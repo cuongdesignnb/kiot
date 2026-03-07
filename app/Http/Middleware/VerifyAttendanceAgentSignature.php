@@ -10,16 +10,25 @@ class VerifyAttendanceAgentSignature
 {
     public function handle(Request $request, Closure $next)
     {
-        $key = config('services.attendance_agent.hmac_key', 'your-long-random-secret-here-change-me');
+        $keyRaw = config('services.attendance_agent.hmac_key', 'your-long-random-secret-here-change-me');
         $tolerance = (int) config('services.attendance_agent.timestamp_tolerance', 300);
         $deviceId = $request->header('X-Device-Id', '');
         $timestamp = $request->header('X-Timestamp', '');
         $signature = $request->header('X-Signature', '');
 
+        // Nếu key là chuỗi hex (chỉ chứa 0-9a-f, độ dài chẵn) → decode thành bytes
+        // Client C# dùng hmac_key_format=hex → decode hex thành bytes trước khi HMAC
+        $key = $keyRaw;
+        if (ctype_xdigit($keyRaw) && strlen($keyRaw) % 2 === 0) {
+            $key = hex2bin($keyRaw);
+        }
+
         // Debug log — xoá sau khi fix xong
         Log::channel('single')->info('HMAC Debug', [
-            'key_first8'    => substr($key, 0, 8) . '...',
-            'key_length'    => strlen($key),
+            'key_raw_first8' => substr($keyRaw, 0, 8) . '...',
+            'key_raw_length' => strlen($keyRaw),
+            'key_is_hex'     => ctype_xdigit($keyRaw) && strlen($keyRaw) % 2 === 0,
+            'key_bin_length'  => strlen($key),
             'device_id'     => $deviceId,
             'timestamp'     => $timestamp,
             'server_time'   => time(),

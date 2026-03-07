@@ -112,7 +112,13 @@ Route::get('/test', [AttendanceAgentController::class, 'test']);
 
 // Debug HMAC — test tạm, xoá sau khi fix
 Route::post('/attendance-agent/debug-hmac', function (\Illuminate\Http\Request $request) {
-    $key = config('services.attendance_agent.hmac_key', 'your-long-random-secret-here-change-me');
+    $keyRaw = config('services.attendance_agent.hmac_key', 'your-long-random-secret-here-change-me');
+    $key = $keyRaw;
+    $isHex = ctype_xdigit($keyRaw) && strlen($keyRaw) % 2 === 0;
+    if ($isHex) {
+        $key = hex2bin($keyRaw);
+    }
+
     $deviceId = $request->header('X-Device-Id', '');
     $timestamp = $request->header('X-Timestamp', '');
     $signature = $request->header('X-Signature', '');
@@ -122,7 +128,9 @@ Route::post('/attendance-agent/debug-hmac', function (\Illuminate\Http\Request $
     $expected = hash_hmac('sha256', $payload, $key);
 
     return response()->json([
-        'key_hint'       => substr($key, 0, 8) . '...(len=' . strlen($key) . ')',
+        'key_hint'       => substr($keyRaw, 0, 8) . '...(len=' . strlen($keyRaw) . ')',
+        'key_is_hex'     => $isHex,
+        'key_bin_length'  => strlen($key),
         'device_id'      => $deviceId,
         'timestamp'      => $timestamp,
         'server_time'    => time(),
