@@ -110,6 +110,32 @@ Route::prefix('attendance-agent')->middleware('attendance.agent')->group(functio
 
 Route::get('/test', [AttendanceAgentController::class, 'test']);
 
+// Debug HMAC — test tạm, xoá sau khi fix
+Route::post('/attendance-agent/debug-hmac', function (\Illuminate\Http\Request $request) {
+    $key = config('services.attendance_agent.hmac_key', 'your-long-random-secret-here-change-me');
+    $deviceId = $request->header('X-Device-Id', '');
+    $timestamp = $request->header('X-Timestamp', '');
+    $signature = $request->header('X-Signature', '');
+    $rawBody = $request->getContent();
+
+    $payload = "{$timestamp}.{$deviceId}.{$rawBody}";
+    $expected = hash_hmac('sha256', $payload, $key);
+
+    return response()->json([
+        'key_hint'       => substr($key, 0, 8) . '...(len=' . strlen($key) . ')',
+        'device_id'      => $deviceId,
+        'timestamp'      => $timestamp,
+        'server_time'    => time(),
+        'time_diff'      => abs(time() - (int)$timestamp),
+        'body_length'    => strlen($rawBody),
+        'body_first80'   => substr($rawBody, 0, 80),
+        'payload_first80'=> substr($payload, 0, 80),
+        'expected_sig'   => $expected,
+        'received_sig'   => $signature,
+        'match'          => hash_equals($expected, $signature),
+    ]);
+});
+
 // =======================
 // 📋 HR & ATTENDANCE MANAGEMENT
 // =======================
