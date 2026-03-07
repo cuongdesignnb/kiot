@@ -12,7 +12,8 @@ return new class extends Migration {
     {
         Schema::create('employee_salary_components', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('employee_id')->constrained()->cascadeOnDelete();
+            // Keep plain IDs here because this file can run before parent tables on fresh setups.
+            $table->unsignedBigInteger('employee_id');
             $table->string('type'); // allowance, deduction
             $table->string('name'); // Ví dụ: Đi lại, Cơm trưa, Đi muộn
             $table->decimal('amount', 15, 2)->default(0); // Mức tiền (hoặc %)

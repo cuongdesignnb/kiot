@@ -12,8 +12,9 @@ return new class extends Migration {
     {
         Schema::create('invoice_items', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('invoice_id')->constrained()->onDelete('cascade');
-            $table->foreignId('product_id')->nullable()->constrained()->nullOnDelete();
+            // Keep plain IDs here because this file can run before parent tables on fresh setups.
+            $table->unsignedBigInteger('invoice_id');
+            $table->unsignedBigInteger('product_id')->nullable();
             $table->integer('quantity');
             $table->decimal('price', 15, 2);
             $table->timestamps();

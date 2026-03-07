@@ -12,8 +12,9 @@ return new class extends Migration {
     {
         Schema::create('stock_transfer_items', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('stock_transfer_id')->constrained()->onDelete('cascade');
-            $table->foreignId('product_id')->constrained()->onDelete('cascade');
+            // Keep plain IDs here because this file can run before parent tables on fresh setups.
+            $table->unsignedBigInteger('stock_transfer_id');
+            $table->unsignedBigInteger('product_id');
             $table->integer('quantity');
             $table->decimal('price', 15, 2)->default(0);
             $table->timestamps();

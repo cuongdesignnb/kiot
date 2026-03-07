@@ -12,8 +12,9 @@ return new class extends Migration {
     {
         Schema::create('employee_salary_settings', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('employee_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('salary_template_id')->nullable()->constrained()->nullOnDelete();
+            // Keep plain IDs here because this file can run before parent tables on fresh setups.
+            $table->unsignedBigInteger('employee_id');
+            $table->unsignedBigInteger('salary_template_id')->nullable();
             $table->string('type')->default('fixed'); // Loại lương chính: Tùy chỉnh (fixed/hourly) hoặc theo mẫu
             $table->decimal('base_salary', 15, 2)->default(0); // Lương chính (nếu tùy chỉnh)
             $table->boolean('has_bonus')->default(false); // Có áp dụng thưởng

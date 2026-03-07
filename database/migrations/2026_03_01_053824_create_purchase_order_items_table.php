@@ -12,8 +12,9 @@ return new class extends Migration {
     {
         Schema::create('purchase_order_items', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('purchase_order_id')->constrained()->onDelete('cascade');
-            $table->foreignId('product_id')->constrained()->onDelete('cascade');
+            // Keep plain IDs here because this file can run before parent tables on fresh setups.
+            $table->unsignedBigInteger('purchase_order_id');
+            $table->unsignedBigInteger('product_id');
             $table->integer('qty')->default(1);
             $table->decimal('price', 15, 2)->default(0); // Đơn giá
             $table->decimal('discount', 15, 2)->default(0); // Giảm giá
