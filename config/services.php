@@ -31,4 +31,9 @@ return [
         ],
     ],
 
+    'attendance_agent' => [
+        'hmac_key' => env('ATTENDANCE_AGENT_SECRET', 'your-long-random-secret-here-change-me'),
+        'timestamp_tolerance' => (int) env('ATTENDANCE_AGENT_TIMESTAMP_TOLERANCE', 300),
+    ],
+
 ];
