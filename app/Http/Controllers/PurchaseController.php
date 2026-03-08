@@ -78,13 +78,20 @@ class PurchaseController extends Controller
             }
         }
 
+        // Check if any active price book enables retail/technician price columns
+        $priceBooks = \App\Models\PriceBook::where('is_active', true)->get();
+        $showRetailPrice = $priceBooks->contains('enable_retail_price', true);
+        $showTechnicianPrice = $priceBooks->contains('enable_technician_price', true);
+
         return Inertia::render('Purchases/Create', [
             'suppliers' => $suppliers,
             'products' => $products,
             'categories' => \App\Models\Category::all(),
             'brands' => \App\Models\Brand::all(),
             'purchaseCode' => 'PN' . date('YmdHis'),
-            'purchaseOrderInfo' => $purchaseOrderInfo
+            'purchaseOrderInfo' => $purchaseOrderInfo,
+            'showRetailPrice' => $showRetailPrice,
+            'showTechnicianPrice' => $showTechnicianPrice,
         ]);
     }
 
@@ -97,6 +104,8 @@ class PurchaseController extends Controller
             'items.*.quantity' => 'required|integer|min:0',
             'items.*.price' => 'required|numeric|min:0',
             'items.*.discount' => 'nullable|numeric|min:0',
+            'items.*.retail_price' => 'nullable|numeric|min:0',
+            'items.*.technician_price' => 'nullable|numeric|min:0',
             'items.*.serials' => 'nullable|array',
             'items.*.serials.*' => 'string|max:100',
             'discount' => 'nullable|numeric|min:0',
@@ -173,7 +182,25 @@ class PurchaseController extends Controller
                     }
 
                     $product->stock_quantity = $newStock;
+
+                    // Update retail_price if provided
+                    if (isset($item['retail_price']) && $item['retail_price'] > 0) {
+                        $product->retail_price = $item['retail_price'];
+                    }
+
                     $product->save();
+
+                    // Update technician_price in active price books if provided
+                    if (isset($item['technician_price']) && $item['technician_price'] > 0) {
+                        $activeBooks = \App\Models\PriceBook::where('is_active', true)
+                            ->where('enable_technician_price', true)->get();
+                        foreach ($activeBooks as $book) {
+                            \App\Models\PriceBookProduct::updateOrCreate(
+                                ['price_book_id' => $book->id, 'product_id' => $product->id],
+                                ['technician_price' => $item['technician_price'], 'price' => $item['retail_price'] ?? $product->retail_price ?? 0]
+                            );
+                        }
+                    }
 
                     // Create Serial/IMEI records for products with serial tracking
                     if ($product->has_serial && !empty($item['serials'])) {

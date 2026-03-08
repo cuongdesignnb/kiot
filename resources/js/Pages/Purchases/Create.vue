@@ -9,7 +9,9 @@ const props = defineProps({
     categories: Array,
     brands: Array,
     purchaseCode: String,
-    purchaseOrderInfo: Object
+    purchaseOrderInfo: Object,
+    showRetailPrice: Boolean,
+    showTechnicianPrice: Boolean,
 });
 
 // Local mutable copy of products list (to add newly created products)
@@ -58,6 +60,8 @@ const selectProduct = (product) => {
             has_serial: !!product.has_serial,
             quantity: product.has_serial ? 0 : 1,
             price: product.cost_price || 0,
+            retail_price: product.retail_price || 0,
+            technician_price: product.technician_price || 0,
             discount: 0,
             stock_quantity: product.stock_quantity || 0,
             serials: [],
@@ -136,6 +140,8 @@ const save = async () => {
                 product_id: item.product_id,
                 quantity: item.quantity,
                 price: item.price,
+                retail_price: item.retail_price || 0,
+                technician_price: item.technician_price || 0,
                 discount: item.discount,
                 serials: item.serials || [],
             }))
@@ -280,6 +286,8 @@ const submitCreateProduct = async () => {
                                 <th class="p-3 w-[80px] text-center">ĐVT</th>
                                 <th class="p-3 w-[100px] text-center">Số lượng</th>
                                 <th class="p-3 w-[120px] text-right">Đơn giá</th>
+                                <th v-if="showRetailPrice" class="p-3 w-[120px] text-right">Giá bán lẻ</th>
+                                <th v-if="showTechnicianPrice" class="p-3 w-[120px] text-right">Giá bán thợ</th>
                                 <th class="p-3 w-[100px] text-right">Giảm giá</th>
                                 <th class="p-3 w-[140px] text-right pr-6">Thành tiền</th>
                             </tr>
@@ -309,6 +317,12 @@ const submitCreateProduct = async () => {
                                 <td class="p-3 w-[120px]">
                                     <input type="number" v-model="item.price" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-green-500 text-[13px] hover:bg-green-50 font-medium tracking-wide">
                                 </td>
+                                <td v-if="showRetailPrice" class="p-3 w-[120px]">
+                                    <input type="number" v-model="item.retail_price" min="0" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-blue-500 text-[13px] hover:bg-blue-50 font-medium tracking-wide">
+                                </td>
+                                <td v-if="showTechnicianPrice" class="p-3 w-[120px]">
+                                    <input type="number" v-model="item.technician_price" min="0" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-purple-500 text-[13px] hover:bg-purple-50 font-medium tracking-wide">
+                                </td>
                                 <td class="p-3 w-[100px]">
                                     <input type="number" v-model="item.discount" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-green-500 text-[13px] hover:bg-green-50">
                                 </td>
@@ -316,7 +330,7 @@ const submitCreateProduct = async () => {
                             </tr>
                             <!-- Serial/IMEI input row -->
                             <tr v-if="item.has_serial" class="bg-gray-50/50">
-                                <td colspan="8" class="px-6 py-2">
+                                <td :colspan="8 + (showRetailPrice ? 1 : 0) + (showTechnicianPrice ? 1 : 0)" class="px-6 py-2">
                                     <div class="flex items-center gap-2 mb-2">
                                         <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path></svg>
                                         <input
