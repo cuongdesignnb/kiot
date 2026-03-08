@@ -6,6 +6,9 @@ const props = defineProps({
     product: Object,
     categories: Array,
     brands: Array,
+    showRetailPrice: Boolean,
+    showTechnicianPrice: Boolean,
+    technicianPrice: { type: Number, default: 0 },
 });
 
 const form = useForm({
@@ -17,6 +20,7 @@ const form = useForm({
     brand_id: props.product.brand_id || '',
     cost_price: props.product.cost_price || 0,
     retail_price: props.product.retail_price || 0,
+    technician_price: props.technicianPrice || 0,
     stock_quantity: props.product.stock_quantity || 0,
     min_stock: props.product.min_stock || 0,
     has_serial: !!props.product.has_serial,
@@ -148,6 +152,25 @@ const submit = () => {
                                             <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-medium">₫</span>
                                         </div>
                                         <span v-if="form.errors.retail_price" class="text-red-500 text-xs mt-1 block">{{ form.errors.retail_price }}</span>
+                                    </div>
+
+                                    <!-- Giá bán lẻ (conditional) -->
+                                    <div v-if="showRetailPrice">
+                                        <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán lẻ</label>
+                                        <div class="relative">
+                                            <input type="number" v-model="form.retail_price" class="w-full border border-gray-300 rounded p-2 pr-10 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-right text-base font-semibold">
+                                            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-medium">₫</span>
+                                        </div>
+                                    </div>
+
+                                    <!-- Giá thợ (conditional) -->
+                                    <div v-if="showTechnicianPrice">
+                                        <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán thợ</label>
+                                        <div class="relative">
+                                            <input type="number" v-model="form.technician_price" class="w-full border border-gray-300 rounded p-2 pr-10 focus:ring-1 focus:ring-purple-500 focus:border-purple-500 outline-none transition-shadow text-right text-base font-semibold text-purple-700">
+                                            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-medium">₫</span>
+                                        </div>
+                                        <span v-if="form.errors.technician_price" class="text-red-500 text-xs mt-1 block">{{ form.errors.technician_price }}</span>
                                     </div>
 
                                     <!-- Tồn kho -->

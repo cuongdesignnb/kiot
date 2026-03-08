@@ -241,10 +241,24 @@ class ProductController extends Controller
 
     public function edit(Product $product)
     {
+        $priceBooks = PriceBook::where('is_active', true)->get();
+        $showTechnician = $priceBooks->contains('enable_technician_price', true);
+
+        // Load technician_price from PriceBookProduct if applicable
+        $technicianPrice = 0;
+        if ($showTechnician) {
+            $pbp = PriceBookProduct::whereHas('priceBook', fn($q) => $q->where('is_active', true)->where('enable_technician_price', true))
+                ->where('product_id', $product->id)->first();
+            $technicianPrice = $pbp ? $pbp->technician_price : 0;
+        }
+
         return Inertia::render('Products/Edit', [
             'product' => $product,
             'categories' => Category::all(),
             'brands' => Brand::all(),
+            'showRetailPrice' => $priceBooks->contains('enable_retail_price', true),
+            'showTechnicianPrice' => $showTechnician,
+            'technicianPrice' => $technicianPrice,
         ]);
     }
 
@@ -258,6 +272,7 @@ class ProductController extends Controller
             'brand_id' => 'nullable|exists:brands,id',
             'cost_price' => 'numeric|min:0',
             'retail_price' => 'numeric|min:0',
+            'technician_price' => 'nullable|numeric|min:0',
             'stock_quantity' => 'numeric|min:0',
             'min_stock' => 'numeric|min:0',
             'has_serial' => 'boolean',
@@ -267,7 +282,22 @@ class ProductController extends Controller
             'location' => 'nullable|string',
         ]);
 
+        $technicianPrice = $validated['technician_price'] ?? null;
+        unset($validated['technician_price']);
+
         $product->update($validated);
+
+        // Save technician_price to active price books
+        if ($technicianPrice !== null) {
+            $activeBooks = PriceBook::where('is_active', true)
+                ->where('enable_technician_price', true)->get();
+            foreach ($activeBooks as $book) {
+                PriceBookProduct::updateOrCreate(
+                    ['price_book_id' => $book->id, 'product_id' => $product->id],
+                    ['technician_price' => $technicianPrice, 'price' => $product->retail_price ?? 0]
+                );
+            }
+        }
 
         return redirect()->route('products.index')->with('success', 'Cập nhật hàng hóa thành công!');
     }
