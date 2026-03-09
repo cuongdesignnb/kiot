@@ -1,5 +1,7 @@
 <script setup>
 import { Head, useForm, Link } from '@inertiajs/vue3';
+import { ref } from 'vue';
+import axios from 'axios';
 import AppLayout from '../../Layouts/AppLayout.vue';
 
 const props = defineProps({
@@ -29,6 +31,47 @@ const form = useForm({
     weight: props.product.weight || '',
     location: props.product.location || '',
 });
+
+// Reactive local copies for inline creation
+const localCategories = ref([...(props.categories || [])]);
+const localBrands = ref([...(props.brands || [])]);
+
+const showNewCategory = ref(false);
+const newCategoryName = ref('');
+const creatingCategory = ref(false);
+const showNewBrand = ref(false);
+const newBrandName = ref('');
+const creatingBrand = ref(false);
+
+const quickCreateCategory = async () => {
+    if (!newCategoryName.value.trim()) return;
+    creatingCategory.value = true;
+    try {
+        const res = await axios.post('/categories/quick-store', { name: newCategoryName.value.trim() });
+        if (res.data.success) {
+            localCategories.value.push(res.data.category);
+            form.category_id = res.data.category.id;
+            newCategoryName.value = '';
+            showNewCategory.value = false;
+        }
+    } catch (e) { alert(e.response?.data?.message || 'Lỗi tạo nhóm hàng'); }
+    creatingCategory.value = false;
+};
+
+const quickCreateBrand = async () => {
+    if (!newBrandName.value.trim()) return;
+    creatingBrand.value = true;
+    try {
+        const res = await axios.post('/brands/quick-store', { name: newBrandName.value.trim() });
+        if (res.data.success) {
+            localBrands.value.push(res.data.brand);
+            form.brand_id = res.data.brand.id;
+            newBrandName.value = '';
+            showNewBrand.value = false;
+        }
+    } catch (e) { alert(e.response?.data?.message || 'Lỗi tạo thương hiệu'); }
+    creatingBrand.value = false;
+};
 
 const submit = () => {
     form.put(`/products/${props.product.id}`);
@@ -111,17 +154,31 @@ const submit = () => {
                                     <!-- Nhóm hàng & Thương hiệu -->
                                     <div>
                                         <label class="block text-sm font-semibold text-gray-700 mb-1">Nhóm hàng</label>
-                                        <select v-model="form.category_id" class="w-full border border-gray-300 rounded p-2 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-sm text-gray-800 bg-white">
-                                            <option value="">--- Chọn nhóm hàng ---</option>
-                                            <option v-for="category in props.categories" :key="category.id" :value="category.id">{{ category.name }}</option>
-                                        </select>
+                                        <div class="flex gap-1">
+                                            <select v-model="form.category_id" class="flex-1 border border-gray-300 rounded p-2 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-sm text-gray-800 bg-white">
+                                                <option value="">--- Chọn nhóm hàng ---</option>
+                                                <option v-for="category in localCategories" :key="category.id" :value="category.id">{{ category.name }}</option>
+                                            </select>
+                                            <button type="button" @click="showNewCategory = !showNewCategory" class="px-2 border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-400 text-blue-600 font-bold text-lg leading-none" title="Thêm nhóm hàng">+</button>
+                                        </div>
+                                        <div v-if="showNewCategory" class="mt-1 flex gap-1">
+                                            <input type="text" v-model="newCategoryName" @keyup.enter="quickCreateCategory" placeholder="Tên nhóm hàng mới" class="flex-1 border border-gray-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                                            <button type="button" @click="quickCreateCategory" :disabled="creatingCategory" class="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50">Lưu</button>
+                                        </div>
                                     </div>
                                     <div>
                                         <label class="block text-sm font-semibold text-gray-700 mb-1">Thương hiệu</label>
-                                        <select v-model="form.brand_id" class="w-full border border-gray-300 rounded p-2 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-sm text-gray-800 bg-white">
-                                            <option value="">--- Chọn thương hiệu ---</option>
-                                            <option v-for="brand in props.brands" :key="brand.id" :value="brand.id">{{ brand.name }}</option>
-                                        </select>
+                                        <div class="flex gap-1">
+                                            <select v-model="form.brand_id" class="flex-1 border border-gray-300 rounded p-2 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-sm text-gray-800 bg-white">
+                                                <option value="">--- Chọn thương hiệu ---</option>
+                                                <option v-for="brand in localBrands" :key="brand.id" :value="brand.id">{{ brand.name }}</option>
+                                            </select>
+                                            <button type="button" @click="showNewBrand = !showNewBrand" class="px-2 border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-400 text-blue-600 font-bold text-lg leading-none" title="Thêm thương hiệu">+</button>
+                                        </div>
+                                        <div v-if="showNewBrand" class="mt-1 flex gap-1">
+                                            <input type="text" v-model="newBrandName" @keyup.enter="quickCreateBrand" placeholder="Tên thương hiệu mới" class="flex-1 border border-gray-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                                            <button type="button" @click="quickCreateBrand" :disabled="creatingBrand" class="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50">Lưu</button>
+                                        </div>
                                     </div>
 
                                     <!-- Vị trí & Trọng lượng -->

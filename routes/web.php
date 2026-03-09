@@ -57,6 +57,8 @@ Route::get('/products/create/{type?}', [ProductController::class, 'create'])->na
 Route::get('/products/document-detail', [ProductController::class, 'documentDetail'])->name('products.document-detail');
 Route::post('/products', [ProductController::class, 'store'])->name('products.store');
 Route::post('/products/quick-store', [ProductController::class, 'quickStore'])->name('products.quick-store');
+Route::post('/categories/quick-store', [SettingController::class, 'quickStoreCategory'])->name('categories.quick-store');
+Route::post('/brands/quick-store', [SettingController::class, 'quickStoreBrand'])->name('brands.quick-store');
 Route::get('/products/{product}/edit', [ProductController::class, 'edit'])->name('products.edit');
 Route::get('/products/{product}/inventory-card', [ProductController::class, 'inventoryCard'])->name('products.inventory-card');
 Route::get('/products/{product}/serials', [ProductController::class, 'serials'])->name('products.serials');

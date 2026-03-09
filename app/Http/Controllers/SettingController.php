@@ -87,6 +87,17 @@ class SettingController extends Controller
         return redirect()->back()->with('success', "Nhóm hàng \"{$category->name}\" đã được tạo.");
     }
 
+    public function quickStoreCategory(Request $request)
+    {
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+        ]);
+
+        $category = Category::create($validated);
+
+        return response()->json(['success' => true, 'category' => $category]);
+    }
+
     public function updateCategory(Request $request, Category $category)
     {
         $validated = $request->validate([
@@ -120,6 +131,17 @@ class SettingController extends Controller
         $brand = Brand::create($validated);
 
         return redirect()->back()->with('success', "Thương hiệu \"{$brand->name}\" đã được tạo.");
+    }
+
+    public function quickStoreBrand(Request $request)
+    {
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+        ]);
+
+        $brand = Brand::create($validated);
+
+        return response()->json(['success' => true, 'brand' => $brand]);
     }
 
     public function updateBrand(Request $request, Brand $brand)

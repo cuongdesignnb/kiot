@@ -223,6 +223,46 @@ const submitCreateProduct = async () => {
     }
 };
 
+// === Quick Create Category / Brand (inline in modal) ===
+const localCategories = ref([...(props.categories || [])]);
+const localBrands = ref([...(props.brands || [])]);
+const showNewCategory = ref(false);
+const newCategoryName = ref('');
+const creatingCategory = ref(false);
+const showNewBrand = ref(false);
+const newBrandName = ref('');
+const creatingBrand = ref(false);
+
+const quickCreateCategory = async () => {
+    if (!newCategoryName.value.trim()) return;
+    creatingCategory.value = true;
+    try {
+        const res = await axios.post('/categories/quick-store', { name: newCategoryName.value.trim() });
+        if (res.data.success) {
+            localCategories.value.push(res.data.category);
+            newProduct.value.category_id = res.data.category.id;
+            newCategoryName.value = '';
+            showNewCategory.value = false;
+        }
+    } catch (e) { alert(e.response?.data?.message || 'Lỗi tạo nhóm hàng'); }
+    creatingCategory.value = false;
+};
+
+const quickCreateBrand = async () => {
+    if (!newBrandName.value.trim()) return;
+    creatingBrand.value = true;
+    try {
+        const res = await axios.post('/brands/quick-store', { name: newBrandName.value.trim() });
+        if (res.data.success) {
+            localBrands.value.push(res.data.brand);
+            newProduct.value.brand_id = res.data.brand.id;
+            newBrandName.value = '';
+            showNewBrand.value = false;
+        }
+    } catch (e) { alert(e.response?.data?.message || 'Lỗi tạo thương hiệu'); }
+    creatingBrand.value = false;
+};
+
 </script>
 
 <template>
@@ -485,19 +525,33 @@ const submitCreateProduct = async () => {
                         <!-- Nhóm hàng -->
                         <div>
                             <label class="block text-sm font-semibold text-gray-700 mb-1">Nhóm hàng</label>
-                            <select v-model="newProduct.category_id" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white">
-                                <option value="">-- Chọn nhóm hàng --</option>
-                                <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
-                            </select>
+                            <div class="flex gap-1">
+                                <select v-model="newProduct.category_id" class="flex-1 border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white">
+                                    <option value="">-- Chọn nhóm hàng --</option>
+                                    <option v-for="cat in localCategories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
+                                </select>
+                                <button type="button" @click="showNewCategory = !showNewCategory" class="px-2 border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-400 text-blue-600 font-bold text-lg leading-none" title="Thêm nhóm hàng">+</button>
+                            </div>
+                            <div v-if="showNewCategory" class="mt-1 flex gap-1">
+                                <input type="text" v-model="newCategoryName" @keyup.enter="quickCreateCategory" placeholder="Tên nhóm hàng mới" class="flex-1 border border-gray-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                                <button type="button" @click="quickCreateCategory" :disabled="creatingCategory" class="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50">Lưu</button>
+                            </div>
                         </div>
 
                         <!-- Thương hiệu -->
                         <div>
                             <label class="block text-sm font-semibold text-gray-700 mb-1">Thương hiệu</label>
-                            <select v-model="newProduct.brand_id" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white">
-                                <option value="">-- Chọn thương hiệu --</option>
-                                <option v-for="brand in brands" :key="brand.id" :value="brand.id">{{ brand.name }}</option>
-                            </select>
+                            <div class="flex gap-1">
+                                <select v-model="newProduct.brand_id" class="flex-1 border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white">
+                                    <option value="">-- Chọn thương hiệu --</option>
+                                    <option v-for="brand in localBrands" :key="brand.id" :value="brand.id">{{ brand.name }}</option>
+                                </select>
+                                <button type="button" @click="showNewBrand = !showNewBrand" class="px-2 border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-400 text-blue-600 font-bold text-lg leading-none" title="Thêm thương hiệu">+</button>
+                            </div>
+                            <div v-if="showNewBrand" class="mt-1 flex gap-1">
+                                <input type="text" v-model="newBrandName" @keyup.enter="quickCreateBrand" placeholder="Tên thương hiệu mới" class="flex-1 border border-gray-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                                <button type="button" @click="quickCreateBrand" :disabled="creatingBrand" class="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50">Lưu</button>
+                            </div>
                         </div>
 
                         <!-- Giá vốn -->
