@@ -93,9 +93,23 @@ class TimekeepingService
             }
 
             if (!$checkIn && $logs->isNotEmpty()) {
-                $checkIn = $logs->first()->punched_at;
-                if ($logs->count() > 1 && $logs->last()->id !== $logs->first()->id) {
-                    $checkOut = $logs->last()->punched_at;
+                if ($logs->count() === 1 && $scheduleStart && $scheduleEnd) {
+                    // Chỉ có 1 lần chấm: so sánh khoảng cách tới giờ bắt đầu/kết thúc ca
+                    // Nếu gần giờ kết thúc ca hơn → coi là check_out (nhân viên quên chấm vào)
+                    $punch = Carbon::parse($logs->first()->punched_at);
+                    $midShift = $scheduleStart->copy()->addMinutes(
+                        $scheduleStart->diffInMinutes($scheduleEnd) / 2
+                    );
+                    if ($punch->greaterThan($midShift)) {
+                        $checkOut = $logs->first()->punched_at;
+                    } else {
+                        $checkIn = $logs->first()->punched_at;
+                    }
+                } else {
+                    $checkIn = $logs->first()->punched_at;
+                    if ($logs->count() > 1 && $logs->last()->id !== $logs->first()->id) {
+                        $checkOut = $logs->last()->punched_at;
+                    }
                 }
             }
 
