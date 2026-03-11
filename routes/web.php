@@ -329,12 +329,10 @@ Route::get('/warranties/export', [App\Http\Controllers\WarrantyController::class
 Route::get('/paysheets/export', [App\Http\Controllers\PaysheetController::class, 'export'])->name('paysheets.export');
 
 // =======================
-// 🔧 DEVICE REPAIR (gated by middleware)
+// 🔧 DEVICE REPAIR
 // =======================
-Route::middleware(\App\Http\Middleware\CheckRepairEnabled::class)->group(function () {
-    Route::get('/repairs', [App\Http\Controllers\DeviceRepairPageController::class, 'index'])->name('repairs.index');
-    Route::get('/repairs/performance', [App\Http\Controllers\DeviceRepairPageController::class, 'performance'])->name('repairs.performance');
-    Route::get('/repairs/{id}', [App\Http\Controllers\DeviceRepairPageController::class, 'show'])->name('repairs.show');
-});
+Route::get('/repairs', [App\Http\Controllers\DeviceRepairPageController::class, 'index'])->name('repairs.index');
+Route::get('/repairs/performance', [App\Http\Controllers\DeviceRepairPageController::class, 'performance'])->name('repairs.performance');
+Route::get('/repairs/{id}', [App\Http\Controllers\DeviceRepairPageController::class, 'show'])->name('repairs.show');
 
 }); // end auth middleware

@@ -240,30 +240,26 @@ Route::prefix('paysheets')->group(function () {
 });
 
 // =======================
-// 🔧 DEVICE REPAIR (gated by middleware)
+// 🔧 DEVICE REPAIR
 // =======================
 
-Route::middleware(\App\Http\Middleware\CheckRepairEnabled::class)->group(function () {
-    Route::prefix('device-repairs')->group(function () {
-        Route::get('/', [\App\Http\Controllers\Api\DeviceRepairController::class, 'index']);
-        Route::get('/performance', [\App\Http\Controllers\Api\DeviceRepairController::class, 'performance']);
-        Route::get('/search-serials', [\App\Http\Controllers\Api\DeviceRepairController::class, 'searchSerials']);
-        Route::get('/search-products', [\App\Http\Controllers\Api\DeviceRepairController::class, 'searchProducts']);
-        Route::post('/', [\App\Http\Controllers\Api\DeviceRepairController::class, 'store']);
-        Route::get('/{deviceRepair}', [\App\Http\Controllers\Api\DeviceRepairController::class, 'show']);
-        Route::put('/{deviceRepair}', [\App\Http\Controllers\Api\DeviceRepairController::class, 'update']);
-        Route::post('/{deviceRepair}/assign', [\App\Http\Controllers\Api\DeviceRepairController::class, 'assign']);
-        Route::post('/{deviceRepair}/parts', [\App\Http\Controllers\Api\DeviceRepairController::class, 'addPart']);
-        Route::delete('/{deviceRepair}/parts/{partId}', [\App\Http\Controllers\Api\DeviceRepairController::class, 'removePart']);
-        Route::post('/{deviceRepair}/complete', [\App\Http\Controllers\Api\DeviceRepairController::class, 'complete']);
-    });
-
-    Route::prefix('repair-performance-tiers')->group(function () {
-        Route::post('/', [\App\Http\Controllers\Api\RepairPerformanceTierController::class, 'store']);
-        Route::put('/{tier}', [\App\Http\Controllers\Api\RepairPerformanceTierController::class, 'update']);
-        Route::delete('/{tier}', [\App\Http\Controllers\Api\RepairPerformanceTierController::class, 'destroy']);
-    });
+Route::prefix('device-repairs')->group(function () {
+    Route::get('/', [\App\Http\Controllers\Api\DeviceRepairController::class, 'index']);
+    Route::get('/performance', [\App\Http\Controllers\Api\DeviceRepairController::class, 'performance']);
+    Route::get('/search-serials', [\App\Http\Controllers\Api\DeviceRepairController::class, 'searchSerials']);
+    Route::get('/search-products', [\App\Http\Controllers\Api\DeviceRepairController::class, 'searchProducts']);
+    Route::post('/', [\App\Http\Controllers\Api\DeviceRepairController::class, 'store']);
+    Route::get('/{deviceRepair}', [\App\Http\Controllers\Api\DeviceRepairController::class, 'show']);
+    Route::put('/{deviceRepair}', [\App\Http\Controllers\Api\DeviceRepairController::class, 'update']);
+    Route::post('/{deviceRepair}/assign', [\App\Http\Controllers\Api\DeviceRepairController::class, 'assign']);
+    Route::post('/{deviceRepair}/parts', [\App\Http\Controllers\Api\DeviceRepairController::class, 'addPart']);
+    Route::delete('/{deviceRepair}/parts/{partId}', [\App\Http\Controllers\Api\DeviceRepairController::class, 'removePart']);
+    Route::post('/{deviceRepair}/complete', [\App\Http\Controllers\Api\DeviceRepairController::class, 'complete']);
 });
 
-// Performance tiers GET - accessible from Settings without repair toggle
-Route::get('/repair-performance-tiers', [\App\Http\Controllers\Api\RepairPerformanceTierController::class, 'index']);
+Route::prefix('repair-performance-tiers')->group(function () {
+    Route::get('/', [\App\Http\Controllers\Api\RepairPerformanceTierController::class, 'index']);
+    Route::post('/', [\App\Http\Controllers\Api\RepairPerformanceTierController::class, 'store']);
+    Route::put('/{tier}', [\App\Http\Controllers\Api\RepairPerformanceTierController::class, 'update']);
+    Route::delete('/{tier}', [\App\Http\Controllers\Api\RepairPerformanceTierController::class, 'destroy']);
+});
