@@ -7,6 +7,7 @@ use Inertia\Inertia;
 use App\Models\Category;
 use App\Models\Brand;
 use App\Models\Product;
+use App\Models\SerialImei;
 use App\Models\PriceBook;
 use App\Models\PriceBookProduct;
 
@@ -642,4 +643,86 @@ class ProductController extends Controller
             $count++;
         }
         return back()->with('success', "Đã nhập {$count} sản phẩm từ file.");
-    }}
+    }
+
+    /**
+     * POST /products/{product}/serials
+     */
+    public function storeSerial(Request $request, Product $product)
+    {
+        $data = $request->validate([
+            'serial_number' => 'required|string|max:255|unique:serial_imeis,serial_number',
+        ]);
+
+        $serial = SerialImei::create([
+            'product_id' => $product->id,
+            'serial_number' => $data['serial_number'],
+            'status' => 'in_stock',
+            'cost_price' => $product->cost_price ?? 0,
+        ]);
+
+        return response()->json($serial, 201);
+    }
+
+    /**
+     * POST /products/{product}/serials/bulk
+     */
+    public function bulkStoreSerials(Request $request, Product $product)
+    {
+        $data = $request->validate([
+            'serials' => 'required|string',
+        ]);
+
+        $lines = array_filter(array_map('trim', preg_split('/[\r\n,;]+/', $data['serials'])));
+        $created = 0;
+        $duplicates = [];
+
+        foreach ($lines as $serial) {
+            if (SerialImei::where('serial_number', $serial)->exists()) {
+                $duplicates[] = $serial;
+                continue;
+            }
+            SerialImei::create([
+                'product_id' => $product->id,
+                'serial_number' => $serial,
+                'status' => 'in_stock',
+                'cost_price' => $product->cost_price ?? 0,
+            ]);
+            $created++;
+        }
+
+        return response()->json([
+            'created' => $created,
+            'duplicates' => $duplicates,
+        ]);
+    }
+
+    /**
+     * PUT /products/{product}/serials/{serial}
+     */
+    public function updateSerial(Request $request, Product $product, SerialImei $serial)
+    {
+        $data = $request->validate([
+            'serial_number' => 'required|string|max:255|unique:serial_imeis,serial_number,' . $serial->id,
+            'status' => 'nullable|string|in:in_stock,sold,returning,warranty,defective',
+        ]);
+
+        $serial->update($data);
+
+        return response()->json($serial);
+    }
+
+    /**
+     * DELETE /products/{product}/serials/{serial}
+     */
+    public function destroySerial(Product $product, SerialImei $serial)
+    {
+        if ($serial->status === 'sold') {
+            return response()->json(['message' => 'Không thể xóa serial đã bán.'], 422);
+        }
+
+        $serial->delete();
+
+        return response()->json(['message' => 'Đã xóa serial.']);
+    }
+}

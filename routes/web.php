@@ -62,6 +62,10 @@ Route::post('/brands/quick-store', [SettingController::class, 'quickStoreBrand']
 Route::get('/products/{product}/edit', [ProductController::class, 'edit'])->name('products.edit');
 Route::get('/products/{product}/inventory-card', [ProductController::class, 'inventoryCard'])->name('products.inventory-card');
 Route::get('/products/{product}/serials', [ProductController::class, 'serials'])->name('products.serials');
+Route::post('/products/{product}/serials', [ProductController::class, 'storeSerial'])->name('products.serials.store');
+Route::post('/products/{product}/serials/bulk', [ProductController::class, 'bulkStoreSerials'])->name('products.serials.bulk');
+Route::put('/products/{product}/serials/{serial}', [ProductController::class, 'updateSerial'])->name('products.serials.update');
+Route::delete('/products/{product}/serials/{serial}', [ProductController::class, 'destroySerial'])->name('products.serials.destroy');
 Route::get('/products/{product}/warranties', [ProductController::class, 'warranties'])->name('products.warranties');
 Route::put('/products/{product}', [ProductController::class, 'update'])->name('products.update');
 Route::delete('/products/{product}', [ProductController::class, 'destroy'])->name('products.destroy');

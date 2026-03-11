@@ -1,6 +1,6 @@
 <script setup>
 import { Head, useForm, Link } from '@inertiajs/vue3';
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import axios from 'axios';
 import AppLayout from '../../Layouts/AppLayout.vue';
 
@@ -11,6 +11,117 @@ const props = defineProps({
     showRetailPrice: Boolean,
     showTechnicianPrice: Boolean,
     technicianPrice: { type: Number, default: 0 },
+});
+
+// ===== Serial/IMEI Management =====
+const serials = ref([]);
+const serialLoading = ref(false);
+const serialSearch = ref('');
+const serialStatusFilter = ref('all');
+const newSerial = ref('');
+const bulkSerials = ref('');
+const showBulkInput = ref(false);
+const serialError = ref('');
+const editingSerialId = ref(null);
+const editSerialNumber = ref('');
+const editSerialStatus = ref('');
+
+const statusLabels = {
+    in_stock: 'Còn hàng',
+    sold: 'Đã bán',
+    returning: 'Đang trả',
+    warranty: 'Bảo hành',
+    defective: 'Lỗi',
+};
+const statusColors = {
+    in_stock: 'bg-green-100 text-green-700',
+    sold: 'bg-gray-100 text-gray-600',
+    returning: 'bg-yellow-100 text-yellow-700',
+    warranty: 'bg-blue-100 text-blue-700',
+    defective: 'bg-red-100 text-red-600',
+};
+
+const loadSerials = async () => {
+    serialLoading.value = true;
+    try {
+        const params = {};
+        if (serialSearch.value) params.search = serialSearch.value;
+        if (serialStatusFilter.value !== 'all') params.status = serialStatusFilter.value;
+        const res = await axios.get(`/products/${props.product.id}/serials`, { params });
+        serials.value = res.data || [];
+    } catch (e) { console.error(e); }
+    serialLoading.value = false;
+};
+
+const addSerial = async () => {
+    serialError.value = '';
+    if (!newSerial.value.trim()) return;
+    try {
+        await axios.post(`/products/${props.product.id}/serials`, { serial_number: newSerial.value.trim() });
+        newSerial.value = '';
+        loadSerials();
+    } catch (e) {
+        serialError.value = e.response?.data?.message || e.response?.data?.errors?.serial_number?.[0] || 'Lỗi';
+    }
+};
+
+const bulkAdd = async () => {
+    serialError.value = '';
+    if (!bulkSerials.value.trim()) return;
+    try {
+        const res = await axios.post(`/products/${props.product.id}/serials/bulk`, { serials: bulkSerials.value });
+        const d = res.data;
+        let msg = `Đã thêm ${d.created} serial.`;
+        if (d.duplicates?.length) msg += ` Trùng: ${d.duplicates.join(', ')}`;
+        serialError.value = msg;
+        bulkSerials.value = '';
+        showBulkInput.value = false;
+        loadSerials();
+    } catch (e) {
+        serialError.value = e.response?.data?.message || 'Lỗi';
+    }
+};
+
+const startEdit = (s) => {
+    editingSerialId.value = s.id;
+    editSerialNumber.value = s.serial_number;
+    editSerialStatus.value = s.status;
+};
+
+const cancelEdit = () => { editingSerialId.value = null; };
+
+const saveEdit = async (s) => {
+    serialError.value = '';
+    try {
+        await axios.put(`/products/${props.product.id}/serials/${s.id}`, {
+            serial_number: editSerialNumber.value,
+            status: editSerialStatus.value,
+        });
+        editingSerialId.value = null;
+        loadSerials();
+    } catch (e) {
+        serialError.value = e.response?.data?.message || e.response?.data?.errors?.serial_number?.[0] || 'Lỗi';
+    }
+};
+
+const deleteSerial = async (s) => {
+    if (!confirm(`Xác nhận xóa serial ${s.serial_number}?`)) return;
+    try {
+        await axios.delete(`/products/${props.product.id}/serials/${s.id}`);
+        loadSerials();
+    } catch (e) {
+        alert(e.response?.data?.message || 'Lỗi');
+    }
+};
+
+let searchTimeout;
+const onSerialSearch = () => {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(loadSerials, 300);
+};
+
+onMounted(() => {
+    if (props.product.has_serial) loadSerials();
 });
 
 const form = useForm({
@@ -279,6 +390,104 @@ const submit = () => {
                                 </div>
                             </div>
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Serial/IMEI Management Section -->
+            <div v-if="form.has_serial" class="max-w-6xl mx-auto px-4 md:px-6 mt-4">
+                <div class="bg-white rounded border border-gray-200 shadow-sm overflow-hidden">
+                    <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                        <h3 class="text-base font-bold text-gray-800">Quản lý Serial/IMEI</h3>
+                        <span class="text-sm text-gray-500">{{ serials.length }} serial</span>
+                    </div>
+
+                    <div class="p-6">
+                        <!-- Add serial -->
+                        <div class="flex flex-wrap gap-2 mb-4">
+                            <div class="flex gap-1 flex-1 min-w-[200px]">
+                                <input
+                                    v-model="newSerial"
+                                    @keyup.enter="addSerial"
+                                    type="text"
+                                    placeholder="Nhập serial mới..."
+                                    class="flex-1 border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                                />
+                                <button @click="addSerial" class="px-4 py-2 bg-blue-600 text-white rounded text-sm font-semibold hover:bg-blue-700">Thêm</button>
+                            </div>
+                            <button @click="showBulkInput = !showBulkInput" class="px-3 py-2 border border-gray-300 rounded text-sm font-semibold hover:bg-gray-50">
+                                {{ showBulkInput ? 'Ẩn' : 'Thêm hàng loạt' }}
+                            </button>
+                        </div>
+
+                        <!-- Bulk input -->
+                        <div v-if="showBulkInput" class="mb-4 bg-blue-50 border border-blue-200 rounded p-3">
+                            <p class="text-xs text-gray-500 mb-2">Mỗi serial một dòng, hoặc ngăn cách bằng dấu phẩy / chấm phẩy</p>
+                            <textarea v-model="bulkSerials" rows="4" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none" placeholder="SERIAL001&#10;SERIAL002&#10;SERIAL003"></textarea>
+                            <button @click="bulkAdd" class="mt-2 px-4 py-2 bg-blue-600 text-white rounded text-sm font-semibold hover:bg-blue-700">Thêm hàng loạt</button>
+                        </div>
+
+                        <!-- Error/Info message -->
+                        <div v-if="serialError" class="mb-3 text-sm px-3 py-2 rounded" :class="serialError.startsWith('Đã thêm') ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'">{{ serialError }}</div>
+
+                        <!-- Search & Filter -->
+                        <div class="flex gap-2 mb-3">
+                            <input v-model="serialSearch" @input="onSerialSearch" type="text" placeholder="Tìm serial..." class="flex-1 border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none" />
+                            <select v-model="serialStatusFilter" @change="loadSerials" class="border border-gray-300 rounded px-3 py-2 text-sm">
+                                <option value="all">Tất cả</option>
+                                <option value="in_stock">Còn hàng</option>
+                                <option value="sold">Đã bán</option>
+                                <option value="returning">Đang trả</option>
+                                <option value="warranty">Bảo hành</option>
+                                <option value="defective">Lỗi</option>
+                            </select>
+                        </div>
+
+                        <!-- Serial table -->
+                        <div v-if="serialLoading" class="text-center py-6 text-gray-400">Đang tải...</div>
+                        <table v-else class="w-full text-sm">
+                            <thead class="bg-gray-50 text-gray-600 text-xs uppercase">
+                                <tr>
+                                    <th class="px-3 py-2 text-left">Serial/IMEI</th>
+                                    <th class="px-3 py-2 text-center">Trạng thái</th>
+                                    <th class="px-3 py-2 text-right">Giá vốn</th>
+                                    <th class="px-3 py-2 text-center w-32"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-if="!serials.length">
+                                    <td colspan="4" class="text-center py-6 text-gray-400">Chưa có serial nào.</td>
+                                </tr>
+                                <tr v-for="s in serials" :key="s.id" class="border-t hover:bg-gray-50">
+                                    <template v-if="editingSerialId === s.id">
+                                        <td class="px-3 py-2">
+                                            <input v-model="editSerialNumber" class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 outline-none" />
+                                        </td>
+                                        <td class="px-3 py-2 text-center">
+                                            <select v-model="editSerialStatus" class="border border-gray-300 rounded px-2 py-1 text-sm">
+                                                <option v-for="(label, key) in statusLabels" :key="key" :value="key">{{ label }}</option>
+                                            </select>
+                                        </td>
+                                        <td class="px-3 py-2 text-right text-gray-500">{{ Number(s.cost_price || 0).toLocaleString('vi-VN') }}</td>
+                                        <td class="px-3 py-2 text-center">
+                                            <button @click="saveEdit(s)" class="text-blue-600 text-xs font-semibold mr-2 hover:underline">Lưu</button>
+                                            <button @click="cancelEdit" class="text-gray-500 text-xs font-semibold hover:underline">Hủy</button>
+                                        </td>
+                                    </template>
+                                    <template v-else>
+                                        <td class="px-3 py-2 font-mono font-semibold text-gray-800">{{ s.serial_number }}</td>
+                                        <td class="px-3 py-2 text-center">
+                                            <span :class="statusColors[s.status]" class="px-2 py-0.5 rounded-full text-xs font-semibold">{{ statusLabels[s.status] || s.status }}</span>
+                                        </td>
+                                        <td class="px-3 py-2 text-right text-gray-500">{{ Number(s.cost_price || 0).toLocaleString('vi-VN') }}</td>
+                                        <td class="px-3 py-2 text-center">
+                                            <button @click="startEdit(s)" class="text-blue-600 text-xs font-semibold mr-2 hover:underline">Sửa</button>
+                                            <button v-if="s.status !== 'sold'" @click="deleteSerial(s)" class="text-red-500 text-xs font-semibold hover:underline">Xóa</button>
+                                        </td>
+                                    </template>
+                                </tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
