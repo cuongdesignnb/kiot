@@ -8,7 +8,7 @@ import AttributeManager from '@/Components/AttributeManager.vue';
 import LocationManager from '@/Components/LocationManager.vue';
 import OtherFeeManager from '@/Components/OtherFeeManager.vue';
 import BankAccountManager from '@/Components/BankAccountManager.vue';
-import { ref, onMounted } from 'vue';
+import { ref, watch } from 'vue';
 import axios from 'axios';
 
 const props = defineProps({
@@ -39,16 +39,18 @@ const loadRepairTiers = async () => {
         const res = await axios.get('/api/repair-performance-tiers');
         repairTiers.value = res.data || [];
     } catch (e) {
-        // Tiers API may 404 if repair module is disabled
+        // ignore
     }
 };
-onMounted(() => loadRepairTiers());
 
 const form = useForm({
     settings: { ...props.settings }
 });
 
 const activeCategory = ref('hang-hoa');
+watch(activeCategory, (val) => {
+    if (val === 'sua-chua') loadRepairTiers();
+});
 
 const categories = [
     { id: 'hang-hoa', name: 'Hàng hóa', icon: 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4' },

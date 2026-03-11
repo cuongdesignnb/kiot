@@ -259,9 +259,11 @@ Route::middleware(\App\Http\Middleware\CheckRepairEnabled::class)->group(functio
     });
 
     Route::prefix('repair-performance-tiers')->group(function () {
-        Route::get('/', [\App\Http\Controllers\Api\RepairPerformanceTierController::class, 'index']);
         Route::post('/', [\App\Http\Controllers\Api\RepairPerformanceTierController::class, 'store']);
         Route::put('/{tier}', [\App\Http\Controllers\Api\RepairPerformanceTierController::class, 'update']);
         Route::delete('/{tier}', [\App\Http\Controllers\Api\RepairPerformanceTierController::class, 'destroy']);
     });
 });
+
+// Performance tiers GET - accessible from Settings without repair toggle
+Route::get('/repair-performance-tiers', [\App\Http\Controllers\Api\RepairPerformanceTierController::class, 'index']);
