@@ -572,7 +572,13 @@ const saveRecord = async () => {
         await axios.post('/api/timekeeping-records', form)
         await fetchSchedules()
         closeModal()
-    } catch(e) { alert("Không thể lưu thay đổi!"); console.error(e) }
+    } catch(e) {
+        const msg = e.response?.data?.message || e.response?.data?.errors
+            ? Object.values(e.response.data.errors).flat().join('\n')
+            : 'Không thể lưu thay đổi!'
+        alert(msg)
+        console.error(e)
+    }
     finally { isSaving.value = false }
 }
 

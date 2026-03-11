@@ -61,6 +61,7 @@ class SalaryCalculationService
         // Doanh thu cá nhân (dùng cho thưởng/hoa hồng)
         $personalRevenue = $this->getPersonalRevenue($employee, $from, $to);
         $branchRevenue = $this->getBranchRevenue($employee, $from, $to);
+        $personalGrossProfit = null; // Lazy load khi cần
 
         $bonusAmount = 0;
         $commissionAmount = 0;
@@ -74,7 +75,14 @@ class SalaryCalculationService
         if ($template) {
             // ===== THƯỞNG =====
             if ($template->has_bonus && $template->bonuses->count()) {
-                $revenue = $template->bonus_type === 'branch_revenue' ? $branchRevenue : $personalRevenue;
+                if ($template->bonus_type === 'personal_gross_profit') {
+                    $personalGrossProfit = $personalGrossProfit ?? $this->getPersonalGrossProfit($employee, $from, $to);
+                    $revenue = $personalGrossProfit;
+                } elseif ($template->bonus_type === 'branch_revenue') {
+                    $revenue = $branchRevenue;
+                } else {
+                    $revenue = $personalRevenue;
+                }
                 $result = $this->calculateBonus($template, $revenue);
                 $bonusAmount = $result['amount'];
                 $bonusDetails = $result['details'];
@@ -424,6 +432,31 @@ class SalaryCalculationService
             ->sum('total');
 
         return (float) ($orderRevenue + $invoiceRevenue);
+    }
+
+    /**
+     * Lợi nhuận gộp cá nhân trong kỳ = Doanh thu - Giá vốn
+     * Tính từ đơn hàng: SUM(order_items.subtotal) - SUM(order_items.qty * products.cost_price)
+     */
+    private function getPersonalGrossProfit(Employee $employee, Carbon $from, Carbon $to): float
+    {
+        $startDate = $from->copy()->startOfDay();
+        $endDate = $to->copy()->endOfDay();
+
+        $orders = Order::where('created_by', $employee->id)
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->with('items.product:id,cost_price')
+            ->get();
+
+        $grossProfit = 0;
+        foreach ($orders as $order) {
+            foreach ($order->items as $item) {
+                $costPrice = $item->product?->cost_price ?? 0;
+                $grossProfit += $item->subtotal - ($item->qty * $costPrice);
+            }
+        }
+
+        return max(0, (float) $grossProfit);
     }
 
     private function emptyResult(): array

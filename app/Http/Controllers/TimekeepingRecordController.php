@@ -40,6 +40,15 @@ class TimekeepingRecordController extends Controller
     // POST /api/timekeeping-records — Chấm công thủ công
     public function store(Request $request)
     {
+        // Normalize empty strings to null
+        $input = $request->all();
+        foreach (['check_in_time', 'check_out_time', 'notes'] as $field) {
+            if (isset($input[$field]) && $input[$field] === '') {
+                $input[$field] = null;
+            }
+        }
+        $request->merge($input);
+
         $data = $request->validate([
             'employee_work_schedule_id' => 'required|integer|exists:employee_work_schedules,id',
             'attendance_type' => 'nullable|in:work,leave_paid,leave_unpaid',
@@ -48,6 +57,8 @@ class TimekeepingRecordController extends Controller
             'ot_minutes' => 'nullable|integer|min:0|max:1440',
             'notes' => 'nullable|string',
         ]);
+
+        try {
 
         // Load schedule + shift + setting
         $schedule = EmployeeWorkSchedule::with('shift')->findOrFail($data['employee_work_schedule_id']);
@@ -110,6 +121,13 @@ class TimekeepingRecordController extends Controller
         );
 
         return response()->json(['success' => true, 'data' => $record]);
+
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 500);
+        }
     }
 
     // POST /api/timekeeping-records/recalculate

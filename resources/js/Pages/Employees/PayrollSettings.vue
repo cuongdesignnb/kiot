@@ -116,13 +116,23 @@ const roleTypes = [
 
 const bonusTypeOptions = [
     { value: 'personal_revenue', label: 'Theo doanh thu cá nhân' },
-    { value: 'branch_revenue', label: 'Theo doanh thu chi nhánh' },
+    { value: 'branch_revenue', label: 'Theo doanh thu chi nhánh/Cửa hàng' },
+    { value: 'personal_gross_profit', label: 'Theo lợi nhuận gộp cá nhân' },
 ];
 
-const bonusCalculationOptions = [
-    { value: 'total_revenue', label: 'Tính theo mức tổng doanh thu' },
-    { value: 'progressive', label: 'Tính lũy tiến' },
-];
+const bonusCalculationLabels = {
+    personal_revenue: { total: 'Tính theo mức tổng doanh thu', progressive: 'Tính lũy tiến' },
+    branch_revenue: { total: 'Tính theo mức tổng doanh thu', progressive: 'Tính lũy tiến' },
+    personal_gross_profit: { total: 'Tính theo tổng lợi nhuận gộp', progressive: 'Tính lũy tiến' },
+};
+const bonusCalculationOptions = computed(() => {
+    const labels = bonusCalculationLabels[templateForm.bonus_type] || bonusCalculationLabels.personal_revenue;
+    return [
+        { value: 'total_revenue', label: labels.total },
+        { value: 'progressive', label: labels.progressive },
+    ];
+});
+const bonusRevenueLabel = computed(() => templateForm.bonus_type === 'personal_gross_profit' ? 'Lợi nhuận gộp' : 'Doanh thu');
 
 const allowanceTypeOptions = [
     { value: 'fixed_per_day', label: 'Phụ cấp cố định theo ngày' },
@@ -528,7 +538,7 @@ const removeTemplate = async (template) => {
                         <div class="flex items-center justify-between">
                             <div>
                                 <h3 class="text-base font-bold text-gray-900">Thưởng</h3>
-                                <p class="mt-0.5 text-sm text-gray-500">Thiết lập thưởng theo doanh thu cho nhân viên</p>
+                                <p class="mt-0.5 text-sm text-gray-500">Thiết lập thưởng theo {{ templateForm.bonus_type === 'personal_gross_profit' ? 'lợi nhuận gộp' : 'doanh thu' }} cho nhân viên</p>
                             </div>
                             <button type="button" class="inline-flex h-7 w-12 items-center rounded-full transition" :class="templateForm.has_bonus ? 'bg-blue-600' : 'bg-gray-300'" @click="templateForm.has_bonus = !templateForm.has_bonus">
                                 <span class="inline-block h-5 w-5 rounded-full bg-white shadow transition" :class="templateForm.has_bonus ? 'translate-x-6' : 'translate-x-1'" />
@@ -556,8 +566,8 @@ const removeTemplate = async (template) => {
                                     <thead class="bg-gray-50">
                                         <tr>
                                             <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500">Loại hình</th>
-                                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500" colspan="2">Doanh thu <span class="cursor-help text-gray-400" title="Mức doanh thu tối thiểu">&#9432;</span></th>
-                                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500">Thưởng</th>
+                                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500" colspan="2">{{ bonusRevenueLabel }} <span class="cursor-help text-gray-400" :title="'Mức ' + bonusRevenueLabel.toLowerCase() + ' tối thiểu'">&#9432;</span></th>
+                                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500">Thưởng thụ hưởng</th>
                                             <th class="w-10"></th>
                                         </tr>
                                     </thead>
@@ -576,7 +586,7 @@ const removeTemplate = async (template) => {
                                                 <div class="flex items-center gap-1">
                                                     <input v-model.number="bonus.bonus_value" type="number" min="0" class="w-20 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
                                                     <select v-model="bonus.bonus_is_percentage" class="rounded border border-gray-300 px-1 py-1.5 text-xs">
-                                                        <option :value="true">% Doanh thu</option>
+                                                        <option :value="true">% {{ bonusRevenueLabel }}</option>
                                                         <option :value="false">Cố định</option>
                                                     </select>
                                                 </div>
