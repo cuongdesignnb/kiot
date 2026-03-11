@@ -1327,7 +1327,7 @@ const scrollToSection = (id) => {
                 <!-- Right: Jump links sidebar -->
                 <div class="w-48 shrink-0 sticky top-20 h-fit hidden lg:block">
                     <nav class="space-y-1 border-l border-gray-200 ml-2">
-                        <button v-for="(catData, catKey) in permissionsMap" :key="catKey" @click="document.getElementById('perm-' + catKey)?.scrollIntoView({ behavior: 'smooth', block: 'start' })" class="block w-full text-left px-3 py-1.5 text-[12px] text-gray-500 hover:text-blue-600 hover:border-l-2 hover:border-blue-600 transition-all font-medium">{{ catData._label || catKey }}</button>
+                        <button v-for="(catData, catKey) in permissionsMap" :key="catKey" @click="scrollToSection('perm-' + catKey)" class="block w-full text-left px-3 py-1.5 text-[12px] text-gray-500 hover:text-blue-600 hover:border-l-2 hover:border-blue-600 transition-all font-medium">{{ catData._label || catKey }}</button>
                     </nav>
                 </div>
             </div>
