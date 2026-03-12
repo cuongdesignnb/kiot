@@ -16,6 +16,35 @@ const props = defineProps({
 
 // Local mutable copy of products list (to add newly created products)
 const allProducts = ref([...(props.products || [])]);
+const localSuppliers = ref([...(props.suppliers || [])]);
+
+// Quick Create Supplier
+const showCreateSupplierModal = ref(false);
+const creatingSupplier = ref(false);
+const newSupplier = ref({ name: '', phone: '', email: '', address: '' });
+
+const submitCreateSupplier = async () => {
+    if (!newSupplier.value.name.trim()) return;
+    creatingSupplier.value = true;
+    try {
+        const res = await axios.post('/api/suppliers/quick-store', {
+            name: newSupplier.value.name.trim(),
+            phone: newSupplier.value.phone || null,
+            email: newSupplier.value.email || null,
+            address: newSupplier.value.address || null,
+        });
+        if (res.data.success && res.data.supplier) {
+            localSuppliers.value.push(res.data.supplier);
+            selectedSupplierId.value = res.data.supplier.id;
+            showCreateSupplierModal.value = false;
+            newSupplier.value = { name: '', phone: '', email: '', address: '' };
+        }
+    } catch (e) {
+        alert(e.response?.data?.message || 'Có lỗi khi tạo nhà cung cấp');
+    } finally {
+        creatingSupplier.value = false;
+    }
+};
 
 const searchQuery = ref('');
 const showSuggestions = ref(false);
@@ -153,6 +182,30 @@ const save = async () => {
 };
 
 const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
+
+// Format input hiển thị giá Việt Nam (8.000.000) nhưng lưu số thật
+const parseCurrencyInput = (str) => {
+    if (!str && str !== 0) return 0;
+    return Number(String(str).replace(/\./g, '').replace(/,/g, '')) || 0;
+};
+const formatCurrencyInput = (val) => {
+    const num = Number(val) || 0;
+    return num.toLocaleString('vi-VN');
+};
+const onCurrencyInput = (obj, field, event) => {
+    const raw = event.target.value;
+    obj[field] = parseCurrencyInput(raw);
+    event.target.value = formatCurrencyInput(obj[field]);
+};
+const onCurrencyFocus = (event) => {
+    const val = parseCurrencyInput(event.target.value);
+    if (val === 0) event.target.value = '';
+    else event.target.value = String(val);
+};
+const onCurrencyBlur = (obj, field, event) => {
+    obj[field] = parseCurrencyInput(event.target.value);
+    event.target.value = formatCurrencyInput(obj[field]);
+};
 
 // === Quick Create Product Modal ===
 const showCreateProductModal = ref(false);
@@ -387,16 +440,16 @@ const quickCreateBrand = async () => {
                                     <span v-else class="font-medium text-gray-700">{{ item.serials.length }}</span>
                                 </td>
                                 <td class="p-3 w-[120px]">
-                                    <input type="number" v-model="item.price" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-green-500 text-[13px] hover:bg-green-50 font-medium tracking-wide">
+                                    <input type="text" :value="formatCurrencyInput(item.price)" @focus="onCurrencyFocus" @blur="onCurrencyBlur(item, 'price', $event)" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-green-500 text-[13px] hover:bg-green-50 font-medium tracking-wide">
                                 </td>
                                 <td v-if="showRetailPrice" class="p-3 w-[120px]">
-                                    <input type="number" v-model="item.retail_price" min="0" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-blue-500 text-[13px] hover:bg-blue-50 font-medium tracking-wide">
+                                    <input type="text" :value="formatCurrencyInput(item.retail_price)" @focus="onCurrencyFocus" @blur="onCurrencyBlur(item, 'retail_price', $event)" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-blue-500 text-[13px] hover:bg-blue-50 font-medium tracking-wide">
                                 </td>
                                 <td v-if="showTechnicianPrice" class="p-3 w-[120px]">
-                                    <input type="number" v-model="item.technician_price" min="0" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-purple-500 text-[13px] hover:bg-purple-50 font-medium tracking-wide">
+                                    <input type="text" :value="formatCurrencyInput(item.technician_price)" @focus="onCurrencyFocus" @blur="onCurrencyBlur(item, 'technician_price', $event)" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-purple-500 text-[13px] hover:bg-purple-50 font-medium tracking-wide">
                                 </td>
                                 <td class="p-3 w-[100px]">
-                                    <input type="number" v-model="item.discount" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-green-500 text-[13px] hover:bg-green-50">
+                                    <input type="text" :value="formatCurrencyInput(item.discount)" @focus="onCurrencyFocus" @blur="onCurrencyBlur(item, 'discount', $event)" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-green-500 text-[13px] hover:bg-green-50">
                                 </td>
                                 <td class="p-3 font-bold text-gray-800 text-right w-[140px] pr-6">{{ formatCurrency(item.total_value) }}</td>
                             </tr>
@@ -452,12 +505,17 @@ const quickCreateBrand = async () => {
 
                 <div class="flex-1 overflow-auto bg-white flex flex-col pt-2">
                     <div class="px-3 pb-3">
-                        <div class="relative mb-3 flex items-center border-b border-gray-300 pb-1">
-                            <svg class="w-4 h-4 text-gray-400 absolute left-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-                            <select v-model="selectedSupplierId" class="w-full pl-7 pr-8 py-1 outline-none text-[13px] text-gray-800 bg-transparent appearance-none">
-                                <option value="">Tìm nhà cung cấp <span class="text-red-500">*</span></option>
-                                <option v-for="supplier in suppliers" :key="supplier.id" :value="supplier.id">{{ supplier.name }}</option>
-                            </select>
+                        <div class="relative mb-3">
+                            <div class="flex items-center border-b border-gray-300 pb-1">
+                                <svg class="w-4 h-4 text-gray-400 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                                <select v-model="selectedSupplierId" class="flex-1 py-1 outline-none text-[13px] text-gray-800 bg-transparent appearance-none">
+                                    <option value="">Tìm nhà cung cấp *</option>
+                                    <option v-for="supplier in localSuppliers" :key="supplier.id" :value="supplier.id">{{ supplier.name }}</option>
+                                </select>
+                                <button type="button" @click="showCreateSupplierModal = true" class="text-green-600 hover:text-green-700 font-bold text-lg leading-none ml-1" title="Thêm nhà cung cấp">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                                </button>
+                            </div>
                         </div>
 
                         <div class="space-y-3.5 mt-4">
@@ -476,12 +534,12 @@ const quickCreateBrand = async () => {
 
                             <div class="flex justify-between items-center text-[13px] pt-1">
                                 <label class="text-gray-700 font-medium flex items-center gap-1">Tổng tiền hàng <span class="bg-gray-100 text-gray-500 px-1.5 rounded text-[11px] font-bold border border-gray-200">{{ items.length }}</span></label>
-                                <div class="w-[150px] text-right font-bold text-gray-800 tracking-wide">{{ formatCurrency(totalAmount) }}</div>
+                                <div class="w-[150px] text-right font-bold text-gray-800 tracking-wide text-[15px]">{{ formatCurrency(totalAmount) }}</div>
                             </div>
 
                             <div class="flex justify-between items-center text-[13px]">
                                 <label class="text-gray-700 font-medium">Giảm giá</label>
-                                <input type="number" v-model="discount" class="w-[150px] border-b border-dashed border-gray-300 text-right pr-2 py-0.5 outline-none focus:border-green-500 hover:bg-green-50">
+                                <input type="text" :value="formatCurrencyInput(discount)" @focus="onCurrencyFocus" @blur="(e) => { discount = parseCurrencyInput(e.target.value); e.target.value = formatCurrencyInput(discount); }" class="w-[150px] border-b border-dashed border-gray-300 text-right pr-2 py-0.5 outline-none focus:border-green-500 hover:bg-green-50">
                             </div>
 
                             <div class="flex justify-between items-center text-[13px] pt-2">
@@ -491,10 +549,10 @@ const quickCreateBrand = async () => {
 
                             <div class="flex justify-between items-center text-[13px]">
                                 <label class="text-gray-700 font-medium">Tiền trả nhà cung cấp</label>
-                                <input type="number" v-model="paidAmount" class="w-[150px] border-b border-gray-400 text-right pr-2 py-0.5 outline-none focus:border-green-500 hover:bg-green-50 font-bold text-blue-600">
+                                <input type="text" :value="formatCurrencyInput(paidAmount)" @focus="onCurrencyFocus" @blur="(e) => { paidAmount = parseCurrencyInput(e.target.value); e.target.value = formatCurrencyInput(paidAmount); }" class="w-[150px] border-b border-gray-400 text-right pr-2 py-0.5 outline-none focus:border-green-500 hover:bg-green-50 font-bold text-blue-600">
                             </div>
 
-                             <div class="flex justify-between items-center text-[13px]">
+                            <div class="flex justify-between items-center text-[13px]">
                                 <label class="text-gray-700 font-medium text-gray-500">Tính vào công nợ</label>
                                  <div class="w-[150px] text-right font-bold text-gray-500 tracking-wide">{{ formatCurrency(debtAmount) }}</div>
                             </div>
@@ -631,6 +689,38 @@ const quickCreateBrand = async () => {
                             <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
                             {{ creatingProduct ? 'Đang lưu...' : 'Lưu' }}
                         </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Quick Create Supplier Modal -->
+        <div v-if="showCreateSupplierModal" class="fixed inset-0 bg-black bg-opacity-50 z-[100] flex items-center justify-center p-4" @click.self="showCreateSupplierModal = false">
+            <div class="bg-white rounded-lg shadow-2xl w-full max-w-md">
+                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+                    <h2 class="text-lg font-bold text-gray-800">Thêm nhà cung cấp</h2>
+                    <button @click="showCreateSupplierModal = false" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+                </div>
+                <form @submit.prevent="submitCreateSupplier" class="p-6 space-y-4">
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">Tên nhà cung cấp <span class="text-red-500">*</span></label>
+                        <input type="text" v-model="newSupplier.name" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-green-500 focus:border-green-500 outline-none" placeholder="Nhập tên nhà cung cấp">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">Điện thoại</label>
+                        <input type="text" v-model="newSupplier.phone" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-green-500 focus:border-green-500 outline-none" placeholder="Số điện thoại">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">Email</label>
+                        <input type="email" v-model="newSupplier.email" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-green-500 focus:border-green-500 outline-none" placeholder="Email">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">Địa chỉ</label>
+                        <input type="text" v-model="newSupplier.address" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-green-500 focus:border-green-500 outline-none" placeholder="Địa chỉ">
+                    </div>
+                    <div class="flex justify-end gap-3 pt-2">
+                        <button type="button" @click="showCreateSupplierModal = false" class="px-4 py-2 border border-gray-300 rounded text-gray-700 hover:bg-gray-50 font-medium text-sm">Hủy</button>
+                        <button type="submit" :disabled="creatingSupplier || !newSupplier.name.trim()" class="px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 font-medium text-sm disabled:opacity-50">Lưu</button>
                     </div>
                 </form>
             </div>

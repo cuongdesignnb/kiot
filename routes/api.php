@@ -222,6 +222,8 @@ Route::prefix('employee-salary-settings')->group(function () {
     Route::post('/{employeeId}', [\App\Http\Controllers\Api\EmployeeSalarySettingController::class, 'upsert']);
 });
 
+Route::post('/suppliers/quick-store', [\App\Http\Controllers\SupplierController::class, 'quickStore']);
+
 Route::prefix('attendance-devices')->group(function () {
     Route::get('/', [AttendanceDeviceController::class, 'index']);
     Route::get('/{device}', [AttendanceDeviceController::class, 'show']);

@@ -83,6 +83,24 @@ class SupplierController extends Controller
         return redirect()->route('suppliers.index')->with('success', 'Tạo nhà cung cấp thành công.');
     }
 
+    public function quickStore(Request $request)
+    {
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'phone' => 'nullable|string|max:255',
+            'email' => 'nullable|email|max:255',
+            'address' => 'nullable|string',
+        ]);
+
+        $validated['code'] = 'NCC' . time() . rand(10, 99);
+        $validated['is_supplier'] = true;
+        $validated['is_customer'] = false;
+
+        $supplier = Customer::create($validated);
+
+        return response()->json(['success' => true, 'supplier' => $supplier]);
+    }
+
     public function export(Request $request)
     {
         $suppliers = Customer::where('is_supplier', true)
