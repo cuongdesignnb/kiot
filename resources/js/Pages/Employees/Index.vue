@@ -914,6 +914,7 @@ const bonusCalcLabel = (calc) => {
                                             class="w-full border border-blue-400 text-blue-600 font-medium rounded-md px-3 py-1.5 focus:outline-none"
                                         >
                                             <option value="fixed">Cố định</option>
+                                            <option value="by_workday">Theo ngày công chuẩn</option>
                                             <option value="hourly">Theo giờ</option>
                                         </select>
                                     </div>
@@ -927,7 +928,7 @@ const bonusCalcLabel = (calc) => {
                                                 class="w-full border border-gray-300 rounded-md px-3 py-1.5 focus:border-blue-500 outline-none"
                                                 placeholder="0"
                                             />
-                                            <span class="text-gray-500 whitespace-nowrap text-sm">/ {{ salaryForm.salary_type === 'hourly' ? 'giờ' : 'kỳ lương' }}</span>
+                                            <span class="text-gray-500 whitespace-nowrap text-sm">/ {{ salaryForm.salary_type === 'hourly' ? 'giờ' : 'tháng' }}</span>
                                         </div>
                                     </div>
                                 </div>

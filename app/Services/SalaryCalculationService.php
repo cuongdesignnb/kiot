@@ -58,18 +58,19 @@ class SalaryCalculationService
         $earlyLeaveCount = $records->where('early_minutes', '>', 0)->count();
         $earlyTotalMinutes = $records->sum('early_minutes');
 
-        // Tính lương cơ bản theo tỷ lệ ngày công
+        // Tính lương cơ bản theo loại lương
         $baseSalary = $setting->base_salary;
         if ($setting->salary_type === 'hourly') {
             // Lương theo giờ: base_salary = hourly_rate × totalUnits × 8h
             $baseSalary = $totalUnits * 8 * $setting->base_salary;
-        } else {
-            // Lương cố định: tính theo tỷ lệ ngày công thực tế / ngày công chuẩn
+        } elseif ($setting->salary_type === 'by_workday') {
+            // Theo ngày công chuẩn: tính theo tỷ lệ ngày công thực tế / ngày công chuẩn
             // VD: lương 10tr, công chuẩn 26, đi 20 → 10tr × 20/26 = 7.69tr
             if ($standardWorkUnits > 0) {
                 $baseSalary = $setting->base_salary * $totalUnits / $standardWorkUnits;
             }
         }
+        // salary_type === 'fixed': giữ nguyên base_salary, không chia theo ngày công
 
         // Doanh thu cá nhân (dùng cho thưởng/hoa hồng)
         $personalRevenue = $this->getPersonalRevenue($employee, $from, $to);

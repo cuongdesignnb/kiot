@@ -27,7 +27,7 @@ class EmployeeSalarySettingController extends Controller
         $employee = Employee::findOrFail($employeeId);
 
         $data = $request->validate([
-            'salary_type' => 'required|in:fixed,hourly',
+            'salary_type' => 'required|in:fixed,by_workday,hourly',
             'base_salary' => 'required|numeric|min:0',
             'salary_template_id' => 'nullable|integer|exists:salary_templates,id',
             'advanced_salary' => 'boolean',
