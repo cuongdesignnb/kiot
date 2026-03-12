@@ -554,38 +554,46 @@ class SalaryCalculationService
             $calcType = data_get($deduction, 'calculation_type');
             $amt = data_get($deduction, 'amount', 0);
 
-            switch ($category) {
-                case 'late':
-                    $occurrences = $lateCount;
-                    if ($calcType === 'per_occurrence') {
-                        $dedAmount = $amt * $lateCount;
-                    } elseif ($calcType === 'per_minute') {
-                        $dedAmount = $amt * $lateTotalMinutes;
-                    } else {
+            // Per-employee custom deductions: chỉ có name + amount (cố định/tháng)
+            // Template deductions: có đầy đủ category + calc_type
+            if (!$category) {
+                // Simple fixed deduction (per-employee)
+                $dedAmount = $amt;
+            } else {
+                // Template-based deduction with attendance logic
+                switch ($category) {
+                    case 'late':
+                        $occurrences = $lateCount;
+                        if ($calcType === 'per_occurrence') {
+                            $dedAmount = $amt * $lateCount;
+                        } elseif ($calcType === 'per_minute') {
+                            $dedAmount = $amt * $lateTotalMinutes;
+                        } else {
+                            $dedAmount = $amt;
+                        }
+                        break;
+                    case 'early_leave':
+                        $occurrences = $earlyLeaveCount;
+                        if ($calcType === 'per_occurrence') {
+                            $dedAmount = $amt * $earlyLeaveCount;
+                        } elseif ($calcType === 'per_minute') {
+                            $dedAmount = $amt * $earlyTotalMinutes;
+                        } else {
+                            $dedAmount = $amt;
+                        }
+                        break;
+                    case 'absence':
+                    case 'violation':
                         $dedAmount = $amt;
-                    }
-                    break;
-                case 'early_leave':
-                    $occurrences = $earlyLeaveCount;
-                    if ($calcType === 'per_occurrence') {
-                        $dedAmount = $amt * $earlyLeaveCount;
-                    } elseif ($calcType === 'per_minute') {
-                        $dedAmount = $amt * $earlyTotalMinutes;
-                    } else {
-                        $dedAmount = $amt;
-                    }
-                    break;
-                case 'absence':
-                case 'violation':
-                    $dedAmount = $amt;
-                    break;
+                        break;
+                }
             }
 
             $amount += $dedAmount;
             $details[] = [
                 'name' => data_get($deduction, 'name'),
-                'category' => $category,
-                'calc_type' => $calcType,
+                'category' => $category ?? 'fixed',
+                'calc_type' => $calcType ?? 'fixed_per_month',
                 'config_amount' => $amt,
                 'occurrences' => $occurrences,
                 'calculated' => round($dedAmount),
