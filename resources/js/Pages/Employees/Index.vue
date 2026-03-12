@@ -125,8 +125,20 @@ const salaryForm = reactive({
     tet_rate: 300,
     has_overtime: false,
     overtime_rate: 150,
+    // Per-employee overrides
+    has_bonus: false,
+    has_commission: false,
+    has_allowance: false,
+    has_deduction: false,
+    bonus_type: 'personal_revenue',
+    bonus_calculation: 'total_revenue',
+    custom_bonuses: [],
+    custom_commissions: [],
+    custom_allowances: [],
+    custom_deductions: [],
 });
 const selectedTemplate = ref(null);
+const commissionTables = ref([]);
 const salaryLoading = ref(false);
 const expandedSections = reactive({
     bonus: false,
@@ -135,8 +147,7 @@ const expandedSections = reactive({
     deduction: false,
 });
 
-const loadSalarySetting = async (employeeId) => {
-    salaryLoading.value = true;
+const resetSalaryForm = () => {
     salaryForm.salary_type = 'fixed';
     salaryForm.base_salary = 0;
     salaryForm.salary_template_id = null;
@@ -145,8 +156,68 @@ const loadSalarySetting = async (employeeId) => {
     salaryForm.tet_rate = 300;
     salaryForm.has_overtime = false;
     salaryForm.overtime_rate = 150;
+    salaryForm.has_bonus = false;
+    salaryForm.has_commission = false;
+    salaryForm.has_allowance = false;
+    salaryForm.has_deduction = false;
+    salaryForm.bonus_type = 'personal_revenue';
+    salaryForm.bonus_calculation = 'total_revenue';
+    salaryForm.custom_bonuses = [];
+    salaryForm.custom_commissions = [];
+    salaryForm.custom_allowances = [];
+    salaryForm.custom_deductions = [];
     selectedTemplate.value = null;
     Object.keys(expandedSections).forEach(k => expandedSections[k] = false);
+};
+
+const copyTemplateToForm = (tpl) => {
+    salaryForm.has_bonus = Boolean(tpl.has_bonus);
+    salaryForm.has_commission = Boolean(tpl.has_commission);
+    salaryForm.has_allowance = Boolean(tpl.has_allowance);
+    salaryForm.has_deduction = Boolean(tpl.has_deduction);
+    salaryForm.bonus_type = tpl.bonus_type || 'personal_revenue';
+    salaryForm.bonus_calculation = tpl.bonus_calculation || 'total_revenue';
+    salaryForm.custom_bonuses = (tpl.bonuses || []).map(b => ({
+        role_type: b.role_type || 'employee',
+        revenue_from: b.revenue_from || 0,
+        bonus_value: b.bonus_value || 0,
+        bonus_is_percentage: Boolean(b.bonus_is_percentage),
+    }));
+    salaryForm.custom_commissions = (tpl.commissions || []).map(c => ({
+        role_type: c.role_type || 'employee',
+        revenue_from: c.revenue_from || 0,
+        commission_table_id: c.commission_table_id || null,
+        commission_value: c.commission_value || 0,
+        commission_is_percentage: Boolean(c.commission_is_percentage),
+    }));
+    salaryForm.custom_allowances = (tpl.allowances || []).map(a => ({
+        name: a.name || '',
+        allowance_type: a.allowance_type || 'fixed_per_month',
+        amount: a.amount || 0,
+    }));
+    salaryForm.custom_deductions = (tpl.deductions || []).map(d => ({
+        name: d.name || '',
+        deduction_category: d.deduction_category || 'late',
+        calculation_type: d.calculation_type || 'per_occurrence',
+        amount: d.amount || 0,
+    }));
+    if (salaryForm.has_bonus) expandedSections.bonus = true;
+    if (salaryForm.has_commission) expandedSections.commission = true;
+    if (salaryForm.has_allowance) expandedSections.allowance = true;
+    if (salaryForm.has_deduction) expandedSections.deduction = true;
+};
+
+const loadCommissionTables = async () => {
+    try {
+        const res = await axios.get('/api/commission-tables');
+        commissionTables.value = res.data?.data || res.data || [];
+    } catch (e) { commissionTables.value = []; }
+};
+
+const loadSalarySetting = async (employeeId) => {
+    salaryLoading.value = true;
+    resetSalaryForm();
+    loadCommissionTables();
     try {
         const res = await axios.get(`/api/employee-salary-settings/${employeeId}`);
         const setting = res.data?.data;
@@ -159,12 +230,29 @@ const loadSalarySetting = async (employeeId) => {
             salaryForm.tet_rate = setting.tet_rate ?? 300;
             salaryForm.has_overtime = Boolean(setting.has_overtime);
             salaryForm.overtime_rate = setting.overtime_rate ?? 150;
+
+            // Per-employee overrides take priority, else copy from template
+            const hasCustom = setting.custom_bonuses || setting.custom_commissions || setting.custom_allowances || setting.custom_deductions;
+            if (hasCustom) {
+                salaryForm.has_bonus = Boolean(setting.has_bonus);
+                salaryForm.has_commission = Boolean(setting.has_commission);
+                salaryForm.has_allowance = Boolean(setting.has_allowance);
+                salaryForm.has_deduction = Boolean(setting.has_deduction);
+                salaryForm.bonus_type = setting.bonus_type || 'personal_revenue';
+                salaryForm.bonus_calculation = setting.bonus_calculation || 'total_revenue';
+                salaryForm.custom_bonuses = (setting.custom_bonuses || []).map(b => ({ ...b }));
+                salaryForm.custom_commissions = (setting.custom_commissions || []).map(c => ({ ...c }));
+                salaryForm.custom_allowances = (setting.custom_allowances || []).map(a => ({ ...a }));
+                salaryForm.custom_deductions = (setting.custom_deductions || []).map(d => ({ ...d }));
+                if (salaryForm.has_bonus) expandedSections.bonus = true;
+                if (salaryForm.has_commission) expandedSections.commission = true;
+                if (salaryForm.has_allowance) expandedSections.allowance = true;
+                if (salaryForm.has_deduction) expandedSections.deduction = true;
+            } else if (setting.template) {
+                copyTemplateToForm(setting.template);
+            }
             if (setting.template) {
                 selectedTemplate.value = setting.template;
-                if (setting.template.has_bonus) expandedSections.bonus = true;
-                if (setting.template.has_commission) expandedSections.commission = true;
-                if (setting.template.has_allowance) expandedSections.allowance = true;
-                if (setting.template.has_deduction) expandedSections.deduction = true;
             }
         }
     } catch (e) {
@@ -177,6 +265,15 @@ const loadSalarySetting = async (employeeId) => {
 const onTemplateChange = async (templateId) => {
     salaryForm.salary_template_id = templateId || null;
     selectedTemplate.value = null;
+    // Reset per-employee sections
+    salaryForm.has_bonus = false;
+    salaryForm.has_commission = false;
+    salaryForm.has_allowance = false;
+    salaryForm.has_deduction = false;
+    salaryForm.custom_bonuses = [];
+    salaryForm.custom_commissions = [];
+    salaryForm.custom_allowances = [];
+    salaryForm.custom_deductions = [];
     Object.keys(expandedSections).forEach(k => expandedSections[k] = false);
     if (!templateId) return;
     try {
@@ -184,10 +281,7 @@ const onTemplateChange = async (templateId) => {
         const tpl = res.data?.data || res.data;
         if (tpl) {
             selectedTemplate.value = tpl;
-            if (tpl.has_bonus) expandedSections.bonus = true;
-            if (tpl.has_commission) expandedSections.commission = true;
-            if (tpl.has_allowance) expandedSections.allowance = true;
-            if (tpl.has_deduction) expandedSections.deduction = true;
+            copyTemplateToForm(tpl);
         }
     } catch (e) {
         // ignore
@@ -205,6 +299,16 @@ const saveSalarySetting = async (employeeId) => {
             tet_rate: salaryForm.tet_rate,
             has_overtime: salaryForm.has_overtime,
             overtime_rate: salaryForm.overtime_rate,
+            has_bonus: salaryForm.has_bonus,
+            has_commission: salaryForm.has_commission,
+            has_allowance: salaryForm.has_allowance,
+            has_deduction: salaryForm.has_deduction,
+            bonus_type: salaryForm.bonus_type,
+            bonus_calculation: salaryForm.bonus_calculation,
+            custom_bonuses: salaryForm.custom_bonuses,
+            custom_commissions: salaryForm.custom_commissions,
+            custom_allowances: salaryForm.custom_allowances,
+            custom_deductions: salaryForm.custom_deductions,
         });
     } catch (e) {
         console.error('Failed to save salary settings', e);
@@ -906,109 +1010,194 @@ const bonusCalcLabel = (calc) => {
                             <!-- Thưởng -->
                             <div class="bg-white border border-gray-200 shadow-sm rounded-lg overflow-hidden">
                                 <div class="p-4 flex items-center justify-between cursor-pointer" @click="expandedSections.bonus = !expandedSections.bonus">
-                                    <div>
-                                        <div class="font-bold text-[14px] text-gray-800">Thưởng</div>
-                                        <div class="text-[12px] text-gray-500 mt-0.5">Thiết lập thưởng theo doanh thu cho nhân viên</div>
-                                    </div>
-                                    <div class="flex items-center gap-2">
-                                        <span v-if="selectedTemplate?.has_bonus" class="text-xs text-green-600 font-semibold bg-green-50 px-2 py-0.5 rounded">Có</span>
-                                        <span v-else class="text-xs text-gray-400">Không</span>
-                                        <svg class="w-4 h-4 text-gray-400 transition-transform" :class="{ 'rotate-180': expandedSections.bonus }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                                    </div>
-                                </div>
-                                <div v-show="expandedSections.bonus" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-1">
-                                    <template v-if="selectedTemplate?.has_bonus">
-                                        <div class="flex justify-between"><span class="text-gray-500">Loại thưởng:</span><span class="font-medium">{{ bonusTypeLabel(selectedTemplate?.bonus_type) }}</span></div>
-                                        <div v-if="selectedTemplate?.bonuses?.length">
-                                            <div v-for="(b, i) in selectedTemplate?.bonuses" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
-                                                <span>Từ {{ formatCurrency(b.revenue_from) }}</span>
-                                                <span class="font-semibold text-blue-600">{{ b.bonus_is_percentage ? b.bonus_value + '%' : formatCurrency(b.bonus_value) + 'đ' }}</span>
-                                            </div>
+                                    <div class="flex items-center gap-3">
+                                        <input type="checkbox" v-model="salaryForm.has_bonus" @click.stop class="accent-blue-600 w-4 h-4" />
+                                        <div>
+                                            <div class="font-bold text-[14px] text-gray-800">Thưởng</div>
+                                            <div class="text-[12px] text-gray-500 mt-0.5">Thiết lập thưởng theo doanh thu cho nhân viên</div>
                                         </div>
-                                        <div v-else class="text-gray-400 italic">Chưa có mức thưởng</div>
-                                    </template>
-                                    <div v-else class="text-gray-400 italic">Chưa chọn mẫu lương hoặc mẫu lương chưa thiết lập thưởng</div>
+                                    </div>
+                                    <svg class="w-4 h-4 text-gray-400 transition-transform" :class="{ 'rotate-180': expandedSections.bonus }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                                </div>
+                                <div v-show="expandedSections.bonus && salaryForm.has_bonus" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-3">
+                                    <div class="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <label class="block text-xs font-semibold text-gray-500 mb-1">Loại thưởng</label>
+                                            <select v-model="salaryForm.bonus_type" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:border-blue-500 outline-none">
+                                                <option value="personal_revenue">Theo doanh thu cá nhân</option>
+                                                <option value="branch_revenue">Theo doanh thu chi nhánh</option>
+                                                <option value="personal_gross_profit">Theo lợi nhuận gộp cá nhân</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label class="block text-xs font-semibold text-gray-500 mb-1">Hình thức</label>
+                                            <select v-model="salaryForm.bonus_calculation" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:border-blue-500 outline-none">
+                                                <option value="total_revenue">Theo mức doanh thu tổng</option>
+                                                <option value="progressive">Lũy tiến</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <!-- Bonus tiers table -->
+                                    <div v-if="salaryForm.custom_bonuses.length" class="border rounded overflow-hidden">
+                                        <table class="w-full text-sm">
+                                            <thead class="bg-gray-100">
+                                                <tr>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600">Doanh thu từ</th>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600">Thưởng</th>
+                                                    <th class="text-center px-2 py-1.5 font-semibold text-gray-600">%</th>
+                                                    <th class="w-8"></th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr v-for="(b, i) in salaryForm.custom_bonuses" :key="i" class="border-t">
+                                                    <td class="px-2 py-1"><input v-model.number="b.revenue_from" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
+                                                    <td class="px-2 py-1"><input v-model.number="b.bonus_value" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
+                                                    <td class="px-2 py-1 text-center"><input type="checkbox" v-model="b.bonus_is_percentage" class="accent-blue-600" /></td>
+                                                    <td class="px-1 py-1"><button type="button" @click="salaryForm.custom_bonuses.splice(i, 1)" class="text-red-400 hover:text-red-600">&times;</button></td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <button type="button" @click="salaryForm.custom_bonuses.push({ role_type: 'employee', revenue_from: 0, bonus_value: 0, bonus_is_percentage: false })" class="text-blue-600 text-sm font-semibold hover:underline">+ Thêm mức thưởng</button>
                                 </div>
                             </div>
 
                             <!-- Hoa hồng -->
                             <div class="bg-white border border-gray-200 shadow-sm rounded-lg overflow-hidden">
                                 <div class="p-4 flex items-center justify-between cursor-pointer" @click="expandedSections.commission = !expandedSections.commission">
-                                    <div>
-                                        <div class="font-bold text-[14px] text-gray-800">Hoa hồng</div>
-                                        <div class="text-[12px] text-gray-500 mt-0.5">Thiết lập mức hoa hồng theo sản phẩm hoặc dịch vụ</div>
-                                    </div>
-                                    <div class="flex items-center gap-2">
-                                        <span v-if="selectedTemplate?.has_commission" class="text-xs text-green-600 font-semibold bg-green-50 px-2 py-0.5 rounded">Có</span>
-                                        <span v-else class="text-xs text-gray-400">Không</span>
-                                        <svg class="w-4 h-4 text-gray-400 transition-transform" :class="{ 'rotate-180': expandedSections.commission }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                                    </div>
-                                </div>
-                                <div v-show="expandedSections.commission" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-1">
-                                    <template v-if="selectedTemplate?.has_commission">
-                                        <div v-if="selectedTemplate?.commissions?.length">
-                                            <div v-for="(c, i) in selectedTemplate?.commissions" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
-                                                <span>{{ c.role_type || 'Hoa hồng ' + (i+1) }}</span>
-                                                <span class="font-semibold text-blue-600">{{ c.commission_is_percentage ? c.commission_value + '%' : formatCurrency(c.commission_value) + 'đ' }}</span>
-                                            </div>
+                                    <div class="flex items-center gap-3">
+                                        <input type="checkbox" v-model="salaryForm.has_commission" @click.stop class="accent-blue-600 w-4 h-4" />
+                                        <div>
+                                            <div class="font-bold text-[14px] text-gray-800">Hoa hồng</div>
+                                            <div class="text-[12px] text-gray-500 mt-0.5">Thiết lập mức hoa hồng theo sản phẩm hoặc dịch vụ</div>
                                         </div>
-                                        <div v-else class="text-gray-400 italic">Chưa có mức hoa hồng</div>
-                                    </template>
-                                    <div v-else class="text-gray-400 italic">Chưa chọn mẫu lương hoặc mẫu lương chưa thiết lập hoa hồng</div>
+                                    </div>
+                                    <svg class="w-4 h-4 text-gray-400 transition-transform" :class="{ 'rotate-180': expandedSections.commission }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                                </div>
+                                <div v-show="expandedSections.commission && salaryForm.has_commission" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-3">
+                                    <div v-if="salaryForm.custom_commissions.length" class="border rounded overflow-hidden">
+                                        <table class="w-full text-sm">
+                                            <thead class="bg-gray-100">
+                                                <tr>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600">DT từ</th>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600">Bảng hoa hồng</th>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600">Giá trị</th>
+                                                    <th class="text-center px-2 py-1.5 font-semibold text-gray-600">%</th>
+                                                    <th class="w-8"></th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr v-for="(c, i) in salaryForm.custom_commissions" :key="i" class="border-t">
+                                                    <td class="px-2 py-1"><input v-model.number="c.revenue_from" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
+                                                    <td class="px-2 py-1">
+                                                        <select v-model="c.commission_table_id" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none">
+                                                            <option :value="null">-- Không --</option>
+                                                            <option v-for="ct in commissionTables" :key="ct.id" :value="ct.id">{{ ct.name }}</option>
+                                                        </select>
+                                                    </td>
+                                                    <td class="px-2 py-1"><input v-model.number="c.commission_value" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" :disabled="!!c.commission_table_id" /></td>
+                                                    <td class="px-2 py-1 text-center"><input type="checkbox" v-model="c.commission_is_percentage" class="accent-blue-600" :disabled="!!c.commission_table_id" /></td>
+                                                    <td class="px-1 py-1"><button type="button" @click="salaryForm.custom_commissions.splice(i, 1)" class="text-red-400 hover:text-red-600">&times;</button></td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <button type="button" @click="salaryForm.custom_commissions.push({ role_type: 'employee', revenue_from: 0, commission_table_id: null, commission_value: 0, commission_is_percentage: false })" class="text-blue-600 text-sm font-semibold hover:underline">+ Thêm hoa hồng</button>
                                 </div>
                             </div>
 
                             <!-- Phụ cấp -->
                             <div class="bg-white border border-gray-200 shadow-sm rounded-lg overflow-hidden">
                                 <div class="p-4 flex items-center justify-between cursor-pointer" @click="expandedSections.allowance = !expandedSections.allowance">
-                                    <div>
-                                        <div class="font-bold text-[14px] text-gray-800">Phụ cấp</div>
-                                        <div class="text-[12px] text-gray-500 mt-0.5">Thiết lập khoản hỗ trợ làm việc như ăn trưa, đi lại, điện thoại, ...</div>
-                                    </div>
-                                    <div class="flex items-center gap-2">
-                                        <span v-if="selectedTemplate?.has_allowance" class="text-xs text-green-600 font-semibold bg-green-50 px-2 py-0.5 rounded">Có</span>
-                                        <span v-else class="text-xs text-gray-400">Không</span>
-                                        <svg class="w-4 h-4 text-gray-400 transition-transform" :class="{ 'rotate-180': expandedSections.allowance }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                                    </div>
-                                </div>
-                                <div v-show="expandedSections.allowance" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-1">
-                                    <template v-if="selectedTemplate?.has_allowance">
-                                        <div v-if="selectedTemplate?.allowances?.length">
-                                            <div v-for="(a, i) in selectedTemplate?.allowances" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
-                                                <span>{{ a.name }}</span>
-                                                <span class="font-semibold text-blue-600">{{ formatCurrency(a.amount) }}đ</span>
-                                            </div>
+                                    <div class="flex items-center gap-3">
+                                        <input type="checkbox" v-model="salaryForm.has_allowance" @click.stop class="accent-blue-600 w-4 h-4" />
+                                        <div>
+                                            <div class="font-bold text-[14px] text-gray-800">Phụ cấp</div>
+                                            <div class="text-[12px] text-gray-500 mt-0.5">Thiết lập khoản hỗ trợ làm việc như ăn trưa, đi lại, điện thoại, ...</div>
                                         </div>
-                                        <div v-else class="text-gray-400 italic">Chưa có phụ cấp</div>
-                                    </template>
-                                    <div v-else class="text-gray-400 italic">Chưa chọn mẫu lương hoặc mẫu lương chưa thiết lập phụ cấp</div>
+                                    </div>
+                                    <svg class="w-4 h-4 text-gray-400 transition-transform" :class="{ 'rotate-180': expandedSections.allowance }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                                </div>
+                                <div v-show="expandedSections.allowance && salaryForm.has_allowance" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-3">
+                                    <div v-if="salaryForm.custom_allowances.length" class="border rounded overflow-hidden">
+                                        <table class="w-full text-sm">
+                                            <thead class="bg-gray-100">
+                                                <tr>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600">Tên phụ cấp</th>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600">Loại phụ cấp</th>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600">Phụ cấp thụ hưởng</th>
+                                                    <th class="w-8"></th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr v-for="(a, i) in salaryForm.custom_allowances" :key="i" class="border-t">
+                                                    <td class="px-2 py-1"><input v-model="a.name" type="text" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" placeholder="Ăn trưa, đi lại..." /></td>
+                                                    <td class="px-2 py-1">
+                                                        <select v-model="a.allowance_type" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none">
+                                                            <option value="fixed_per_month">Cố định/tháng</option>
+                                                            <option value="fixed_per_day">Theo ngày công</option>
+                                                            <option value="percentage">% lương</option>
+                                                        </select>
+                                                    </td>
+                                                    <td class="px-2 py-1"><input v-model.number="a.amount" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
+                                                    <td class="px-1 py-1"><button type="button" @click="salaryForm.custom_allowances.splice(i, 1)" class="text-red-400 hover:text-red-600">&times;</button></td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <button type="button" @click="salaryForm.custom_allowances.push({ name: '', allowance_type: 'fixed_per_month', amount: 0 })" class="text-blue-600 text-sm font-semibold hover:underline">+ Thêm phụ cấp</button>
                                 </div>
                             </div>
 
                             <!-- Giảm trừ -->
                             <div class="bg-white border border-gray-200 shadow-sm rounded-lg overflow-hidden">
                                 <div class="p-4 flex items-center justify-between cursor-pointer" @click="expandedSections.deduction = !expandedSections.deduction">
-                                    <div>
-                                        <div class="font-bold text-[14px] text-gray-800">Giảm trừ</div>
-                                        <div class="text-[12px] text-gray-500 mt-0.5">Thiết lập khoản giảm trừ như đi muộn, về sớm, vi phạm nội quy, ...</div>
-                                    </div>
-                                    <div class="flex items-center gap-2">
-                                        <span v-if="selectedTemplate?.has_deduction" class="text-xs text-green-600 font-semibold bg-green-50 px-2 py-0.5 rounded">Có</span>
-                                        <span v-else class="text-xs text-gray-400">Không</span>
-                                        <svg class="w-4 h-4 text-gray-400 transition-transform" :class="{ 'rotate-180': expandedSections.deduction }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                                    </div>
-                                </div>
-                                <div v-show="expandedSections.deduction" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-1">
-                                    <template v-if="selectedTemplate?.has_deduction">
-                                        <div v-if="selectedTemplate?.deductions?.length">
-                                            <div v-for="(d, i) in selectedTemplate?.deductions" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
-                                                <span>{{ d.name }}</span>
-                                                <span class="font-semibold text-red-500">-{{ formatCurrency(d.amount) }}đ</span>
-                                            </div>
+                                    <div class="flex items-center gap-3">
+                                        <input type="checkbox" v-model="salaryForm.has_deduction" @click.stop class="accent-blue-600 w-4 h-4" />
+                                        <div>
+                                            <div class="font-bold text-[14px] text-gray-800">Giảm trừ</div>
+                                            <div class="text-[12px] text-gray-500 mt-0.5">Thiết lập khoản giảm trừ như đi muộn, về sớm, vi phạm nội quy, ...</div>
                                         </div>
-                                        <div v-else class="text-gray-400 italic">Chưa có giảm trừ</div>
-                                    </template>
-                                    <div v-else class="text-gray-400 italic">Chưa chọn mẫu lương hoặc mẫu lương chưa thiết lập giảm trừ</div>
+                                    </div>
+                                    <svg class="w-4 h-4 text-gray-400 transition-transform" :class="{ 'rotate-180': expandedSections.deduction }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                                </div>
+                                <div v-show="expandedSections.deduction && salaryForm.has_deduction" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-3">
+                                    <div v-if="salaryForm.custom_deductions.length" class="border rounded overflow-hidden">
+                                        <table class="w-full text-sm">
+                                            <thead class="bg-gray-100">
+                                                <tr>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600">Tên giảm trừ</th>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600">Loại giảm trừ</th>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600">Khoản giảm trừ</th>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600">Số tiền</th>
+                                                    <th class="w-8"></th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr v-for="(d, i) in salaryForm.custom_deductions" :key="i" class="border-t">
+                                                    <td class="px-2 py-1"><input v-model="d.name" type="text" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" placeholder="Đi muộn, về sớm..." /></td>
+                                                    <td class="px-2 py-1">
+                                                        <select v-model="d.deduction_category" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none">
+                                                            <option value="late">Đi muộn</option>
+                                                            <option value="early_leave">Về sớm</option>
+                                                            <option value="absence">Vắng mặt</option>
+                                                            <option value="violation">Vi phạm</option>
+                                                        </select>
+                                                    </td>
+                                                    <td class="px-2 py-1">
+                                                        <select v-model="d.calculation_type" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none">
+                                                            <option value="per_occurrence">Theo số lần</option>
+                                                            <option value="per_minute">Theo số phút</option>
+                                                            <option value="fixed_per_month">Cố định/tháng</option>
+                                                        </select>
+                                                    </td>
+                                                    <td class="px-2 py-1"><input v-model.number="d.amount" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
+                                                    <td class="px-1 py-1"><button type="button" @click="salaryForm.custom_deductions.splice(i, 1)" class="text-red-400 hover:text-red-600">&times;</button></td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <button type="button" @click="salaryForm.custom_deductions.push({ name: '', deduction_category: 'late', calculation_type: 'per_occurrence', amount: 0 })" class="text-blue-600 text-sm font-semibold hover:underline">+ Thêm giảm trừ</button>
                                 </div>
                             </div>
                             </template>

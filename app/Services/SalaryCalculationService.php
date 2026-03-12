@@ -29,6 +29,18 @@ class SalaryCalculationService
             ? SalaryTemplate::with(['bonuses', 'commissions.commissionTable.tiers', 'allowances', 'deductions'])->find($setting->salary_template_id)
             : null;
 
+        // Xây dựng dữ liệu thưởng/hoa hồng/phụ cấp/giảm trừ: ưu tiên per-employee, fallback template
+        $hasBonus = $setting->has_bonus ?? ($template->has_bonus ?? false);
+        $hasCommission = $setting->has_commission ?? ($template->has_commission ?? false);
+        $hasAllowance = $setting->has_allowance ?? ($template->has_allowance ?? false);
+        $hasDeduction = $setting->has_deduction ?? ($template->has_deduction ?? false);
+        $bonusType = $setting->bonus_type ?? ($template->bonus_type ?? 'personal_revenue');
+        $bonusCalculation = $setting->bonus_calculation ?? ($template->bonus_calculation ?? 'total_revenue');
+        $bonusList = !empty($setting->custom_bonuses) ? collect($setting->custom_bonuses) : ($template ? $template->bonuses : collect());
+        $commissionList = !empty($setting->custom_commissions) ? collect($setting->custom_commissions) : ($template ? $template->commissions : collect());
+        $allowanceList = !empty($setting->custom_allowances) ? collect($setting->custom_allowances) : ($template ? $template->allowances : collect());
+        $deductionList = !empty($setting->custom_deductions) ? collect($setting->custom_deductions) : ($template ? $template->deductions : collect());
+
         // Tính ngày công chuẩn theo lịch thực tế (WorkdaySetting + Holiday)
         $standardWorkUnits = $this->getStandardWorkUnits($employee->branch_id, $from, $to);
 
@@ -73,45 +85,43 @@ class SalaryCalculationService
         $allowanceDetails = [];
         $deductionDetails = [];
 
-        if ($template) {
-            // ===== THƯỞNG =====
-            if ($template->has_bonus && $template->bonuses->count()) {
-                if ($template->bonus_type === 'personal_gross_profit') {
-                    $personalGrossProfit = $personalGrossProfit ?? $this->getPersonalGrossProfit($employee, $from, $to);
-                    $revenue = $personalGrossProfit;
-                } elseif ($template->bonus_type === 'branch_revenue') {
-                    $revenue = $branchRevenue;
-                } else {
-                    $revenue = $personalRevenue;
-                }
-                $result = $this->calculateBonus($template, $revenue);
-                $bonusAmount = $result['amount'];
-                $bonusDetails = $result['details'];
+        // ===== THƯỞNG =====
+        if ($hasBonus && $bonusList->count()) {
+            if ($bonusType === 'personal_gross_profit') {
+                $personalGrossProfit = $personalGrossProfit ?? $this->getPersonalGrossProfit($employee, $from, $to);
+                $revenue = $personalGrossProfit;
+            } elseif ($bonusType === 'branch_revenue') {
+                $revenue = $branchRevenue;
+            } else {
+                $revenue = $personalRevenue;
             }
+            $result = $this->calculateBonusFromList($bonusList, $bonusCalculation, $revenue);
+            $bonusAmount = $result['amount'];
+            $bonusDetails = $result['details'];
+        }
 
-            // ===== HOA HỒNG =====
-            if ($template->has_commission && $template->commissions->count()) {
-                $result = $this->calculateCommission($template, $personalRevenue);
-                $commissionAmount = $result['amount'];
-                $commissionDetails = $result['details'];
-            }
+        // ===== HOA HỒNG =====
+        if ($hasCommission && $commissionList->count()) {
+            $result = $this->calculateCommissionFromList($commissionList, $personalRevenue);
+            $commissionAmount = $result['amount'];
+            $commissionDetails = $result['details'];
+        }
 
-            // ===== PHỤ CẤP =====
-            if ($template->has_allowance && $template->allowances->count()) {
-                $result = $this->calculateAllowances($template, $baseSalary, $totalUnits);
-                $allowanceAmount = $result['amount'];
-                $allowanceDetails = $result['details'];
-            }
+        // ===== PHỤ CẤP =====
+        if ($hasAllowance && $allowanceList->count()) {
+            $result = $this->calculateAllowancesFromList($allowanceList, $baseSalary, $totalUnits);
+            $allowanceAmount = $result['amount'];
+            $allowanceDetails = $result['details'];
+        }
 
-            // ===== GIẢM TRỪ =====
-            if ($template->has_deduction && $template->deductions->count()) {
-                $result = $this->calculateDeductions(
-                    $template, $lateCount, $lateTotalMinutes,
-                    $earlyLeaveCount, $earlyTotalMinutes
-                );
-                $deductionAmount = $result['amount'];
-                $deductionDetails = $result['details'];
-            }
+        // ===== GIẢM TRỪ =====
+        if ($hasDeduction && $deductionList->count()) {
+            $result = $this->calculateDeductionsFromList(
+                $deductionList, $lateCount, $lateTotalMinutes,
+                $earlyLeaveCount, $earlyTotalMinutes
+            );
+            $deductionAmount = $result['amount'];
+            $deductionDetails = $result['details'];
         }
 
         // ===== GIẢM TRỪ ĐI MUỘN THEO MỨC (PayrollSetting) =====
@@ -372,6 +382,211 @@ class SalaryCalculationService
                 'category' => $deduction->deduction_category,
                 'calc_type' => $deduction->calculation_type,
                 'config_amount' => $deduction->amount,
+                'occurrences' => $occurrences,
+                'calculated' => round($dedAmount),
+            ];
+        }
+
+        return ['amount' => $amount, 'details' => $details];
+    }
+
+    /**
+     * Tính thưởng từ danh sách (hỗ trợ cả Eloquent Collection và JSON array)
+     */
+    private function calculateBonusFromList(Collection $bonusList, string $bonusCalculation, float $revenue): array
+    {
+        $amount = 0;
+        $details = [];
+
+        if ($bonusCalculation === 'total_revenue') {
+            $matchedTier = $bonusList
+                ->filter(fn($b) => data_get($b, 'revenue_from') <= $revenue)
+                ->sortByDesc(fn($b) => data_get($b, 'revenue_from'))
+                ->first();
+
+            if ($matchedTier) {
+                $isPct = data_get($matchedTier, 'bonus_is_percentage');
+                $val = data_get($matchedTier, 'bonus_value');
+                $tierAmount = $isPct ? $revenue * $val / 100 : $val;
+                $amount = $tierAmount;
+                $details[] = [
+                    'role_type' => data_get($matchedTier, 'role_type'),
+                    'revenue_from' => data_get($matchedTier, 'revenue_from'),
+                    'bonus_value' => $val,
+                    'is_percentage' => $isPct,
+                    'calculated' => round($tierAmount),
+                ];
+            }
+        } else {
+            $sortedTiers = $bonusList->sortBy(fn($b) => data_get($b, 'revenue_from'))->values();
+            $remainingRevenue = $revenue;
+
+            for ($i = 0; $i < $sortedTiers->count(); $i++) {
+                $tier = $sortedTiers[$i];
+                $from = data_get($tier, 'revenue_from');
+                if ($revenue < $from) break;
+
+                $nextThreshold = ($i + 1 < $sortedTiers->count()) ? data_get($sortedTiers[$i + 1], 'revenue_from') : $revenue;
+                $tierRevenue = min($remainingRevenue, $nextThreshold - $from);
+
+                if ($tierRevenue > 0) {
+                    $isPct = data_get($tier, 'bonus_is_percentage');
+                    $val = data_get($tier, 'bonus_value');
+                    $tierAmount = $isPct ? $tierRevenue * $val / 100 : $val;
+                    $amount += $tierAmount;
+                    $details[] = [
+                        'role_type' => data_get($tier, 'role_type'),
+                        'revenue_from' => $from,
+                        'tier_revenue' => round($tierRevenue),
+                        'bonus_value' => $val,
+                        'is_percentage' => $isPct,
+                        'calculated' => round($tierAmount),
+                    ];
+                    $remainingRevenue -= $tierRevenue;
+                }
+            }
+        }
+
+        return ['amount' => $amount, 'details' => $details];
+    }
+
+    /**
+     * Tính hoa hồng từ danh sách
+     */
+    private function calculateCommissionFromList(Collection $commissionList, float $revenue): array
+    {
+        $amount = 0;
+        $details = [];
+
+        foreach ($commissionList as $commission) {
+            $revenueFrom = data_get($commission, 'revenue_from', 0);
+            if ($revenue < $revenueFrom) continue;
+
+            $tableId = data_get($commission, 'commission_table_id');
+            if ($tableId) {
+                $table = CommissionTable::with('tiers')->find($tableId);
+                if ($table) {
+                    $matchedTier = $table->tiers->sortByDesc('revenue_from')
+                        ->where('revenue_from', '<=', $revenue)->first();
+                    if ($matchedTier) {
+                        $tierAmount = $matchedTier->is_percentage
+                            ? $revenue * $matchedTier->commission_value / 100
+                            : $matchedTier->commission_value;
+                        $amount += $tierAmount;
+                        $details[] = [
+                            'role_type' => data_get($commission, 'role_type'),
+                            'table_name' => $table->name,
+                            'tier_revenue_from' => $matchedTier->revenue_from,
+                            'commission_value' => $matchedTier->commission_value,
+                            'is_percentage' => $matchedTier->is_percentage,
+                            'calculated' => round($tierAmount),
+                        ];
+                    }
+                }
+            } else {
+                $isPct = data_get($commission, 'commission_is_percentage');
+                $val = data_get($commission, 'commission_value', 0);
+                $tierAmount = $isPct ? $revenue * $val / 100 : $val;
+                $amount += $tierAmount;
+                $details[] = [
+                    'role_type' => data_get($commission, 'role_type'),
+                    'commission_value' => $val,
+                    'is_percentage' => $isPct,
+                    'calculated' => round($tierAmount),
+                ];
+            }
+        }
+
+        return ['amount' => $amount, 'details' => $details];
+    }
+
+    /**
+     * Tính phụ cấp từ danh sách
+     */
+    private function calculateAllowancesFromList(Collection $allowanceList, float $baseSalary, float $workUnits): array
+    {
+        $amount = 0;
+        $details = [];
+
+        foreach ($allowanceList as $allowance) {
+            $alAmount = 0;
+            $type = data_get($allowance, 'allowance_type');
+            $amt = data_get($allowance, 'amount', 0);
+
+            switch ($type) {
+                case 'fixed_per_day':
+                    $alAmount = $amt * $workUnits;
+                    break;
+                case 'fixed_per_month':
+                    $alAmount = $amt;
+                    break;
+                case 'percentage':
+                    $alAmount = $baseSalary * $amt / 100;
+                    break;
+            }
+            $amount += $alAmount;
+            $details[] = [
+                'name' => data_get($allowance, 'name'),
+                'type' => $type,
+                'config_amount' => $amt,
+                'calculated' => round($alAmount),
+            ];
+        }
+
+        return ['amount' => $amount, 'details' => $details];
+    }
+
+    /**
+     * Tính giảm trừ từ danh sách
+     */
+    private function calculateDeductionsFromList(
+        Collection $deductionList,
+        int $lateCount, int $lateTotalMinutes,
+        int $earlyLeaveCount, int $earlyTotalMinutes
+    ): array {
+        $amount = 0;
+        $details = [];
+
+        foreach ($deductionList as $deduction) {
+            $dedAmount = 0;
+            $occurrences = 0;
+            $category = data_get($deduction, 'deduction_category');
+            $calcType = data_get($deduction, 'calculation_type');
+            $amt = data_get($deduction, 'amount', 0);
+
+            switch ($category) {
+                case 'late':
+                    $occurrences = $lateCount;
+                    if ($calcType === 'per_occurrence') {
+                        $dedAmount = $amt * $lateCount;
+                    } elseif ($calcType === 'per_minute') {
+                        $dedAmount = $amt * $lateTotalMinutes;
+                    } else {
+                        $dedAmount = $amt;
+                    }
+                    break;
+                case 'early_leave':
+                    $occurrences = $earlyLeaveCount;
+                    if ($calcType === 'per_occurrence') {
+                        $dedAmount = $amt * $earlyLeaveCount;
+                    } elseif ($calcType === 'per_minute') {
+                        $dedAmount = $amt * $earlyTotalMinutes;
+                    } else {
+                        $dedAmount = $amt;
+                    }
+                    break;
+                case 'absence':
+                case 'violation':
+                    $dedAmount = $amt;
+                    break;
+            }
+
+            $amount += $dedAmount;
+            $details[] = [
+                'name' => data_get($deduction, 'name'),
+                'category' => $category,
+                'calc_type' => $calcType,
+                'config_amount' => $amt,
                 'occurrences' => $occurrences,
                 'calculated' => round($dedAmount),
             ];

@@ -19,6 +19,16 @@ class EmployeeSalarySetting extends Model
         'tet_rate',
         'has_overtime',
         'overtime_rate',
+        'has_bonus',
+        'has_commission',
+        'has_allowance',
+        'has_deduction',
+        'bonus_type',
+        'bonus_calculation',
+        'custom_bonuses',
+        'custom_commissions',
+        'custom_allowances',
+        'custom_deductions',
     ];
 
     protected $casts = [
@@ -28,6 +38,14 @@ class EmployeeSalarySetting extends Model
         'tet_rate' => 'integer',
         'has_overtime' => 'boolean',
         'overtime_rate' => 'integer',
+        'has_bonus' => 'boolean',
+        'has_commission' => 'boolean',
+        'has_allowance' => 'boolean',
+        'has_deduction' => 'boolean',
+        'custom_bonuses' => 'array',
+        'custom_commissions' => 'array',
+        'custom_allowances' => 'array',
+        'custom_deductions' => 'array',
     ];
 
     public function employee()
