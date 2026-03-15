@@ -12,7 +12,7 @@ const load = async () => {
     loading.value = true;
     try {
         const res = await axios.get("/api/my-tasks");
-        tasks.value = res.data || [];
+        tasks.value = res.data?.data || [];
     } catch (e) {
         console.error(e);
     } finally {
