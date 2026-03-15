@@ -8,47 +8,50 @@ use Illuminate\Support\Facades\DB;
 return new class extends Migration {
     public function up(): void
     {
-        // 1) Rename device_repair_parts → task_parts (trước khi rename bảng cha)
-        Schema::rename('device_repair_parts', 'task_parts');
+        // 1) Rename device_repair_parts → task_parts (idempotent)
+        if (Schema::hasTable('device_repair_parts') && !Schema::hasTable('task_parts')) {
+            Schema::rename('device_repair_parts', 'task_parts');
+        }
 
-        // 2) Rename device_repairs → tasks
-        Schema::rename('device_repairs', 'tasks');
+        // 2) Rename device_repairs → tasks (idempotent)
+        if (Schema::hasTable('device_repairs') && !Schema::hasTable('tasks')) {
+            Schema::rename('device_repairs', 'tasks');
+        }
 
         // 3) Rename FK column trong task_parts: device_repair_id → task_id
-        // FK name có thể khác nhau tuỳ lúc tạo (trước/sau rename bảng)
-        Schema::table('task_parts', function (Blueprint $table) {
-            // Try dropping FK with possible names
-            $possibleFKs = [
-                'device_repair_parts_device_repair_id_foreign',
-                'task_parts_device_repair_id_foreign',
-            ];
-            $sm = Schema::getConnection()->getDoctrineSchemaManager();
-            $existingFKs = collect($sm->listTableForeignKeys('task_parts'))->map(fn($fk) => $fk->getName())->toArray();
+        if (Schema::hasColumn('task_parts', 'device_repair_id')) {
+            // Drop old FK — tên có thể khác nhau
+            DB::statement("SET @fk_name = (SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'task_parts' AND COLUMN_NAME = 'device_repair_id' AND REFERENCED_TABLE_NAME IS NOT NULL LIMIT 1)");
+            DB::statement("SET @sql = IF(@fk_name IS NOT NULL, CONCAT('ALTER TABLE task_parts DROP FOREIGN KEY ', @fk_name), 'SELECT 1')");
+            DB::statement("PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;");
 
-            foreach ($possibleFKs as $fkName) {
-                if (in_array($fkName, $existingFKs)) {
-                    $table->dropForeign($fkName);
-                    break;
-                }
+            Schema::table('task_parts', function (Blueprint $table) {
+                $table->renameColumn('device_repair_id', 'task_id');
+            });
+        }
+
+        // Re-add FK nếu chưa có
+        if (Schema::hasColumn('task_parts', 'task_id')) {
+            $hasFk = DB::selectOne("SELECT COUNT(*) as cnt FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'task_parts' AND COLUMN_NAME = 'task_id' AND REFERENCED_TABLE_NAME = 'tasks'");
+            if (!$hasFk || $hasFk->cnt == 0) {
+                Schema::table('task_parts', function (Blueprint $table) {
+                    $table->foreign('task_id')->references('id')->on('tasks')->cascadeOnDelete();
+                });
             }
-            // Rename column
-            $table->renameColumn('device_repair_id', 'task_id');
-        });
-        Schema::table('task_parts', function (Blueprint $table) {
-            // Re-add FK
-            $table->foreign('task_id')->references('id')->on('tasks')->cascadeOnDelete();
-        });
+        }
 
-        // 4) Add new columns to tasks
-        Schema::table('tasks', function (Blueprint $table) {
-            $table->string('type', 20)->default('general')->after('code')->comment('general | repair');
-            $table->string('title')->nullable()->after('type');
-            $table->unsignedBigInteger('category_id')->nullable()->after('title');
-            $table->foreign('category_id')->references('id')->on('task_categories')->nullOnDelete();
-            $table->string('priority', 10)->default('normal')->after('issue_description')->comment('low | normal | high | urgent');
-            $table->unsignedTinyInteger('progress')->default(0)->after('priority')->comment('0-100%');
-            $table->timestamp('cancelled_at')->nullable()->after('completed_at');
-        });
+        // 4) Add new columns to tasks (idempotent)
+        if (!Schema::hasColumn('tasks', 'type')) {
+            Schema::table('tasks', function (Blueprint $table) {
+                $table->string('type', 20)->default('general')->after('code')->comment('general | repair');
+                $table->string('title')->nullable()->after('type');
+                $table->unsignedBigInteger('category_id')->nullable()->after('title');
+                $table->foreign('category_id')->references('id')->on('task_categories')->nullOnDelete();
+                $table->string('priority', 10)->default('normal')->after('issue_description')->comment('low | normal | high | urgent');
+                $table->unsignedTinyInteger('progress')->default(0)->after('priority')->comment('0-100%');
+                $table->timestamp('cancelled_at')->nullable()->after('completed_at');
+            });
+        }
 
         // 5) Update existing rows: đánh dấu là repair, title = code
         DB::table('tasks')->update([
