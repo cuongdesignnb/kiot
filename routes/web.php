@@ -53,6 +53,8 @@ Route::post('/suppliers', [SupplierController::class, 'store'])->name('suppliers
 Route::get('/purchases', [PurchaseController::class, 'index'])->name('purchases.index');
 Route::get('/purchases/create', [PurchaseController::class, 'create'])->name('purchases.create');
 Route::post('/purchases', [PurchaseController::class, 'store'])->name('purchases.store');
+Route::get('/purchases/{purchase}', [PurchaseController::class, 'show'])->name('purchases.show');
+Route::delete('/purchases/{purchase}', [PurchaseController::class, 'destroy'])->name('purchases.destroy');
 Route::get('/products/create/{type?}', [ProductController::class, 'create'])->name('products.create');
 Route::get('/products/document-detail', [ProductController::class, 'documentDetail'])->name('products.document-detail');
 Route::post('/products', [ProductController::class, 'store'])->name('products.store');

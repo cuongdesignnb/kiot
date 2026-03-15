@@ -57,6 +57,10 @@ const toggleExpand = (id) => {
 };
 const isExpanded = (id) => expandedRows.value.includes(id);
 
+const goToDetail = (id) => {
+    router.visit(`/purchases/${id}`);
+};
+
 const formatCurrency = (val) => Number(val).toLocaleString("vi-VN");
 const formatStatus = (val) => {
     const s = allStatuses.find((x) => x.value === val);
@@ -349,7 +353,7 @@ const printPurchase = (order) => {
                             :key="order.id"
                         >
                             <tr
-                                @click="toggleExpand(order.id)"
+                                @click="goToDetail(order.id)"
                                 class="hover:bg-blue-50/40 cursor-pointer transition-colors"
                                 :class="{
                                     'bg-[#f4f7fe]': isExpanded(order.id),

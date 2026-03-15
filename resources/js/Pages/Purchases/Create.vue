@@ -129,19 +129,14 @@ const removeSerial = (item, index) => {
     item.quantity = item.serials.length;
 };
 
-const itemsComputed = computed(() => {
-    return items.value.map(item => {
-        const qty = parseInt(item.quantity) || 0;
-        const price = parseFloat(item.price) || 0;
-        const itemDiscount = parseFloat(item.discount) || 0;
-        return {
-            ...item,
-            total_value: (qty * price) - itemDiscount
-        };
-    });
-});
+const getItemTotal = (item) => {
+    const qty = item.has_serial ? (item.serials?.length || 0) : (parseInt(item.quantity) || 0);
+    const price = parseFloat(item.price) || 0;
+    const itemDiscount = parseFloat(item.discount) || 0;
+    return (qty * price) - itemDiscount;
+};
 
-const totalAmount = computed(() => itemsComputed.value.reduce((sum, item) => sum + item.total_value, 0));
+const totalAmount = computed(() => items.value.reduce((sum, item) => sum + getItemTotal(item), 0));
 const totalPayment = computed(() => Math.max(0, totalAmount.value - Number(discount.value)));
 const debtAmount = computed(() => Math.max(0, totalPayment.value - Number(paidAmount.value)));
 
@@ -165,9 +160,9 @@ const save = async () => {
             note: note.value,
             discount: discount.value,
             paid_amount: paidAmount.value,
-            items: itemsComputed.value.map(item => ({
+            items: items.value.map(item => ({
                 product_id: item.product_id,
-                quantity: item.quantity,
+                quantity: item.has_serial ? (item.serials?.length || 0) : (parseInt(item.quantity) || 0),
                 price: item.price,
                 retail_price: item.retail_price || 0,
                 technician_price: item.technician_price || 0,
@@ -203,8 +198,9 @@ const onCurrencyFocus = (event) => {
     else event.target.value = String(val);
 };
 const onCurrencyBlur = (obj, field, event) => {
-    obj[field] = parseCurrencyInput(event.target.value);
-    event.target.value = formatCurrencyInput(obj[field]);
+    const val = parseCurrencyInput(event.target.value);
+    obj[field] = val;
+    event.target.value = formatCurrencyInput(val);
 };
 
 // === Quick Create Product Modal ===
@@ -418,7 +414,7 @@ const quickCreateBrand = async () => {
                             </tr>
                         </thead>
                         <tbody v-if="items.length > 0">
-                            <template v-for="(item, index) in itemsComputed" :key="item.product_id">
+                            <template v-for="(item, index) in items" :key="item.product_id">
                             <tr class="border-b border-gray-100 hover:bg-[#f8fafc] transition-colors">
                                 <td class="p-3 text-center text-gray-500 group relative w-12">
                                     <span class="group-hover:hidden">{{ index + 1 }}</span>
@@ -451,7 +447,7 @@ const quickCreateBrand = async () => {
                                 <td class="p-3 w-[100px]">
                                     <input type="text" :value="formatCurrencyInput(item.discount)" @focus="onCurrencyFocus" @blur="onCurrencyBlur(item, 'discount', $event)" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-green-500 text-[13px] hover:bg-green-50">
                                 </td>
-                                <td class="p-3 font-bold text-gray-800 text-right w-[140px] pr-6">{{ formatCurrency(item.total_value) }}</td>
+                                <td class="p-3 font-bold text-gray-800 text-right w-[140px] pr-6">{{ formatCurrency(getItemTotal(item)) }}</td>
                             </tr>
                             <!-- Serial/IMEI input row -->
                             <tr v-if="item.has_serial" class="bg-gray-50/50">

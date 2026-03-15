@@ -251,6 +251,74 @@ class PurchaseController extends Controller
         }
     }
 
+    public function show(Purchase $purchase)
+    {
+        $purchase->load(['supplier', 'items.product', 'user']);
+
+        // Load serials for each item
+        foreach ($purchase->items as $item) {
+            if ($item->product && $item->product->has_serial) {
+                $item->serials = SerialImei::where('purchase_id', $purchase->id)
+                    ->where('product_id', $item->product_id)
+                    ->get(['id', 'serial_number', 'status']);
+            } else {
+                $item->serials = [];
+            }
+        }
+
+        // Load payment history (cash flows)
+        $purchase->cash_flows = CashFlow::where('reference_code', $purchase->code)
+            ->where('reference_type', 'Purchase')
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        return Inertia::render('Purchases/Show', [
+            'purchase' => $purchase,
+        ]);
+    }
+
+    public function destroy(Purchase $purchase)
+    {
+        if ($purchase->status !== 'completed') {
+            $purchase->delete();
+            return redirect()->route('purchases.index')->with('success', 'Đã xóa phiếu tạm.');
+        }
+
+        try {
+            DB::beginTransaction();
+
+            // Reverse stock changes
+            foreach ($purchase->items as $item) {
+                $product = Product::find($item->product_id);
+                if ($product) {
+                    $product->stock_quantity = max(0, $product->stock_quantity - $item->quantity);
+                    $product->save();
+                }
+                // Delete serials
+                SerialImei::where('purchase_id', $purchase->id)
+                    ->where('product_id', $item->product_id)
+                    ->delete();
+            }
+
+            // Reverse supplier debt
+            if ($purchase->supplier) {
+                $purchase->supplier->supplier_debt_amount -= $purchase->debt_amount;
+                $purchase->supplier->total_bought -= $purchase->total_amount;
+                $purchase->supplier->save();
+            }
+
+            $purchase->items()->delete();
+            $purchase->status = 'cancelled';
+            $purchase->save();
+
+            DB::commit();
+            return redirect()->route('purchases.index')->with('success', 'Đã hủy phiếu nhập hàng.');
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return back()->with('error', 'Lỗi: ' . $e->getMessage());
+        }
+    }
+
     public function export(Request $request)
     {
         $purchases = \App\Models\Purchase::with('supplier')
