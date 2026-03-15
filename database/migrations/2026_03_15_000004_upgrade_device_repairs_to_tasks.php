@@ -15,9 +15,22 @@ return new class extends Migration {
         Schema::rename('device_repairs', 'tasks');
 
         // 3) Rename FK column trong task_parts: device_repair_id → task_id
+        // FK name có thể khác nhau tuỳ lúc tạo (trước/sau rename bảng)
         Schema::table('task_parts', function (Blueprint $table) {
-            // Drop old FK constraint
-            $table->dropForeign(['device_repair_id']);
+            // Try dropping FK with possible names
+            $possibleFKs = [
+                'device_repair_parts_device_repair_id_foreign',
+                'task_parts_device_repair_id_foreign',
+            ];
+            $sm = Schema::getConnection()->getDoctrineSchemaManager();
+            $existingFKs = collect($sm->listTableForeignKeys('task_parts'))->map(fn($fk) => $fk->getName())->toArray();
+
+            foreach ($possibleFKs as $fkName) {
+                if (in_array($fkName, $existingFKs)) {
+                    $table->dropForeign($fkName);
+                    break;
+                }
+            }
             // Rename column
             $table->renameColumn('device_repair_id', 'task_id');
         });
