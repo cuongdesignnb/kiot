@@ -45,9 +45,18 @@ class PurchaseController extends Controller
 
         $purchases = $query->paginate(20)->withQueryString();
 
+        // Tổng công nợ NCC (toàn bộ, không phụ thuộc filter)
+        $summary = [
+            'total_amount' => Purchase::sum('total_amount'),
+            'total_discount' => Purchase::sum('discount'),
+            'total_paid' => Purchase::sum('paid_amount'),
+            'total_debt' => Purchase::sum('debt_amount'),
+        ];
+
         return Inertia::render('Purchases/Index', [
             'purchases' => $purchases,
-            'filters' => $request->only(['search', 'status', 'date_filter'])
+            'filters' => $request->only(['search', 'status', 'date_filter']),
+            'summary' => $summary,
         ]);
     }
 

@@ -7,6 +7,7 @@ import ExcelButtons from "@/Components/ExcelButtons.vue";
 const props = defineProps({
     purchases: Object,
     filters: Object,
+    summary: Object,
 });
 
 const search = ref(props.filters?.search || "");
@@ -328,6 +329,18 @@ const printPurchase = (order) => {
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100 bg-white">
+                        <!-- Summary row -->
+                        <tr class="bg-gray-50 border-b border-gray-200 font-semibold text-sm">
+                            <td></td>
+                            <td></td>
+                            <td></td>
+                            <td></td>
+                            <td></td>
+                            <td class="px-4 py-2 text-right text-gray-700">{{ formatCurrency(summary?.total_amount) }}</td>
+                            <td class="px-4 py-2 text-right text-gray-700">{{ formatCurrency((summary?.total_amount || 0) - (summary?.total_discount || 0)) }}</td>
+                            <td class="px-4 py-2 text-right text-green-600">{{ formatCurrency(summary?.total_paid) }}</td>
+                            <td></td>
+                        </tr>
                         <tr v-if="purchases.data.length === 0">
                             <td
                                 colspan="9"
