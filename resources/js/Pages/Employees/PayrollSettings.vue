@@ -532,6 +532,12 @@ const addAllowance = () => templateForm.allowances.push({ name: '', allowance_ty
 const removeAllowance = (i) => templateForm.allowances.splice(i, 1);
 const addDeduction = () => templateForm.deductions.push({ name: '', deduction_category: 'late', calculation_type: 'per_occurrence', amount: 0 });
 const removeDeduction = (i) => templateForm.deductions.splice(i, 1);
+const onDeductionCategoryChange = (ded) => {
+    if (!ded.name) {
+        const opt = deductionCategoryOptions.find(o => o.value === ded.deduction_category);
+        if (opt) ded.name = opt.label;
+    }
+};
 
 const saveTemplate = async () => {
     if (!templateForm.name.trim()) {
@@ -977,21 +983,19 @@ const removeTemplate = async (template) => {
                                         <tr>
                                             <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500">Tên giảm trừ</th>
                                             <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500">Loại giảm trừ</th>
-                                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500"></th>
-                                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500">Khoản giảm trừ</th>
+                                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500">Loại tính</th>
+                                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500">Số tiền</th>
                                             <th class="w-10"></th>
                                         </tr>
                                     </thead>
                                     <tbody class="divide-y divide-gray-100 bg-white">
                                         <tr v-for="(ded, i) in templateForm.deductions" :key="i">
                                             <td class="px-3 py-2">
-                                                <select v-model="ded.deduction_category" @change="ded.name = deductionCategoryOptions.find(o => o.value === ded.deduction_category)?.label || ded.deduction_category" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm">
-                                                    <option value="">Chọn Loại giảm trừ</option>
-                                                    <option v-for="opt in deductionCategoryOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-                                                </select>
+                                                <input v-model="ded.name" type="text" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm" placeholder="Đi muộn, BHXH..." />
                                             </td>
                                             <td class="px-3 py-2">
-                                                <select v-model="ded.deduction_category" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm">
+                                                <select v-model="ded.deduction_category" @change="onDeductionCategoryChange(ded)" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm">
+                                                    <option value="">Chọn loại</option>
                                                     <option v-for="opt in deductionCategoryOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
                                                 </select>
                                             </td>
@@ -1001,7 +1005,12 @@ const removeTemplate = async (template) => {
                                                 </select>
                                             </td>
                                             <td class="px-3 py-2">
-                                                <input v-model.number="ded.amount" type="number" min="0" class="w-32 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                                <div class="flex items-center gap-1">
+                                                    <input v-model.number="ded.amount" type="number" min="0" class="w-32 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                                    <span class="text-xs text-gray-400 whitespace-nowrap">
+                                                        {{ ded.calculation_type === 'per_minute' ? '/phút' : ded.calculation_type === 'per_occurrence' ? '/lần' : '/tháng' }}
+                                                    </span>
+                                                </div>
                                             </td>
                                             <td class="px-3 py-2 text-center">
                                                 <button type="button" class="text-gray-400 hover:text-red-500" @click="removeDeduction(i)">
@@ -1012,7 +1021,11 @@ const removeTemplate = async (template) => {
                                     </tbody>
                                 </table>
                             </div>
-                            <button type="button" class="text-sm font-medium text-blue-600 hover:text-blue-700" @click="addDeduction">Thêm giảm trừ</button>
+                            <button type="button" class="text-sm font-medium text-blue-600 hover:text-blue-700" @click="addDeduction">+ Thêm giảm trừ</button>
+                            <p class="text-xs text-gray-400 mt-2">
+                                <strong>Theo số phút:</strong> Số phút đi muộn/về sớm được tính tự động từ chấm công. Giảm trừ = Số tiền × Tổng số phút.<br>
+                                <strong>Theo lần:</strong> Giảm trừ = Số tiền × Số lần đi muộn/về sớm trong kỳ.
+                            </p>
                         </div>
                     </div>
                 </div>
