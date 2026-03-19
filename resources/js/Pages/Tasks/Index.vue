@@ -49,6 +49,7 @@ const productSearch = ref("");
 const productResults = ref([]);
 const selectedProduct = ref(null);
 const productSerials = ref([]);
+const selectedSerialIds = ref([]); // serials được tick trong batch mode
 
 // ── Assign modal ──
 const showAssignModal = ref(false);
@@ -120,10 +121,19 @@ const selectProduct = async (product) => {
     selectedProduct.value = product;
     productSearch.value = product.sku + ' - ' + product.name;
     productResults.value = [];
+    selectedSerialIds.value = [];
     try {
         const res = await axios.get("/api/tasks/product-serials", { params: { product_id: product.id } });
         productSerials.value = res.data || [];
+        // Nếu không có serial → chọn tất cả (tức là product-level)
+        if (productSerials.value.length === 0) selectedSerialIds.value = [];
     } catch (e) { productSerials.value = []; }
+};
+
+const toggleAllSerials = (e) => {
+    selectedSerialIds.value = e.target.checked
+        ? productSerials.value.map(s => s.id)
+        : [];
 };
 
 // ── Create ──
@@ -136,6 +146,7 @@ const openCreateModal = (type = "general") => {
     selectedProduct.value = null;
     productSearch.value = "";
     productSerials.value = [];
+    selectedSerialIds.value = [];
     createForm.value = { title: "", description: "", serial_imei_id: null, issue_description: "", category_id: null, priority: "normal", branch_id: null, deadline: "", notes: "", employee_ids: [] };
     showCreateModal.value = true;
 };
@@ -143,10 +154,10 @@ const openCreateModal = (type = "general") => {
 const submitCreate = async () => {
     createError.value = "";
     try {
-        // Batch mode: create multiple repair tasks for all product serials
-        if (createType.value === "repair" && batchMode.value && productSerials.value.length > 0) {
+        // Batch mode: create repair tasks for SELECTED serials
+        if (createType.value === "repair" && batchMode.value && selectedSerialIds.value.length > 0) {
             const payload = {
-                serial_imei_ids: productSerials.value.map(s => s.id),
+                serial_imei_ids: selectedSerialIds.value,
                 issue_description: createForm.value.issue_description,
                 title: createForm.value.title,
                 category_id: createForm.value.category_id,
@@ -559,7 +570,7 @@ loadTasks();
                             </div>
                         </div>
 
-                        <!-- Batch mode: search product -->
+                        <!-- Batch mode: search product then pick serials -->
                         <div v-if="batchMode">
                             <label class="block font-semibold text-sm mb-1">Mã hàng / Tên hàng *</label>
                             <div class="relative">
@@ -571,12 +582,41 @@ loadTasks();
                                     </div>
                                 </div>
                             </div>
-                            <div v-if="selectedProduct" class="mt-2 text-sm bg-blue-50 border border-blue-200 px-3 py-2 rounded">
-                                <div class="font-medium text-blue-800">{{ selectedProduct.sku }} — {{ selectedProduct.name }}</div>
-                                <div class="text-blue-600 mt-1">
-                                    Số serial tồn kho: <strong>{{ productSerials.length }}</strong> máy
+
+                            <!-- Serial list to pick after selecting product -->
+                            <div v-if="selectedProduct && productSerials.length > 0" class="mt-3">
+                                <div class="flex items-center justify-between mb-1">
+                                    <label class="block font-semibold text-sm">Chọn Serial/IMEI cần sửa *</label>
+                                    <label class="flex items-center gap-1 text-xs text-blue-600 cursor-pointer">
+                                        <input type="checkbox"
+                                            :checked="selectedSerialIds.length === productSerials.length"
+                                            @change="toggleAllSerials"
+                                            class="accent-blue-600"
+                                        />
+                                        Chọn tất cả
+                                    </label>
                                 </div>
-                                <div v-if="productSerials.length === 0" class="text-orange-600 mt-1 text-xs">Không có serial nào đang tồn kho cho sản phẩm này.</div>
+                                <div class="border border-gray-200 rounded-lg max-h-44 overflow-y-auto">
+                                    <label
+                                        v-for="s in productSerials"
+                                        :key="s.id"
+                                        class="flex items-center gap-3 px-3 py-2 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-0"
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            :value="s.id"
+                                            v-model="selectedSerialIds"
+                                            class="accent-blue-600"
+                                        />
+                                        <span class="text-sm font-medium text-blue-700">{{ s.serial_number }}</span>
+                                        <span class="text-xs text-gray-400 ml-auto">GV: {{ Number(s.cost_price || 0).toLocaleString() }}đ</span>
+                                    </label>
+                                </div>
+                                <p v-if="selectedSerialIds.length" class="text-xs text-blue-600 mt-1">Đã chọn {{ selectedSerialIds.length }} serial</p>
+                            </div>
+
+                            <div v-if="selectedProduct && productSerials.length === 0" class="mt-2 text-sm text-orange-600 bg-orange-50 border border-orange-200 px-3 py-2 rounded">
+                                Không có serial nào đang tồn kho cho sản phẩm này.
                             </div>
                         </div>
                     </div>
@@ -664,9 +704,9 @@ loadTasks();
                     <button @click="showCreateModal = false" class="px-5 py-2 border rounded-lg text-sm font-semibold">Hủy</button>
                     <button
                         @click="submitCreate"
-                        :disabled="createType === 'repair' ? (batchMode ? productSerials.length === 0 : !createForm.serial_imei_id) : !createForm.title"
+                        :disabled="createType === 'repair' ? (batchMode ? selectedSerialIds.length === 0 : !createForm.serial_imei_id) : !createForm.title"
                         class="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
-                    >{{ batchMode && createType === 'repair' ? `Tạo ${productSerials.length} phiếu` : 'Tạo' }}</button>
+                    >{{ batchMode && createType === 'repair' ? `Tạo ${selectedSerialIds.length} phiếu` : 'Tạo' }}</button>
                 </div>
             </div>
         </div>
