@@ -723,7 +723,7 @@ class ProductController extends Controller
                 ['sku' => trim($row[0])],
                 array_filter([
                     'name' => trim($row[1]),
-                    'type' => trim($row[2] ?? '') ?: 'product',
+                    'type' => in_array(trim($row[2] ?? ''), ['standard', 'service', 'combo', 'manufactured']) ? trim($row[2]) : 'standard',
                     'category_id' => $categoryId,
                     'brand_id' => $brandId,
                     'cost_price' => (float) ($row[5] ?? 0),
