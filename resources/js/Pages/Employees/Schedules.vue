@@ -602,7 +602,6 @@ const saveSchedule = async () => {
         for (const empId of employeeIds) {
             for (const d of dates) {
                 let slotCounter = form.id ? form.slot : 1
-                // Tìm slot tiếp theo cho ngày này nếu đã có lịch
                 if (!form.id) {
                     const existing = serverSchedules.value.filter(s => s.employee_id === empId && s.work_date === d)
                     slotCounter = existing.length > 0 ? Math.max(...existing.map(s => s.slot || 0)) + 1 : 1
@@ -620,11 +619,18 @@ const saveSchedule = async () => {
             }
         }
 
-        await Promise.all(promises)
+        const results = await Promise.allSettled(promises)
+        const failed = results.filter(r => r.status === 'rejected')
+        if (failed.length > 0) {
+            const msg = failed[0].reason?.response?.data?.message || failed[0].reason?.message || 'Lỗi không xác định'
+            alert(`Lỗi lưu ca: ${msg} (${failed.length}/${results.length} thất bại)`)
+            console.error('Failed requests:', failed)
+        }
         await fetchSchedules()
         closeModal()
     } catch(e) {
-        alert("Không thể lưu ca làm việc!")
+        const msg = e.response?.data?.message || e.message || 'Lỗi không xác định'
+        alert(`Không thể lưu ca làm việc: ${msg}`)
         console.error(e)
     } finally {
         isSaving.value = false
