@@ -16,13 +16,6 @@ class EmployeeWorkScheduleController extends Controller
             'timekeepingRecord:id,employee_work_schedule_id,attendance_type,manual_override,scheduled_start_at,scheduled_end_at,check_in_at,check_out_at,source,late_minutes,early_minutes,ot_minutes,worked_minutes,notes',
         ]);
 
-        // Exclude employees with fixed salary (no attendance needed)
-        $query->whereHas('employee', function ($q) {
-            $q->whereDoesntHave('salarySetting', function ($sq) {
-                $sq->where('salary_type', 'fixed');
-            });
-        });
-
         if ($request->filled('employee_id'))
             $query->where('employee_id', $request->integer('employee_id'));
         if ($request->filled('from'))
