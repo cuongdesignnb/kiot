@@ -1188,9 +1188,10 @@ const bonusCalcLabel = (calc) => {
                                             <thead class="bg-gray-100">
                                                 <tr>
                                                     <th class="text-left px-2 py-1.5 font-semibold text-gray-600">Tên giảm trừ</th>
-                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[150px]">Loại giảm trừ</th>
-                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[150px]">Loại tính</th>
-                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[130px]">Số tiền</th>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[140px]">Loại giảm trừ</th>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[140px]">Loại tính</th>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[90px]">Mỗi (phút)</th>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[120px]">Số tiền</th>
                                                     <th class="w-8"></th>
                                                 </tr>
                                             </thead>
@@ -1214,13 +1215,31 @@ const bonusCalcLabel = (calc) => {
                                                             <option v-if="d.deduction_category === 'late' || d.deduction_category === 'early_leave'" value="per_occurrence">Theo số lần</option>
                                                         </select>
                                                     </td>
-                                                    <td class="px-2 py-1"><input v-model.number="d.amount" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
+                                                    <td class="px-2 py-1">
+                                                        <input
+                                                            v-if="d.calculation_type === 'per_minute'"
+                                                            v-model.number="d.per_minutes"
+                                                            type="number"
+                                                            min="1"
+                                                            class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none"
+                                                            placeholder="15"
+                                                        />
+                                                        <span v-else class="text-gray-300 text-xs">—</span>
+                                                    </td>
+                                                    <td class="px-2 py-1">
+                                                        <div class="relative">
+                                                            <input v-model.number="d.amount" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" />
+                                                        </div>
+                                                        <div v-if="d.calculation_type === 'per_minute' && d.per_minutes" class="text-[10px] text-gray-400 mt-0.5">
+                                                            Trừ {{ Number(d.amount || 0).toLocaleString() }}đ / {{ d.per_minutes }} phút
+                                                        </div>
+                                                    </td>
                                                     <td class="px-1 py-1"><button type="button" @click="salaryForm.custom_deductions.splice(i, 1)" class="text-red-400 hover:text-red-600">&times;</button></td>
                                                 </tr>
                                             </tbody>
                                         </table>
                                     </div>
-                                    <button type="button" @click="salaryForm.custom_deductions.push({ name: '', deduction_category: '', calculation_type: 'fixed_per_month', amount: 0 })" class="text-blue-600 text-sm font-semibold hover:underline">+ Thêm giảm trừ</button>
+                                    <button type="button" @click="salaryForm.custom_deductions.push({ name: '', deduction_category: '', calculation_type: 'fixed_per_month', amount: 0, per_minutes: 15 })" class="text-blue-600 text-sm font-semibold hover:underline">+ Thêm giảm trừ</button>
                                 </div>
                             </div>
                             </template>
