@@ -14,13 +14,21 @@ const task = ref(null);
 const loading = ref(true);
 const activeTab = ref("info");
 
-// Part modal
+// Part modal (add)
 const showPartModal = ref(false);
 const partForm = ref({ product_id: null, quantity: 1, notes: "" });
 const partError = ref("");
 const productSearch = ref("");
 const productResults = ref([]);
 const selectedProduct = ref(null);
+
+// Disassemble modal (bóc máy)
+const showDisassembleModal = ref(false);
+const disForm = ref({ product_id: null, quantity: 1, unit_cost: 0, notes: "" });
+const disError = ref("");
+const disProductSearch = ref("");
+const disProductResults = ref([]);
+const disSelectedProduct = ref(null);
 
 // Assign modal
 const showAssignModal = ref(false);
@@ -79,7 +87,7 @@ const assignmentStatusBadge = (status) => {
     return map[status] || { label: status, cls: "bg-gray-100 text-gray-600" };
 };
 
-// Product search for parts
+// Product search for parts (add)
 let prodTimeout;
 watch(productSearch, (val) => {
     clearTimeout(prodTimeout);
@@ -97,6 +105,27 @@ const selectProduct = (p) => {
     partForm.value.product_id = p.id;
     productSearch.value = p.name;
     productResults.value = [];
+};
+
+// Product search for disassemble (bóc máy)
+let disProdTimeout;
+watch(disProductSearch, (val) => {
+    clearTimeout(disProdTimeout);
+    if (!val || val.length < 2) { disProductResults.value = []; return; }
+    disProdTimeout = setTimeout(async () => {
+        try {
+            const res = await axios.get("/api/tasks/search-products", { params: { q: val } });
+            disProductResults.value = res.data || [];
+        } catch (e) { disProductResults.value = []; }
+    }, 300);
+});
+
+const selectDisProduct = (p) => {
+    disSelectedProduct.value = p;
+    disForm.value.product_id = p.id;
+    disForm.value.unit_cost = p.cost_price || 0;
+    disProductSearch.value = p.name;
+    disProductResults.value = [];
 };
 
 const submitAddPart = async () => {
@@ -121,6 +150,29 @@ const removePart = async (partId) => {
     } catch (e) {
         alert(e.response?.data?.message || "Lỗi.");
     }
+};
+
+// Disassemble submit
+const submitDisassemble = async () => {
+    disError.value = "";
+    try {
+        await axios.post(`/api/tasks/${props.taskId}/disassemble-part`, disForm.value);
+        showDisassembleModal.value = false;
+        disForm.value = { product_id: null, quantity: 1, unit_cost: 0, notes: "" };
+        disSelectedProduct.value = null;
+        disProductSearch.value = "";
+        loadTask();
+    } catch (e) {
+        disError.value = e.response?.data?.message || "Lỗi khi bóc linh kiện.";
+    }
+};
+
+const openDisassembleModal = () => {
+    disError.value = '';
+    disSelectedProduct.value = null;
+    disProductSearch.value = '';
+    disForm.value = { product_id: null, quantity: 1, unit_cost: 0, notes: '' };
+    showDisassembleModal.value = true;
 };
 
 // Assign
@@ -237,7 +289,8 @@ loadTask();
                     </div>
                     <div class="flex gap-2">
                         <button v-if="isActive" @click="openAssignModal" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700">Giao NV</button>
-                        <button v-if="isActive && task.type === 'repair'" @click="showPartModal = true; partError = ''; selectedProduct = null; productSearch = ''; partForm = { product_id: null, quantity: 1, notes: '' }" class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700">+ Linh kiện</button>
+                        <button v-if="isActive && task.type === 'repair'" @click="showPartModal = true; partError = ''; selectedProduct = null; productSearch = ''; partForm = { product_id: null, quantity: 1, notes: '' }" class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700">+ Lắp LK</button>
+                        <button v-if="isActive && task.type === 'repair'" @click="openDisassembleModal" class="px-4 py-2 bg-orange-500 text-white rounded-lg text-sm font-semibold hover:bg-orange-600">↑ Bóc LK</button>
                         <button v-if="isActive" @click="markComplete" class="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700">Hoàn thành</button>
                         <button v-if="isActive" @click="cancelTask" class="px-4 py-2 bg-red-50 text-red-600 rounded-lg text-sm font-semibold hover:bg-red-100 border border-red-200">Hủy</button>
                     </div>
@@ -357,13 +410,18 @@ loadTask();
                 <!-- TAB: Parts (repair only) -->
                 <div v-if="activeTab === 'parts' && task.type === 'repair'" class="bg-white border rounded-lg shadow-sm overflow-hidden">
                     <div class="px-4 py-3 border-b flex justify-between items-center">
-                        <h3 class="font-bold text-gray-800">Linh kiện đã xuất</h3>
-                        <span class="text-sm text-gray-500">{{ task.parts?.length || 0 }} linh kiện</span>
+                        <h3 class="font-bold text-gray-800">Linh kiện</h3>
+                        <div class="flex gap-2 items-center">
+                            <span class="text-sm text-gray-500">{{ task.parts?.length || 0 }} mục</span>
+                            <button v-if="isActive" @click="showPartModal = true; partError = ''; selectedProduct = null; productSearch = ''; partForm = { product_id: null, quantity: 1, notes: '' }" class="text-xs text-blue-600 font-semibold hover:underline">+ Lắp LK</button>
+                            <button v-if="isActive" @click="openDisassembleModal" class="text-xs text-orange-600 font-semibold hover:underline">↑ Bóc LK</button>
+                        </div>
                     </div>
                     <table class="w-full text-sm">
                         <thead class="bg-gray-50 text-gray-600 uppercase text-xs">
                             <tr>
                                 <th class="px-4 py-3 text-left">Sản phẩm</th>
+                                <th class="px-4 py-3 text-center">Loại</th>
                                 <th class="px-4 py-3 text-center">SL</th>
                                 <th class="px-4 py-3 text-right">Đơn giá vốn</th>
                                 <th class="px-4 py-3 text-right">Thành tiền</th>
@@ -372,12 +430,18 @@ loadTask();
                             </tr>
                         </thead>
                         <tbody>
-                            <tr v-if="!task.parts?.length"><td colspan="6" class="text-center py-6 text-gray-400">Chưa có linh kiện.</td></tr>
-                            <tr v-for="part in task.parts" :key="part.id" class="border-t">
+                            <tr v-if="!task.parts?.length"><td colspan="7" class="text-center py-6 text-gray-400">Chưa có linh kiện.</td></tr>
+                            <tr v-for="part in task.parts" :key="part.id" class="border-t" :class="(part.direction || 'export') === 'import' ? 'bg-orange-50/50' : ''">
                                 <td class="px-4 py-3">{{ part.product?.name || '-' }}</td>
+                                <td class="px-4 py-3 text-center">
+                                    <span v-if="(part.direction || 'export') === 'import'" class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-orange-100 text-orange-700">Bóc ra</span>
+                                    <span v-else class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-700">Lắp vào</span>
+                                </td>
                                 <td class="px-4 py-3 text-center">{{ part.quantity }}</td>
                                 <td class="px-4 py-3 text-right">{{ formatCurrency(part.unit_cost) }}</td>
-                                <td class="px-4 py-3 text-right font-semibold">{{ formatCurrency(part.total_cost) }}</td>
+                                <td class="px-4 py-3 text-right font-semibold" :class="(part.direction || 'export') === 'import' ? 'text-orange-600' : ''">
+                                    {{ (part.direction || 'export') === 'import' ? '-' : '' }}{{ formatCurrency(part.total_cost) }}
+                                </td>
                                 <td class="px-4 py-3 text-gray-500">{{ part.notes || '' }}</td>
                                 <td class="px-4 py-3 text-center" v-if="isActive">
                                     <button @click="removePart(part.id)" class="text-red-500 hover:text-red-700 text-xs font-semibold">Gỡ</button>
@@ -385,6 +449,11 @@ loadTask();
                             </tr>
                         </tbody>
                     </table>
+                    <!-- Summary -->
+                    <div class="px-4 py-3 border-t bg-gray-50 flex justify-end gap-6 text-sm">
+                        <span class="text-gray-500">Chi phí LK ròng: <strong class="text-gray-800">{{ formatCurrency(task.parts_cost) }}</strong></span>
+                        <span class="text-gray-500">Tổng giá vốn: <strong class="text-gray-800">{{ formatCurrency(task.total_cost) }}</strong></span>
+                    </div>
                 </div>
 
                 <!-- TAB: Comments -->
@@ -449,6 +518,59 @@ loadTask();
                 <div class="flex justify-end gap-3 px-6 py-4 border-t">
                     <button @click="showPartModal = false" class="px-5 py-2 border rounded-lg text-sm font-semibold">Hủy</button>
                     <button @click="submitAddPart" :disabled="!partForm.product_id || !partForm.quantity" class="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">Xuất linh kiện</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Assign Modal -->
+
+        <!-- Disassemble Part Modal (Bóc máy) -->
+        <div v-if="showDisassembleModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4">
+                <div class="flex items-center justify-between px-6 py-4 border-b bg-orange-50">
+                    <h2 class="text-lg font-bold text-orange-700">↑ Bóc linh kiện từ máy</h2>
+                    <button @click="showDisassembleModal = false" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+                </div>
+                <div class="px-6 py-5 space-y-4">
+                    <div v-if="disError" class="text-red-500 text-sm bg-red-50 px-3 py-2 rounded">{{ disError }}</div>
+                    <p class="text-xs text-gray-500 bg-gray-50 px-3 py-2 rounded">Linh kiện bóc ra sẽ được <strong>nhập vào tồn kho</strong>. Giá vốn máy sẽ giảm tương ứng.</p>
+                    <div>
+                        <label class="block font-semibold text-sm mb-1">Sản phẩm (linh kiện bóc ra) *</label>
+                        <div class="relative">
+                            <input v-model="disProductSearch" type="text" placeholder="Nhập tên linh kiện..." class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-orange-500 outline-none" />
+                            <div v-if="disProductResults.length" class="absolute z-10 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-48 overflow-auto">
+                                <div v-for="p in disProductResults" :key="p.id" @click="selectDisProduct(p)" class="px-3 py-2 hover:bg-orange-50 cursor-pointer text-sm flex justify-between">
+                                    <span>{{ p.name }}</span><span class="text-gray-400">GV: {{ formatCurrency(p.cost_price) }}đ</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div v-if="disSelectedProduct" class="mt-2 text-sm text-gray-600 bg-orange-50 px-3 py-2 rounded border border-orange-200">
+                            <strong>{{ disSelectedProduct.name }}</strong> — Giá vốn BQ: {{ formatCurrency(disSelectedProduct.cost_price) }}đ — Tồn hiện tại: {{ disSelectedProduct.stock_quantity ?? '?' }}
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block font-semibold text-sm mb-1">Số lượng *</label>
+                            <input v-model.number="disForm.quantity" type="number" min="1" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                        </div>
+                        <div>
+                            <label class="block font-semibold text-sm mb-1">Đơn giá nhập kho</label>
+                            <input v-model.number="disForm.unit_cost" type="number" min="0" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                            <p class="text-[11px] text-gray-400 mt-1">Mặc định = giá vốn BQ, có thể sửa</p>
+                        </div>
+                    </div>
+                    <div v-if="disForm.product_id && disForm.quantity && disForm.unit_cost" class="text-sm bg-orange-50 px-3 py-2 rounded border border-orange-200">
+                        Tổng giá trị bóc ra: <strong class="text-orange-700">{{ formatCurrency(disForm.unit_cost * disForm.quantity) }}đ</strong>
+                        — Giá vốn máy sẽ giảm tương ứng
+                    </div>
+                    <div>
+                        <label class="block font-semibold text-sm mb-1">Ghi chú</label>
+                        <input v-model="disForm.notes" type="text" placeholder="VD: Bóc RAM 16GB để lắp RAM 8GB" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                    </div>
+                </div>
+                <div class="flex justify-end gap-3 px-6 py-4 border-t">
+                    <button @click="showDisassembleModal = false" class="px-5 py-2 border rounded-lg text-sm font-semibold">Hủy</button>
+                    <button @click="submitDisassemble" :disabled="!disForm.product_id || !disForm.quantity" class="px-5 py-2 bg-orange-500 text-white rounded-lg text-sm font-semibold hover:bg-orange-600 disabled:opacity-50">Bóc linh kiện</button>
                 </div>
             </div>
         </div>

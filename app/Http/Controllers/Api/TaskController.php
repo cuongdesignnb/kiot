@@ -245,6 +245,43 @@ class TaskController extends Controller
     }
 
     /**
+     * Bóc linh kiện từ máy — nhập vào tồn kho.
+     */
+    public function disassemblePart(Request $request, Task $task)
+    {
+        if (!$task->is_repair) {
+            return response()->json(['message' => 'Chỉ phiếu sửa chữa mới có thể bóc linh kiện.'], 422);
+        }
+
+        $data = $request->validate([
+            'product_id' => 'required|exists:products,id',
+            'quantity'   => 'required|integer|min:1',
+            'unit_cost'  => 'nullable|numeric|min:0',
+            'notes'      => 'nullable|string|max:500',
+        ]);
+
+        try {
+            $part = $this->service->disassemblePart(
+                $task,
+                $data['product_id'],
+                $data['quantity'],
+                isset($data['unit_cost']) ? (float) $data['unit_cost'] : null,
+                $data['notes'] ?? null,
+                $request->user()?->id
+            );
+            $part->load('product:id,name,sku');
+            $task->refresh();
+
+            return response()->json([
+                'part' => $part,
+                'task' => $task->only(['parts_cost', 'total_cost']),
+            ], 201);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+    }
+
+    /**
      * Cập nhật tiến độ.
      */
     public function updateProgress(Request $request, Task $task)

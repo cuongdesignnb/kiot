@@ -160,7 +160,9 @@ class Task extends Model
 
     public function recalculateCosts(): void
     {
-        $this->parts_cost = $this->parts()->sum('total_cost');
+        $exportCost = $this->parts()->where('direction', 'export')->sum('total_cost');
+        $importCost = $this->parts()->where('direction', 'import')->sum('total_cost');
+        $this->parts_cost = $exportCost - $importCost;
         $this->total_cost = $this->original_cost + $this->parts_cost;
         $this->save();
     }

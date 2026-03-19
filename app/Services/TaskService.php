@@ -261,6 +261,7 @@ class TaskService
                 'total_cost' => $totalCost,
                 'exported_by' => $exportedBy,
                 'notes'      => $notes,
+                'direction'  => 'export',
             ]);
 
             $product->decrement('stock_quantity', $quantity);
@@ -311,6 +312,51 @@ class TaskService
 
             $part->delete();
             $task->recalculateCosts();
+        });
+    }
+
+    /**
+     * Bóc linh kiện từ máy — nhập vào tồn kho.
+     */
+    public function disassemblePart(Task $task, int $productId, int $quantity = 1, ?float $unitCost = null, ?string $notes = null, ?int $exportedBy = null): TaskPart
+    {
+        return DB::transaction(function () use ($task, $productId, $quantity, $unitCost, $notes, $exportedBy) {
+            $product = Product::findOrFail($productId);
+
+            // Giá mặc định = giá vốn bình quân hiện tại, có thể sửa
+            $cost = $unitCost ?? ($product->cost_price ?? 0);
+            $totalCost = $cost * $quantity;
+
+            $part = TaskPart::create([
+                'task_id'    => $task->id,
+                'product_id' => $productId,
+                'quantity'   => $quantity,
+                'unit_cost'  => $cost,
+                'total_cost' => $totalCost,
+                'exported_by' => $exportedBy,
+                'notes'      => $notes,
+                'direction'  => 'import',
+            ]);
+
+            // Cộng tồn kho linh kiện
+            $product->increment('stock_quantity', $quantity);
+
+            // Trừ giá vốn máy
+            if ($task->serial_imei_id) {
+                $serial = $task->serialImei;
+                $serial->cost_price = max(0, (float) $serial->cost_price - $totalCost);
+                $serial->save();
+            } elseif ($task->product_id) {
+                $repairedProduct = Product::find($task->product_id);
+                if ($repairedProduct) {
+                    $repairedProduct->cost_price = max(0, (float) $repairedProduct->cost_price - $totalCost);
+                    $repairedProduct->save();
+                }
+            }
+
+            $task->recalculateCosts();
+
+            return $part;
         });
     }
 

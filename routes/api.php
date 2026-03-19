@@ -293,6 +293,7 @@ Route::prefix('tasks')->group(function () {
     Route::post('/{task}/assign', [\App\Http\Controllers\Api\TaskController::class, 'assign']);
     Route::post('/{task}/parts', [\App\Http\Controllers\Api\TaskController::class, 'addPart']);
     Route::delete('/{task}/parts/{partId}', [\App\Http\Controllers\Api\TaskController::class, 'removePart']);
+    Route::post('/{task}/disassemble-part', [\App\Http\Controllers\Api\TaskController::class, 'disassemblePart']);
     Route::post('/{task}/complete', [\App\Http\Controllers\Api\TaskController::class, 'complete']);
     Route::post('/{task}/progress', [\App\Http\Controllers\Api\TaskController::class, 'updateProgress']);
     Route::post('/{task}/comments', [\App\Http\Controllers\Api\TaskController::class, 'addComment']);

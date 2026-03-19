@@ -16,6 +16,7 @@ class TaskPart extends Model
         'total_cost',
         'exported_by',
         'notes',
+        'direction',
     ];
 
     protected $casts = [
