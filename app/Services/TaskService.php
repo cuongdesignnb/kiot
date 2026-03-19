@@ -266,19 +266,18 @@ class TaskService
             $product->decrement('stock_quantity', $quantity);
             $task->recalculateCosts();
 
-            // Cộng giá vốn vào serial (repair only)
+            // Cộng giá vốn vào đúng nơi (repair only)
             if ($task->serial_imei_id) {
+                // Sản phẩm có serial → cộng vào giá vốn serial cụ thể đó, KHÔNG cộng vào product chung
                 $serial = $task->serialImei;
                 $serial->cost_price = (float) $serial->cost_price + $totalCost;
                 $serial->save();
-
-                // Cập nhật giá vốn sản phẩm gốc (product bị sửa chữa)
-                if ($task->product_id) {
-                    $repairedProduct = Product::find($task->product_id);
-                    if ($repairedProduct) {
-                        $repairedProduct->cost_price = (float) $repairedProduct->cost_price + $totalCost;
-                        $repairedProduct->save();
-                    }
+            } elseif ($task->product_id) {
+                // Sản phẩm không theo dõi serial → cộng vào giá vốn product chung
+                $repairedProduct = Product::find($task->product_id);
+                if ($repairedProduct) {
+                    $repairedProduct->cost_price = (float) $repairedProduct->cost_price + $totalCost;
+                    $repairedProduct->save();
                 }
             }
 
@@ -297,17 +296,16 @@ class TaskService
             Product::where('id', $part->product_id)->increment('stock_quantity', $part->quantity);
 
             if ($task->serial_imei_id) {
+                // Sản phẩm có serial → trừ từ giá vốn serial cụ thể
                 $serial = $task->serialImei;
                 $serial->cost_price = max(0, (float) $serial->cost_price - (float) $part->total_cost);
                 $serial->save();
-
-                // Trừ giá vốn sản phẩm gốc
-                if ($task->product_id) {
-                    $repairedProduct = Product::find($task->product_id);
-                    if ($repairedProduct) {
-                        $repairedProduct->cost_price = max(0, (float) $repairedProduct->cost_price - (float) $part->total_cost);
-                        $repairedProduct->save();
-                    }
+            } elseif ($task->product_id) {
+                // Sản phẩm không theo dõi serial → trừ từ giá vốn product chung
+                $repairedProduct = Product::find($task->product_id);
+                if ($repairedProduct) {
+                    $repairedProduct->cost_price = max(0, (float) $repairedProduct->cost_price - (float) $part->total_cost);
+                    $repairedProduct->save();
                 }
             }
 
