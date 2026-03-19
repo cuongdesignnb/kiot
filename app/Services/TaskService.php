@@ -271,6 +271,15 @@ class TaskService
                 $serial = $task->serialImei;
                 $serial->cost_price = (float) $serial->cost_price + $totalCost;
                 $serial->save();
+
+                // Cập nhật giá vốn sản phẩm gốc (product bị sửa chữa)
+                if ($task->product_id) {
+                    $repairedProduct = Product::find($task->product_id);
+                    if ($repairedProduct) {
+                        $repairedProduct->cost_price = (float) $repairedProduct->cost_price + $totalCost;
+                        $repairedProduct->save();
+                    }
+                }
             }
 
             return $part;
@@ -291,6 +300,15 @@ class TaskService
                 $serial = $task->serialImei;
                 $serial->cost_price = max(0, (float) $serial->cost_price - (float) $part->total_cost);
                 $serial->save();
+
+                // Trừ giá vốn sản phẩm gốc
+                if ($task->product_id) {
+                    $repairedProduct = Product::find($task->product_id);
+                    if ($repairedProduct) {
+                        $repairedProduct->cost_price = max(0, (float) $repairedProduct->cost_price - (float) $part->total_cost);
+                        $repairedProduct->save();
+                    }
+                }
             }
 
             $part->delete();
