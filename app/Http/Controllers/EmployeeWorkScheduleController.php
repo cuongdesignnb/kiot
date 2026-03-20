@@ -67,4 +67,20 @@ class EmployeeWorkScheduleController extends Controller
         $schedule->delete();
         return response()->json(['success' => true]);
     }
+
+    public function bulkDestroy(Request $request)
+    {
+        $data = $request->validate([
+            'employee_id' => 'required|integer',
+            'from' => 'required|date',
+            'to' => 'required|date',
+        ]);
+
+        $deleted = EmployeeWorkSchedule::where('employee_id', $data['employee_id'])
+            ->whereDate('work_date', '>=', $data['from'])
+            ->whereDate('work_date', '<=', $data['to'])
+            ->delete();
+
+        return response()->json(['success' => true, 'deleted' => $deleted]);
+    }
 }

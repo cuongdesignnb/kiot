@@ -72,8 +72,9 @@ class TimekeepingRecordController extends Controller
             $scheduleEnd->addDay(); // ca đêm
 
         // Tính checkIn / checkOut từ input
-        $checkInAt = !empty($data['check_in_time']) ? Carbon::parse($schedule->work_date . ' ' . $data['check_in_time']) : null;
-        $checkOutAt = !empty($data['check_out_time']) ? Carbon::parse($schedule->work_date . ' ' . $data['check_out_time']) : null;
+        $dateStr = Carbon::parse($schedule->work_date)->toDateString(); // '2026-03-20' without time
+        $checkInAt = !empty($data['check_in_time']) ? Carbon::parse($dateStr . ' ' . $data['check_in_time']) : null;
+        $checkOutAt = !empty($data['check_out_time']) ? Carbon::parse($dateStr . ' ' . $data['check_out_time']) : null;
         if ($checkOutAt && $checkInAt && $checkOutAt <= $checkInAt)
             $checkOutAt->addDay(); // ca đêm
 

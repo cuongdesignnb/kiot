@@ -20,6 +20,9 @@ const selectedProductIds = ref([]);
 const showTransferModal = ref(false);
 const transferCategoryId = ref('');
 const transferLoading = ref(false);
+const showNewCategoryInTransfer = ref(false);
+const newTransferCategoryName = ref('');
+const creatingTransferCategory = ref(false);
 
 const allSelected = computed(() => {
     const data = props.products?.data || [];
@@ -49,6 +52,8 @@ const openTransferModal = () => {
     showTransferModal.value = true;
 };
 
+const localCategories = ref([...(props.categories || [])]);
+
 const flatCategories = computed(() => {
     const result = [];
     const flatten = (cats, prefix = '') => {
@@ -57,9 +62,27 @@ const flatCategories = computed(() => {
             if (c.children?.length) flatten(c.children, prefix + c.name + ' > ');
         });
     };
-    flatten(props.categories);
+    flatten(localCategories.value);
     return result;
 });
+
+const quickCreateTransferCategory = async () => {
+    if (!newTransferCategoryName.value.trim()) return;
+    creatingTransferCategory.value = true;
+    try {
+        const res = await axios.post('/categories/quick-store', { name: newTransferCategoryName.value.trim() });
+        if (res.data.success) {
+            const cat = res.data.category;
+            localCategories.value.push({ ...cat, children: [] });
+            transferCategoryId.value = cat.id;
+            newTransferCategoryName.value = '';
+            showNewCategoryInTransfer.value = false;
+        }
+    } catch (e) {
+        alert(e.response?.data?.message || 'Lỗi tạo nhóm hàng');
+    }
+    creatingTransferCategory.value = false;
+};
 
 const submitTransfer = async () => {
     if (!transferCategoryId.value || selectedProductIds.value.length === 0) return;
@@ -1782,11 +1805,24 @@ const formatDate = (val) => {
                             Chuyển <strong>{{ selectedProductIds.length }}</strong> sản phẩm đã chọn sang nhóm hàng mới.
                         </p>
                         <div>
-                            <label class="block font-semibold text-sm mb-2">Nhóm hàng đích *</label>
+                            <div class="flex items-center justify-between mb-2">
+                                <label class="block font-semibold text-sm">Nhóm hàng đích *</label>
+                                <button @click="showNewCategoryInTransfer = !showNewCategoryInTransfer" type="button" class="text-blue-600 hover:text-blue-700 text-sm font-medium flex items-center gap-1">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                                    Thêm nhóm mới
+                                </button>
+                            </div>
                             <select v-model="transferCategoryId" class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:border-blue-500 outline-none bg-white">
                                 <option value="">-- Chọn nhóm hàng --</option>
                                 <option v-for="c in flatCategories" :key="c.id" :value="c.id">{{ c.name }}</option>
                             </select>
+                            <!-- Inline quick create category -->
+                            <div v-if="showNewCategoryInTransfer" class="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                                <div class="flex gap-2">
+                                    <input v-model="newTransferCategoryName" @keyup.enter="quickCreateTransferCategory" type="text" placeholder="Tên nhóm hàng mới" class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
+                                    <button @click="quickCreateTransferCategory" :disabled="creatingTransferCategory || !newTransferCategoryName.trim()" class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap">Tạo</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div class="flex justify-end gap-3 px-6 py-4 border-t bg-gray-50 rounded-b-xl">

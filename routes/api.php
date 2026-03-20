@@ -160,6 +160,7 @@ Route::prefix('shifts')->group(function () {
 Route::prefix('employee-schedules')->group(function () {
     Route::get('/', [EmployeeWorkScheduleController::class, 'index']);
     Route::post('/', [EmployeeWorkScheduleController::class, 'store']);
+    Route::post('/bulk-destroy', [EmployeeWorkScheduleController::class, 'bulkDestroy']);
     Route::delete('/{id}', [EmployeeWorkScheduleController::class, 'destroy']);
 });
 

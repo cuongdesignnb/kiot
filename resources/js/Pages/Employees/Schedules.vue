@@ -63,14 +63,24 @@
                 >
                   <!-- Cột NV Cố định -->
                   <td class="px-6 py-4 whitespace-nowrap sticky left-0 bg-white border-r border-gray-200 z-10">
-                    <div class="flex items-center">
-                      <div class="flex-shrink-0 h-10 w-10 flex items-center justify-center rounded-full bg-blue-100 text-blue-600 font-bold">
-                          {{ employee.name.charAt(0) }}
+                    <div class="flex items-center justify-between">
+                      <div class="flex items-center">
+                        <div class="flex-shrink-0 h-10 w-10 flex items-center justify-center rounded-full bg-blue-100 text-blue-600 font-bold">
+                            {{ employee.name.charAt(0) }}
+                        </div>
+                        <div class="ml-4">
+                          <div class="text-sm font-medium text-gray-900">{{ employee.name }}</div>
+                          <div class="text-xs text-gray-500">{{ employee.code }}</div>
+                        </div>
                       </div>
-                      <div class="ml-4">
-                        <div class="text-sm font-medium text-gray-900">{{ employee.name }}</div>
-                        <div class="text-xs text-gray-500">{{ employee.code }}</div>
-                      </div>
+                      <button
+                        v-if="getEmployeeScheduleCount(employee.id) > 0"
+                        @click.stop="clearEmployeeSchedules(employee)"
+                        class="ml-2 text-gray-400 hover:text-red-500 transition p-1 rounded hover:bg-red-50"
+                        title="Xóa hết lịch tuần này"
+                      >
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                      </button>
                     </div>
                   </td>
 
@@ -437,7 +447,7 @@ const fetchSchedules = async () => {
 }
 
 const getSchedules = (employeeId, dateStr) => {
-    return serverSchedules.value.filter(s => s.employee_id === employeeId && s.work_date === dateStr)
+    return serverSchedules.value.filter(s => s.employee_id === employeeId && (s.work_date || '').substring(0, 10) === dateStr)
 }
 
 const changeWeek = (offset) => {
@@ -603,7 +613,7 @@ const saveSchedule = async () => {
             for (const d of dates) {
                 let slotCounter = form.id ? form.slot : 1
                 if (!form.id) {
-                    const existing = serverSchedules.value.filter(s => s.employee_id === empId && s.work_date === d)
+                    const existing = serverSchedules.value.filter(s => s.employee_id === empId && (s.work_date || '').substring(0, 10) === d)
                     slotCounter = existing.length > 0 ? Math.max(...existing.map(s => s.slot || 0)) + 1 : 1
                 }
 
@@ -634,6 +644,24 @@ const saveSchedule = async () => {
         console.error(e)
     } finally {
         isSaving.value = false
+    }
+}
+
+const getEmployeeScheduleCount = (employeeId) => {
+    return serverSchedules.value.filter(s => s.employee_id === employeeId).length
+}
+
+const clearEmployeeSchedules = async (employee) => {
+    if (!confirm(`Xóa hết lịch làm việc tuần này của ${employee.name}?`)) return
+    try {
+        await axios.post('/api/employee-schedules/bulk-destroy', {
+            employee_id: employee.id,
+            from: weekStart.value,
+            to: weekEnd.value
+        })
+        await fetchSchedules()
+    } catch (e) {
+        alert('Lỗi khi xóa lịch: ' + (e.response?.data?.message || e.message))
     }
 }
 
