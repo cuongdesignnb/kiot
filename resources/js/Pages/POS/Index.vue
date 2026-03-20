@@ -74,6 +74,11 @@ const handleSearchInput = () => {
 
 // Add product to cart
 const addToCart = (product) => {
+    // Block products with 0 sellable stock (all units in repair)
+    if (product.has_serial && product.sellable_quantity !== undefined && product.sellable_quantity <= 0) {
+        alert(`Sản phẩm "${product.name}" hiện có ${product.repairing_count} máy đang sửa, không còn máy sẵn bán!`);
+        return;
+    }
     const existingItem = cart.value.find(item => item.product.id === product.id);
     if (existingItem) {
         existingItem.quantity += 1;
@@ -199,10 +204,14 @@ const processCheckout = async () => {
                     
                     <!-- Quick Dropdown Search Results -->
                     <div v-if="query && products.length > 0" class="absolute left-0 right-0 top-full mt-1 bg-white shadow-lg rounded border border-gray-200 p-2 z-50 max-h-60 overflow-y-auto">
-                        <div v-for="product in products" :key="'dd-'+product.id" @click="addToCart(product); query=''" class="flex items-center justify-between p-2 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-0">
+                        <div v-for="product in products" :key="'dd-'+product.id" @click="addToCart(product); query=''" class="flex items-center justify-between p-2 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-0" :class="product.has_serial && product.sellable_quantity <= 0 ? 'opacity-50 cursor-not-allowed' : ''">
                             <div>
                                 <div class="font-semibold text-sm">{{ product.name }}</div>
-                                <div class="text-xs text-gray-500">{{ product.sku }} | Tồn: {{ product.stock_quantity }}</div>
+                                <div class="text-xs text-gray-500">
+                                    {{ product.sku }} | Tồn: {{ product.stock_quantity }}
+                                    <span v-if="product.repairing_count > 0" class="text-yellow-600 font-semibold">(🔧 {{ product.repairing_count }} đang sửa)</span>
+                                    <span v-if="product.has_serial && product.sellable_quantity !== undefined" class="text-green-600 font-semibold ml-1">| Sẵn bán: {{ product.sellable_quantity }}</span>
+                                </div>
                             </div>
                             <div class="text-blue-600 font-bold text-sm">{{ Number(product.retail_price).toLocaleString() }} &curren;</div>
                         </div>
@@ -299,8 +308,10 @@ const processCheckout = async () => {
                             :key="'quick-'+product.id"
                             @click="addToCart(product)"
                             class="w-32 flex-none bg-white rounded border border-gray-200 p-2 hover:border-blue-500 hover:shadow-md cursor-pointer transition-all flex flex-col shadow-sm group"
+                            :class="product.has_serial && product.sellable_quantity <= 0 ? 'opacity-40 pointer-events-none' : ''"
                         >
                             <div class="flex-1 text-sm font-semibold text-gray-800 line-clamp-3 leading-snug group-hover:text-blue-700">{{ product.name }}</div>
+                            <div v-if="product.repairing_count > 0" class="text-[10px] text-yellow-600 font-bold mt-1">🔧 {{ product.repairing_count }} sửa</div>
                             <div class="text-blue-600 font-bold mt-2 font-mono text-sm tracking-tighter">{{ Number(product.retail_price).toLocaleString() }} ₫</div>
                         </div>
                     </div>

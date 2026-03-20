@@ -62,6 +62,11 @@ class Product extends Model
         return $this->hasMany(SerialImei::class);
     }
 
+    public function serialImeis(): HasMany
+    {
+        return $this->hasMany(SerialImei::class);
+    }
+
     public function components(): BelongsToMany
     {
         return $this->belongsToMany(Product::class, 'product_combos', 'combo_product_id', 'component_product_id')

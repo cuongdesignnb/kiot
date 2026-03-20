@@ -84,7 +84,21 @@ class ProductController extends Controller
             });
         }
 
-        $products = $query->orderBy('id', 'desc')->paginate(50)->withQueryString();
+        $products = $query
+            ->withCount([
+                'serialImeis as repairing_count' => function ($q) {
+                    $q->where('status', 'in_stock')
+                      ->whereIn('repair_status', ['not_started', 'repairing']);
+                },
+                'serialImeis as ready_count' => function ($q) {
+                    $q->where('status', 'in_stock')
+                      ->where(function ($q2) {
+                          $q2->where('repair_status', 'ready')
+                             ->orWhereNull('repair_status');
+                      });
+                },
+            ])
+            ->orderBy('id', 'desc')->paginate(50)->withQueryString();
 
         return Inertia::render('Welcome', [
             'products' => $products,

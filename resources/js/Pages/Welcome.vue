@@ -508,6 +508,10 @@ const formatDate = (val) => {
                                     <span class="font-bold text-gray-800">{{
                                         product.stock_quantity || 0
                                     }}</span>
+                                    <div v-if="product.has_serial && (product.ready_count > 0 || product.repairing_count > 0)" class="flex items-center justify-end gap-1.5 mt-0.5">
+                                        <span v-if="product.ready_count > 0" class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 font-semibold" title="Sẵn bán">✓ {{ product.ready_count }}</span>
+                                        <span v-if="product.repairing_count > 0" class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 font-semibold" title="Đang sửa">🔧 {{ product.repairing_count }}</span>
+                                    </div>
                                 </td>
                             </tr>
                             <tr
@@ -1213,13 +1217,17 @@ const formatDate = (val) => {
                                                         v-for="s in product.serialsData"
                                                         :key="s.id"
                                                         class="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 last:border-b-0 hover:bg-gray-50/50 text-[13px]"
+                                                        :class="s.repair_status === 'repairing' || s.repair_status === 'not_started' ? 'bg-yellow-50/50' : ''"
                                                     >
-                                                        <span
-                                                            class="font-medium text-gray-800"
-                                                            >{{
-                                                                s.serial_number
-                                                            }}</span
-                                                        >
+                                                        <div class="flex items-center gap-2">
+                                                            <span
+                                                                class="font-medium"
+                                                                :class="s.repair_status === 'repairing' || s.repair_status === 'not_started' ? 'text-orange-700' : 'text-gray-800'"
+                                                            >{{ s.serial_number }}</span>
+                                                            <span v-if="s.repair_status === 'repairing'" class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 font-bold">🔧 Đang sửa</span>
+                                                            <span v-else-if="s.repair_status === 'not_started'" class="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-600 font-bold">⏳ Chờ sửa</span>
+                                                            <span v-else-if="s.repair_status === 'ready'" class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-600 font-bold">✓ Sẵn bán</span>
+                                                        </div>
                                                         <span
                                                             :class="[
                                                                 'text-[12px] font-medium',
