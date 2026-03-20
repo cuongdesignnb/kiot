@@ -14,31 +14,21 @@ const task = ref(null);
 const loading = ref(true);
 const activeTab = ref("info");
 
-// Part modal (add) — multi-line
+// Part modal (add)
 const showPartModal = ref(false);
-const partItems = ref([]);
+const partForm = ref({ product_id: null, quantity: 1, notes: "" });
 const partError = ref("");
-const partSearchIdx = ref(-1);
-const partSearchQuery = ref("");
-const partSearchResults = ref([]);
+const productSearch = ref("");
+const productResults = ref([]);
+const selectedProduct = ref(null);
 
-// Disassemble modal (bóc máy) — multi-line
+// Disassemble modal (bóc máy)
 const showDisassembleModal = ref(false);
-const disItems = ref([]);
+const disForm = ref({ product_id: null, quantity: 1, unit_cost: 0, notes: "" });
 const disError = ref("");
-const disSearchIdx = ref(-1);
-const disSearchQuery = ref("");
-const disSearchResults = ref([]);
-
-// Quick create product
-const showQuickCreate = ref(false);
-const quickCreateFor = ref(""); // 'add' or 'dis'
-const quickProduct = ref({ name: "", cost_price: 0 });
-const quickCreateError = ref("");
-
-// Helpers
-const newPartRow = () => ({ product_id: null, product_name: "", quantity: 1, notes: "", cost_price: 0, stock_quantity: 0 });
-const newDisRow = () => ({ product_id: null, product_name: "", quantity: 1, unit_cost: 0, notes: "", stock_quantity: 0 });
+const disProductSearch = ref("");
+const disProductResults = ref([]);
+const disSelectedProduct = ref(null);
 
 // Assign modal
 const showAssignModal = ref(false);
@@ -97,113 +87,58 @@ const assignmentStatusBadge = (status) => {
     return map[status] || { label: status, cls: "bg-gray-100 text-gray-600" };
 };
 
-// ── Product search (shared for both modals) ──
-let searchTimeout;
-const doProductSearch = (query, target) => {
-    clearTimeout(searchTimeout);
-    if (!query || query.length < 2) {
-        if (target === 'add') partSearchResults.value = [];
-        else disSearchResults.value = [];
-        return;
-    }
-    searchTimeout = setTimeout(async () => {
+// Product search for parts (add)
+let prodTimeout;
+watch(productSearch, (val) => {
+    clearTimeout(prodTimeout);
+    if (!val || val.length < 2) { productResults.value = []; return; }
+    prodTimeout = setTimeout(async () => {
         try {
-            const res = await axios.get("/api/tasks/search-products", { params: { q: query } });
-            if (target === 'add') partSearchResults.value = res.data || [];
-            else disSearchResults.value = res.data || [];
-        } catch (e) {
-            if (target === 'add') partSearchResults.value = [];
-            else disSearchResults.value = [];
-        }
+            const res = await axios.get("/api/tasks/search-products", { params: { q: val } });
+            productResults.value = res.data || [];
+        } catch (e) { productResults.value = []; }
     }, 300);
+});
+
+const selectProduct = (p) => {
+    selectedProduct.value = p;
+    partForm.value.product_id = p.id;
+    productSearch.value = p.name;
+    productResults.value = [];
 };
 
-const onPartSearch = (idx) => {
-    partSearchIdx.value = idx;
-    doProductSearch(partSearchQuery.value, 'add');
-};
-const selectPartProduct = (p, idx) => {
-    partItems.value[idx].product_id = p.id;
-    partItems.value[idx].product_name = p.name;
-    partItems.value[idx].cost_price = p.cost_price || 0;
-    partItems.value[idx].stock_quantity = p.stock_quantity ?? 0;
-    partSearchResults.value = [];
-    partSearchIdx.value = -1;
-    partSearchQuery.value = "";
+// Product search for disassemble (bóc máy)
+let disProdTimeout;
+watch(disProductSearch, (val) => {
+    clearTimeout(disProdTimeout);
+    if (!val || val.length < 2) { disProductResults.value = []; return; }
+    disProdTimeout = setTimeout(async () => {
+        try {
+            const res = await axios.get("/api/tasks/search-products", { params: { q: val } });
+            disProductResults.value = res.data || [];
+        } catch (e) { disProductResults.value = []; }
+    }, 300);
+});
+
+const selectDisProduct = (p) => {
+    disSelectedProduct.value = p;
+    disForm.value.product_id = p.id;
+    disForm.value.unit_cost = p.cost_price || 0;
+    disProductSearch.value = p.name;
+    disProductResults.value = [];
 };
 
-const onDisSearch = (idx) => {
-    disSearchIdx.value = idx;
-    doProductSearch(disSearchQuery.value, 'dis');
-};
-const selectDisProduct = (p, idx) => {
-    disItems.value[idx].product_id = p.id;
-    disItems.value[idx].product_name = p.name;
-    disItems.value[idx].unit_cost = p.cost_price || 0;
-    disItems.value[idx].stock_quantity = p.stock_quantity ?? 0;
-    disSearchResults.value = [];
-    disSearchIdx.value = -1;
-    disSearchQuery.value = "";
-};
-
-// ── Quick Create Product ──
-const openQuickCreate = (target) => {
-    quickCreateFor.value = target;
-    quickProduct.value = { name: "", cost_price: 0 };
-    quickCreateError.value = "";
-    showQuickCreate.value = true;
-};
-const submitQuickProduct = async () => {
-    quickCreateError.value = "";
-    if (!quickProduct.value.name.trim()) { quickCreateError.value = "Nhập tên sản phẩm."; return; }
-    try {
-        const res = await axios.post("/api/tasks/quick-create-product", quickProduct.value);
-        const p = res.data;
-        // Add to the current modal's items
-        if (quickCreateFor.value === 'add') {
-            partItems.value.push({ product_id: p.id, product_name: p.name, quantity: 1, notes: "", cost_price: p.cost_price || 0, stock_quantity: 0 });
-        } else {
-            disItems.value.push({ product_id: p.id, product_name: p.name, quantity: 1, unit_cost: p.cost_price || 0, notes: "", stock_quantity: 0 });
-        }
-        showQuickCreate.value = false;
-    } catch (e) {
-        quickCreateError.value = e.response?.data?.message || "Lỗi tạo sản phẩm.";
-    }
-};
-
-// ── Submit batch add ──
-const submitAddParts = async () => {
+const submitAddPart = async () => {
     partError.value = "";
-    const validItems = partItems.value.filter(i => i.product_id && i.quantity > 0);
-    if (!validItems.length) { partError.value = "Thêm ít nhất 1 linh kiện."; return; }
     try {
-        const res = await axios.post(`/api/tasks/${props.taskId}/batch-parts`, { items: validItems });
-        if (res.data.errors?.length) {
-            partError.value = res.data.errors.join("\n");
-        } else {
-            showPartModal.value = false;
-        }
+        await axios.post(`/api/tasks/${props.taskId}/parts`, partForm.value);
+        showPartModal.value = false;
+        partForm.value = { product_id: null, quantity: 1, notes: "" };
+        selectedProduct.value = null;
+        productSearch.value = "";
         loadTask();
     } catch (e) {
         partError.value = e.response?.data?.message || "Lỗi khi thêm linh kiện.";
-    }
-};
-
-// ── Submit batch disassemble ──
-const submitDisassembleParts = async () => {
-    disError.value = "";
-    const validItems = disItems.value.filter(i => i.product_id && i.quantity > 0);
-    if (!validItems.length) { disError.value = "Thêm ít nhất 1 linh kiện."; return; }
-    try {
-        const res = await axios.post(`/api/tasks/${props.taskId}/batch-disassemble`, { items: validItems });
-        if (res.data.errors?.length) {
-            disError.value = res.data.errors.join("\n");
-        } else {
-            showDisassembleModal.value = false;
-        }
-        loadTask();
-    } catch (e) {
-        disError.value = e.response?.data?.message || "Lỗi khi bóc linh kiện.";
     }
 };
 
@@ -217,20 +152,26 @@ const removePart = async (partId) => {
     }
 };
 
-const openPartModal = () => {
-    partError.value = '';
-    partItems.value = [newPartRow()];
-    partSearchIdx.value = -1;
-    partSearchQuery.value = "";
-    partSearchResults.value = [];
-    showPartModal.value = true;
+// Disassemble submit
+const submitDisassemble = async () => {
+    disError.value = "";
+    try {
+        await axios.post(`/api/tasks/${props.taskId}/disassemble-part`, disForm.value);
+        showDisassembleModal.value = false;
+        disForm.value = { product_id: null, quantity: 1, unit_cost: 0, notes: "" };
+        disSelectedProduct.value = null;
+        disProductSearch.value = "";
+        loadTask();
+    } catch (e) {
+        disError.value = e.response?.data?.message || "Lỗi khi bóc linh kiện.";
+    }
 };
+
 const openDisassembleModal = () => {
     disError.value = '';
-    disItems.value = [newDisRow()];
-    disSearchIdx.value = -1;
-    disSearchQuery.value = "";
-    disSearchResults.value = [];
+    disSelectedProduct.value = null;
+    disProductSearch.value = '';
+    disForm.value = { product_id: null, quantity: 1, unit_cost: 0, notes: '' };
     showDisassembleModal.value = true;
 };
 
@@ -348,7 +289,7 @@ loadTask();
                     </div>
                     <div class="flex gap-2">
                         <button v-if="isActive" @click="openAssignModal" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700">Giao NV</button>
-                        <button v-if="isActive && task.type === 'repair'" @click="openPartModal" class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700">+ Lắp LK</button>
+                        <button v-if="isActive && task.type === 'repair'" @click="showPartModal = true; partError = ''; selectedProduct = null; productSearch = ''; partForm = { product_id: null, quantity: 1, notes: '' }" class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700">+ Lắp LK</button>
                         <button v-if="isActive && task.type === 'repair'" @click="openDisassembleModal" class="px-4 py-2 bg-orange-500 text-white rounded-lg text-sm font-semibold hover:bg-orange-600">↑ Bóc LK</button>
                         <button v-if="isActive" @click="markComplete" class="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700">Hoàn thành</button>
                         <button v-if="isActive" @click="cancelTask" class="px-4 py-2 bg-red-50 text-red-600 rounded-lg text-sm font-semibold hover:bg-red-100 border border-red-200">Hủy</button>
@@ -472,7 +413,7 @@ loadTask();
                         <h3 class="font-bold text-gray-800">Linh kiện</h3>
                         <div class="flex gap-2 items-center">
                             <span class="text-sm text-gray-500">{{ task.parts?.length || 0 }} mục</span>
-                            <button v-if="isActive" @click="openPartModal" class="text-xs text-blue-600 font-semibold hover:underline">+ Lắp LK</button>
+                            <button v-if="isActive" @click="showPartModal = true; partError = ''; selectedProduct = null; productSearch = ''; partForm = { product_id: null, quantity: 1, notes: '' }" class="text-xs text-blue-600 font-semibold hover:underline">+ Lắp LK</button>
                             <button v-if="isActive" @click="openDisassembleModal" class="text-xs text-orange-600 font-semibold hover:underline">↑ Bóc LK</button>
                         </div>
                     </div>
@@ -542,171 +483,94 @@ loadTask();
             </template>
         </div>
 
-        <!-- Add Part Modal (Multi-line) -->
+        <!-- Add Part Modal -->
         <div v-if="showPartModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-            <div class="bg-white rounded-xl shadow-2xl w-full max-w-3xl mx-4">
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4">
                 <div class="flex items-center justify-between px-6 py-4 border-b">
-                    <h2 class="text-lg font-bold">Lắp linh kiện vào máy</h2>
+                    <h2 class="text-lg font-bold">Thêm linh kiện</h2>
                     <button @click="showPartModal = false" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
                 </div>
-                <div class="px-6 py-4">
-                    <div v-if="partError" class="text-red-500 text-sm bg-red-50 px-3 py-2 rounded mb-3 whitespace-pre-wrap">{{ partError }}</div>
-                    <!-- Items table -->
-                    <table class="w-full text-sm mb-3">
-                        <thead class="bg-gray-50 text-gray-600 uppercase text-xs">
-                            <tr>
-                                <th class="px-3 py-2 text-left w-2/5">Sản phẩm</th>
-                                <th class="px-3 py-2 text-center w-16">SL</th>
-                                <th class="px-3 py-2 text-right">Giá vốn</th>
-                                <th class="px-3 py-2 text-right">Tồn kho</th>
-                                <th class="px-3 py-2 text-left">Ghi chú</th>
-                                <th class="px-3 py-2 w-10"></th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="(item, idx) in partItems" :key="idx" class="border-t">
-                                <td class="px-3 py-2">
-                                    <div v-if="item.product_id" class="flex items-center gap-2">
-                                        <span class="font-medium">{{ item.product_name }}</span>
-                                        <button @click="item.product_id = null; item.product_name = ''" class="text-gray-400 hover:text-red-500 text-xs">✕</button>
-                                    </div>
-                                    <div v-else class="relative">
-                                        <input v-model="partSearchQuery" @input="onPartSearch(idx)" @focus="onPartSearch(idx)" type="text" placeholder="Tìm sản phẩm..." class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:border-blue-500 outline-none" />
-                                        <div v-if="partSearchIdx === idx && partSearchResults.length" class="absolute z-20 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-40 overflow-auto">
-                                            <div v-for="p in partSearchResults" :key="p.id" @click="selectPartProduct(p, idx)" class="px-3 py-2 hover:bg-blue-50 cursor-pointer text-sm flex justify-between">
-                                                <span>{{ p.name }}</span><span class="text-gray-400">{{ formatCurrency(p.cost_price) }}đ</span>
-                                            </div>
-                                        </div>
-                                        <div v-if="partSearchIdx === idx && partSearchQuery.length >= 2 && !partSearchResults.length" class="absolute z-20 w-full bg-white border rounded-lg shadow-lg mt-1 px-3 py-2 text-sm text-gray-500">
-                                            Không tìm thấy sản phẩm.
-                                        </div>
-                                    </div>
-                                </td>
-                                <td class="px-3 py-2 text-center">
-                                    <input v-model.number="item.quantity" type="number" min="1" class="w-14 border border-gray-300 rounded px-2 py-1 text-sm text-center" />
-                                </td>
-                                <td class="px-3 py-2 text-right text-gray-600">{{ formatCurrency(item.cost_price) }}</td>
-                                <td class="px-3 py-2 text-right text-gray-500">{{ item.stock_quantity }}</td>
-                                <td class="px-3 py-2">
-                                    <input v-model="item.notes" type="text" placeholder="Ghi chú..." class="w-full border border-gray-200 rounded px-2 py-1 text-sm" />
-                                </td>
-                                <td class="px-3 py-2 text-center">
-                                    <button v-if="partItems.length > 1" @click="partItems.splice(idx, 1)" class="text-red-400 hover:text-red-600">✕</button>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                    <div class="flex gap-2">
-                        <button @click="partItems.push(newPartRow())" class="text-sm text-blue-600 font-semibold hover:underline">+ Thêm dòng</button>
+                <div class="px-6 py-5 space-y-4">
+                    <div v-if="partError" class="text-red-500 text-sm bg-red-50 px-3 py-2 rounded">{{ partError }}</div>
+                    <div>
+                        <label class="block font-semibold text-sm mb-1">Sản phẩm *</label>
+                        <div class="relative">
+                            <input v-model="productSearch" type="text" placeholder="Nhập tên sản phẩm..." class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
+                            <div v-if="productResults.length" class="absolute z-10 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-48 overflow-auto">
+                                <div v-for="p in productResults" :key="p.id" @click="selectProduct(p)" class="px-3 py-2 hover:bg-blue-50 cursor-pointer text-sm flex justify-between">
+                                    <span>{{ p.name }}</span><span class="text-gray-400">{{ formatCurrency(p.cost_price) }}đ</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div v-if="selectedProduct" class="mt-2 text-sm text-gray-600 bg-gray-50 px-3 py-2 rounded">
+                            <strong>{{ selectedProduct.name }}</strong> — Giá vốn: {{ formatCurrency(selectedProduct.cost_price) }}đ — Tồn: {{ selectedProduct.stock_quantity ?? '?' }}
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block font-semibold text-sm mb-1">Số lượng *</label>
+                        <input v-model.number="partForm.quantity" type="number" min="1" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                    </div>
+                    <div>
+                        <label class="block font-semibold text-sm mb-1">Ghi chú</label>
+                        <input v-model="partForm.notes" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
                     </div>
                 </div>
                 <div class="flex justify-end gap-3 px-6 py-4 border-t">
                     <button @click="showPartModal = false" class="px-5 py-2 border rounded-lg text-sm font-semibold">Hủy</button>
-                    <button @click="submitAddParts" :disabled="!partItems.some(i => i.product_id && i.quantity > 0)" class="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">
-                        Xuất {{ partItems.filter(i => i.product_id).length }} linh kiện
-                    </button>
+                    <button @click="submitAddPart" :disabled="!partForm.product_id || !partForm.quantity" class="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">Xuất linh kiện</button>
                 </div>
             </div>
         </div>
 
-        <!-- Disassemble Part Modal (Multi-line, Bóc máy) -->
+        <!-- Assign Modal -->
+
+        <!-- Disassemble Part Modal (Bóc máy) -->
         <div v-if="showDisassembleModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-            <div class="bg-white rounded-xl shadow-2xl w-full max-w-3xl mx-4">
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4">
                 <div class="flex items-center justify-between px-6 py-4 border-b bg-orange-50">
                     <h2 class="text-lg font-bold text-orange-700">↑ Bóc linh kiện từ máy</h2>
                     <button @click="showDisassembleModal = false" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
                 </div>
-                <div class="px-6 py-4">
-                    <div v-if="disError" class="text-red-500 text-sm bg-red-50 px-3 py-2 rounded mb-3 whitespace-pre-wrap">{{ disError }}</div>
-                    <p class="text-xs text-gray-500 bg-gray-50 px-3 py-2 rounded mb-3">Linh kiện bóc ra sẽ được <strong>nhập vào tồn kho</strong>. Giá vốn máy sẽ giảm tương ứng.</p>
-                    <!-- Items table -->
-                    <table class="w-full text-sm mb-3">
-                        <thead class="bg-gray-50 text-gray-600 uppercase text-xs">
-                            <tr>
-                                <th class="px-3 py-2 text-left w-2/5">Sản phẩm</th>
-                                <th class="px-3 py-2 text-center w-14">SL</th>
-                                <th class="px-3 py-2 text-right">Đơn giá</th>
-                                <th class="px-3 py-2 text-right">Thành tiền</th>
-                                <th class="px-3 py-2 text-left">Ghi chú</th>
-                                <th class="px-3 py-2 w-10"></th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="(item, idx) in disItems" :key="idx" class="border-t">
-                                <td class="px-3 py-2">
-                                    <div v-if="item.product_id" class="flex items-center gap-2">
-                                        <span class="font-medium">{{ item.product_name }}</span>
-                                        <button @click="item.product_id = null; item.product_name = ''" class="text-gray-400 hover:text-red-500 text-xs">✕</button>
-                                    </div>
-                                    <div v-else class="relative">
-                                        <input v-model="disSearchQuery" @input="onDisSearch(idx)" @focus="onDisSearch(idx)" type="text" placeholder="Tìm sản phẩm..." class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:border-orange-500 outline-none" />
-                                        <div v-if="disSearchIdx === idx && disSearchResults.length" class="absolute z-20 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-40 overflow-auto">
-                                            <div v-for="p in disSearchResults" :key="p.id" @click="selectDisProduct(p, idx)" class="px-3 py-2 hover:bg-orange-50 cursor-pointer text-sm flex justify-between">
-                                                <span>{{ p.name }}</span><span class="text-gray-400">GV: {{ formatCurrency(p.cost_price) }}đ</span>
-                                            </div>
-                                        </div>
-                                        <div v-if="disSearchIdx === idx && disSearchQuery.length >= 2 && !disSearchResults.length" class="absolute z-20 w-full bg-white border rounded-lg shadow-lg mt-1 px-3 py-2 text-sm text-gray-500">
-                                            Không tìm thấy. <button @click="openQuickCreate('dis')" class="text-orange-600 font-semibold hover:underline">+ Tạo SP mới</button>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td class="px-3 py-2 text-center">
-                                    <input v-model.number="item.quantity" type="number" min="1" class="w-14 border border-gray-300 rounded px-2 py-1 text-sm text-center" />
-                                </td>
-                                <td class="px-3 py-2 text-right">
-                                    <input v-model.number="item.unit_cost" type="number" min="0" class="w-24 border border-gray-300 rounded px-2 py-1 text-sm text-right" />
-                                </td>
-                                <td class="px-3 py-2 text-right font-semibold text-orange-600">{{ formatCurrency(item.unit_cost * item.quantity) }}</td>
-                                <td class="px-3 py-2">
-                                    <input v-model="item.notes" type="text" placeholder="Ghi chú..." class="w-full border border-gray-200 rounded px-2 py-1 text-sm" />
-                                </td>
-                                <td class="px-3 py-2 text-center">
-                                    <button v-if="disItems.length > 1" @click="disItems.splice(idx, 1)" class="text-red-400 hover:text-red-600">✕</button>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                    <div class="flex gap-2">
-                        <button @click="disItems.push(newDisRow())" class="text-sm text-orange-600 font-semibold hover:underline">+ Thêm dòng</button>
-                        <button @click="openQuickCreate('dis')" class="text-sm text-green-600 font-semibold hover:underline">+ Tạo SP mới</button>
-                    </div>
-                </div>
-                <div class="flex justify-between items-center px-6 py-4 border-t">
-                    <div class="text-sm text-gray-500">
-                        Tổng bóc ra: <strong class="text-orange-700">{{ formatCurrency(disItems.reduce((s, i) => s + (i.unit_cost || 0) * (i.quantity || 0), 0)) }}đ</strong>
-                    </div>
-                    <div class="flex gap-3">
-                        <button @click="showDisassembleModal = false" class="px-5 py-2 border rounded-lg text-sm font-semibold">Hủy</button>
-                        <button @click="submitDisassembleParts" :disabled="!disItems.some(i => i.product_id && i.quantity > 0)" class="px-5 py-2 bg-orange-500 text-white rounded-lg text-sm font-semibold hover:bg-orange-600 disabled:opacity-50">
-                            Bóc {{ disItems.filter(i => i.product_id).length }} linh kiện
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Quick Create Product Popup -->
-        <div v-if="showQuickCreate" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/40">
-            <div class="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4">
-                <div class="flex items-center justify-between px-6 py-4 border-b bg-green-50">
-                    <h2 class="text-lg font-bold text-green-700">Tạo sản phẩm mới</h2>
-                    <button @click="showQuickCreate = false" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
-                </div>
                 <div class="px-6 py-5 space-y-4">
-                    <div v-if="quickCreateError" class="text-red-500 text-sm bg-red-50 px-3 py-2 rounded">{{ quickCreateError }}</div>
-                    <p class="text-xs text-gray-500 bg-gray-50 px-3 py-2 rounded">Sản phẩm mới sẽ được tạo trong danh mục <strong>Hàng hóa</strong> và tự động thêm vào dòng hiện tại.</p>
+                    <div v-if="disError" class="text-red-500 text-sm bg-red-50 px-3 py-2 rounded">{{ disError }}</div>
+                    <p class="text-xs text-gray-500 bg-gray-50 px-3 py-2 rounded">Linh kiện bóc ra sẽ được <strong>nhập vào tồn kho</strong>. Giá vốn máy sẽ giảm tương ứng.</p>
                     <div>
-                        <label class="block font-semibold text-sm mb-1">Tên sản phẩm *</label>
-                        <input v-model="quickProduct.name" type="text" placeholder="VD: RAM DDR4 16GB 3200MHz" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-green-500 outline-none" />
+                        <label class="block font-semibold text-sm mb-1">Sản phẩm (linh kiện bóc ra) *</label>
+                        <div class="relative">
+                            <input v-model="disProductSearch" type="text" placeholder="Nhập tên linh kiện..." class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-orange-500 outline-none" />
+                            <div v-if="disProductResults.length" class="absolute z-10 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-48 overflow-auto">
+                                <div v-for="p in disProductResults" :key="p.id" @click="selectDisProduct(p)" class="px-3 py-2 hover:bg-orange-50 cursor-pointer text-sm flex justify-between">
+                                    <span>{{ p.name }}</span><span class="text-gray-400">GV: {{ formatCurrency(p.cost_price) }}đ</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div v-if="disSelectedProduct" class="mt-2 text-sm text-gray-600 bg-orange-50 px-3 py-2 rounded border border-orange-200">
+                            <strong>{{ disSelectedProduct.name }}</strong> — Giá vốn BQ: {{ formatCurrency(disSelectedProduct.cost_price) }}đ — Tồn hiện tại: {{ disSelectedProduct.stock_quantity ?? '?' }}
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block font-semibold text-sm mb-1">Số lượng *</label>
+                            <input v-model.number="disForm.quantity" type="number" min="1" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                        </div>
+                        <div>
+                            <label class="block font-semibold text-sm mb-1">Đơn giá nhập kho</label>
+                            <input v-model.number="disForm.unit_cost" type="number" min="0" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                            <p class="text-[11px] text-gray-400 mt-1">Mặc định = giá vốn BQ, có thể sửa</p>
+                        </div>
+                    </div>
+                    <div v-if="disForm.product_id && disForm.quantity && disForm.unit_cost" class="text-sm bg-orange-50 px-3 py-2 rounded border border-orange-200">
+                        Tổng giá trị bóc ra: <strong class="text-orange-700">{{ formatCurrency(disForm.unit_cost * disForm.quantity) }}đ</strong>
+                        — Giá vốn máy sẽ giảm tương ứng
                     </div>
                     <div>
-                        <label class="block font-semibold text-sm mb-1">Giá vốn</label>
-                        <input v-model.number="quickProduct.cost_price" type="number" min="0" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                        <label class="block font-semibold text-sm mb-1">Ghi chú</label>
+                        <input v-model="disForm.notes" type="text" placeholder="VD: Bóc RAM 16GB để lắp RAM 8GB" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
                     </div>
                 </div>
                 <div class="flex justify-end gap-3 px-6 py-4 border-t">
-                    <button @click="showQuickCreate = false" class="px-5 py-2 border rounded-lg text-sm font-semibold">Hủy</button>
-                    <button @click="submitQuickProduct" :disabled="!quickProduct.name.trim()" class="px-5 py-2 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700 disabled:opacity-50">Tạo & Thêm</button>
+                    <button @click="showDisassembleModal = false" class="px-5 py-2 border rounded-lg text-sm font-semibold">Hủy</button>
+                    <button @click="submitDisassemble" :disabled="!disForm.product_id || !disForm.quantity" class="px-5 py-2 bg-orange-500 text-white rounded-lg text-sm font-semibold hover:bg-orange-600 disabled:opacity-50">Bóc linh kiện</button>
                 </div>
             </div>
         </div>

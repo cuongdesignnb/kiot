@@ -292,14 +292,11 @@ Route::prefix('tasks')->group(function () {
     Route::delete('/{task}', [\App\Http\Controllers\Api\TaskController::class, 'destroy']);
     Route::post('/{task}/assign', [\App\Http\Controllers\Api\TaskController::class, 'assign']);
     Route::post('/{task}/parts', [\App\Http\Controllers\Api\TaskController::class, 'addPart']);
-    Route::post('/{task}/batch-parts', [\App\Http\Controllers\Api\TaskController::class, 'batchAddParts']);
     Route::delete('/{task}/parts/{partId}', [\App\Http\Controllers\Api\TaskController::class, 'removePart']);
     Route::post('/{task}/disassemble-part', [\App\Http\Controllers\Api\TaskController::class, 'disassemblePart']);
-    Route::post('/{task}/batch-disassemble', [\App\Http\Controllers\Api\TaskController::class, 'batchDisassembleParts']);
     Route::post('/{task}/complete', [\App\Http\Controllers\Api\TaskController::class, 'complete']);
     Route::post('/{task}/progress', [\App\Http\Controllers\Api\TaskController::class, 'updateProgress']);
     Route::post('/{task}/comments', [\App\Http\Controllers\Api\TaskController::class, 'addComment']);
-    Route::post('/quick-create-product', [\App\Http\Controllers\Api\TaskController::class, 'quickCreateProduct']);
 });
 
 // 🔔 NOTIFICATIONS
