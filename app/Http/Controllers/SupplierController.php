@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Customer;
 use App\Models\Purchase;
+use App\Models\SupplierDebtTransaction;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
@@ -160,4 +161,188 @@ class SupplierController extends Controller
         }
         return back()->with('success', "Đã nhập {$count} nhà cung cấp từ file.");
     }
+
+    // ===== API METHODS =====
+
+    /**
+     * Lịch sử nhập/trả hàng
+     */
+    public function purchaseHistory($id)
+    {
+        $purchases = Purchase::where('supplier_id', $id)
+            ->with(['user:id,name'])
+            ->orderByDesc('purchase_date')
+            ->get()
+            ->map(function ($p) {
+                return [
+                    'id' => $p->id,
+                    'code' => $p->code,
+                    'date' => $p->purchase_date ? $p->purchase_date->format('d/m/Y H:i') : ($p->created_at ? $p->created_at->format('d/m/Y H:i') : ''),
+                    'user_name' => $p->user->name ?? 'Admin',
+                    'branch' => 'Laptopplus.vn',
+                    'total' => $p->total_amount,
+                    'status' => $p->status,
+                    'status_label' => $p->status === 'completed' ? 'Đã nhập hàng' : ($p->status === 'returned' ? 'Đã trả hàng' : ucfirst($p->status)),
+                ];
+            });
+
+        return response()->json($purchases);
+    }
+
+    /**
+     * Nợ cần trả NCC - lịch sử công nợ
+     */
+    public function debtTransactions($id)
+    {
+        // Seed debt transactions from purchases if empty
+        $this->seedDebtTransactions($id);
+
+        $transactions = SupplierDebtTransaction::where('supplier_id', $id)
+            ->orderBy('created_at')
+            ->get()
+            ->map(function ($t) {
+                $typeLabels = [
+                    'purchase' => 'Nhập hàng',
+                    'return' => 'Trả hàng',
+                    'payment' => 'Thanh toán',
+                    'adjustment' => 'Điều chỉnh',
+                    'discount' => 'Chiết khấu TT',
+                ];
+                return [
+                    'id' => $t->id,
+                    'code' => $t->code,
+                    'date' => $t->created_at->format('d/m/Y H:i'),
+                    'type' => $t->type,
+                    'type_label' => $typeLabels[$t->type] ?? $t->type,
+                    'amount' => $t->amount,
+                    'debt_remain' => $t->debt_remain,
+                    'note' => $t->note,
+                ];
+            });
+
+        return response()->json($transactions);
+    }
+
+    /**
+     * Thanh toán công nợ NCC
+     */
+    public function recordPayment(Request $request, $id)
+    {
+        $data = $request->validate([
+            'amount' => 'required|numeric|min:0.01',
+            'note' => 'nullable|string',
+        ]);
+
+        $supplier = Customer::findOrFail($id);
+        $currentDebt = $this->calculateDebt($id);
+
+        $code = 'PCPN' . date('ymd') . rand(100, 999);
+        SupplierDebtTransaction::create([
+            'supplier_id' => $id,
+            'code' => $code,
+            'type' => 'payment',
+            'amount' => -abs($data['amount']),
+            'debt_remain' => $currentDebt - abs($data['amount']),
+            'note' => $data['note'] ?? 'Thanh toán công nợ',
+            'user_id' => auth()->id(),
+        ]);
+
+        // Update cached debt
+        $supplier->update(['supplier_debt_amount' => $currentDebt - abs($data['amount'])]);
+
+        return response()->json(['success' => true, 'message' => 'Đã ghi thanh toán.']);
+    }
+
+    /**
+     * Điều chỉnh công nợ NCC
+     */
+    public function adjustDebt(Request $request, $id)
+    {
+        $data = $request->validate([
+            'amount' => 'required|numeric',
+            'note' => 'nullable|string',
+            'type' => 'nullable|string', // 'adjustment' or 'discount'
+        ]);
+
+        $supplier = Customer::findOrFail($id);
+        $currentDebt = $this->calculateDebt($id);
+        $type = $data['type'] ?? 'adjustment';
+
+        $code = ($type === 'discount' ? 'CKNCC' : 'DCNCC') . date('ymd') . rand(100, 999);
+        $amount = $type === 'discount' ? -abs($data['amount']) : $data['amount'];
+
+        SupplierDebtTransaction::create([
+            'supplier_id' => $id,
+            'code' => $code,
+            'type' => $type,
+            'amount' => $amount,
+            'debt_remain' => $currentDebt + $amount,
+            'note' => $data['note'] ?? ($type === 'discount' ? 'Chiết khấu thanh toán' : 'Điều chỉnh công nợ'),
+            'user_id' => auth()->id(),
+        ]);
+
+        $supplier->update(['supplier_debt_amount' => $currentDebt + $amount]);
+
+        return response()->json(['success' => true, 'message' => 'Đã cập nhật công nợ.']);
+    }
+
+    // Private helpers
+
+    private function calculateDebt($supplierId)
+    {
+        $lastTx = SupplierDebtTransaction::where('supplier_id', $supplierId)
+            ->orderByDesc('created_at')
+            ->first();
+        if ($lastTx) return $lastTx->debt_remain;
+
+        return Purchase::where('supplier_id', $supplierId)
+            ->where('status', 'completed')
+            ->sum('debt_amount');
+    }
+
+    private function seedDebtTransactions($supplierId)
+    {
+        if (SupplierDebtTransaction::where('supplier_id', $supplierId)->exists()) return;
+
+        $purchases = Purchase::where('supplier_id', $supplierId)
+            ->where('status', 'completed')
+            ->orderBy('purchase_date')
+            ->orderBy('created_at')
+            ->get();
+
+        $runningDebt = 0;
+        foreach ($purchases as $p) {
+            // Purchase entry
+            $runningDebt += $p->total_amount;
+            SupplierDebtTransaction::create([
+                'supplier_id' => $supplierId,
+                'code' => $p->code,
+                'type' => 'purchase',
+                'amount' => $p->total_amount,
+                'debt_remain' => $runningDebt,
+                'purchase_id' => $p->id,
+                'user_id' => $p->user_id,
+                'created_at' => $p->purchase_date ?? $p->created_at,
+                'updated_at' => $p->purchase_date ?? $p->created_at,
+            ]);
+
+            // Payment entry (if paid)
+            $paid = $p->paid_amount ?? ($p->total_amount - ($p->debt_amount ?? 0));
+            if ($paid > 0) {
+                $runningDebt -= $paid;
+                SupplierDebtTransaction::create([
+                    'supplier_id' => $supplierId,
+                    'code' => 'PCPN' . substr($p->code, 2),
+                    'type' => 'payment',
+                    'amount' => -$paid,
+                    'debt_remain' => $runningDebt,
+                    'purchase_id' => $p->id,
+                    'user_id' => $p->user_id,
+                    'created_at' => $p->purchase_date ?? $p->created_at,
+                    'updated_at' => $p->purchase_date ?? $p->created_at,
+                ]);
+            }
+        }
+    }
 }
+
