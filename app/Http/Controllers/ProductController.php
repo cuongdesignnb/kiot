@@ -86,6 +86,9 @@ class ProductController extends Controller
 
         $products = $query
             ->withCount([
+                'serialImeis as total_serial_count' => function ($q) {
+                    $q->where('status', 'in_stock');
+                },
                 'serialImeis as repairing_count' => function ($q) {
                     $q->where('status', 'in_stock')
                       ->whereIn('repair_status', ['not_started', 'repairing']);

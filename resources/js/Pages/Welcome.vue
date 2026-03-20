@@ -505,13 +505,23 @@ const formatDate = (val) => {
                                     }}
                                 </td>
                                 <td class="p-3 text-right">
-                                    <span class="font-bold text-gray-800">{{
-                                        product.stock_quantity || 0
-                                    }}</span>
-                                    <div v-if="product.has_serial && (product.ready_count > 0 || product.repairing_count > 0)" class="flex items-center justify-end gap-1.5 mt-0.5">
-                                        <span v-if="product.ready_count > 0" class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 font-semibold" title="Sẵn bán">✓ {{ product.ready_count }}</span>
-                                        <span v-if="product.repairing_count > 0" class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 font-semibold" title="Đang sửa">🔧 {{ product.repairing_count }}</span>
-                                    </div>
+                                    <!-- Sản phẩm có Serial -->
+                                    <template v-if="product.has_serial">
+                                        <div class="text-[13px] font-bold text-gray-800">{{ product.total_serial_count || 0 }} serial</div>
+                                        <div class="flex flex-col items-end gap-0.5 mt-1">
+                                            <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-bold inline-flex items-center gap-0.5">
+                                                <svg class="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>
+                                                Sẵn bán: {{ product.ready_count || 0 }}
+                                            </span>
+                                            <span v-if="product.repairing_count > 0" class="text-[10px] px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 font-bold inline-flex items-center gap-0.5">
+                                                🔧 Chờ xử lý: {{ product.repairing_count }}
+                                            </span>
+                                        </div>
+                                    </template>
+                                    <!-- Sản phẩm không có Serial -->
+                                    <template v-else>
+                                        <span class="font-bold text-gray-800">{{ product.stock_quantity || 0 }}</span>
+                                    </template>
                                 </td>
                             </tr>
                             <tr
