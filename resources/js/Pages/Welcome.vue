@@ -1135,12 +1135,16 @@ const formatDate = (val) => {
                                                     <span
                                                         class="font-bold text-[13px] text-gray-700"
                                                         >Danh sách
-                                                        Serial/IMEI</span
-                                                    >
-                                                    <span
-                                                        class="text-[13px] text-gray-500 font-medium"
-                                                        >Trạng thái</span
-                                                    >
+                                                        Serial/IMEI
+                                                        <span class="text-gray-400 font-normal ml-1">({{ product.total_serial_count || 0 }})</span>
+                                                    </span>
+                                                    <div class="flex items-center gap-2">
+                                                        <span class="text-[11px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-bold">✓ Sẵn bán: {{ product.ready_count || 0 }}</span>
+                                                        <span v-if="product.repairing_count > 0" class="text-[11px] px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-bold">🔧 Chờ xử lý: {{ product.repairing_count }}</span>
+                                                        <span
+                                                            class="text-[13px] text-gray-500 font-medium ml-2"
+                                                        >Trạng thái</span>
+                                                    </div>
                                                 </div>
                                                 <!-- Search + Filter -->
                                                 <div
@@ -1195,6 +1199,16 @@ const formatDate = (val) => {
                                                                 value="in_stock"
                                                             >
                                                                 Còn hàng
+                                                            </option>
+                                                            <option
+                                                                value="ready"
+                                                            >
+                                                                ✓ Sẵn bán
+                                                            </option>
+                                                            <option
+                                                                value="repairing"
+                                                            >
+                                                                🔧 Đang sửa/Chờ xử lý
                                                             </option>
                                                             <option
                                                                 value="sold"

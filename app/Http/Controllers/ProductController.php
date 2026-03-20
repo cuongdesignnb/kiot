@@ -582,7 +582,21 @@ class ProductController extends Controller
         $query = $product->serials();
 
         if ($request->filled('status') && $request->status !== 'all') {
-            $query->where('status', $request->status);
+            $status = $request->status;
+
+            // Filter by repair status
+            if ($status === 'repairing') {
+                $query->where('status', 'in_stock')
+                      ->whereIn('repair_status', ['not_started', 'repairing']);
+            } elseif ($status === 'ready') {
+                $query->where('status', 'in_stock')
+                      ->where(function ($q) {
+                          $q->where('repair_status', 'ready')
+                             ->orWhereNull('repair_status');
+                      });
+            } else {
+                $query->where('status', $status);
+            }
         }
 
         if ($request->filled('search')) {
