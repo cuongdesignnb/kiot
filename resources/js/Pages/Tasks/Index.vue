@@ -400,6 +400,8 @@ loadTasks();
                         <tr>
                             <th class="px-4 py-3 text-left">Mã</th>
                             <th class="px-4 py-3 text-left">Tiêu đề</th>
+                            <th class="px-4 py-3 text-left">Tên máy</th>
+                            <th class="px-4 py-3 text-left">Serial</th>
                             <th class="px-4 py-3 text-center">Loại</th>
                             <th class="px-4 py-3 text-center">Ưu tiên</th>
                             <th class="px-4 py-3 text-left">NV phụ trách</th>
@@ -411,7 +413,7 @@ loadTasks();
                     </thead>
                     <tbody>
                         <tr v-if="!tasks.data?.length">
-                            <td colspan="9" class="text-center py-8 text-gray-400">Chưa có công việc nào.</td>
+                            <td colspan="11" class="text-center py-8 text-gray-400">Chưa có công việc nào.</td>
                         </tr>
                         <tr v-for="t in tasks.data" :key="t.id" class="border-t hover:bg-gray-50 cursor-pointer" @click="router.visit(`/tasks/${t.id}`)">
                             <td class="px-4 py-3 font-semibold text-blue-600">{{ t.code }}</td>
@@ -421,6 +423,15 @@ loadTasks();
                                     <span class="inline-block w-2 h-2 rounded-full mr-1" :style="{ backgroundColor: t.category.color }"></span>
                                     {{ t.category.name }}
                                 </div>
+                            </td>
+                            <td class="px-4 py-3 text-left">
+                                <span v-if="t.serial_imei?.product?.name" class="text-gray-800">{{ t.serial_imei.product.name }}</span>
+                                <span v-else-if="t.product?.name" class="text-gray-800">{{ t.product.name }}</span>
+                                <span v-else class="text-gray-300">-</span>
+                            </td>
+                            <td class="px-4 py-3 text-left">
+                                <span v-if="t.serial_imei?.serial_number" class="text-blue-600 font-mono text-xs">{{ t.serial_imei.serial_number }}</span>
+                                <span v-else class="text-gray-300">-</span>
                             </td>
                             <td class="px-4 py-3 text-center">
                                 <span :class="typeBadge(t.type).cls" class="px-2 py-0.5 rounded-full text-xs font-semibold">{{ typeBadge(t.type).label }}</span>

@@ -28,7 +28,8 @@ class TaskController extends Controller
     {
         $query = Task::with([
             'product:id,name,sku',
-            'serialImei:id,serial_number,repair_status',
+            'serialImei:id,serial_number,repair_status,product_id',
+            'serialImei.product:id,name,sku',
             'assignedEmployee:id,name',
             'branch:id,name',
             'category:id,name,color',
