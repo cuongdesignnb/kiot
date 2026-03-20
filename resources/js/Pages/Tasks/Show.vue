@@ -578,7 +578,7 @@ loadTask();
                                             </div>
                                         </div>
                                         <div v-if="partSearchIdx === idx && partSearchQuery.length >= 2 && !partSearchResults.length" class="absolute z-20 w-full bg-white border rounded-lg shadow-lg mt-1 px-3 py-2 text-sm text-gray-500">
-                                            Không tìm thấy. <button @click="openQuickCreate('add')" class="text-blue-600 font-semibold hover:underline">+ Tạo SP mới</button>
+                                            Không tìm thấy sản phẩm.
                                         </div>
                                     </div>
                                 </td>
@@ -598,7 +598,6 @@ loadTask();
                     </table>
                     <div class="flex gap-2">
                         <button @click="partItems.push(newPartRow())" class="text-sm text-blue-600 font-semibold hover:underline">+ Thêm dòng</button>
-                        <button @click="openQuickCreate('add')" class="text-sm text-green-600 font-semibold hover:underline">+ Tạo SP mới</button>
                     </div>
                 </div>
                 <div class="flex justify-end gap-3 px-6 py-4 border-t">

@@ -525,7 +525,7 @@ class ProductController extends Controller
             });
         $transactions = $transactions->concat($transfers);
 
-        // 7. Xuất sửa chữa & Nhập bóc máy (Repair Parts)
+        // 7. Xuất lắp ráp & Nhập tháo máy (Repair Parts)
         $repairParts = \App\Models\TaskPart::with(['task', 'task.product'])
             ->where('product_id', $product->id)
             ->get()
@@ -538,12 +538,12 @@ class ProductController extends Controller
                     'code' => $task?->code ?? ('TP-' . $part->id),
                     'doc_type' => $isImport ? 'disassemble_part' : 'repair_part',
                     'doc_id' => $task?->id,
-                    'type' => $isImport ? 'Nhập bóc máy' : 'Xuất sửa chữa',
+                    'type' => $isImport ? 'Nhập tháo máy' : 'Xuất lắp ráp',
                     'partner' => $repairedName,
                     'sell_price' => 0,
                     'cost_price' => (float) ($part->unit_cost ?? 0),
                     'change' => $isImport ? $part->quantity : -$part->quantity,
-                    'method' => $isImport ? 'Nhập kho' : 'Trừ kho',
+                    'method' => $isImport ? 'Cộng kho' : 'Trừ kho',
                 ];
             });
         $transactions = $transactions->concat($repairParts);
