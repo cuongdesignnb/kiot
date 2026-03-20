@@ -30,6 +30,13 @@ const disProductSearch = ref("");
 const disProductResults = ref([]);
 const disSelectedProduct = ref(null);
 
+// Quick create product (from Bóc LK only)
+const showQuickCreate = ref(false);
+const quickProduct = ref({ name: "", sku: "", barcode: "", category_id: "", brand_id: "", cost_price: 0, retail_price: 0, location: "" });
+const quickCreateError = ref("");
+const quickCreateLoading = ref(false);
+const brandsList = ref([]);
+
 // Assign modal
 const showAssignModal = ref(false);
 const assignEmployeeIds = ref([]);
@@ -173,6 +180,45 @@ const openDisassembleModal = () => {
     disProductSearch.value = '';
     disForm.value = { product_id: null, quantity: 1, unit_cost: 0, notes: '' };
     showDisassembleModal.value = true;
+};
+
+// Quick Create Product
+const openQuickCreate = async () => {
+    quickProduct.value = { name: "", sku: "", barcode: "", category_id: "", brand_id: "", cost_price: 0, retail_price: 0, location: "" };
+    quickCreateError.value = "";
+    quickCreateLoading.value = false;
+    showQuickCreate.value = true;
+    if (!brandsList.value.length) {
+        try {
+            const res = await axios.get("/api/brands");
+            brandsList.value = res.data || [];
+        } catch (e) { brandsList.value = []; }
+    }
+};
+const submitQuickProduct = async () => {
+    quickCreateError.value = "";
+    if (!quickProduct.value.name.trim()) { quickCreateError.value = "Nhập tên sản phẩm."; return; }
+    quickCreateLoading.value = true;
+    try {
+        const payload = { ...quickProduct.value };
+        if (!payload.category_id) delete payload.category_id;
+        if (!payload.brand_id) delete payload.brand_id;
+        if (!payload.sku) delete payload.sku;
+        if (!payload.barcode) delete payload.barcode;
+        if (!payload.location) delete payload.location;
+        const res = await axios.post("/api/tasks/quick-create-product", payload);
+        const p = res.data;
+        // Auto-select in disassemble modal
+        disSelectedProduct.value = p;
+        disForm.value.product_id = p.id;
+        disForm.value.unit_cost = p.cost_price || 0;
+        disProductSearch.value = p.name;
+        showQuickCreate.value = false;
+    } catch (e) {
+        quickCreateError.value = e.response?.data?.message || "Lỗi tạo sản phẩm.";
+    } finally {
+        quickCreateLoading.value = false;
+    }
 };
 
 // Assign
@@ -543,6 +589,9 @@ loadTask();
                                     <span>{{ p.name }}</span><span class="text-gray-400">GV: {{ formatCurrency(p.cost_price) }}đ</span>
                                 </div>
                             </div>
+                            <div v-if="disProductSearch.length >= 2 && !disProductResults.length && !disSelectedProduct" class="absolute z-10 w-full bg-white border rounded-lg shadow-lg mt-1 px-3 py-2 text-sm text-gray-500">
+                                Không tìm thấy. <button @click="openQuickCreate" class="text-green-600 font-semibold hover:underline">+ Tạo SP mới</button>
+                            </div>
                         </div>
                         <div v-if="disSelectedProduct" class="mt-2 text-sm text-gray-600 bg-orange-50 px-3 py-2 rounded border border-orange-200">
                             <strong>{{ disSelectedProduct.name }}</strong> — Giá vốn BQ: {{ formatCurrency(disSelectedProduct.cost_price) }}đ — Tồn hiện tại: {{ disSelectedProduct.stock_quantity ?? '?' }}
@@ -568,9 +617,101 @@ loadTask();
                         <input v-model="disForm.notes" type="text" placeholder="VD: Bóc RAM 16GB để lắp RAM 8GB" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
                     </div>
                 </div>
-                <div class="flex justify-end gap-3 px-6 py-4 border-t">
-                    <button @click="showDisassembleModal = false" class="px-5 py-2 border rounded-lg text-sm font-semibold">Hủy</button>
-                    <button @click="submitDisassemble" :disabled="!disForm.product_id || !disForm.quantity" class="px-5 py-2 bg-orange-500 text-white rounded-lg text-sm font-semibold hover:bg-orange-600 disabled:opacity-50">Bóc linh kiện</button>
+                <div class="flex justify-between gap-3 px-6 py-4 border-t">
+                    <button @click="openQuickCreate" class="text-sm text-green-600 font-semibold hover:underline">+ Tạo SP mới</button>
+                    <div class="flex gap-3">
+                        <button @click="showDisassembleModal = false" class="px-5 py-2 border rounded-lg text-sm font-semibold">Hủy</button>
+                        <button @click="submitDisassemble" :disabled="!disForm.product_id || !disForm.quantity" class="px-5 py-2 bg-orange-500 text-white rounded-lg text-sm font-semibold hover:bg-orange-600 disabled:opacity-50">Bóc linh kiện</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Create Product Popup (Full form like Thêm hàng hóa) -->
+        <div v-if="showQuickCreate" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/40">
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+                <div class="flex items-center justify-between px-6 py-4 border-b bg-green-50 sticky top-0 z-10">
+                    <div class="flex items-center gap-3">
+                        <button @click="showQuickCreate = false" class="text-green-600 hover:text-green-800 text-sm font-semibold flex items-center gap-1">
+                            ← Quay lại bóc LK
+                        </button>
+                        <span class="text-gray-300">|</span>
+                        <h2 class="text-lg font-bold text-green-700">Thêm mới hàng hóa</h2>
+                    </div>
+                    <button @click="showQuickCreate = false" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+                </div>
+                <div class="px-6 py-5 space-y-5">
+                    <div v-if="quickCreateError" class="text-red-500 text-sm bg-red-50 px-3 py-2 rounded">{{ quickCreateError }}</div>
+                    <p class="text-xs text-gray-500 bg-green-50 px-3 py-2 rounded border border-green-200">Sản phẩm mới sẽ được tạo trong mục <strong>Hàng hóa</strong> và tự động chọn trong modal bóc linh kiện.</p>
+
+                    <!-- Tên hàng -->
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">Tên hàng <span class="text-red-500">*</span></label>
+                        <input v-model="quickProduct.name" type="text" placeholder="VD: RAM DDR4 16GB 3200MHz" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 outline-none" />
+                    </div>
+
+                    <!-- Mã hàng & Mã vạch -->
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-1">Mã hàng hóa</label>
+                            <input v-model="quickProduct.sku" type="text" placeholder="Tự động nếu bỏ trống" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-green-500 outline-none" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-1">Mã vạch</label>
+                            <input v-model="quickProduct.barcode" type="text" placeholder="Tự động = mã hàng" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-green-500 outline-none" />
+                        </div>
+                    </div>
+
+                    <!-- Nhóm hàng & Thương hiệu -->
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-1">Nhóm hàng</label>
+                            <select v-model="quickProduct.category_id" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-green-500 outline-none bg-white">
+                                <option value="">--- Chọn nhóm hàng ---</option>
+                                <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-1">Thương hiệu</label>
+                            <select v-model="quickProduct.brand_id" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-green-500 outline-none bg-white">
+                                <option value="">--- Chọn thương hiệu ---</option>
+                                <option v-for="b in brandsList" :key="b.id" :value="b.id">{{ b.name }}</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="border-t border-gray-100 my-1"></div>
+
+                    <!-- Giá vốn & Giá bán -->
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-1">Giá vốn</label>
+                            <div class="relative">
+                                <input v-model.number="quickProduct.cost_price" type="number" min="0" class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-8 text-sm text-right font-semibold focus:border-green-500 outline-none" />
+                                <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₫</span>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán</label>
+                            <div class="relative">
+                                <input v-model.number="quickProduct.retail_price" type="number" min="0" class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-8 text-sm text-right font-semibold text-blue-700 focus:border-green-500 outline-none" />
+                                <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₫</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Vị trí -->
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">Vị trí lưu kho</label>
+                        <input v-model="quickProduct.location" type="text" placeholder="VD: Kệ A3, Tầng 2" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-green-500 outline-none" />
+                    </div>
+                </div>
+                <div class="flex justify-between items-center px-6 py-4 border-t sticky bottom-0 bg-white">
+                    <button @click="showQuickCreate = false" class="px-5 py-2 border rounded-lg text-sm font-semibold text-gray-600 hover:bg-gray-50">← Quay lại</button>
+                    <button @click="submitQuickProduct" :disabled="!quickProduct.name.trim() || quickCreateLoading" class="px-6 py-2 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700 disabled:opacity-50 flex items-center gap-2">
+                        <svg v-if="quickCreateLoading" class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                        {{ quickCreateLoading ? 'Đang tạo...' : 'Lưu & Chọn trong bóc LK' }}
+                    </button>
                 </div>
             </div>
         </div>
