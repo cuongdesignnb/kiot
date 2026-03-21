@@ -232,6 +232,14 @@ Route::get('/warranties/{warranty}/print', [\App\Http\Controllers\WarrantyContro
 Route::get('/paysheets/{paysheet}/print', [\App\Http\Controllers\PaysheetController::class, 'print'])->name('paysheets.print');
 Route::delete('/invoices/{invoice}', [InvoiceController::class, 'destroy'])->name('invoices.destroy');
 
+// User Management
+Route::get('/users', [App\Http\Controllers\UserController::class, 'index'])->name('users.index');
+Route::post('/users', [App\Http\Controllers\UserController::class, 'store'])->name('users.store');
+Route::put('/users/{user}', [App\Http\Controllers\UserController::class, 'update'])->name('users.update');
+Route::post('/users/{user}/change-password', [App\Http\Controllers\UserController::class, 'changePassword'])->name('users.change-password');
+Route::post('/users/{user}/toggle-status', [App\Http\Controllers\UserController::class, 'toggleStatus'])->name('users.toggle-status');
+Route::delete('/users/{user}', [App\Http\Controllers\UserController::class, 'destroy'])->name('users.destroy');
+
 Route::get('/settings', [SettingController::class, 'index'])->middleware('permission:settings.view')->name('settings.index');
 Route::post('/settings', [SettingController::class, 'update'])->middleware('permission:settings.view')->name('settings.update');
 
