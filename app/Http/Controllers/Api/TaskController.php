@@ -84,7 +84,7 @@ class TaskController extends Controller
             'assignedEmployee:id,name',
             'branch:id,name',
             'category:id,name,color,type',
-            'parts.product:id,name,sku',
+            'parts.product:id,name,sku,stock_quantity',
             'creator:id,name',
             'assignments.employee:id,name',
             'assignments.assigner:id,name',
@@ -224,9 +224,10 @@ class TaskController extends Controller
         }
 
         $data = $request->validate([
-            'product_id' => 'required|exists:products,id',
-            'quantity'   => 'required|integer|min:1',
-            'notes'      => 'nullable|string|max:500',
+            'product_id'     => 'required|exists:products,id',
+            'quantity'       => 'required|integer|min:1',
+            'notes'          => 'nullable|string|max:500',
+            'allow_negative' => 'nullable|boolean',
         ]);
 
         try {
@@ -235,14 +236,22 @@ class TaskController extends Controller
                 $data['product_id'],
                 $data['quantity'],
                 $data['notes'] ?? null,
-                $request->user()?->id
+                $request->user()?->id,
+                !empty($data['allow_negative'])
             );
-            $part->load('product:id,name,sku');
+            $part->load('product:id,name,sku,stock_quantity');
             $task->refresh();
+
+            $product = Product::find($data['product_id']);
+            $warning = null;
+            if ($product && $product->stock_quantity < 0) {
+                $warning = "⚠ Linh kiện \"{$product->name}\" tồn kho âm: {$product->stock_quantity}. Cần nhập thêm hàng.";
+            }
 
             return response()->json([
                 'part' => $part,
                 'task' => $task->only(['parts_cost', 'total_cost']),
+                'warning' => $warning,
             ], 201);
         } catch (\RuntimeException $e) {
             return response()->json(['message' => $e->getMessage()], 422);

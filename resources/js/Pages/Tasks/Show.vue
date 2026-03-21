@@ -16,8 +16,9 @@ const activeTab = ref("info");
 
 // Part modal (add)
 const showPartModal = ref(false);
-const partForm = ref({ product_id: null, quantity: 1, notes: "" });
+const partForm = ref({ product_id: null, quantity: 1, notes: "", allow_negative: false });
 const partError = ref("");
+const partWarning = ref("");
 const productSearch = ref("");
 const productResults = ref([]);
 const selectedProduct = ref(null);
@@ -137,10 +138,16 @@ const selectDisProduct = (p) => {
 
 const submitAddPart = async () => {
     partError.value = "";
+    partWarning.value = "";
     try {
-        await axios.post(`/api/tasks/${props.taskId}/parts`, partForm.value);
+        const res = await axios.post(`/api/tasks/${props.taskId}/parts`, partForm.value);
+        if (res.data?.warning) {
+            partWarning.value = res.data.warning;
+            // Show warning briefly then close
+            setTimeout(() => { partWarning.value = ""; }, 5000);
+        }
         showPartModal.value = false;
-        partForm.value = { product_id: null, quantity: 1, notes: "" };
+        partForm.value = { product_id: null, quantity: 1, notes: "", allow_negative: false };
         selectedProduct.value = null;
         productSearch.value = "";
         loadTask();
@@ -459,7 +466,7 @@ loadTask();
                         <h3 class="font-bold text-gray-800">Linh kiện</h3>
                         <div class="flex gap-2 items-center">
                             <span class="text-sm text-gray-500">{{ task.parts?.length || 0 }} mục</span>
-                            <button v-if="isActive" @click="showPartModal = true; partError = ''; selectedProduct = null; productSearch = ''; partForm = { product_id: null, quantity: 1, notes: '' }" class="text-xs text-blue-600 font-semibold hover:underline">+ Lắp LK</button>
+                            <button v-if="isActive" @click="showPartModal = true; partError = ''; partWarning = ''; selectedProduct = null; productSearch = ''; partForm = { product_id: null, quantity: 1, notes: '', allow_negative: false }" class="text-xs text-blue-600 font-semibold hover:underline">+ Lắp LK</button>
                             <button v-if="isActive" @click="openDisassembleModal" class="text-xs text-orange-600 font-semibold hover:underline">↑ Bóc LK</button>
                         </div>
                     </div>
@@ -471,12 +478,13 @@ loadTask();
                                 <th class="px-4 py-3 text-center">SL</th>
                                 <th class="px-4 py-3 text-right">Đơn giá vốn</th>
                                 <th class="px-4 py-3 text-right">Thành tiền</th>
+                                <th class="px-4 py-3 text-center">Tồn kho</th>
                                 <th class="px-4 py-3 text-left">Ghi chú</th>
                                 <th class="px-4 py-3 text-center" v-if="isActive"></th>
                             </tr>
                         </thead>
                         <tbody>
-                            <tr v-if="!task.parts?.length"><td colspan="7" class="text-center py-6 text-gray-400">Chưa có linh kiện.</td></tr>
+                            <tr v-if="!task.parts?.length"><td colspan="8" class="text-center py-6 text-gray-400">Chưa có linh kiện.</td></tr>
                             <tr v-for="part in task.parts" :key="part.id" class="border-t" :class="(part.direction || 'export') === 'import' ? 'bg-orange-50/50' : ''">
                                 <td class="px-4 py-3">{{ part.product?.name || '-' }}</td>
                                 <td class="px-4 py-3 text-center">
@@ -487,6 +495,12 @@ loadTask();
                                 <td class="px-4 py-3 text-right">{{ formatCurrency(part.unit_cost) }}</td>
                                 <td class="px-4 py-3 text-right font-semibold" :class="(part.direction || 'export') === 'import' ? 'text-orange-600' : ''">
                                     {{ (part.direction || 'export') === 'import' ? '-' : '' }}{{ formatCurrency(part.total_cost) }}
+                                </td>
+                                <td class="px-4 py-3 text-center">
+                                    <span v-if="part.product?.stock_quantity != null" :class="part.product.stock_quantity < 0 ? 'text-red-600 font-bold' : 'text-gray-600'">
+                                        {{ part.product.stock_quantity }}
+                                    </span>
+                                    <span v-else class="text-gray-400">-</span>
                                 </td>
                                 <td class="px-4 py-3 text-gray-500">{{ part.notes || '' }}</td>
                                 <td class="px-4 py-3 text-center" v-if="isActive">
@@ -538,18 +552,35 @@ loadTask();
                 </div>
                 <div class="px-6 py-5 space-y-4">
                     <div v-if="partError" class="text-red-500 text-sm bg-red-50 px-3 py-2 rounded">{{ partError }}</div>
+                    <div v-if="partWarning" class="text-orange-600 text-sm bg-orange-50 border border-orange-200 px-3 py-2 rounded flex items-center gap-2">
+                        <span class="text-lg">⚠</span>
+                        <span>{{ partWarning }}</span>
+                    </div>
                     <div>
                         <label class="block font-semibold text-sm mb-1">Sản phẩm *</label>
                         <div class="relative">
                             <input v-model="productSearch" type="text" placeholder="Nhập tên sản phẩm..." class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
                             <div v-if="productResults.length" class="absolute z-10 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-48 overflow-auto">
                                 <div v-for="p in productResults" :key="p.id" @click="selectProduct(p)" class="px-3 py-2 hover:bg-blue-50 cursor-pointer text-sm flex justify-between">
-                                    <span>{{ p.name }}</span><span class="text-gray-400">{{ formatCurrency(p.cost_price) }}đ</span>
+                                    <span>{{ p.name }}</span>
+                                    <div class="flex items-center gap-3 text-xs">
+                                        <span class="text-gray-400">{{ formatCurrency(p.cost_price) }}đ</span>
+                                        <span :class="p.stock_quantity <= 0 ? 'text-red-500 font-bold' : 'text-green-600'">Tồn: {{ p.stock_quantity ?? 0 }}</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                        <div v-if="selectedProduct" class="mt-2 text-sm text-gray-600 bg-gray-50 px-3 py-2 rounded">
-                            <strong>{{ selectedProduct.name }}</strong> — Giá vốn: {{ formatCurrency(selectedProduct.cost_price) }}đ — Tồn: {{ selectedProduct.stock_quantity ?? '?' }}
+                        <div v-if="selectedProduct" class="mt-2 text-sm bg-gray-50 px-3 py-2 rounded">
+                            <div class="flex justify-between items-center">
+                                <strong>{{ selectedProduct.name }}</strong>
+                                <span :class="(selectedProduct.stock_quantity ?? 0) <= 0 ? 'text-red-600 font-bold bg-red-50 px-2 py-0.5 rounded' : 'text-green-600'">
+                                    Tồn kho: {{ selectedProduct.stock_quantity ?? 0 }}
+                                </span>
+                            </div>
+                            <div class="text-gray-500 mt-1">Giá vốn: {{ formatCurrency(selectedProduct.cost_price) }}đ</div>
+                            <div v-if="(selectedProduct.stock_quantity ?? 0) < partForm.quantity" class="mt-2 text-orange-600 text-xs bg-orange-50 border border-orange-200 px-2 py-1.5 rounded">
+                                ⚠ Tồn kho không đủ (cần {{ partForm.quantity }}, còn {{ selectedProduct.stock_quantity ?? 0 }}). Tích chọn bên dưới để lắp âm kho.
+                            </div>
                         </div>
                     </div>
                     <div>
@@ -559,6 +590,16 @@ loadTask();
                     <div>
                         <label class="block font-semibold text-sm mb-1">Ghi chú</label>
                         <input v-model="partForm.notes" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                    </div>
+                    <!-- Allow negative stock checkbox -->
+                    <div class="bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2.5">
+                        <label class="flex items-start gap-2.5 cursor-pointer">
+                            <input type="checkbox" v-model="partForm.allow_negative" class="mt-0.5 rounded border-gray-300 text-orange-600 focus:ring-orange-500 w-4 h-4" />
+                            <div>
+                                <span class="text-sm font-semibold text-gray-700">Cho phép lắp khi hết hàng</span>
+                                <p class="text-xs text-gray-500 mt-0.5">Tồn kho linh kiện sẽ chuyển sang âm. Quản lý có thể xem báo cáo linh kiện thiếu cần nhập thêm.</p>
+                            </div>
+                        </label>
                     </div>
                 </div>
                 <div class="flex justify-end gap-3 px-6 py-4 border-t">

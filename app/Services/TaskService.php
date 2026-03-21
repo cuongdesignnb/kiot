@@ -275,13 +275,13 @@ class TaskService
     /**
      * Xuất linh kiện (chỉ cho repair task).
      */
-    public function addPart(Task $task, int $productId, int $quantity = 1, ?string $notes = null, ?int $exportedBy = null): TaskPart
+    public function addPart(Task $task, int $productId, int $quantity = 1, ?string $notes = null, ?int $exportedBy = null, bool $allowNegative = false): TaskPart
     {
-        return DB::transaction(function () use ($task, $productId, $quantity, $notes, $exportedBy) {
+        return DB::transaction(function () use ($task, $productId, $quantity, $notes, $exportedBy, $allowNegative) {
             $product = Product::findOrFail($productId);
 
-            if ($product->stock_quantity < $quantity) {
-                throw new \RuntimeException("Tồn kho linh kiện \"{$product->name}\" không đủ (còn {$product->stock_quantity}, cần {$quantity}).");
+            if (!$allowNegative && $product->stock_quantity < $quantity) {
+                throw new \RuntimeException("Tồn kho linh kiện \"{$product->name}\" không đủ (còn {$product->stock_quantity}, cần {$quantity}). Tích chọn \"Cho phép lắp khi hết hàng\" để lắp âm kho.");
             }
 
             $unitCost = $product->cost_price ?? 0;
