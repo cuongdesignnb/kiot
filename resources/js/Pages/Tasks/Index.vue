@@ -324,6 +324,19 @@ const adminComplete = async (taskId) => {
     }
 };
 
+const cancelTask = async (task) => {
+    const msg = task.type === 'repair'
+        ? `Huỷ phiếu sửa chữa "${task.code}"?\nSerial sẽ được thu hồi về trạng thái sẵn bán.`
+        : `Huỷ công việc "${task.title || task.code}"?`;
+    if (!confirm(msg)) return;
+    try {
+        await axios.delete(`/api/tasks/${task.id}`);
+        loadTasks();
+    } catch (e) {
+        alert(e.response?.data?.message || "Không thể huỷ công việc.");
+    }
+};
+
 loadTasks();
 </script>
 
@@ -465,6 +478,7 @@ loadTasks();
                                 <div class="flex items-center justify-center gap-2">
                                     <button v-if="t.status !== 'completed' && t.status !== 'cancelled'" @click.stop="openAssignModal(t.id)" class="text-indigo-600 hover:text-indigo-800 text-xs font-semibold">Giao NV</button>
                                     <button v-if="t.status !== 'completed' && t.status !== 'cancelled'" @click.stop="adminComplete(t.id)" class="text-green-600 hover:text-green-800 text-xs font-semibold">Hoàn thành</button>
+                                    <button v-if="t.status !== 'completed' && t.status !== 'cancelled'" @click.stop="cancelTask(t)" class="text-red-500 hover:text-red-700 text-xs font-semibold">Huỷ</button>
                                 </div>
                             </td>
                         </tr>

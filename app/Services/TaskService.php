@@ -230,6 +230,24 @@ class TaskService
     }
 
     /**
+     * Huỷ công việc — reset serial về trạng thái sẵn bán.
+     */
+    public function cancelTask(Task $task, ?int $cancelledBy = null): Task
+    {
+        return DB::transaction(function () use ($task, $cancelledBy) {
+            // Đổi trạng thái sang cancelled
+            $task = $this->changeStatus($task, Task::STATUS_CANCELLED, $cancelledBy);
+
+            // Reset repair_status serial về null (sẵn bán)
+            if ($task->is_repair && $task->serial_imei_id) {
+                $task->serialImei?->update(['repair_status' => null]);
+            }
+
+            return $task;
+        });
+    }
+
+    /**
      * Cập nhật tiến độ.
      */
     public function updateProgress(Task $task, int $progress): Task

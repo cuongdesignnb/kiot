@@ -155,16 +155,44 @@ class TaskController extends Controller
 
     /**
      * Xóa / hủy công việc.
+     * - Pending: ai cũng huỷ được
+     * - In_progress: chỉ người nhận việc mới huỷ được
+     * - Completed/Cancelled: không huỷ được
      */
-    public function destroy(Task $task)
+    public function destroy(Request $request, Task $task)
     {
+        // Không cho huỷ việc đã hoàn thành hoặc đã huỷ
         if ($task->status === Task::STATUS_COMPLETED) {
-            return response()->json(['message' => 'Không thể xóa công việc đã hoàn thành.'], 422);
+            return response()->json(['message' => 'Không thể huỷ công việc đã hoàn thành.'], 422);
+        }
+        if ($task->status === Task::STATUS_CANCELLED) {
+            return response()->json(['message' => 'Công việc đã được huỷ trước đó.'], 422);
         }
 
-        $this->service->changeStatus($task, Task::STATUS_CANCELLED, request()->user()?->id);
+        // Nếu đang sửa (in_progress) → chỉ người nhận việc mới huỷ được
+        if ($task->status === Task::STATUS_IN_PROGRESS) {
+            $user = $request->user();
+            $isAssigned = false;
 
-        return response()->json(['message' => 'Đã hủy công việc.']);
+            if ($user) {
+                // Kiểm tra user có phải là nhân viên được giao không
+                $employee = \App\Models\Employee::where('user_id', $user->id)->first();
+                if ($employee) {
+                    $isAssigned = $task->assigned_employee_id === $employee->id
+                        || $task->assignments()->where('employee_id', $employee->id)->exists();
+                }
+            }
+
+            if (!$isAssigned) {
+                return response()->json([
+                    'message' => 'Công việc đang thực hiện, chỉ người nhận việc mới có thể huỷ.'
+                ], 403);
+            }
+        }
+
+        $this->service->cancelTask($task, $request->user()?->id);
+
+        return response()->json(['message' => 'Đã huỷ công việc. Serial đã được thu hồi về trạng thái sẵn bán.']);
     }
 
     /**
