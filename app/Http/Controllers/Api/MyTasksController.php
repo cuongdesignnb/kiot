@@ -99,4 +99,57 @@ class MyTasksController extends Controller
         $result = $this->service->updateProgress($task, $data['progress']);
         return response()->json($result);
     }
+
+    /**
+     * Nhân viên thêm ghi chú tiến độ (work log).
+     */
+    public function addNote(Request $request, Task $task)
+    {
+        $employee = $request->user()->employee;
+        if (!$employee) {
+            return response()->json(['message' => 'Không có quyền.'], 403);
+        }
+
+        $isAssigned = $task->assignments()->where('employee_id', $employee->id)->exists();
+        if (!$isAssigned) {
+            return response()->json(['message' => 'Bạn không được giao công việc này.'], 403);
+        }
+
+        $data = $request->validate([
+            'body' => 'required|string|max:2000',
+        ]);
+
+        $comment = \App\Models\TaskComment::create([
+            'task_id' => $task->id,
+            'user_id' => $request->user()->id,
+            'body'    => $data['body'],
+        ]);
+
+        $comment->load('user:id,name');
+
+        return response()->json($comment, 201);
+    }
+
+    /**
+     * Lấy danh sách ghi chú tiến độ.
+     */
+    public function getNotes(Task $task, Request $request)
+    {
+        $employee = $request->user()->employee;
+        if (!$employee) {
+            return response()->json(['data' => []]);
+        }
+
+        $isAssigned = $task->assignments()->where('employee_id', $employee->id)->exists();
+        if (!$isAssigned) {
+            return response()->json(['message' => 'Bạn không được giao công việc này.'], 403);
+        }
+
+        $comments = $task->comments()
+            ->with('user:id,name')
+            ->orderByDesc('created_at')
+            ->get();
+
+        return response()->json(['data' => $comments]);
+    }
 }

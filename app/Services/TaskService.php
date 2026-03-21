@@ -55,6 +55,22 @@ class TaskService
     {
         $serial = SerialImei::findOrFail($data['serial_imei_id']);
 
+        // Prevent duplicate: check if serial already has active repair task
+        $existingTask = Task::where('serial_imei_id', $serial->id)
+            ->where('type', Task::TYPE_REPAIR)
+            ->whereNotIn('status', [Task::STATUS_COMPLETED, Task::STATUS_CANCELLED])
+            ->first();
+
+        if ($existingTask) {
+            throw new \Illuminate\Validation\ValidationException(
+                \Illuminate\Support\Facades\Validator::make([], []),
+                new \Illuminate\Http\JsonResponse([
+                    'message' => "Serial {$serial->serial_number} đang có phiếu sửa chữa {$existingTask->code} chưa hoàn thành. Không thể tạo thêm.",
+                    'errors' => ['serial_imei_id' => ["Serial này đang trong phiếu sửa chữa {$existingTask->code}."]]
+                ], 422)
+            );
+        }
+
         $task = Task::create([
             'code'              => Task::generateCode(Task::TYPE_REPAIR),
             'type'              => Task::TYPE_REPAIR,

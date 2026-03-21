@@ -127,6 +127,9 @@ class PurchaseController extends Controller
             'note' => 'nullable|string',
             'payment_method' => 'nullable|string|in:cash,transfer',
             'bank_account_info' => 'nullable|string',
+            'other_costs' => 'nullable|array',
+            'other_costs.*.name' => 'required|string|max:255',
+            'other_costs.*.amount' => 'required|numeric|min:0',
         ]);
 
         // Validate serial products have quantity matching serials count
@@ -153,7 +156,9 @@ class PurchaseController extends Controller
             });
 
             $discount = $request->discount ?? 0;
-            $pay_amount = $total_amount - $discount; // Total to pay
+            $otherCosts = $request->other_costs ?? [];
+            $otherCostsTotal = collect($otherCosts)->sum('amount');
+            $pay_amount = $total_amount - $discount + $otherCostsTotal; // Total to pay
             $paid_amount = $request->paid_amount ?? 0;
             $debt_amount = $pay_amount - $paid_amount; // Current debt for this order
 
@@ -171,6 +176,8 @@ class PurchaseController extends Controller
                 'purchase_date' => $request->purchase_date ?? now(),
                 'payment_method' => $request->payment_method ?? 'cash',
                 'bank_account_info' => $request->bank_account_info,
+                'other_costs' => !empty($otherCosts) ? json_encode($otherCosts) : null,
+                'other_costs_total' => $otherCostsTotal,
             ]);
 
             foreach ($request->items as $item) {

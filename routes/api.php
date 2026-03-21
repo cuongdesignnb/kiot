@@ -319,6 +319,8 @@ Route::prefix('my-tasks')->middleware('auth:sanctum')->group(function () {
     Route::get('/', [\App\Http\Controllers\Api\MyTasksController::class, 'index']);
     Route::post('/{assignment}/respond', [\App\Http\Controllers\Api\MyTasksController::class, 'respond']);
     Route::post('/{task}/progress', [\App\Http\Controllers\Api\MyTasksController::class, 'updateProgress']);
+    Route::post('/{task}/notes', [\App\Http\Controllers\Api\MyTasksController::class, 'addNote']);
+    Route::get('/{task}/notes', [\App\Http\Controllers\Api\MyTasksController::class, 'getNotes']);
 });
 
 Route::prefix('repair-performance-tiers')->group(function () {

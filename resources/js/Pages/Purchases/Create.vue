@@ -68,6 +68,27 @@ const submitRef = ref(false);
 const paymentMethod = ref('cash');
 const bankAccountInfo = ref('');
 
+// Chi phí nhập khác (shipping, etc.)
+const otherCosts = ref([]);
+const showOtherCosts = ref(false);
+const newCostName = ref('');
+const newCostAmount = ref(0);
+
+const addOtherCost = () => {
+    if (!newCostName.value.trim()) return;
+    otherCosts.value.push({
+        id: Date.now(),
+        name: newCostName.value.trim(),
+        amount: Number(newCostAmount.value) || 0,
+    });
+    newCostName.value = '';
+    newCostAmount.value = 0;
+};
+const removeOtherCost = (index) => {
+    otherCosts.value.splice(index, 1);
+};
+const totalOtherCosts = computed(() => otherCosts.value.reduce((s, c) => s + (Number(c.amount) || 0), 0));
+
 onMounted(() => {
     if (props.purchaseOrderInfo) {
         selectedSupplierId.value = props.purchaseOrderInfo.supplier_id || '';
@@ -148,7 +169,7 @@ const getItemTotal = (item) => {
 };
 
 const totalAmount = computed(() => items.value.reduce((sum, item) => sum + getItemTotal(item), 0));
-const totalPayment = computed(() => Math.max(0, totalAmount.value - Number(discount.value)));
+const totalPayment = computed(() => Math.max(0, totalAmount.value - Number(discount.value) + totalOtherCosts.value));
 const debtAmount = computed(() => Math.max(0, totalPayment.value - Number(paidAmount.value)));
 
 const save = async () => {
@@ -175,6 +196,7 @@ const save = async () => {
             paid_amount: paidAmount.value,
             payment_method: paymentMethod.value,
             bank_account_info: paymentMethod.value === 'transfer' ? bankAccountInfo.value : null,
+            other_costs: otherCosts.value.map(c => ({ name: c.name, amount: c.amount })),
             items: items.value.map(item => ({
                 product_id: item.product_id,
                 quantity: item.has_serial ? (item.serials?.length || 0) : (parseInt(item.quantity) || 0),
@@ -559,6 +581,27 @@ const quickCreateBrand = async () => {
                             <div class="flex justify-between items-center text-[13px]">
                                 <label class="text-gray-700 font-medium">Giảm giá</label>
                                 <input type="text" :value="formatCurrencyInput(discount)" @focus="onCurrencyFocus" @blur="(e) => { discount = parseCurrencyInput(e.target.value); e.target.value = formatCurrencyInput(discount); }" class="w-[150px] border-b border-dashed border-gray-300 text-right pr-2 py-0.5 outline-none focus:border-green-500 hover:bg-green-50">
+                            </div>
+
+                            <!-- Chi phí nhập khác -->
+                            <div class="flex justify-between items-center text-[13px]">
+                                <label class="text-gray-700 font-medium">Chi phí nhập khác</label>
+                                <button @click="showOtherCosts = !showOtherCosts" class="flex items-center gap-1 text-blue-600 hover:text-blue-700 font-medium">
+                                    <span>→</span>
+                                    <span>{{ formatCurrency(totalOtherCosts) }}</span>
+                                </button>
+                            </div>
+                            <div v-if="showOtherCosts" class="bg-gray-50 border border-gray-200 rounded-lg p-3 text-[13px] space-y-2">
+                                <div v-for="(cost, ci) in otherCosts" :key="cost.id" class="flex items-center gap-2">
+                                    <input type="text" v-model="cost.name" class="flex-1 border border-gray-300 rounded px-2 py-1 text-[12px] outline-none focus:border-green-500" />
+                                    <input type="text" :value="formatCurrencyInput(cost.amount)" @focus="onCurrencyFocus" @blur="onCurrencyBlur(cost, 'amount', $event)" class="w-[100px] border border-gray-300 rounded px-2 py-1 text-right text-[12px] outline-none focus:border-green-500" />
+                                    <button @click="removeOtherCost(ci)" class="text-red-400 hover:text-red-600 text-sm">✕</button>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <input type="text" v-model="newCostName" @keydown.enter="addOtherCost" class="flex-1 border border-gray-300 rounded px-2 py-1 text-[12px] outline-none focus:border-green-500" placeholder="Tên chi phí (VD: Ship hàng)" />
+                                    <input type="text" :value="formatCurrencyInput(newCostAmount)" @focus="onCurrencyFocus" @blur="(e) => { newCostAmount = parseCurrencyInput(e.target.value); e.target.value = formatCurrencyInput(newCostAmount); }" class="w-[100px] border border-gray-300 rounded px-2 py-1 text-right text-[12px] outline-none focus:border-green-500" placeholder="Số tiền" />
+                                    <button @click="addOtherCost" class="text-green-600 hover:text-green-700 text-sm font-bold">+</button>
+                                </div>
                             </div>
 
                             <div class="flex justify-between items-center text-[13px] pt-2">
