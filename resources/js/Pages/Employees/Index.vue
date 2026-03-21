@@ -11,6 +11,7 @@ const props = defineProps({
     departments: Array,
     jobTitles: Array,
     salaryTemplates: { type: Array, default: () => [] },
+    availableUsers: { type: Array, default: () => [] },
     filters: Object,
 });
 
@@ -60,8 +61,26 @@ const form = useForm({
     branch_id: null,
     department_id: null,
     job_title_id: null,
+    user_id: null,
     notes: "",
     is_active: true,
+});
+
+// Computed: available users for linking (include current employee's linked user if editing)
+const linkableUsers = computed(() => {
+    const list = [...(props.availableUsers || [])];
+    // If editing and this employee already has a user linked, add it to options
+    if (form.id && form.user_id) {
+        const existing = list.find(u => u.id === form.user_id);
+        if (!existing) {
+            // Find from employees data
+            const emp = (props.employees?.data || []).find(e => e.id === form.id);
+            if (emp?.user) {
+                list.unshift({ id: emp.user.id, name: emp.user.name, email: emp.user.email });
+            }
+        }
+    }
+    return list;
 });
 
 const openCreateModal = () => {
@@ -85,6 +104,7 @@ const openEditModal = (employee) => {
     form.branch_id = employee.branch_id;
     form.department_id = employee.department_id;
     form.job_title_id = employee.job_title_id;
+    form.user_id = employee.user_id || null;
     form.notes = employee.notes;
     form.is_active = employee.is_active;
 
@@ -580,6 +600,7 @@ const bonusCalcLabel = (calc) => {
                             <th class="px-4 py-3">Mã chấm công</th>
                             <th class="px-4 py-3">Tên nhân viên</th>
                             <th class="px-4 py-3">Số điện thoại</th>
+                            <th class="px-4 py-3">Tài khoản</th>
                             <th class="px-4 py-3">Số CMND/CCCD</th>
                             <th class="px-4 py-3 text-right">Nợ và tạm ứng</th>
                             <th class="px-4 py-3">Ghi chú</th>
@@ -588,7 +609,7 @@ const bonusCalcLabel = (calc) => {
                     <tbody class="divide-y divide-gray-200 text-gray-800">
                         <tr v-if="employees.data.length === 0">
                             <td
-                                colspan="9"
+                                colspan="10"
                                 class="px-6 py-12 text-center text-gray-500"
                             >
                                 Không tìm thấy nhân viên nào.
@@ -637,6 +658,15 @@ const bonusCalcLabel = (calc) => {
                                     {{ employee.name }}
                                 </td>
                                 <td class="px-4 py-3">{{ employee.phone }}</td>
+                                <td class="px-4 py-3">
+                                    <template v-if="employee.user">
+                                        <div class="text-xs">
+                                            <span class="font-medium text-indigo-600">{{ employee.user.name }}</span>
+                                            <div class="text-gray-400">{{ employee.user.email }}</div>
+                                        </div>
+                                    </template>
+                                    <span v-else class="text-gray-300">-</span>
+                                </td>
                                 <td class="px-4 py-3">{{ employee.cccd }}</td>
                                 <td class="px-4 py-3 text-right">
                                     {{
@@ -889,6 +919,30 @@ const bonusCalcLabel = (calc) => {
                                                 <span v-if="br.id">x</span>
                                             </option>
                                         </select>
+                                    </div>
+
+                                    <!-- Liên kết tài khoản đăng nhập -->
+                                    <div class="col-span-2">
+                                        <label class="block font-semibold mb-1">
+                                            <span class="inline-flex items-center gap-1">
+                                                <svg class="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path></svg>
+                                                Liên kết tài khoản đăng nhập
+                                            </span>
+                                        </label>
+                                        <select
+                                            v-model="form.user_id"
+                                            class="w-full border border-gray-300 rounded-md px-3 py-2 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
+                                        >
+                                            <option :value="null">-- Không liên kết --</option>
+                                            <option
+                                                v-for="u in linkableUsers"
+                                                :key="u.id"
+                                                :value="u.id"
+                                            >
+                                                {{ u.name }} ({{ u.email }})
+                                            </option>
+                                        </select>
+                                        <p class="text-xs text-gray-400 mt-1">Gán tài khoản đăng nhập cho nhân viên này. Mỗi tài khoản chỉ được gán cho 1 nhân viên.</p>
                                     </div>
 
                                     <div
