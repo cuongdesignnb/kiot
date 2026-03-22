@@ -389,11 +389,6 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                         class="px-3 py-2 hover:bg-[#005bb5] rounded"
                         :class="{ 'bg-[#005bb5]': $page.url.startsWith('/my-tasks') }"
                     >Việc của tôi</Link>
-                    <Link href="/activity-logs"
-                        class="px-3 py-2 hover:bg-[#005bb5] rounded"
-                        :class="{ 'bg-[#005bb5]': $page.url.startsWith('/activity-logs') }"
-                        >📜 Lịch sử</Link
-                    >
                     <Link href="#" class="px-3 py-2 hover:bg-[#005bb5] rounded"
                         >Phân tích</Link
                     >
