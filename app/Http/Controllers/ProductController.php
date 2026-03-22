@@ -24,7 +24,10 @@ class ProductController extends Controller
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
                     ->orWhere('sku', 'like', "%{$search}%")
-                    ->orWhere('barcode', 'like', "%{$search}%");
+                    ->orWhere('barcode', 'like', "%{$search}%")
+                    ->orWhereHas('serials', function ($sq) use ($search) {
+                        $sq->where('serial_number', 'like', "%{$search}%");
+                    });
             });
         }
 
