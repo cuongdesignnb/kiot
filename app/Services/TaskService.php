@@ -259,6 +259,52 @@ class TaskService
                 $task->serialImei?->update(['repair_status' => null]);
             }
 
+            // ── Hoàn trả tất cả linh kiện về kho ──
+            $parts = $task->parts()->get();
+            foreach ($parts as $part) {
+                if (($part->direction ?? 'export') === 'export') {
+                    // Linh kiện đã lắp vào → trả lại tồn kho
+                    Product::where('id', $part->product_id)->increment('stock_quantity', $part->quantity);
+
+                    // Trừ giá vốn đã cộng vào serial/product
+                    if ($task->serial_imei_id) {
+                        $serial = $task->serialImei;
+                        if ($serial) {
+                            $serial->cost_price = max(0, (float) $serial->cost_price - (float) $part->total_cost);
+                            $serial->save();
+                        }
+                    } elseif ($task->product_id) {
+                        $repairedProduct = Product::find($task->product_id);
+                        if ($repairedProduct) {
+                            $repairedProduct->cost_price = max(0, (float) $repairedProduct->cost_price - (float) $part->total_cost);
+                            $repairedProduct->save();
+                        }
+                    }
+                } elseif ($part->direction === 'import') {
+                    // Linh kiện bóc ra từ máy → trừ lại tồn kho (hoàn nguyên)
+                    Product::where('id', $part->product_id)->decrement('stock_quantity', $part->quantity);
+
+                    // Cộng lại giá vốn đã trừ từ serial/product
+                    if ($task->serial_imei_id) {
+                        $serial = $task->serialImei;
+                        if ($serial) {
+                            $serial->cost_price = (float) $serial->cost_price + (float) $part->total_cost;
+                            $serial->save();
+                        }
+                    } elseif ($task->product_id) {
+                        $repairedProduct = Product::find($task->product_id);
+                        if ($repairedProduct) {
+                            $repairedProduct->cost_price = (float) $repairedProduct->cost_price + (float) $part->total_cost;
+                            $repairedProduct->save();
+                        }
+                    }
+                }
+            }
+
+            // Xoá tất cả part records
+            $task->parts()->delete();
+            $task->recalculateCosts();
+
             return $task;
         });
     }

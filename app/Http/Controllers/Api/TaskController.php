@@ -192,7 +192,7 @@ class TaskController extends Controller
 
         $this->service->cancelTask($task, $request->user()?->id);
 
-        return response()->json(['message' => 'Đã huỷ công việc. Serial đã được thu hồi về trạng thái sẵn bán.']);
+        return response()->json(['message' => 'Đã huỷ công việc. Serial đã được thu hồi về trạng thái sẵn bán. Tất cả linh kiện đã hoàn trả về kho.']);
     }
 
     /**
