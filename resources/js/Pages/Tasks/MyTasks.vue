@@ -6,13 +6,20 @@ import axios from "axios";
 
 const tasks = ref([]);
 const loading = ref(true);
+const notLinked = ref(false);
 const activeFilter = ref("all"); // all | pending | active | completed
 
 const load = async () => {
     loading.value = true;
+    notLinked.value = false;
     try {
         const res = await axios.get("/api/my-tasks");
-        tasks.value = res.data?.data || [];
+        if (res.data?.message === 'Tài khoản chưa liên kết nhân viên.') {
+            notLinked.value = true;
+            tasks.value = [];
+        } else {
+            tasks.value = res.data?.data || [];
+        }
     } catch (e) {
         console.error(e);
     } finally {
@@ -144,6 +151,17 @@ load();
     <AppLayout>
         <div class="p-6">
             <h1 class="text-xl font-bold text-gray-800 mb-4">Việc của tôi</h1>
+
+            <!-- Warning: account not linked -->
+            <div v-if="notLinked" class="bg-yellow-50 border border-yellow-300 rounded-lg p-4 mb-4">
+                <div class="flex items-start gap-3">
+                    <span class="text-2xl">⚠</span>
+                    <div>
+                        <h3 class="font-bold text-yellow-800">Tài khoản chưa liên kết nhân viên</h3>
+                        <p class="text-sm text-yellow-700 mt-1">Tài khoản đăng nhập của bạn chưa được liên kết với hồ sơ nhân viên. Vui lòng liên hệ quản trị viên để liên kết tài khoản.</p>
+                    </div>
+                </div>
+            </div>
 
             <!-- Filter tabs -->
             <div class="flex gap-2 mb-4">
