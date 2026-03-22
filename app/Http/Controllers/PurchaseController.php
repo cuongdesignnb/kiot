@@ -53,10 +53,24 @@ class PurchaseController extends Controller
             'total_debt' => Purchase::sum('debt_amount'),
         ];
 
+        $user = $request->user();
+        $canViewCost = $user && $user->hasAnyPermission(['purchases.view_cost', 'purchases.view']);
+
+        // Nhân viên không có quyền → ẩn tổng tiền
+        if (!$canViewCost) {
+            $summary = [
+                'total_amount' => 0,
+                'total_discount' => 0,
+                'total_paid' => 0,
+                'total_debt' => 0,
+            ];
+        }
+
         return Inertia::render('Purchases/Index', [
             'purchases' => $purchases,
             'filters' => $request->only(['search', 'status', 'date_filter']),
             'summary' => $summary,
+            'canViewCost' => $canViewCost,
         ]);
     }
 
@@ -92,6 +106,18 @@ class PurchaseController extends Controller
         $showRetailPrice = $priceBooks->contains('enable_retail_price', true);
         $showTechnicianPrice = $priceBooks->contains('enable_technician_price', true);
 
+        $user = $request->user();
+        $canViewCost = $user && $user->hasAnyPermission(['purchases.view_cost', 'purchases.view']);
+
+        // Nếu nhân viên không có quyền xem giá nhập → ẩn cost_price
+        if (!$canViewCost) {
+            $products = $products->map(function ($p) {
+                $p->cost_price = 0;
+                $p->last_purchase_price = 0;
+                return $p;
+            });
+        }
+
         return Inertia::render('Purchases/Create', [
             'suppliers' => $suppliers,
             'products' => $products,
@@ -103,6 +129,7 @@ class PurchaseController extends Controller
             'showRetailPrice' => $showRetailPrice,
             'showTechnicianPrice' => $showTechnicianPrice,
             'bankAccounts' => \App\Models\BankAccount::where('status', 'active')->get(),
+            'canViewCost' => $canViewCost,
         ]);
     }
 

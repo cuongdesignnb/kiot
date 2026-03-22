@@ -350,7 +350,7 @@ Route::get('/paysheets/export', [App\Http\Controllers\PaysheetController::class,
 // =======================
 Route::get('/tasks', [TaskPageController::class, 'index'])->middleware('permission:tasks.view')->name('tasks.index');
 Route::get('/tasks/performance', [TaskPageController::class, 'performance'])->middleware('permission:tasks.view')->name('tasks.performance');
-Route::get('/tasks/{id}', [TaskPageController::class, 'show'])->middleware('permission:tasks.view')->name('tasks.show');
+Route::get('/tasks/{id}', [TaskPageController::class, 'show'])->name('tasks.show'); // quyền check ở API level
 Route::get('/my-tasks', [TaskPageController::class, 'myTasks'])->name('my-tasks');
 
 // Backward compat: redirect old repair routes

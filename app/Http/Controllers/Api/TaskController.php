@@ -76,8 +76,18 @@ class TaskController extends Controller
     /**
      * Chi tiết công việc.
      */
-    public function show(Task $task)
+    public function show(Request $request, Task $task)
     {
+        $user = $request->user();
+
+        // Nhân viên (không có quyền tasks.view) chỉ xem được task được giao cho mình
+        if ($user && !$user->hasPermission('tasks.view')) {
+            $employee = $user->employee;
+            if (!$employee || !$task->assignments()->where('employee_id', $employee->id)->exists()) {
+                return response()->json(['message' => 'Bạn không có quyền xem công việc này.'], 403);
+            }
+        }
+
         $task->load([
             'product:id,name,sku,image',
             'serialImei:id,serial_number,repair_status,cost_price',

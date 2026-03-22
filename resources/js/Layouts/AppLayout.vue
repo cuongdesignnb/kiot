@@ -61,7 +61,7 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                         :class="{ 'bg-[#005bb5]': $page.url === '/' }"
                         >Tổng quan</Link
                     >
-                    <div v-if="canAny(['products.view', 'stock.transfer', 'stock.take', 'purchases.view'])" class="relative group cursor-pointer">
+                    <div v-if="canAny(['products.view', 'stock.transfer', 'stock.take', 'purchases.view', 'purchases.create'])" class="relative group cursor-pointer">
                         <div
                             class="px-3 py-2 flex items-center gap-1 hover:bg-[#005bb5] rounded"
                             :class="{
@@ -109,7 +109,7 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                             class="absolute left-0 top-full mt-1 w-[550px] bg-white border border-gray-200 rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 text-gray-800 text-[13.5px] flex font-normal overflow-hidden leading-normal"
                         >
                             <!-- Col 1: Hàng hóa -->
-                            <div class="flex-1 py-1">
+                            <div v-if="canAny(['products.view'])" class="flex-1 py-1">
                                 <h3
                                     class="px-4 py-3 font-bold text-gray-500 text-[12px] mb-1"
                                 >
@@ -121,6 +121,7 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                                     >Danh sách hàng hóa</Link
                                 >
                                 <Link
+                                    v-if="canAny(['products.edit'])"
                                     href="/price-settings"
                                     class="block px-4 py-3 hover:bg-gray-100"
                                     >Thiết lập giá</Link
@@ -137,7 +138,7 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                             </div>
 
                             <!-- Col 2: Kho hàng -->
-                            <div class="flex-1 py-1 border-l border-gray-200">
+                            <div v-if="canAny(['stock.transfer', 'stock.take', 'products.view'])" class="flex-1 py-1 border-l border-gray-200">
                                 <h3
                                     class="px-4 py-3 font-bold text-gray-500 text-[12px] mb-1"
                                 >
@@ -181,6 +182,7 @@ watch(() => page.props.flash, triggerToast, { deep: true });
 
                             <!-- Col 3: Nhập hàng -->
                             <div
+                                v-if="canAny(['purchases.view', 'purchases.create'])"
                                 class="flex-1 py-1 border-l border-gray-200 bg-gray-50/30"
                             >
                                 <h3
@@ -189,6 +191,7 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                                     Nhập hàng
                                 </h3>
                                 <Link
+                                    v-if="canAny(['purchases.view'])"
                                     href="#"
                                     class="block px-4 py-3 hover:bg-gray-100 flex justify-between items-center"
                                 >
@@ -199,25 +202,27 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                                     >
                                 </Link>
                                 <Link
+                                    v-if="canAny(['purchases.view'])"
                                     href="/suppliers"
                                     class="block px-4 py-3 hover:bg-gray-100"
                                     >Nhà cung cấp</Link
                                 >
                                 <Link
                                     v-if="
-                                        $page.props.app_settings
-                                            ?.purchase_order_enabled ?? true
+                                        canAny(['purchases.view']) && ($page.props.app_settings
+                                            ?.purchase_order_enabled ?? true)
                                     "
                                     href="/purchase-orders"
                                     class="block px-4 py-3 hover:bg-gray-100"
                                     >Đặt hàng nhập</Link
                                 >
                                 <Link
-                                    href="/purchases"
+                                    href="/purchases/create"
                                     class="block px-4 py-3 hover:bg-gray-100"
                                     >Nhập hàng</Link
                                 >
                                 <Link
+                                    v-if="canAny(['purchases.view'])"
                                     href="#"
                                     class="block px-4 py-3 hover:bg-gray-100 bg-gray-100 border-t border-gray-200"
                                     >Trả hàng nhập</Link
