@@ -399,3 +399,11 @@ Route::get('purchase-orders/search-by-serial', function (Illuminate\Http\Request
 
     return response()->json($results);
 });
+
+// =======================
+// 📜 ACTIVITY LOGS
+// =======================
+Route::prefix('activity-logs')->group(function () {
+    Route::get('/', [\App\Http\Controllers\Api\ActivityLogController::class, 'index']);
+    Route::get('/action-types', [\App\Http\Controllers\Api\ActivityLogController::class, 'actionTypes']);
+});

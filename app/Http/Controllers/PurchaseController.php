@@ -306,6 +306,16 @@ class PurchaseController extends Controller
 
             DB::commit();
 
+            // Log activity
+            $itemCount = count($request->items);
+            $supplierName = Customer::find($request->supplier_id)?->name ?? 'N/A';
+            \App\Models\ActivityLog::log('purchase_create', "Nhập hàng {$purchase->code} ({$itemCount} sản phẩm) - NCC: {$supplierName}", $purchase, [
+                'purchase_code' => $purchase->code,
+                'supplier' => $supplierName,
+                'total_amount' => $total_amount,
+                'item_count' => $itemCount,
+            ]);
+
             return redirect()->route('purchases.index')->with('success', 'Tạo đơn nhập hàng thành công!');
         } catch (\Exception $e) {
             DB::rollBack();

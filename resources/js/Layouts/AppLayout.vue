@@ -374,6 +374,11 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                                     class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100"
                                     >Báo cáo năng suất</Link
                                 >
+                                <Link
+                                    href="/activity-logs"
+                                    class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100 border-t border-gray-100"
+                                    >📜 Lịch sử thao tác</Link
+                                >
                             </div>
                         </div>
                     </div>
@@ -384,6 +389,11 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                         class="px-3 py-2 hover:bg-[#005bb5] rounded"
                         :class="{ 'bg-[#005bb5]': $page.url.startsWith('/my-tasks') }"
                     >Việc của tôi</Link>
+                    <Link href="/activity-logs"
+                        class="px-3 py-2 hover:bg-[#005bb5] rounded"
+                        :class="{ 'bg-[#005bb5]': $page.url.startsWith('/activity-logs') }"
+                        >📜 Lịch sử</Link
+                    >
                     <Link href="#" class="px-3 py-2 hover:bg-[#005bb5] rounded"
                         >Phân tích</Link
                     >

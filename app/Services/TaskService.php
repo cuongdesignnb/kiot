@@ -9,6 +9,7 @@ use App\Models\TaskPart;
 use App\Models\Product;
 use App\Models\SerialImei;
 use App\Models\User;
+use App\Models\ActivityLog;
 use App\Notifications\TaskAssignedNotification;
 use App\Notifications\TaskStatusChangedNotification;
 use App\Notifications\TaskCommentNotification;
@@ -42,6 +43,11 @@ class TaskService
                 'notes'             => $data['notes'] ?? null,
                 'deadline'          => $data['deadline'] ?? null,
                 'created_by'        => $data['created_by'] ?? null,
+            ]);
+
+            ActivityLog::log('task_create', "Tạo công việc {$task->code}: {$task->title}", $task, [
+                'task_code' => $task->code,
+                'title' => $task->title,
             ]);
 
             return $task;
@@ -242,7 +248,16 @@ class TaskService
      */
     public function markCompleted(Task $task, ?int $completedBy = null): Task
     {
-        return $this->changeStatus($task, Task::STATUS_COMPLETED, $completedBy);
+        $task = $this->changeStatus($task, Task::STATUS_COMPLETED, $completedBy);
+
+        $serialInfo = $task->serialImei ? " (SN: {$task->serialImei->serial_number})" : '';
+        ActivityLog::log('task_complete', "Hoàn thành {$task->code}{$serialInfo}", $task, [
+            'task_code' => $task->code,
+            'serial' => $task->serialImei?->serial_number,
+            'product' => $task->product?->name,
+        ], $completedBy);
+
+        return $task;
     }
 
     /**
@@ -305,6 +320,11 @@ class TaskService
             $task->parts()->delete();
             $task->recalculateCosts();
 
+            ActivityLog::log('task_cancel', "Huỷ công việc {$task->code}", $task, [
+                'task_code' => $task->code,
+                'serial' => $task->serialImei?->serial_number,
+            ], $cancelledBy);
+
             return $task;
         });
     }
@@ -362,6 +382,16 @@ class TaskService
                 }
             }
 
+            $productName = $product->name;
+            ActivityLog::log('part_install', "Lắp {$quantity}x {$productName} vào {$task->code}", $task, [
+                'task_code' => $task->code,
+                'product_name' => $productName,
+                'product_id' => $productId,
+                'quantity' => $quantity,
+                'unit_cost' => $cost,
+                'total_cost' => $totalCost,
+            ]);
+
             return $part;
         });
     }
@@ -390,8 +420,18 @@ class TaskService
                 }
             }
 
+            $productName = $part->product?->name ?? 'N/A';
+            $qty = $part->quantity;
+            $taskCode = $task->code;
+
             $part->delete();
             $task->recalculateCosts();
+
+            ActivityLog::log('part_remove', "Gỡ {$qty}x {$productName} khỏi {$taskCode}", $task, [
+                'task_code' => $taskCode,
+                'product_name' => $productName,
+                'quantity' => $qty,
+            ]);
         });
     }
 

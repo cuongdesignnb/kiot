@@ -357,5 +357,9 @@ Route::get('/my-tasks', [TaskPageController::class, 'myTasks'])->name('my-tasks'
 Route::get('/repairs', fn () => redirect('/tasks?type=repair'));
 Route::get('/repairs/performance', fn () => redirect('/tasks/performance'));
 Route::get('/repairs/{id}', fn ($id) => redirect("/tasks/$id"));
+// 📜 Activity Logs (Lịch sử thao tác)
+Route::get('/activity-logs', fn () => \Inertia\Inertia::render('ActivityLogs/Index', [
+    'employees' => \App\Models\Employee::where('is_active', true)->select('id', 'name')->get(),
+]))->name('activity-logs.index');
 
 }); // end auth middleware
