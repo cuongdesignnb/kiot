@@ -363,3 +363,39 @@ Route::prefix('product-attributes')->group(function () {
     Route::delete('/{attribute}', [\App\Http\Controllers\Api\ProductAttributeController::class, 'destroy']);
     Route::delete('/values/{value}', [\App\Http\Controllers\Api\ProductAttributeController::class, 'destroyValue']);
 });
+
+// 🔍 Purchase Order - search by serial
+Route::get('purchase-orders/search-by-serial', function (Illuminate\Http\Request $request) {
+    $q = $request->get('q', '');
+    if (mb_strlen($q) < 2) return response()->json([]);
+
+    // Search serials matching query
+    $serials = \App\Models\SerialImei::with('product:id,name,sku,barcode,cost_price,stock_quantity,image')
+        ->where('serial_number', 'like', '%' . $q . '%')
+        ->limit(10)
+        ->get();
+
+    // Map to products with matched_serial info
+    $results = [];
+    $seenProductIds = [];
+    foreach ($serials as $serial) {
+        if (!$serial->product || in_array($serial->product_id, $seenProductIds)) continue;
+        $seenProductIds[] = $serial->product_id;
+        $product = $serial->product->toArray();
+        $product['matched_serial'] = $serial->serial_number;
+        $results[] = $product;
+    }
+
+    // Also search by barcode
+    $barcodeProducts = \App\Models\Product::where('barcode', 'like', '%' . $q . '%')
+        ->where('is_active', true)
+        ->limit(5)
+        ->get(['id', 'name', 'sku', 'barcode', 'cost_price', 'stock_quantity', 'image']);
+    foreach ($barcodeProducts as $bp) {
+        if (!in_array($bp->id, $seenProductIds)) {
+            $results[] = $bp->toArray();
+        }
+    }
+
+    return response()->json($results);
+});

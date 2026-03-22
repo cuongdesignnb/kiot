@@ -1,6 +1,7 @@
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
+import axios from 'axios';
 
 const props = defineProps({
     products: Array,
@@ -24,13 +25,38 @@ const expectedDate = ref('');
 const note = ref('');
 const submitRef = ref(false);
 
+// Serial search results from API
+const serialSearchResults = ref([]);
+let serialSearchTimeout;
+
 const filteredProducts = computed(() => {
     if (!searchQuery.value) return [];
     const query = searchQuery.value.toLowerCase();
-    return props.products.filter(p => 
+    const localResults = props.products.filter(p => 
         p.name.toLowerCase().includes(query) || 
-        p.sku.toLowerCase().includes(query)
+        p.sku.toLowerCase().includes(query) ||
+        (p.barcode && p.barcode.toLowerCase().includes(query))
     ).slice(0, 10);
+    
+    // Merge serial search results (avoid duplicates)
+    const localIds = new Set(localResults.map(p => p.id));
+    const serialProducts = serialSearchResults.value.filter(p => !localIds.has(p.id));
+    return [...localResults, ...serialProducts].slice(0, 15);
+});
+
+// Watch search query to also search by serial number via API
+watch(searchQuery, (val) => {
+    clearTimeout(serialSearchTimeout);
+    serialSearchResults.value = [];
+    if (!val || val.length < 2) return;
+    serialSearchTimeout = setTimeout(async () => {
+        try {
+            const res = await axios.get('/api/purchase-orders/search-by-serial', { params: { q: val } });
+            serialSearchResults.value = res.data || [];
+        } catch (e) {
+            serialSearchResults.value = [];
+        }
+    }, 300);
 });
 
 const selectProduct = (product) => {
@@ -122,7 +148,7 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                     <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                         <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                     </div>
-                    <input v-model="searchQuery" @focus="showSuggestions = true" @blur="hideSuggestions" type="text" class="w-full pl-9 pr-12 py-[9px] border border-gray-300 text-gray-800 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 bg-white" placeholder="Tìm hàng hóa theo mã hoặc tên (F3)">
+                    <input v-model="searchQuery" @focus="showSuggestions = true" @blur="hideSuggestions" type="text" class="w-full pl-9 pr-12 py-[9px] border border-gray-300 text-gray-800 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 bg-white" placeholder="Tìm hàng hóa theo tên, mã, barcode, serial (F3)">
                     
                     <!-- Suggestions Dropdown -->
                     <div v-if="showSuggestions && filteredProducts.length > 0" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded-sm z-50 max-h-[300px] overflow-auto">
@@ -130,7 +156,11 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                             <img :src="product.image || 'https://ui-avatars.com/api/?name=' + product.name + '&background=random'" class="w-10 h-10 object-cover rounded border border-gray-200">
                             <div class="flex-1">
                                 <div class="font-medium text-[13px] text-gray-800">{{ product.name }}</div>
-                                <div class="text-[12px] text-gray-500">{{ product.sku }}</div>
+                                <div class="text-[12px] text-gray-500">
+                                    {{ product.sku }}
+                                    <span v-if="product.barcode" class="ml-2 text-gray-400">BC: {{ product.barcode }}</span>
+                                    <span v-if="product.matched_serial" class="ml-2 text-purple-500 font-semibold">SN: {{ product.matched_serial }}</span>
+                                </div>
                             </div>
                             <div class="text-right">
                                 <div class="text-blue-600 font-medium text-[13px]">{{ formatCurrency(product.cost_price) }}</div>
