@@ -160,22 +160,139 @@ const handlePriceBookChange = async () => {
 };
 
 const selectProduct = (product) => {
+    // If product has serial → open serial picker
+    if (product.has_serial) {
+        openSerialModal(product);
+        activeTab.value.searchQuery = '';
+        activeTab.value.showSuggestions = false;
+        return;
+    }
+
     const existing = activeTab.value.items.find(i => i.product_id === product.id);
     if (!existing) {
         activeTab.value.items.unshift({ 
             product_id: product.id,
             sku: product.sku,
             name: product.name,
+            has_serial: false,
             qty: 1,
             price: product.selling_price || product.retail_price || product.cost_price || 0,
             discount: 0,
             stock_quantity: product.stock_quantity || 0,
+            serial_ids: [],
+            serial_names: [],
         });
     } else {
         existing.qty++;
     }
     activeTab.value.searchQuery = '';
     activeTab.value.showSuggestions = false;
+};
+
+// ── Serial/IMEI Selection Modal ──
+const showSerialModal = ref(false);
+const serialModalProduct = ref(null);
+const availableSerials = ref([]);
+const selectedSerialIds = ref([]);
+const serialSearch = ref('');
+const serialLoading = ref(false);
+
+const filteredSerials = computed(() => {
+    if (!serialSearch.value) return availableSerials.value;
+    const q = serialSearch.value.toLowerCase();
+    return availableSerials.value.filter(s => s.serial_number.toLowerCase().includes(q));
+});
+
+const isSerialSelected = (id) => selectedSerialIds.value.includes(id);
+
+const toggleSerial = (id) => {
+    const idx = selectedSerialIds.value.indexOf(id);
+    if (idx > -1) {
+        selectedSerialIds.value.splice(idx, 1);
+    } else {
+        selectedSerialIds.value.push(id);
+    }
+};
+
+const toggleAllSerials = () => {
+    if (selectedSerialIds.value.length === filteredSerials.value.length) {
+        selectedSerialIds.value = [];
+    } else {
+        selectedSerialIds.value = filteredSerials.value.map(s => s.id);
+    }
+};
+
+const openSerialModal = async (product) => {
+    serialModalProduct.value = product;
+    selectedSerialIds.value = [];
+    serialSearch.value = '';
+    availableSerials.value = [];
+    showSerialModal.value = true;
+    serialLoading.value = true;
+    try {
+        const res = await axios.get(`/api/products/${product.id}/serials`);
+        availableSerials.value = res.data || [];
+    } catch (e) {
+        console.error('Error fetching serials:', e);
+    } finally {
+        serialLoading.value = false;
+    }
+};
+
+const confirmSerialSelection = () => {
+    if (!serialModalProduct.value || selectedSerialIds.value.length === 0) return;
+    const product = serialModalProduct.value;
+    const selectedNames = availableSerials.value
+        .filter(s => selectedSerialIds.value.includes(s.id))
+        .map(s => s.serial_number);
+
+    const existing = activeTab.value.items.find(i => i.product_id === (product.id || product.product_id));
+    if (existing) {
+        const existingIds = existing.serial_ids || [];
+        const newIds = selectedSerialIds.value.filter(id => !existingIds.includes(id));
+        existing.serial_ids = [...existingIds, ...newIds];
+        existing.serial_names = availableSerials.value
+            .filter(s => existing.serial_ids.includes(s.id))
+            .map(s => s.serial_number);
+        existing.qty = existing.serial_ids.length;
+    } else {
+        activeTab.value.items.unshift({
+            product_id: product.id,
+            sku: product.sku,
+            name: product.name,
+            has_serial: true,
+            qty: selectedSerialIds.value.length,
+            price: product.selling_price || product.retail_price || product.cost_price || 0,
+            discount: 0,
+            stock_quantity: product.stock_quantity || 0,
+            serial_ids: [...selectedSerialIds.value],
+            serial_names: selectedNames,
+        });
+    }
+    showSerialModal.value = false;
+};
+
+const skipSerialSelection = () => {
+    if (!serialModalProduct.value) return;
+    const product = serialModalProduct.value;
+    const existing = activeTab.value.items.find(i => i.product_id === product.id);
+    if (existing) {
+        existing.qty += 1;
+    } else {
+        activeTab.value.items.unshift({
+            product_id: product.id,
+            sku: product.sku,
+            name: product.name,
+            has_serial: true,
+            qty: 1,
+            price: product.selling_price || product.retail_price || product.cost_price || 0,
+            discount: 0,
+            stock_quantity: product.stock_quantity || 0,
+            serial_ids: [],
+            serial_names: [],
+        });
+    }
+    showSerialModal.value = false;
 };
 
 const hideSuggestions = () => {
@@ -464,6 +581,15 @@ onUnmounted(() => {
                                 <td class="p-3 text-gray-800 text-[12px]">{{ item.sku }}</td>
                                 <td class="p-3 font-medium text-gray-800">
                                     <div class="truncate w-[150px] lg:w-[250px] xl:w-[350px]">{{ item.name }}</div>
+                                    <!-- Serial info -->
+                                    <div v-if="item.has_serial" class="mt-1">
+                                        <div v-if="item.serial_names && item.serial_names.length > 0" class="flex flex-wrap gap-1 mb-0.5">
+                                            <span v-for="sn in item.serial_names" :key="sn" class="inline-block bg-gray-100 text-gray-500 text-[10px] px-1.5 py-0.5 rounded font-mono">{{ sn }}</span>
+                                        </div>
+                                        <button @click="openSerialModal({id: item.product_id, sku: item.sku, name: item.name, has_serial: true, selling_price: item.price, stock_quantity: item.stock_quantity})" class="text-[11px] text-blue-500 hover:text-blue-700 font-semibold cursor-pointer">
+                                            {{ item.serial_names && item.serial_names.length > 0 ? 'Thay đổi IMEI' : 'Chọn Serial/IMEI' }}
+                                        </button>
+                                    </div>
                                 </td>
                                 <td class="p-3">
                                     <div class="flex items-center justify-center gap-1 border border-transparent hover:border-blue-400 rounded overflow-hidden w-fit mx-auto transition-colors">
@@ -758,6 +884,62 @@ onUnmounted(() => {
                 <button @click="showReturnModal = false" class="bg-[#0070f4] hover:bg-blue-600 text-white font-bold px-6 py-1.5 rounded shadow-sm">
                     Trả nhanh
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ Serial/IMEI Selection Modal ═══ -->
+    <div v-if="showSerialModal" class="fixed inset-0 z-[200] bg-black/40 flex items-center justify-center font-sans text-[13px]">
+        <div class="bg-white rounded-lg shadow-2xl w-[520px] max-h-[80vh] flex flex-col">
+            <div class="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
+                <h3 class="text-lg font-bold text-gray-800">Chọn Serial/IMEI</h3>
+                <button @click="showSerialModal = false" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer">&times;</button>
+            </div>
+            <div class="px-5 pt-3 pb-2">
+                <div class="relative">
+                    <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+                    <input v-model="serialSearch" type="text" placeholder="Tìm serial/IMEI..." class="w-full pl-9 pr-3 py-2 border border-gray-300 rounded text-sm outline-none focus:border-blue-500">
+                </div>
+            </div>
+            <div class="flex-1 overflow-auto px-5 py-3 min-h-[200px]">
+                <div v-if="serialLoading" class="flex items-center justify-center h-32 text-gray-400">
+                    <i class="fas fa-spinner fa-spin text-blue-500 mr-2"></i> Đang tải...
+                </div>
+                <div v-else-if="filteredSerials.length === 0" class="flex flex-col items-center justify-center h-32 text-gray-400">
+                    <span class="text-sm">Không tìm thấy serial nào</span>
+                </div>
+                <div v-else class="flex flex-wrap gap-2">
+                    <button 
+                        v-for="serial in filteredSerials" 
+                        :key="serial.id"
+                        @click="toggleSerial(serial.id)"
+                        class="px-3 py-1.5 rounded border text-sm font-mono transition-all cursor-pointer"
+                        :class="isSerialSelected(serial.id) 
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm' 
+                            : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400 hover:bg-blue-50'"
+                    >
+                        {{ serial.serial_number }}
+                    </button>
+                </div>
+            </div>
+            <div class="px-5 py-3 border-t border-gray-200 flex items-center justify-between bg-gray-50/50">
+                <label class="flex items-center gap-2 cursor-pointer text-sm text-gray-600">
+                    <input 
+                        type="checkbox" 
+                        :checked="filteredSerials.length > 0 && selectedSerialIds.length === filteredSerials.length"
+                        @change="toggleAllSerials"
+                        class="rounded border-gray-300 text-blue-600 w-4 h-4"
+                    >
+                    Chọn tất cả <span v-if="selectedSerialIds.length > 0" class="text-blue-600 font-bold">({{ selectedSerialIds.length }})</span>
+                </label>
+                <div class="flex gap-2">
+                    <button @click="skipSerialSelection" class="px-5 py-2 border border-gray-300 rounded text-sm font-semibold text-gray-600 hover:bg-gray-100 cursor-pointer">Bỏ qua</button>
+                    <button 
+                        @click="confirmSerialSelection" 
+                        :disabled="selectedSerialIds.length === 0"
+                        class="px-5 py-2 bg-blue-600 text-white rounded text-sm font-bold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    >Xong</button>
+                </div>
             </div>
         </div>
     </div>

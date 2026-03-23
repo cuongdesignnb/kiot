@@ -210,6 +210,7 @@ Route::post('/cash-flows/subject', [App\Http\Controllers\CashFlowController::cla
 Route::get('/pos', [PosController::class, 'index'])->name('pos.index');
 Route::get('/api/pos/products', [PosController::class, 'searchProducts']);
 Route::post('/api/pos/checkout', [PosController::class, 'checkout']);
+Route::get('/api/products/{product}/serials', [PosController::class, 'getProductSerials']);
 
 // Product search API (shared by Orders, POS, etc.)
 Route::get('/api/products/search', [ProductController::class, 'apiSearch'])->name('api.products.search');

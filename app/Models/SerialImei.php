@@ -13,10 +13,15 @@ class SerialImei extends Model
         'purchase_id',
         'repair_status',
         'cost_price',
+        'sold_at',
+        'invoice_id',
+        'warranty_expires_at',
     ];
 
     protected $casts = [
         'cost_price' => 'decimal:0',
+        'sold_at' => 'datetime',
+        'warranty_expires_at' => 'datetime',
     ];
 
     const REPAIR_STATUS_MAP = [

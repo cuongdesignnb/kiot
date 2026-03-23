@@ -25,7 +25,10 @@ class PosController extends Controller
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
                     ->orWhere('sku', 'like', "%{$search}%")
-                    ->orWhere('barcode', 'like', "%{$search}%");
+                    ->orWhere('barcode', 'like', "%{$search}%")
+                    ->orWhereHas('serials', function ($sq) use ($search) {
+                        $sq->where('serial_number', 'like', "%{$search}%");
+                    });
             });
         }
 
@@ -49,6 +52,23 @@ class PosController extends Controller
         return response()->json($products);
     }
 
+    /**
+     * Lấy danh sách serial/IMEI khả dụng cho 1 sản phẩm
+     */
+    public function getProductSerials(Product $product)
+    {
+        $serials = \App\Models\SerialImei::where('product_id', $product->id)
+            ->where('status', 'in_stock')
+            ->where(function ($q) {
+                $q->whereNull('repair_status')
+                  ->orWhereNotIn('repair_status', ['not_started', 'repairing']);
+            })
+            ->orderBy('serial_number')
+            ->get(['id', 'serial_number', 'status', 'warranty_expires_at']);
+
+        return response()->json($serials);
+    }
+
     public function checkout(Request $request)
     {
         $validated = $request->validate([
@@ -64,6 +84,7 @@ class PosController extends Controller
             'items.*.product_id' => 'required|exists:products,id',
             'items.*.quantity' => 'required|integer|min:1',
             'items.*.price' => 'required|numeric|min:0',
+            'items.*.serial_ids' => 'nullable|array',
         ]);
 
         try {
@@ -82,8 +103,10 @@ class PosController extends Controller
             ]);
 
             foreach ($validated['items'] as $item) {
+                $serialIds = $item['serial_ids'] ?? [];
+
                 // Create Item
-                $invoice->items()->create([
+                $invoiceItem = $invoice->items()->create([
                     'product_id' => $item['product_id'],
                     'quantity' => $item['quantity'],
                     'price' => $item['price'],
@@ -98,9 +121,22 @@ class PosController extends Controller
                     }
 
                     $product->stock_quantity -= $item['quantity'];
-                    // If allowOversell is false, we already checked it won't be < 0
-                    // If allowOversell is true, it can go negative.
                     $product->save();
+                }
+
+                // Mark selected serials as sold
+                if (!empty($serialIds) && $product && $product->has_serial) {
+                    \App\Models\SerialImei::whereIn('id', $serialIds)
+                        ->where('product_id', $product->id)
+                        ->update([
+                            'status' => 'sold',
+                            'sold_at' => now(),
+                            'invoice_id' => $invoice->id,
+                        ]);
+
+                    // Store serial numbers in invoice item for reference
+                    $serialNumbers = \App\Models\SerialImei::whereIn('id', $serialIds)->pluck('serial_number');
+                    $invoiceItem->update(['serial' => $serialNumbers->implode(', ')]);
                 }
             }
 
@@ -108,7 +144,7 @@ class PosController extends Controller
             \App\Models\CashFlow::create([
                 'code' => 'PT' . time() . rand(10, 99),
                 'type' => 'receipt',
-                'amount' => $validated['total'], // Actually received for the invoice
+                'amount' => $validated['total'],
                 'time' => now(),
                 'category' => 'Thu tiền khách trả',
                 'target_type' => 'Khách hàng',
@@ -126,3 +162,4 @@ class PosController extends Controller
         }
     }
 }
+
