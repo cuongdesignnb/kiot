@@ -388,7 +388,7 @@ class TaskService
                 'product_name' => $productName,
                 'product_id' => $productId,
                 'quantity' => $quantity,
-                'unit_cost' => $cost,
+                'unit_cost' => $unitCost,
                 'total_cost' => $totalCost,
             ]);
 
