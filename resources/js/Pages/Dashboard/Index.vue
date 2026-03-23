@@ -1,237 +1,505 @@
 <script setup>
 import { Head, Link } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 
-// Chart.js imports
 import {
   Chart as ChartJS,
   CategoryScale,
   LinearScale,
   PointElement,
   LineElement,
+  BarElement,
+  ArcElement,
   Title,
   Tooltip,
   Legend,
   Filler
 } from 'chart.js';
-import { Line } from 'vue-chartjs';
+import { Line, Bar, Doughnut } from 'vue-chartjs';
 
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler
-);
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, ArcElement, Title, Tooltip, Legend, Filler);
 
 const props = defineProps({
     todayRevenue: Number,
+    yesterdayRevenue: Number,
     todayOrders: Number,
-    totalProductsInStock: Number,
+    yesterdayOrders: Number,
     thisMonthRevenue: Number,
-    chartData: Object,
+    lastMonthRevenue: Number,
+    thisMonthProfit: Number,
+    thisMonthPurchase: Number,
+    thisMonthReturn: Number,
+    totalProductsInStock: Number,
+    totalProductCount: Number,
+    newCustomersThisMonth: Number,
+    totalCustomers: Number,
+    totalCustomerDebt: Number,
+    totalSupplierDebt: Number,
+    outOfStockCount: Number,
+    revenueChart: Object,
+    cashFlowChart: Object,
+    topProducts: Array,
+    lowStockProducts: Array,
+    recentInvoices: Array,
+    recentPurchases: Array,
+    recentReturns: Array,
+    ordersByStatus: Object,
     branches: Array,
 });
 
-const chartOptions = {
+const fmt = (v) => Number(v || 0).toLocaleString('vi-VN');
+const fmtShort = (v) => {
+    const n = Number(v || 0);
+    if (n >= 1e9) return (n / 1e9).toFixed(1) + ' tỷ';
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + ' tr';
+    if (n >= 1e3) return (n / 1e3).toFixed(0) + 'k';
+    return n.toString();
+};
+
+const pctChange = (current, prev) => {
+    if (!prev || prev === 0) return current > 0 ? 100 : 0;
+    return Math.round(((current - prev) / prev) * 100);
+};
+
+const revenuePct = computed(() => pctChange(props.todayRevenue, props.yesterdayRevenue));
+const ordersPct = computed(() => pctChange(props.todayOrders, props.yesterdayOrders));
+const monthPct = computed(() => pctChange(props.thisMonthRevenue, props.lastMonthRevenue));
+
+const timeAgo = (dateStr) => {
+    const d = new Date(dateStr);
+    const now = new Date();
+    const diff = (now - d) / 1000;
+    if (diff < 60) return 'Vừa xong';
+    if (diff < 3600) return Math.floor(diff / 60) + ' phút trước';
+    if (diff < 86400) return Math.floor(diff / 3600) + ' giờ trước';
+    return Math.floor(diff / 86400) + ' ngày trước';
+};
+
+// ── CHART CONFIGS ──
+const revenueChartData = computed(() => ({
+    labels: props.revenueChart.labels,
+    datasets: [
+        {
+            label: 'Doanh thu',
+            data: props.revenueChart.revenue,
+            borderColor: '#6366f1',
+            backgroundColor: (ctx) => {
+                const chart = ctx.chart;
+                const { ctx: c, chartArea } = chart;
+                if (!chartArea) return 'rgba(99,102,241,0.1)';
+                const g = c.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+                g.addColorStop(0, 'rgba(99,102,241,0.3)');
+                g.addColorStop(1, 'rgba(99,102,241,0.02)');
+                return g;
+            },
+            fill: true,
+            tension: 0.4,
+            borderWidth: 2.5,
+            pointRadius: 0,
+            pointHoverRadius: 6,
+            pointHoverBackgroundColor: '#6366f1',
+            pointHoverBorderColor: '#fff',
+            pointHoverBorderWidth: 2,
+        }
+    ]
+}));
+
+const revenueChartOptions = {
     responsive: true,
     maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
     plugins: {
-        legend: {
-            display: false,
-        },
+        legend: { display: false },
         tooltip: {
+            backgroundColor: '#1e1b4b',
+            titleFont: { size: 12, weight: '600' },
+            bodyFont: { size: 13 },
+            padding: 12,
+            cornerRadius: 8,
             callbacks: {
-                label: function(context) {
-                    let label = context.dataset.label || '';
-                    if (label) {
-                        label += ': ';
-                    }
-                    if (context.parsed.y !== null) {
-                        label += new Intl.NumberFormat('vi-VN').format(context.parsed.y) + ' đ';
-                    }
-                    return label;
-                }
+                label: (ctx) => ' ' + fmt(ctx.parsed.y) + ' đ'
             }
         }
     },
     scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 10 }, color: '#94a3b8', maxRotation: 0 } },
         y: {
-            beginAtZero: true,
-            ticks: {
-                callback: function(value, index, values) {
-                    return new Intl.NumberFormat('vi-VN').format(value) + ' đ';
-                }
-            }
+            grid: { color: '#f1f5f9', drawBorder: false },
+            ticks: { font: { size: 10 }, color: '#94a3b8', callback: (v) => fmtShort(v) },
+            border: { display: false }
         }
     }
 };
 
-const chartDataConfig = {
-    labels: props.chartData.labels,
+const cashFlowChartData = computed(() => ({
+    labels: props.cashFlowChart.labels,
     datasets: [
         {
-            label: 'Doanh thu',
-            backgroundColor: 'rgba(59, 130, 246, 0.2)', // blue-500 with opacity
-            borderColor: 'rgb(59, 130, 246)',       // blue-500
-            borderWidth: 2,
-            pointBackgroundColor: 'rgb(59, 130, 246)',
-            pointBorderColor: '#fff',
-            pointHoverBackgroundColor: '#fff',
-            pointHoverBorderColor: 'rgb(59, 130, 246)',
-            fill: true,
-            tension: 0.4,
-            data: props.chartData.data
+            label: 'Thu',
+            data: props.cashFlowChart.receipts,
+            backgroundColor: '#22c55e',
+            borderRadius: 6,
+            barPercentage: 0.5,
+        },
+        {
+            label: 'Chi',
+            data: props.cashFlowChart.payments,
+            backgroundColor: '#ef4444',
+            borderRadius: 6,
+            barPercentage: 0.5,
         }
     ]
+}));
+
+const cashFlowChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+        legend: { position: 'top', labels: { usePointStyle: true, pointStyle: 'circle', padding: 16, font: { size: 12 } } },
+        tooltip: {
+            backgroundColor: '#1e1b4b',
+            padding: 10,
+            cornerRadius: 8,
+            callbacks: { label: (ctx) => ' ' + ctx.dataset.label + ': ' + fmt(ctx.parsed.y) + ' đ' }
+        }
+    },
+    scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 11 }, color: '#64748b' } },
+        y: { grid: { color: '#f1f5f9', drawBorder: false }, ticks: { font: { size: 10 }, color: '#94a3b8', callback: (v) => fmtShort(v) }, border: { display: false } }
+    }
+};
+
+// Top products bar chart
+const topProductsChartData = computed(() => ({
+    labels: (props.topProducts || []).map(p => p.name.length > 18 ? p.name.slice(0, 18) + '…' : p.name),
+    datasets: [{
+        label: 'Số lượng bán',
+        data: (props.topProducts || []).map(p => p.qty),
+        backgroundColor: ['#6366f1', '#8b5cf6', '#a78bfa', '#c4b5fd', '#818cf8', '#6366f1', '#8b5cf6', '#a78bfa', '#c4b5fd', '#818cf8'],
+        borderRadius: 6,
+        barPercentage: 0.6,
+    }]
+}));
+
+const topProductsChartOptions = {
+    indexAxis: 'y',
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+        legend: { display: false },
+        tooltip: {
+            backgroundColor: '#1e1b4b',
+            padding: 10,
+            cornerRadius: 8,
+            callbacks: { label: (ctx) => ' SL: ' + ctx.parsed.x }
+        }
+    },
+    scales: {
+        x: { grid: { color: '#f1f5f9', drawBorder: false }, ticks: { font: { size: 10 }, color: '#94a3b8' }, border: { display: false } },
+        y: { grid: { display: false }, ticks: { font: { size: 11 }, color: '#475569' } }
+    }
+};
+
+// Order status doughnut
+const statusLabels = { draft: 'Nháp', confirmed: 'Xác nhận', processing: 'Đang xử lý', completed: 'Hoàn thành', cancelled: 'Đã hủy', return: 'Trả hàng' };
+const statusColors = { draft: '#94a3b8', confirmed: '#3b82f6', processing: '#f59e0b', completed: '#22c55e', cancelled: '#ef4444', return: '#8b5cf6' };
+
+const orderStatusChartData = computed(() => {
+    const entries = Object.entries(props.ordersByStatus || {});
+    return {
+        labels: entries.map(([k]) => statusLabels[k] || k),
+        datasets: [{
+            data: entries.map(([, v]) => v),
+            backgroundColor: entries.map(([k]) => statusColors[k] || '#cbd5e1'),
+            borderWidth: 0,
+            spacing: 2,
+        }]
+    };
+});
+
+const orderStatusOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    cutout: '65%',
+    plugins: {
+        legend: { position: 'bottom', labels: { usePointStyle: true, pointStyle: 'circle', padding: 12, font: { size: 11 } } },
+        tooltip: { backgroundColor: '#1e1b4b', padding: 10, cornerRadius: 8 }
+    }
 };
 </script>
 
 <template>
     <Head title="Tổng quan - KiotViet Clone" />
     <AppLayout>
-        <!-- Mini Sidebar / Additional Info can go here if needed, but Dashboard often spans full -->
         <template #sidebar>
-            <div class="px-4 py-3 font-semibold text-gray-800 border-b border-gray-200 uppercase text-xs tracking-wider">Hoạt động hôm nay</div>
-            <div class="px-4 py-4 space-y-4">
+            <div class="px-4 py-3 font-semibold text-gray-800 border-b border-gray-200 uppercase text-xs tracking-wider">Tổng quan nhanh</div>
+            <div class="px-4 py-4 space-y-3">
                <div>
-                   <div class="text-sm text-gray-500 mb-1">Tiền bán hàng</div>
-                   <div class="font-bold text-lg text-blue-600 font-mono">{{ Number(props.todayRevenue).toLocaleString() }} ₫</div>
+                   <div class="text-xs text-gray-500 mb-0.5">Doanh thu hôm nay</div>
+                   <div class="font-bold text-lg text-indigo-600 font-mono">{{ fmt(todayRevenue) }} ₫</div>
+                   <div class="flex items-center gap-1 mt-0.5">
+                       <span :class="revenuePct >= 0 ? 'text-green-600' : 'text-red-500'" class="text-xs font-semibold flex items-center">
+                           <svg v-if="revenuePct >= 0" class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5.293 9.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 7.414V15a1 1 0 11-2 0V7.414L6.707 9.707a1 1 0 01-1.414 0z" clip-rule="evenodd"></path></svg>
+                           <svg v-else class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M14.707 10.293a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L9 12.586V5a1 1 0 012 0v7.586l2.293-2.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>
+                           {{ Math.abs(revenuePct) }}%
+                       </span>
+                       <span class="text-[10px] text-gray-400">vs hôm qua</span>
+                   </div>
                </div>
-               <div class="border-t border-gray-100 pt-3">
-                   <div class="text-sm text-gray-500 mb-1">Số đơn hàng</div>
-                   <div class="font-bold text-lg text-gray-800">{{ props.todayOrders }}</div>
+               <div class="border-t border-gray-100 pt-2">
+                   <div class="text-xs text-gray-500 mb-0.5">Đơn hôm nay</div>
+                   <div class="font-bold text-lg text-gray-800">{{ todayOrders }} <span class="text-xs text-gray-400 font-normal">đơn</span></div>
                </div>
-               <div class="border-t border-gray-100 pt-3">
-                   <div class="text-sm text-gray-500 mb-1">Hàng hóa trong kho</div>
-                   <div class="font-bold text-lg text-gray-800">{{ props.totalProductsInStock }}</div>
+               <div class="border-t border-gray-100 pt-2">
+                   <div class="text-xs text-gray-500 mb-0.5">Tồn kho</div>
+                   <div class="font-bold text-gray-800">{{ fmt(totalProductsInStock) }} <span class="text-xs text-gray-400 font-normal">SP</span></div>
+                   <div v-if="outOfStockCount > 0" class="text-xs text-red-500 mt-0.5">⚠ {{ outOfStockCount }} hết hàng</div>
+               </div>
+               <div class="border-t border-gray-100 pt-2">
+                   <div class="text-xs text-gray-500 mb-0.5">Nợ phải thu</div>
+                   <div class="font-bold text-orange-600 font-mono">{{ fmt(totalCustomerDebt) }} ₫</div>
+               </div>
+               <div class="border-t border-gray-100 pt-2">
+                   <div class="text-xs text-gray-500 mb-0.5">Nợ phải trả NCC</div>
+                   <div class="font-bold text-red-500 font-mono">{{ fmt(totalSupplierDebt) }} ₫</div>
                </div>
             </div>
 
             <div class="px-4 py-3 font-semibold text-gray-800 border-b border-t border-gray-200 uppercase text-xs tracking-wider bg-gray-50/50">Chi nhánh</div>
-            <div class="px-4 py-4">
+            <div class="px-4 py-3">
                 <select class="w-full border border-gray-300 rounded p-1.5 text-[13px] outline-none text-gray-700 font-medium">
+                    <option value="">Tất cả chi nhánh</option>
                     <option v-for="branch in branches" :key="branch.id">{{ branch.name }}</option>
                 </select>
             </div>
-            
-            <div class="px-4 py-3 font-semibold text-gray-800 border-b border-t border-gray-200 uppercase text-xs tracking-wider mt-4 bg-gray-50/50">Tháng này</div>
-            <div class="px-4 py-4">
-                 <div class="text-sm text-gray-500 mb-1">Doanh thu tạm tính</div>
-                 <div class="font-bold text-xl text-blue-700 font-mono">{{ Number(props.thisMonthRevenue).toLocaleString() }} ₫</div>
-            </div>
         </template>
 
-        <div class="p-6">
-            <h1 class="text-2xl font-bold text-gray-800 mb-6">Tổng quan</h1>
-            
-            <!-- Key Metrics Cards -->
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                <!-- Card 1 -->
-                <div class="bg-white rounded shadow-sm border border-gray-200 p-5 hover:shadow-md transition cursor-pointer">
-                    <div class="flex justify-between items-start">
-                        <div>
-                            <p class="text-gray-500 text-sm font-medium mb-1">DOANH THU HÔM NAY</p>
-                            <h3 class="text-2xl font-bold text-blue-600 font-mono">{{ Number(props.todayRevenue).toLocaleString() }} <span class="text-sm text-gray-500">₫</span></h3>
-                        </div>
-                        <div class="p-2 bg-blue-50 text-blue-600 rounded">
-                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                        </div>
+        <div class="p-5 space-y-5">
+
+            <!-- ═══ HEADER ═══ -->
+            <div class="flex items-center justify-between">
+                <div>
+                    <h1 class="text-xl font-bold text-gray-800">Tổng quan kinh doanh</h1>
+                    <p class="text-sm text-gray-500">Cập nhật lúc {{ new Date().toLocaleString('vi-VN') }}</p>
+                </div>
+            </div>
+
+            <!-- ═══ 6 METRIC CARDS ═══ -->
+            <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                <!-- Card: Doanh thu tháng -->
+                <div class="bg-gradient-to-br from-indigo-500 to-indigo-700 rounded-xl p-4 text-white shadow-lg shadow-indigo-200 relative overflow-hidden">
+                    <div class="absolute -right-3 -top-3 w-16 h-16 bg-white/10 rounded-full"></div>
+                    <div class="absolute -right-1 -bottom-5 w-12 h-12 bg-white/5 rounded-full"></div>
+                    <p class="text-indigo-200 text-[11px] font-semibold uppercase tracking-wide mb-1">Doanh thu tháng</p>
+                    <p class="text-xl font-bold font-mono tracking-tight">{{ fmtShort(thisMonthRevenue) }}</p>
+                    <div class="flex items-center gap-1 mt-1.5">
+                        <span :class="monthPct >= 0 ? 'bg-green-400/20 text-green-200' : 'bg-red-400/20 text-red-200'" class="text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                            {{ monthPct >= 0 ? '+' : '' }}{{ monthPct }}%
+                        </span>
+                        <span class="text-[10px] text-indigo-300">vs tháng trước</span>
                     </div>
                 </div>
 
-                <!-- Card 2 -->
-                <div class="bg-white rounded shadow-sm border border-gray-200 p-5 hover:shadow-md transition cursor-pointer">
-                    <div class="flex justify-between items-start">
-                        <div>
-                            <p class="text-gray-500 text-sm font-medium mb-1">ĐƠN HÀNG MỚI</p>
-                            <h3 class="text-2xl font-bold text-gray-800">{{ props.todayOrders }}</h3>
-                        </div>
-                        <div class="p-2 bg-green-50 text-green-600 rounded">
-                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg>
-                        </div>
+                <!-- Card: Lợi nhuận gộp -->
+                <div class="bg-gradient-to-br from-emerald-500 to-emerald-700 rounded-xl p-4 text-white shadow-lg shadow-emerald-200 relative overflow-hidden">
+                    <div class="absolute -right-3 -top-3 w-16 h-16 bg-white/10 rounded-full"></div>
+                    <p class="text-emerald-200 text-[11px] font-semibold uppercase tracking-wide mb-1">Lợi nhuận gộp</p>
+                    <p class="text-xl font-bold font-mono tracking-tight">{{ fmtShort(thisMonthProfit) }}</p>
+                    <p class="text-[10px] text-emerald-200 mt-1.5">Tháng này</p>
+                </div>
+
+                <!-- Card: Nhập hàng -->
+                <div class="bg-white rounded-xl p-4 border border-gray-200 shadow-sm hover:shadow-md transition">
+                    <p class="text-gray-500 text-[11px] font-semibold uppercase tracking-wide mb-1">Nhập hàng tháng</p>
+                    <p class="text-xl font-bold text-gray-800 font-mono tracking-tight">{{ fmtShort(thisMonthPurchase) }}</p>
+                    <div class="flex items-center gap-1 mt-1.5">
+                        <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                        <span class="text-[10px] text-gray-400">Tổng nhập</span>
                     </div>
                 </div>
 
-                <!-- Card 3 -->
-                <div class="bg-white rounded shadow-sm border border-gray-200 p-5 hover:shadow-md transition cursor-pointer">
-                    <div class="flex justify-between items-start">
-                        <div>
-                            <p class="text-gray-500 text-sm font-medium mb-1">DOANH THU THÁNG</p>
-                            <h3 class="text-2xl font-bold text-indigo-600 font-mono">{{ Number(props.thisMonthRevenue).toLocaleString() }} <span class="text-sm text-gray-500">₫</span></h3>
-                        </div>
-                        <div class="p-2 bg-indigo-50 text-indigo-600 rounded">
-                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 14v3m4-3v3m4-3v3M3 21h18M3 10h18M3 7l9-4 9 4M4 10h16v11H4V10z"></path></svg>
-                        </div>
+                <!-- Card: Trả hàng -->
+                <div class="bg-white rounded-xl p-4 border border-gray-200 shadow-sm hover:shadow-md transition">
+                    <p class="text-gray-500 text-[11px] font-semibold uppercase tracking-wide mb-1">Trả hàng tháng</p>
+                    <p class="text-xl font-bold text-red-500 font-mono tracking-tight">{{ fmtShort(thisMonthReturn) }}</p>
+                    <div class="flex items-center gap-1 mt-1.5">
+                        <span class="w-1.5 h-1.5 rounded-full bg-red-400"></span>
+                        <span class="text-[10px] text-gray-400">Tổng trả</span>
                     </div>
                 </div>
 
-                <!-- Card 4 -->
-                <div class="bg-white rounded shadow-sm border border-gray-200 p-5 hover:shadow-md transition cursor-pointer">
-                    <div class="flex justify-between items-start">
-                        <div>
-                            <p class="text-gray-500 text-sm font-medium mb-1">TỔNG TỒN KHO</p>
-                            <h3 class="text-2xl font-bold text-orange-600">{{ props.totalProductsInStock }}</h3>
-                        </div>
-                        <div class="p-2 bg-orange-50 text-orange-600 rounded">
-                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path></svg>
-                        </div>
+                <!-- Card: Khách hàng -->
+                <div class="bg-white rounded-xl p-4 border border-gray-200 shadow-sm hover:shadow-md transition">
+                    <p class="text-gray-500 text-[11px] font-semibold uppercase tracking-wide mb-1">Khách hàng</p>
+                    <p class="text-xl font-bold text-gray-800">{{ totalCustomers }}</p>
+                    <div class="flex items-center gap-1 mt-1.5">
+                        <span class="text-[10px] text-green-600 font-semibold">+{{ newCustomersThisMonth }}</span>
+                        <span class="text-[10px] text-gray-400">mới tháng này</span>
+                    </div>
+                </div>
+
+                <!-- Card: Sản phẩm -->
+                <div class="bg-white rounded-xl p-4 border border-gray-200 shadow-sm hover:shadow-md transition">
+                    <p class="text-gray-500 text-[11px] font-semibold uppercase tracking-wide mb-1">Sản phẩm</p>
+                    <p class="text-xl font-bold text-gray-800">{{ totalProductCount }}</p>
+                    <div class="flex items-center gap-1 mt-1.5">
+                        <span v-if="outOfStockCount > 0" class="text-[10px] text-red-500 font-semibold">{{ outOfStockCount }} hết hàng</span>
+                        <span v-else class="text-[10px] text-green-600">Đủ hàng</span>
                     </div>
                 </div>
             </div>
 
-            <!-- Charts Section -->
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div class="bg-white rounded shadow-sm border border-gray-200 lg:col-span-2">
-                    <div class="p-5 border-b border-gray-100 flex justify-between items-center">
-                        <h2 class="font-bold text-gray-800">Doanh thu 7 ngày qua</h2>
-                        <!-- A small dropdown mock -->
-                        <button class="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1 border rounded px-2 py-1">
-                            Hôm nay
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                        </button>
+            <!-- ═══ CHARTS ROW 1 ═══ -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                <!-- Revenue Chart (2/3) -->
+                <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <div class="px-5 py-4 border-b border-gray-100 flex justify-between items-center">
+                        <div>
+                            <h2 class="font-bold text-gray-800 text-[15px]">Doanh thu 30 ngày</h2>
+                            <p class="text-xs text-gray-400">Theo ngày</p>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <div class="flex items-center gap-1">
+                                <span class="w-2.5 h-2.5 rounded-full bg-indigo-500"></span>
+                                <span class="text-xs text-gray-500">Doanh thu</span>
+                            </div>
+                        </div>
                     </div>
-                    <div class="p-5" style="height: 350px;">
-                        <Line :data="chartDataConfig" :options="chartOptions" />
+                    <div class="p-4" style="height: 320px;">
+                        <Line :data="revenueChartData" :options="revenueChartOptions" />
                     </div>
                 </div>
 
-                <div class="bg-white rounded shadow-sm border border-gray-200">
-                    <div class="p-5 border-b border-gray-100">
-                        <h2 class="font-bold text-gray-800">Hoạt động gần đây</h2>
+                <!-- Cash flow chart (1/3) -->
+                <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <div class="px-5 py-4 border-b border-gray-100">
+                        <h2 class="font-bold text-gray-800 text-[15px]">Thu - Chi tháng này</h2>
+                        <p class="text-xs text-gray-400">Theo tuần</p>
                     </div>
-                    <div class="p-5">
-                        <ul class="space-y-4">
-                            <li class="flex gap-4">
-                                <div class="w-2 h-2 mt-2 rounded-full bg-blue-500"></div>
-                                <div>
-                                    <p class="text-sm font-medium text-gray-800">Đơn hàng mới tạo thành công</p>
-                                    <p class="text-xs text-gray-500">Vài phút trước</p>
-                                </div>
-                            </li>
-                            <li class="flex gap-4">
-                                <div class="w-2 h-2 mt-2 rounded-full bg-green-500"></div>
-                                <div>
-                                    <p class="text-sm font-medium text-gray-800">Đã thu tiền mặt 58.000.000 đ</p>
-                                    <p class="text-xs text-gray-500">Vài phút trước</p>
-                                </div>
-                            </li>
-                             <li class="flex gap-4">
-                                <div class="w-2 h-2 mt-2 rounded-full bg-gray-300"></div>
-                                <div>
-                                    <p class="text-sm font-medium text-gray-500">Hệ thống sẵn sàng hoạt động</p>
-                                    <p class="text-xs text-gray-500">1 giờ trước</p>
-                                </div>
-                            </li>
-                        </ul>
-                        
-                        <div class="mt-6 pt-4 border-t border-gray-100 text-center">
-                            <Link href="/invoices" class="text-sm text-blue-600 font-medium hover:underline">Xem tất cả hoạt động</Link>
+                    <div class="p-4" style="height: 320px;">
+                        <Bar :data="cashFlowChartData" :options="cashFlowChartOptions" />
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ CHARTS ROW 2 ═══ -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                <!-- Top Products (2/3) -->
+                <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <div class="px-5 py-4 border-b border-gray-100 flex justify-between items-center">
+                        <div>
+                            <h2 class="font-bold text-gray-800 text-[15px]">Top sản phẩm bán chạy</h2>
+                            <p class="text-xs text-gray-400">Tháng này</p>
                         </div>
+                        <Link href="/products" class="text-xs text-indigo-600 hover:underline font-medium">Xem tất cả →</Link>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2">
+                        <div class="p-4" style="height: 300px;">
+                            <Bar v-if="topProducts && topProducts.length" :data="topProductsChartData" :options="topProductsChartOptions" />
+                            <div v-else class="flex items-center justify-center h-full text-gray-400 text-sm">Chưa có dữ liệu</div>
+                        </div>
+                        <div class="p-4 border-l border-gray-100">
+                            <div class="space-y-2">
+                                <div v-for="(p, idx) in (topProducts || []).slice(0, 8)" :key="idx" class="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-gray-50 transition">
+                                    <div class="flex items-center gap-2 min-w-0">
+                                        <span class="flex-shrink-0 w-5 h-5 rounded-full text-white text-[10px] font-bold flex items-center justify-center" :class="idx < 3 ? 'bg-indigo-500' : 'bg-gray-300'">{{ idx + 1 }}</span>
+                                        <div class="min-w-0">
+                                            <p class="text-sm text-gray-800 truncate font-medium">{{ p.name }}</p>
+                                            <p class="text-[10px] text-gray-400">{{ p.sku }}</p>
+                                        </div>
+                                    </div>
+                                    <div class="text-right flex-shrink-0 ml-2">
+                                        <p class="text-sm font-bold text-gray-800">{{ p.qty }}</p>
+                                        <p class="text-[10px] text-gray-400">{{ fmtShort(p.revenue) }}đ</p>
+                                    </div>
+                                </div>
+                                <div v-if="!topProducts || topProducts.length === 0" class="text-center text-gray-400 text-sm py-6">Chưa có dữ liệu bán hàng</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Order status doughnut (1/3) -->
+                <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <div class="px-5 py-4 border-b border-gray-100">
+                        <h2 class="font-bold text-gray-800 text-[15px]">Đơn hàng theo trạng thái</h2>
+                        <p class="text-xs text-gray-400">Tất cả thời gian</p>
+                    </div>
+                    <div class="p-4 flex items-center justify-center" style="height: 300px;">
+                        <Doughnut v-if="Object.keys(ordersByStatus || {}).length" :data="orderStatusChartData" :options="orderStatusOptions" />
+                        <div v-else class="text-gray-400 text-sm">Chưa có đơn hàng</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ BOTTOM ROW ═══ -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                <!-- Recent invoices -->
+                <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <div class="px-5 py-4 border-b border-gray-100 flex justify-between items-center">
+                        <h2 class="font-bold text-gray-800 text-[15px]">Hóa đơn gần đây</h2>
+                        <Link href="/invoices" class="text-xs text-indigo-600 hover:underline font-medium">Xem tất cả →</Link>
+                    </div>
+                    <div class="divide-y divide-gray-50">
+                        <div v-for="inv in recentInvoices" :key="inv.id" class="px-5 py-3 flex items-center justify-between hover:bg-gray-50/50 transition">
+                            <div>
+                                <p class="text-sm font-semibold text-gray-800">{{ inv.code }}</p>
+                                <p class="text-[10px] text-gray-400">{{ timeAgo(inv.created_at) }} <span v-if="inv.employee">• {{ inv.employee.name }}</span></p>
+                            </div>
+                            <span class="text-sm font-bold text-indigo-600 font-mono">+{{ fmt(inv.total) }}đ</span>
+                        </div>
+                        <div v-if="!recentInvoices || recentInvoices.length === 0" class="px-5 py-8 text-center text-gray-400 text-sm">Chưa có hóa đơn</div>
+                    </div>
+                </div>
+
+                <!-- Recent purchases -->
+                <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <div class="px-5 py-4 border-b border-gray-100 flex justify-between items-center">
+                        <h2 class="font-bold text-gray-800 text-[15px]">Nhập hàng gần đây</h2>
+                        <Link href="/purchases" class="text-xs text-indigo-600 hover:underline font-medium">Xem tất cả →</Link>
+                    </div>
+                    <div class="divide-y divide-gray-50">
+                        <div v-for="p in recentPurchases" :key="p.id" class="px-5 py-3 flex items-center justify-between hover:bg-gray-50/50 transition">
+                            <div>
+                                <p class="text-sm font-semibold text-gray-800">{{ p.code }}</p>
+                                <p class="text-[10px] text-gray-400">{{ timeAgo(p.created_at) }} <span v-if="p.supplier">• {{ p.supplier.name }}</span></p>
+                            </div>
+                            <div class="text-right">
+                                <span class="text-sm font-bold text-red-500 font-mono">-{{ fmt(p.total_amount) }}đ</span>
+                                <span v-if="p.status === 'completed'" class="block text-[10px] text-green-600">Hoàn thành</span>
+                                <span v-else class="block text-[10px] text-yellow-600">{{ p.status }}</span>
+                            </div>
+                        </div>
+                        <div v-if="!recentPurchases || recentPurchases.length === 0" class="px-5 py-8 text-center text-gray-400 text-sm">Chưa nhập hàng</div>
+                    </div>
+                </div>
+
+                <!-- Low stock alerts -->
+                <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <div class="px-5 py-4 border-b border-gray-100 flex justify-between items-center">
+                        <div class="flex items-center gap-2">
+                            <h2 class="font-bold text-gray-800 text-[15px]">Cảnh báo tồn kho</h2>
+                            <span v-if="outOfStockCount > 0" class="px-1.5 py-0.5 text-[10px] font-bold text-white bg-red-500 rounded-full">{{ outOfStockCount }}</span>
+                        </div>
+                        <Link href="/products" class="text-xs text-indigo-600 hover:underline font-medium">Xem kho →</Link>
+                    </div>
+                    <div class="divide-y divide-gray-50">
+                        <div v-for="p in lowStockProducts" :key="p.id" class="px-5 py-3 flex items-center justify-between hover:bg-gray-50/50 transition">
+                            <div class="min-w-0">
+                                <p class="text-sm font-medium text-gray-800 truncate">{{ p.name }}</p>
+                                <p class="text-[10px] text-gray-400">{{ p.sku }}</p>
+                            </div>
+                            <div class="flex items-center gap-2 flex-shrink-0 ml-2">
+                                <span class="px-2 py-0.5 rounded-full text-xs font-bold" :class="p.stock_quantity <= 2 ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'">
+                                    Còn {{ p.stock_quantity }}
+                                </span>
+                            </div>
+                        </div>
+                        <div v-if="outOfStockCount > 0" class="px-5 py-3 bg-red-50 text-center">
+                            <p class="text-xs text-red-600 font-semibold">🚨 {{ outOfStockCount }} sản phẩm đã hết hàng</p>
+                        </div>
+                        <div v-if="!lowStockProducts || lowStockProducts.length === 0" class="px-5 py-8 text-center text-gray-400 text-sm">Tồn kho ổn</div>
                     </div>
                 </div>
             </div>
