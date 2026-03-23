@@ -62,6 +62,8 @@ const priorityBadge = (priority) => {
     return map[priority] || { label: priority, cls: "text-gray-500" };
 };
 
+const acceptingAll = ref(false);
+
 const respond = async (assignmentId, status) => {
     const action = status === "accepted" ? "nhận" : "từ chối";
     if (!confirm(`Xác nhận ${action} công việc này?`)) return;
@@ -70,6 +72,20 @@ const respond = async (assignmentId, status) => {
         load();
     } catch (e) {
         alert(e.response?.data?.message || "Lỗi.");
+    }
+};
+
+const acceptAllTasks = async () => {
+    if (!confirm(`Xác nhận nhận tất cả ${counts.value.pending} công việc đang chờ?`)) return;
+    acceptingAll.value = true;
+    try {
+        const res = await axios.post('/api/my-tasks/accept-all');
+        alert(res.data?.message || 'Đã nhận tất cả!');
+        load();
+    } catch (e) {
+        alert(e.response?.data?.message || 'Lỗi.');
+    } finally {
+        acceptingAll.value = false;
     }
 };
 
@@ -164,7 +180,7 @@ load();
             </div>
 
             <!-- Filter tabs -->
-            <div class="flex gap-2 mb-4">
+            <div class="flex items-center gap-2 mb-4 flex-wrap">
                 <button v-for="f in [
                     { key: 'all', label: 'Tất cả' },
                     { key: 'pending', label: 'Chờ xác nhận' },
@@ -174,6 +190,17 @@ load();
                     :class="activeFilter === f.key ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 border'"
                     class="px-4 py-2 rounded-lg text-sm font-semibold transition">
                     {{ f.label }} <span class="ml-1 text-xs opacity-75">({{ counts[f.key] }})</span>
+                </button>
+                <!-- Nhận tất cả -->
+                <button
+                    v-if="counts.pending > 0"
+                    @click="acceptAllTasks"
+                    :disabled="acceptingAll"
+                    class="ml-auto px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-bold hover:bg-green-700 transition disabled:opacity-50 flex items-center gap-1.5 shadow-sm"
+                >
+                    <svg v-if="acceptingAll" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                    <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                    {{ acceptingAll ? 'Đang nhận...' : `Nhận tất cả (${counts.pending})` }}
                 </button>
             </div>
 

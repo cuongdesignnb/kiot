@@ -77,6 +77,32 @@ class MyTasksController extends Controller
     }
 
     /**
+     * Nhận tất cả công việc đang chờ.
+     */
+    public function acceptAll(Request $request)
+    {
+        $employee = $request->user()->employee;
+        if (!$employee) {
+            return response()->json(['message' => 'Tài khoản chưa liên kết nhân viên.'], 422);
+        }
+
+        $pendingAssignments = TaskAssignment::where('employee_id', $employee->id)
+            ->where('status', TaskAssignment::STATUS_PENDING)
+            ->get();
+
+        $count = 0;
+        foreach ($pendingAssignments as $assignment) {
+            $this->service->respondToAssignment($assignment, 'accepted');
+            $count++;
+        }
+
+        return response()->json([
+            'message' => "Đã nhận {$count} công việc.",
+            'accepted_count' => $count,
+        ]);
+    }
+
+    /**
      * Cập nhật tiến độ.
      */
     public function updateProgress(Request $request, Task $task)
