@@ -10,16 +10,12 @@ const props = defineProps({
     invoice: Object,
 });
 
-const currentTime = computed(() => {
+// Date helper
+const pad = (n) => String(n).padStart(2, '0');
+const getLocalNow = () => {
     const now = new Date();
-    return now.toLocaleString('vi-VN', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-    });
-});
+    return `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+};
 
 // Create an initial tab state template
 // Create an initial tab state template
@@ -58,6 +54,7 @@ const createInitialTab = (index) => ({
     selectedBranchId: null,
     selectedPriceBookId: null,
     selectedPriceBookName: 'Bảng giá chung',
+    orderDate: getLocalNow(),
 });
 
 const tabs = ref([createInitialTab(1)]);
@@ -313,6 +310,7 @@ const save = async () => {
             amount_paid: activeTab.value.amountPaid,
             price_book_id: activeTab.value.selectedPriceBookId,
             price_book_name: activeTab.value.selectedPriceBookName,
+            order_date: activeTab.value.orderDate ? new Date(activeTab.value.orderDate).toISOString() : null,
             items: itemsComputed.value,
             invoice_id: activeTab.value.invoice_id,
             subtotal: totalAmount.value,
@@ -407,6 +405,7 @@ const saveAndPrint = async () => {
             amount_paid: activeTab.value.amountPaid,
             price_book_id: activeTab.value.selectedPriceBookId,
             price_book_name: activeTab.value.selectedPriceBookName,
+            order_date: activeTab.value.orderDate ? new Date(activeTab.value.orderDate).toISOString() : null,
             items: itemsComputed.value,
             invoice_id: activeTab.value.invoice_id,
             subtotal: totalAmount.value,
@@ -643,10 +642,12 @@ onUnmounted(() => {
                            <i class="fas fa-walking text-gray-400"></i> 
                            <i class="fas fa-caret-down text-gray-400"></i>
                        </div>
-                       <div class="text-[12px] text-gray-500">{{ currentTime }}</div>
+                       <div class="text-[12px] text-gray-500">
+                           <input type="datetime-local" v-model="activeTab.orderDate" class="bg-transparent border-b border-dashed border-gray-300 outline-none focus:border-blue-500 text-[12px] text-gray-500 py-0.5 w-[170px]" />
+                       </div>
                     </div>
                     <div v-else class="flex justify-end text-[12px] text-gray-500 mb-2">
-                        {{ currentTime }}
+                        <input type="datetime-local" v-model="activeTab.orderDate" class="bg-transparent border-b border-dashed border-gray-300 outline-none focus:border-blue-500 text-[12px] text-gray-500 py-0.5 w-[170px]" />
                     </div>
                     
                     <div class="flex gap-2 relative">

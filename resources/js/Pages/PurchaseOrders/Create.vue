@@ -25,6 +25,12 @@ const expectedDate = ref('');
 const note = ref('');
 const submitRef = ref(false);
 
+// Ngày đặt hàng
+const pad = (n) => String(n).padStart(2, '0');
+const nowInit = new Date();
+const localNowStr = `${nowInit.getFullYear()}-${pad(nowInit.getMonth()+1)}-${pad(nowInit.getDate())}T${pad(nowInit.getHours())}:${pad(nowInit.getMinutes())}`;
+const orderDate = ref(localNowStr);
+
 // Serial search results from API
 const serialSearchResults = ref([]);
 let serialSearchTimeout;
@@ -116,6 +122,7 @@ const save = async (saveStatus) => {
             branch_id: props.defaultBranchId,
             supplier_id: selectedSupplierId.value || null,
             expected_date: expectedDate.value || null,
+            order_date: orderDate.value ? new Date(orderDate.value).toISOString() : null,
             note: note.value,
             discount: discount.value,
             import_fee: importFee.value,
@@ -249,7 +256,7 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                         </div>
                         <span class="font-medium text-[13px] text-gray-700">Trần Văn Tiến <span class="text-gray-400 font-normal ml-1">▼</span></span>
                     </div>
-                    <div class="text-[13px] text-gray-500">{{ new Date().toLocaleString('vi-VN', {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'}) }}</div>
+                    <input type="datetime-local" v-model="orderDate" class="text-[13px] text-gray-500 bg-transparent border-b border-dashed border-gray-300 outline-none focus:border-blue-500 py-0.5 w-[170px]" />
                 </div>
 
                 <div class="flex-1 overflow-auto bg-white flex flex-col pt-2">

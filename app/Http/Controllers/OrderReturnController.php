@@ -110,6 +110,11 @@ class OrderReturnController extends Controller
                     'partner_id' => $return->customer_id,
                 ]);
             }
+
+            // Cho phép chọn ngày trả hàng (kế toán nhập sau)
+            if (request()->filled('order_date')) {
+                $return->update(['created_at' => \Carbon\Carbon::parse(request()->order_date)]);
+            }
         });
 
         return redirect()->route('returns.index')->with('success', 'Phiếu trả hàng đã được tạo thành công.');

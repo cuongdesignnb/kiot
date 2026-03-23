@@ -207,6 +207,11 @@ class PurchaseController extends Controller
                 'other_costs_total' => $otherCostsTotal,
             ]);
 
+            // Cho phép chọn ngày nhập (kế toán nhập sau)
+            if ($request->filled('purchase_date')) {
+                $purchase->update(['created_at' => \Carbon\Carbon::parse($request->purchase_date)]);
+            }
+
             foreach ($request->items as $item) {
                 $product = Product::find($item['product_id']);
 

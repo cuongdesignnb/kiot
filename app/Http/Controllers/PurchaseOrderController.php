@@ -153,6 +153,11 @@ class PurchaseOrderController extends Controller
 
             DB::commit();
 
+            // Cho phép chọn ngày đặt hàng (kế toán nhập sau)
+            if ($request->filled('order_date')) {
+                $purchaseOrder->update(['created_at' => \Carbon\Carbon::parse($request->order_date)]);
+            }
+
             return redirect()->route('purchase-orders.index')->with('success', 'Tạo phiếu đặt hàng nhập thành công.');
         } catch (\Exception $e) {
             DB::rollBack();

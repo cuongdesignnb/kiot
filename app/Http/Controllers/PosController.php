@@ -102,6 +102,11 @@ class PosController extends Controller
                 'bank_account_info' => ($validated['payment_method'] ?? 'cash') === 'transfer' ? ($validated['bank_account_info'] ?? null) : null,
             ]);
 
+            // Cho phép chọn ngày bán (kế toán nhập sau)
+            if (!empty($validated['sale_time'])) {
+                $invoice->update(['created_at' => \Carbon\Carbon::parse($validated['sale_time'])]);
+            }
+
             foreach ($validated['items'] as $item) {
                 $serialIds = $item['serial_ids'] ?? [];
 

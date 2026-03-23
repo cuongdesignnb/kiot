@@ -20,6 +20,12 @@ const cart = ref([]);
 const selectedEmployeeId = ref('');
 const currentTime = ref('');
 
+// Ngày bán (cho phép chọn ngày khác hôm nay)
+const pad = (n) => String(n).padStart(2, '0');
+const nowInit = new Date();
+const localNowStr = `${nowInit.getFullYear()}-${pad(nowInit.getMonth()+1)}-${pad(nowInit.getDate())}T${pad(nowInit.getHours())}:${pad(nowInit.getMinutes())}`;
+const saleDate = ref(localNowStr);
+
 const updateTime = () => {
     const now = new Date();
     currentTime.value = now.toLocaleString('vi-VN', {
@@ -230,7 +236,7 @@ const processCheckout = async () => {
             total: totalAmount.value,
             customer_paid: customerPaid.value,
             employee_id: selectedEmployeeId.value || null,
-            sale_time: new Date().toISOString(),
+            sale_time: saleDate.value ? new Date(saleDate.value).toISOString() : new Date().toISOString(),
             payment_method: paymentMethod.value,
             bank_account_info: paymentMethod.value === 'transfer' ? bankAccountInfo.value : null,
             items: cart.value.map(item => ({
@@ -316,8 +322,12 @@ const processCheckout = async () => {
                         <option v-for="emp in employees" :key="emp.id" :value="emp.id" class="text-gray-800">{{ emp.name }}</option>
                     </select>
                 </div>
-                <!-- Real-time clock -->
-                <div class="text-sm font-medium text-blue-100 bg-blue-700/50 rounded px-3 py-1 tabular-nums tracking-tight">
+                <!-- Ngày bán -->
+                <div class="flex items-center bg-blue-700/50 rounded px-2 py-0.5">
+                    <svg class="w-4 h-4 text-blue-200 mr-1.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                    <input type="datetime-local" v-model="saleDate" class="bg-transparent text-white text-sm outline-none border-none font-medium w-[170px] cursor-pointer" />
+                </div>
+                <div class="text-xs font-medium text-blue-200 bg-blue-700/50 rounded px-2 py-1 tabular-nums">
                     {{ currentTime }}
                 </div>
                 <Link href="/" class="text-sm font-medium hover:bg-blue-700 px-3 py-1.5 rounded bg-blue-500 transition-colors flex items-center gap-1">

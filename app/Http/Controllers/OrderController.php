@@ -152,6 +152,11 @@ class OrderController extends Controller
             'cod_amount' => $validated['cod_amount'] ?? 0,
         ]);
 
+        // Cho phép chọn ngày (kế toán nhập sau)
+        if ($request->filled('order_date')) {
+            $order->update(['created_at' => \Carbon\Carbon::parse($request->order_date)]);
+        }
+
         foreach ($validated['items'] as $item) {
             $subtotal = ($item['qty'] * $item['price']) - ($item['discount'] ?? 0);
             $order->items()->create([
