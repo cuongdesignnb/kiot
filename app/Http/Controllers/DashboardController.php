@@ -161,6 +161,119 @@ class DashboardController extends Controller
             ->groupBy('status')->get()
             ->pluck('total', 'status')->toArray();
 
+        // ═══════════════════════════════════════
+        // 8. TOP SẢN PHẨM THEO DOANH THU
+        // ═══════════════════════════════════════
+        $topProductsByRevenue = InvoiceItem::select('product_id', DB::raw('SUM(quantity) as total_qty'), DB::raw('SUM(quantity * price) as total_revenue'))
+            ->whereHas('invoice', fn($q) => $q->where('created_at', '>=', $startOfMonth))
+            ->groupBy('product_id')
+            ->orderByDesc('total_revenue')
+            ->limit(10)
+            ->with('product:id,name,sku,cost_price')
+            ->get()
+            ->map(fn($item) => [
+                'name' => $item->product->name ?? 'N/A',
+                'sku' => $item->product->sku ?? '',
+                'qty' => (int) $item->total_qty,
+                'revenue' => (float) $item->total_revenue,
+                'cost' => (float) (($item->product->cost_price ?? 0) * $item->total_qty),
+                'profit' => (float) ($item->total_revenue - (($item->product->cost_price ?? 0) * $item->total_qty)),
+            ]);
+
+        // ═══════════════════════════════════════
+        // 9. TOP SẢN PHẨM THEO LỢI NHUẬN
+        // ═══════════════════════════════════════
+        $allProductSales = InvoiceItem::select('product_id', DB::raw('SUM(quantity) as total_qty'), DB::raw('SUM(quantity * price) as total_revenue'))
+            ->whereHas('invoice', fn($q) => $q->where('created_at', '>=', $startOfMonth))
+            ->groupBy('product_id')
+            ->with('product:id,name,sku,cost_price')
+            ->get()
+            ->map(fn($item) => [
+                'name' => $item->product->name ?? 'N/A',
+                'sku' => $item->product->sku ?? '',
+                'qty' => (int) $item->total_qty,
+                'revenue' => (float) $item->total_revenue,
+                'profit' => (float) ($item->total_revenue - (($item->product->cost_price ?? 0) * $item->total_qty)),
+            ])
+            ->sortByDesc('profit')
+            ->take(10)
+            ->values();
+
+        // ═══════════════════════════════════════
+        // 10. TOP KHÁCH HÀNG
+        // ═══════════════════════════════════════
+        $topCustomersByRevenue = Invoice::select('customer_id', DB::raw('COUNT(*) as order_count'), DB::raw('SUM(total) as total_revenue'))
+            ->whereNotNull('customer_id')
+            ->where('created_at', '>=', $startOfMonth)
+            ->groupBy('customer_id')
+            ->orderByDesc('total_revenue')
+            ->limit(10)
+            ->with('customer:id,name,phone,code')
+            ->get()
+            ->map(fn($inv) => [
+                'name' => $inv->customer->name ?? 'N/A',
+                'phone' => $inv->customer->phone ?? '',
+                'code' => $inv->customer->code ?? '',
+                'orders' => (int) $inv->order_count,
+                'revenue' => (float) $inv->total_revenue,
+            ]);
+
+        // Top khách theo số lượng đơn
+        $topCustomersByQty = Invoice::select('customer_id', DB::raw('COUNT(*) as order_count'), DB::raw('SUM(total) as total_revenue'))
+            ->whereNotNull('customer_id')
+            ->where('created_at', '>=', $startOfMonth)
+            ->groupBy('customer_id')
+            ->orderByDesc('order_count')
+            ->limit(10)
+            ->with('customer:id,name,phone,code')
+            ->get()
+            ->map(fn($inv) => [
+                'name' => $inv->customer->name ?? 'N/A',
+                'phone' => $inv->customer->phone ?? '',
+                'code' => $inv->customer->code ?? '',
+                'orders' => (int) $inv->order_count,
+                'revenue' => (float) $inv->total_revenue,
+            ]);
+
+        // ═══════════════════════════════════════
+        // 11. TOP NHÂN VIÊN BÁN HÀNG
+        // ═══════════════════════════════════════
+        $topEmployees = Invoice::select('employee_id', DB::raw('COUNT(*) as invoice_count'), DB::raw('SUM(total) as total_revenue'))
+            ->whereNotNull('employee_id')
+            ->where('created_at', '>=', $startOfMonth)
+            ->groupBy('employee_id')
+            ->orderByDesc('total_revenue')
+            ->limit(10)
+            ->with('employee:id,name')
+            ->get()
+            ->map(fn($inv) => [
+                'name' => $inv->employee->name ?? 'N/A',
+                'invoices' => (int) $inv->invoice_count,
+                'revenue' => (float) $inv->total_revenue,
+            ]);
+
+        // ═══════════════════════════════════════
+        // 12. BẢNG TỒN KHO ĐẦY ĐỦ
+        // ═══════════════════════════════════════
+        $inventoryProducts = Product::where('is_active', true)
+            ->orderBy('stock_quantity', 'asc')
+            ->limit(50)
+            ->get(['id', 'name', 'sku', 'stock_quantity', 'cost_price', 'selling_price'])
+            ->map(fn($p) => [
+                'id' => $p->id,
+                'name' => $p->name,
+                'sku' => $p->sku,
+                'stock' => (int) $p->stock_quantity,
+                'cost_price' => (float) ($p->cost_price ?? 0),
+                'selling_price' => (float) ($p->selling_price ?? 0),
+                'stock_value' => (float) (($p->cost_price ?? 0) * $p->stock_quantity),
+                'alert' => $p->stock_quantity <= 0 ? 'out' : ($p->stock_quantity <= 5 ? 'low' : 'ok'),
+            ]);
+
+        $totalStockValue = Product::where('is_active', true)
+            ->selectRaw('COALESCE(SUM(stock_quantity * cost_price), 0) as val')
+            ->value('val');
+
         return Inertia::render('Dashboard/Index', [
             // Key metrics
             'todayRevenue' => (float) $todayRevenue,
@@ -179,6 +292,7 @@ class DashboardController extends Controller
             'totalCustomerDebt' => (float) $totalCustomerDebt,
             'totalSupplierDebt' => (float) $totalSupplierDebt,
             'outOfStockCount' => (int) $outOfStockCount,
+            'totalStockValue' => (float) $totalStockValue,
 
             // Charts
             'revenueChart' => $revenueChart,
@@ -186,6 +300,12 @@ class DashboardController extends Controller
 
             // Lists
             'topProducts' => $topProducts,
+            'topProductsByRevenue' => $topProductsByRevenue,
+            'topProductsByProfit' => $allProductSales,
+            'topCustomersByRevenue' => $topCustomersByRevenue,
+            'topCustomersByQty' => $topCustomersByQty,
+            'topEmployees' => $topEmployees,
+            'inventoryProducts' => $inventoryProducts,
             'lowStockProducts' => $lowStockProducts,
             'recentInvoices' => $recentInvoices,
             'recentPurchases' => $recentPurchases,

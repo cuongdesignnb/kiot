@@ -37,9 +37,16 @@ const props = defineProps({
     totalCustomerDebt: Number,
     totalSupplierDebt: Number,
     outOfStockCount: Number,
+    totalStockValue: Number,
     revenueChart: Object,
     cashFlowChart: Object,
     topProducts: Array,
+    topProductsByRevenue: Array,
+    topProductsByProfit: Array,
+    topCustomersByRevenue: Array,
+    topCustomersByQty: Array,
+    topEmployees: Array,
+    inventoryProducts: Array,
     lowStockProducts: Array,
     recentInvoices: Array,
     recentPurchases: Array,
@@ -47,6 +54,11 @@ const props = defineProps({
     ordersByStatus: Object,
     branches: Array,
 });
+
+// Tab states
+const productRankTab = ref('revenue'); // 'revenue' | 'profit' | 'qty'
+const customerRankTab = ref('revenue'); // 'revenue' | 'qty'
+const inventoryFilter = ref('all'); // 'all' | 'low' | 'out'
 
 const fmt = (v) => Number(v || 0).toLocaleString('vi-VN');
 const fmtShort = (v) => {
@@ -501,6 +513,161 @@ const orderStatusOptions = {
                         </div>
                         <div v-if="!lowStockProducts || lowStockProducts.length === 0" class="px-5 py-8 text-center text-gray-400 text-sm">Tồn kho ổn</div>
                     </div>
+                </div>
+            </div>
+
+            <!-- ═══ RANKING SECTIONS ═══ -->
+
+            <!-- Top sản phẩm bán chạy -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <div class="px-5 py-4 border-b border-gray-100 flex justify-between items-center">
+                    <h2 class="font-bold text-gray-800 text-[15px]">🏆 Top sản phẩm bán chạy <span class="text-xs text-gray-400 font-normal">tháng này</span></h2>
+                    <div class="flex gap-1 bg-gray-100 rounded-lg p-0.5">
+                        <button @click="productRankTab = 'revenue'" :class="productRankTab === 'revenue' ? 'bg-white shadow text-indigo-700' : 'text-gray-500 hover:text-gray-700'" class="px-3 py-1 text-xs font-semibold rounded-md transition">Doanh thu</button>
+                        <button @click="productRankTab = 'profit'" :class="productRankTab === 'profit' ? 'bg-white shadow text-indigo-700' : 'text-gray-500 hover:text-gray-700'" class="px-3 py-1 text-xs font-semibold rounded-md transition">Lợi nhuận</button>
+                        <button @click="productRankTab = 'qty'" :class="productRankTab === 'qty' ? 'bg-white shadow text-indigo-700' : 'text-gray-500 hover:text-gray-700'" class="px-3 py-1 text-xs font-semibold rounded-md transition">Số lượng</button>
+                    </div>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead class="bg-gray-50 text-gray-600 text-xs uppercase tracking-wider">
+                            <tr>
+                                <th class="px-5 py-2.5 text-left w-10">#</th>
+                                <th class="px-3 py-2.5 text-left">Sản phẩm</th>
+                                <th class="px-3 py-2.5 text-left">Mã SKU</th>
+                                <th class="px-3 py-2.5 text-right">SL bán</th>
+                                <th class="px-3 py-2.5 text-right">Doanh thu</th>
+                                <th v-if="productRankTab !== 'qty'" class="px-5 py-2.5 text-right">Lợi nhuận</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-50">
+                            <tr v-for="(p, idx) in (productRankTab === 'profit' ? topProductsByProfit : (productRankTab === 'qty' ? topProducts : topProductsByRevenue)) || []" :key="idx" class="hover:bg-indigo-50/30 transition">
+                                <td class="px-5 py-2.5">
+                                    <span class="w-5 h-5 rounded-full text-white text-[10px] font-bold flex items-center justify-center" :class="idx < 3 ? ['bg-yellow-500','bg-gray-400','bg-amber-600'][idx] : 'bg-gray-200 text-gray-600'">{{ idx + 1 }}</span>
+                                </td>
+                                <td class="px-3 py-2.5 font-medium text-gray-800">{{ p.name }}</td>
+                                <td class="px-3 py-2.5 text-gray-500 text-xs">{{ p.sku }}</td>
+                                <td class="px-3 py-2.5 text-right font-semibold">{{ p.qty }}</td>
+                                <td class="px-3 py-2.5 text-right font-mono text-indigo-600 font-semibold">{{ fmt(p.revenue) }}đ</td>
+                                <td v-if="productRankTab !== 'qty'" class="px-5 py-2.5 text-right font-mono font-semibold" :class="p.profit >= 0 ? 'text-green-600' : 'text-red-500'">{{ fmt(p.profit) }}đ</td>
+                            </tr>
+                            <tr v-if="!(productRankTab === 'profit' ? topProductsByProfit : topProductsByRevenue)?.length"><td colspan="6" class="px-5 py-6 text-center text-gray-400">Chưa có dữ liệu</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Top khách hàng + Top nhân viên -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                <!-- Top khách hàng -->
+                <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <div class="px-5 py-4 border-b border-gray-100 flex justify-between items-center">
+                        <h2 class="font-bold text-gray-800 text-[15px]">👤 Top khách hàng <span class="text-xs text-gray-400 font-normal">tháng này</span></h2>
+                        <div class="flex gap-1 bg-gray-100 rounded-lg p-0.5">
+                            <button @click="customerRankTab = 'revenue'" :class="customerRankTab === 'revenue' ? 'bg-white shadow text-indigo-700' : 'text-gray-500'" class="px-3 py-1 text-xs font-semibold rounded-md transition">Doanh thu</button>
+                            <button @click="customerRankTab = 'qty'" :class="customerRankTab === 'qty' ? 'bg-white shadow text-indigo-700' : 'text-gray-500'" class="px-3 py-1 text-xs font-semibold rounded-md transition">Số đơn</button>
+                        </div>
+                    </div>
+                    <div class="divide-y divide-gray-50">
+                        <div v-for="(c, idx) in (customerRankTab === 'qty' ? topCustomersByQty : topCustomersByRevenue) || []" :key="idx" class="px-5 py-3 flex items-center justify-between hover:bg-gray-50/50 transition">
+                            <div class="flex items-center gap-3 min-w-0">
+                                <span class="flex-shrink-0 w-6 h-6 rounded-full text-white text-[10px] font-bold flex items-center justify-center" :class="idx < 3 ? 'bg-indigo-500' : 'bg-gray-300'">{{ idx + 1 }}</span>
+                                <div class="min-w-0">
+                                    <p class="text-sm font-semibold text-gray-800 truncate">{{ c.name }}</p>
+                                    <p class="text-[10px] text-gray-400">{{ c.phone || c.code }}</p>
+                                </div>
+                            </div>
+                            <div class="text-right flex-shrink-0 ml-2">
+                                <p class="text-sm font-bold text-indigo-600 font-mono">{{ fmt(c.revenue) }}đ</p>
+                                <p class="text-[10px] text-gray-400">{{ c.orders }} đơn</p>
+                            </div>
+                        </div>
+                        <div v-if="!(customerRankTab === 'qty' ? topCustomersByQty : topCustomersByRevenue)?.length" class="px-5 py-8 text-center text-gray-400 text-sm">Chưa có dữ liệu</div>
+                    </div>
+                </div>
+
+                <!-- Top nhân viên -->
+                <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <div class="px-5 py-4 border-b border-gray-100">
+                        <h2 class="font-bold text-gray-800 text-[15px]">⭐ Top nhân viên bán hàng <span class="text-xs text-gray-400 font-normal">tháng này</span></h2>
+                    </div>
+                    <div class="divide-y divide-gray-50">
+                        <div v-for="(e, idx) in topEmployees || []" :key="idx" class="px-5 py-3 flex items-center justify-between hover:bg-gray-50/50 transition">
+                            <div class="flex items-center gap-3">
+                                <span class="flex-shrink-0 w-6 h-6 rounded-full text-white text-[10px] font-bold flex items-center justify-center" :class="idx === 0 ? 'bg-yellow-500' : idx === 1 ? 'bg-gray-400' : idx === 2 ? 'bg-amber-600' : 'bg-gray-200 text-gray-600'">{{ idx + 1 }}</span>
+                                <div>
+                                    <p class="text-sm font-semibold text-gray-800">{{ e.name }}</p>
+                                    <p class="text-[10px] text-gray-400">{{ e.invoices }} hóa đơn</p>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <p class="text-sm font-bold text-emerald-600 font-mono">{{ fmt(e.revenue) }}đ</p>
+                                <!-- Revenue bar -->
+                                <div class="w-24 h-1.5 bg-gray-100 rounded-full mt-1">
+                                    <div class="h-full rounded-full bg-gradient-to-r from-emerald-400 to-emerald-600" :style="{width: Math.min(100, (e.revenue / ((topEmployees || [])[0]?.revenue || 1)) * 100) + '%'}"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div v-if="!topEmployees?.length" class="px-5 py-8 text-center text-gray-400 text-sm">Chưa có dữ liệu</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ BẢNG TỒN KHO ═══ -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <div class="px-5 py-4 border-b border-gray-100 flex justify-between items-center">
+                    <div>
+                        <h2 class="font-bold text-gray-800 text-[15px]">📦 Tồn kho sản phẩm</h2>
+                        <p class="text-xs text-gray-400">Giá trị tồn kho: <span class="font-semibold text-gray-600">{{ fmt(totalStockValue) }}đ</span></p>
+                    </div>
+                    <div class="flex gap-1 bg-gray-100 rounded-lg p-0.5">
+                        <button @click="inventoryFilter = 'all'" :class="inventoryFilter === 'all' ? 'bg-white shadow text-indigo-700' : 'text-gray-500'" class="px-3 py-1 text-xs font-semibold rounded-md transition">
+                            Tất cả
+                        </button>
+                        <button @click="inventoryFilter = 'low'" :class="inventoryFilter === 'low' ? 'bg-white shadow text-yellow-700' : 'text-gray-500'" class="px-3 py-1 text-xs font-semibold rounded-md transition">
+                            ⚠ Sắp hết <span v-if="(inventoryProducts || []).filter(p => p.alert === 'low').length" class="ml-0.5 bg-yellow-500 text-white rounded-full px-1 text-[9px]">{{ (inventoryProducts || []).filter(p => p.alert === 'low').length }}</span>
+                        </button>
+                        <button @click="inventoryFilter = 'out'" :class="inventoryFilter === 'out' ? 'bg-white shadow text-red-700' : 'text-gray-500'" class="px-3 py-1 text-xs font-semibold rounded-md transition">
+                            🚨 Hết hàng <span v-if="outOfStockCount" class="ml-0.5 bg-red-500 text-white rounded-full px-1 text-[9px]">{{ outOfStockCount }}</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="overflow-x-auto max-h-[400px] overflow-y-auto">
+                    <table class="w-full text-sm">
+                        <thead class="bg-gray-50 text-gray-600 text-xs uppercase tracking-wider sticky top-0">
+                            <tr>
+                                <th class="px-5 py-2.5 text-left">#</th>
+                                <th class="px-3 py-2.5 text-left">Sản phẩm</th>
+                                <th class="px-3 py-2.5 text-left">Mã SKU</th>
+                                <th class="px-3 py-2.5 text-right">Tồn kho</th>
+                                <th class="px-3 py-2.5 text-right">Giá vốn</th>
+                                <th class="px-3 py-2.5 text-right">Giá bán</th>
+                                <th class="px-5 py-2.5 text-right">Giá trị tồn</th>
+                                <th class="px-3 py-2.5 text-center">Trạng thái</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-50">
+                            <template v-for="(p, idx) in (inventoryProducts || []).filter(p => inventoryFilter === 'all' || p.alert === inventoryFilter)" :key="p.id">
+                                <tr :class="p.alert === 'out' ? 'bg-red-50/50' : p.alert === 'low' ? 'bg-yellow-50/50' : 'hover:bg-gray-50/50'" class="transition">
+                                    <td class="px-5 py-2.5 text-gray-400">{{ idx + 1 }}</td>
+                                    <td class="px-3 py-2.5 font-medium text-gray-800">{{ p.name }}</td>
+                                    <td class="px-3 py-2.5 text-gray-500 text-xs">{{ p.sku }}</td>
+                                    <td class="px-3 py-2.5 text-right font-bold" :class="p.alert === 'out' ? 'text-red-600' : p.alert === 'low' ? 'text-yellow-600' : 'text-gray-800'">{{ p.stock }}</td>
+                                    <td class="px-3 py-2.5 text-right text-gray-600 font-mono text-xs">{{ fmt(p.cost_price) }}</td>
+                                    <td class="px-3 py-2.5 text-right text-gray-600 font-mono text-xs">{{ fmt(p.selling_price) }}</td>
+                                    <td class="px-5 py-2.5 text-right font-mono text-xs font-semibold text-gray-700">{{ fmt(p.stock_value) }}</td>
+                                    <td class="px-3 py-2.5 text-center">
+                                        <span v-if="p.alert === 'out'" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700">Hết hàng</span>
+                                        <span v-else-if="p.alert === 'low'" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-yellow-100 text-yellow-700">Sắp hết</span>
+                                        <span v-else class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-100 text-green-700">Còn hàng</span>
+                                    </td>
+                                </tr>
+                            </template>
+                            <tr v-if="!(inventoryProducts || []).filter(p => inventoryFilter === 'all' || p.alert === inventoryFilter).length">
+                                <td colspan="8" class="px-5 py-8 text-center text-gray-400">Không có sản phẩm nào</td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
 
