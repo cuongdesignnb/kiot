@@ -258,14 +258,14 @@ class DashboardController extends Controller
         $inventoryProducts = Product::where('is_active', true)
             ->orderBy('stock_quantity', 'asc')
             ->limit(50)
-            ->get(['id', 'name', 'sku', 'stock_quantity', 'cost_price', 'selling_price'])
+            ->get(['id', 'name', 'sku', 'stock_quantity', 'cost_price', 'retail_price'])
             ->map(fn($p) => [
                 'id' => $p->id,
                 'name' => $p->name,
                 'sku' => $p->sku,
                 'stock' => (int) $p->stock_quantity,
                 'cost_price' => (float) ($p->cost_price ?? 0),
-                'selling_price' => (float) ($p->selling_price ?? 0),
+                'selling_price' => (float) ($p->retail_price ?? 0),
                 'stock_value' => (float) (($p->cost_price ?? 0) * $p->stock_quantity),
                 'alert' => $p->stock_quantity <= 0 ? 'out' : ($p->stock_quantity <= 5 ? 'low' : 'ok'),
             ]);
