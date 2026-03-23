@@ -242,56 +242,28 @@ const openSerialModal = async (product) => {
 const confirmSerialSelection = () => {
     if (!serialModalProduct.value || selectedSerialIds.value.length === 0) return;
     const product = serialModalProduct.value;
-    const selectedNames = availableSerials.value
-        .filter(s => selectedSerialIds.value.includes(s.id))
-        .map(s => s.serial_number);
 
-    const existing = activeTab.value.items.find(i => i.product_id === (product.id || product.product_id));
-    if (existing) {
-        const existingIds = existing.serial_ids || [];
-        const newIds = selectedSerialIds.value.filter(id => !existingIds.includes(id));
-        existing.serial_ids = [...existingIds, ...newIds];
-        existing.serial_names = availableSerials.value
-            .filter(s => existing.serial_ids.includes(s.id))
-            .map(s => s.serial_number);
-        existing.qty = existing.serial_ids.length;
-    } else {
+    // Each serial = 1 separate line item (1 serial = 1 máy)
+    selectedSerialIds.value.forEach(serialId => {
+        // Skip if already in cart
+        const alreadyInCart = activeTab.value.items.some(i => i.serial_id === serialId);
+        if (alreadyInCart) return;
+
+        const serial = availableSerials.value.find(s => s.id === serialId);
         activeTab.value.items.unshift({
             product_id: product.id,
             sku: product.sku,
             name: product.name,
-            has_serial: true,
-            qty: selectedSerialIds.value.length,
-            price: product.selling_price || product.retail_price || product.cost_price || 0,
-            discount: 0,
-            stock_quantity: product.stock_quantity || 0,
-            serial_ids: [...selectedSerialIds.value],
-            serial_names: selectedNames,
-        });
-    }
-    showSerialModal.value = false;
-};
-
-const skipSerialSelection = () => {
-    if (!serialModalProduct.value) return;
-    const product = serialModalProduct.value;
-    const existing = activeTab.value.items.find(i => i.product_id === product.id);
-    if (existing) {
-        existing.qty += 1;
-    } else {
-        activeTab.value.items.unshift({
-            product_id: product.id,
-            sku: product.sku,
-            name: product.name,
-            has_serial: true,
+            is_serial_product: true,
+            serial_id: serialId,
+            serial_number: serial?.serial_number || '',
             qty: 1,
             price: product.selling_price || product.retail_price || product.cost_price || 0,
             discount: 0,
             stock_quantity: product.stock_quantity || 0,
-            serial_ids: [],
-            serial_names: [],
         });
-    }
+    });
+
     showSerialModal.value = false;
 };
 
@@ -581,22 +553,22 @@ onUnmounted(() => {
                                 <td class="p-3 text-gray-800 text-[12px]">{{ item.sku }}</td>
                                 <td class="p-3 font-medium text-gray-800">
                                     <div class="truncate w-[150px] lg:w-[250px] xl:w-[350px]">{{ item.name }}</div>
-                                    <!-- Serial info -->
-                                    <div v-if="item.has_serial" class="mt-1">
-                                        <div v-if="item.serial_names && item.serial_names.length > 0" class="flex flex-wrap gap-1 mb-0.5">
-                                            <span v-for="sn in item.serial_names" :key="sn" class="inline-block bg-gray-100 text-gray-500 text-[10px] px-1.5 py-0.5 rounded font-mono">{{ sn }}</span>
-                                        </div>
-                                        <button @click="openSerialModal({id: item.product_id, sku: item.sku, name: item.name, has_serial: true, selling_price: item.price, stock_quantity: item.stock_quantity})" class="text-[11px] text-blue-500 hover:text-blue-700 font-semibold cursor-pointer">
-                                            {{ item.serial_names && item.serial_names.length > 0 ? 'Thay đổi IMEI' : 'Chọn Serial/IMEI' }}
-                                        </button>
-                                    </div>
+                                    <!-- Serial number chip -->
+                                    <span v-if="item.is_serial_product && item.serial_number" class="inline-block bg-blue-50 text-blue-700 text-[10px] px-2 py-0.5 rounded font-mono mt-1 border border-blue-200">
+                                        SN: {{ item.serial_number }}
+                                    </span>
                                 </td>
                                 <td class="p-3">
-                                    <div class="flex items-center justify-center gap-1 border border-transparent hover:border-blue-400 rounded overflow-hidden w-fit mx-auto transition-colors">
-                                        <button class="px-2 py-1 text-gray-400 hover:text-gray-700 font-bold" @click="item.qty > 1 ? item.qty-- : null"><i class="fas fa-minus text-[10px]"></i></button>
-                                        <input type="text" v-model="item.qty" class="w-10 text-center outline-none text-[13px] border-b border-transparent focus:border-blue-500 py-0.5 text-blue-600 font-bold">
-                                        <button class="px-2 py-1 text-gray-400 hover:text-gray-700 font-bold" @click="item.qty++"><i class="fas fa-plus text-[10px]"></i></button>
-                                    </div>
+                                    <template v-if="item.is_serial_product">
+                                        <div class="text-center text-blue-600 font-bold text-[13px]">1</div>
+                                    </template>
+                                    <template v-else>
+                                        <div class="flex items-center justify-center gap-1 border border-transparent hover:border-blue-400 rounded overflow-hidden w-fit mx-auto transition-colors">
+                                            <button class="px-2 py-1 text-gray-400 hover:text-gray-700 font-bold" @click="item.qty > 1 ? item.qty-- : null"><i class="fas fa-minus text-[10px]"></i></button>
+                                            <input type="text" v-model="item.qty" class="w-10 text-center outline-none text-[13px] border-b border-transparent focus:border-blue-500 py-0.5 text-blue-600 font-bold">
+                                            <button class="px-2 py-1 text-gray-400 hover:text-gray-700 font-bold" @click="item.qty++"><i class="fas fa-plus text-[10px]"></i></button>
+                                        </div>
+                                    </template>
                                 </td>
                                 <td class="p-3 text-right font-medium text-gray-800">
                                     <input type="text" :value="formatCurrency(item.price)" @change="e => item.price = e.target.value.replace(/\D/g,'')" class="w-24 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-right outline-none bg-transparent">
@@ -933,7 +905,7 @@ onUnmounted(() => {
                     Chọn tất cả <span v-if="selectedSerialIds.length > 0" class="text-blue-600 font-bold">({{ selectedSerialIds.length }})</span>
                 </label>
                 <div class="flex gap-2">
-                    <button @click="skipSerialSelection" class="px-5 py-2 border border-gray-300 rounded text-sm font-semibold text-gray-600 hover:bg-gray-100 cursor-pointer">Bỏ qua</button>
+                    <button @click="showSerialModal = false" class="px-5 py-2 border border-gray-300 rounded text-sm font-semibold text-gray-600 hover:bg-gray-100 cursor-pointer">Hủy</button>
                     <button 
                         @click="confirmSerialSelection" 
                         :disabled="selectedSerialIds.length === 0"

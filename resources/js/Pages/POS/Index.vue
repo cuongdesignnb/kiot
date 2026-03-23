@@ -101,49 +101,26 @@ const openSerialModal = async (product) => {
 const confirmSerialSelection = () => {
     if (!serialModalProduct.value || selectedSerialIds.value.length === 0) return;
     const product = serialModalProduct.value;
-    const selectedNames = availableSerials.value
-        .filter(s => selectedSerialIds.value.includes(s.id))
-        .map(s => s.serial_number);
 
-    // Check if already in cart
-    const existingItem = cart.value.find(item => item.product.id === product.id);
-    if (existingItem) {
-        // Merge serials
-        const existingIds = existingItem.serial_ids || [];
-        const newIds = selectedSerialIds.value.filter(id => !existingIds.includes(id));
-        existingItem.serial_ids = [...existingIds, ...newIds];
-        const allNames = availableSerials.value
-            .filter(s => existingItem.serial_ids.includes(s.id))
-            .map(s => s.serial_number);
-        existingItem.serial_names = allNames;
-        existingItem.quantity = existingItem.serial_ids.length;
-    } else {
-        cart.value.push({
-            product: product,
-            quantity: selectedSerialIds.value.length,
-            price: product.retail_price,
-            serial_ids: [...selectedSerialIds.value],
-            serial_names: selectedNames,
-        });
-    }
-    showSerialModal.value = false;
-};
+    // Each serial = 1 separate line in cart (1 serial = 1 máy)
+    selectedSerialIds.value.forEach(serialId => {
+        // Skip if this serial is already in cart
+        const alreadyInCart = cart.value.some(item => 
+            item.serial_id === serialId
+        );
+        if (alreadyInCart) return;
 
-const skipSerialSelection = () => {
-    if (!serialModalProduct.value) return;
-    const product = serialModalProduct.value;
-    const existingItem = cart.value.find(item => item.product.id === product.id);
-    if (existingItem) {
-        existingItem.quantity += 1;
-    } else {
+        const serial = availableSerials.value.find(s => s.id === serialId);
         cart.value.push({
             product: product,
             quantity: 1,
             price: product.retail_price,
-            serial_ids: [],
-            serial_names: [],
+            serial_id: serialId,
+            serial_number: serial?.serial_number || '',
+            is_serial_product: true,
         });
-    }
+    });
+
     showSerialModal.value = false;
 };
 
@@ -186,7 +163,7 @@ const addToCart = (product) => {
     }
 
     // Regular product (no serial)
-    const existingItem = cart.value.find(item => item.product.id === product.id);
+    const existingItem = cart.value.find(item => item.product.id === product.id && !item.is_serial_product);
     if (existingItem) {
         existingItem.quantity += 1;
     } else {
@@ -194,8 +171,7 @@ const addToCart = (product) => {
             product: product,
             quantity: 1,
             price: product.retail_price,
-            serial_ids: [],
-            serial_names: [],
+            is_serial_product: false,
         });
     }
 };
@@ -208,12 +184,10 @@ const removeFromCart = (index) => {
 // Update quantity
 const updateQuantity = (index, delta) => {
     const item = cart.value[index];
+    // Serial product: qty is always 1, cannot change
+    if (item.is_serial_product) return;
     const newQty = item.quantity + delta;
     if (newQty > 0) {
-        // For serial products, don't allow qty > selected serials
-        if (item.serial_ids && item.serial_ids.length > 0 && newQty > item.serial_ids.length) {
-            return; // Can't exceed selected serials
-        }
         item.quantity = newQty;
     } else {
         removeFromCart(index);
@@ -263,7 +237,7 @@ const processCheckout = async () => {
                 product_id: item.product.id,
                 quantity: item.quantity,
                 price: item.price,
-                serial_ids: item.serial_ids || [],
+                serial_ids: item.serial_id ? [item.serial_id] : [],
             }))
         };
 
@@ -380,25 +354,28 @@ const processCheckout = async () => {
                         <div class="col-span-4 flex flex-col items-start leading-snug">
                             <span class="font-bold text-gray-800 text-sm overflow-hidden text-ellipsis line-clamp-2 w-full" :title="item.product.name">{{ item.product.name }}</span>
                             <span class="text-xs text-blue-600 font-medium tracking-wide mt-0.5">{{ item.product.sku }}</span>
-                            <!-- Serial info -->
-                            <div v-if="item.product.has_serial" class="mt-1">
-                                <div v-if="item.serial_names && item.serial_names.length > 0" class="flex flex-wrap gap-1">
-                                    <span v-for="sn in item.serial_names" :key="sn" class="inline-block bg-gray-100 text-gray-600 text-[10px] px-1.5 py-0.5 rounded font-mono">{{ sn }}</span>
-                                </div>
-                                <button @click="openSerialModal(item.product)" class="text-[11px] text-blue-500 hover:text-blue-700 font-semibold mt-0.5 cursor-pointer">
-                                    {{ item.serial_names && item.serial_names.length > 0 ? 'Thay đổi IMEI' : 'Chọn Serial/IMEI' }}
-                                </button>
-                            </div>
+                            <!-- Serial number chip -->
+                            <span v-if="item.is_serial_product && item.serial_number" class="inline-block bg-blue-50 text-blue-700 text-[10px] px-2 py-0.5 rounded font-mono mt-1 border border-blue-200">
+                                SN: {{ item.serial_number }}
+                            </span>
                         </div>
                         
-                        <div class="col-span-2 flex items-center justify-center bg-gray-100/50 rounded-lg p-1 w-fit mx-auto ring-1 ring-gray-300">
-                            <button @click="updateQuantity(index, -1)" class="w-7 h-7 flex items-center justify-center rounded bg-white text-gray-600 hover:bg-red-50 hover:text-red-500 transition-colors shadow-sm cursor-pointer disabled:opacity-50">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M20 12H4"></path></svg>
-                            </button>
-                            <input type="text" readonly :value="item.quantity" class="w-10 text-center bg-transparent text-sm font-bold text-gray-800 focus:outline-none focus:ring-0 select-none">
-                            <button @click="updateQuantity(index, 1)" class="w-7 h-7 flex items-center justify-center rounded bg-white text-gray-600 hover:bg-blue-50 hover:text-blue-600 transition-colors shadow-sm cursor-pointer disabled:opacity-50">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"></path></svg>
-                            </button>
+                        <!-- Quantity: hide +/- for serial products -->
+                        <div class="col-span-2 flex items-center justify-center">
+                            <template v-if="item.is_serial_product">
+                                <span class="text-sm font-bold text-gray-800 bg-gray-100 px-3 py-1 rounded">1</span>
+                            </template>
+                            <template v-else>
+                                <div class="flex items-center bg-gray-100/50 rounded-lg p-1 w-fit ring-1 ring-gray-300">
+                                    <button @click="updateQuantity(index, -1)" class="w-7 h-7 flex items-center justify-center rounded bg-white text-gray-600 hover:bg-red-50 hover:text-red-500 transition-colors shadow-sm cursor-pointer disabled:opacity-50">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M20 12H4"></path></svg>
+                                    </button>
+                                    <input type="text" readonly :value="item.quantity" class="w-10 text-center bg-transparent text-sm font-bold text-gray-800 focus:outline-none focus:ring-0 select-none">
+                                    <button @click="updateQuantity(index, 1)" class="w-7 h-7 flex items-center justify-center rounded bg-white text-gray-600 hover:bg-blue-50 hover:text-blue-600 transition-colors shadow-sm cursor-pointer disabled:opacity-50">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"></path></svg>
+                                    </button>
+                                </div>
+                            </template>
                         </div>
                         <div class="col-span-2 text-right">
                             <input type="number" v-model="item.price" class="w-full text-right outline-none bg-transparent border-b border-dashed border-gray-300 focus:border-blue-500 py-1 font-semibold text-gray-700">
@@ -611,8 +588,8 @@ const processCheckout = async () => {
                     Chọn tất cả <span v-if="selectedSerialIds.length > 0" class="text-blue-600 font-bold">({{ selectedSerialIds.length }})</span>
                 </label>
                 <div class="flex gap-2">
-                    <button @click="skipSerialSelection" class="px-5 py-2 border border-gray-300 rounded text-sm font-semibold text-gray-600 hover:bg-gray-100 transition-colors cursor-pointer">
-                        Bỏ qua
+                    <button @click="showSerialModal = false" class="px-5 py-2 border border-gray-300 rounded text-sm font-semibold text-gray-600 hover:bg-gray-100 transition-colors cursor-pointer">
+                        Hủy
                     </button>
                     <button 
                         @click="confirmSerialSelection" 
