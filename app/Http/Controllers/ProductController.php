@@ -767,6 +767,18 @@ class ProductController extends Controller
 
         return redirect()->back()->with('success', 'Đã xoá hàng hóa!');
     }
+
+    public function bulkDestroy(Request $request)
+    {
+        $request->validate([
+            'product_ids' => 'required|array|min:1',
+            'product_ids.*' => 'integer|exists:products,id',
+        ]);
+
+        $count = Product::whereIn('id', $request->product_ids)->delete();
+
+        return redirect()->back()->with('success', "Đã xoá {$count} hàng hóa!");
+    }
     public function export(Request $request)
     {
         $products = Product::with(['category', 'brand'])

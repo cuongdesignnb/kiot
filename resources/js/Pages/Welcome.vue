@@ -106,6 +106,39 @@ const submitTransfer = async () => {
     }
 };
 
+// Delete single product
+const deleteProduct = (product) => {
+    if (!confirm(`Bạn có chắc chắn muốn xóa hàng hóa "${product.name}" (${product.sku})?`)) return;
+    router.delete(`/products/${product.id}`, { preserveScroll: true });
+};
+
+// Bulk delete
+const bulkDeleting = ref(false);
+
+const bulkDelete = async () => {
+    if (selectedProductIds.value.length === 0) return;
+    const count = selectedProductIds.value.length;
+    if (!confirm(`Bạn có chắc chắn muốn xóa ${count} hàng hóa đã chọn? Thao tác này không thể hoàn tác.`)) return;
+    bulkDeleting.value = true;
+    try {
+        router.post('/products/bulk-destroy', {
+            product_ids: selectedProductIds.value,
+        }, {
+            preserveScroll: true,
+            onSuccess: () => {
+                selectedProductIds.value = [];
+                bulkDeleting.value = false;
+            },
+            onError: () => {
+                bulkDeleting.value = false;
+            },
+        });
+    } catch (e) {
+        alert('Lỗi khi xoá hàng hóa.');
+        bulkDeleting.value = false;
+    }
+};
+
 const handleSort = (field, direction) => {
     sortBy.value = field;
     sortDirection.value = direction;
@@ -362,6 +395,16 @@ const formatDate = (val) => {
                     >
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
                         Chuyển nhóm ({{ selectedProductIds.length }})
+                    </button>
+                    <!-- Xóa hàng loạt button -->
+                    <button
+                        v-if="selectedProductIds.length > 0"
+                        @click="bulkDelete"
+                        :disabled="bulkDeleting"
+                        class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded text-sm font-medium flex items-center gap-2 transition-colors shadow-sm disabled:opacity-50"
+                    >
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        {{ bulkDeleting ? 'Đang xóa...' : `Xóa (${selectedProductIds.length})` }}
                     </button>
                     <div class="relative items-center" @click.stop>
                         <button
@@ -754,16 +797,13 @@ const formatDate = (val) => {
                                                     <i class="fas fa-edit"></i>
                                                     Cập nhật
                                                 </Link>
-                                                <Link
-                                                    :href="`/products/${product.id}`"
-                                                    method="delete"
-                                                    as="button"
-                                                    preserve-scroll
+                                                <button
+                                                    @click.stop="deleteProduct(product)"
                                                     class="bg-white hover:bg-red-50 text-red-600 border border-red-200 px-5 py-2 rounded text-sm font-bold flex items-center gap-2 transition-all shadow-sm"
                                                 >
                                                     <i class="fas fa-trash"></i>
                                                     Xóa hàng
-                                                </Link>
+                                                </button>
                                             </div>
                                         </div>
 

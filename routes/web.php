@@ -52,6 +52,7 @@ Route::get('/products/{product}/edit', [ProductController::class, 'edit'])->midd
 Route::put('/products/{product}', [ProductController::class, 'update'])->middleware('permission:products.edit')->name('products.update');
 Route::delete('/products/{product}', [ProductController::class, 'destroy'])->middleware('permission:products.delete')->name('products.destroy');
 Route::post('/products/bulk-update-category', [ProductController::class, 'bulkUpdateCategory'])->middleware('permission:products.edit')->name('products.bulk-update-category');
+Route::post('/products/bulk-destroy', [ProductController::class, 'bulkDestroy'])->middleware('permission:products.delete')->name('products.bulk-destroy');
 Route::get('/products/{product}/inventory-card', [ProductController::class, 'inventoryCard'])->middleware('permission:products.view')->name('products.inventory-card');
 Route::get('/products/document-detail', [ProductController::class, 'documentDetail'])->middleware('permission:products.view')->name('products.document-detail');
 
