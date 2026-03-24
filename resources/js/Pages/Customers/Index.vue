@@ -160,9 +160,7 @@ const editForm = useForm({
 const openEditModal = (customer) => {
     editingCustomer.value = customer;
     editForm.reset();
-    editForm.fill({
-        _method: 'put',
-        id: customer.id,
+    Object.assign(editForm, {
         name: customer.name || '',
         code: customer.code || '',
         phone: customer.phone || '',
