@@ -21,9 +21,13 @@ return new class extends Migration {
         // 3) Rename FK column trong task_parts: device_repair_id → task_id
         if (Schema::hasColumn('task_parts', 'device_repair_id')) {
             // Find and drop old FK by querying information_schema
-            $fk = DB::selectOne("SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'task_parts' AND COLUMN_NAME = 'device_repair_id' AND REFERENCED_TABLE_NAME IS NOT NULL LIMIT 1");
-            if ($fk) {
-                DB::statement("ALTER TABLE task_parts DROP FOREIGN KEY `{$fk->CONSTRAINT_NAME}`");
+            try {
+                $fk = DB::selectOne("SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'task_parts' AND COLUMN_NAME = 'device_repair_id' AND REFERENCED_TABLE_NAME IS NOT NULL LIMIT 1");
+                if ($fk) {
+                    DB::statement("ALTER TABLE task_parts DROP FOREIGN KEY `{$fk->CONSTRAINT_NAME}`");
+                }
+            } catch (\Exception $e) {
+                // Ignore constraint drop for SQLite
             }
 
             Schema::table('task_parts', function (Blueprint $table) {
@@ -33,11 +37,15 @@ return new class extends Migration {
 
         // Re-add FK nếu chưa có
         if (Schema::hasColumn('task_parts', 'task_id')) {
-            $hasFk = DB::selectOne("SELECT COUNT(*) as cnt FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'task_parts' AND COLUMN_NAME = 'task_id' AND REFERENCED_TABLE_NAME = 'tasks'");
-            if (!$hasFk || $hasFk->cnt == 0) {
-                Schema::table('task_parts', function (Blueprint $table) {
-                    $table->foreign('task_id')->references('id')->on('tasks')->cascadeOnDelete();
-                });
+            try {
+                $hasFk = DB::selectOne("SELECT COUNT(*) as cnt FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'task_parts' AND COLUMN_NAME = 'task_id' AND REFERENCED_TABLE_NAME = 'tasks'");
+                if (!$hasFk || $hasFk->cnt == 0) {
+                    Schema::table('task_parts', function (Blueprint $table) {
+                        $table->foreign('task_id')->references('id')->on('tasks')->cascadeOnDelete();
+                    });
+                }
+            } catch (\Exception $e) {
+                // SQLite bypass
             }
         }
 

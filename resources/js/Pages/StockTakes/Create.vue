@@ -8,16 +8,10 @@ const props = defineProps({
     stockTakeCode: String
 });
 
-const currentTime = computed(() => {
-    const now = new Date();
-    return now.toLocaleString('vi-VN', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-    });
-});
+const pad = (n) => String(n).padStart(2, '0');
+const nowInit = new Date();
+const localNowStr = `${nowInit.getFullYear()}-${pad(nowInit.getMonth()+1)}-${pad(nowInit.getDate())}T${pad(nowInit.getHours())}:${pad(nowInit.getMinutes())}`;
+const transactionDate = ref(localNowStr);
 
 const selectedBranch = ref('');
 
@@ -93,6 +87,7 @@ const save = async (status) => {
         await router.post('/stock-takes', {
             code: props.stockTakeCode,
             status: status, // 'draft' | 'balanced'
+            action_date: transactionDate.value,
             note: note.value,
             items: itemsWithDiffs.value
         });
@@ -217,7 +212,7 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                     <div class="p-4 flex items-center gap-2 border-b border-gray-200 bg-white">
                         <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
                         <span class="font-medium text-gray-800 flex-1">Trần Văn Tiến</span>
-                        <span class="text-gray-500 text-[12px] bg-gray-100 px-2 py-0.5 rounded">{{ currentTime }}</span>
+                        <input type="datetime-local" v-model="transactionDate" class="text-gray-500 text-[12px] bg-gray-100 px-2 py-0.5 rounded border border-gray-200 outline-none focus:border-blue-500 hover:border-blue-400">
                     </div>
 
                     <div class="p-4 flex flex-col gap-4 bg-white border-b border-gray-200">

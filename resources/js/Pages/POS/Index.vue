@@ -54,6 +54,80 @@ const customerPaid = ref(0);
 const paymentMethod = ref('cash');
 const bankAccountInfo = ref('');
 
+// ── Customer Search ──
+const customerQuery = ref('');
+const customerResults = ref([]);
+const selectedCustomer = ref(null);
+const showCustomerDropdown = ref(false);
+const customerSearching = ref(false);
+let customerTimeout;
+
+const searchCustomers = async () => {
+    if (customerQuery.value.length < 1) {
+        customerResults.value = [];
+        showCustomerDropdown.value = false;
+        return;
+    }
+    customerSearching.value = true;
+    try {
+        const res = await axios.get('/api/pos/customers', { params: { search: customerQuery.value } });
+        customerResults.value = res.data || [];
+        showCustomerDropdown.value = true;
+    } catch (e) {
+        console.error(e);
+    } finally {
+        customerSearching.value = false;
+    }
+};
+
+const handleCustomerInput = () => {
+    clearTimeout(customerTimeout);
+    customerTimeout = setTimeout(searchCustomers, 300);
+};
+
+const selectCustomer = (customer) => {
+    selectedCustomer.value = customer;
+    customerQuery.value = '';
+    showCustomerDropdown.value = false;
+    customerResults.value = [];
+};
+
+const clearCustomer = () => {
+    selectedCustomer.value = null;
+    customerQuery.value = '';
+};
+
+// ── Quick Create Customer Modal ──
+const showNewCustomerModal = ref(false);
+const newCustomerName = ref('');
+const newCustomerPhone = ref('');
+const creatingCustomer = ref(false);
+
+const openNewCustomerModal = () => {
+    newCustomerName.value = customerQuery.value || '';
+    newCustomerPhone.value = '';
+    showNewCustomerModal.value = true;
+};
+
+const createCustomer = async () => {
+    if (!newCustomerName.value.trim()) return;
+    creatingCustomer.value = true;
+    try {
+        const res = await axios.post('/api/pos/customers', {
+            name: newCustomerName.value.trim(),
+            phone: newCustomerPhone.value.trim() || null,
+        });
+        selectedCustomer.value = res.data;
+        showNewCustomerModal.value = false;
+        customerQuery.value = '';
+        showCustomerDropdown.value = false;
+    } catch (e) {
+        alert(e.response?.data?.message || 'Lỗi tạo khách hàng.');
+    } finally {
+        creatingCustomer.value = false;
+    }
+};
+
 // ── Serial/IMEI Selection Modal ──
 const showSerialModal = ref(false);
 const serialModalProduct = ref(null);
@@ -235,6 +309,7 @@ const processCheckout = async () => {
             discount: discount.value,
             total: totalAmount.value,
             customer_paid: customerPaid.value,
+            customer_id: selectedCustomer.value?.id || null,
             employee_id: selectedEmployeeId.value || null,
             sale_time: saleDate.value ? new Date(saleDate.value).toISOString() : new Date().toISOString(),
             payment_method: paymentMethod.value,
@@ -258,6 +333,8 @@ const processCheckout = async () => {
             customerPaid.value = 0;
             paymentMethod.value = 'cash';
             bankAccountInfo.value = '';
+            selectedCustomer.value = null;
+            customerQuery.value = '';
             
             searchProducts(); 
         } else {
@@ -431,14 +508,59 @@ const processCheckout = async () => {
             <!-- Right Side: Order Summary & Checkout -->
             <div class="w-80 lg:w-[400px] flex flex-col bg-white overflow-y-auto flex-shrink-0 z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)] h-full">
                 <!-- Customer info -->
-                <div class="p-4 border-b border-gray-100 flex items-center justify-between">
-                    <div class="flex items-center gap-2 flex-1 relative">
-                        <svg class="w-5 h-5 text-gray-400 absolute left-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
-                        <input type="text" placeholder="Tìm khách hàng (F4)" class="w-full pl-8 py-2 text-sm border-b border-gray-300 focus:border-blue-500 outline-none transition-colors">
+                <div class="p-4 border-b border-gray-100">
+                    <!-- Selected customer display -->
+                    <div v-if="selectedCustomer" class="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                        <div class="flex items-center gap-2 min-w-0">
+                            <svg class="w-5 h-5 text-blue-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                            <div class="min-w-0">
+                                <div class="font-bold text-sm text-blue-800 truncate">{{ selectedCustomer.name }}</div>
+                                <div class="text-xs text-blue-600">
+                                    {{ selectedCustomer.phone || 'Chưa có SĐT' }}
+                                    <span v-if="selectedCustomer.debt_amount > 0" class="text-red-500 ml-1">| Nợ: {{ Number(selectedCustomer.debt_amount).toLocaleString() }}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <button @click="clearCustomer" class="text-blue-400 hover:text-red-500 p-1 rounded transition-colors flex-shrink-0" title="Bỏ chọn">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        </button>
                     </div>
-                    <button class="ml-2 bg-blue-50 text-blue-600 hover:bg-blue-100 w-8 h-8 rounded flex items-center justify-center transition-colors">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"></path></svg>
-                    </button>
+
+                    <!-- Customer search input -->
+                    <div v-else class="flex items-center gap-2 relative">
+                        <div class="flex-1 relative">
+                            <svg class="w-5 h-5 text-gray-400 absolute left-2 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                            <input
+                                v-model="customerQuery"
+                                @input="handleCustomerInput"
+                                @focus="customerQuery.length >= 1 && searchCustomers()"
+                                type="text"
+                                placeholder="Tìm khách hàng (tên, SĐT, mã)..."
+                                class="w-full pl-8 py-2 text-sm border-b border-gray-300 focus:border-blue-500 outline-none transition-colors"
+                            >
+                            <svg v-if="customerSearching" class="w-4 h-4 animate-spin text-blue-500 absolute right-2 top-1/2 -translate-y-1/2" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+
+                            <!-- Dropdown results -->
+                            <div v-if="showCustomerDropdown" class="absolute left-0 right-0 top-full mt-1 bg-white shadow-lg rounded-lg border border-gray-200 z-50 max-h-48 overflow-y-auto">
+                                <div v-if="customerResults.length === 0 && !customerSearching" class="px-3 py-4 text-sm text-gray-400 text-center">
+                                    Không tìm thấy khách hàng "{{ customerQuery }}"
+                                    <button @click="openNewCustomerModal" class="block mx-auto mt-2 text-blue-600 font-semibold hover:underline text-xs">+ Tạo khách mới</button>
+                                </div>
+                                <div v-for="c in customerResults" :key="c.id"
+                                    @click="selectCustomer(c)"
+                                    class="flex items-center justify-between px-3 py-2 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-0 transition-colors">
+                                    <div>
+                                        <div class="font-semibold text-sm text-gray-800">{{ c.name }}</div>
+                                        <div class="text-xs text-gray-500">{{ c.code }} | {{ c.phone || '—' }}</div>
+                                    </div>
+                                    <div v-if="c.debt_amount > 0" class="text-xs text-red-500 font-semibold">Nợ: {{ Number(c.debt_amount).toLocaleString() }}</div>
+                                </div>
+                            </div>
+                        </div>
+                        <button @click="openNewCustomerModal" class="bg-blue-50 text-blue-600 hover:bg-blue-100 w-8 h-8 rounded flex items-center justify-center transition-colors flex-shrink-0" title="Thêm khách mới">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"></path></svg>
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Tabs (Invoice, Delivery) -->
@@ -609,6 +731,47 @@ const processCheckout = async () => {
                         Xong
                     </button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ Quick Create Customer Modal ═══ -->
+    <div v-if="showNewCustomerModal" class="fixed inset-0 z-[100] bg-black/40 flex items-center justify-center font-sans">
+        <div class="bg-white rounded-lg shadow-2xl w-[400px] overflow-hidden">
+            <!-- Header -->
+            <div class="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
+                <h3 class="text-lg font-bold text-gray-800">Thêm khách hàng mới</h3>
+                <button @click="showNewCustomerModal = false" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer">&times;</button>
+            </div>
+
+            <!-- Form -->
+            <div class="px-5 py-4 space-y-4">
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-1">Tên khách hàng <span class="text-red-500">*</span></label>
+                    <input v-model="newCustomerName" type="text" placeholder="Nhập tên khách hàng..."
+                        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                        @keydown.enter="createCustomer"
+                        autofocus>
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-1">Số điện thoại</label>
+                    <input v-model="newCustomerPhone" type="text" placeholder="Nhập SĐT..."
+                        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                        @keydown.enter="createCustomer">
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="px-5 py-3 border-t border-gray-200 flex items-center justify-end gap-2 bg-gray-50/50">
+                <button @click="showNewCustomerModal = false" class="px-5 py-2 border border-gray-300 rounded text-sm font-semibold text-gray-600 hover:bg-gray-100 transition-colors cursor-pointer">
+                    Hủy
+                </button>
+                <button
+                    @click="createCustomer"
+                    :disabled="creatingCustomer || !newCustomerName.trim()"
+                    class="px-5 py-2 bg-blue-600 text-white rounded text-sm font-bold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer">
+                    {{ creatingCustomer ? 'Đang tạo...' : 'Tạo khách hàng' }}
+                </button>
             </div>
         </div>
     </div>

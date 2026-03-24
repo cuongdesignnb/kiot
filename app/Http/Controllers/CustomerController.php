@@ -33,7 +33,14 @@ class CustomerController extends Controller
                     $q->where('branch_id', auth()->user()->branch_id);
                 }
             })
-            ->orderBy('id', 'desc')
+            ->when($request->filled('sort_by'), function ($q) use ($request) {
+                $allowed = ['code', 'name', 'phone', 'debt_amount', 'total_spent', 'created_at'];
+                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'id';
+                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+                $q->orderBy($sortBy, $dir);
+            }, function ($q) {
+                $q->orderBy('id', 'desc');
+            })
             ->paginate(15)
             ->withQueryString();
 
@@ -46,7 +53,7 @@ class CustomerController extends Controller
 
         return Inertia::render('Customers/Index', [
             'customers' => $customers,
-            'filters' => ['search' => $search, 'type' => $type, 'gender' => $gender],
+            'filters' => ['search' => $search, 'type' => $type, 'gender' => $gender, 'sort_by' => $request->sort_by, 'sort_direction' => $request->sort_direction],
             'customerSettings' => $customerSettings,
         ]);
     }
@@ -118,7 +125,14 @@ class CustomerController extends Controller
             'invoice_name' => 'nullable|string|max:255',
             'invoice_address' => 'nullable|string',
             'status' => 'nullable|in:active,inactive',
+            'is_supplier' => 'boolean',
         ]);
+
+        if (array_key_exists('is_supplier', $validated) && $validated['is_supplier']) {
+             $validated['is_supplier'] = true;
+        } else {
+             $validated['is_supplier'] = false;
+        }
 
         $customer->update($validated);
 

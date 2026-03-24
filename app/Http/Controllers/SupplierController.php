@@ -49,7 +49,16 @@ class SupplierController extends Controller
             }
         }
 
-        $suppliers = $query->latest()->paginate(50)->withQueryString();
+        $suppliers = $query
+            ->when($request->filled('sort_by'), function ($q) use ($request) {
+                $allowed = ['code', 'name', 'phone', 'email', 'created_at'];
+                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'id';
+                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+                $q->orderBy($sortBy, $dir);
+            }, function ($q) {
+                $q->latest();
+            })
+            ->paginate(50)->withQueryString();
 
         // Recalculate supplier_debt_amount from actual purchase data
         $supplierIds = $suppliers->pluck('id');
@@ -85,7 +94,10 @@ class SupplierController extends Controller
         return Inertia::render('Suppliers/Index', [
             'suppliers' => $suppliers,
             'groups' => $groups,
-            'filters' => $request->only(['search', 'customer_group', 'date_filter', 'partner_type']),
+            'filters' => array_merge($request->only(['search', 'customer_group', 'date_filter', 'partner_type']), [
+                'sort_by' => $request->sort_by,
+                'sort_direction' => $request->sort_direction,
+            ]),
             'summary' => $summary,
         ]);
     }

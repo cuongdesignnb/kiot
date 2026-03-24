@@ -3,6 +3,7 @@ import { ref, watch } from "vue";
 import { Head, router, Link, useForm } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
+import SortableHeader from "@/Components/SortableHeader.vue";
 
 const props = defineProps({
     cashFlows: Object,
@@ -21,6 +22,18 @@ const mergeUnique = (defaults, saved) => {
 };
 
 const search = ref(props.filters?.search || "");
+const sortBy = ref(props.filters?.sort_by || "");
+const sortDirection = ref(props.filters?.sort_direction || "");
+
+const handleSort = (field, direction) => {
+    sortBy.value = field;
+    sortDirection.value = direction;
+    router.get(
+        "/cash-flows",
+        { search: search.value, sort_by: field, sort_direction: direction },
+        { preserveState: true, replace: true },
+    );
+};
 
 let searchTimeout;
 watch(search, (value) => {
@@ -28,7 +41,7 @@ watch(search, (value) => {
     searchTimeout = setTimeout(() => {
         router.get(
             "/cash-flows",
-            { search: value },
+            { search: value, sort_by: sortBy.value, sort_direction: sortDirection.value },
             {
                 preserveState: true,
                 replace: true,
@@ -380,17 +393,15 @@ const printFlow = (flow) => {
                         class="text-xs text-gray-500 uppercase bg-gray-50 border-b border-gray-200 sticky top-0 z-10 shadow-sm"
                     >
                         <tr>
-                            <th class="px-4 py-3 font-semibold">Mã Phiếu</th>
-                            <th class="px-4 py-3 font-semibold">Thời gian</th>
+                            <SortableHeader label="Mã Phiếu" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3 font-semibold" @sort="handleSort" />
+                            <SortableHeader label="Thời gian" field="time" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3 font-semibold" @sort="handleSort" />
                             <th class="px-4 py-3 font-semibold">
                                 Loại thu chi
                             </th>
                             <th class="px-4 py-3 font-semibold">
                                 Người nộp/nhận
                             </th>
-                            <th class="px-4 py-3 font-semibold text-right">
-                                Giá trị
-                            </th>
+                            <SortableHeader label="Giá trị" field="amount" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-3 font-semibold text-right" @sort="handleSort" />
                             <th class="px-4 py-3 font-semibold">Ghi chú</th>
                         </tr>
                     </thead>

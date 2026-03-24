@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from 'vue';
+import { ref } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 
@@ -30,55 +30,7 @@ const cancelPurchase = () => {
     });
 };
 
-// === Update Modal ===
-const showUpdateModal = ref(false);
-const pad = (n) => String(n).padStart(2, '0');
 
-const getLocalDatetime = (val) => {
-    if (!val) return '';
-    const d = new Date(val);
-    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-};
-
-const editForm = ref({
-    note: props.purchase.note || '',
-    purchase_date: getLocalDatetime(props.purchase.purchase_date || props.purchase.created_at),
-    discount: Number(props.purchase.discount) || 0,
-    paid_amount: Number(props.purchase.paid_amount) || 0,
-    payment_method: props.purchase.payment_method || 'cash',
-    bank_account_info: props.purchase.bank_account_info || '',
-    employee_id: props.purchase.employee_id || '',
-});
-
-const editPayAmount = computed(() => totalAmount - (Number(editForm.value.discount) || 0));
-const editDebt = computed(() => Math.max(0, editPayAmount.value - (Number(editForm.value.paid_amount) || 0)));
-const isSubmitting = ref(false);
-
-const openUpdateModal = () => {
-    editForm.value = {
-        note: props.purchase.note || '',
-        purchase_date: getLocalDatetime(props.purchase.purchase_date || props.purchase.created_at),
-        discount: Number(props.purchase.discount) || 0,
-        paid_amount: Number(props.purchase.paid_amount) || 0,
-        payment_method: props.purchase.payment_method || 'cash',
-        bank_account_info: props.purchase.bank_account_info || '',
-        employee_id: props.purchase.employee_id || '',
-    };
-    showUpdateModal.value = true;
-};
-
-const submitUpdate = () => {
-    isSubmitting.value = true;
-    router.put(`/purchases/${props.purchase.id}`, editForm.value, {
-        onSuccess: () => {
-            showUpdateModal.value = false;
-            isSubmitting.value = false;
-        },
-        onError: () => {
-            isSubmitting.value = false;
-        },
-    });
-};
 
 const paymentMethodLabel = (method) => {
     return method === 'transfer' ? 'Chuyển khoản' : 'Tiền mặt';
@@ -344,11 +296,11 @@ const paymentMethodLabel = (method) => {
 
             <!-- Footer Actions -->
             <div class="flex items-center justify-center gap-3 px-4 py-3 border-t border-gray-200 bg-gray-50/50">
-                <button @click="openUpdateModal"
+                <Link :href="`/purchases/${purchase.id}/edit`"
                     class="bg-blue-500 hover:bg-blue-600 text-white px-5 py-2 rounded text-sm font-medium flex items-center gap-1.5 transition-colors">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-                    Cập nhật
-                </button>
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                    Sửa phiếu nhập
+                </Link>
                 <button @click="printPurchase"
                     class="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-5 py-2 rounded text-sm font-medium flex items-center gap-1.5 transition-colors">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
@@ -362,85 +314,5 @@ const paymentMethodLabel = (method) => {
             </div>
         </div>
 
-        <!-- Update Modal -->
-        <div v-if="showUpdateModal" class="fixed inset-0 bg-black bg-opacity-50 z-[100] flex items-center justify-center p-4" @click.self="showUpdateModal = false">
-            <div class="bg-white rounded-lg shadow-2xl w-full max-w-lg">
-                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-                    <h2 class="text-lg font-bold text-gray-800">Cập nhật phiếu nhập {{ purchase.code }}</h2>
-                    <button @click="showUpdateModal = false" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
-                </div>
-                <form @submit.prevent="submitUpdate" class="p-6 space-y-4">
-                    <!-- Thời gian -->
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1">Thời gian</label>
-                        <input type="datetime-local" v-model="editForm.purchase_date" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none" />
-                    </div>
-
-                    <!-- Nhân viên -->
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1">Nhân viên nhập</label>
-                        <select v-model="editForm.employee_id" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white">
-                            <option value="">-- Không chọn --</option>
-                            <option v-for="emp in employees" :key="emp.id" :value="emp.id">{{ emp.name }}</option>
-                        </select>
-                    </div>
-
-                    <!-- Giảm giá -->
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1">Giảm giá</label>
-                        <input type="number" v-model.number="editForm.discount" min="0" class="w-full border border-gray-300 rounded px-3 py-2 text-sm text-right focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none" />
-                    </div>
-
-                    <!-- Tiền trả NCC -->
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1">Tiền trả NCC</label>
-                        <input type="number" v-model.number="editForm.paid_amount" min="0" class="w-full border border-gray-300 rounded px-3 py-2 text-sm text-right focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none font-bold text-blue-600" />
-                        <div class="flex justify-between mt-1 text-[12px]">
-                            <span class="text-gray-500">Cần trả: {{ formatCurrency(editPayAmount) }}</span>
-                            <span class="text-red-500" v-if="editDebt > 0">Còn nợ: {{ formatCurrency(editDebt) }}</span>
-                        </div>
-                    </div>
-
-                    <!-- Payment Method -->
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1">Phương thức thanh toán</label>
-                        <div class="flex items-center gap-4 text-sm">
-                            <label class="flex items-center gap-1.5 cursor-pointer">
-                                <input type="radio" v-model="editForm.payment_method" value="cash" class="text-green-600 focus:ring-green-500 w-4 h-4" />
-                                <span>Tiền mặt</span>
-                            </label>
-                            <label class="flex items-center gap-1.5 cursor-pointer">
-                                <input type="radio" v-model="editForm.payment_method" value="transfer" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
-                                <span>Chuyển khoản</span>
-                            </label>
-                        </div>
-                        <div v-if="editForm.payment_method === 'transfer'" class="mt-2">
-                            <select v-model="editForm.bank_account_info" class="w-full border border-gray-300 rounded px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white">
-                                <option value="">-- Chọn tài khoản --</option>
-                                <option v-for="ba in bankAccounts" :key="ba.id" :value="ba.bank_name + ' - ' + ba.account_number + ' - ' + ba.account_holder">
-                                    {{ ba.bank_name }} - {{ ba.account_number }} ({{ ba.account_holder }})
-                                </option>
-                            </select>
-                            <input v-if="!bankAccounts?.length" type="text" v-model="editForm.bank_account_info" class="w-full border border-gray-300 rounded px-3 py-2 text-sm outline-none focus:border-blue-500 mt-1" placeholder="Số tài khoản ngân hàng" />
-                        </div>
-                    </div>
-
-                    <!-- Ghi chú -->
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1">Ghi chú</label>
-                        <textarea v-model="editForm.note" rows="2" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="Ghi chú..."></textarea>
-                    </div>
-
-                    <!-- Footer -->
-                    <div class="flex justify-end gap-3 pt-2 border-t border-gray-200">
-                        <button type="button" @click="showUpdateModal = false" class="px-5 py-2 border border-gray-300 rounded text-sm font-medium text-gray-700 hover:bg-gray-50">Hủy</button>
-                        <button type="submit" :disabled="isSubmitting" class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium disabled:opacity-50 flex items-center gap-2">
-                            <svg v-if="isSubmitting" class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
-                            {{ isSubmitting ? 'Đang lưu...' : 'Cập nhật' }}
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
     </AppLayout>
 </template>

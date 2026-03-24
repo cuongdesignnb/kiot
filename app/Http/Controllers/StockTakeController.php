@@ -15,7 +15,15 @@ class StockTakeController extends Controller
 {
     public function index(Request $request)
     {
-        $query = StockTake::with('items.product')->orderBy('id', 'desc');
+        $query = StockTake::with('items.product')
+            ->when($request->filled('sort_by'), function ($q) use ($request) {
+                $allowed = ['code', 'created_at', 'total_actual_qty', 'total_diff_qty', 'status'];
+                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'id';
+                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+                $q->orderBy($sortBy, $dir);
+            }, function ($q) {
+                $q->orderBy('id', 'desc');
+            });
 
         if ($request->filled('search')) {
             $query->where('code', 'like', "%{$request->search}%");
@@ -47,7 +55,10 @@ class StockTakeController extends Controller
         return Inertia::render('StockTakes/Index', [
             'stockTakes' => $stockTakes,
             'branches' => $branches,
-            'filters' => $request->only(['search', 'status', 'user_name', 'date_filter'])
+            'filters' => array_merge($request->only(['search', 'status', 'user_name', 'date_filter']), [
+                'sort_by' => $request->sort_by,
+                'sort_direction' => $request->sort_direction,
+            ])
         ]);
     }
 
@@ -89,6 +100,14 @@ class StockTakeController extends Controller
                 'total_diff_decrease' => collect($request->items)->filter(fn($i) => $i['diff_qty'] < 0)->sum('diff_qty'),
                 'total_diff_value' => array_sum(array_column($request->items, 'diff_value'))
             ]);
+
+            if ($request->filled('action_date')) {
+                $stockTake->created_at = Carbon::parse($request->action_date);
+                if ($request->status === 'balanced') {
+                    $stockTake->balanced_date = Carbon::parse($request->action_date);
+                }
+                $stockTake->save();
+            }
 
             foreach ($request->items as $item) {
                 StockTakeItem::create([

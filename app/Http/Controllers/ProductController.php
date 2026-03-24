@@ -104,13 +104,21 @@ class ProductController extends Controller
                       });
                 },
             ])
-            ->orderBy('id', 'desc')->paginate(50)->withQueryString();
+            ->when($request->filled('sort_by'), function ($q) use ($request) {
+                $allowed = ['sku', 'name', 'retail_price', 'cost_price', 'stock_quantity', 'created_at'];
+                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'id';
+                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+                $q->orderBy($sortBy, $dir);
+            }, function ($q) {
+                $q->orderBy('id', 'desc');
+            })
+            ->paginate(50)->withQueryString();
 
         return Inertia::render('Welcome', [
             'products' => $products,
             'categories' => Category::with('children')->whereNull('parent_id')->orderBy('name')->get(),
             'brands' => Brand::all(),
-            'filters' => $request->only('search'),
+            'filters' => $request->only('search', 'sort_by', 'sort_direction'),
             'canViewCostPrice' => auth()->check() && auth()->user()->hasPermission('products.view_cost_price'),
         ]);
     }
@@ -131,6 +139,7 @@ class ProductController extends Controller
             'showRetailPrice' => $priceBooks->contains('enable_retail_price', true),
             'showTechnicianPrice' => $priceBooks->contains('enable_technician_price', true),
             'productAttributes' => ProductAttribute::with('values')->orderBy('sort_order')->orderBy('name')->get(),
+            'redirectBack' => $request->input('redirect_back'),
         ]);
     }
 
@@ -242,6 +251,12 @@ class ProductController extends Controller
                     $variant->attributeValues()->sync($vData['attribute_value_ids']);
                 }
             }
+        }
+
+        // If redirect_back param was provided (e.g., from Purchases/Create or Tasks), redirect there
+        $redirectBack = $request->input('redirect_back');
+        if ($redirectBack && str_starts_with($redirectBack, '/')) {
+            return redirect($redirectBack)->with('success', 'Hàng hóa "' . $product->name . '" được tạo thành công!');
         }
 
         return redirect()->route('products.index')->with('success', 'Hàng hóa được tạo thành công!');

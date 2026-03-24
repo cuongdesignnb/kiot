@@ -1,22 +1,19 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
 
 const props = defineProps({
+    purchase: Object,
     products: Array,
     suppliers: Array,
     employees: Array,
-    categories: Array,
-    brands: Array,
-    purchaseCode: String,
-    purchaseOrderInfo: Object,
     showRetailPrice: Boolean,
     showTechnicianPrice: Boolean,
     bankAccounts: Array,
 });
 
-// Local mutable copy of products list (to add newly created products)
+// Local mutable copy of products list
 const allProducts = ref([...(props.products || [])]);
 const localSuppliers = ref([...(props.suppliers || [])]);
 
@@ -51,26 +48,33 @@ const submitCreateSupplier = async () => {
 const searchQuery = ref('');
 const showSuggestions = ref(false);
 const showCreateDropdown = ref(false);
-const items = ref([]);
 
-const selectedSupplierId = ref('');
-const selectedEmployeeId = ref('');
-// Use local time (not UTC) for datetime-local input
+// Pre-fill from existing purchase
 const pad = (n) => String(n).padStart(2, '0');
-const nowLocal = new Date();
-const localNow = `${nowLocal.getFullYear()}-${pad(nowLocal.getMonth()+1)}-${pad(nowLocal.getDate())}T${pad(nowLocal.getHours())}:${pad(nowLocal.getMinutes())}`;
-const purchaseDate = ref(localNow);
-const status = ref('completed');
-const discount = ref(0);
-const paidAmount = ref(0);
-const note = ref('');
-const submitRef = ref(false);
-const paymentMethod = ref('cash');
-const bankAccountInfo = ref('');
+const getLocalDatetime = (val) => {
+    if (!val) return '';
+    const d = new Date(val);
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
 
-// Chi phí nhập khác (shipping, etc.)
-const otherCosts = ref([]);
-const showOtherCosts = ref(false);
+const selectedSupplierId = ref(props.purchase.supplier_id || '');
+const selectedEmployeeId = ref(props.purchase.employee_id || '');
+const purchaseDate = ref(getLocalDatetime(props.purchase.purchase_date || props.purchase.created_at));
+const status = ref(props.purchase.status || 'completed');
+const discount = ref(Number(props.purchase.discount) || 0);
+const paidAmount = ref(Number(props.purchase.paid_amount) || 0);
+const note = ref(props.purchase.note || '');
+const submitRef = ref(false);
+const paymentMethod = ref(props.purchase.payment_method || 'cash');
+const bankAccountInfo = ref(props.purchase.bank_account_info || '');
+
+// Chi phí nhập khác
+const otherCosts = ref(
+    props.purchase.other_costs
+        ? (typeof props.purchase.other_costs === 'string' ? JSON.parse(props.purchase.other_costs) : props.purchase.other_costs).map((c, i) => ({ id: Date.now() + i, name: c.name, amount: Number(c.amount) || 0 }))
+        : []
+);
+const showOtherCosts = ref(otherCosts.value.length > 0);
 const newCostName = ref('');
 const newCostAmount = ref(0);
 
@@ -89,19 +93,31 @@ const removeOtherCost = (index) => {
 };
 const totalOtherCosts = computed(() => otherCosts.value.reduce((s, c) => s + (Number(c.amount) || 0), 0));
 
-onMounted(() => {
-    if (props.purchaseOrderInfo) {
-        selectedSupplierId.value = props.purchaseOrderInfo.supplier_id || '';
-        discount.value = props.purchaseOrderInfo.discount || 0;
-        items.value = props.purchaseOrderInfo.items || [];
-    }
-});
+// Pre-fill items from existing purchase
+const items = ref(
+    (props.purchase.items || []).map(item => ({
+        product_id: item.product_id,
+        sku: item.product_code || item.product?.sku || '',
+        name: item.product_name || item.product?.name || '',
+        has_serial: !!(item.product?.has_serial),
+        quantity: item.quantity || 0,
+        price: Number(item.price) || 0,
+        retail_price: Number(item.product?.retail_price) || 0,
+        technician_price: Number(item.product?.technician_price) || 0,
+        discount: Number(item.discount) || 0,
+        stock_quantity: item.product?.stock_quantity || 0,
+        serials: (item.serials || []).map(s => s.serial_number || s),
+        serialInput: '',
+        showSerialArea: !!(item.product?.has_serial),
+        warranty_months: item.warranty_months || 0,
+    }))
+);
 
 const filteredProducts = computed(() => {
     if (!searchQuery.value) return [];
     const query = searchQuery.value.toLowerCase();
-    return allProducts.value.filter(p => 
-        p.name.toLowerCase().includes(query) || 
+    return allProducts.value.filter(p =>
+        p.name.toLowerCase().includes(query) ||
         p.sku.toLowerCase().includes(query)
     ).slice(0, 10);
 });
@@ -113,7 +129,7 @@ watch(searchQuery, (val) => {
 const selectProduct = (product) => {
     const existing = items.value.find(i => i.product_id === product.id);
     if (!existing) {
-        items.value.unshift({ 
+        items.value.unshift({
             product_id: product.id,
             sku: product.sku,
             name: product.name,
@@ -183,11 +199,9 @@ const save = async () => {
     }
 
     submitRef.value = true;
-    
+
     try {
-        await router.post('/purchases', {
-            code: props.purchaseCode,
-            status: status.value,
+        await router.put(`/purchases/${props.purchase.id}`, {
             supplier_id: selectedSupplierId.value || null,
             employee_id: selectedEmployeeId.value || null,
             purchase_date: purchaseDate.value || null,
@@ -216,7 +230,6 @@ const save = async () => {
 
 const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
 
-// Format input hiển thị giá Việt Nam (8.000.000) nhưng lưu số thật
 const parseCurrencyInput = (str) => {
     if (!str && str !== 0) return 0;
     return Number(String(str).replace(/\./g, '').replace(/,/g, '')) || 0;
@@ -224,11 +237,6 @@ const parseCurrencyInput = (str) => {
 const formatCurrencyInput = (val) => {
     const num = Number(val) || 0;
     return num.toLocaleString('vi-VN');
-};
-const onCurrencyInput = (obj, field, event) => {
-    const raw = event.target.value;
-    obj[field] = parseCurrencyInput(raw);
-    event.target.value = formatCurrencyInput(obj[field]);
 };
 const onCurrencyFocus = (event) => {
     const val = parseCurrencyInput(event.target.value);
@@ -241,32 +249,32 @@ const onCurrencyBlur = (obj, field, event) => {
     event.target.value = formatCurrencyInput(val);
 };
 
-// === Navigate to full product creation page ===
+// Navigate to full product creation page
 const goToCreateProduct = () => {
-    // Redirect to full product creation page; after save it will redirect back here
-    window.location.href = '/products/create/standard?redirect_back=/purchases/create';
+    window.location.href = `/products/create/standard?redirect_back=/purchases/${props.purchase.id}/edit`;
 };
 
 </script>
 
 <template>
-    <Head title="Nhập hàng - KiotViet Clone" />
+    <Head :title="`Sửa phiếu nhập ${purchase.code}`" />
     <div class="h-screen flex flex-col bg-[#eef1f5] text-[13px] overflow-hidden font-sans">
-        
+
         <!-- Header -->
         <header class="bg-white text-gray-800 px-4 h-[56px] flex items-center justify-between border-b border-gray-200 shadow-sm flex-shrink-0">
             <div class="flex items-center gap-4 flex-1">
-                <Link href="/purchases" class="text-gray-600 hover:text-green-600 transition-colors">
+                <Link :href="`/purchases/${purchase.id}`" class="text-gray-600 hover:text-green-600 transition-colors">
                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
                 </Link>
-                <div class="text-xl font-bold text-gray-800 mr-4">Nhập hàng</div>
-                
-                <div class="relative w-full max-w-[500px]">
+                <div class="text-xl font-bold text-gray-800 mr-1">Sửa phiếu nhập</div>
+                <span class="text-blue-600 font-bold text-lg">{{ purchase.code }}</span>
+
+                <div class="relative w-full max-w-[500px] ml-4">
                     <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                         <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                     </div>
                     <input v-model="searchQuery" @focus="showSuggestions = true" @blur="hideSuggestions" type="text" class="w-full pl-9 pr-12 py-[9px] border border-gray-300 text-gray-800 rounded focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500 bg-white" placeholder="Tìm hàng hóa theo mã hoặc tên (F3)">
-                    
+
                     <div v-if="showSuggestions && filteredProducts.length > 0" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded-sm z-50 max-h-[300px] overflow-auto">
                         <div v-for="product in filteredProducts" :key="product.id" @mousedown.prevent="selectProduct(product)" class="flex items-center gap-3 p-2 border-b border-gray-100 hover:bg-gray-50 cursor-pointer">
                             <img :src="product.image || 'https://ui-avatars.com/api/?name=' + product.name + '&background=random'" class="w-10 h-10 object-cover rounded border border-gray-200">
@@ -292,9 +300,6 @@ const goToCreateProduct = () => {
                         </div>
                     </div>
                 </div>
-            </div>
-            <div class="flex items-center gap-3 text-gray-500">
-                 <button class="hover:bg-gray-100 p-2 rounded"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg></button>
             </div>
         </header>
 
@@ -384,13 +389,10 @@ const goToCreateProduct = () => {
                             </template>
                         </tbody>
                     </table>
-                    
+
                     <div v-if="items.length === 0" class="h-full flex flex-col items-center justify-center min-h-[400px]">
                         <div class="text-center">
-                            <h3 class="font-bold text-gray-800 text-[16px] mb-2 mt-12">Thêm sản phẩm từ phiếu đặt / file excel</h3>
-                            <button class="bg-[#2ebc5b] hover:bg-[#209644] text-white font-semibold py-2 px-6 rounded shadow-sm text-[14px] flex items-center justify-center w-full max-w-[180px] mx-auto transition-colors">
-                                <svg class="w-5 h-5 mr-2 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg> Chọn file dữ liệu
-                            </button>
+                            <h3 class="font-bold text-gray-800 text-[16px] mb-2 mt-12">Chưa có sản phẩm nào. Tìm và thêm sản phẩm ở thanh tìm kiếm phía trên.</h3>
                         </div>
                     </div>
                 </div>
@@ -429,12 +431,12 @@ const goToCreateProduct = () => {
                         <div class="space-y-3.5 mt-4">
                             <div class="flex justify-between items-center text-[13px]">
                                 <label class="text-gray-700 font-medium">Mã nhập hàng</label>
-                                <input type="text" :value="purchaseCode" disabled class="w-[150px] text-right border-b border-transparent px-1 py-0.5 outline-none text-gray-500 bg-transparent" placeholder="Mã tự động">
+                                <input type="text" :value="purchase.code" disabled class="w-[150px] text-right border-b border-transparent px-1 py-0.5 outline-none text-gray-500 bg-transparent font-bold" placeholder="Mã tự động">
                             </div>
 
                             <div class="flex justify-between items-center text-[13px]">
                                 <label class="text-gray-700 font-medium">Trạng thái</label>
-                                <select v-model="status" class="w-[150px] border border-gray-300 rounded px-2 py-1 outline-none text-gray-700 focus:border-green-500 bg-green-50 font-medium">
+                                <select v-model="status" class="w-[150px] border border-gray-300 rounded px-2 py-1 outline-none text-gray-700 focus:border-green-500 bg-green-50 font-medium" disabled>
                                     <option value="draft">Phiếu tạm</option>
                                     <option value="completed">Đã nhập hàng</option>
                                 </select>
@@ -521,11 +523,11 @@ const goToCreateProduct = () => {
 
                 <!-- Action Button -->
                 <div class="p-4 bg-white border-t border-gray-200 shadow-[0_-2px_10px_rgba(0,0,0,0.05)]">
-                    <button @click="save" :disabled="submitRef" class="w-full bg-[#2ebc5b] hover:bg-[#209644] text-white font-bold py-3 rounded text-[15px] uppercase tracking-wide transition-colors flex justify-center items-center gap-2 disabled:opacity-50">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Hoàn thành
+                    <button @click="save" :disabled="submitRef" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded text-[15px] uppercase tracking-wide transition-colors flex justify-center items-center gap-2 disabled:opacity-50">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Cập nhật phiếu nhập
                     </button>
                     <div class="mt-2 text-center">
-                        <Link href="/purchases" class="text-gray-500 hover:text-gray-800 text-[13px] underline">Hủy bỏ</Link>
+                        <Link :href="`/purchases/${purchase.id}`" class="text-gray-500 hover:text-gray-800 text-[13px] underline">Quay lại</Link>
                     </div>
                 </div>
             </div>

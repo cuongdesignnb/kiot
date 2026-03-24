@@ -38,7 +38,24 @@ class WarrantyController extends Controller
             }
         }
 
-        $query = Warranty::with('product')->orderBy('id', 'desc');
+        $query = Warranty::with('product')
+            ->when($request->filled('sort_by'), function ($q) use ($request) {
+                $allowed = ['invoice_code', 'customer_name', 'serial_imei', 'warranty_period', 'purchase_date', 'warranty_end_date', 'created_at'];
+                $productSortFields = ['product_sku' => 'sku', 'product_name' => 'name'];
+                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+
+                if (array_key_exists($request->sort_by, $productSortFields)) {
+                    $q->join('products', 'warranties.product_id', '=', 'products.id')
+                        ->orderBy('products.' . $productSortFields[$request->sort_by], $dir)
+                        ->select('warranties.*');
+                } elseif (in_array($request->sort_by, $allowed)) {
+                    $q->orderBy($request->sort_by, $dir);
+                } else {
+                    $q->orderBy('id', 'desc');
+                }
+            }, function ($q) {
+                $q->orderBy('id', 'desc');
+            });
 
         if ($request->filled('search')) {
             $search = $request->input('search');
@@ -88,7 +105,7 @@ class WarrantyController extends Controller
 
         return Inertia::render('Warranties/Index', [
             'warranties' => $warranties,
-            'filters' => $request->only([
+            'filters' => array_merge($request->only([
                 'search',
                 'time_filter',
                 'time_start',
@@ -100,6 +117,9 @@ class WarrantyController extends Controller
                 'maintenance_filter',
                 'maintenance_start',
                 'maintenance_end'
+            ]), [
+                'sort_by' => $request->sort_by,
+                'sort_direction' => $request->sort_direction,
             ]),
         ]);
     }

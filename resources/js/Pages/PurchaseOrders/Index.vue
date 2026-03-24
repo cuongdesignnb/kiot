@@ -3,6 +3,7 @@ import { ref, watch, computed } from "vue";
 import { Head, router, Link } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
+import SortableHeader from "@/Components/SortableHeader.vue";
 
 const props = defineProps({
     purchaseOrders: Object,
@@ -14,6 +15,8 @@ const search = ref(props.filters?.search || "");
 const statusFilters = ref(props.filters?.status || []);
 const activeBranch = ref(props.filters?.branch_id || "");
 const dateFilter = ref(props.filters?.date_filter || "this_month");
+const sortBy = ref(props.filters?.sort_by || "");
+const sortDirection = ref(props.filters?.sort_direction || "");
 
 // Bảng trạng thái
 const allStatuses = [
@@ -22,6 +25,23 @@ const allStatuses = [
     { value: "partial", label: "Nhập một phần" },
     { value: "completed", label: "Đã nhập hàng" },
 ];
+
+const handleSort = (field, direction) => {
+    sortBy.value = field;
+    sortDirection.value = direction;
+    router.get(
+        "/purchase-orders",
+        {
+            search: search.value,
+            status: statusFilters.value,
+            branch_id: activeBranch.value,
+            date_filter: dateFilter.value,
+            sort_by: field,
+            sort_direction: direction,
+        },
+        { preserveState: true, replace: true },
+    );
+};
 
 let searchTimeout;
 const updateFilters = () => {
@@ -34,6 +54,8 @@ const updateFilters = () => {
                 status: statusFilters.value,
                 branch_id: activeBranch.value,
                 date_filter: dateFilter.value,
+                sort_by: sortBy.value,
+                sort_direction: sortDirection.value,
             },
             {
                 preserveState: true,
@@ -407,17 +429,15 @@ const printPurchaseOrder = (order) => {
                                     ></path>
                                 </svg>
                             </th>
-                            <th class="px-2 py-2">Mã đặt hàng nhập</th>
-                            <th class="px-2 py-2">Thời gian</th>
+                            <SortableHeader label="Mã đặt hàng nhập" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
+                            <SortableHeader label="Thời gian" field="created_at" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
                             <th class="px-2 py-2">Nhà cung cấp</th>
                             <th class="px-2 py-2 text-center">
                                 Ngày nhập dự kiến
                             </th>
                             <th class="px-2 py-2 text-center">Số ngày chờ</th>
-                            <th class="px-4 py-2 text-right">Cần trả NCC</th>
-                            <th class="px-4 py-2 text-center w-24">
-                                Trạng thái
-                            </th>
+                            <SortableHeader label="Cần trả NCC" field="total_payment" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader label="Trạng thái" field="status" :current-sort="sortBy" :current-direction="sortDirection" align="center" class="px-4 py-2 text-center w-24" @sort="handleSort" />
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100 bg-white">

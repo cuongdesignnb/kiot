@@ -3,6 +3,7 @@ import { ref, watch } from "vue";
 import { Head, router, Link } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
+import SortableHeader from "@/Components/SortableHeader.vue";
 import axios from "axios";
 
 const props = defineProps({
@@ -24,6 +25,32 @@ const expirationEnd = ref(props.filters.expiration_end || "");
 const maintenanceFilter = ref(props.filters.maintenance_filter || "all");
 const maintenanceStart = ref(props.filters.maintenance_start || "");
 const maintenanceEnd = ref(props.filters.maintenance_end || "");
+const sortBy = ref(props.filters.sort_by || "");
+const sortDirection = ref(props.filters.sort_direction || "");
+
+const handleSort = (field, direction) => {
+    sortBy.value = field;
+    sortDirection.value = direction;
+    router.get(
+        "/warranties",
+        {
+            search: search.value,
+            time_filter: timeFilter.value,
+            time_start: timeStart.value,
+            time_end: timeEnd.value,
+            status: statusFilter.value,
+            expiration_filter: expirationFilter.value,
+            expiration_start: expirationStart.value,
+            expiration_end: expirationEnd.value,
+            maintenance_filter: maintenanceFilter.value,
+            maintenance_start: maintenanceStart.value,
+            maintenance_end: maintenanceEnd.value,
+            sort_by: field,
+            sort_direction: direction,
+        },
+        { preserveState: true, preserveScroll: true, replace: true },
+    );
+};
 
 let fetchTimeout = null;
 const fetchFiltered = () => {
@@ -43,6 +70,8 @@ const fetchFiltered = () => {
                 maintenance_filter: maintenanceFilter.value,
                 maintenance_start: maintenanceStart.value,
                 maintenance_end: maintenanceEnd.value,
+                sort_by: sortBy.value,
+                sort_direction: sortDirection.value,
             },
             { preserveState: true, preserveScroll: true, replace: true },
         );
@@ -582,16 +611,8 @@ const printWarranty = (item) => {
                             class="bg-[#f0f4f9] text-[#1a56bc] text-[13px] font-bold sticky top-0 z-10 shadow-[0_1px_0_rgba(200,200,200,0.5)]"
                         >
                             <tr>
-                                <th
-                                    class="p-3 whitespace-nowrap border-b border-[#dce3ec] font-semibold w-[150px]"
-                                >
-                                    Mã hàng
-                                </th>
-                                <th
-                                    class="p-3 border-b border-[#dce3ec] font-semibold"
-                                >
-                                    Tên hàng
-                                </th>
+                                <SortableHeader label="Mã hàng" field="product_sku" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 whitespace-nowrap border-b border-[#dce3ec] font-semibold w-[150px]" @sort="handleSort" />
+                                <SortableHeader label="Tên hàng" field="product_name" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-b border-[#dce3ec] font-semibold" @sort="handleSort" />
                                 <th
                                     class="p-3 whitespace-nowrap border-b border-[#dce3ec] font-semibold w-[150px]"
                                 >
@@ -602,16 +623,8 @@ const printWarranty = (item) => {
                                 >
                                     Hóa đơn mua
                                 </th>
-                                <th
-                                    class="p-3 whitespace-nowrap border-b border-[#dce3ec] font-semibold w-[200px]"
-                                >
-                                    Khách hàng
-                                </th>
-                                <th
-                                    class="p-3 whitespace-nowrap border-b border-[#dce3ec] font-semibold w-[130px]"
-                                >
-                                    Bảo hành tối đa
-                                </th>
+                                <SortableHeader label="Khách hàng" field="customer_name" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 whitespace-nowrap border-b border-[#dce3ec] font-semibold w-[200px]" @sort="handleSort" />
+                                <SortableHeader label="Bảo hành tối đa" field="warranty_period" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 whitespace-nowrap border-b border-[#dce3ec] font-semibold w-[130px]" @sort="handleSort" />
                                 <th
                                     class="p-3 whitespace-nowrap border-b border-[#dce3ec] font-semibold w-[130px]"
                                 >

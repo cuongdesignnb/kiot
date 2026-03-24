@@ -31,6 +31,8 @@ class MyTasksController extends Controller
             'category:id,name,color',
             'branch:id,name',
             'creator:id,name',
+            'product:id,name,sku',
+            'serialImei:id,serial_number,product_id',
             'assignments' => fn($q) => $q->where('employee_id', $employee->id),
         ])
         ->whereHas('assignments', fn($q) => $q->where('employee_id', $employee->id))

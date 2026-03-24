@@ -128,7 +128,28 @@ const goPage = (p) => {
     page.value = p;
     load();
 };
-</script>
+
+// Vietnamese-friendly property labels
+const propLabels = {
+    task_code: 'Mã phiếu',
+    employee: 'Nhân viên',
+    linh_kien: 'Linh kiện',
+    so_luong: 'Số lượng',
+    may: 'Máy',
+    serial: 'Serial',
+    gia_von: 'Giá vốn',
+    product: 'Sản phẩm',
+    product_name: 'Tên SP',
+    quantity: 'Số lượng',
+    unit_cost: 'Đơn giá',
+    total_cost: 'Tổng giá',
+    title: 'Tiêu đề',
+    purchase_code: 'Mã nhập',
+    supplier: 'NCC',
+    total_amount: 'Tổng tiền',
+    item_count: 'Số SP',
+};
+const getPropLabel = (key) => propLabels[key] || key;</script>
 
 <template>
     <Head title="Lịch sử thao tác" />
@@ -219,11 +240,13 @@ const goPage = (p) => {
 
                             <!-- Properties -->
                             <div v-if="log.properties && Object.keys(log.properties).length > 0" class="mt-2 flex flex-wrap gap-2">
-                                <span v-for="(val, key) in log.properties" :key="key"
-                                    class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-xs text-gray-600">
-                                    <span class="font-medium text-gray-500">{{ key }}:</span>
-                                    <span>{{ typeof val === 'number' ? Number(val).toLocaleString('vi-VN') : val }}</span>
-                                </span>
+                                <template v-for="(val, key) in log.properties" :key="key">
+                                    <span v-if="val != null && val !== ''"
+                                        class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-xs text-gray-600">
+                                        <span class="font-medium text-gray-500">{{ getPropLabel(key) }}:</span>
+                                        <span>{{ typeof val === 'number' ? Number(val).toLocaleString('vi-VN') : val }}</span>
+                                    </span>
+                                </template>
                             </div>
                         </div>
 

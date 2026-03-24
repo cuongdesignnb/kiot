@@ -21,7 +21,15 @@ class PurchaseController extends Controller
         $statuses = $request->input('status');
         $dateFilter = $request->input('date_filter');
 
-        $query = Purchase::with(['supplier', 'items'])->latest();
+        $query = Purchase::with(['supplier', 'items'])
+            ->when($request->filled('sort_by'), function ($q) use ($request) {
+                $allowed = ['code', 'created_at', 'total_amount', 'discount', 'paid_amount', 'debt_amount', 'status'];
+                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'id';
+                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+                $q->orderBy($sortBy, $dir);
+            }, function ($q) {
+                $q->latest();
+            });
 
         if ($search) {
             $query->where(function ($q) use ($search) {
@@ -68,7 +76,10 @@ class PurchaseController extends Controller
 
         return Inertia::render('Purchases/Index', [
             'purchases' => $purchases,
-            'filters' => $request->only(['search', 'status', 'date_filter']),
+            'filters' => array_merge($request->only(['search', 'status', 'date_filter']), [
+                'sort_by' => $request->sort_by,
+                'sort_direction' => $request->sort_direction,
+            ]),
             'summary' => $summary,
             'canViewCost' => $canViewCost,
         ]);
@@ -378,6 +389,51 @@ class PurchaseController extends Controller
         ]);
     }
 
+    public function edit(Purchase $purchase)
+    {
+        $purchase->load(['supplier', 'items.product', 'user', 'employee']);
+
+        // Load serials for each item
+        foreach ($purchase->items as $item) {
+            if ($item->product && $item->product->has_serial) {
+                $item->setRelation('serials', SerialImei::where('purchase_id', $purchase->id)
+                    ->where('product_id', $item->product_id)
+                    ->get(['id', 'serial_number', 'status']));
+            } else {
+                $item->setRelation('serials', collect([]));
+            }
+        }
+
+        $suppliers = Customer::where('is_supplier', true)->get();
+        $products = Product::where('is_active', true)->get();
+
+        $priceBooks = \App\Models\PriceBook::where('is_active', true)->get();
+        $showRetailPrice = $priceBooks->contains('enable_retail_price', true);
+        $showTechnicianPrice = $priceBooks->contains('enable_technician_price', true);
+
+        $user = request()->user();
+        $canViewCost = $user && $user->hasAnyPermission(['purchases.view_cost', 'purchases.view']);
+
+        if (!$canViewCost) {
+            $products = $products->map(function ($p) {
+                $p->cost_price = 0;
+                $p->last_purchase_price = 0;
+                return $p;
+            });
+        }
+
+        return Inertia::render('Purchases/Edit', [
+            'purchase' => $purchase,
+            'suppliers' => $suppliers,
+            'products' => $products,
+            'employees' => \App\Models\Employee::where('is_active', true)->get(['id', 'name', 'code']),
+            'showRetailPrice' => $showRetailPrice,
+            'showTechnicianPrice' => $showTechnicianPrice,
+            'bankAccounts' => \App\Models\BankAccount::where('status', 'active')->get(),
+            'canViewCost' => $canViewCost,
+        ]);
+    }
+
     public function update(Request $request, Purchase $purchase)
     {
         $request->validate([
@@ -388,6 +444,20 @@ class PurchaseController extends Controller
             'payment_method' => 'nullable|string|in:cash,transfer',
             'bank_account_info' => 'nullable|string',
             'employee_id' => 'nullable|exists:employees,id',
+            'supplier_id' => 'nullable|exists:customers,id',
+            'items' => 'nullable|array',
+            'items.*.product_id' => 'required|exists:products,id',
+            'items.*.quantity' => 'required|integer|min:0',
+            'items.*.price' => 'required|numeric|min:0',
+            'items.*.discount' => 'nullable|numeric|min:0',
+            'items.*.retail_price' => 'nullable|numeric|min:0',
+            'items.*.technician_price' => 'nullable|numeric|min:0',
+            'items.*.serials' => 'nullable|array',
+            'items.*.serials.*' => 'string|max:100',
+            'items.*.warranty_months' => 'nullable|integer|min:0',
+            'other_costs' => 'nullable|array',
+            'other_costs.*.name' => 'required|string|max:255',
+            'other_costs.*.amount' => 'required|numeric|min:0',
         ]);
 
         try {
@@ -395,44 +465,196 @@ class PurchaseController extends Controller
 
             $oldPaidAmount = $purchase->paid_amount;
             $oldDebt = $purchase->debt_amount;
+            $oldTotalAmount = $purchase->total_amount;
 
-            $discount = $request->discount ?? $purchase->discount;
-            $paidAmount = $request->paid_amount ?? $purchase->paid_amount;
-            $payAmount = $purchase->total_amount - $discount;
-            $debtAmount = $payAmount - $paidAmount;
+            // If items are provided, do full item update
+            if ($request->has('items') && is_array($request->items)) {
+                // 1. Reverse stock changes from old items (if purchase was completed)
+                if ($purchase->status === 'completed') {
+                    foreach ($purchase->items as $oldItem) {
+                        $product = Product::find($oldItem->product_id);
+                        if ($product) {
+                            $product->stock_quantity = max(0, $product->stock_quantity - $oldItem->quantity);
+                            $product->save();
+                        }
+                        // Delete old serials
+                        SerialImei::where('purchase_id', $purchase->id)
+                            ->where('product_id', $oldItem->product_id)
+                            ->delete();
+                    }
 
-            $purchase->update([
-                'note' => $request->note ?? $purchase->note,
-                'purchase_date' => $request->purchase_date ?? $purchase->purchase_date,
-                'discount' => $discount,
-                'paid_amount' => $paidAmount,
-                'debt_amount' => $debtAmount,
-                'payment_method' => $request->payment_method ?? $purchase->payment_method,
-                'bank_account_info' => $request->bank_account_info,
-                'employee_id' => $request->employee_id ?? $purchase->employee_id,
-            ]);
+                    // Reverse old supplier debt/total_bought
+                    if ($purchase->supplier) {
+                        $purchase->supplier->supplier_debt_amount -= $oldDebt;
+                        $purchase->supplier->total_bought -= $oldTotalAmount;
+                        $purchase->supplier->save();
+                    }
+                }
 
-            // Update supplier debt if paid amount changed
-            if ($paidAmount != $oldPaidAmount && $purchase->supplier) {
-                $debtDiff = $debtAmount - $oldDebt;
-                $purchase->supplier->supplier_debt_amount += $debtDiff;
-                $purchase->supplier->save();
+                // 2. Delete old items
+                $purchase->items()->delete();
 
-                // Create cash flow for additional payment
-                $additionalPayment = $paidAmount - $oldPaidAmount;
-                if ($additionalPayment > 0) {
-                    CashFlow::create([
-                        'code' => 'PC' . date('YmdHis') . rand(10,99),
-                        'type' => 'payment',
-                        'amount' => $additionalPayment,
-                        'time' => now(),
-                        'category' => 'Chi tiền trả NCC',
-                        'target_type' => 'Nhà cung cấp',
-                        'target_name' => $purchase->supplier->name ?? 'Nhà cung cấp',
-                        'reference_type' => 'Purchase',
-                        'reference_code' => $purchase->code,
-                        'description' => 'Trả thêm tiền NCC cho phiếu ' . $purchase->code,
+                // 3. Recalculate total
+                $total_amount = collect($request->items)->sum(function ($item) {
+                    return $item['quantity'] * $item['price'] - ($item['discount'] ?? 0);
+                });
+
+                $discount = $request->discount ?? 0;
+                $otherCosts = $request->other_costs ?? [];
+                $otherCostsTotal = collect($otherCosts)->sum('amount');
+                $pay_amount = $total_amount - $discount + $otherCostsTotal;
+                $paidAmount = $request->paid_amount ?? 0;
+                $debtAmount = $pay_amount - $paidAmount;
+
+                // 4. Update purchase header
+                $purchase->update([
+                    'supplier_id' => $request->supplier_id ?? $purchase->supplier_id,
+                    'total_amount' => $total_amount,
+                    'discount' => $discount,
+                    'paid_amount' => $paidAmount,
+                    'debt_amount' => $debtAmount,
+                    'note' => $request->note ?? $purchase->note,
+                    'purchase_date' => $request->purchase_date ?? $purchase->purchase_date,
+                    'payment_method' => $request->payment_method ?? $purchase->payment_method,
+                    'bank_account_info' => $request->bank_account_info,
+                    'employee_id' => $request->employee_id ?? $purchase->employee_id,
+                    'other_costs' => !empty($otherCosts) ? json_encode($otherCosts) : null,
+                    'other_costs_total' => $otherCostsTotal,
+                ]);
+
+                // 5. Re-create items and apply stock changes
+                foreach ($request->items as $item) {
+                    $product = Product::find($item['product_id']);
+
+                    $warrantyMonths = $item['warranty_months'] ?? 0;
+                    $warrantyExpiresAt = $warrantyMonths > 0
+                        ? ($purchase->purchase_date ?? now())->copy()->addMonths($warrantyMonths)->toDateString()
+                        : null;
+
+                    $purchase->items()->create([
+                        'product_id' => $product->id,
+                        'product_name' => $product->name,
+                        'product_code' => $product->sku,
+                        'quantity' => $item['quantity'],
+                        'price' => $item['price'],
+                        'discount' => $item['discount'] ?? 0,
+                        'subtotal' => $item['quantity'] * $item['price'] - ($item['discount'] ?? 0),
+                        'warranty_months' => $warrantyMonths,
+                        'warranty_expires_at' => $warrantyExpiresAt,
                     ]);
+
+                    if ($purchase->status === 'completed') {
+                        $newStock = $product->stock_quantity + $item['quantity'];
+
+                        $product->last_purchase_price = $item['price'];
+
+                        $costingMethod = \App\Models\Setting::get('inventory_costing_method', 'average');
+                        if ($costingMethod === 'average') {
+                            $totalCurrentValue = $product->stock_quantity * $product->cost_price;
+                            $totalNewValue = $item['quantity'] * $item['price'];
+                            $newCostPrice = $newStock > 0 ? ($totalCurrentValue + $totalNewValue) / $newStock : $item['price'];
+                            $product->cost_price = $newCostPrice;
+                        }
+
+                        $product->stock_quantity = $newStock;
+
+                        if (isset($item['retail_price']) && $item['retail_price'] > 0) {
+                            $product->retail_price = $item['retail_price'];
+                        }
+
+                        $product->save();
+
+                        // Update technician_price in price books
+                        if (isset($item['technician_price']) && $item['technician_price'] > 0) {
+                            $activeBooks = \App\Models\PriceBook::where('is_active', true)
+                                ->where('enable_technician_price', true)->get();
+                            foreach ($activeBooks as $book) {
+                                \App\Models\PriceBookProduct::updateOrCreate(
+                                    ['price_book_id' => $book->id, 'product_id' => $product->id],
+                                    ['technician_price' => $item['technician_price'], 'price' => $item['retail_price'] ?? $product->retail_price ?? 0]
+                                );
+                            }
+                        }
+
+                        // Create Serial/IMEI records
+                        if ($product->has_serial && !empty($item['serials'])) {
+                            foreach ($item['serials'] as $serialNumber) {
+                                SerialImei::create([
+                                    'product_id' => $product->id,
+                                    'serial_number' => trim($serialNumber),
+                                    'status' => 'in_stock',
+                                    'purchase_id' => $purchase->id,
+                                ]);
+                            }
+                        }
+                    }
+                }
+
+                // 6. Re-apply supplier debt/total_bought
+                if ($purchase->status === 'completed') {
+                    $supplier = Customer::find($request->supplier_id ?? $purchase->supplier_id);
+                    if ($supplier) {
+                        $supplier->supplier_debt_amount += $debtAmount;
+                        $supplier->total_bought += $total_amount;
+                        $supplier->save();
+                    }
+
+                    // Create cash flow for payment difference
+                    $additionalPayment = $paidAmount - $oldPaidAmount;
+                    if ($additionalPayment > 0) {
+                        CashFlow::create([
+                            'code' => 'PC' . date('YmdHis') . rand(10,99),
+                            'type' => 'payment',
+                            'amount' => $additionalPayment,
+                            'time' => now(),
+                            'category' => 'Chi tiền trả NCC',
+                            'target_type' => 'Nhà cung cấp',
+                            'target_name' => $supplier->name ?? 'Nhà cung cấp',
+                            'reference_type' => 'Purchase',
+                            'reference_code' => $purchase->code,
+                            'description' => 'Trả thêm tiền NCC cho phiếu ' . $purchase->code,
+                        ]);
+                    }
+                }
+            } else {
+                // Simple update (metadata only) - legacy behavior
+                $discount = $request->discount ?? $purchase->discount;
+                $paidAmount = $request->paid_amount ?? $purchase->paid_amount;
+                $payAmount = $purchase->total_amount - $discount;
+                $debtAmount = $payAmount - $paidAmount;
+
+                $purchase->update([
+                    'note' => $request->note ?? $purchase->note,
+                    'purchase_date' => $request->purchase_date ?? $purchase->purchase_date,
+                    'discount' => $discount,
+                    'paid_amount' => $paidAmount,
+                    'debt_amount' => $debtAmount,
+                    'payment_method' => $request->payment_method ?? $purchase->payment_method,
+                    'bank_account_info' => $request->bank_account_info,
+                    'employee_id' => $request->employee_id ?? $purchase->employee_id,
+                ]);
+
+                // Update supplier debt if paid amount changed
+                if ($paidAmount != $oldPaidAmount && $purchase->supplier) {
+                    $debtDiff = $debtAmount - $oldDebt;
+                    $purchase->supplier->supplier_debt_amount += $debtDiff;
+                    $purchase->supplier->save();
+
+                    $additionalPayment = $paidAmount - $oldPaidAmount;
+                    if ($additionalPayment > 0) {
+                        CashFlow::create([
+                            'code' => 'PC' . date('YmdHis') . rand(10,99),
+                            'type' => 'payment',
+                            'amount' => $additionalPayment,
+                            'time' => now(),
+                            'category' => 'Chi tiền trả NCC',
+                            'target_type' => 'Nhà cung cấp',
+                            'target_name' => $purchase->supplier->name ?? 'Nhà cung cấp',
+                            'reference_type' => 'Purchase',
+                            'reference_code' => $purchase->code,
+                            'description' => 'Trả thêm tiền NCC cho phiếu ' . $purchase->code,
+                        ]);
+                    }
                 }
             }
 

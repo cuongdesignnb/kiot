@@ -9,16 +9,10 @@ const props = defineProps({
     damageCode: String
 });
 
-const currentTime = computed(() => {
-    const now = new Date();
-    return now.toLocaleString('vi-VN', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-    });
-});
+const pad = (n) => String(n).padStart(2, '0');
+const nowInit = new Date();
+const localNowStr = `${nowInit.getFullYear()}-${pad(nowInit.getMonth()+1)}-${pad(nowInit.getDate())}T${pad(nowInit.getHours())}:${pad(nowInit.getMinutes())}`;
+const transactionDate = ref(localNowStr);
 
 const searchQuery = ref('');
 const showSuggestions = ref(false);
@@ -95,6 +89,7 @@ const save = async (status) => {
             code: props.damageCode,
             status: status, // 'draft' | 'completed'
             branch_id: selectedBranch.value,
+            action_date: transactionDate.value,
             note: note.value,
             items: itemsComputed.value
         });
@@ -216,7 +211,7 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                             </div>
                             <span class="font-medium text-gray-800">Trần Văn Tiến</span>
                         </div>
-                        <span class="text-gray-500 text-[12px] bg-gray-100 px-2 py-0.5 rounded">{{ currentTime }}</span>
+                        <input type="datetime-local" v-model="transactionDate" class="text-gray-500 text-[12px] bg-gray-100 px-2 py-0.5 rounded border border-gray-200 outline-none focus:border-blue-500 hover:border-blue-400">
                     </div>
 
                     <div class="p-4 flex flex-col gap-4 bg-white border-b border-gray-200 flex-1">

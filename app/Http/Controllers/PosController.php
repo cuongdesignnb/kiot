@@ -76,6 +76,7 @@ class PosController extends Controller
             'discount' => 'required|numeric|min:0',
             'total' => 'required|numeric|min:0',
             'customer_paid' => 'required|numeric|min:0',
+            'customer_id' => 'nullable|exists:customers,id',
             'employee_id' => 'nullable|exists:employees,id',
             'sale_time' => 'nullable|date',
             'payment_method' => 'nullable|string|in:cash,transfer',
@@ -90,12 +91,15 @@ class PosController extends Controller
         try {
             \Illuminate\Support\Facades\DB::beginTransaction();
 
+            $customer = $validated['customer_id'] ? \App\Models\Customer::find($validated['customer_id']) : null;
+
             $invoice = \App\Models\Invoice::create([
                 'code' => 'HD' . time() . rand(10, 99),
                 'subtotal' => $validated['subtotal'],
                 'discount' => $validated['discount'],
                 'total' => $validated['total'],
                 'customer_paid' => $validated['customer_paid'],
+                'customer_id' => $customer?->id,
                 'employee_id' => $validated['employee_id'] ?? null,
                 'sale_time' => $validated['sale_time'] ?? now(),
                 'payment_method' => $validated['payment_method'] ?? 'cash',
@@ -145,18 +149,30 @@ class PosController extends Controller
                 }
             }
 
+            // Customer debt tracking
+            $customerName = $customer ? $customer->name : 'Khách lẻ';
+            $debtAmount = max(0, $validated['total'] - $validated['customer_paid']);
+
+            if ($customer && $debtAmount > 0) {
+                $customer->increment('debt_amount', $debtAmount);
+                $customer->increment('total_spent', $validated['total']);
+            } elseif ($customer) {
+                $customer->increment('total_spent', $validated['total']);
+            }
+
             // Record into Cash Flow as a receipt
             \App\Models\CashFlow::create([
                 'code' => 'PT' . time() . rand(10, 99),
                 'type' => 'receipt',
-                'amount' => $validated['total'],
+                'amount' => $validated['customer_paid'] > 0 ? $validated['customer_paid'] : $validated['total'],
                 'time' => now(),
                 'category' => 'Thu tiền khách trả',
                 'target_type' => 'Khách hàng',
-                'target_name' => 'Khách lẻ',
+                'target_id' => $customer?->id,
+                'target_name' => $customerName,
                 'reference_type' => 'Invoice',
                 'reference_code' => $invoice->code,
-                'description' => 'Thu tiền hóa đơn ' . $invoice->code,
+                'description' => 'Thu tiền hóa đơn ' . $invoice->code . ($customer ? " - {$customer->name}" : ''),
             ]);
 
             \Illuminate\Support\Facades\DB::commit();
@@ -165,6 +181,69 @@ class PosController extends Controller
             \Illuminate\Support\Facades\DB::rollBack();
             return response()->json(['success' => false, 'message' => 'Có lỗi xảy ra: ' . $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * Tìm kiếm khách hàng (typeahead).
+     */
+    public function searchCustomers(Request $request)
+    {
+        $search = $request->input('search', '');
+        if (strlen($search) < 1) {
+            return response()->json([]);
+        }
+
+        $customers = \App\Models\Customer::where(function ($q) use ($search) {
+                $q->where('name', 'LIKE', "%{$search}%")
+                  ->orWhere('phone', 'LIKE', "%{$search}%")
+                  ->orWhere('code', 'LIKE', "%{$search}%");
+            })
+            ->orderBy('name')
+            ->limit(10)
+            ->get(['id', 'code', 'name', 'phone', 'debt_amount']);
+
+        return response()->json($customers);
+    }
+
+    /**
+     * Tạo nhanh khách hàng từ POS.
+     */
+    public function quickCreateCustomer(Request $request)
+    {
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'phone' => 'nullable|string|max:255',
+        ]);
+
+        $customer = \App\Models\Customer::create([
+            'code' => 'KH' . time() . rand(10, 99),
+            'name' => $validated['name'],
+            'phone' => $validated['phone'] ?? null,
+        ]);
+
+        return response()->json($customer);
+    }
+
+    /**
+     * Tìm kiếm nhà cung cấp (typeahead).
+     */
+    public function searchSuppliers(Request $request)
+    {
+        $search = $request->input('search', '');
+        if (strlen($search) < 1) {
+            return response()->json([]);
+        }
+
+        $suppliers = \App\Models\Supplier::where(function ($q) use ($search) {
+                $q->where('name', 'LIKE', "%{$search}%")
+                  ->orWhere('phone', 'LIKE', "%{$search}%")
+                  ->orWhere('code', 'LIKE', "%{$search}%");
+            })
+            ->orderBy('name')
+            ->limit(10)
+            ->get(['id', 'code', 'name', 'phone', 'debt_amount']);
+
+        return response()->json($suppliers);
     }
 }
 

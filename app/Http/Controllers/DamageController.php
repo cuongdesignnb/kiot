@@ -15,7 +15,15 @@ class DamageController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Damage::with(['items.product', 'branch'])->orderBy('id', 'desc');
+        $query = Damage::with(['items.product', 'branch'])
+            ->when($request->filled('sort_by'), function ($q) use ($request) {
+                $allowed = ['code', 'created_at', 'total_qty', 'total_value', 'status'];
+                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'id';
+                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+                $q->orderBy($sortBy, $dir);
+            }, function ($q) {
+                $q->orderBy('id', 'desc');
+            });
 
         if ($request->filled('search')) {
             $query->where('code', 'like', "%{$request->search}%");
@@ -59,13 +67,16 @@ class DamageController extends Controller
         return Inertia::render('Damages/Index', [
             'damages' => $damages,
             'branches' => $branches,
-            'filters' => $request->only([
+            'filters' => array_merge($request->only([
                 'search',
                 'status',
                 'branch_id',
                 'created_by_name',
                 'destroyed_by_name',
                 'date_filter'
+            ]), [
+                'sort_by' => $request->sort_by,
+                'sort_direction' => $request->sort_direction,
             ])
         ]);
     }
@@ -104,11 +115,17 @@ class DamageController extends Controller
                 'status' => $request->status,
                 'created_by_name' => 'Trần Văn Tiến', // hardcoded cho demo
                 'destroyed_by_name' => collect($request->items)->sum('qty') > 0 ? 'Trần Văn Tiến' : 'Chưa có',
-                'destroyed_date' => clone Carbon::now(),
+                'destroyed_date' => clone Carbon::now(), // default if empty
                 'note' => $request->note,
                 'total_qty' => array_sum(array_column($request->items, 'qty')),
                 'total_value' => array_sum(array_column($request->items, 'total_value')),
             ]);
+
+            if ($request->filled('action_date')) {
+                $damage->created_at = Carbon::parse($request->action_date);
+                $damage->destroyed_date = Carbon::parse($request->action_date);
+                $damage->save();
+            }
 
             foreach ($request->items as $item) {
                 // Lấy sản phẩm để trừ kho nếu không phải là draft (tạm thời)

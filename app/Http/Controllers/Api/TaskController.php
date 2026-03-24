@@ -375,14 +375,25 @@ class TaskController extends Controller
         $request->validate([
             'month' => 'required|integer|between:1,12',
             'year'  => 'required|integer|min:2020',
+            'employee_id' => 'nullable|exists:employees,id',
         ]);
 
         $from = Carbon::create($request->year, $request->month, 1)->startOfMonth();
         $to = $from->copy()->endOfMonth();
 
-        $employees = Employee::whereHas('tasks', function ($q) use ($from, $to) {
-            $q->whereBetween('assigned_at', [$from, $to]);
-        })->get();
+        $employeeQuery = Employee::where('is_active', true);
+
+        // Filter by employee_id if provided
+        if ($request->filled('employee_id')) {
+            $employeeQuery->where('id', $request->employee_id);
+        } else {
+            // Only show employees who have assignments in the period
+            $employeeQuery->whereHas('taskAssignments', function ($q) use ($from, $to) {
+                $q->whereBetween('assigned_at', [$from, $to->copy()->endOfDay()]);
+            });
+        }
+
+        $employees = $employeeQuery->get();
 
         $results = [];
         foreach ($employees as $emp) {

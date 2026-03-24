@@ -3,6 +3,7 @@ import { ref, watch } from "vue";
 import { Head, router, Link } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
+import SortableHeader from "@/Components/SortableHeader.vue";
 
 const props = defineProps({
     returns: Object,
@@ -11,7 +12,19 @@ const props = defineProps({
 });
 
 const search = ref(props.filters?.search || "");
+const sortBy = ref(props.filters?.sort_by || "");
+const sortDirection = ref(props.filters?.sort_direction || "");
 const expandedRows = ref([]);
+
+const handleSort = (field, direction) => {
+    sortBy.value = field;
+    sortDirection.value = direction;
+    router.get(
+        "/returns",
+        { search: search.value, sort_by: field, sort_direction: direction },
+        { preserveState: true, replace: true },
+    );
+};
 
 let searchTimeout;
 const updateFilters = () => {
@@ -19,7 +32,7 @@ const updateFilters = () => {
     searchTimeout = setTimeout(() => {
         router.get(
             "/returns",
-            { search: search.value },
+            { search: search.value, sort_by: sortBy.value, sort_direction: sortDirection.value },
             { preserveState: true, replace: true },
         );
     }, 500);
@@ -353,14 +366,14 @@ const printReturn = (ret) => {
                                     class="rounded border-gray-300"
                                 />
                             </th>
-                            <th class="px-2 py-2">Mã trả hàng</th>
+                            <SortableHeader label="Mã trả hàng" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
                             <th class="px-2 py-2">Người bán</th>
-                            <th class="px-2 py-2">Thời gian</th>
+                            <SortableHeader label="Thời gian" field="created_at" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
                             <th class="px-2 py-2">Khách hàng</th>
-                            <th class="px-4 py-2 text-right">Tổng tiền hàng</th>
+                            <SortableHeader label="Tổng tiền hàng" field="total" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
                             <th class="px-4 py-2 text-right">Cần trả khách</th>
-                            <th class="px-4 py-2 text-right">Đã trả khách</th>
-                            <th class="px-2 py-2 text-left">Trạng thái</th>
+                            <SortableHeader label="Đã trả khách" field="paid_to_customer" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader label="Trạng thái" field="status" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2 text-left" @sort="handleSort" />
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100">

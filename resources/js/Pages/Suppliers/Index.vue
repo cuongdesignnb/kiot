@@ -3,6 +3,7 @@ import { ref, watch, reactive } from "vue";
 import { Head, router, Link, useForm } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
+import SortableHeader from "@/Components/SortableHeader.vue";
 import axios from "axios";
 
 const props = defineProps({
@@ -16,7 +17,26 @@ const search = ref(props.filters?.search || "");
 const customerGroup = ref(props.filters?.customer_group || "");
 const dateFilter = ref(props.filters?.date_filter || "all");
 const partnerType = ref(props.filters?.partner_type || "all");
+const sortBy = ref(props.filters?.sort_by || "");
+const sortDirection = ref(props.filters?.sort_direction || "");
 const expandedRows = ref([]); // array of expanded supplier IDs
+
+const handleSort = (field, direction) => {
+    sortBy.value = field;
+    sortDirection.value = direction;
+    router.get(
+        "/suppliers",
+        {
+            search: search.value,
+            customer_group: customerGroup.value,
+            date_filter: dateFilter.value,
+            partner_type: partnerType.value,
+            sort_by: field,
+            sort_direction: direction,
+        },
+        { preserveState: true, replace: true },
+    );
+};
 
 let searchTimeout;
 const updateFilters = () => {
@@ -29,6 +49,8 @@ const updateFilters = () => {
                 customer_group: customerGroup.value,
                 date_filter: dateFilter.value,
                 partner_type: partnerType.value,
+                sort_by: sortBy.value,
+                sort_direction: sortDirection.value,
             },
             {
                 preserveState: true,
@@ -571,10 +593,10 @@ const submitDebtAction = async () => {
                                     class="rounded border-gray-300"
                                 />
                             </th>
-                            <th class="px-4 py-3">Mã nhà cung cấp</th>
-                            <th class="px-4 py-3">Tên nhà cung cấp</th>
-                            <th class="px-4 py-3">Điện thoại</th>
-                            <th class="px-4 py-3">Email</th>
+                            <SortableHeader label="Mã nhà cung cấp" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Tên nhà cung cấp" field="name" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Điện thoại" field="phone" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Email" field="email" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
                             <th class="px-4 py-3 text-right">
                                 Nợ cần trả hiện tại
                             </th>

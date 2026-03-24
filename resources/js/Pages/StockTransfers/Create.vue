@@ -17,6 +17,11 @@ const status = ref('draft');
 
 const submitRef = ref(false);
 
+const pad = (n) => String(n).padStart(2, '0');
+const nowInit = new Date();
+const localNowStr = `${nowInit.getFullYear()}-${pad(nowInit.getMonth()+1)}-${pad(nowInit.getDate())}T${pad(nowInit.getHours())}:${pad(nowInit.getMinutes())}`;
+const transactionDate = ref(localNowStr);
+
 const searchQuery = ref('');
 const showSuggestions = ref(false);
 
@@ -71,6 +76,7 @@ const save = async (actionStatus) => {
             from_branch_id: fromBranchId.value,
             to_branch_id: toBranchId.value,
             status: status.value,
+            action_date: transactionDate.value,
             note: note.value,
             items: items.value.map(i => ({
                 product_id: i.id,
@@ -200,9 +206,7 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                             <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
                             Trần Văn Tiến
                         </div>
-                        <div class="bg-gray-50 border border-gray-200 px-2 py-0.5 rounded text-[12px] text-gray-500 font-medium">
-                            {{ new Date().toLocaleDateString('vi-VN') + ' ' + new Date().toLocaleTimeString('vi-VN', {hour:'2-digit', minute:'2-digit'}) }}
-                        </div>
+                        <input type="datetime-local" v-model="transactionDate" class="text-gray-500 text-[12px] bg-gray-50 px-2 py-0.5 rounded border border-gray-200 outline-none focus:border-blue-500 hover:border-blue-400 font-medium">
                     </div>
 
                     <div class="grid grid-cols-[100px_1fr] items-center gap-y-5 gap-x-2">

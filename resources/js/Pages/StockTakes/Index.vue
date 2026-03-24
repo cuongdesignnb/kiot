@@ -3,6 +3,7 @@ import { ref, watch, computed } from "vue";
 import { Head, Link, router } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
+import SortableHeader from "@/Components/SortableHeader.vue";
 
 const debounce = (fn, delay) => {
     let timeoutID;
@@ -25,6 +26,8 @@ const expandedRow = ref(null);
 const selectedFilter = ref("all"); // all, draft, balanced, cancelled
 const activeDateFilter = ref(props.filters.date_filter || "all");
 const creatorQuery = ref(props.filters.user_name || "");
+const sortBy = ref(props.filters.sort_by || "");
+const sortDirection = ref(props.filters.sort_direction || "");
 
 const activeStatusFilters = ref({
     "Phiếu tạm": props.filters.status?.includes("draft") ?? true,
@@ -58,11 +61,31 @@ const getStatusLabelText = (status) => {
     return "Chưa rõ";
 };
 
+const handleSort = (field, direction) => {
+    sortBy.value = field;
+    sortDirection.value = direction;
+    let activeStatuses = [];
+    if (activeStatusFilters.value["Phiếu tạm"]) activeStatuses.push("draft");
+    if (activeStatusFilters.value["Đã cân bằng kho"]) activeStatuses.push("balanced");
+    if (activeStatusFilters.value["Đã hủy"]) activeStatuses.push("cancelled");
+    router.get(
+        "/stock-takes",
+        {
+            search: searchQuery.value,
+            status: activeStatuses,
+            date_filter: activeDateFilter.value,
+            user_name: creatorQuery.value,
+            sort_by: field,
+            sort_direction: direction,
+        },
+        { preserveState: true, replace: true },
+    );
+};
+
 const updateFilters = debounce(() => {
     let activeStatuses = [];
     if (activeStatusFilters.value["Phiếu tạm"]) activeStatuses.push("draft");
-    if (activeStatusFilters.value["Đã cân bằng kho"])
-        activeStatuses.push("balanced");
+    if (activeStatusFilters.value["Đã cân bằng kho"]) activeStatuses.push("balanced");
     if (activeStatusFilters.value["Đã hủy"]) activeStatuses.push("cancelled");
 
     router.get(
@@ -72,6 +95,8 @@ const updateFilters = debounce(() => {
             status: activeStatuses,
             date_filter: activeDateFilter.value,
             user_name: creatorQuery.value,
+            sort_by: sortBy.value,
+            sort_direction: sortDirection.value,
         },
         { preserveState: true, replace: true },
     );
@@ -307,12 +332,8 @@ const printStockTake = (stockTake) => {
                                         class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                                     />
                                 </th>
-                                <th class="p-3 border-b border-[#dce3ec]">
-                                    Mã kiểm kho
-                                </th>
-                                <th class="p-3 border-b border-[#dce3ec]">
-                                    Thời gian
-                                </th>
+                                <SortableHeader label="Mã kiểm kho" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
+                                <SortableHeader label="Thời gian" field="created_at" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
                                 <th class="p-3 border-b border-[#dce3ec]">
                                     Ngày cân bằng
                                 </th>
@@ -344,11 +365,7 @@ const printStockTake = (stockTake) => {
                                 <th class="p-3 border-b border-[#dce3ec]">
                                     Ghi chú
                                 </th>
-                                <th
-                                    class="p-3 w-24 text-right border-b border-[#dce3ec]"
-                                >
-                                    Trạng thái
-                                </th>
+                                <SortableHeader label="Trạng thái" field="status" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 w-24 text-right border-b border-[#dce3ec]" @sort="handleSort" />
                             </tr>
                         </thead>
                         <tbody>

@@ -16,7 +16,15 @@ class OrderController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Order::with(['customer', 'branch', 'items.product'])->orderBy('created_at', 'desc');
+        $query = Order::with(['customer', 'branch', 'items.product'])
+            ->when($request->filled('sort_by'), function ($q) use ($request) {
+                $allowed = ['code', 'created_at', 'total_payment', 'amount_paid', 'status'];
+                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'created_at';
+                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+                $q->orderBy($sortBy, $dir);
+            }, function ($q) {
+                $q->orderBy('created_at', 'desc');
+            });
 
         if ($request->filled('search')) {
             $query->where('code', 'like', '%' . $request->search . '%')
@@ -41,7 +49,10 @@ class OrderController extends Controller
             'orders' => $orders,
             'branches' => Branch::all(),
             'employees' => Employee::where('is_active', true)->orderBy('name')->get(['id', 'name']),
-            'filters' => $request->only(['search', 'branch_id', 'status', 'date_filter']),
+            'filters' => array_merge($request->only(['search', 'branch_id', 'status', 'date_filter']), [
+                'sort_by' => $request->sort_by,
+                'sort_direction' => $request->sort_direction,
+            ]),
         ]);
     }
 

@@ -18,6 +18,43 @@ use Illuminate\Support\Facades\DB;
 class TaskService
 {
     /**
+     * Helper: resolve employee/user name from user ID.
+     */
+    protected function resolveActorName(?int $userId): string
+    {
+        if (!$userId) {
+            $user = auth()->user();
+            $userId = $user?->id;
+        }
+        if (!$userId) return 'Hệ thống';
+
+        $user = User::find($userId);
+        if (!$user) return 'Hệ thống';
+
+        // Try to find linked employee name first
+        $employee = \App\Models\Employee::where('user_id', $userId)->first();
+        return $employee?->name ?? $user->name ?? 'Hệ thống';
+    }
+
+    /**
+     * Helper: build machine description for activity logs.
+     */
+    protected function buildMachineInfo(Task $task): string
+    {
+        $machineName = $task->product?->name ?? '';
+        $serialNumber = $task->serialImei?->serial_number ?? '';
+
+        if ($machineName && $serialNumber) {
+            return "máy {$machineName} (SN: {$serialNumber})";
+        } elseif ($machineName) {
+            return "máy {$machineName}";
+        } elseif ($serialNumber) {
+            return "máy SN: {$serialNumber}";
+        }
+        return "phiếu {$task->code}";
+    }
+
+    /**
      * Tạo công việc mới (general hoặc repair).
      */
     public function createTask(array $data): Task
@@ -45,9 +82,11 @@ class TaskService
                 'created_by'        => $data['created_by'] ?? null,
             ]);
 
-            ActivityLog::log('task_create', "Tạo công việc {$task->code}: {$task->title}", $task, [
+            $actorName = $this->resolveActorName($data['created_by'] ?? null);
+            ActivityLog::log('task_create', "NV {$actorName} tạo công việc {$task->code}: {$task->title}", $task, [
                 'task_code' => $task->code,
                 'title' => $task->title,
+                'employee' => $actorName,
             ]);
 
             return $task;
@@ -107,6 +146,15 @@ class TaskService
         }
         $serial->repair_status = 'not_started';
         $serial->save();
+
+        $actorName = $this->resolveActorName($data['created_by'] ?? null);
+        $machineInfo = $this->buildMachineInfo($task);
+        ActivityLog::log('task_create', "NV {$actorName} tạo phiếu sửa chữa {$task->code} cho {$machineInfo}", $task, [
+            'task_code' => $task->code,
+            'employee' => $actorName,
+            'product' => $task->product?->name,
+            'serial' => $serial->serial_number,
+        ], $data['created_by'] ?? null);
 
         return $task;
     }
@@ -250,9 +298,11 @@ class TaskService
     {
         $task = $this->changeStatus($task, Task::STATUS_COMPLETED, $completedBy);
 
-        $serialInfo = $task->serialImei ? " (SN: {$task->serialImei->serial_number})" : '';
-        ActivityLog::log('task_complete', "Hoàn thành {$task->code}{$serialInfo}", $task, [
+        $actorName = $this->resolveActorName($completedBy);
+        $machineInfo = $this->buildMachineInfo($task);
+        ActivityLog::log('task_complete', "NV {$actorName} hoàn thành công việc {$task->code} — {$machineInfo}", $task, [
             'task_code' => $task->code,
+            'employee' => $actorName,
             'serial' => $task->serialImei?->serial_number,
             'product' => $task->product?->name,
         ], $completedBy);
@@ -320,9 +370,13 @@ class TaskService
             $task->parts()->delete();
             $task->recalculateCosts();
 
-            ActivityLog::log('task_cancel', "Huỷ công việc {$task->code}", $task, [
+            $actorName = $this->resolveActorName($cancelledBy);
+            $machineInfo = $this->buildMachineInfo($task);
+            ActivityLog::log('task_cancel', "NV {$actorName} huỷ công việc {$task->code} — {$machineInfo}", $task, [
                 'task_code' => $task->code,
+                'employee' => $actorName,
                 'serial' => $task->serialImei?->serial_number,
+                'product' => $task->product?->name,
             ], $cancelledBy);
 
             return $task;
@@ -383,14 +437,17 @@ class TaskService
             }
 
             $productName = $product->name;
-            ActivityLog::log('part_install', "Lắp {$quantity}x {$productName} vào {$task->code}", $task, [
+            $actorName = $this->resolveActorName($exportedBy);
+            $machineInfo = $this->buildMachineInfo($task);
+            ActivityLog::log('part_install', "NV {$actorName} lắp {$quantity}x {$productName} vào {$machineInfo} — phiếu {$task->code}", $task, [
                 'task_code' => $task->code,
-                'product_name' => $productName,
-                'product_id' => $productId,
-                'quantity' => $quantity,
-                'unit_cost' => $unitCost,
-                'total_cost' => $totalCost,
-            ]);
+                'employee' => $actorName,
+                'linh_kien' => $productName,
+                'so_luong' => $quantity,
+                'may' => $task->product?->name,
+                'serial' => $task->serialImei?->serial_number,
+                'gia_von' => $totalCost,
+            ], $exportedBy);
 
             return $part;
         });
@@ -423,14 +480,19 @@ class TaskService
             $productName = $part->product?->name ?? 'N/A';
             $qty = $part->quantity;
             $taskCode = $task->code;
+            $actorName = $this->resolveActorName(null);
+            $machineInfo = $this->buildMachineInfo($task);
 
             $part->delete();
             $task->recalculateCosts();
 
-            ActivityLog::log('part_remove', "Gỡ {$qty}x {$productName} khỏi {$taskCode}", $task, [
+            ActivityLog::log('part_remove', "NV {$actorName} gỡ {$qty}x {$productName} khỏi {$machineInfo} — phiếu {$taskCode}", $task, [
                 'task_code' => $taskCode,
-                'product_name' => $productName,
-                'quantity' => $qty,
+                'employee' => $actorName,
+                'linh_kien' => $productName,
+                'so_luong' => $qty,
+                'may' => $task->product?->name,
+                'serial' => $task->serialImei?->serial_number,
             ]);
         });
     }
@@ -476,6 +538,18 @@ class TaskService
 
             $task->recalculateCosts();
 
+            $actorName = $this->resolveActorName($exportedBy);
+            $machineInfo = $this->buildMachineInfo($task);
+            ActivityLog::log('part_disassemble', "NV {$actorName} bóc {$quantity}x {$product->name} từ {$machineInfo} — phiếu {$task->code}", $task, [
+                'task_code' => $task->code,
+                'employee' => $actorName,
+                'linh_kien' => $product->name,
+                'so_luong' => $quantity,
+                'may' => $task->product?->name,
+                'serial' => $task->serialImei?->serial_number,
+                'gia_von' => $totalCost,
+            ], $exportedBy);
+
             return $part;
         });
     }
@@ -510,29 +584,72 @@ class TaskService
     }
 
     /**
-     * Tính % hoàn thành của NV trong kỳ.
+     * Tính hiệu suất NV trong kỳ (chi tiết).
      */
     public function getEmployeePerformance(int $employeeId, string $from, string $to): array
     {
-        $assigned = Task::where('assigned_employee_id', $employeeId)
-            ->whereBetween('assigned_at', [$from, $to])
-            ->count();
+        // Get all tasks assigned to this employee in the period via assignments table
+        $taskIds = TaskAssignment::where('employee_id', $employeeId)
+            ->whereBetween('assigned_at', [$from, $to . ' 23:59:59'])
+            ->pluck('task_id')
+            ->unique();
 
-        $completed = Task::where('assigned_employee_id', $employeeId)
-            ->where('status', Task::STATUS_COMPLETED)
-            ->whereBetween('completed_at', [$from, $to])
-            ->count();
+        $tasks = Task::with(['product:id,name,sku', 'serialImei:id,serial_number,product_id'])
+            ->whereIn('id', $taskIds)
+            ->get();
 
-        $rate = $assigned > 0 ? round(($completed / $assigned) * 100, 1) : 0;
+        $total = $tasks->count();
+        $completed = $tasks->where('status', Task::STATUS_COMPLETED)->count();
+        $inProgress = $tasks->where('status', Task::STATUS_IN_PROGRESS)->count();
+        $pending = $tasks->where('status', Task::STATUS_PENDING)->count();
+        $cancelled = $tasks->where('status', Task::STATUS_CANCELLED)->count();
+
+        $activeTasks = $tasks->whereIn('status', [Task::STATUS_IN_PROGRESS, Task::STATUS_PENDING]);
+        $avgProgress = $activeTasks->count() > 0
+            ? round($activeTasks->avg('progress'), 1)
+            : ($completed > 0 ? 100 : 0);
+
+        $now = now();
+        $overdue = $tasks->filter(function ($t) use ($now) {
+            return $t->deadline
+                && $t->status !== Task::STATUS_COMPLETED
+                && $t->status !== Task::STATUS_CANCELLED
+                && \Carbon\Carbon::parse($t->deadline)->lt($now);
+        })->count();
+
+        $rate = $total > 0 ? round(($completed / $total) * 100, 1) : 0;
 
         $tier = \App\Models\RepairPerformanceTier::getTierForPercent($rate);
 
+        // Detail list for expandable view
+        $taskDetails = $tasks->map(function ($t) {
+            return [
+                'id' => $t->id,
+                'code' => $t->code,
+                'title' => $t->title,
+                'type' => $t->type,
+                'status' => $t->status,
+                'progress' => $t->progress ?? 0,
+                'deadline' => $t->deadline,
+                'completed_at' => $t->completed_at,
+                'product_name' => $t->product?->name,
+                'serial_number' => $t->serialImei?->serial_number,
+            ];
+        })->values();
+
         return [
-            'assigned'        => $assigned,
+            'total'           => $total,
+            'assigned'        => $total,
             'completed'       => $completed,
-            'completion_rate'  => $rate,
+            'in_progress'     => $inProgress,
+            'pending'         => $pending,
+            'cancelled'       => $cancelled,
+            'avg_progress'    => $avgProgress,
+            'overdue'         => $overdue,
+            'completion_rate' => $rate,
             'tier'            => $tier,
             'salary_percent'  => $tier?->salary_percent ?? 100,
+            'tasks'           => $taskDetails,
         ];
     }
 }

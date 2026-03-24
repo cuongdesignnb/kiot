@@ -3,6 +3,7 @@ import { ref, watch } from "vue";
 import { Head, router, Link } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
+import SortableHeader from "@/Components/SortableHeader.vue";
 
 const props = defineProps({
     transfers: Object,
@@ -16,6 +17,8 @@ const toBranchId = ref(props.filters.to_branch_id || "");
 const statuses = ref(
     props.filters.status || ["draft", "transferring", "received"],
 );
+const sortBy = ref(props.filters.sort_by || "");
+const sortDirection = ref(props.filters.sort_direction || "");
 
 const toggleStatus = (status) => {
     if (statuses.value.includes(status)) {
@@ -24,6 +27,23 @@ const toggleStatus = (status) => {
         statuses.value.push(status);
     }
     fetchFiltered();
+};
+
+const handleSort = (field, direction) => {
+    sortBy.value = field;
+    sortDirection.value = direction;
+    router.get(
+        "/stock-transfers",
+        {
+            search: search.value,
+            from_branch_id: fromBranchId.value,
+            to_branch_id: toBranchId.value,
+            status: statuses.value,
+            sort_by: field,
+            sort_direction: direction,
+        },
+        { preserveState: true, preserveScroll: true, replace: true },
+    );
 };
 
 let fetchTimeout = null;
@@ -37,6 +57,8 @@ const fetchFiltered = () => {
                 from_branch_id: fromBranchId.value,
                 to_branch_id: toBranchId.value,
                 status: statuses.value,
+                sort_by: sortBy.value,
+                sort_direction: sortDirection.value,
             },
             { preserveState: true, preserveScroll: true, replace: true },
         );
@@ -295,12 +317,8 @@ const printTransfer = (item) => {
                                 <th
                                     class="p-3 w- diez border-b border-[#dce3ec]"
                                 ></th>
-                                <th class="p-3 border-b border-[#dce3ec]">
-                                    Mã chuyển hàng
-                                </th>
-                                <th class="p-3 border-b border-[#dce3ec]">
-                                    Ngày chuyển
-                                </th>
+                                <SortableHeader label="Mã chuyển hàng" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
+                                <SortableHeader label="Ngày chuyển" field="sent_date" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
                                 <th class="p-3 border-b border-[#dce3ec]">
                                     Ngày nhận
                                 </th>
@@ -310,14 +328,8 @@ const printTransfer = (item) => {
                                 <th class="p-3 border-b border-[#dce3ec]">
                                     Tới chi nhánh
                                 </th>
-                                <th
-                                    class="p-3 text-right border-b border-[#dce3ec]"
-                                >
-                                    Giá trị chuyển
-                                </th>
-                                <th class="p-3 border-b border-[#dce3ec]">
-                                    Trạng thái
-                                </th>
+                                <SortableHeader label="Giá trị chuyển" field="total_price" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right border-b border-[#dce3ec]" @sort="handleSort" />
+                                <SortableHeader label="Trạng thái" field="status" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
                                 <th
                                     class="p-3 border-b border-[#dce3ec] text-center w-16"
                                 ></th>

@@ -113,6 +113,7 @@ Route::post('/purchase-orders', [PurchaseOrderController::class, 'store'])->midd
 Route::get('/purchases', [PurchaseController::class, 'index'])->middleware('permission:purchases.view')->name('purchases.index');
 Route::get('/purchases/create', [PurchaseController::class, 'create'])->middleware('permission:purchases.create')->name('purchases.create');
 Route::post('/purchases', [PurchaseController::class, 'store'])->middleware('permission:purchases.create')->name('purchases.store');
+Route::get('/purchases/{purchase}/edit', [PurchaseController::class, 'edit'])->middleware('permission:purchases.create')->name('purchases.edit');
 Route::get('/purchases/{purchase}', [PurchaseController::class, 'show'])->middleware('permission:purchases.view')->name('purchases.show');
 Route::put('/purchases/{purchase}', [PurchaseController::class, 'update'])->middleware('permission:purchases.create')->name('purchases.update');
 Route::delete('/purchases/{purchase}', [PurchaseController::class, 'destroy'])->middleware('permission:purchases.create')->name('purchases.destroy');
@@ -154,6 +155,9 @@ Route::get('/pos', [PosController::class, 'index'])->middleware('permission:pos.
 Route::get('/api/pos/products', [PosController::class, 'searchProducts'])->middleware('permission:pos.use');
 Route::post('/api/pos/checkout', [PosController::class, 'checkout'])->middleware('permission:pos.use');
 Route::get('/api/products/{product}/serials', [PosController::class, 'getProductSerials']);
+Route::get('/api/pos/customers', [PosController::class, 'searchCustomers'])->middleware('permission:pos.use');
+Route::post('/api/pos/customers', [PosController::class, 'quickCreateCustomer'])->middleware('permission:pos.use');
+Route::get('/api/pos/suppliers', [PosController::class, 'searchSuppliers'])->middleware('permission:pos.use');
 
 // =======================
 // 👤 CUSTOMERS (Khách hàng)

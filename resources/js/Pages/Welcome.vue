@@ -3,6 +3,7 @@ import { ref, watch, computed } from "vue";
 import { Head, Link, router } from "@inertiajs/vue3";
 import AppLayout from "../Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
+import SortableHeader from "@/Components/SortableHeader.vue";
 import axios from "axios";
 
 const props = defineProps({
@@ -14,6 +15,8 @@ const props = defineProps({
 });
 
 const search = ref(props.filters?.search || "");
+const sortBy = ref(props.filters?.sort_by || "");
+const sortDirection = ref(props.filters?.sort_direction || "");
 
 // Bulk selection state
 const selectedProductIds = ref([]);
@@ -103,13 +106,23 @@ const submitTransfer = async () => {
     }
 };
 
+const handleSort = (field, direction) => {
+    sortBy.value = field;
+    sortDirection.value = direction;
+    router.get(
+        "/products",
+        { search: search.value, sort_by: field, sort_direction: direction },
+        { preserveState: true, replace: true },
+    );
+};
+
 let searchTimeout;
 watch(search, (value) => {
     clearTimeout(searchTimeout);
     searchTimeout = setTimeout(() => {
         router.get(
             "/products",
-            { search: value },
+            { search: value, sort_by: sortBy.value, sort_direction: sortDirection.value },
             {
                 preserveState: true,
                 replace: true,
@@ -435,12 +448,12 @@ const formatDate = (val) => {
                                 />
                             </th>
                             <th class="p-3 w-16">Ảnh</th>
-                            <th class="p-3">Mã hàng</th>
-                            <th class="p-3">Tên hàng</th>
+                            <SortableHeader label="Mã hàng" field="sku" :current-sort="sortBy" :current-direction="sortDirection" class="p-3" @sort="handleSort" />
+                            <SortableHeader label="Tên hàng" field="name" :current-sort="sortBy" :current-direction="sortDirection" class="p-3" @sort="handleSort" />
                             <th class="p-3">Nhóm hàng</th>
-                            <th class="p-3 text-right">Giá bán</th>
-                            <th v-if="canViewCostPrice" class="p-3 text-right">Giá vốn</th>
-                            <th class="p-3 text-right">Tồn kho</th>
+                            <SortableHeader label="Giá bán" field="retail_price" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right" @sort="handleSort" />
+                            <SortableHeader v-if="canViewCostPrice" label="Giá vốn" field="cost_price" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right" @sort="handleSort" />
+                            <SortableHeader label="Tồn kho" field="stock_quantity" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right" @sort="handleSort" />
                         </tr>
                     </thead>
                     <tbody class="text-sm divide-y divide-gray-100">

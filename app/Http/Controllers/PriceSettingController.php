@@ -93,9 +93,10 @@ class PriceSettingController extends Controller
         $request->validate([
             'cost_price' => 'sometimes|numeric|min:0',
             'retail_price' => 'sometimes|numeric|min:0',
+            'technician_price' => 'sometimes|numeric|min:0',
         ]);
 
-        $product->update($request->only('cost_price', 'retail_price'));
+        $product->update($request->only('cost_price', 'retail_price', 'technician_price'));
 
         return redirect()->back()->with('success', 'Đã cập nhật giá: ' . $product->name);
     }

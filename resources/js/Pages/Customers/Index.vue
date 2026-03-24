@@ -3,6 +3,7 @@ import { ref, watch, reactive } from "vue";
 import { Head, router, Link, useForm } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
+import SortableHeader from "@/Components/SortableHeader.vue";
 import axios from "axios";
 
 const props = defineProps({
@@ -13,6 +14,8 @@ const props = defineProps({
 const search = ref(props.filters?.search || "");
 const filterType = ref(props.filters?.type || "");
 const filterGender = ref(props.filters?.gender || "");
+const sortBy = ref(props.filters?.sort_by || "");
+const sortDirection = ref(props.filters?.sort_direction || "");
 const expandedRows = ref([]); // array of expanded customer IDs
 
 // Tab state per customer
@@ -55,6 +58,22 @@ const loadDebtHistory = async (customerId) => {
     tabLoading[customerId] = false;
 };
 
+const handleSort = (field, direction) => {
+    sortBy.value = field;
+    sortDirection.value = direction;
+    router.get(
+        "/customers",
+        {
+            search: search.value || undefined,
+            type: filterType.value || undefined,
+            gender: filterGender.value || undefined,
+            sort_by: field || undefined,
+            sort_direction: direction || undefined,
+        },
+        { preserveState: true, replace: true },
+    );
+};
+
 let searchTimeout;
 const applyFilters = () => {
     clearTimeout(searchTimeout);
@@ -65,6 +84,8 @@ const applyFilters = () => {
                 search: search.value || undefined,
                 type: filterType.value || undefined,
                 gender: filterGender.value || undefined,
+                sort_by: sortBy.value || undefined,
+                sort_direction: sortDirection.value || undefined,
             },
             {
                 preserveState: true,
@@ -133,12 +154,34 @@ const editForm = useForm({
     email: "", facebook: "", address: "", city: "", district: "", ward: "",
     customer_group: "", note: "", type: "individual",
     invoice_name: "", tax_code: "", invoice_address: "",
+    is_supplier: false,
 });
 
 const openEditModal = (customer) => {
     editingCustomer.value = customer;
-    Object.keys(editForm.data()).forEach(key => {
-        editForm[key] = customer[key] ?? (key === 'gender' ? 'none' : key === 'type' ? 'individual' : '');
+    editForm.reset();
+    editForm.fill({
+        _method: 'put',
+        id: customer.id,
+        name: customer.name || '',
+        code: customer.code || '',
+        phone: customer.phone || '',
+        phone2: customer.phone2 || '',
+        email: customer.email || '',
+        address: customer.address || '',
+        gender: customer.gender || 'none',
+        birthday: customer.birthday || '',
+        city: customer.city || '',
+        district: customer.district || '',
+        ward: customer.ward || '',
+        customer_group: customer.customer_group || '',
+        note: customer.note || '',
+        facebook: customer.facebook || '',
+        type: customer.type || 'individual',
+        tax_code: customer.tax_code || '',
+        invoice_name: customer.invoice_name || '',
+        invoice_address: customer.invoice_address || '',
+        is_supplier: Boolean(customer.is_supplier),
     });
     showEditModal.value = true;
 };
@@ -655,12 +698,12 @@ const submit = () => {
                                     class="rounded border-gray-300"
                                 />
                             </th>
-                            <th class="px-4 py-3">Mã khách hàng</th>
-                            <th class="px-4 py-3">Tên khách hàng</th>
-                            <th class="px-4 py-3">Điện thoại</th>
-                            <th class="px-4 py-3 text-right">Nợ hiện tại</th>
+                            <SortableHeader label="Mã khách hàng" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Tên khách hàng" field="name" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Điện thoại" field="phone" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Nợ hiện tại" field="debt_amount" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
                             <th class="px-4 py-3 text-right">Số ngày nợ</th>
-                            <th class="px-4 py-3 text-right">Tổng bán</th>
+                            <SortableHeader label="Tổng bán" field="total_spent" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
                             <th class="px-4 py-3 text-right">
                                 Tổng bán trừ trả hàng
                             </th>
@@ -2395,7 +2438,7 @@ const submit = () => {
                             <label class="block text-sm font-semibold text-gray-700 mb-1">Ghi chú</label>
                             <textarea v-model="editForm.note" rows="2" class="w-full border border-gray-300 rounded px-3 py-2 text-sm"></textarea>
                         </div>
-                        <details class="border border-gray-200 rounded p-3">
+                        <details class="border border-gray-200 rounded p-3 mt-4">
                             <summary class="font-semibold text-sm text-gray-700 cursor-pointer">Thông tin xuất hóa đơn</summary>
                             <div class="grid grid-cols-2 gap-x-6 gap-y-4 mt-3">
                                 <div>
@@ -2419,6 +2462,22 @@ const submit = () => {
                                 </div>
                             </div>
                         </details>
+
+                        <!-- Switch Supplier -->
+                        <div class="bg-gray-50 border border-gray-200 rounded px-4 py-4 mt-4 flex items-center justify-between">
+                            <div>
+                                <h3 class="font-bold text-[14px] text-gray-800">
+                                    Khách hàng là nhà cung cấp
+                                </h3>
+                                <p class="text-[12px] text-gray-500 mt-0.5">
+                                    Công nợ của khách hàng và nhà cung cấp sẽ được gộp với nhau
+                                </p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" v-model="editForm.is_supplier" class="sr-only peer" />
+                                <div class="w-11 h-6 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                            </label>
+                        </div>
                     </form>
                 </div>
                 <div class="px-6 py-4 border-t border-gray-200 bg-white flex justify-end gap-3 rounded-b">

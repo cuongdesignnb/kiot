@@ -23,7 +23,15 @@ class StockTransferController extends Controller
             ]);
         }
 
-        $query = StockTransfer::with(['fromBranch', 'toBranch'])->orderBy('id', 'desc');
+        $query = StockTransfer::with(['fromBranch', 'toBranch'])
+            ->when($request->filled('sort_by'), function ($q) use ($request) {
+                $allowed = ['code', 'created_at', 'sent_date', 'total_quantity', 'total_price', 'status'];
+                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'id';
+                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+                $q->orderBy($sortBy, $dir);
+            }, function ($q) {
+                $q->orderBy('id', 'desc');
+            });
 
         if ($request->filled('search')) {
             $query->where('code', 'like', "%{$request->search}%");
@@ -47,7 +55,10 @@ class StockTransferController extends Controller
         return Inertia::render('StockTransfers/Index', [
             'transfers' => $transfers,
             'branches' => $branches,
-            'filters' => $request->only(['search', 'from_branch_id', 'to_branch_id', 'status', 'time_filter', 'time_start', 'time_end'])
+            'filters' => array_merge($request->only(['search', 'from_branch_id', 'to_branch_id', 'status', 'time_filter', 'time_start', 'time_end']), [
+                'sort_by' => $request->sort_by,
+                'sort_direction' => $request->sort_direction,
+            ])
         ]);
     }
 
@@ -89,6 +100,17 @@ class StockTransferController extends Controller
                 'total_quantity' => array_sum(array_column($request->items, 'quantity')),
                 'total_price' => array_sum(array_column($request->items, 'price'))
             ]);
+
+            if ($request->filled('action_date')) {
+                $transfer->created_at = Carbon::parse($request->action_date);
+                if ($request->status !== 'draft') {
+                    $transfer->sent_date = Carbon::parse($request->action_date);
+                }
+                if ($request->status === 'received') {
+                    $transfer->receive_date = Carbon::parse($request->action_date);
+                }
+                $transfer->save();
+            }
 
             foreach ($request->items as $item) {
                 StockTransferItem::create([

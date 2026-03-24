@@ -220,6 +220,18 @@ load();
                                     <span v-else class="bg-teal-100 text-teal-600 px-1.5 py-0.5 rounded text-xs font-semibold">Công việc</span>
                                 </div>
                                 <h3 class="font-semibold text-gray-800">{{ t.title || t.code }}</h3>
+
+                                <!-- Machine info for repair tasks -->
+                                <div v-if="t.type === 'repair' && (t.product || t.serial_imei)" class="flex items-center gap-2 mt-1.5 bg-purple-50 border border-purple-100 rounded-lg px-3 py-1.5">
+                                    <svg class="w-4 h-4 text-purple-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+                                    <span class="text-sm font-semibold text-purple-700">
+                                        {{ t.product?.name || 'Máy không xác định' }}
+                                    </span>
+                                    <span v-if="t.serial_imei?.serial_number" class="text-xs text-purple-500 bg-purple-100 px-1.5 py-0.5 rounded font-mono">
+                                        SN: {{ t.serial_imei.serial_number }}
+                                    </span>
+                                </div>
+
                                 <p v-if="t.issue_description" class="text-sm text-gray-500 mt-1 line-clamp-2">{{ t.issue_description }}</p>
                                 <div class="flex items-center gap-4 mt-2 text-xs text-gray-400">
                                     <span v-if="t.branch?.name">📍 {{ t.branch.name }}</span>
