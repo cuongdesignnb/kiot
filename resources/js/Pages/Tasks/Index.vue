@@ -337,6 +337,78 @@ const cancelTask = async (task) => {
     }
 };
 
+// ── Expand row detail ──
+const expandedTaskId = ref(null);
+const expandedLoading = ref(false);
+const expandedParts = ref([]);
+const expandedLogs = ref([]);
+
+const toggleTaskExpand = async (task) => {
+    if (expandedTaskId.value === task.id) {
+        expandedTaskId.value = null;
+        return;
+    }
+    expandedTaskId.value = task.id;
+    expandedLoading.value = true;
+    expandedParts.value = [];
+    expandedLogs.value = [];
+    try {
+        const [partsRes, logsRes] = await Promise.all([
+            axios.get(`/api/tasks/${task.id}/parts`).catch(() => ({ data: [] })),
+            axios.get(`/api/activity-logs`, { params: { search: task.code, per_page: 50 } }).catch(() => ({ data: { data: [] } })),
+        ]);
+        expandedParts.value = partsRes.data || [];
+        expandedLogs.value = logsRes.data?.data || logsRes.data || [];
+    } catch (e) {
+        console.error(e);
+    } finally {
+        expandedLoading.value = false;
+    }
+};
+
+const timeAgo = (dt) => {
+    if (!dt) return '';
+    const now = new Date();
+    const d = new Date(dt);
+    const diff = Math.floor((now - d) / 1000);
+    if (diff < 60) return 'Vừa xong';
+    if (diff < 3600) return `${Math.floor(diff / 60)} phút trước`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)} giờ trước`;
+    if (diff < 604800) return `${Math.floor(diff / 86400)} ngày trước`;
+    return new Date(dt).toLocaleString('vi-VN');
+};
+
+const propLabels = {
+    task_code: 'Mã phiếu', employee: 'Nhân viên', linh_kien: 'Linh kiện',
+    so_luong: 'Số lượng', may: 'Máy', serial: 'Serial', gia_von: 'Giá vốn',
+    product: 'Sản phẩm', product_name: 'Tên SP', quantity: 'Số lượng',
+    unit_cost: 'Đơn giá', total_cost: 'Tổng giá', title: 'Tiêu đề',
+    purchase_code: 'Mã nhập', supplier: 'NCC', total_amount: 'Tổng tiền',
+    item_count: 'Số SP', product_id: 'Mã SP',
+};
+
+const logActionIcons = {
+    part_install: '🔧', part_remove: '↩️', part_disassemble: '🔩',
+    task_create: '📋', task_assign: '👤', task_accept: '✅',
+    task_reject: '❌', task_complete: '🎉', task_cancel: '🚫',
+    task_progress: '📊', comment_add: '💬', purchase_create: '📦',
+};
+
+const logActionColors = {
+    part_install: 'bg-orange-100 text-orange-700',
+    part_remove: 'bg-pink-100 text-pink-700',
+    part_disassemble: 'bg-amber-100 text-amber-700',
+    task_create: 'bg-indigo-100 text-indigo-700',
+    task_assign: 'bg-purple-100 text-purple-700',
+    task_accept: 'bg-green-100 text-green-700',
+    task_reject: 'bg-red-100 text-red-700',
+    task_complete: 'bg-emerald-100 text-emerald-700',
+    task_cancel: 'bg-gray-200 text-gray-700',
+    task_progress: 'bg-cyan-100 text-cyan-700',
+    comment_add: 'bg-sky-100 text-sky-700',
+    purchase_create: 'bg-blue-100 text-blue-700',
+};
+
 loadTasks();
 </script>
 
@@ -411,6 +483,7 @@ loadTasks();
                 <table v-else class="w-full text-sm">
                     <thead class="bg-gray-50 text-gray-600 uppercase text-xs">
                         <tr>
+                            <th class="px-4 py-3 text-left w-8"></th>
                             <th class="px-4 py-3 text-left">Mã</th>
                             <th class="px-4 py-3 text-left">Tiêu đề</th>
                             <th class="px-4 py-3 text-left">Tên máy</th>
@@ -426,9 +499,13 @@ loadTasks();
                     </thead>
                     <tbody>
                         <tr v-if="!tasks.data?.length">
-                            <td colspan="11" class="text-center py-8 text-gray-400">Chưa có công việc nào.</td>
+                            <td colspan="12" class="text-center py-8 text-gray-400">Chưa có công việc nào.</td>
                         </tr>
-                        <tr v-for="t in tasks.data" :key="t.id" class="border-t hover:bg-gray-50 cursor-pointer" @click="router.visit(`/tasks/${t.id}`)">
+                        <template v-for="t in tasks.data" :key="t.id">
+                        <tr class="border-t hover:bg-gray-50 cursor-pointer" :class="{ 'bg-blue-50/30': expandedTaskId === t.id }" @click="toggleTaskExpand(t)">
+                            <td class="px-4 py-3 text-center">
+                                <svg class="w-4 h-4 text-gray-400 transition-transform" :class="{ 'rotate-90': expandedTaskId === t.id }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                            </td>
                             <td class="px-4 py-3 font-semibold text-blue-600">{{ t.code }}</td>
                             <td class="px-4 py-3">
                                 <div>{{ t.title || t.code }}</div>
@@ -482,6 +559,143 @@ loadTasks();
                                 </div>
                             </td>
                         </tr>
+
+                        <!-- Expanded detail row -->
+                        <tr v-if="expandedTaskId === t.id" class="border-t-0 bg-gray-50/50">
+                            <td colspan="12" class="p-0">
+                                <div class="px-6 py-4 border-l-4 border-blue-400">
+                                    <!-- Loading spinner -->
+                                    <div v-if="expandedLoading" class="text-center py-6 text-gray-400">
+                                        <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto"></div>
+                                        <p class="text-sm mt-2">Đang tải chi tiết...</p>
+                                    </div>
+
+                                    <template v-else>
+                                        <!-- Info Top -->
+                                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                                            <div>
+                                                <span class="text-xs text-gray-500 block">Mã phiếu</span>
+                                                <span class="font-semibold text-blue-600">{{ t.code }}</span>
+                                            </div>
+                                            <div>
+                                                <span class="text-xs text-gray-500 block">Sản phẩm</span>
+                                                <span class="font-medium text-gray-800">{{ t.serial_imei?.product?.name || t.product?.name || '-' }}</span>
+                                            </div>
+                                            <div>
+                                                <span class="text-xs text-gray-500 block">Serial/IMEI</span>
+                                                <span class="font-mono text-blue-600 text-sm">{{ t.serial_imei?.serial_number || '-' }}</span>
+                                            </div>
+                                            <div>
+                                                <span class="text-xs text-gray-500 block">Giá vốn</span>
+                                                <span class="font-semibold text-gray-800">{{ formatCurrency(t.serial_imei?.cost_price || t.serial_imei?.product?.cost_price || 0) }}đ</span>
+                                            </div>
+                                        </div>
+
+                                        <!-- Issue / Description -->
+                                        <div v-if="t.issue_description || t.description" class="mb-4 bg-white border border-gray-200 rounded p-3">
+                                            <span class="text-xs text-gray-500 block mb-1">{{ t.type === 'repair' ? 'Mô tả lỗi' : 'Mô tả công việc' }}</span>
+                                            <p class="text-sm text-gray-700">{{ t.issue_description || t.description }}</p>
+                                        </div>
+
+                                        <!-- Installed Parts -->
+                                        <div v-if="expandedParts.length > 0" class="mb-4">
+                                            <h4 class="text-xs font-bold text-gray-600 uppercase mb-2 flex items-center gap-1">
+                                                🔧 Linh kiện đã lắp ({{ expandedParts.length }})
+                                            </h4>
+                                            <div class="bg-white border border-gray-200 rounded overflow-hidden">
+                                                <table class="w-full text-sm">
+                                                    <thead class="bg-gray-50 text-xs text-gray-500">
+                                                        <tr>
+                                                            <th class="px-3 py-2 text-left">Tên linh kiện</th>
+                                                            <th class="px-3 py-2 text-left">Mã hàng</th>
+                                                            <th class="px-3 py-2 text-center">SL</th>
+                                                            <th class="px-3 py-2 text-right">Đơn giá</th>
+                                                            <th class="px-3 py-2 text-right">Thành tiền</th>
+                                                            <th class="px-3 py-2 text-left">NV lắp</th>
+                                                            <th class="px-3 py-2 text-left">Thời gian</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody class="divide-y divide-gray-100">
+                                                        <tr v-for="part in expandedParts" :key="part.id" class="hover:bg-blue-50/30">
+                                                            <td class="px-3 py-2 font-medium text-gray-800">{{ part.product?.name || part.product_name || '-' }}</td>
+                                                            <td class="px-3 py-2 text-gray-500 text-xs">{{ part.product?.sku || '-' }}</td>
+                                                            <td class="px-3 py-2 text-center font-semibold">{{ part.quantity }}</td>
+                                                            <td class="px-3 py-2 text-right">{{ formatCurrency(part.unit_cost || 0) }}</td>
+                                                            <td class="px-3 py-2 text-right font-semibold text-blue-700">{{ formatCurrency(part.total_cost || (part.quantity * (part.unit_cost || 0))) }}</td>
+                                                            <td class="px-3 py-2 text-gray-600">{{ part.installed_by?.name || '-' }}</td>
+                                                            <td class="px-3 py-2 text-gray-400 text-xs">{{ part.created_at ? new Date(part.created_at).toLocaleString('vi-VN') : '-' }}</td>
+                                                        </tr>
+                                                    </tbody>
+                                                    <tfoot class="bg-gray-50 font-semibold text-sm">
+                                                        <tr>
+                                                            <td colspan="4" class="px-3 py-2 text-right">Tổng chi phí linh kiện:</td>
+                                                            <td class="px-3 py-2 text-right text-blue-700">{{ formatCurrency(expandedParts.reduce((s, p) => s + Number(p.total_cost || (p.quantity * (p.unit_cost || 0))), 0)) }}</td>
+                                                            <td colspan="2"></td>
+                                                        </tr>
+                                                    </tfoot>
+                                                </table>
+                                            </div>
+                                        </div>
+
+                                        <!-- Activity Logs -->
+                                        <div v-if="expandedLogs.length > 0" class="mb-4">
+                                            <h4 class="text-xs font-bold text-gray-600 uppercase mb-2 flex items-center gap-1">
+                                                📋 Nhật ký hoạt động ({{ expandedLogs.length }})
+                                            </h4>
+                                            <div class="space-y-2">
+                                                <div v-for="log in expandedLogs" :key="log.id" class="bg-white border border-gray-200 rounded-lg p-3 flex items-start gap-3">
+                                                    <div class="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm"
+                                                        :class="logActionColors[log.action] || 'bg-gray-100 text-gray-600'">
+                                                        {{ logActionIcons[log.action] || '📝' }}
+                                                    </div>
+                                                    <div class="flex-1 min-w-0">
+                                                        <div class="flex items-center gap-2 flex-wrap">
+                                                            <span class="px-2 py-0.5 rounded text-[11px] font-semibold"
+                                                                :class="logActionColors[log.action] || 'bg-gray-100 text-gray-600'">
+                                                                {{ log.action_label || log.action }}
+                                                            </span>
+                                                            <span class="text-xs text-gray-500">
+                                                                bởi <strong class="text-gray-700">{{ log.employee?.name || log.user?.name || 'Admin' }}</strong>
+                                                            </span>
+                                                        </div>
+                                                        <p class="text-sm text-gray-800 mt-1">{{ log.description }}</p>
+                                                        <div v-if="log.properties && Object.keys(log.properties).length > 0" class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+                                                            <template v-for="(val, key) in log.properties" :key="key">
+                                                                <span v-if="val != null && val !== ''">
+                                                                    <span class="font-medium text-gray-500">{{ propLabels[key] || key }}:</span>
+                                                                    {{ typeof val === 'number' ? Number(val).toLocaleString('vi-VN') : val }}
+                                                                </span>
+                                                            </template>
+                                                        </div>
+                                                    </div>
+                                                    <div class="flex-shrink-0 text-right">
+                                                        <div class="text-[11px] text-gray-400">{{ log.created_at ? timeAgo(log.created_at) : '' }}</div>
+                                                        <div class="text-[10px] text-gray-300 mt-0.5">{{ log.created_at ? new Date(log.created_at).toLocaleString('vi-VN') : '' }}</div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <!-- No data -->
+                                        <div v-if="expandedParts.length === 0 && expandedLogs.length === 0 && !t.issue_description && !t.description"
+                                            class="text-center py-4 text-gray-400 text-sm">
+                                            Chưa có chi tiết nào cho công việc này.
+                                        </div>
+
+                                        <!-- Actions -->
+                                        <div class="flex items-center gap-3 pt-3 border-t border-gray-200">
+                                            <button @click.stop="router.visit(`/tasks/${t.id}`)" class="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 flex items-center gap-1">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                                                Xem chi tiết
+                                            </button>
+                                            <button v-if="t.status !== 'completed' && t.status !== 'cancelled'" @click.stop="openAssignModal(t.id)" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">Giao NV</button>
+                                            <button v-if="t.status !== 'completed' && t.status !== 'cancelled'" @click.stop="adminComplete(t.id)" class="px-4 py-2 bg-green-600 text-white rounded-lg text-xs font-bold hover:bg-green-700">Hoàn thành</button>
+                                        </div>
+                                    </template>
+                                </div>
+                            </td>
+                        </tr>
+                        </template>
                     </tbody>
                 </table>
 
