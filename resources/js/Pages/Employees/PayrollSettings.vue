@@ -4,6 +4,7 @@ import { Head, Link } from '@inertiajs/vue3';
 import axios from 'axios';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import SetupSidebar from '@/Pages/Employees/Partials/SetupSidebar.vue';
+import CurrencyInput from '@/Components/CurrencyInput.vue';
 
 const props = defineProps({
     payrollSetting: {
@@ -832,11 +833,12 @@ const removeTemplate = async (template) => {
                                             </td>
                                             <td class="px-1 py-2 text-sm text-gray-500 text-right">Từ</td>
                                             <td class="px-3 py-2">
-                                                <input v-model.number="bonus.revenue_from" type="number" min="0" class="w-28 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                                <CurrencyInput v-model="bonus.revenue_from" class="w-28 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
                                             </td>
                                             <td class="px-3 py-2">
                                                 <div class="flex items-center gap-1">
-                                                    <input v-model.number="bonus.bonus_value" type="number" min="0" class="w-20 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                                    <CurrencyInput v-if="!bonus.bonus_is_percentage" v-model="bonus.bonus_value" class="w-20 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                                    <input v-else v-model.number="bonus.bonus_value" type="number" min="0" class="w-20 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
                                                     <select v-model="bonus.bonus_is_percentage" class="rounded border border-gray-300 px-1 py-1.5 text-xs">
                                                         <option :value="true">% {{ bonusRevenueLabel }}</option>
                                                         <option :value="false">Cố định</option>
@@ -888,7 +890,7 @@ const removeTemplate = async (template) => {
                                             </td>
                                             <td class="px-1 py-2 text-sm text-gray-500 text-right">Từ</td>
                                             <td class="px-3 py-2">
-                                                <input v-model.number="com.revenue_from" type="number" min="0" class="w-28 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                                <CurrencyInput v-model="com.revenue_from" class="w-28 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
                                             </td>
                                             <td class="px-3 py-2">
                                                 <select v-model="com.commission_table_id" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm">
@@ -949,7 +951,8 @@ const removeTemplate = async (template) => {
                                                 </div>
                                             </td>
                                             <td class="px-3 py-2">
-                                                <input v-model.number="al.amount" type="number" min="0" class="w-32 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                                <CurrencyInput v-if="al.allowance_type !== 'percentage'" v-model="al.amount" class="w-32 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                                <input v-else v-model.number="al.amount" type="number" min="0" class="w-32 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
                                             </td>
                                             <td class="px-3 py-2 text-center">
                                                 <button type="button" class="text-gray-400 hover:text-red-500" @click="removeAllowance(i)">
@@ -1006,7 +1009,7 @@ const removeTemplate = async (template) => {
                                             </td>
                                             <td class="px-3 py-2">
                                                 <div class="flex items-center gap-1">
-                                                    <input v-model.number="ded.amount" type="number" min="0" class="w-32 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                                    <CurrencyInput v-model="ded.amount" class="w-32 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
                                                     <span class="text-xs text-gray-400 whitespace-nowrap">
                                                         {{ ded.calculation_type === 'per_minute' ? '/phút' : ded.calculation_type === 'per_occurrence' ? '/lần' : '/tháng' }}
                                                     </span>
@@ -1182,7 +1185,7 @@ const removeTemplate = async (template) => {
                         </div>
                         <div>
                             <label class="mb-1 block text-sm font-medium text-gray-700">{{ cellForm.salary_type === 'hourly' ? 'Đơn giá / giờ' : 'Lương cơ bản / tháng' }}</label>
-                            <input v-model.number="cellForm.base_salary" type="number" min="0" step="100000" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500" />
+                            <CurrencyInput v-model="cellForm.base_salary" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500" />
                         </div>
                     </template>
 
@@ -1213,11 +1216,12 @@ const removeTemplate = async (template) => {
                                     </div>
                                     <div>
                                         <label class="text-xs text-gray-500">Doanh thu từ</label>
-                                        <input v-model.number="b.revenue_from" type="number" min="0" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                        <CurrencyInput v-model="b.revenue_from" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
                                     </div>
                                 </div>
                                 <div class="flex items-center gap-2">
-                                    <input v-model.number="b.bonus_value" type="number" min="0" class="w-24 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                    <CurrencyInput v-if="!b.bonus_is_percentage" v-model="b.bonus_value" class="w-24 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                    <input v-else v-model.number="b.bonus_value" type="number" min="0" class="w-24 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
                                     <select v-model="b.bonus_is_percentage" class="rounded border border-gray-300 px-2 py-1.5 text-xs">
                                         <option :value="true">%</option>
                                         <option :value="false">Cố định</option>
@@ -1242,11 +1246,12 @@ const removeTemplate = async (template) => {
                                     </div>
                                     <div>
                                         <label class="text-xs text-gray-500">Doanh thu từ</label>
-                                        <input v-model.number="c.revenue_from" type="number" min="0" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                        <CurrencyInput v-model="c.revenue_from" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
                                     </div>
                                 </div>
                                 <div class="flex items-center gap-2">
-                                    <input v-model.number="c.commission_value" type="number" min="0" class="w-24 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                    <CurrencyInput v-if="!c.commission_is_percentage" v-model="c.commission_value" class="w-24 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                    <input v-else v-model.number="c.commission_value" type="number" min="0" class="w-24 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
                                     <select v-model="c.commission_is_percentage" class="rounded border border-gray-300 px-2 py-1.5 text-xs">
                                         <option :value="true">%</option>
                                         <option :value="false">Cố định</option>
@@ -1279,7 +1284,8 @@ const removeTemplate = async (template) => {
                                 </div>
                                 <div>
                                     <label class="text-xs text-gray-500">Số tiền</label>
-                                    <input v-model.number="a.amount" type="number" min="0" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                    <CurrencyInput v-if="a.allowance_type !== 'percentage'" v-model="a.amount" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                    <input v-else v-model.number="a.amount" type="number" min="0" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
                                 </div>
                             </div>
                             <button type="button" class="mt-1 text-gray-400 hover:text-red-500" @click="cellForm.custom_allowances.splice(i, 1)">✕</button>
@@ -1297,7 +1303,7 @@ const removeTemplate = async (template) => {
                                 </div>
                                 <div>
                                     <label class="text-xs text-gray-500">Số tiền</label>
-                                    <input v-model.number="d.amount" type="number" min="0" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                    <CurrencyInput v-model="d.amount" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
                                 </div>
                             </div>
                             <button type="button" class="mt-1 text-gray-400 hover:text-red-500" @click="cellForm.custom_deductions.splice(i, 1)">✕</button>

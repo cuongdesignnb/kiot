@@ -3,6 +3,7 @@ import { ref, watch, reactive, computed } from "vue";
 import { Head, router, Link, useForm, usePage } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
+import CurrencyInput from "@/Components/CurrencyInput.vue";
 import axios from "axios";
 
 const props = defineProps({
@@ -996,10 +997,8 @@ const bonusCalcLabel = (calc) => {
                                     <div>
                                         <label class="block font-semibold mb-1 text-gray-500">Mức lương</label>
                                         <div class="flex items-center gap-2">
-                                            <input
-                                                v-model.number="salaryForm.base_salary"
-                                                type="number"
-                                                min="0"
+                                            <CurrencyInput
+                                                v-model="salaryForm.base_salary"
                                                 class="w-full border border-gray-300 rounded-md px-3 py-1.5 focus:border-blue-500 outline-none"
                                                 placeholder="0"
                                             />
@@ -1124,8 +1123,8 @@ const bonusCalcLabel = (calc) => {
                                             </thead>
                                             <tbody>
                                                 <tr v-for="(b, i) in salaryForm.custom_bonuses" :key="i" class="border-t">
-                                                    <td class="px-2 py-1"><input v-model.number="b.revenue_from" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
-                                                    <td class="px-2 py-1"><input v-model.number="b.bonus_value" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
+                                                    <td class="px-2 py-1"><CurrencyInput v-model="b.revenue_from" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
+                                                    <td class="px-2 py-1"><CurrencyInput v-if="!b.bonus_is_percentage" v-model="b.bonus_value" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /><input v-else v-model.number="b.bonus_value" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
                                                     <td class="px-2 py-1 text-center"><input type="checkbox" v-model="b.bonus_is_percentage" class="accent-blue-600" /></td>
                                                     <td class="px-1 py-1"><button type="button" @click="salaryForm.custom_bonuses.splice(i, 1)" class="text-red-400 hover:text-red-600">&times;</button></td>
                                                 </tr>
@@ -1162,14 +1161,14 @@ const bonusCalcLabel = (calc) => {
                                             </thead>
                                             <tbody>
                                                 <tr v-for="(c, i) in salaryForm.custom_commissions" :key="i" class="border-t">
-                                                    <td class="px-2 py-1"><input v-model.number="c.revenue_from" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
+                                                    <td class="px-2 py-1"><CurrencyInput v-model="c.revenue_from" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
                                                     <td class="px-2 py-1">
                                                         <select v-model="c.commission_table_id" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none">
                                                             <option :value="null">-- Không --</option>
                                                             <option v-for="ct in commissionTables" :key="ct.id" :value="ct.id">{{ ct.name }}</option>
                                                         </select>
                                                     </td>
-                                                    <td class="px-2 py-1"><input v-model.number="c.commission_value" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" :disabled="!!c.commission_table_id" /></td>
+                                                    <td class="px-2 py-1"><CurrencyInput v-if="!c.commission_is_percentage" v-model="c.commission_value" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" :disabled="!!c.commission_table_id" /><input v-else v-model.number="c.commission_value" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" :disabled="!!c.commission_table_id" /></td>
                                                     <td class="px-2 py-1 text-center"><input type="checkbox" v-model="c.commission_is_percentage" class="accent-blue-600" :disabled="!!c.commission_table_id" /></td>
                                                     <td class="px-1 py-1"><button type="button" @click="salaryForm.custom_commissions.splice(i, 1)" class="text-red-400 hover:text-red-600">&times;</button></td>
                                                 </tr>
@@ -1213,7 +1212,7 @@ const bonusCalcLabel = (calc) => {
                                                             <option value="percentage">% lương</option>
                                                         </select>
                                                     </td>
-                                                    <td class="px-2 py-1"><input v-model.number="a.amount" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
+                                                    <td class="px-2 py-1"><CurrencyInput v-if="a.allowance_type !== 'percentage'" v-model="a.amount" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /><input v-else v-model.number="a.amount" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
                                                     <td class="px-1 py-1"><button type="button" @click="salaryForm.custom_allowances.splice(i, 1)" class="text-red-400 hover:text-red-600">&times;</button></td>
                                                 </tr>
                                             </tbody>
@@ -1282,7 +1281,7 @@ const bonusCalcLabel = (calc) => {
                                                     </td>
                                                     <td class="px-2 py-1">
                                                         <div class="relative">
-                                                            <input v-model.number="d.amount" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" />
+                                                            <CurrencyInput v-model="d.amount" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" />
                                                         </div>
                                                         <div v-if="d.calculation_type === 'per_minute' && d.per_minutes" class="text-[10px] text-gray-400 mt-0.5">
                                                             Trừ {{ Number(d.amount || 0).toLocaleString() }}đ / {{ d.per_minutes }} phút
