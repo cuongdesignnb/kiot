@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { Head, Link } from '@inertiajs/vue3';
 import axios from 'axios';
+import QuickCreateCustomerModal from '@/Components/QuickCreateCustomerModal.vue';
 
 const props = defineProps({
     employees: Array,
@@ -99,33 +100,17 @@ const clearCustomer = () => {
 
 // ── Quick Create Customer Modal ──
 const showNewCustomerModal = ref(false);
-const newCustomerName = ref('');
-const newCustomerPhone = ref('');
-const creatingCustomer = ref(false);
+const newCustomerInitialName = ref('');
 
 const openNewCustomerModal = () => {
-    newCustomerName.value = customerQuery.value || '';
-    newCustomerPhone.value = '';
+    newCustomerInitialName.value = customerQuery.value || '';
     showNewCustomerModal.value = true;
 };
 
-const createCustomer = async () => {
-    if (!newCustomerName.value.trim()) return;
-    creatingCustomer.value = true;
-    try {
-        const res = await axios.post('/api/pos/customers', {
-            name: newCustomerName.value.trim(),
-            phone: newCustomerPhone.value.trim() || null,
-        });
-        selectedCustomer.value = res.data;
-        showNewCustomerModal.value = false;
-        customerQuery.value = '';
-        showCustomerDropdown.value = false;
-    } catch (e) {
-        alert(e.response?.data?.message || 'Lỗi tạo khách hàng.');
-    } finally {
-        creatingCustomer.value = false;
-    }
+const onCustomerCreated = (customer) => {
+    selectedCustomer.value = customer;
+    customerQuery.value = '';
+    showCustomerDropdown.value = false;
 };
 
 // ── Serial/IMEI Selection Modal ──
@@ -736,45 +721,14 @@ const processCheckout = async () => {
     </div>
 
     <!-- ═══ Quick Create Customer Modal ═══ -->
-    <div v-if="showNewCustomerModal" class="fixed inset-0 z-[100] bg-black/40 flex items-center justify-center font-sans">
-        <div class="bg-white rounded-lg shadow-2xl w-[400px] overflow-hidden">
-            <!-- Header -->
-            <div class="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
-                <h3 class="text-lg font-bold text-gray-800">Thêm khách hàng mới</h3>
-                <button @click="showNewCustomerModal = false" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer">&times;</button>
-            </div>
-
-            <!-- Form -->
-            <div class="px-5 py-4 space-y-4">
-                <div>
-                    <label class="block text-sm font-semibold text-gray-700 mb-1">Tên khách hàng <span class="text-red-500">*</span></label>
-                    <input v-model="newCustomerName" type="text" placeholder="Nhập tên khách hàng..."
-                        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        @keydown.enter="createCustomer"
-                        autofocus>
-                </div>
-                <div>
-                    <label class="block text-sm font-semibold text-gray-700 mb-1">Số điện thoại</label>
-                    <input v-model="newCustomerPhone" type="text" placeholder="Nhập SĐT..."
-                        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        @keydown.enter="createCustomer">
-                </div>
-            </div>
-
-            <!-- Footer -->
-            <div class="px-5 py-3 border-t border-gray-200 flex items-center justify-end gap-2 bg-gray-50/50">
-                <button @click="showNewCustomerModal = false" class="px-5 py-2 border border-gray-300 rounded text-sm font-semibold text-gray-600 hover:bg-gray-100 transition-colors cursor-pointer">
-                    Hủy
-                </button>
-                <button
-                    @click="createCustomer"
-                    :disabled="creatingCustomer || !newCustomerName.trim()"
-                    class="px-5 py-2 bg-blue-600 text-white rounded text-sm font-bold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer">
-                    {{ creatingCustomer ? 'Đang tạo...' : 'Tạo khách hàng' }}
-                </button>
-            </div>
-        </div>
-    </div>
+    <QuickCreateCustomerModal
+        :show="showNewCustomerModal"
+        :initial-name="newCustomerInitialName"
+        api-url="/api/pos/customers"
+        entity-label="khách hàng"
+        @close="showNewCustomerModal = false"
+        @created="onCustomerCreated"
+    />
 </template>
 
 <style scoped>

@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
+import QuickCreateCustomerModal from '@/Components/QuickCreateCustomerModal.vue';
 
 const props = defineProps({
     purchase: Object,
@@ -19,30 +20,10 @@ const localSuppliers = ref([...(props.suppliers || [])]);
 
 // Quick Create Supplier
 const showCreateSupplierModal = ref(false);
-const creatingSupplier = ref(false);
-const newSupplier = ref({ name: '', phone: '', email: '', address: '' });
 
-const submitCreateSupplier = async () => {
-    if (!newSupplier.value.name.trim()) return;
-    creatingSupplier.value = true;
-    try {
-        const res = await axios.post('/api/suppliers/quick-store', {
-            name: newSupplier.value.name.trim(),
-            phone: newSupplier.value.phone || null,
-            email: newSupplier.value.email || null,
-            address: newSupplier.value.address || null,
-        });
-        if (res.data.success && res.data.supplier) {
-            localSuppliers.value.push(res.data.supplier);
-            selectedSupplierId.value = res.data.supplier.id;
-            showCreateSupplierModal.value = false;
-            newSupplier.value = { name: '', phone: '', email: '', address: '' };
-        }
-    } catch (e) {
-        alert(e.response?.data?.message || 'Có lỗi khi tạo nhà cung cấp');
-    } finally {
-        creatingSupplier.value = false;
-    }
+const onSupplierCreated = (supplier) => {
+    localSuppliers.value.push(supplier);
+    selectedSupplierId.value = supplier.id;
 };
 
 const searchQuery = ref('');
@@ -534,35 +515,13 @@ const goToCreateProduct = () => {
         </div>
 
         <!-- Quick Create Supplier Modal -->
-        <div v-if="showCreateSupplierModal" class="fixed inset-0 bg-black bg-opacity-50 z-[100] flex items-center justify-center p-4" @click.self="showCreateSupplierModal = false">
-            <div class="bg-white rounded-lg shadow-2xl w-full max-w-md">
-                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-                    <h2 class="text-lg font-bold text-gray-800">Thêm nhà cung cấp</h2>
-                    <button @click="showCreateSupplierModal = false" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
-                </div>
-                <form @submit.prevent="submitCreateSupplier" class="p-6 space-y-4">
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1">Tên nhà cung cấp <span class="text-red-500">*</span></label>
-                        <input type="text" v-model="newSupplier.name" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-green-500 focus:border-green-500 outline-none" placeholder="Nhập tên nhà cung cấp">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1">Điện thoại</label>
-                        <input type="text" v-model="newSupplier.phone" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-green-500 focus:border-green-500 outline-none" placeholder="Số điện thoại">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1">Email</label>
-                        <input type="email" v-model="newSupplier.email" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-green-500 focus:border-green-500 outline-none" placeholder="Email">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1">Địa chỉ</label>
-                        <input type="text" v-model="newSupplier.address" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-green-500 focus:border-green-500 outline-none" placeholder="Địa chỉ">
-                    </div>
-                    <div class="flex justify-end gap-3 pt-2">
-                        <button type="button" @click="showCreateSupplierModal = false" class="px-4 py-2 border border-gray-300 rounded text-gray-700 hover:bg-gray-50 font-medium text-sm">Hủy</button>
-                        <button type="submit" :disabled="creatingSupplier || !newSupplier.name.trim()" class="px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 font-medium text-sm disabled:opacity-50">Lưu</button>
-                    </div>
-                </form>
-            </div>
-        </div>
+        <QuickCreateCustomerModal
+            :show="showCreateSupplierModal"
+            api-url="/api/suppliers/quick-store"
+            entity-label="nhà cung cấp"
+            :is-supplier="true"
+            @close="showCreateSupplierModal = false"
+            @created="onSupplierCreated"
+        />
     </div>
 </template>

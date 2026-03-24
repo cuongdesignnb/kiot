@@ -132,14 +132,41 @@ class SupplierController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
+            'code' => 'nullable|string|max:255|unique:customers,code',
             'phone' => 'nullable|string|max:255',
+            'phone2' => 'nullable|string|max:255',
+            'birthday' => 'nullable|date',
+            'gender' => 'nullable|in:none,male,female',
             'email' => 'nullable|email|max:255',
+            'facebook' => 'nullable|string|max:255',
             'address' => 'nullable|string',
+            'city' => 'nullable|string',
+            'district' => 'nullable|string',
+            'ward' => 'nullable|string',
+            'customer_group' => 'nullable|string',
+            'note' => 'nullable|string',
+            'type' => 'nullable|in:individual,company',
+            'invoice_name' => 'nullable|string|max:255',
+            'id_card' => 'nullable|string|max:255',
+            'passport' => 'nullable|string|max:255',
+            'tax_code' => 'nullable|string|max:255',
+            'invoice_address' => 'nullable|string',
+            'invoice_city' => 'nullable|string',
+            'invoice_district' => 'nullable|string',
+            'invoice_ward' => 'nullable|string',
+            'invoice_email' => 'nullable|email|max:255',
+            'invoice_phone' => 'nullable|string|max:255',
+            'bank_name' => 'nullable|string|max:255',
+            'bank_account' => 'nullable|string|max:255',
+            'is_customer' => 'boolean',
         ]);
 
-        $validated['code'] = 'NCC' . time() . rand(10, 99);
+        if (empty($validated['code'])) {
+            $validated['code'] = 'NCC' . time() . rand(10, 99);
+        }
+
         $validated['is_supplier'] = true;
-        $validated['is_customer'] = false;
+        $validated['is_customer'] = $request->input('is_customer', false);
 
         $supplier = Customer::create($validated);
 
