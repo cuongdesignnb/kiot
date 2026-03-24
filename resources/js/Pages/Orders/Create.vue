@@ -2,6 +2,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
+import QuickCreateCustomerModal from '@/Components/QuickCreateCustomerModal.vue';
 
 const props = defineProps({
     customers: Array,
@@ -270,6 +271,37 @@ const hideSuggestions = () => {
 
 const hideCustomerDropdown = () => {
     window.setTimeout(() => { if(activeTab.value) activeTab.value.showCustomerDropdown = false; }, 200);
+};
+
+// Filter customers by search text
+const filteredCustomers = computed(() => {
+    const query = (activeTab.value?.searchCustomer || '').trim().toLowerCase();
+    if (!query) return props.customers || [];
+    return (props.customers || []).filter(c => {
+        return (c.name || '').toLowerCase().includes(query)
+            || (c.phone || '').includes(query)
+            || (c.code || '').toLowerCase().includes(query);
+    });
+});
+
+// Quick create customer modal
+const showQuickCreateCustomer = ref(false);
+
+const openQuickCreateCustomer = () => {
+    showQuickCreateCustomer.value = true;
+};
+
+const onCustomerCreated = (customer) => {
+    showQuickCreateCustomer.value = false;
+    // Add to local list and select
+    if (customer) {
+        props.customers.push(customer);
+        activeTab.value.selectedCustomer = customer;
+        activeTab.value.searchCustomer = customer.name;
+        activeTab.value.receiverName = customer.name;
+        activeTab.value.receiverPhone = customer.phone || '';
+        activeTab.value.receiverAddress = customer.address || '';
+    }
 };
 
 const removeItem = (index) => {
@@ -655,14 +687,18 @@ onUnmounted(() => {
                        <div class="relative flex-1">
                           <i class="fas fa-search absolute left-2 top-2 text-gray-400"></i>
                            <input v-model="activeTab.searchCustomer" @focus="activeTab.showCustomerDropdown = true" @blur="hideCustomerDropdown" placeholder="Tìm khách hàng (F4)" class="w-full border-b border-gray-300 outline-none focus:border-blue-500 py-1 pl-7 pr-6 text-[13px]" />
-                          <button class="absolute right-0 top-0.5 text-gray-400 hover:text-blue-600 font-bold px-1"><i class="fas fa-plus"></i></button>
+                          <button type="button" @click="openQuickCreateCustomer" class="absolute right-0 top-0.5 text-gray-400 hover:text-blue-600 font-bold px-1" title="Thêm khách hàng mới"><i class="fas fa-plus"></i></button>
                           
                           <!-- Dropdown Results -->
-                          <div v-if="activeTab.showCustomerDropdown" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded z-50 max-h-[200px] overflow-auto">
-                              <div v-for="c in customers" :key="c.id" @mousedown.prevent="activeTab.selectedCustomer = c; activeTab.receiverName = c.name; activeTab.receiverPhone = c.phone;" class="p-2 border-b border-gray-100 hover:bg-blue-50 cursor-pointer">
+                          <div v-if="activeTab.showCustomerDropdown && filteredCustomers.length > 0" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded z-50 max-h-[200px] overflow-auto">
+                              <div v-for="c in filteredCustomers" :key="c.id" @mousedown.prevent="activeTab.selectedCustomer = c; activeTab.searchCustomer = c.name; activeTab.receiverName = c.name; activeTab.receiverPhone = c.phone || ''; activeTab.receiverAddress = c.address || '';" class="p-2 border-b border-gray-100 hover:bg-blue-50 cursor-pointer">
                                   <div class="font-bold text-gray-800">{{ c.name }}</div>
-                                  <div class="text-[12px] text-gray-500">{{ c.phone }}</div>
+                                  <div v-if="c.phone" class="text-[12px] text-green-600">{{ c.phone }}</div>
                               </div>
+                          </div>
+                          <div v-if="activeTab.showCustomerDropdown && activeTab.searchCustomer && filteredCustomers.length === 0" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded z-50 p-3 text-center text-gray-400 text-[13px]">
+                              Không tìm thấy khách hàng
+                              <button @mousedown.prevent="openQuickCreateCustomer" class="block mx-auto mt-2 text-blue-600 hover:underline font-medium">+ Tạo khách hàng mới</button>
                           </div>
                        </div>
                        <select
@@ -916,6 +952,16 @@ onUnmounted(() => {
             </div>
         </div>
     </div>
+
+    <!-- Quick Create Customer Modal -->
+    <QuickCreateCustomerModal
+        :show="showQuickCreateCustomer"
+        :initial-name="activeTab?.searchCustomer || ''"
+        api-url="/api/pos/customers"
+        entity-label="khách hàng"
+        @close="showQuickCreateCustomer = false"
+        @created="onCustomerCreated"
+    />
 </template>
 
 <style scoped>
