@@ -111,41 +111,55 @@ const close = () => emit('close');
                                 <input v-model="form.code" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none" placeholder="Tự động" />
                             </div>
 
-                            <!-- Row 2: Phone -->
-                            <div class="flex gap-2">
-                                <div class="w-1/2">
+                            <!-- Row 2: Supplier layout = Phone + Email side by side -->
+                            <template v-if="isSupplier">
+                                <div>
                                     <label class="block font-semibold mb-1">Điện thoại</label>
                                     <input v-model="form.phone" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 outline-none" />
                                 </div>
-                                <div class="w-1/2">
-                                    <label class="block font-semibold mb-1">Điện thoại 2</label>
-                                    <input v-model="form.phone2" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 outline-none" />
+                                <div>
+                                    <label class="block font-semibold mb-1">Email</label>
+                                    <input v-model="form.email" type="email" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 outline-none" placeholder="email@gmail.com" />
                                 </div>
-                            </div>
-                            <div class="flex gap-2">
-                                <div class="w-1/2">
-                                    <label class="block font-semibold mb-1">Sinh nhật</label>
-                                    <input v-model="form.birthday" type="date" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 outline-none" />
-                                </div>
-                                <div class="w-1/2">
-                                    <label class="block font-semibold mb-1">Giới tính</label>
-                                    <select v-model="form.gender" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 outline-none">
-                                        <option value="none">Chọn giới tính</option>
-                                        <option value="male">Nam</option>
-                                        <option value="female">Nữ</option>
-                                    </select>
-                                </div>
-                            </div>
+                            </template>
 
-                            <!-- Row 3: Email / Facebook -->
-                            <div>
-                                <label class="block font-semibold mb-1">Email</label>
-                                <input v-model="form.email" type="email" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 outline-none" placeholder="email@gmail.com" />
-                            </div>
-                            <div>
-                                <label class="block font-semibold mb-1">Facebook</label>
-                                <input v-model="form.facebook" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 outline-none" placeholder="facebook.com/username" />
-                            </div>
+                            <!-- Row 2: Customer layout = Phone + Phone2, Birthday + Gender, Email + Facebook -->
+                            <template v-else>
+                                <div class="flex gap-2">
+                                    <div class="w-1/2">
+                                        <label class="block font-semibold mb-1">Điện thoại</label>
+                                        <input v-model="form.phone" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 outline-none" />
+                                    </div>
+                                    <div class="w-1/2">
+                                        <label class="block font-semibold mb-1">Điện thoại 2</label>
+                                        <input v-model="form.phone2" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 outline-none" />
+                                    </div>
+                                </div>
+                                <div class="flex gap-2">
+                                    <div class="w-1/2">
+                                        <label class="block font-semibold mb-1">Sinh nhật</label>
+                                        <input v-model="form.birthday" type="date" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 outline-none" />
+                                    </div>
+                                    <div class="w-1/2">
+                                        <label class="block font-semibold mb-1">Giới tính</label>
+                                        <select v-model="form.gender" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 outline-none">
+                                            <option value="none">Chọn giới tính</option>
+                                            <option value="male">Nam</option>
+                                            <option value="female">Nữ</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <!-- Row 3: Email / Facebook -->
+                                <div>
+                                    <label class="block font-semibold mb-1">Email</label>
+                                    <input v-model="form.email" type="email" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 outline-none" placeholder="email@gmail.com" />
+                                </div>
+                                <div>
+                                    <label class="block font-semibold mb-1">Facebook</label>
+                                    <input v-model="form.facebook" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 outline-none" placeholder="facebook.com/username" />
+                                </div>
+                            </template>
                         </div>
                     </div>
 
@@ -207,8 +221,8 @@ const close = () => emit('close');
                             </div>
                             <div class="grid grid-cols-2 gap-x-6 gap-y-4">
                                 <div>
-                                    <label class="block font-semibold mb-1">Tên người mua</label>
-                                    <input v-model="form.invoice_name" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 outline-none" placeholder="Nhập tên người mua" />
+                                    <label class="block font-semibold mb-1">{{ isSupplier ? 'Tên công ty' : 'Tên người mua' }}</label>
+                                    <input v-model="form.invoice_name" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 outline-none" :placeholder="isSupplier ? 'Nhập tên công ty' : 'Nhập tên người mua'" />
                                 </div>
                                 <div>
                                     <label class="block font-semibold mb-1">Mã số thuế</label>
