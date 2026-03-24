@@ -761,11 +761,57 @@ class ProductController extends Controller
         }
     }
 
+    /**
+     * Check if a product has related transaction data.
+     */
+    private function productHasTransactions(int $productId): array
+    {
+        $relations = [];
+
+        if (\App\Models\InvoiceItem::where('product_id', $productId)->exists()) {
+            $relations[] = 'hóa đơn bán hàng';
+        }
+        if (\App\Models\PurchaseItem::where('product_id', $productId)->exists()) {
+            $relations[] = 'phiếu nhập hàng';
+        }
+        if (\Illuminate\Support\Facades\DB::table('order_items')->where('product_id', $productId)->exists()) {
+            $relations[] = 'đơn hàng';
+        }
+        if (\Illuminate\Support\Facades\DB::table('return_items')->where('product_id', $productId)->exists()) {
+            $relations[] = 'phiếu trả hàng';
+        }
+        if (SerialImei::where('product_id', $productId)->exists()) {
+            $relations[] = 'serial/IMEI';
+        }
+        if (\Illuminate\Support\Facades\DB::table('task_parts')->where('product_id', $productId)->exists()) {
+            $relations[] = 'công việc sửa chữa';
+        }
+        if (\Illuminate\Support\Facades\DB::table('stock_transfer_items')->where('product_id', $productId)->exists()) {
+            $relations[] = 'chuyển kho';
+        }
+        if (\Illuminate\Support\Facades\DB::table('damage_items')->where('product_id', $productId)->exists()) {
+            $relations[] = 'xuất hủy';
+        }
+        if (\Illuminate\Support\Facades\DB::table('stock_take_items')->where('product_id', $productId)->exists()) {
+            $relations[] = 'kiểm kho';
+        }
+
+        return $relations;
+    }
+
     public function destroy(Product $product)
     {
-        $product->delete();
+        $relations = $this->productHasTransactions($product->id);
 
-        return redirect()->back()->with('success', 'Đã xoá hàng hóa!');
+        if (!empty($relations)) {
+            // Has transactions → deactivate instead of delete
+            $product->update(['is_active' => false]);
+            $list = implode(', ', $relations);
+            return redirect()->back()->with('warning', "Hàng hóa \"{$product->name}\" đang có phát sinh ({$list}) nên không thể xóa. Đã chuyển sang trạng thái Ngừng kinh doanh.");
+        }
+
+        $product->delete();
+        return redirect()->back()->with('success', "Đã xoá hàng hóa \"{$product->name}\"!");
     }
 
     public function bulkDestroy(Request $request)
@@ -775,10 +821,40 @@ class ProductController extends Controller
             'product_ids.*' => 'integer|exists:products,id',
         ]);
 
-        $count = Product::whereIn('id', $request->product_ids)->delete();
+        $products = Product::whereIn('id', $request->product_ids)->get();
+        $deleted = 0;
+        $deactivated = 0;
+        $deactivatedNames = [];
 
-        return redirect()->back()->with('success', "Đã xoá {$count} hàng hóa!");
+        foreach ($products as $product) {
+            $relations = $this->productHasTransactions($product->id);
+
+            if (!empty($relations)) {
+                $product->update(['is_active' => false]);
+                $deactivated++;
+                $deactivatedNames[] = $product->name;
+            } else {
+                $product->delete();
+                $deleted++;
+            }
+        }
+
+        $messages = [];
+        if ($deleted > 0) {
+            $messages[] = "Đã xóa {$deleted} hàng hóa";
+        }
+        if ($deactivated > 0) {
+            $names = implode(', ', array_slice($deactivatedNames, 0, 3));
+            if ($deactivated > 3) $names .= '...';
+            $messages[] = "{$deactivated} hàng hóa có phát sinh giao dịch ({$names}) đã chuyển sang Ngừng kinh doanh";
+        }
+
+        $msg = implode('. ', $messages) . '.';
+        $type = $deactivated > 0 ? 'warning' : 'success';
+
+        return redirect()->back()->with($type, $msg);
     }
+
     public function export(Request $request)
     {
         $products = Product::with(['category', 'brand'])
