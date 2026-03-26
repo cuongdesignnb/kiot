@@ -30,6 +30,56 @@ const searchQuery = ref('');
 const showSuggestions = ref(false);
 const showCreateDropdown = ref(false);
 
+const supplierSearchQuery = ref('');
+const showSupplierDropdown = ref(false);
+const isSearchingSupplier = ref(false);
+const filteredSuppliers = ref([]);
+let supplierSearchTimeout = null;
+
+const selectedSupplier = computed(() => {
+    return localSuppliers.value.find(s => s.id === selectedSupplierId.value) || null;
+});
+
+watch(supplierSearchQuery, (val) => {
+    if (!val) {
+        filteredSuppliers.value = [];
+        showSupplierDropdown.value = false;
+        return;
+    }
+    showSupplierDropdown.value = true;
+    if (supplierSearchTimeout) clearTimeout(supplierSearchTimeout);
+    supplierSearchTimeout = setTimeout(async () => {
+        isSearchingSupplier.value = true;
+        try {
+            const response = await axios.get('/api/suppliers/search', { params: { search: val } });
+            filteredSuppliers.value = response.data;
+        } catch (e) {
+            console.error('Error fetching suppliers:', e);
+        } finally {
+            isSearchingSupplier.value = false;
+        }
+    }, 300);
+});
+
+const selectSupplier = (supplier) => {
+    if (!localSuppliers.value.find(s => s.id === supplier.id)) {
+        localSuppliers.value.push(supplier);
+    }
+    selectedSupplierId.value = supplier.id;
+    supplierSearchQuery.value = '';
+    showSupplierDropdown.value = false;
+};
+
+const removeSupplier = () => {
+    selectedSupplierId.value = '';
+    supplierSearchQuery.value = '';
+};
+
+// Handle clicks outside the supplier dropdown
+const hideSupplierSuggestions = () => {
+    setTimeout(() => { showSupplierDropdown.value = false; }, 200);
+};
+
 // Pre-fill from existing purchase
 const pad = (n) => String(n).padStart(2, '0');
 const getLocalDatetime = (val) => {
@@ -94,17 +144,31 @@ const items = ref(
     }))
 );
 
-const filteredProducts = computed(() => {
-    if (!searchQuery.value) return [];
-    const query = searchQuery.value.toLowerCase();
-    return allProducts.value.filter(p =>
-        p.name.toLowerCase().includes(query) ||
-        p.sku.toLowerCase().includes(query)
-    ).slice(0, 10);
-});
+const filteredProducts = ref([]);
+const isSearchingProduct = ref(false);
 
+let searchTimeout = null;
 watch(searchQuery, (val) => {
-    if (val) showSuggestions.value = true;
+    if (!val) {
+        filteredProducts.value = [];
+        showSuggestions.value = false;
+        return;
+    }
+    showSuggestions.value = true;
+    if (searchTimeout) clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(async () => {
+        isSearchingProduct.value = true;
+        try {
+            const response = await axios.get('/api/products/search', {
+                params: { search: val }
+            });
+            filteredProducts.value = response.data;
+        } catch (error) {
+            console.error("Lỗi tìm kiếm sản phẩm:", error);
+        } finally {
+            isSearchingProduct.value = false;
+        }
+    }, 300);
 });
 
 const selectProduct = (product) => {
@@ -162,11 +226,19 @@ const getItemTotal = (item) => {
     const qty = item.has_serial ? (item.serials?.length || 0) : (parseInt(item.quantity) || 0);
     const price = parseFloat(item.price) || 0;
     const itemDiscount = parseFloat(item.discount) || 0;
-    return (qty * price) - itemDiscount;
+    const total = (qty * price) - itemDiscount;
+    return isNaN(total) ? 0 : total;
 };
 
-const totalAmount = computed(() => items.value.reduce((sum, item) => sum + getItemTotal(item), 0));
-const totalPayment = computed(() => Math.max(0, totalAmount.value - Number(discount.value) + totalOtherCosts.value));
+const totalAmount = computed(() => {
+    if (!items.value || !Array.isArray(items.value)) return 0;
+    const sum = items.value.reduce((s, item) => s + getItemTotal(item), 0);
+    return isNaN(sum) ? 0 : sum;
+});
+const totalPayment = computed(() => {
+    const payment = Math.max(0, totalAmount.value - Number(discount.value || 0) + totalOtherCosts.value);
+    return isNaN(payment) ? 0 : payment;
+});
 const debtAmount = computed(() => Math.max(0, totalPayment.value - Number(paidAmount.value)));
 
 const save = async () => {
@@ -256,7 +328,13 @@ const goToCreateProduct = () => {
                     </div>
                     <input v-model="searchQuery" @focus="showSuggestions = true" @blur="hideSuggestions" type="text" class="w-full pl-9 pr-12 py-[9px] border border-gray-300 text-gray-800 rounded focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500 bg-white" placeholder="Tìm hàng hóa theo mã hoặc tên (F3)">
 
-                    <div v-if="showSuggestions && filteredProducts.length > 0" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded-sm z-50 max-h-[300px] overflow-auto">
+                    <div v-if="showSuggestions" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded-sm z-50 max-h-[300px] overflow-auto">
+                        <div v-if="isSearchingProduct" class="p-3 text-sm text-gray-500 text-center">
+                            Đang tìm kiếm...
+                        </div>
+                        <div v-else-if="filteredProducts.length === 0 && searchQuery" class="p-3 text-sm text-gray-500 text-center">
+                            Không tìm thấy sản phẩm hợp lệ
+                        </div>
                         <div v-for="product in filteredProducts" :key="product.id" @mousedown.prevent="selectProduct(product)" class="flex items-center gap-3 p-2 border-b border-gray-100 hover:bg-gray-50 cursor-pointer">
                             <img :src="product.image || 'https://ui-avatars.com/api/?name=' + product.name + '&background=random'" class="w-10 h-10 object-cover rounded border border-gray-200">
                             <div class="flex-1">
@@ -396,14 +474,57 @@ const goToCreateProduct = () => {
 
                 <div class="flex-1 overflow-auto bg-white flex flex-col pt-2">
                     <div class="px-3 pb-3">
-                        <div class="relative mb-3">
-                            <div class="flex items-center border-b border-gray-300 pb-1">
+                        <div class="relative mb-3 z-30">
+                            <div class="flex items-center border-b border-gray-300 pb-1 relative">
                                 <svg class="w-4 h-4 text-gray-400 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-                                <select v-model="selectedSupplierId" class="flex-1 py-1 outline-none text-[13px] text-gray-800 bg-transparent appearance-none">
-                                    <option value="">Tìm nhà cung cấp *</option>
-                                    <option v-for="supplier in localSuppliers" :key="supplier.id" :value="supplier.id">{{ supplier.name }}</option>
-                                </select>
-                                <button type="button" @click="showCreateSupplierModal = true" class="text-green-600 hover:text-green-700 font-bold text-lg leading-none ml-1" title="Thêm nhà cung cấp">
+                                
+                                <div class="flex-1 relative">
+                                    <!-- Search Input -->
+                                    <input 
+                                        v-if="!selectedSupplier" 
+                                        type="text" 
+                                        v-model="supplierSearchQuery" 
+                                        @focus="showSupplierDropdown = true"
+                                        @blur="hideSupplierSuggestions"
+                                        placeholder="Tìm nhà cung cấp" 
+                                        class="w-full py-1 outline-none text-[13px] text-gray-800 bg-transparent placeholder-gray-500"
+                                    />
+                                    
+                                    <!-- Selected Display -->
+                                    <div v-else class="flex items-center justify-between w-full py-1 pr-1 bg-blue-50/50 rounded-sm">
+                                        <div class="flex items-center gap-2 line-clamp-1 px-1">
+                                            <span class="text-[13px] font-bold text-blue-700">{{ selectedSupplier.name }}</span>
+                                            <span v-if="selectedSupplier.phone" class="text-[12px] text-blue-500 font-medium whitespace-nowrap">&bull; {{ selectedSupplier.phone }}</span>
+                                        </div>
+                                        <button type="button" @click="removeSupplier" class="text-gray-400 hover:text-red-500 hover:bg-red-50 rounded pl-1 pr-1 py-0.5 ml-1 flex-shrink-0 transition-colors" title="Xóa">
+                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                        </button>
+                                    </div>
+
+                                    <!-- Autocomplete Dropdown -->
+                                    <div v-if="showSupplierDropdown && !selectedSupplier" class="absolute left-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded-sm z-50 max-h-64 overflow-y-auto w-full">
+                                        <div v-if="isSearchingSupplier" class="p-3 text-sm text-gray-500 text-center">
+                                            Đang tìm kiếm...
+                                        </div>
+                                        <div v-else-if="filteredSuppliers.length === 0 && supplierSearchQuery" class="p-3 text-center text-gray-500 text-[12px]">
+                                            Không tìm thấy NCC nào
+                                        </div>
+                                        <div 
+                                            v-for="sup in filteredSuppliers" 
+                                            :key="sup.id" 
+                                            @mousedown.prevent="selectSupplier(sup)" 
+                                            class="p-2.5 cursor-pointer hover:bg-blue-50 border-b border-gray-100 last:border-b-0"
+                                        >
+                                            <div class="font-bold text-[13px] text-gray-800">{{ sup.name }}</div>
+                                            <div class="text-[12px] text-gray-500 flex items-center gap-2 mt-0.5">
+                                                <span>{{ sup.code || '---' }}</span>
+                                                <span v-if="sup.phone">&bull; {{ sup.phone }}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <button type="button" @click="showCreateSupplierModal = true" class="text-green-600 hover:text-green-700 font-bold text-lg leading-none ml-2 shrink-0" title="Thêm nhà cung cấp">
                                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
                                 </button>
                             </div>

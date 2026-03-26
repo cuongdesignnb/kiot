@@ -53,10 +53,15 @@ watch(search, (value) => {
 const isModalOpen = ref(false);
 const modalType = ref("receipt"); // receipt or payment
 
+const getLocalIsoTime = (d = new Date()) => {
+    const date = new Date(d);
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+};
+
 const form = useForm({
     id: null,
     type: "receipt",
-    time: new Date().toISOString().slice(0, 16),
+    time: getLocalIsoTime(),
     category: "",
     target_type: "Khác",
     target_name: "",
@@ -166,8 +171,8 @@ const openModal = (type, flow = null) => {
         form.id = flow.id;
         form.type = flow.type;
         form.time = flow.time
-            ? new Date(flow.time).toISOString().slice(0, 16)
-            : new Date(flow.created_at).toISOString().slice(0, 16);
+            ? getLocalIsoTime(flow.time)
+            : getLocalIsoTime(flow.created_at);
         form.category = flow.category || "";
         form.target_type = flow.target_type || "Khác";
         form.target_name = flow.target_name || "";
@@ -180,7 +185,7 @@ const openModal = (type, flow = null) => {
     } else {
         form.id = null;
         form.type = type;
-        form.time = new Date().toISOString().slice(0, 16);
+        form.time = getLocalIsoTime();
         form.category = "";
         form.target_type = "Khác";
         form.target_name = "";

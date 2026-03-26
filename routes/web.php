@@ -20,6 +20,15 @@ use App\Http\Controllers\CashFlowController;
 use App\Http\Controllers\OrderReturnController;
 use App\Http\Controllers\SettingController;
 use App\Http\Controllers\TaskPageController;
+use App\Http\Controllers\ReportController;
+use App\Http\Controllers\EndOfDayReportController;
+use App\Http\Controllers\SalesReportController;
+use App\Http\Controllers\OrderReportController;
+use App\Http\Controllers\ProductReportController;
+use App\Http\Controllers\CustomerReportController;
+use App\Http\Controllers\SupplierReportController;
+use App\Http\Controllers\EmployeeReportController;
+use App\Http\Controllers\FinancialReportController;
 
 // Auth routes (guest)
 Route::middleware('guest')->group(function () {
@@ -131,8 +140,12 @@ Route::get('/orders/create', [OrderController::class, 'create'])->middleware('pe
 Route::post('/orders', [OrderController::class, 'store'])->middleware('permission:orders.create')->name('orders.store');
 Route::put('/orders/{order}', [OrderController::class, 'update'])->middleware('permission:orders.edit')->name('orders.update');
 
-Route::get('/invoices', [InvoiceController::class, 'index'])->middleware('permission:invoices.view')->name('invoices.index');
+Route::get('/api/customers/search', [CustomerController::class, 'apiSearch'])->middleware('permission:customers.view')->name('api.customers.search');
 Route::get('/api/invoices/search', [InvoiceController::class, 'apiSearch'])->middleware('permission:invoices.view')->name('api.invoices.search');
+
+// Suppliers API
+Route::get('/api/suppliers/search', [SupplierController::class, 'apiSearch'])->name('api.suppliers.search');
+Route::get('/invoices', [InvoiceController::class, 'index'])->middleware('permission:invoices.view')->name('invoices.index');
 Route::post('/invoices', [InvoiceController::class, 'store'])->middleware('permission:invoices.create')->name('invoices.store');
 Route::delete('/invoices/{invoice}', [InvoiceController::class, 'destroy'])->middleware('permission:invoices.delete')->name('invoices.destroy');
 
@@ -402,6 +415,30 @@ Route::get('/run-migrate-2', function () {
     } catch (\Exception $e) {
         return 'Error: ' . $e->getMessage();
     }
+});
+
+// =======================
+// 📊 REPORTS (Phân tích)
+// =======================
+Route::group(['prefix' => 'reports'], function () {
+    Route::get('/business', [ReportController::class, 'businessOverview'])->name('reports.business');
+    Route::get('/cost-profit', [ReportController::class, 'costProfit'])->name('reports.cost-profit');
+    Route::get('/products', [ReportController::class, 'productOverview'])->name('reports.products');
+    Route::get('/inventory', [ReportController::class, 'inventory'])->name('reports.inventory');
+    Route::get('/product-categories', [ReportController::class, 'productCategory'])->name('reports.product-categories');
+    Route::get('/customers', [ReportController::class, 'customerOverview'])->name('reports.customers');
+    Route::get('/customer-categories', [ReportController::class, 'customerCategory'])->name('reports.customer-categories');
+    Route::get('/customer-debt', [ReportController::class, 'customerDebt'])->name('reports.customer-debt');
+
+    // Báo cáo
+    Route::get('/end-of-day', [EndOfDayReportController::class, 'index'])->name('reports.end-of-day');
+    Route::get('/sales', [SalesReportController::class, 'index'])->name('reports.sales');
+    Route::get('/orders', [OrderReportController::class, 'index'])->name('reports.orders');
+    Route::get('/products-report', [ProductReportController::class, 'index'])->name('reports.products-report');
+    Route::get('/customers-report', [CustomerReportController::class, 'index'])->name('reports.customers-report');
+    Route::get('/suppliers-report', [SupplierReportController::class, 'index'])->name('reports.suppliers-report');
+    Route::get('/employees-report', [EmployeeReportController::class, 'index'])->name('reports.employees-report');
+    Route::get('/financial-report', [FinancialReportController::class, 'index'])->name('reports.financial-report');
 });
 
 }); // end auth middleware

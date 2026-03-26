@@ -44,7 +44,52 @@ const form = ref({
     bank_account: '',
     is_supplier: false,
     is_customer: true,
+    link_existing_id: null,
 });
+
+const linkOption = ref('new'); // 'new' or 'existing'
+const searchExistingQuery = ref('');
+const isSearchingExisting = ref(false);
+const existingResults = ref([]);
+const showExistingDropdown = ref(false);
+const selectedExistingEntity = ref(null);
+let searchExistingTimeout = null;
+
+watch(searchExistingQuery, (val) => {
+    if (!val) {
+        existingResults.value = [];
+        showExistingDropdown.value = false;
+        return;
+    }
+    showExistingDropdown.value = true;
+    if (searchExistingTimeout) clearTimeout(searchExistingTimeout);
+    searchExistingTimeout = setTimeout(async () => {
+        isSearchingExisting.value = true;
+        try {
+            const ep = props.isSupplier ? '/api/customers/search' : '/api/suppliers/search';
+            const { data } = await axios.get(ep, { params: { search: val }});
+            existingResults.value = data;
+        } catch (e) {
+            console.error('Lỗi tìm kiếm:', e);
+        } finally {
+            isSearchingExisting.value = false;
+        }
+    }, 300);
+});
+
+const selectExistingEntity = (entity) => {
+    selectedExistingEntity.value = entity;
+    form.value.link_existing_id = entity.id;
+    searchExistingQuery.value = '';
+    showExistingDropdown.value = false;
+};
+
+const removeExistingEntity = () => {
+    selectedExistingEntity.value = null;
+    form.value.link_existing_id = null;
+    searchExistingQuery.value = '';
+};
+
 
 const resetForm = () => {
     Object.assign(form.value, {
@@ -63,6 +108,11 @@ watch(() => props.show, (val) => {
         form.value.name = props.initialName || '';
         form.value.is_supplier = props.isSupplier;
         form.value.is_customer = !props.isSupplier;
+        linkOption.value = 'new';
+        searchExistingQuery.value = '';
+        existingResults.value = [];
+        selectedExistingEntity.value = null;
+        form.value.link_existing_id = null;
     }
 });
 
@@ -275,27 +325,95 @@ const close = () => emit('close');
                     </div>
 
                     <!-- Switch Supplier -->
-                    <div v-if="!isSupplier" class="bg-gray-50 border border-gray-200 rounded px-4 py-4 flex items-center justify-between">
-                        <div>
-                            <h3 class="font-bold text-[14px] text-gray-800">Khách hàng là nhà cung cấp</h3>
-                            <p class="text-[12px] text-gray-500 mt-0.5">Công nợ của khách hàng và nhà cung cấp sẽ được gộp với nhau</p>
+                    <div v-if="!isSupplier" class="bg-gray-50 border border-gray-200 rounded px-4 py-4">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h3 class="font-bold text-[14px] text-gray-800">Khách hàng là nhà cung cấp</h3>
+                                <p class="text-[12px] text-gray-500 mt-0.5">Công nợ của khách hàng và nhà cung cấp sẽ được gộp với nhau</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" v-model="form.is_supplier" class="sr-only peer" />
+                                <div class="w-11 h-6 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                            </label>
                         </div>
-                        <label class="relative inline-flex items-center cursor-pointer">
-                            <input type="checkbox" v-model="form.is_supplier" class="sr-only peer" />
-                            <div class="w-11 h-6 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                        </label>
+                        
+                        <div v-if="form.is_supplier" class="mt-4 pt-4 border-t border-gray-200">
+                            <div class="flex items-center gap-6 mb-3">
+                                <label class="flex items-center gap-2 cursor-pointer font-medium">
+                                    <input type="radio" v-model="linkOption" value="new" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
+                                    Tạo mới hoàn toàn
+                                </label>
+                                <label class="flex items-center gap-2 cursor-pointer font-medium">
+                                    <input type="radio" v-model="linkOption" value="existing" @change="form.link_existing_id = selectedExistingEntity?.id || null" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
+                                    Chọn từ nhà cung cấp đã có
+                                </label>
+                            </div>
+                            
+                            <div v-if="linkOption === 'existing'" class="relative">
+                                <div v-if="!selectedExistingEntity" class="relative">
+                                    <svg class="w-4 h-4 text-gray-400 absolute left-2.5 top-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                                    <input v-model="searchExistingQuery" @focus="showExistingDropdown = true" type="text" class="w-full border border-gray-300 rounded pl-8 pr-3 py-1.5 focus:border-blue-500 outline-none" placeholder="Tìm tên nhà cung cấp..." />
+                                </div>
+                                <div v-else class="flex items-center justify-between border border-blue-200 bg-blue-50 rounded px-3 py-2">
+                                    <div class="font-medium text-blue-700">{{ selectedExistingEntity.name }} <span class="text-gray-500 text-[12px] font-normal ml-2">{{ selectedExistingEntity.phone }}</span></div>
+                                    <button @click="removeExistingEntity" type="button" class="text-gray-400 hover:text-red-500">&times;</button>
+                                </div>
+                                
+                                <div v-if="showExistingDropdown && !selectedExistingEntity" class="absolute left-0 top-full mt-1 w-full bg-white border border-gray-200 shadow-xl rounded-sm z-[100] max-h-48 overflow-y-auto">
+                                    <div v-if="isSearchingExisting" class="p-2 text-center text-gray-500">Đang tìm...</div>
+                                    <div v-else-if="existingResults.length === 0 && searchExistingQuery" class="p-2 text-center text-gray-500">Không tìm thấy NCC</div>
+                                    <div v-for="sup in existingResults" :key="sup.id" @mousedown.prevent="selectExistingEntity(sup)" class="p-2 cursor-pointer hover:bg-blue-50 border-b border-gray-100">
+                                        {{ sup.name }} <span class="text-gray-400 text-xs">{{ sup.phone }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Switch Customer (for supplier form) -->
-                    <div v-if="isSupplier" class="bg-gray-50 border border-gray-200 rounded px-4 py-4 flex items-center justify-between">
-                        <div>
-                            <h3 class="font-bold text-[14px] text-gray-800">Nhà cung cấp đồng thời là khách hàng</h3>
-                            <p class="text-[12px] text-gray-500 mt-0.5">Công nợ của nhà cung cấp và khách hàng sẽ được gộp với nhau</p>
+                    <div v-if="isSupplier" class="bg-gray-50 border border-gray-200 rounded px-4 py-4">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h3 class="font-bold text-[14px] text-gray-800">Nhà cung cấp đồng thời là khách hàng</h3>
+                                <p class="text-[12px] text-gray-500 mt-0.5">Công nợ của nhà cung cấp và khách hàng sẽ được gộp với nhau</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" v-model="form.is_customer" class="sr-only peer" />
+                                <div class="w-11 h-6 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                            </label>
                         </div>
-                        <label class="relative inline-flex items-center cursor-pointer">
-                            <input type="checkbox" v-model="form.is_customer" class="sr-only peer" />
-                            <div class="w-11 h-6 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                        </label>
+
+                        <div v-if="form.is_customer" class="mt-4 pt-4 border-t border-gray-200">
+                            <div class="flex items-center gap-6 mb-3">
+                                <label class="flex items-center gap-2 cursor-pointer font-medium">
+                                    <input type="radio" v-model="linkOption" value="new" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
+                                    Tạo mới hoàn toàn
+                                </label>
+                                <label class="flex items-center gap-2 cursor-pointer font-medium">
+                                    <input type="radio" v-model="linkOption" value="existing" @change="form.link_existing_id = selectedExistingEntity?.id || null" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
+                                    Chọn từ khách hàng đã có
+                                </label>
+                            </div>
+                            
+                            <div v-if="linkOption === 'existing'" class="relative">
+                                <div v-if="!selectedExistingEntity" class="relative">
+                                    <svg class="w-4 h-4 text-gray-400 absolute left-2.5 top-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                                    <input v-model="searchExistingQuery" @focus="showExistingDropdown = true" type="text" class="w-full border border-gray-300 rounded pl-8 pr-3 py-1.5 focus:border-blue-500 outline-none" placeholder="Tìm tên khách hàng..." />
+                                </div>
+                                <div v-else class="flex items-center justify-between border border-blue-200 bg-blue-50 rounded px-3 py-2">
+                                    <div class="font-medium text-blue-700">{{ selectedExistingEntity.name }} <span class="text-gray-500 text-[12px] font-normal ml-2">{{ selectedExistingEntity.phone }}</span></div>
+                                    <button @click="removeExistingEntity" type="button" class="text-gray-400 hover:text-red-500">&times;</button>
+                                </div>
+
+                                <div v-if="showExistingDropdown && !selectedExistingEntity" class="absolute left-0 top-full mt-1 w-full bg-white border border-gray-200 shadow-xl rounded-sm z-[100] max-h-48 overflow-y-auto">
+                                    <div v-if="isSearchingExisting" class="p-2 text-center text-gray-500">Đang tìm...</div>
+                                    <div v-else-if="existingResults.length === 0 && searchExistingQuery" class="p-2 text-center text-gray-500">Không tìm thấy khách hàng</div>
+                                    <div v-for="cus in existingResults" :key="cus.id" @mousedown.prevent="selectExistingEntity(cus)" class="p-2 cursor-pointer hover:bg-blue-50 border-b border-gray-100">
+                                        {{ cus.name }} <span class="text-gray-400 text-xs">{{ cus.phone }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </form>
             </div>

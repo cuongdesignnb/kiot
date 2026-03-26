@@ -31,36 +31,29 @@ const nowInit = new Date();
 const localNowStr = `${nowInit.getFullYear()}-${pad(nowInit.getMonth()+1)}-${pad(nowInit.getDate())}T${pad(nowInit.getHours())}:${pad(nowInit.getMinutes())}`;
 const orderDate = ref(localNowStr);
 
-// Serial search results from API
-const serialSearchResults = ref([]);
-let serialSearchTimeout;
+const filteredProducts = ref([]);
+const isSearchingProduct = ref(false);
 
-const filteredProducts = computed(() => {
-    if (!searchQuery.value) return [];
-    const query = searchQuery.value.toLowerCase();
-    const localResults = props.products.filter(p => 
-        p.name.toLowerCase().includes(query) || 
-        p.sku.toLowerCase().includes(query) ||
-        (p.barcode && p.barcode.toLowerCase().includes(query))
-    ).slice(0, 10);
-    
-    // Merge serial search results (avoid duplicates)
-    const localIds = new Set(localResults.map(p => p.id));
-    const serialProducts = serialSearchResults.value.filter(p => !localIds.has(p.id));
-    return [...localResults, ...serialProducts].slice(0, 15);
-});
-
-// Watch search query to also search by serial number via API
+let searchTimeout = null;
 watch(searchQuery, (val) => {
-    clearTimeout(serialSearchTimeout);
-    serialSearchResults.value = [];
-    if (!val || val.length < 2) return;
-    serialSearchTimeout = setTimeout(async () => {
+    if (!val) {
+        filteredProducts.value = [];
+        showSuggestions.value = false;
+        return;
+    }
+    showSuggestions.value = true;
+    if (searchTimeout) clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(async () => {
+        isSearchingProduct.value = true;
         try {
-            const res = await axios.get('/api/purchase-orders/search-by-serial', { params: { q: val } });
-            serialSearchResults.value = res.data || [];
-        } catch (e) {
-            serialSearchResults.value = [];
+            const response = await axios.get('/api/products/search', {
+                params: { search: val }
+            });
+            filteredProducts.value = response.data;
+        } catch (error) {
+            console.error("Lỗi tìm kiếm sản phẩm:", error);
+        } finally {
+            isSearchingProduct.value = false;
         }
     }, 300);
 });
@@ -122,7 +115,7 @@ const save = async (saveStatus) => {
             branch_id: props.defaultBranchId,
             supplier_id: selectedSupplierId.value || null,
             expected_date: expectedDate.value || null,
-            order_date: orderDate.value ? new Date(orderDate.value).toISOString() : null,
+            order_date: orderDate.value || null,
             note: note.value,
             discount: discount.value,
             import_fee: importFee.value,
@@ -158,7 +151,13 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                     <input v-model="searchQuery" @focus="showSuggestions = true" @blur="hideSuggestions" type="text" class="w-full pl-9 pr-12 py-[9px] border border-gray-300 text-gray-800 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 bg-white" placeholder="Tìm hàng hóa theo tên, mã, barcode, serial (F3)">
                     
                     <!-- Suggestions Dropdown -->
-                    <div v-if="showSuggestions && filteredProducts.length > 0" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded-sm z-50 max-h-[300px] overflow-auto">
+                    <div v-if="showSuggestions" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded-sm z-50 max-h-[300px] overflow-auto">
+                        <div v-if="isSearchingProduct" class="p-3 text-sm text-gray-500 text-center">
+                            Đang tìm kiếm...
+                        </div>
+                        <div v-else-if="filteredProducts.length === 0 && searchQuery" class="p-3 text-sm text-gray-500 text-center">
+                            Không tìm thấy sản phẩm hợp lệ
+                        </div>
                         <div v-for="product in filteredProducts" :key="product.id" @mousedown.prevent="selectProduct(product)" class="flex items-center gap-3 p-2 border-b border-gray-100 hover:bg-gray-50 cursor-pointer">
                             <img :src="product.image || 'https://ui-avatars.com/api/?name=' + product.name + '&background=random'" class="w-10 h-10 object-cover rounded border border-gray-200">
                             <div class="flex-1">

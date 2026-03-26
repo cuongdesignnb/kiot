@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { Head, Link } from '@inertiajs/vue3';
 import axios from 'axios';
 import QuickCreateCustomerModal from '@/Components/QuickCreateCustomerModal.vue';
@@ -44,6 +44,7 @@ onMounted(() => {
     updateTime();
     timeInterval = setInterval(updateTime, 1000);
     searchProducts();
+    loadDraft();
 });
 onUnmounted(() => {
     clearInterval(timeInterval);
@@ -113,80 +114,114 @@ const onCustomerCreated = (customer) => {
     showCustomerDropdown.value = false;
 };
 
-// ── Serial/IMEI Selection Modal ──
-const showSerialModal = ref(false);
-const serialModalProduct = ref(null);
-const availableSerials = ref([]);
-const selectedSerialIds = ref([]);
-const serialSearch = ref('');
-const serialLoading = ref(false);
-
-const filteredSerials = computed(() => {
-    if (!serialSearch.value) return availableSerials.value;
-    const q = serialSearch.value.toLowerCase();
-    return availableSerials.value.filter(s => s.serial_number.toLowerCase().includes(q));
-});
-
-const isSerialSelected = (id) => selectedSerialIds.value.includes(id);
-
-const toggleSerial = (id) => {
-    const idx = selectedSerialIds.value.indexOf(id);
-    if (idx > -1) {
-        selectedSerialIds.value.splice(idx, 1);
-    } else {
-        selectedSerialIds.value.push(id);
-    }
-};
-
-const toggleAllSerials = () => {
-    if (selectedSerialIds.value.length === filteredSerials.value.length) {
-        selectedSerialIds.value = [];
-    } else {
-        selectedSerialIds.value = filteredSerials.value.map(s => s.id);
-    }
-};
-
-const openSerialModal = async (product) => {
-    serialModalProduct.value = product;
-    selectedSerialIds.value = [];
-    serialSearch.value = '';
-    availableSerials.value = [];
-    showSerialModal.value = true;
-    serialLoading.value = true;
+// ── Inline Serial/IMEI Logic ──
+const loadSerialsForProduct = async (item) => {
+    item.serialLoading = true;
     try {
-        const res = await axios.get(`/api/products/${product.id}/serials`);
-        availableSerials.value = res.data || [];
+        const res = await axios.get(`/api/products/${item.product.id}/serials`);
+        item.allAvailableSerials = res.data || [];
+        searchSerialsForItem(item);
     } catch (e) {
         console.error('Error fetching serials:', e);
     } finally {
-        serialLoading.value = false;
+        item.serialLoading = false;
     }
 };
 
-const confirmSerialSelection = () => {
-    if (!serialModalProduct.value || selectedSerialIds.value.length === 0) return;
-    const product = serialModalProduct.value;
+const searchSerialsForItem = (item, isFocus = false) => {
+    if (!item.allAvailableSerials) return;
+    const q = (item.serialInput || '').toLowerCase().trim();
+    item.availableSerials = item.allAvailableSerials.filter(s => 
+        !item.serials.some(selected => selected.id === s.id) && 
+        s.serial_number.toLowerCase().includes(q)
+    );
+};
 
-    // Each serial = 1 separate line in cart (1 serial = 1 máy)
-    selectedSerialIds.value.forEach(serialId => {
-        // Skip if this serial is already in cart
-        const alreadyInCart = cart.value.some(item => 
-            item.serial_id === serialId
-        );
-        if (alreadyInCart) return;
+const selectSerialForItem = (item, serialObj) => {
+    if (!item.serials.find(s => s.id === serialObj.id)) {
+        item.serials.push(serialObj);
+        item.quantity = item.serials.length;
+    }
+    item.serialInput = '';
+    item.showSerialDropdown = false;
+    searchSerialsForItem(item);
+};
 
-        const serial = availableSerials.value.find(s => s.id === serialId);
-        cart.value.push({
-            product: product,
-            quantity: 1,
-            price: product.retail_price,
-            serial_id: serialId,
-            serial_number: serial?.serial_number || '',
-            is_serial_product: true,
-        });
-    });
+const addSerialToItem = (item) => {
+    const q = (item.serialInput || '').trim().toLowerCase();
+    if (!q) return;
+    
+    // exact match from available
+    const exactMatch = item.availableSerials.find(s => s.serial_number.toLowerCase() === q);
+    if (exactMatch) {
+        selectSerialForItem(item, exactMatch);
+    } else {
+        alert("Serial không hợp lệ hoặc đã được chọn!");
+    }
+};
 
-    showSerialModal.value = false;
+const removeSerialFromItem = (item, idx) => {
+    item.serials.splice(idx, 1);
+    item.quantity = item.serials.length;
+    searchSerialsForItem(item);
+};
+
+const hideSerialDropdown = (item) => {
+    setTimeout(() => { item.showSerialDropdown = false; }, 200);
+};
+
+// ── LocalStorage Draft ──
+const DRAFT_KEY = 'kiotviet_pos_draft';
+
+const saveDraft = () => {
+    const draft = {
+        cart: cart.value,
+        discount: discount.value,
+        customerPaid: customerPaid.value,
+        paymentMethod: paymentMethod.value,
+        bankAccountInfo: bankAccountInfo.value,
+        selectedCustomer: selectedCustomer.value,
+        selectedEmployeeId: selectedEmployeeId.value,
+        saleDate: saleDate.value
+    };
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+};
+
+const loadDraft = () => {
+    try {
+        const raw = localStorage.getItem(DRAFT_KEY);
+        if (raw) {
+            const draft = JSON.parse(raw);
+            if (draft.cart) {
+                cart.value = draft.cart.map(i => {
+                    if (i.is_serial_product) {
+                        return { ...i, showSerialDropdown: false, serialLoading: false, availableSerials: i.allAvailableSerials || [] };
+                    }
+                    return i;
+                });
+            }
+            if (draft.discount !== undefined) discount.value = draft.discount;
+            if (draft.customerPaid !== undefined) customerPaid.value = draft.customerPaid;
+            if (draft.paymentMethod) paymentMethod.value = draft.paymentMethod;
+            if (draft.bankAccountInfo) bankAccountInfo.value = draft.bankAccountInfo;
+            if (draft.selectedCustomer) selectedCustomer.value = draft.selectedCustomer;
+            if (draft.selectedEmployeeId) selectedEmployeeId.value = draft.selectedEmployeeId;
+            if (draft.saleDate) saleDate.value = draft.saleDate;
+            
+            // Reload available serials seamlessly
+            cart.value.forEach(item => {
+                if (item.is_serial_product) {
+                    loadSerialsForProduct(item);
+                }
+            });
+        }
+    } catch(e) {
+        console.warn('Failed to load POS draft', e);
+    }
+};
+
+const clearDraft = () => {
+    localStorage.removeItem(DRAFT_KEY);
 };
 
 // Fetch products based on search query
@@ -196,7 +231,7 @@ const searchProducts = async () => {
         const response = await axios.get('/api/pos/products', {
             params: { search: query.value }
         });
-        products.value = response.data;
+        products.value = response.data || [];
     } catch (error) {
         console.error('Error fetching products:', error);
     } finally {
@@ -221,9 +256,27 @@ const addToCart = (product) => {
         return;
     }
 
-    // If product has serial → open serial picker modal
     if (product.has_serial) {
-        openSerialModal(product);
+        const existingGroup = cart.value.find(item => item.product.id === product.id && item.is_serial_product);
+        if (!existingGroup) {
+            const newItem = {
+                product: product,
+                quantity: 0,
+                price: product.retail_price,
+                is_serial_product: true,
+                serials: [], 
+                serialInput: '',
+                showSerialDropdown: false,
+                allAvailableSerials: [],
+                availableSerials: [],
+                serialLoading: false,
+            };
+            cart.value.unshift(newItem);
+            loadSerialsForProduct(newItem);
+        } else {
+            existingGroup.serialInput = '';
+            existingGroup.showSerialDropdown = true;
+        }
         return;
     }
 
@@ -232,7 +285,7 @@ const addToCart = (product) => {
     if (existingItem) {
         existingItem.quantity += 1;
     } else {
-        cart.value.push({
+        cart.value.unshift({
             product: product,
             quantity: 1,
             price: product.retail_price,
@@ -249,7 +302,6 @@ const removeFromCart = (index) => {
 // Update quantity
 const updateQuantity = (index, delta) => {
     const item = cart.value[index];
-    // Serial product: qty is always 1, cannot change
     if (item.is_serial_product) return;
     const newQty = item.quantity + delta;
     if (newQty > 0) {
@@ -258,6 +310,10 @@ const updateQuantity = (index, delta) => {
         removeFromCart(index);
     }
 };
+
+watch([cart, discount, customerPaid, paymentMethod, bankAccountInfo, selectedCustomer, selectedEmployeeId, saleDate], () => {
+    saveDraft();
+}, { deep: true });
 
 // Computed totals
 const subtotal = computed(() => {
@@ -289,6 +345,13 @@ const processCheckout = async () => {
     isCheckingOut.value = true;
 
     try {
+        const invalidItems = cart.value.filter(i => i.is_serial_product && i.quantity === 0);
+        if (invalidItems.length > 0) {
+            alert("Có sản phẩm quản lý theo Serial/IMEI chưa được chọn mã nào. Vui lòng chọn ít nhất 1 Serial hoặc xóa khỏi đơn.");
+            isCheckingOut.value = false;
+            return;
+        }
+
         const payload = {
             subtotal: subtotal.value,
             discount: discount.value,
@@ -296,14 +359,14 @@ const processCheckout = async () => {
             customer_paid: customerPaid.value,
             customer_id: selectedCustomer.value?.id || null,
             employee_id: selectedEmployeeId.value || null,
-            sale_time: saleDate.value ? new Date(saleDate.value).toISOString() : new Date().toISOString(),
+            sale_time: saleDate.value || null,
             payment_method: paymentMethod.value,
             bank_account_info: paymentMethod.value === 'transfer' ? bankAccountInfo.value : null,
             items: cart.value.map(item => ({
                 product_id: item.product.id,
                 quantity: item.quantity,
                 price: item.price,
-                serial_ids: item.serial_id ? [item.serial_id] : [],
+                serial_ids: item.is_serial_product ? item.serials.map(s => s.id) : [],
             }))
         };
 
@@ -313,6 +376,7 @@ const processCheckout = async () => {
             toastMsg.value = `${response.data.message} - Phiếu ${response.data.invoice_code}`;
             setTimeout(() => toastMsg.value = '', 4000);
 
+            clearDraft();
             cart.value = [];
             discount.value = 0;
             customerPaid.value = 0;
@@ -348,28 +412,30 @@ const processCheckout = async () => {
                     KiotViet POS
                 </div>
                 <!-- Search Bar -->
-                <div class="relative w-96 ml-6 text-gray-800">
+                <div class="relative w-[450px] ml-6 font-sans">
+                    <div class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none">
+                        <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                    </div>
                     <input 
                         v-model="query" 
                         @input="handleSearchInput" 
                         type="text" 
-                        placeholder="Thêm hàng hóa vào đơn (F3)" 
-                        class="w-full pl-10 pr-4 py-1.5 rounded outline-none focus:ring-2 focus:ring-blue-300 text-sm"
+                        placeholder="Nhập mã SP, tên SP hoặc quét Serial/Barcode (F3)" 
+                        class="w-full pl-11 pr-4 py-2.5 bg-gray-50 hover:bg-white focus:bg-white text-gray-900 placeholder-gray-500 rounded-lg shadow-sm outline-none focus:ring-4 focus:ring-blue-300/50 border border-gray-200 focus:border-blue-500 transition-all font-medium text-[15px]"
                     >
-                    <svg class="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                     
                     <!-- Quick Dropdown Search Results -->
-                    <div v-if="query && products.length > 0" class="absolute left-0 right-0 top-full mt-1 bg-white shadow-lg rounded border border-gray-200 p-2 z-50 max-h-60 overflow-y-auto">
-                        <div v-for="product in products" :key="'dd-'+product.id" @click="addToCart(product); query=''" class="flex items-center justify-between p-2 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-0" :class="product.has_serial && product.sellable_quantity <= 0 ? 'opacity-50 cursor-not-allowed' : ''">
-                            <div>
-                                <div class="font-semibold text-sm">{{ product.name }}</div>
-                                <div class="text-xs text-gray-500">
+                    <div v-if="query && products && products.length > 0" class="absolute left-0 right-0 top-full mt-1.5 bg-white shadow-[0_10px_25px_-5px_rgba(0,0,0,0.1),0_8px_10px_-6px_rgba(0,0,0,0.1)] rounded-md border border-gray-200 p-0 z-50 max-h-[350px] overflow-y-auto">
+                        <div v-for="product in products" :key="'dd-'+product.id" @click="addToCart(product); query=''" class="flex items-center justify-between p-3 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-0 transition-colors" :class="product.has_serial && product.sellable_quantity <= 0 ? 'opacity-50 cursor-not-allowed' : ''">
+                            <div class="flex-1 mr-4">
+                                <div class="font-bold text-[14px] text-gray-800">{{ product.name }}</div>
+                                <div class="text-[12px] text-gray-500 mt-0.5">
                                     {{ product.sku }} | Tồn: {{ product.stock_quantity }}
                                     <span v-if="product.repairing_count > 0" class="text-yellow-600 font-semibold">(🔧 {{ product.repairing_count }} đang sửa)</span>
                                     <span v-if="product.has_serial && product.sellable_quantity !== undefined" class="text-green-600 font-semibold ml-1">| Sẵn bán: {{ product.sellable_quantity }}</span>
                                 </div>
                             </div>
-                            <div class="text-blue-600 font-bold text-sm">{{ Number(product.retail_price).toLocaleString() }} &curren;</div>
+                            <div class="text-blue-600 font-bold text-sm">{{ Number(product.retail_price || 0).toLocaleString() }} &curren;</div>
                         </div>
                     </div>
                 </div>
@@ -416,7 +482,7 @@ const processCheckout = async () => {
                 
                 <!-- Cart List -->
                 <div class="flex-1 overflow-y-auto p-2 space-y-2">
-                    <div v-if="cart.length === 0" class="flex flex-col items-center justify-center h-full text-gray-400">
+                    <div v-if="!cart || cart.length === 0" class="flex flex-col items-center justify-center h-full text-gray-400">
                         <svg class="w-16 h-16 mb-2 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
                         <p class="font-medium">Chưa có sản phẩm nào trong đơn</p>
                     </div>
@@ -426,16 +492,42 @@ const processCheckout = async () => {
                         <div class="col-span-4 flex flex-col items-start leading-snug">
                             <span class="font-bold text-gray-800 text-sm overflow-hidden text-ellipsis line-clamp-2 w-full" :title="item.product.name">{{ item.product.name }}</span>
                             <span class="text-xs text-blue-600 font-medium tracking-wide mt-0.5">{{ item.product.sku }}</span>
-                            <!-- Serial number chip -->
-                            <span v-if="item.is_serial_product && item.serial_number" class="inline-block bg-blue-50 text-blue-700 text-[10px] px-2 py-0.5 rounded font-mono mt-1 border border-blue-200">
-                                SN: {{ item.serial_number }}
-                            </span>
+                            
+                            <!-- Inline Serial Selection -->
+                            <div v-if="item.is_serial_product" class="mt-2 w-full">
+                                <div v-if="item.serials && item.serials.length > 0" class="flex flex-wrap gap-1 mb-1.5">
+                                    <span v-for="(s, sIdx) in item.serials" :key="sIdx" class="inline-flex items-center gap-1 bg-blue-50 text-blue-700 text-[11px] px-1.5 py-0.5 rounded font-mono border border-blue-200">
+                                        {{ s.serial_number }}
+                                        <button @click="removeSerialFromItem(item, sIdx)" class="text-blue-400 hover:text-red-500 hover:bg-red-50 rounded pl-0.5 pr-0.5">&times;</button>
+                                    </span>
+                                </div>
+                                <div class="relative w-full z-20">
+                                    <input 
+                                       type="text" 
+                                       v-model="item.serialInput" 
+                                       @keydown.enter.prevent="addSerialToItem(item)"
+                                       placeholder="Nhập/Quét Serial..." 
+                                       class="w-full text-xs border border-gray-300 rounded px-2 py-1 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+                                       @input="searchSerialsForItem(item)"
+                                       @focus="item.showSerialDropdown = true; searchSerialsForItem(item, true)"
+                                       @blur="hideSerialDropdown(item)"
+                                    >
+                                    <div v-if="item.showSerialDropdown" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded z-50 max-h-40 overflow-auto">
+                                        <div v-if="item.serialLoading" class="p-2 text-xs text-gray-400 text-center">Đang tải mã...</div>
+                                        <div v-else-if="!item.availableSerials || item.availableSerials.length === 0" class="p-2 text-xs text-gray-400 text-center">Không còn mã nào</div>
+                                        <div v-else v-for="s in item.availableSerials" :key="s.id" @mousedown.prevent="selectSerialForItem(item, s)" class="p-1.5 text-xs text-gray-700 border-b border-gray-100 hover:bg-blue-50 cursor-pointer font-mono font-medium truncate">
+                                            > {{ s.serial_number }}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div v-if="item.quantity === 0" class="text-[10px] text-red-500 mt-1 font-medium">Vui lòng chọn ít nhất 1 Serial!</div>
+                            </div>
                         </div>
                         
                         <!-- Quantity: hide +/- for serial products -->
                         <div class="col-span-2 flex items-center justify-center">
                             <template v-if="item.is_serial_product">
-                                <span class="text-sm font-bold text-gray-800 bg-gray-100 px-3 py-1 rounded">1</span>
+                                <span class="text-sm font-bold text-gray-800 bg-gray-100 px-3 py-1 rounded" :class="{'text-red-500 bg-red-50 border border-red-200': item.quantity === 0}">{{ item.quantity }}</span>
                             </template>
                             <template v-else>
                                 <div class="flex items-center bg-gray-100/50 rounded-lg p-1 w-fit ring-1 ring-gray-300">
@@ -453,7 +545,7 @@ const processCheckout = async () => {
                             <input type="number" v-model="item.price" class="w-full text-right outline-none bg-transparent border-b border-dashed border-gray-300 focus:border-blue-500 py-1 font-semibold text-gray-700">
                         </div>
                         <div class="col-span-2 text-right font-bold text-gray-900 text-[15px]">
-                            {{ (item.price * item.quantity).toLocaleString() }}
+                            {{ (Number(item.price * item.quantity) || 0).toLocaleString() }}
                         </div>
                         <div class="col-span-1 flex justify-center">
                             <button @click="removeFromCart(index)" class="text-gray-400 hover:text-red-500 hover:bg-red-50 p-2 rounded-full transition-colors">
@@ -468,7 +560,7 @@ const processCheckout = async () => {
                     <div class="font-semibold text-sm px-4 py-2 bg-gray-100/50 border-b border-gray-200 sticky top-0 uppercase tracking-wider text-gray-600">Gợi ý sản phẩm</div>
                     <div class="flex-1 overflow-x-auto p-3 flex gap-3 pb-4">
                         <div 
-                            v-if="products.length === 0" 
+                            v-if="!products || products.length === 0" 
                             class="text-sm text-gray-400 h-full flex items-center justify-center w-full"
                         >
                             <span v-if="isSearching">Đang tải...</span>
@@ -484,7 +576,7 @@ const processCheckout = async () => {
                         >
                             <div class="flex-1 text-sm font-semibold text-gray-800 line-clamp-3 leading-snug group-hover:text-blue-700">{{ product.name }}</div>
                             <div v-if="product.repairing_count > 0" class="text-[10px] text-yellow-600 font-bold mt-1">🔧 {{ product.repairing_count }} sửa</div>
-                            <div class="text-blue-600 font-bold mt-2 font-mono text-sm tracking-tighter">{{ Number(product.retail_price).toLocaleString() }} ₫</div>
+                            <div class="text-blue-600 font-bold mt-2 font-mono text-sm tracking-tighter">{{ Number(product.retail_price || 0).toLocaleString() }} ₫</div>
                         </div>
                     </div>
                 </div>
@@ -502,7 +594,7 @@ const processCheckout = async () => {
                                 <div class="font-bold text-sm text-blue-800 truncate">{{ selectedCustomer.name }}</div>
                                 <div class="text-xs text-blue-600">
                                     {{ selectedCustomer.phone || 'Chưa có SĐT' }}
-                                    <span v-if="selectedCustomer.debt_amount > 0" class="text-red-500 ml-1">| Nợ: {{ Number(selectedCustomer.debt_amount).toLocaleString() }}</span>
+                                    <span v-if="selectedCustomer.debt_amount > 0" class="text-red-500 ml-1">| Nợ: {{ Number(selectedCustomer.debt_amount || 0).toLocaleString() }}</span>
                                 </div>
                             </div>
                         </div>
@@ -518,7 +610,7 @@ const processCheckout = async () => {
                             <input
                                 v-model="customerQuery"
                                 @input="handleCustomerInput"
-                                @focus="customerQuery.length >= 1 && searchCustomers()"
+                                @focus="(customerQuery && customerQuery.length >= 1) && searchCustomers()"
                                 type="text"
                                 placeholder="Tìm khách hàng (tên, SĐT, mã)..."
                                 class="w-full pl-8 py-2 text-sm border-b border-gray-300 focus:border-blue-500 outline-none transition-colors"
@@ -527,7 +619,7 @@ const processCheckout = async () => {
 
                             <!-- Dropdown results -->
                             <div v-if="showCustomerDropdown" class="absolute left-0 right-0 top-full mt-1 bg-white shadow-lg rounded-lg border border-gray-200 z-50 max-h-48 overflow-y-auto">
-                                <div v-if="customerResults.length === 0 && !customerSearching" class="px-3 py-4 text-sm text-gray-400 text-center">
+                                <div v-if="(!customerResults || customerResults.length === 0) && !customerSearching" class="px-3 py-4 text-sm text-gray-400 text-center">
                                     Không tìm thấy khách hàng "{{ customerQuery }}"
                                     <button @click="openNewCustomerModal" class="block mx-auto mt-2 text-blue-600 font-semibold hover:underline text-xs">+ Tạo khách mới</button>
                                 </div>
@@ -538,7 +630,7 @@ const processCheckout = async () => {
                                         <div class="font-semibold text-sm text-gray-800">{{ c.name }}</div>
                                         <div class="text-xs text-gray-500">{{ c.code }} | {{ c.phone || '—' }}</div>
                                     </div>
-                                    <div v-if="c.debt_amount > 0" class="text-xs text-red-500 font-semibold">Nợ: {{ Number(c.debt_amount).toLocaleString() }}</div>
+                                    <div v-if="c.debt_amount > 0" class="text-xs text-red-500 font-semibold">Nợ: {{ Number(c.debt_amount || 0).toLocaleString() }}</div>
                                 </div>
                             </div>
                         </div>
@@ -558,7 +650,7 @@ const processCheckout = async () => {
                 <div class="p-4 space-y-4 text-[15px] flex-1">
                     <div class="flex justify-between items-center text-gray-700 font-medium">
                         <span>Tổng tiền hàng</span>
-                        <span class="font-bold">{{ subtotal.toLocaleString() }}</span>
+                        <span class="font-bold">{{ (subtotal || 0).toLocaleString() }}</span>
                     </div>
                     
                     <div class="flex justify-between items-center text-gray-700 font-medium">
@@ -570,7 +662,7 @@ const processCheckout = async () => {
                     
                     <div class="flex justify-between border-t border-gray-200 pt-3 text-gray-900 font-bold text-lg mt-1">
                         <span>Khách cần trả</span>
-                        <span class="text-blue-700 tracking-tight text-xl">{{ totalAmount.toLocaleString() }}</span>
+                        <span class="text-blue-700 tracking-tight text-xl">{{ (totalAmount || 0).toLocaleString() }}</span>
                     </div>
 
                     <div class="flex justify-between items-center pt-2 text-gray-700 font-medium">
@@ -580,7 +672,7 @@ const processCheckout = async () => {
 
                     <div class="flex justify-between items-center pb-2 text-gray-500 text-sm font-medium">
                         <span>Tiền thừa trả khách</span>
-                        <span>{{ changeDue.toLocaleString() }}</span>
+                        <span>{{ (changeDue || 0).toLocaleString() }}</span>
                     </div>
 
                     <!-- Payment Method -->
@@ -602,7 +694,7 @@ const processCheckout = async () => {
                                     {{ ba.bank_name }} - {{ ba.account_number }} ({{ ba.account_holder }})
                                 </option>
                             </select>
-                            <input v-if="!bankAccounts?.length" type="text" v-model="bankAccountInfo" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm outline-none focus:border-blue-500 mt-1" placeholder="Nhập số tài khoản" />
+                            <input v-if="!bankAccounts || bankAccounts.length === 0" type="text" v-model="bankAccountInfo" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm outline-none focus:border-blue-500 mt-1" placeholder="Nhập số tài khoản" />
                         </div>
                     </div>
                     
@@ -646,79 +738,7 @@ const processCheckout = async () => {
         </main>
     </div>
 
-    <!-- ═══ Serial/IMEI Selection Modal ═══ -->
-    <div v-if="showSerialModal" class="fixed inset-0 z-[100] bg-black/40 flex items-center justify-center font-sans">
-        <div class="bg-white rounded-lg shadow-2xl w-[520px] max-h-[80vh] flex flex-col">
-            <!-- Header -->
-            <div class="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
-                <h3 class="text-lg font-bold text-gray-800">Chọn Serial/IMEI</h3>
-                <button @click="showSerialModal = false" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer">&times;</button>
-            </div>
 
-            <!-- Search -->
-            <div class="px-5 pt-3 pb-2">
-                <div class="relative">
-                    <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-                    <input v-model="serialSearch" type="text" placeholder="Tìm serial/IMEI..." class="w-full pl-9 pr-3 py-2 border border-gray-300 rounded text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-                </div>
-            </div>
-
-            <!-- Serial List -->
-            <div class="flex-1 overflow-auto px-5 py-3 min-h-[200px]">
-                <!-- Loading -->
-                <div v-if="serialLoading" class="flex items-center justify-center h-32 text-gray-400">
-                    <svg class="animate-spin h-6 w-6 text-blue-500 mr-2" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                    Đang tải...
-                </div>
-
-                <!-- No serials -->
-                <div v-else-if="filteredSerials.length === 0" class="flex flex-col items-center justify-center h-32 text-gray-400">
-                    <svg class="w-10 h-10 mb-2 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M12 12h.01M12 12h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                    <span class="text-sm">Không tìm thấy serial nào</span>
-                </div>
-
-                <!-- Serial chips -->
-                <div v-else class="flex flex-wrap gap-2">
-                    <button 
-                        v-for="serial in filteredSerials" 
-                        :key="serial.id"
-                        @click="toggleSerial(serial.id)"
-                        class="px-3 py-1.5 rounded border text-sm font-mono transition-all cursor-pointer"
-                        :class="isSerialSelected(serial.id) 
-                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm' 
-                            : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400 hover:bg-blue-50'"
-                    >
-                        {{ serial.serial_number }}
-                    </button>
-                </div>
-            </div>
-
-            <!-- Footer -->
-            <div class="px-5 py-3 border-t border-gray-200 flex items-center justify-between bg-gray-50/50">
-                <label class="flex items-center gap-2 cursor-pointer text-sm text-gray-600">
-                    <input 
-                        type="checkbox" 
-                        :checked="filteredSerials.length > 0 && selectedSerialIds.length === filteredSerials.length"
-                        @change="toggleAllSerials"
-                        class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
-                    >
-                    Chọn tất cả <span v-if="selectedSerialIds.length > 0" class="text-blue-600 font-bold">({{ selectedSerialIds.length }})</span>
-                </label>
-                <div class="flex gap-2">
-                    <button @click="showSerialModal = false" class="px-5 py-2 border border-gray-300 rounded text-sm font-semibold text-gray-600 hover:bg-gray-100 transition-colors cursor-pointer">
-                        Hủy
-                    </button>
-                    <button 
-                        @click="confirmSerialSelection" 
-                        :disabled="selectedSerialIds.length === 0"
-                        class="px-5 py-2 bg-blue-600 text-white rounded text-sm font-bold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
-                    >
-                        Xong
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
 
     <!-- ═══ Quick Create Customer Modal ═══ -->
     <QuickCreateCustomerModal

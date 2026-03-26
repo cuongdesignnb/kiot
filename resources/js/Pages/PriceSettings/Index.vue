@@ -282,6 +282,11 @@ const isPriceBookModalOpen = ref(false);
 const pbModalTab = ref('info');
 const editingPriceBook = ref(null);
 
+const getLocalIsoTime = (d = new Date()) => {
+    const date = new Date(d);
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+};
+
 const pbForm = ref({
     name: '',
     start_date: '',
@@ -304,8 +309,8 @@ const pbForm = ref({
 const resetPbForm = () => {
     pbForm.value = {
         name: '',
-        start_date: new Date().toISOString().slice(0, 16),
-        end_date: new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 16),
+        start_date: getLocalIsoTime(),
+        end_date: getLocalIsoTime(Date.now() + 365 * 86400000),
         status: 'active',
         formula_base: '',
         formula_operator: '+',

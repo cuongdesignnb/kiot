@@ -92,6 +92,7 @@ class PosController extends Controller
             \Illuminate\Support\Facades\DB::beginTransaction();
 
             $customer = $validated['customer_id'] ? \App\Models\Customer::find($validated['customer_id']) : null;
+            $employee = !empty($validated['employee_id']) ? \App\Models\Employee::find($validated['employee_id']) : null;
 
             $invoice = \App\Models\Invoice::create([
                 'code' => 'HD' . time() . rand(10, 99),
@@ -100,10 +101,11 @@ class PosController extends Controller
                 'total' => $validated['total'],
                 'customer_paid' => $validated['customer_paid'],
                 'customer_id' => $customer?->id,
-                'employee_id' => $validated['employee_id'] ?? null,
+                'created_by' => $employee?->id,
+                'seller_name' => $employee?->name,
                 'sale_time' => $validated['sale_time'] ?? now(),
                 'payment_method' => $validated['payment_method'] ?? 'cash',
-                'bank_account_info' => ($validated['payment_method'] ?? 'cash') === 'transfer' ? ($validated['bank_account_info'] ?? null) : null,
+                'note' => ($validated['payment_method'] ?? 'cash') === 'transfer' && !empty($validated['bank_account_info']) ? 'Chuyển khoản: ' . $validated['bank_account_info'] : null,
             ]);
 
             // Cho phép chọn ngày bán (kế toán nhập sau)
@@ -160,20 +162,23 @@ class PosController extends Controller
                 $customer->increment('total_spent', $validated['total']);
             }
 
-            // Record into Cash Flow as a receipt
-            \App\Models\CashFlow::create([
-                'code' => 'PT' . time() . rand(10, 99),
-                'type' => 'receipt',
-                'amount' => $validated['customer_paid'] > 0 ? $validated['customer_paid'] : $validated['total'],
-                'time' => now(),
-                'category' => 'Thu tiền khách trả',
-                'target_type' => 'Khách hàng',
-                'target_id' => $customer?->id,
-                'target_name' => $customerName,
-                'reference_type' => 'Invoice',
-                'reference_code' => $invoice->code,
-                'description' => 'Thu tiền hóa đơn ' . $invoice->code . ($customer ? " - {$customer->name}" : ''),
-            ]);
+            // Record into Cash Flow as a receipt ONLY if customer pays something
+            if ($validated['customer_paid'] > 0) {
+                \App\Models\CashFlow::create([
+                    'code' => 'PT' . time() . rand(10, 99),
+                    'type' => 'receipt',
+                    'amount' => $validated['customer_paid'],
+                    'time' => now(),
+                    'category' => 'Thu tiền khách trả',
+                    'target_type' => 'Khách hàng',
+                    'target_id' => $customer?->id,
+                    'target_name' => $customerName,
+                    'reference_type' => 'Invoice',
+                    'reference_code' => $invoice->code,
+                    'payment_method' => $validated['payment_method'] ?? 'cash',
+                    'description' => 'Thu tiền hóa đơn ' . $invoice->code . ($customer ? " - {$customer->name}" : '') . (($validated['payment_method'] ?? 'cash') === 'transfer' && !empty($validated['bank_account_info']) ? ' - CK: ' . $validated['bank_account_info'] : ''),
+                ]);
+            }
 
             \Illuminate\Support\Facades\DB::commit();
             return response()->json(['success' => true, 'invoice_code' => $invoice->code, 'message' => 'Thanh toán thành công!']);

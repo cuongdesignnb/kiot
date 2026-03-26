@@ -155,7 +155,37 @@ const editForm = useForm({
     customer_group: "", note: "", type: "individual",
     invoice_name: "", tax_code: "", invoice_address: "",
     is_supplier: false,
+    supplier_linking_mode: 'create_new',
+    linked_supplier_id: null,
 });
+
+// State for supplier search dropdown
+const supplierSearchQuery = ref("");
+const supplierSearchResults = ref([]);
+const showSupplierDropdown = ref(false);
+const selectedSupplierName = ref("");
+
+const searchSuppliers = async () => {
+    if (!supplierSearchQuery.value || supplierSearchQuery.value.trim().length < 1) {
+        supplierSearchResults.value = [];
+        showSupplierDropdown.value = false;
+        return;
+    }
+    try {
+        const { data } = await axios.get('/api/suppliers/search', { params: { search: supplierSearchQuery.value } });
+        supplierSearchResults.value = data;
+        showSupplierDropdown.value = true;
+    } catch (e) {
+        console.error(e);
+    }
+};
+
+const selectSupplierForLinking = (supplier, targetForm) => {
+    targetForm.linked_supplier_id = supplier.id;
+    supplierSearchQuery.value = supplier.name + (supplier.phone ? ' - ' + supplier.phone : '');
+    selectedSupplierName.value = supplier.name;
+    showSupplierDropdown.value = false;
+};
 
 const openEditModal = (customer) => {
     editingCustomer.value = customer;
@@ -180,7 +210,10 @@ const openEditModal = (customer) => {
         invoice_name: customer.invoice_name || '',
         invoice_address: customer.invoice_address || '',
         is_supplier: Boolean(customer.is_supplier),
+        supplier_linking_mode: 'create_new',
+        linked_supplier_id: null,
     });
+    supplierSearchQuery.value = "";
     showEditModal.value = true;
 };
 
@@ -276,7 +309,15 @@ const form = useForm({
     bank_account: "",
 
     is_supplier: false,
+    supplier_linking_mode: 'create_new',
+    linked_supplier_id: null,
 });
+
+const openCreateModal = () => {
+    form.reset();
+    supplierSearchQuery.value = "";
+    showCreateModal.value = true;
+};
 
 const submit = () => {
     form.post("/customers", {
@@ -590,7 +631,7 @@ const submit = () => {
 
                 <div class="flex gap-2 ml-2">
                     <button
-                        @click="showCreateModal = true"
+                        @click="openCreateModal"
                         class="bg-white text-blue-600 border border-blue-600 px-3 py-1.5 text-sm font-medium rounded flex items-center gap-1 hover:bg-blue-50 transition"
                     >
                         <svg
@@ -2313,22 +2354,43 @@ const submit = () => {
                         </div>
 
                         <!-- Switch Supplier -->
-                        <div
-                            class="bg-gray-50 border border-gray-200 rounded px-4 py-4 flex items-center justify-between"
-                        >
-                            <div>
-                                <h3 class="font-bold text-[14px] text-gray-800">
-                                    Khách hàng là nhà cung cấp
-                                </h3>
-                                <p class="text-[12px] text-gray-500 mt-0.5">
-                                    Công nợ của khách hàng và nhà cung cấp sẽ
-                                    được gộp với nhau
-                                </p>
+                        <div class="bg-gray-50 border border-gray-200 rounded px-4 py-4 mb-4 flex flex-col gap-3">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h3 class="font-bold text-[14px] text-gray-800">
+                                        Khách hàng là nhà cung cấp
+                                    </h3>
+                                    <p class="text-[12px] text-gray-500 mt-0.5">
+                                        Công nợ của khách hàng và nhà cung cấp sẽ được gộp với nhau
+                                    </p>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" v-model="form.is_supplier" class="sr-only peer" />
+                                    <div class="w-11 h-6 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                </label>
                             </div>
-                            <label
-                                class="relative inline-flex items-center cursor-pointer"
-                            >
-                                <input
+                            
+                            <div v-if="form.is_supplier" class="pt-3 border-t border-gray-200 flex flex-col gap-2">
+                                <label class="flex items-center gap-2 cursor-pointer">
+                                    <input type="radio" v-model="form.supplier_linking_mode" value="create_new" class="text-blue-600 w-4 h-4">
+                                    <span class="text-[13px] text-gray-700 font-medium">Tạo mới nhà cung cấp với thông tin này</span>
+                                </label>
+                                <label class="flex items-center gap-2 cursor-pointer">
+                                    <input type="radio" v-model="form.supplier_linking_mode" value="link_existing" class="text-blue-600 w-4 h-4">
+                                    <span class="text-[13px] text-gray-700 font-medium">Gán vào nhà cung cấp đã có (Sẽ ghi đè thông tin cũ)</span>
+                                </label>
+                                
+                                <div v-if="form.supplier_linking_mode === 'link_existing'" class="ml-6 mt-1 relative">
+                                    <input type="text" v-model="supplierSearchQuery" @input="searchSuppliers" placeholder="Tìm tên nhà cung cấp..." class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm outline-none focus:border-blue-500" />
+                                    <div v-if="showSupplierDropdown && supplierSearchResults.length > 0" class="absolute z-10 bg-white border border-gray-200 mt-1 shadow-md w-full max-h-40 overflow-auto rounded">
+                                        <div v-for="sup in supplierSearchResults" :key="sup.id" @mousedown.prevent="selectSupplierForLinking(sup, form)" class="p-2 text-[13px] text-gray-800 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-0 hover:text-blue-600">
+                                            <div class="font-bold">{{ sup.name }}</div>
+                                            <div class="text-[12px] text-gray-500">{{ sup.phone || 'Chưa có SĐT' }}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>t
                                     type="checkbox"
                                     v-model="form.is_supplier"
                                     class="sr-only peer"
@@ -2462,19 +2524,42 @@ const submit = () => {
                         </details>
 
                         <!-- Switch Supplier -->
-                        <div class="bg-gray-50 border border-gray-200 rounded px-4 py-4 mt-4 flex items-center justify-between">
-                            <div>
-                                <h3 class="font-bold text-[14px] text-gray-800">
-                                    Khách hàng là nhà cung cấp
-                                </h3>
-                                <p class="text-[12px] text-gray-500 mt-0.5">
-                                    Công nợ của khách hàng và nhà cung cấp sẽ được gộp với nhau
-                                </p>
+                        <div class="bg-gray-50 border border-gray-200 rounded px-4 py-4 mt-4 flex flex-col gap-3">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h3 class="font-bold text-[14px] text-gray-800">
+                                        Khách hàng là nhà cung cấp
+                                    </h3>
+                                    <p class="text-[12px] text-gray-500 mt-0.5">
+                                        Công nợ của khách hàng và nhà cung cấp sẽ được gộp với nhau
+                                    </p>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" v-model="editForm.is_supplier" class="sr-only peer" />
+                                    <div class="w-11 h-6 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                </label>
                             </div>
-                            <label class="relative inline-flex items-center cursor-pointer">
-                                <input type="checkbox" v-model="editForm.is_supplier" class="sr-only peer" />
-                                <div class="w-11 h-6 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                            </label>
+
+                            <div v-if="editForm.is_supplier" class="pt-3 border-t border-gray-200 flex flex-col gap-2">
+                                <label class="flex items-center gap-2 cursor-pointer">
+                                    <input type="radio" v-model="editForm.supplier_linking_mode" value="create_new" class="text-blue-600 w-4 h-4">
+                                    <span class="text-[13px] text-gray-700 font-medium">Lưu thông tin hiện tại (Giữ nguyên)</span>
+                                </label>
+                                <label class="flex items-center gap-2 cursor-pointer">
+                                    <input type="radio" v-model="editForm.supplier_linking_mode" value="link_existing" class="text-blue-600 w-4 h-4">
+                                    <span class="text-[13px] text-gray-700 font-medium">Gán vào một nhà cung cấp đã có (Gộp công nợ)</span>
+                                </label>
+                                
+                                <div v-if="editForm.supplier_linking_mode === 'link_existing'" class="ml-6 mt-1 relative">
+                                    <input type="text" v-model="supplierSearchQuery" @input="searchSuppliers" placeholder="Tìm tên nhà cung cấp..." class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm outline-none focus:border-blue-500" />
+                                    <div v-if="showSupplierDropdown && supplierSearchResults.length > 0" class="absolute z-10 bg-white border border-gray-200 mt-1 shadow-md w-full max-h-40 overflow-auto rounded">
+                                        <div v-for="sup in supplierSearchResults" :key="sup.id" @mousedown.prevent="selectSupplierForLinking(sup, editForm)" class="p-2 text-[13px] text-gray-800 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-0 hover:text-blue-600">
+                                            <div class="font-bold">{{ sup.name }}</div>
+                                            <div class="text-[12px] text-gray-500">{{ sup.phone || 'Chưa có SĐT' }}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </form>
                 </div>

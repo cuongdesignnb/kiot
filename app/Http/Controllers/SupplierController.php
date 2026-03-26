@@ -104,6 +104,17 @@ class SupplierController extends Controller
 
     public function store(Request $request)
     {
+        if ($request->filled('link_existing_id')) {
+            $customer = Customer::find($request->input('link_existing_id'));
+            if ($customer) {
+                $customer->update(['is_supplier' => true]);
+                if ($request->wantsJson()) {
+                    return response()->json(['supplier' => $customer]);
+                }
+                return redirect()->route('suppliers.index')->with('success', 'Đã liên kết nhà cung cấp thành công.');
+            }
+        }
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'code' => 'nullable|string|max:255|unique:customers,code',
@@ -123,7 +134,11 @@ class SupplierController extends Controller
         // If the toggle 'is_customer' is false, it means they are only a supplier.
         $validated['is_customer'] = $request->input('is_customer', false);
 
-        Customer::create($validated);
+        $customer = Customer::create($validated);
+
+        if ($request->wantsJson()) {
+            return response()->json(['supplier' => $customer]);
+        }
 
         return redirect()->route('suppliers.index')->with('success', 'Tạo nhà cung cấp thành công.');
     }
@@ -202,6 +217,23 @@ class SupplierController extends Controller
     }
 
     // ===== API METHODS =====
+
+    public function apiSearch(Request $request)
+    {
+        $search = $request->input('search');
+        $suppliers = Customer::where('is_supplier', true)
+            ->when($search, function($q) use ($search) {
+                $q->where(function($query) use ($search) {
+                    $query->where('name', 'like', "%{$search}%")
+                          ->orWhere('code', 'like', "%{$search}%")
+                          ->orWhere('phone', 'like', "%{$search}%");
+                });
+            })
+            ->take(20)
+            ->get(['id', 'name', 'phone']);
+            
+        return response()->json($suppliers);
+    }
 
     /**
      * Lịch sử nhập/trả hàng

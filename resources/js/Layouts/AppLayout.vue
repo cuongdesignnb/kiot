@@ -395,9 +395,44 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                         class="px-3 py-2 hover:bg-[#005bb5] rounded"
                         :class="{ 'bg-[#005bb5]': $page.url.startsWith('/my-tasks') }"
                     >Việc của tôi</Link>
-                    <Link href="#" class="px-3 py-2 hover:bg-[#005bb5] rounded"
-                        >Phân tích</Link
-                    >
+                    <div class="relative group">
+                        <button
+                            class="px-3 py-2 hover:bg-[#005bb5] rounded flex items-center gap-1"
+                            :class="{
+                                'bg-[#005bb5]': $page.url.startsWith('/reports'),
+                            }"
+                        >
+                            Phân tích
+                        </button>
+                        <div
+                            class="absolute right-0 mt-0 bg-white rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 pt-1 border border-gray-100"
+                            style="min-width: 420px;"
+                        >
+                            <div class="bg-white rounded py-2 flex">
+                                <!-- Column 1: Phân tích -->
+                                <div class="flex-1 border-r border-gray-100 px-2">
+                                    <div class="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider">Phân tích</div>
+                                    <Link href="/reports/business" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Kinh doanh</Link>
+                                    <Link href="/reports/products" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Hàng hóa</Link>
+                                    <Link href="/reports/customers" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Khách hàng</Link>
+                                    <Link href="/reports/customer-debt" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Hiệu quả</Link>
+                                </div>
+                                <!-- Column 2: Báo cáo -->
+                                <div class="flex-1 px-2">
+                                    <div class="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider">Báo cáo</div>
+                                    <Link href="/reports/end-of-day" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Cuối ngày</Link>
+                                    <Link href="/reports/sales" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Bán hàng</Link>
+                                    <Link href="/reports/orders" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Đặt hàng</Link>
+                                    <Link href="/reports/products-report" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Hàng hóa</Link>
+                                    <Link href="/reports/customers-report" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Khách hàng</Link>
+                                    <Link href="/reports/suppliers-report" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Nhà cung cấp</Link>
+                                    <Link href="/reports/employees-report" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Nhân viên</Link>
+                                    <Link href="#" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Kênh bán hàng</Link>
+                                    <Link href="/reports/financial-report" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Tài chính</Link>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </nav>
             </div>
 
