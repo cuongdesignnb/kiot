@@ -141,7 +141,7 @@ class SalesReportController extends Controller
 
         $revenue = (clone $invoiceQuery)
             ->select(
-                DB::raw("strftime('{$format}', created_at) as period"),
+                DB::raw("DATE_FORMAT(created_at, '{$format}') as period"),
                 DB::raw('COALESCE(SUM(total), 0) as total'),
                 DB::raw('COALESCE(SUM(discount), 0) as discount_sum')
             )
@@ -150,7 +150,7 @@ class SalesReportController extends Controller
 
         $returns = (clone $returnsQuery)
             ->select(
-                DB::raw("strftime('{$format}', created_at) as period"),
+                DB::raw("DATE_FORMAT(created_at, '{$format}') as period"),
                 DB::raw('COALESCE(SUM(total), 0) as total')
             )
             ->groupBy('period')
@@ -193,7 +193,7 @@ class SalesReportController extends Controller
         // Revenue per period
         $revenue = (clone $invoiceQuery)
             ->select(
-                DB::raw("strftime('{$format}', created_at) as period"),
+                DB::raw("DATE_FORMAT(created_at, '{$format}') as period"),
                 DB::raw('COALESCE(SUM(total), 0) as total')
             )
             ->groupBy('period')
@@ -205,7 +205,7 @@ class SalesReportController extends Controller
             ->join('invoices', 'invoice_items.invoice_id', '=', 'invoices.id')
             ->join('products', 'invoice_items.product_id', '=', 'products.id')
             ->select(
-                DB::raw("strftime('{$format}', invoices.created_at) as period"),
+                DB::raw("DATE_FORMAT(invoices.created_at, '{$format}') as period"),
                 DB::raw('COALESCE(SUM(invoice_items.quantity * products.cost_price), 0) as total_cost')
             )
             ->groupBy('period')
@@ -244,7 +244,7 @@ class SalesReportController extends Controller
 
         $discounts = (clone $invoiceQuery)
             ->select(
-                DB::raw("strftime('{$format}', created_at) as period"),
+                DB::raw("DATE_FORMAT(created_at, '{$format}') as period"),
                 DB::raw('COALESCE(SUM(discount), 0) as total_discount')
             )
             ->groupBy('period')
@@ -281,7 +281,7 @@ class SalesReportController extends Controller
 
         $returnsData = (clone $returnsQuery)
             ->select(
-                DB::raw("strftime('{$format}', created_at) as period"),
+                DB::raw("DATE_FORMAT(created_at, '{$format}') as period"),
                 DB::raw('COALESCE(SUM(total), 0) as total_return')
             )
             ->groupBy('period')

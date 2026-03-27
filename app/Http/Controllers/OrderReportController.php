@@ -170,7 +170,7 @@ class OrderReportController extends Controller
 
         $orders = (clone $orderQuery)
             ->select(
-                DB::raw("strftime('{$format}', created_at) as period"),
+                DB::raw("DATE_FORMAT(created_at, '{$format}') as period"),
                 DB::raw('COUNT(*) as order_count'),
                 DB::raw('COALESCE(SUM(total_payment), 0) as total_value')
             )
@@ -179,7 +179,7 @@ class OrderReportController extends Controller
 
         $orderCounts = (clone $orderQuery)
             ->select(
-                DB::raw("strftime('{$format}', created_at) as period"),
+                DB::raw("DATE_FORMAT(created_at, '{$format}') as period"),
                 DB::raw('COUNT(*) as order_count')
             )
             ->groupBy('period')
