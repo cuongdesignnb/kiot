@@ -123,10 +123,12 @@ class InvoiceController extends Controller
         ]);
 
         foreach ($validated['items'] as $item) {
+            $product = \App\Models\Product::find($item['product_id']);
             $invoice->items()->create([
                 'product_id' => $item['product_id'],
                 'quantity' => $item['quantity'],
                 'price' => $item['price'],
+                'cost_price' => (float) ($product->cost_price ?? 0),
                 'discount' => $item['discount'] ?? 0,
                 'subtotal' => ($item['price'] * $item['quantity']) - ($item['discount'] ?? 0),
                 'note' => $item['note'] ?? null,

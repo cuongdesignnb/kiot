@@ -203,10 +203,9 @@ class SalesReportController extends Controller
         $invoiceIds = (clone $invoiceQuery)->pluck('id');
         $costs = InvoiceItem::whereIn('invoice_id', $invoiceIds)
             ->join('invoices', 'invoice_items.invoice_id', '=', 'invoices.id')
-            ->join('products', 'invoice_items.product_id', '=', 'products.id')
             ->select(
                 DB::raw("DATE_FORMAT(invoices.created_at, '{$format}') as period"),
-                DB::raw('COALESCE(SUM(invoice_items.quantity * products.cost_price), 0) as total_cost')
+                DB::raw('COALESCE(SUM(invoice_items.quantity * invoice_items.cost_price), 0) as total_cost')
             )
             ->groupBy('period')
             ->pluck('total_cost', 'period');

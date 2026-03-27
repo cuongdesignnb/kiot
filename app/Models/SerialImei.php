@@ -8,6 +8,7 @@ class SerialImei extends Model
 {
     protected $fillable = [
         'product_id',
+        'variant_id',
         'serial_number',
         'status',
         'purchase_id',
@@ -44,6 +45,11 @@ class SerialImei extends Model
     public function product()
     {
         return $this->belongsTo(Product::class);
+    }
+
+    public function variant()
+    {
+        return $this->belongsTo(ProductVariant::class, 'variant_id');
     }
 
     public function deviceRepairs()

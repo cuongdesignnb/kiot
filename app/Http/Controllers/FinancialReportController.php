@@ -47,12 +47,11 @@ class FinancialReportController extends Controller
         if ($branchId) $invoiceQ->where('branch_id', $branchId);
         $totalSales = (float) (clone $invoiceQ)->sum('total');
 
-        // (2) Cost of Goods Sold (COGS)
+        // (2) Cost of Goods Sold (COGS) - use snapshot cost_price from invoice_items
         $invoiceIds = (clone $invoiceQ)->pluck('id');
         $cogs = (float) DB::table('invoice_items')
-            ->join('products', 'invoice_items.product_id', '=', 'products.id')
-            ->whereIn('invoice_items.invoice_id', $invoiceIds)
-            ->sum(DB::raw('invoice_items.quantity * products.cost_price'));
+            ->whereIn('invoice_id', $invoiceIds)
+            ->sum(DB::raw('quantity * cost_price'));
 
         // (3) Sales Returns
         $returnsQ = OrderReturn::whereBetween('created_at', [$startDate, $endDate])
@@ -74,7 +73,8 @@ class FinancialReportController extends Controller
         $expenseQ = CashFlow::where('type', 'payment')
             ->where(function ($q) use ($timeColumn, $startDate, $endDate) {
                 $q->whereBetween($timeColumn, [$startDate, $endDate]);
-            });
+            })
+            ->where('category', '!=', 'Chi tiền trả NCC'); // Exclude NCC payments (already in COGS)
 
         // Breakdown expenses by category
         $expensesByCategory = (clone $expenseQ)

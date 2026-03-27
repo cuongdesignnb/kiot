@@ -81,10 +81,10 @@ class ReportController extends Controller
         $costQuery = InvoiceItem::whereHas('invoice', function ($q) use ($dateFrom, $dateTo, $branchId) {
             $q->whereBetween('created_at', [$dateFrom, $dateTo]);
             if ($branchId) $q->where('branch_id', $branchId);
-        })->with('product:id,cost_price');
+        })->with('product:id');
         $totalCost = 0;
         foreach ($costQuery->get() as $item) {
-            $totalCost += $item->quantity * ($item->product->cost_price ?? 0);
+            $totalCost += $item->quantity * ($item->cost_price ?? 0);
         }
         $grossProfit = $netRevenue - $totalCost;
 
@@ -102,10 +102,10 @@ class ReportController extends Controller
         $prevCostQuery = InvoiceItem::whereHas('invoice', function ($q) use ($prevFrom, $prevTo, $branchId) {
             $q->whereBetween('created_at', [$prevFrom, $prevTo]);
             if ($branchId) $q->where('branch_id', $branchId);
-        })->with('product:id,cost_price');
+        })->with('product:id');
         $prevTotalCost = 0;
         foreach ($prevCostQuery->get() as $item) {
-            $prevTotalCost += $item->quantity * ($item->product->cost_price ?? 0);
+            $prevTotalCost += $item->quantity * ($item->cost_price ?? 0);
         }
         $prevGrossProfit = $prevNetRevenue - $prevTotalCost;
 
@@ -136,10 +136,10 @@ class ReportController extends Controller
             $dayCostItems = InvoiceItem::whereHas('invoice', function ($q) use ($dayStart, $dayEnd, $branchId) {
                 $q->whereBetween('created_at', [$dayStart, $dayEnd]);
                 if ($branchId) $q->where('branch_id', $branchId);
-            })->with('product:id,cost_price')->get();
+            })->get();
             $dayCost = 0;
             foreach ($dayCostItems as $item) {
-                $dayCost += $item->quantity * ($item->product->cost_price ?? 0);
+                $dayCost += $item->quantity * ($item->cost_price ?? 0);
             }
             $chartCost[] = $dayCost;
             $chartProfit[] = ($dayRev - $dayRet) - $dayCost;
@@ -213,21 +213,23 @@ class ReportController extends Controller
         $costItems = InvoiceItem::whereHas('invoice', function ($q) use ($dateFrom, $dateTo, $branchId) {
             $q->whereBetween('created_at', [$dateFrom, $dateTo]);
             if ($branchId) $q->where('branch_id', $branchId);
-        })->with('product:id,cost_price')->get();
+        })->get();
         $cogs = 0;
         foreach ($costItems as $item) {
-            $cogs += $item->quantity * ($item->product->cost_price ?? 0);
+            $cogs += $item->quantity * ($item->cost_price ?? 0);
         }
         $grossProfit = $netRevenue - $cogs;
 
-        // Operating expenses from CashFlow (type = 'payment')
+        // Operating expenses from CashFlow (type = 'payment'), excluding NCC payments (already in COGS)
         $expenseQuery = CashFlow::where('type', 'payment')
-            ->whereBetween('created_at', [$dateFrom, $dateTo]);
+            ->whereBetween('created_at', [$dateFrom, $dateTo])
+            ->where('category', '!=', 'Chi tiền trả NCC');
         $totalExpenses = (float) $expenseQuery->sum('amount');
 
         // Expense breakdown by category
         $expenseCategories = CashFlow::where('type', 'payment')
             ->whereBetween('created_at', [$dateFrom, $dateTo])
+            ->where('category', '!=', 'Chi tiền trả NCC')
             ->select('category', DB::raw('SUM(amount) as total'))
             ->groupBy('category')
             ->orderByDesc('total')
@@ -246,9 +248,10 @@ class ReportController extends Controller
 
         $netProfit = $netRevenue - $cogs - $totalExpenses + $otherIncome;
 
-        // Previous period expenses
+        // Previous period expenses (also excluding NCC payments)
         $prevExpenses = (float) CashFlow::where('type', 'payment')
             ->whereBetween('created_at', [$prevFrom, $prevTo])
+            ->where('category', '!=', 'Chi tiền trả NCC')
             ->sum('amount');
 
         $expensePerDay = round($totalExpenses / $days);
@@ -298,13 +301,13 @@ class ReportController extends Controller
         $soldItems = InvoiceItem::whereHas('invoice', function ($q) use ($dateFrom, $dateTo, $branchId) {
             $q->whereBetween('created_at', [$dateFrom, $dateTo]);
             if ($branchId) $q->where('branch_id', $branchId);
-        })->with('product:id,cost_price,category_id');
+        })->with('product:id,category_id');
 
         $soldData = $soldItems->get();
         $uniqueProductsSold = $soldData->pluck('product_id')->unique()->count();
         $totalItemsSold = $soldData->sum('quantity');
         $totalSoldRevenue = $soldData->sum(fn($i) => $i->quantity * $i->price);
-        $totalSoldCost = $soldData->sum(fn($i) => $i->quantity * ($i->product->cost_price ?? 0));
+        $totalSoldCost = $soldData->sum(fn($i) => $i->quantity * ($i->cost_price ?? 0));
         $avgRevenuePerProduct = $uniqueProductsSold > 0 ? round($totalSoldRevenue / $uniqueProductsSold) : 0;
         $avgProfitPerProduct = $uniqueProductsSold > 0 ? round(($totalSoldRevenue - $totalSoldCost) / $uniqueProductsSold) : 0;
 
@@ -760,10 +763,10 @@ class ReportController extends Controller
                 $q->where('customer_id', $customer->id)
                     ->whereBetween('created_at', [$dateFrom, $dateTo]);
                 if ($branchId) $q->where('branch_id', $branchId);
-            })->with('product:id,cost_price')->get();
+            })->get();
 
             foreach ($costItems as $item) {
-                $custCost += $item->quantity * ($item->product->cost_price ?? 0);
+                $custCost += $item->quantity * ($item->cost_price ?? 0);
             }
             $segments[$segment]['profit'] += ($custRevenue - $custReturns - $custCost);
         }

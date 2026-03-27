@@ -160,6 +160,8 @@ const selectProduct = (product) => {
             sku: product.sku,
             name: product.name,
             has_serial: !!product.has_serial,
+            has_variants: !!product.has_variants,
+            variants: product.variants || [],
             quantity: product.has_serial ? 0 : 1,
             price: product.cost_price || 0,
             retail_price: product.retail_price || 0,
@@ -168,6 +170,7 @@ const selectProduct = (product) => {
             stock_quantity: product.stock_quantity || 0,
             serials: [],
             serialInput: '',
+            serialVariantId: null,
             showSerialArea: !!product.has_serial,
             warranty_months: 0,
         });
@@ -189,11 +192,14 @@ const removeItem = (index) => {
 const addSerial = (item) => {
     const val = item.serialInput?.trim();
     if (!val) return;
-    if (item.serials.includes(val)) {
+    if (item.serials.find(s => s.serial_number === val)) {
         alert('Serial/IMEI "' + val + '" đã tồn tại trong danh sách!');
         return;
     }
-    item.serials.push(val);
+    item.serials.push({
+        serial_number: val,
+        variant_id: item.serialVariantId || null,
+    });
     item.quantity = item.serials.length;
     item.serialInput = '';
 };
@@ -201,6 +207,12 @@ const addSerial = (item) => {
 const removeSerial = (item, index) => {
     item.serials.splice(index, 1);
     item.quantity = item.serials.length;
+};
+
+const getVariantName = (item, variantId) => {
+    if (!variantId || !item.variants) return '';
+    const v = item.variants.find(v => v.id == variantId);
+    return v ? v.name : '';
 };
 
 const getItemTotal = (item) => {
@@ -268,7 +280,10 @@ const save = async () => {
                 retail_price: item.retail_price || 0,
                 technician_price: item.technician_price || 0,
                 discount: item.discount,
-                serials: item.serials || [],
+                serials: (item.serials || []).map(s => ({
+                    serial_number: s.serial_number || s,
+                    variant_id: s.variant_id || null,
+                })),
                 warranty_months: item.warranty_months || 0,
             }))
         });
@@ -490,20 +505,27 @@ const saveQuickProduct = async () => {
                             <!-- Serial/IMEI input row -->
                             <tr v-if="item.has_serial" class="bg-gray-50/50">
                                 <td :colspan="9 + (showRetailPrice ? 1 : 0) + (showTechnicianPrice ? 1 : 0)" class="px-6 py-2">
-                                    <div class="flex items-center gap-2 mb-2">
+                                    <div class="flex items-center gap-2 mb-2 flex-wrap">
                                         <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path></svg>
                                         <input
                                             v-model="item.serialInput"
                                             @keydown.enter.prevent="addSerial(item)"
                                             type="text"
-                                            class="flex-1 max-w-[300px] border border-gray-300 rounded px-2.5 py-1.5 text-[13px] outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
+                                            class="flex-1 max-w-[280px] border border-gray-300 rounded px-2.5 py-1.5 text-[13px] outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
                                             placeholder="Nhập số Serial/IMEI rồi nhấn Enter"
                                         >
+                                        <select v-if="item.has_variants && item.variants && item.variants.length > 0"
+                                            v-model="item.serialVariantId"
+                                            class="max-w-[220px] border border-gray-300 rounded px-2 py-1.5 text-[12px] outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 bg-white">
+                                            <option :value="null">-- Chọn biến thể --</option>
+                                            <option v-for="v in item.variants" :key="v.id" :value="v.id">{{ v.name }}</option>
+                                        </select>
                                         <button @click="addSerial(item)" class="text-green-600 hover:text-green-700 text-[12px] font-medium px-2 py-1 border border-green-300 rounded hover:bg-green-50">Thêm</button>
                                     </div>
                                     <div v-if="item.serials.length > 0" class="flex flex-wrap gap-1.5">
                                         <span v-for="(s, si) in item.serials" :key="si" class="inline-flex items-center gap-1 bg-blue-50 border border-blue-200 text-blue-700 text-[12px] font-medium px-2 py-0.5 rounded">
-                                            {{ s }}
+                                            {{ s.serial_number }}
+                                            <span v-if="s.variant_id && item.variants" class="text-purple-600 text-[11px] font-normal">({{ getVariantName(item, s.variant_id) }})</span>
                                             <button @click="removeSerial(item, si)" class="text-blue-400 hover:text-red-500 ml-0.5">&times;</button>
                                         </span>
                                     </div>

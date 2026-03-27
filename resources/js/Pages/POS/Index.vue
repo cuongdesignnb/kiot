@@ -166,6 +166,25 @@ const removeSerialFromItem = (item, idx) => {
     searchSerialsForItem(item);
 };
 
+const selectAllSerialsForItem = (item) => {
+    if (!item.availableSerials) return;
+    item.availableSerials.forEach(s => {
+        if (!item.serials.find(sel => sel.id === s.id)) {
+            item.serials.push(s);
+        }
+    });
+    item.quantity = item.serials.length;
+    item.serialInput = '';
+    item.showSerialDropdown = false;
+    searchSerialsForItem(item);
+};
+
+const deselectAllSerialsForItem = (item) => {
+    item.serials = [];
+    item.quantity = 0;
+    searchSerialsForItem(item);
+};
+
 const hideSerialDropdown = (item) => {
     setTimeout(() => { item.showSerialDropdown = false; }, 200);
 };
@@ -495,29 +514,41 @@ const processCheckout = async () => {
                             
                             <!-- Inline Serial Selection -->
                             <div v-if="item.is_serial_product" class="mt-2 w-full">
-                                <div v-if="item.serials && item.serials.length > 0" class="flex flex-wrap gap-1 mb-1.5">
+                                <div v-if="item.serials && item.serials.length > 0" class="flex flex-wrap gap-1 mb-1.5 items-center">
                                     <span v-for="(s, sIdx) in item.serials" :key="sIdx" class="inline-flex items-center gap-1 bg-blue-50 text-blue-700 text-[11px] px-1.5 py-0.5 rounded font-mono border border-blue-200">
                                         {{ s.serial_number }}
+                                        <span v-if="s.variant" class="text-purple-600 text-[10px] font-sans font-normal">({{ s.variant.name }})</span>
                                         <button @click="removeSerialFromItem(item, sIdx)" class="text-blue-400 hover:text-red-500 hover:bg-red-50 rounded pl-0.5 pr-0.5">&times;</button>
                                     </span>
+                                    <button v-if="item.serials.length > 1" @mousedown.prevent="deselectAllSerialsForItem(item)" class="text-[10px] text-red-500 hover:text-red-700 font-medium px-1.5 py-0.5 rounded border border-red-200 hover:bg-red-50 transition-colors" title="Bỏ chọn tất cả">✕ Bỏ hết</button>
                                 </div>
                                 <div class="relative w-full z-20">
-                                    <input 
-                                       type="text" 
-                                       v-model="item.serialInput" 
-                                       @keydown.enter.prevent="addSerialToItem(item)"
-                                       placeholder="Nhập/Quét Serial..." 
-                                       class="w-full text-xs border border-gray-300 rounded px-2 py-1 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-                                       @input="searchSerialsForItem(item)"
-                                       @focus="item.showSerialDropdown = true; searchSerialsForItem(item, true)"
-                                       @blur="hideSerialDropdown(item)"
-                                    >
+                                    <div class="flex items-center gap-1">
+                                        <input 
+                                           type="text" 
+                                           v-model="item.serialInput" 
+                                           @keydown.enter.prevent="addSerialToItem(item)"
+                                           placeholder="Nhập/Quét Serial..." 
+                                           class="flex-1 text-xs border border-gray-300 rounded px-2 py-1 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+                                           @input="searchSerialsForItem(item)"
+                                           @focus="item.showSerialDropdown = true; searchSerialsForItem(item, true)"
+                                           @blur="hideSerialDropdown(item)"
+                                        >
+                                        <button v-if="item.allAvailableSerials && item.allAvailableSerials.length > 0 && item.serials.length < item.allAvailableSerials.length" @mousedown.prevent="selectAllSerialsForItem(item)" class="text-[11px] text-green-600 hover:text-green-700 font-semibold px-2 py-1 rounded border border-green-300 hover:bg-green-50 transition-colors whitespace-nowrap" title="Chọn tất cả serial có sẵn">✓ Tất cả</button>
+                                    </div>
                                     <div v-if="item.showSerialDropdown" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded z-50 max-h-40 overflow-auto">
                                         <div v-if="item.serialLoading" class="p-2 text-xs text-gray-400 text-center">Đang tải mã...</div>
                                         <div v-else-if="!item.availableSerials || item.availableSerials.length === 0" class="p-2 text-xs text-gray-400 text-center">Không còn mã nào</div>
-                                        <div v-else v-for="s in item.availableSerials" :key="s.id" @mousedown.prevent="selectSerialForItem(item, s)" class="p-1.5 text-xs text-gray-700 border-b border-gray-100 hover:bg-blue-50 cursor-pointer font-mono font-medium truncate">
-                                            > {{ s.serial_number }}
-                                        </div>
+                                        <template v-else>
+                                            <div @mousedown.prevent="selectAllSerialsForItem(item)" class="p-1.5 text-xs text-green-700 border-b-2 border-green-100 hover:bg-green-50 cursor-pointer font-semibold flex items-center gap-1 sticky top-0 bg-white">
+                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                                Chọn tất cả ({{ item.availableSerials.length }})
+                                            </div>
+                                            <div v-for="s in item.availableSerials" :key="s.id" @mousedown.prevent="selectSerialForItem(item, s)" class="p-1.5 text-xs text-gray-700 border-b border-gray-100 hover:bg-blue-50 cursor-pointer font-mono font-medium truncate flex items-center justify-between">
+                                                <span>> {{ s.serial_number }}</span>
+                                                <span v-if="s.variant" class="text-purple-500 text-[10px] font-sans ml-2">{{ s.variant.name }}</span>
+                                            </div>
+                                        </template>
                                     </div>
                                 </div>
                                 <div v-if="item.quantity === 0" class="text-[10px] text-red-500 mt-1 font-medium">Vui lòng chọn ít nhất 1 Serial!</div>

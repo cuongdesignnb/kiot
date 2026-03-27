@@ -63,8 +63,9 @@ class PosController extends Controller
                 $q->whereNull('repair_status')
                   ->orWhereNotIn('repair_status', ['not_started', 'repairing']);
             })
+            ->with('variant:id,name,sku,cost_price,retail_price')
             ->orderBy('serial_number')
-            ->get(['id', 'serial_number', 'status', 'warranty_expires_at']);
+            ->get(['id', 'serial_number', 'status', 'variant_id', 'cost_price', 'warranty_expires_at']);
 
         return response()->json($serials);
     }
@@ -116,27 +117,33 @@ class PosController extends Controller
             foreach ($validated['items'] as $item) {
                 $serialIds = $item['serial_ids'] ?? [];
 
-                // Create Item
-                $invoiceItem = $invoice->items()->create([
-                    'product_id' => $item['product_id'],
-                    'quantity' => $item['quantity'],
-                    'price' => $item['price'],
-                ]);
-
-                // Deduct stock
+                // Deduct stock & resolve product
                 $product = Product::lockForUpdate()->find($item['product_id']);
                 if ($product) {
                     $allowOversell = \App\Models\Setting::get('inventory_allow_oversell', false);
                     if (!$allowOversell && $product->stock_quantity < $item['quantity']) {
                         throw new \Exception("Sản phẩm [{$product->sku}] {$product->name} không đủ tồn kho (Còn: {$product->stock_quantity})");
                     }
-
                     $product->stock_quantity -= $item['quantity'];
                     $product->save();
                 }
 
-                // Mark selected serials as sold
+                // --- Snapshot cost_price at sale time ---
+                // For serial products: use average cost_price of the specific sold serials
+                // (These serials may have been repaired/upgraded, so cost differs from product average)
+                $snapshotCostPrice = 0;
                 if (!empty($serialIds) && $product && $product->has_serial) {
+                    $soldSerials = \App\Models\SerialImei::whereIn('id', $serialIds)
+                        ->where('product_id', $product->id)
+                        ->get(['id', 'serial_number', 'cost_price']);
+
+                    // Average cost_price of selected serials (fallback to product.cost_price if 0)
+                    $totalCost = $soldSerials->sum(fn($s) => (float) ($s->cost_price ?: $product->cost_price ?? 0));
+                    $snapshotCostPrice = $soldSerials->count() > 0
+                        ? round($totalCost / $soldSerials->count(), 2)
+                        : ($product->cost_price ?? 0);
+
+                    // Mark serials as sold
                     \App\Models\SerialImei::whereIn('id', $serialIds)
                         ->where('product_id', $product->id)
                         ->update([
@@ -146,9 +153,22 @@ class PosController extends Controller
                         ]);
 
                     // Store serial numbers in invoice item for reference
-                    $serialNumbers = \App\Models\SerialImei::whereIn('id', $serialIds)->pluck('serial_number');
-                    $invoiceItem->update(['serial' => $serialNumbers->implode(', ')]);
+                    $serialNumbers = $soldSerials->pluck('serial_number');
+                    $serialStr = $serialNumbers->implode(', ');
+                } else {
+                    // Regular product: use product.cost_price
+                    $snapshotCostPrice = (float) ($product->cost_price ?? 0);
+                    $serialStr = null;
                 }
+
+                // Create Item with cost_price snapshot
+                $invoiceItem = $invoice->items()->create([
+                    'product_id' => $item['product_id'],
+                    'quantity'   => $item['quantity'],
+                    'price'      => $item['price'],
+                    'cost_price' => $snapshotCostPrice,
+                    'serial'     => $serialStr,
+                ]);
             }
 
             // Customer debt tracking

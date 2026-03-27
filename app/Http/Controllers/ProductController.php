@@ -45,7 +45,7 @@ class ProductController extends Controller
             $query->limit(20);
         }
 
-        $products = $query->get();
+        $products = $query->with('variants')->get();
         $priceBookId = $request->input('price_book_id');
         $priceBookName = 'Bảng giá chung';
         $bookPriceByProductId = collect();

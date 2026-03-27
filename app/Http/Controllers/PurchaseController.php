@@ -284,12 +284,24 @@ class PurchaseController extends Controller
 
                     // Create Serial/IMEI records for products with serial tracking
                     if ($product->has_serial && !empty($item['serials'])) {
-                        foreach ($item['serials'] as $serialNumber) {
+                        foreach ($item['serials'] as $serialEntry) {
+                            // Support both plain string and object { serial_number, variant_id }
+                            if (is_array($serialEntry)) {
+                                $serialNumber = trim($serialEntry['serial_number'] ?? '');
+                                $variantId = $serialEntry['variant_id'] ?? null;
+                            } else {
+                                $serialNumber = trim($serialEntry);
+                                $variantId = null;
+                            }
+                            if (!$serialNumber) continue;
+
                             SerialImei::create([
                                 'product_id' => $product->id,
-                                'serial_number' => trim($serialNumber),
+                                'variant_id' => $variantId,
+                                'serial_number' => $serialNumber,
                                 'status' => 'in_stock',
                                 'purchase_id' => $purchase->id,
+                                'cost_price' => $item['price'] ?? $product->cost_price ?? 0,
                             ]);
                         }
                     }
