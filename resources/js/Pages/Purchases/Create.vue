@@ -307,6 +307,21 @@ const onCurrencyBlur = (obj, field, event) => {
 
 // === Quick Create Product Modal ===
 const showQuickProductModal = ref(false);
+
+// Flatten categories with children into hierarchical list for select
+const flattenedCategories = computed(() => {
+    const result = [];
+    for (const cat of (props.categories || [])) {
+        result.push({ id: cat.id, name: cat.name, level: 0 });
+        for (const child of (cat.children || [])) {
+            result.push({ id: child.id, name: child.name, level: 1 });
+            for (const grandchild of (child.children || [])) {
+                result.push({ id: grandchild.id, name: grandchild.name, level: 2 });
+            }
+        }
+    }
+    return result;
+});
 const quickProductForm = ref({
     name: '',
     sku: '',
@@ -749,7 +764,11 @@ const saveQuickProduct = async () => {
                             <label class="block text-[13px] font-semibold text-gray-700 mb-1">Nhóm hàng</label>
                             <select v-model="quickProductForm.category_id" class="w-full border border-gray-300 rounded px-3 py-2 text-[13px] outline-none focus:border-green-500">
                                 <option value="">-- Chọn nhóm --</option>
-                                <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
+                                <template v-for="cat in flattenedCategories" :key="cat.id">
+                                    <option :value="cat.id" :class="cat.level === 1 ? 'pl-4' : cat.level === 2 ? 'pl-8' : ''">
+                                        {{ cat.level === 1 ? '\u00a0\u00a0\u251c\u00a0' : cat.level === 2 ? '\u00a0\u00a0\u00a0\u00a0\u2514\u00a0' : '' }}{{ cat.name }}
+                                    </option>
+                                </template>
                             </select>
                         </div>
                         <!-- Thương hiệu -->
