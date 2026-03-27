@@ -222,7 +222,8 @@ const totalOtherCosts = computed(() => {
     return isNaN(sum) ? 0 : sum;
 });
 const totalPayment = computed(() => {
-    const payment = Math.max(0, totalAmount.value - Number(discount.value || 0) + totalOtherCosts.value);
+    // Supplier debt = goods total - discount ONLY (ship/other costs excluded)
+    const payment = Math.max(0, totalAmount.value - Number(discount.value || 0));
     return isNaN(payment) ? 0 : payment;
 });
 
@@ -640,6 +641,15 @@ const saveQuickProduct = async () => {
                             <div class="flex justify-between items-center text-[13px]">
                                 <label class="text-gray-700 font-medium text-gray-500">Tính vào công nợ</label>
                                  <div class="w-[150px] text-right font-bold text-gray-500 tracking-wide">{{ formatCurrency(debtAmount) }}</div>
+                            </div>
+
+                            <!-- Chi phí phụ (ship) ghi nhận riêng -->
+                            <div v-if="totalOtherCosts > 0" class="flex justify-between items-center text-[13px] pt-1 border-t border-dashed border-gray-200 mt-1">
+                                <label class="text-gray-500 italic flex items-center gap-1">
+                                    <svg class="w-3.5 h-3.5 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                    Chi phí khác (tạo phiếu chi riêng)
+                                </label>
+                                <div class="w-[150px] text-right font-medium text-orange-600">{{ formatCurrency(totalOtherCosts) }}</div>
                             </div>
 
                             <!-- Payment Method -->

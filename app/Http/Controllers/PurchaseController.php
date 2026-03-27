@@ -196,25 +196,27 @@ class PurchaseController extends Controller
             $discount = $request->discount ?? 0;
             $otherCosts = $request->other_costs ?? [];
             $otherCostsTotal = collect($otherCosts)->sum('amount');
-            $pay_amount = $total_amount - $discount + $otherCostsTotal; // Total to pay
+
+            // Supplier debt = goods total - discount only (ship cost excluded)
+            $pay_amount = $total_amount - $discount;
             $paid_amount = $request->paid_amount ?? 0;
-            $debt_amount = $pay_amount - $paid_amount; // Current debt for this order
+            $debt_amount = $pay_amount - $paid_amount;
 
             $purchase = Purchase::create([
-                'code' => $request->code ?? 'PN' . time(),
-                'supplier_id' => $request->supplier_id,
-                'user_id' => auth()->id(),
-                'employee_id' => $request->employee_id,
-                'total_amount' => $total_amount,
-                'discount' => $discount,
-                'paid_amount' => $paid_amount,
-                'debt_amount' => $debt_amount,
-                'note' => $request->note,
-                'status' => $request->status ?? 'completed',
-                'purchase_date' => $request->purchase_date ?? now(),
-                'payment_method' => $request->payment_method ?? 'cash',
+                'code'              => $request->code ?? 'PN' . time(),
+                'supplier_id'       => $request->supplier_id,
+                'user_id'           => auth()->id(),
+                'employee_id'       => $request->employee_id,
+                'total_amount'      => $total_amount,
+                'discount'          => $discount,
+                'paid_amount'       => $paid_amount,
+                'debt_amount'       => $debt_amount,
+                'note'              => $request->note,
+                'status'            => $request->status ?? 'completed',
+                'purchase_date'     => $request->purchase_date ?? now(),
+                'payment_method'    => $request->payment_method ?? 'cash',
                 'bank_account_info' => $request->bank_account_info,
-                'other_costs' => !empty($otherCosts) ? json_encode($otherCosts) : null,
+                'other_costs'       => !empty($otherCosts) ? json_encode($otherCosts) : null,
                 'other_costs_total' => $otherCostsTotal,
             ]);
 
@@ -295,7 +297,7 @@ class PurchaseController extends Controller
             }
 
             if ($purchase->status === 'completed') {
-                // Update Supplier Debt & Total Bought
+                // Update Supplier Debt & Total Bought (ship cost excluded)
                 $supplier = Customer::find($request->supplier_id);
                 if ($supplier) {
                     $supplier->supplier_debt_amount += $debt_amount;
@@ -303,20 +305,38 @@ class PurchaseController extends Controller
                     $supplier->save();
                 }
 
-                // Create Cash Flow if paid > 0 (Chi tiền trả NCC)
+                // Cash flow: payment to supplier (tiền hàng only)
                 if ($paid_amount > 0) {
                     CashFlow::create([
-                        'code' => 'PC' . date('YmdHis'),
-                        'type' => 'payment', // chi
-                        'amount' => $paid_amount,
-                        'time' => now(),
-                        'category' => 'Chi tiền trả NCC',
-                        'target_type' => 'Nhà cung cấp',
-                        'target_name' => $supplier->name ?? 'Nhà cung cấp',
+                        'code'           => 'PC' . date('YmdHis'),
+                        'type'           => 'payment',
+                        'amount'         => $paid_amount,
+                        'time'           => now(),
+                        'category'       => 'Chi tiền trả NCC',
+                        'target_type'    => 'Nhà cung cấp',
+                        'target_name'    => $supplier->name ?? 'Nhà cung cấp',
                         'reference_type' => 'Purchase',
                         'reference_code' => $purchase->code,
-                        'description' => 'Chi tiền trả NCC cho phiếu ' . $purchase->code
+                        'description'    => 'Chi tiền trả NCC cho phiếu ' . $purchase->code,
                     ]);
+                }
+
+                // Cash flow: separate expense for each other_cost (e.g. shipping)
+                foreach ($otherCosts as $cost) {
+                    if (($cost['amount'] ?? 0) > 0) {
+                        CashFlow::create([
+                            'code'           => 'PC' . date('YmdHis') . rand(10, 99),
+                            'type'           => 'payment',
+                            'amount'         => $cost['amount'],
+                            'time'           => now(),
+                            'category'       => 'Chi phí khác',
+                            'target_type'    => 'Chi phí',
+                            'target_name'    => $cost['name'] ?? 'Chi phí khác',
+                            'reference_type' => 'Purchase',
+                            'reference_code' => $purchase->code,
+                            'description'    => ($cost['name'] ?? 'Chi phí') . ' cho phiếu ' . $purchase->code,
+                        ]);
+                    }
                 }
             }
 
@@ -502,7 +522,9 @@ class PurchaseController extends Controller
                 $discount = $request->discount ?? 0;
                 $otherCosts = $request->other_costs ?? [];
                 $otherCostsTotal = collect($otherCosts)->sum('amount');
-                $pay_amount = $total_amount - $discount + $otherCostsTotal;
+
+                // Supplier debt excludes ship/other costs
+                $pay_amount = $total_amount - $discount;
                 $paidAmount = $request->paid_amount ?? 0;
                 $debtAmount = $pay_amount - $paidAmount;
 
@@ -590,7 +612,7 @@ class PurchaseController extends Controller
                     }
                 }
 
-                // 6. Re-apply supplier debt/total_bought
+                // 6. Re-apply supplier debt/total_bought (ship excluded)
                 if ($purchase->status === 'completed') {
                     $supplier = Customer::find($request->supplier_id ?? $purchase->supplier_id);
                     if ($supplier) {
@@ -599,21 +621,39 @@ class PurchaseController extends Controller
                         $supplier->save();
                     }
 
-                    // Create cash flow for payment difference
+                    // Cash flow for additional payment to supplier
                     $additionalPayment = $paidAmount - $oldPaidAmount;
                     if ($additionalPayment > 0) {
                         CashFlow::create([
-                            'code' => 'PC' . date('YmdHis') . rand(10,99),
-                            'type' => 'payment',
-                            'amount' => $additionalPayment,
-                            'time' => now(),
-                            'category' => 'Chi tiền trả NCC',
-                            'target_type' => 'Nhà cung cấp',
-                            'target_name' => $supplier->name ?? 'Nhà cung cấp',
+                            'code'           => 'PC' . date('YmdHis') . rand(10, 99),
+                            'type'           => 'payment',
+                            'amount'         => $additionalPayment,
+                            'time'           => now(),
+                            'category'       => 'Chi tiền trả NCC',
+                            'target_type'    => 'Nhà cung cấp',
+                            'target_name'    => $supplier->name ?? 'Nhà cung cấp',
                             'reference_type' => 'Purchase',
                             'reference_code' => $purchase->code,
-                            'description' => 'Trả thêm tiền NCC cho phiếu ' . $purchase->code,
+                            'description'    => 'Trả thêm tiền NCC cho phiếu ' . $purchase->code,
                         ]);
+                    }
+
+                    // Cash flow: separate expense for each other_cost
+                    foreach ($otherCosts as $cost) {
+                        if (($cost['amount'] ?? 0) > 0) {
+                            CashFlow::create([
+                                'code'           => 'PC' . date('YmdHis') . rand(100, 999),
+                                'type'           => 'payment',
+                                'amount'         => $cost['amount'],
+                                'time'           => now(),
+                                'category'       => 'Chi phí khác',
+                                'target_type'    => 'Chi phí',
+                                'target_name'    => $cost['name'] ?? 'Chi phí khác',
+                                'reference_type' => 'Purchase',
+                                'reference_code' => $purchase->code,
+                                'description'    => ($cost['name'] ?? 'Chi phí') . ' cho phiếu ' . $purchase->code,
+                            ]);
+                        }
                     }
                 }
             } else {
