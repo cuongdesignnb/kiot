@@ -46,10 +46,12 @@ class DashboardController extends Controller
         $totalProductCount = Product::count();
 
         // Lợi nhuận gộp tháng này = Doanh thu - Giá vốn - Tổng chi phí
-        // 1) Giá vốn hàng bán (COGS) - dùng snapshot cost_price trên invoice_items
-        $thisMonthCost = InvoiceItem::whereHas('invoice', function ($q) use ($startOfMonth) {
-            $q->where('created_at', '>=', $startOfMonth);
-        })->selectRaw('COALESCE(SUM(quantity * cost_price), 0) as total_cost')->value('total_cost') ?? 0;
+        // 1) Giá vốn hàng bán (COGS) - dùng snapshot cost_price nếu có, fallback sang products.cost_price
+        $invoiceIdsThisMonth = Invoice::where('created_at', '>=', $startOfMonth)->pluck('id');
+        $thisMonthCost = (float) DB::table('invoice_items')
+            ->join('products', 'invoice_items.product_id', '=', 'products.id')
+            ->whereIn('invoice_items.invoice_id', $invoiceIdsThisMonth)
+            ->sum(DB::raw('invoice_items.quantity * COALESCE(invoice_items.cost_price, products.cost_price, 0)'));
 
         // 2) Tổng chi phí (phiếu chi) tháng này - trừ các khoản trả NCC (đã tính vào giá vốn)
         $thisMonthExpenses = CashFlow::where('type', 'payment')
@@ -172,23 +174,26 @@ class DashboardController extends Controller
         $topProductsByRevenue = InvoiceItem::select(
                 'product_id',
                 DB::raw('SUM(quantity) as total_qty'),
-                DB::raw('SUM(quantity * price) as total_revenue'),
-                DB::raw('SUM(quantity * cost_price) as total_cost')
+                DB::raw('SUM(quantity * price) as total_revenue')
             )
             ->whereHas('invoice', fn($q) => $q->where('created_at', '>=', $startOfMonth))
             ->groupBy('product_id')
             ->orderByDesc('total_revenue')
             ->limit(10)
-            ->with('product:id,name,sku')
+            ->with('product:id,name,sku,cost_price')
             ->get()
-            ->map(fn($item) => [
-                'name' => $item->product->name ?? 'N/A',
-                'sku' => $item->product->sku ?? '',
-                'qty' => (int) $item->total_qty,
-                'revenue' => (float) $item->total_revenue,
-                'cost' => (float) $item->total_cost,
-                'profit' => (float) ($item->total_revenue - $item->total_cost),
-            ]);
+            ->map(function ($item) {
+                $costPrice = $item->product->cost_price ?? 0;
+                $totalCost = $costPrice * $item->total_qty;
+                return [
+                    'name' => $item->product->name ?? 'N/A',
+                    'sku' => $item->product->sku ?? '',
+                    'qty' => (int) $item->total_qty,
+                    'revenue' => (float) $item->total_revenue,
+                    'cost' => (float) $totalCost,
+                    'profit' => (float) ($item->total_revenue - $totalCost),
+                ];
+            });
 
         // ═══════════════════════════════════════
         // 9. TOP SẢN PHẨM THEO LỢI NHUẬN
@@ -196,20 +201,23 @@ class DashboardController extends Controller
         $allProductSales = InvoiceItem::select(
                 'product_id',
                 DB::raw('SUM(quantity) as total_qty'),
-                DB::raw('SUM(quantity * price) as total_revenue'),
-                DB::raw('SUM(quantity * cost_price) as total_cost')
+                DB::raw('SUM(quantity * price) as total_revenue')
             )
             ->whereHas('invoice', fn($q) => $q->where('created_at', '>=', $startOfMonth))
             ->groupBy('product_id')
-            ->with('product:id,name,sku')
+            ->with('product:id,name,sku,cost_price')
             ->get()
-            ->map(fn($item) => [
-                'name' => $item->product->name ?? 'N/A',
-                'sku' => $item->product->sku ?? '',
-                'qty' => (int) $item->total_qty,
-                'revenue' => (float) $item->total_revenue,
-                'profit' => (float) ($item->total_revenue - $item->total_cost),
-            ])
+            ->map(function ($item) {
+                $costPrice = $item->product->cost_price ?? 0;
+                $totalCost = $costPrice * $item->total_qty;
+                return [
+                    'name' => $item->product->name ?? 'N/A',
+                    'sku' => $item->product->sku ?? '',
+                    'qty' => (int) $item->total_qty,
+                    'revenue' => (float) $item->total_revenue,
+                    'profit' => (float) ($item->total_revenue - $totalCost),
+                ];
+            })
             ->sortByDesc('profit')
             ->take(10)
             ->values();
