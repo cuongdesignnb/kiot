@@ -101,7 +101,7 @@ class FinancialReportController extends Controller
             ->where(function ($q) use ($timeColumn, $startDate, $endDate) {
                 $q->whereBetween($timeColumn, [$startDate, $endDate]);
             })
-            ->whereNotIn('category', ['Thu tiền khách trả', 'Chuyển/Rút', '']);
+            ->whereNotIn('category', ['Thu tiền khách trả', 'Thu nợ khách hàng', 'Điều chỉnh công nợ', 'Chuyển/Rút', '']);
 
         $otherIncomeByCategory = (clone $otherIncomeQ)
             ->select('category', DB::raw('SUM(amount) as total'))

@@ -110,6 +110,7 @@ class DashboardController extends Controller
 
             $cashFlowChart['labels'][] = 'Tuần ' . $w;
             $cashFlowChart['receipts'][] = (float) CashFlow::where('type', 'receipt')
+                ->whereNotIn('category', ['Thu nợ khách hàng', 'Điều chỉnh công nợ'])
                 ->whereBetween('created_at', [$weekStart, $weekEnd])->sum('amount');
             $cashFlowChart['payments'][] = (float) CashFlow::where('type', 'payment')
                 ->whereBetween('created_at', [$weekStart, $weekEnd])->sum('amount');
