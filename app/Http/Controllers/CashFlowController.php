@@ -15,9 +15,13 @@ class CashFlowController extends Controller
 
         // Lấy danh sách phiếu thu/chi có phân trang
         $cashFlows = CashFlow::when($search, function ($query, $search) {
-            return $query->where('code', 'LIKE', "%{$search}%")
-                ->orWhere('description', 'LIKE', "%{$search}%")
-                ->orWhere('reference_code', 'LIKE', "%{$search}%");
+            return $query->where(function ($q) use ($search) {
+                $q->where('code', 'LIKE', "%{$search}%")
+                    ->orWhere('description', 'LIKE', "%{$search}%")
+                    ->orWhere('reference_code', 'LIKE', "%{$search}%")
+                    ->orWhere('target_name', 'LIKE', "%{$search}%")
+                    ->orWhere('category', 'LIKE', "%{$search}%");
+            });
         })
             ->when($request->filled('sort_by'), function ($query) use ($request) {
                 $allowed = ['code', 'time', 'type', 'amount', 'target_name', 'category', 'created_at'];
