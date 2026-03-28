@@ -52,7 +52,7 @@ class FinancialReportController extends Controller
         $cogs = (float) DB::table('invoice_items')
             ->join('products', 'invoice_items.product_id', '=', 'products.id')
             ->whereIn('invoice_items.invoice_id', $invoiceIds)
-            ->sum(DB::raw('invoice_items.quantity * COALESCE(invoice_items.cost_price, products.cost_price, 0)'));
+            ->sum(DB::raw('invoice_items.quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0)'));
 
         // (3) Sales Returns
         $returnsQ = OrderReturn::whereBetween('created_at', [$startDate, $endDate])
