@@ -78,6 +78,7 @@ class OrderController extends Controller
                 ->orderBy('name')
                 ->get(['id', 'name']),
             'invoice' => $invoice,
+            'action' => $request->input('action', 'edit'),
             'confirmBeforeComplete' => Setting::get('order_confirm_before_complete', false),
             'allowOutOfStock' => Setting::get('order_allow_when_out_of_stock', true),
         ]);

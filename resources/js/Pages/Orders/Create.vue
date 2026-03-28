@@ -9,6 +9,7 @@ const props = defineProps({
     branches: Array,
     priceBooks: Array,
     invoice: Object,
+    action: { type: String, default: 'edit' },
 });
 
 // Date helper
@@ -418,6 +419,32 @@ const selectInvoiceForReturn = (invoice) => {
     showReturnModal.value = false;
 };
 
+const selectInvoiceForEdit = (invoice) => {
+    activeTab.value.selectedCustomer = invoice.customer;
+    activeTab.value.searchCustomer = invoice.customer?.name || '';
+    activeTab.value.name = `Sửa HĐ ${invoice.code}`;
+    activeTab.value.status = 'draft';
+    activeTab.value.invoice_id = invoice.id;
+    activeTab.value.selectedPriceBookId = null;
+    activeTab.value.selectedPriceBookName = invoice.price_book_name || 'Bảng giá chung';
+    activeTab.value.discount = invoice.discount || 0;
+    activeTab.value.amountPaid = invoice.customer_paid || 0;
+    activeTab.value.note = invoice.note || '';
+    activeTab.value.receiverName = invoice.customer?.name || '';
+    activeTab.value.receiverPhone = invoice.customer?.phone || '';
+    activeTab.value.receiverAddress = invoice.customer?.address || '';
+    activeTab.value.items = (invoice.items || []).map(item => ({
+        product_id: item.product_id,
+        sku: item.product?.sku || '',
+        name: item.product?.name || 'Sản phẩm',
+        qty: item.quantity,
+        price: item.price, 
+        discount: item.discount || 0,
+        stock_quantity: item.product?.stock_quantity || 0,
+        subtotal: (item.quantity * item.price) - (item.discount || 0)
+    }));
+};
+
 const saveAndPrint = async () => {
     if (activeTab.value.items.length === 0) {
         alert("Vui lòng chọn ít nhất 1 hàng hóa.");
@@ -483,12 +510,18 @@ const handleKeydown = (e) => {
 onMounted(() => {
     window.addEventListener('keydown', handleKeydown);
     const params = new URLSearchParams(window.location.search);
-    if (params.get('action') === 'return' && !props.invoice) {
+    const action = params.get('action') || props.action || 'edit';
+
+    if (action === 'return' && !props.invoice) {
+        // No invoice pre-loaded, show modal to select one
         showReturnModal.value = true;
         fetchReturnInvoices();
-    }
-    if (props.invoice) {
-        selectInvoiceForReturn(props.invoice);
+    } else if (props.invoice) {
+        if (action === 'return') {
+            selectInvoiceForReturn(props.invoice);
+        } else {
+            selectInvoiceForEdit(props.invoice);
+        }
     }
 });
 

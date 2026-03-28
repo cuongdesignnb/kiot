@@ -17,6 +17,28 @@ const props = defineProps({
 const search = ref(props.filters?.search || "");
 const sortBy = ref(props.filters?.sort_by || "");
 const sortDirection = ref(props.filters?.sort_direction || "");
+const categoryFilter = ref(props.filters?.category_id || "");
+const brandFilter = ref(props.filters?.brand_id || "");
+const statusFilter = ref(props.filters?.status || "");
+const stockFilter = ref(props.filters?.stock_filter || "");
+const typeFilter = ref(props.filters?.type || "");
+
+const buildFilterParams = () => {
+    const params = {};
+    if (search.value) params.search = search.value;
+    if (sortBy.value) params.sort_by = sortBy.value;
+    if (sortDirection.value) params.sort_direction = sortDirection.value;
+    if (categoryFilter.value) params.category_id = categoryFilter.value;
+    if (brandFilter.value) params.brand_id = brandFilter.value;
+    if (statusFilter.value) params.status = statusFilter.value;
+    if (stockFilter.value) params.stock_filter = stockFilter.value;
+    if (typeFilter.value) params.type = typeFilter.value;
+    return params;
+};
+
+const applyFilters = () => {
+    router.get("/products", buildFilterParams(), { preserveState: true, replace: true });
+};
 
 // Bulk selection state
 const selectedProductIds = ref([]);
@@ -144,24 +166,22 @@ const handleSort = (field, direction) => {
     sortDirection.value = direction;
     router.get(
         "/products",
-        { search: search.value, sort_by: field, sort_direction: direction },
+        buildFilterParams(),
         { preserveState: true, replace: true },
     );
 };
 
 let searchTimeout;
-watch(search, (value) => {
+watch(search, () => {
     clearTimeout(searchTimeout);
     searchTimeout = setTimeout(() => {
-        router.get(
-            "/products",
-            { search: value, sort_by: sortBy.value, sort_direction: sortDirection.value },
-            {
-                preserveState: true,
-                replace: true,
-            },
-        );
+        applyFilters();
     }, 500);
+});
+
+// Watch sidebar filters to apply immediately
+watch([categoryFilter, brandFilter, statusFilter, stockFilter, typeFilter], () => {
+    applyFilters();
 });
 
 const dropdownOpen = ref(false);
@@ -292,63 +312,90 @@ const formatDate = (val) => {
                 <h3 class="font-bold text-gray-700">Bộ lọc tìm kiếm</h3>
             </div>
             <div class="p-4 space-y-6">
+                <!-- Nhóm hàng -->
                 <div>
-                    <label
-                        class="block text-sm font-semibold text-gray-700 mb-2"
-                        >Nhóm hàng</label
-                    >
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">Nhóm hàng</label>
                     <select
+                        v-model="categoryFilter"
                         class="w-full border border-gray-300 rounded p-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none bg-white"
                     >
                         <option value="">Tất cả nhóm</option>
+                        <template v-for="cat in categories" :key="cat.id">
+                            <option :value="cat.id">{{ cat.name }}</option>
+                            <option
+                                v-for="child in (cat.children || [])"
+                                :key="child.id"
+                                :value="child.id"
+                            >
+                                &nbsp;&nbsp;└ {{ child.name }}
+                            </option>
+                        </template>
+                    </select>
+                </div>
+                <!-- Thương hiệu -->
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">Thương hiệu</label>
+                    <select
+                        v-model="brandFilter"
+                        class="w-full border border-gray-300 rounded p-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none bg-white"
+                    >
+                        <option value="">Tất cả thương hiệu</option>
                         <option
-                            v-for="cat in categories"
-                            :key="cat.id"
-                            :value="cat.id"
+                            v-for="brand in brands"
+                            :key="brand.id"
+                            :value="brand.id"
                         >
-                            {{ cat.name }}
+                            {{ brand.name }}
                         </option>
                     </select>
                 </div>
+                <!-- Loại hàng -->
                 <div>
-                    <label
-                        class="block text-sm font-semibold text-gray-700 mb-2"
-                        >Trạng thái</label
-                    >
-                    <div class="space-y-2">
-                        <label
-                            class="flex items-center gap-2 text-gray-600 hover:text-gray-900 cursor-pointer"
-                        >
-                            <input
-                                type="checkbox"
-                                checked
-                                class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
-                            />
-                            Đang kinh doanh
-                        </label>
-                        <label
-                            class="flex items-center gap-2 text-gray-600 hover:text-gray-900 cursor-pointer"
-                        >
-                            <input
-                                type="checkbox"
-                                class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
-                            />
-                            Ngừng kinh doanh
-                        </label>
-                    </div>
-                </div>
-                <div>
-                    <label
-                        class="block text-sm font-semibold text-gray-700 mb-2"
-                        >Tồn kho</label
-                    >
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">Loại hàng</label>
                     <select
+                        v-model="typeFilter"
                         class="w-full border border-gray-300 rounded p-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none bg-white"
                     >
-                        <option>Tất cả</option>
-                        <option>Còn hàng trong kho</option>
-                        <option>Hết hàng</option>
+                        <option value="">Tất cả loại</option>
+                        <option value="standard">Hàng hóa</option>
+                        <option value="service">Dịch vụ</option>
+                        <option value="combo">Combo - đóng gói</option>
+                        <option value="manufactured">Hàng sản xuất</option>
                     </select>
+                </div>
+                <!-- Trạng thái -->
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">Trạng thái</label>
+                    <select
+                        v-model="statusFilter"
+                        class="w-full border border-gray-300 rounded p-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none bg-white"
+                    >
+                        <option value="">Đang kinh doanh</option>
+                        <option value="inactive">Ngừng kinh doanh</option>
+                        <option value="all">Tất cả</option>
+                    </select>
+                </div>
+                <!-- Tồn kho -->
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">Tồn kho</label>
+                    <select
+                        v-model="stockFilter"
+                        class="w-full border border-gray-300 rounded p-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none bg-white"
+                    >
+                        <option value="">Tất cả</option>
+                        <option value="in_stock">Còn hàng trong kho</option>
+                        <option value="out_of_stock">Hết hàng</option>
+                        <option value="below_min">Dưới định mức tồn</option>
+                    </select>
+                </div>
+                <!-- Nút xóa bộ lọc -->
+                <div v-if="categoryFilter || brandFilter || statusFilter || stockFilter || typeFilter">
+                    <button
+                        @click="categoryFilter = ''; brandFilter = ''; statusFilter = ''; stockFilter = ''; typeFilter = '';"
+                        class="w-full text-center text-sm text-blue-600 hover:text-blue-800 font-medium py-2 border border-blue-200 rounded hover:bg-blue-50 transition-colors"
+                    >
+                        ✕ Xóa bộ lọc
+                    </button>
                 </div>
             </div>
         </template>

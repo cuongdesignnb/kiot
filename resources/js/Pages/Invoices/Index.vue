@@ -984,7 +984,7 @@ const printInvoice = (invoice) => {
                                                     </div>
                                                     <div class="flex gap-2">
                                                         <Link
-                                                            :href="`/orders/create?invoice_id=${invoice.id}`"
+                                                            :href="`/orders/create?action=edit&invoice_id=${invoice.id}`"
                                                             class="bg-[#0070f4] text-white px-4 py-1.5 rounded font-medium hover:bg-blue-600 flex items-center gap-1.5"
                                                         >
                                                             <svg

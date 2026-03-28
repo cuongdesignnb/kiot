@@ -87,6 +87,56 @@ class ProductController extends Controller
             });
         }
 
+        // Filter by category
+        if ($request->filled('category_id')) {
+            $categoryId = $request->input('category_id');
+            // Include child categories as well
+            $categoryIds = [$categoryId];
+            $childIds = Category::where('parent_id', $categoryId)->pluck('id')->toArray();
+            $categoryIds = array_merge($categoryIds, $childIds);
+            $query->whereIn('category_id', $categoryIds);
+        }
+
+        // Filter by brand
+        if ($request->filled('brand_id')) {
+            $query->where('brand_id', $request->input('brand_id'));
+        }
+
+        // Filter by status (active / inactive)
+        if ($request->filled('status')) {
+            $status = $request->input('status');
+            if ($status === 'active') {
+                $query->where(function ($q) {
+                    $q->where('is_active', true)->orWhereNull('is_active');
+                });
+            } elseif ($status === 'inactive') {
+                $query->where('is_active', false);
+            }
+            // 'all' => no filter
+        } else {
+            // Default: show only active products
+            $query->where(function ($q) {
+                $q->where('is_active', true)->orWhereNull('is_active');
+            });
+        }
+
+        // Filter by stock level
+        if ($request->filled('stock_filter')) {
+            $stockFilter = $request->input('stock_filter');
+            if ($stockFilter === 'in_stock') {
+                $query->where('stock_quantity', '>', 0);
+            } elseif ($stockFilter === 'out_of_stock') {
+                $query->where('stock_quantity', '<=', 0);
+            } elseif ($stockFilter === 'below_min') {
+                $query->whereColumn('stock_quantity', '<', 'min_stock');
+            }
+        }
+
+        // Filter by product type
+        if ($request->filled('type')) {
+            $query->where('type', $request->input('type'));
+        }
+
         $products = $query
             ->withCount([
                 'serialImeis as total_serial_count' => function ($q) {
@@ -118,7 +168,7 @@ class ProductController extends Controller
             'products' => $products,
             'categories' => Category::with('children')->whereNull('parent_id')->orderBy('name')->get(),
             'brands' => Brand::all(),
-            'filters' => $request->only('search', 'sort_by', 'sort_direction'),
+            'filters' => $request->only('search', 'sort_by', 'sort_direction', 'category_id', 'brand_id', 'status', 'stock_filter', 'type'),
             'canViewCostPrice' => auth()->check() && auth()->user()->hasPermission('products.view_cost_price'),
         ]);
     }
