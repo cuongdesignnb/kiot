@@ -147,6 +147,7 @@ Route::get('/api/invoices/search', [InvoiceController::class, 'apiSearch'])->mid
 Route::get('/api/suppliers/search', [SupplierController::class, 'apiSearch'])->name('api.suppliers.search');
 Route::get('/invoices', [InvoiceController::class, 'index'])->middleware('permission:invoices.view')->name('invoices.index');
 Route::post('/invoices', [InvoiceController::class, 'store'])->middleware('permission:invoices.create')->name('invoices.store');
+Route::put('/invoices/{invoice}', [InvoiceController::class, 'update'])->middleware('permission:invoices.create')->name('invoices.update');
 Route::delete('/invoices/{invoice}', [InvoiceController::class, 'destroy'])->middleware('permission:invoices.delete')->name('invoices.destroy');
 
 Route::get('/returns', [OrderReturnController::class, 'index'])->middleware('permission:returns.view')->name('returns.index');

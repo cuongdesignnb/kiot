@@ -331,41 +331,76 @@ const save = async () => {
     submitRef.value = true;
     try {
         const isReturn = activeTab.value.status === 'return';
-        const endpoint = isReturn ? '/returns' : '/orders';
-        const payload = {
-            status: activeTab.value.status,
-            customer_id: activeTab.value.selectedCustomer?.id || null,
-            branch_id: activeTab.value.selectedBranchId || (props.branches?.[0]?.id || null),
-            note: activeTab.value.note,
-            total_price: totalAmount.value,
-            discount: activeTab.value.discount,
-            total_payment: totalPayment.value,
-            amount_paid: activeTab.value.amountPaid,
-            price_book_id: activeTab.value.selectedPriceBookId,
-            price_book_name: activeTab.value.selectedPriceBookName,
-            order_date: activeTab.value.orderDate || null,
-            items: itemsComputed.value,
-            invoice_id: activeTab.value.invoice_id,
-            subtotal: totalAmount.value,
-            total: totalPayment.value,
-            paid_to_customer: activeTab.value.amountPaid,
-            other_fees: activeTab.value.otherFees,
-            is_delivery: activeTab.value.isDelivery,
-            receiver_name: activeTab.value.receiverName,
-            receiver_phone: activeTab.value.receiverPhone,
-            receiver_address: activeTab.value.receiverAddress,
-            receiver_ward: activeTab.value.receiverWard,
-            receiver_district: activeTab.value.receiverDistrict,
-            receiver_city: activeTab.value.receiverCity,
-            weight: activeTab.value.weight,
-            delivery_fee: activeTab.value.deliveryFee,
-            delivery_note: activeTab.value.deliveryNote,
-            cod_amount: activeTab.value.isCod ? totalPayment.value : 0,
-            length: activeTab.value.sizeL,
-            width: activeTab.value.sizeW,
-            height: activeTab.value.sizeH,
-        };
-        await router.post(endpoint, payload);
+        const isEdit = activeTab.value.invoice_id && !isReturn;
+
+        let endpoint;
+        let method;
+        let payload;
+
+        if (isEdit) {
+            // Editing existing invoice → PUT /invoices/{id}
+            endpoint = `/invoices/${activeTab.value.invoice_id}`;
+            method = 'put';
+            payload = {
+                customer_id: activeTab.value.selectedCustomer?.id || null,
+                branch_id: activeTab.value.selectedBranchId || (props.branches?.[0]?.id || null),
+                note: activeTab.value.note,
+                subtotal: totalAmount.value,
+                discount: activeTab.value.discount,
+                total: totalPayment.value,
+                customer_paid: activeTab.value.amountPaid,
+                price_book_name: activeTab.value.selectedPriceBookName,
+                is_delivery: activeTab.value.isDelivery,
+                delivery_partner: null,
+                delivery_fee: activeTab.value.deliveryFee,
+                payment_method: 'Tiền mặt',
+                items: itemsComputed.value.map(item => ({
+                    product_id: item.product_id,
+                    quantity: parseInt(item.qty) || 1,
+                    price: parseFloat(item.price) || 0,
+                    discount: parseFloat(item.discount) || 0,
+                })),
+            };
+        } else {
+            // New order or return → POST
+            endpoint = isReturn ? '/returns' : '/orders';
+            method = 'post';
+            payload = {
+                status: activeTab.value.status,
+                customer_id: activeTab.value.selectedCustomer?.id || null,
+                branch_id: activeTab.value.selectedBranchId || (props.branches?.[0]?.id || null),
+                note: activeTab.value.note,
+                total_price: totalAmount.value,
+                discount: activeTab.value.discount,
+                total_payment: totalPayment.value,
+                amount_paid: activeTab.value.amountPaid,
+                price_book_id: activeTab.value.selectedPriceBookId,
+                price_book_name: activeTab.value.selectedPriceBookName,
+                order_date: activeTab.value.orderDate || null,
+                items: itemsComputed.value,
+                invoice_id: activeTab.value.invoice_id,
+                subtotal: totalAmount.value,
+                total: totalPayment.value,
+                paid_to_customer: activeTab.value.amountPaid,
+                other_fees: activeTab.value.otherFees,
+                is_delivery: activeTab.value.isDelivery,
+                receiver_name: activeTab.value.receiverName,
+                receiver_phone: activeTab.value.receiverPhone,
+                receiver_address: activeTab.value.receiverAddress,
+                receiver_ward: activeTab.value.receiverWard,
+                receiver_district: activeTab.value.receiverDistrict,
+                receiver_city: activeTab.value.receiverCity,
+                weight: activeTab.value.weight,
+                delivery_fee: activeTab.value.deliveryFee,
+                delivery_note: activeTab.value.deliveryNote,
+                cod_amount: activeTab.value.isCod ? totalPayment.value : 0,
+                length: activeTab.value.sizeL,
+                width: activeTab.value.sizeW,
+                height: activeTab.value.sizeH,
+            };
+        }
+
+        await router[method](endpoint, payload);
         if (tabs.value.length > 1) {
             closeTab(activeTabIndex.value);
         } else {
@@ -452,45 +487,85 @@ const saveAndPrint = async () => {
     }
     submitRef.value = true;
     try {
-        const endpoint = activeTab.value.status === 'return' ? '/returns' : '/orders';
-        const payload = {
-            status: activeTab.value.status,
-            customer_id: activeTab.value.selectedCustomer?.id || null,
-            branch_id: activeTab.value.selectedBranchId || (props.branches?.[0]?.id || null),
-            note: activeTab.value.note,
-            total_price: totalAmount.value,
-            discount: activeTab.value.discount,
-            total_payment: totalPayment.value,
-            amount_paid: activeTab.value.amountPaid,
-            price_book_id: activeTab.value.selectedPriceBookId,
-            price_book_name: activeTab.value.selectedPriceBookName,
-            order_date: activeTab.value.orderDate || null,
-            items: itemsComputed.value,
-            invoice_id: activeTab.value.invoice_id,
-            subtotal: totalAmount.value,
-            total: totalPayment.value,
-            paid_to_customer: activeTab.value.amountPaid,
-            other_fees: activeTab.value.otherFees,
-            is_delivery: activeTab.value.isDelivery,
-            receiver_name: activeTab.value.receiverName,
-            receiver_phone: activeTab.value.receiverPhone,
-            receiver_address: activeTab.value.receiverAddress,
-            receiver_ward: activeTab.value.receiverWard,
-            receiver_district: activeTab.value.receiverDistrict,
-            receiver_city: activeTab.value.receiverCity,
-            weight: activeTab.value.weight,
-            delivery_fee: activeTab.value.deliveryFee,
-            delivery_note: activeTab.value.deliveryNote,
-            cod_amount: activeTab.value.isCod ? totalPayment.value : 0,
-            length: activeTab.value.sizeL,
-            width: activeTab.value.sizeW,
-            height: activeTab.value.sizeH,
-            _print: true,
-        };
-        const res = await axios.post(endpoint, payload);
-        if (res.data?.id) {
-            window.open(`/orders/${res.data.id}/print`, '_blank');
+        const isReturn = activeTab.value.status === 'return';
+        const isEdit = activeTab.value.invoice_id && !isReturn;
+
+        let endpoint;
+        let method;
+        let payload;
+
+        if (isEdit) {
+            endpoint = `/invoices/${activeTab.value.invoice_id}`;
+            method = 'put';
+            payload = {
+                customer_id: activeTab.value.selectedCustomer?.id || null,
+                branch_id: activeTab.value.selectedBranchId || (props.branches?.[0]?.id || null),
+                note: activeTab.value.note,
+                subtotal: totalAmount.value,
+                discount: activeTab.value.discount,
+                total: totalPayment.value,
+                customer_paid: activeTab.value.amountPaid,
+                price_book_name: activeTab.value.selectedPriceBookName,
+                is_delivery: activeTab.value.isDelivery,
+                delivery_partner: null,
+                delivery_fee: activeTab.value.deliveryFee,
+                payment_method: 'Tiền mặt',
+                items: itemsComputed.value.map(item => ({
+                    product_id: item.product_id,
+                    quantity: parseInt(item.qty) || 1,
+                    price: parseFloat(item.price) || 0,
+                    discount: parseFloat(item.discount) || 0,
+                })),
+            };
+        } else {
+            endpoint = isReturn ? '/returns' : '/orders';
+            method = 'post';
+            payload = {
+                status: activeTab.value.status,
+                customer_id: activeTab.value.selectedCustomer?.id || null,
+                branch_id: activeTab.value.selectedBranchId || (props.branches?.[0]?.id || null),
+                note: activeTab.value.note,
+                total_price: totalAmount.value,
+                discount: activeTab.value.discount,
+                total_payment: totalPayment.value,
+                amount_paid: activeTab.value.amountPaid,
+                price_book_id: activeTab.value.selectedPriceBookId,
+                price_book_name: activeTab.value.selectedPriceBookName,
+                order_date: activeTab.value.orderDate || null,
+                items: itemsComputed.value,
+                invoice_id: activeTab.value.invoice_id,
+                subtotal: totalAmount.value,
+                total: totalPayment.value,
+                paid_to_customer: activeTab.value.amountPaid,
+                other_fees: activeTab.value.otherFees,
+                is_delivery: activeTab.value.isDelivery,
+                receiver_name: activeTab.value.receiverName,
+                receiver_phone: activeTab.value.receiverPhone,
+                receiver_address: activeTab.value.receiverAddress,
+                receiver_ward: activeTab.value.receiverWard,
+                receiver_district: activeTab.value.receiverDistrict,
+                receiver_city: activeTab.value.receiverCity,
+                weight: activeTab.value.weight,
+                delivery_fee: activeTab.value.deliveryFee,
+                delivery_note: activeTab.value.deliveryNote,
+                cod_amount: activeTab.value.isCod ? totalPayment.value : 0,
+                length: activeTab.value.sizeL,
+                width: activeTab.value.sizeW,
+                height: activeTab.value.sizeH,
+                _print: true,
+            };
         }
+
+        if (isEdit) {
+            await axios.put(endpoint, payload);
+            window.open(`/invoices/${activeTab.value.invoice_id}/print`, '_blank');
+        } else {
+            const res = await axios.post(endpoint, payload);
+            if (res.data?.id) {
+                window.open(`/orders/${res.data.id}/print`, '_blank');
+            }
+        }
+
         if (tabs.value.length > 1) {
             closeTab(activeTabIndex.value);
         } else {
@@ -855,7 +930,7 @@ onUnmounted(() => {
                 <div class="p-3 bg-white border-t border-[#dce3ec] flex-shrink-0">
                     <button @click="save" :disabled="submitRef" class="w-full bg-[#0062c3] hover:bg-blue-700 text-white font-bold py-3 px-4 rounded transition-colors text-[16px] shadow-sm flex items-center justify-center gap-2">
                         <i v-if="submitRef" class="fas fa-circle-notch fa-spin"></i>
-                        {{ activeTab.status === 'return' ? 'TRẢ HÀNG' : 'ĐẶT HÀNG' }}
+                        {{ activeTab.status === 'return' ? 'TRẢ HÀNG' : (activeTab.invoice_id ? 'CẬP NHẬT HÓA ĐƠN' : 'ĐẶT HÀNG') }}
                     </button>
                     <div @click="saveAndPrint" class="text-center font-bold text-gray-500 mt-2 text-[12px] cursor-pointer hover:text-blue-600"><i class="fas fa-print"></i> (F9)</div>
                 </div>

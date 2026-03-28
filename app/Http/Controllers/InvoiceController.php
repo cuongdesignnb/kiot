@@ -138,6 +138,87 @@ class InvoiceController extends Controller
         return redirect()->route('invoices.index')->with('success', 'Hóa đơn đã được tạo thành công.');
     }
 
+    public function update(Request $request, Invoice $invoice)
+    {
+        // Block edit if e-invoice issued
+        if (Setting::get('block_edit_cancel_einvoice', false) && !empty($invoice->einvoice_code)) {
+            return back()->with('error', 'Không thể sửa hóa đơn đã xuất hóa đơn điện tử.');
+        }
+
+        $orderChangeTime = Setting::get('order_change_time', 24);
+        if ($invoice->created_at->diffInHours(now()) > $orderChangeTime) {
+            return back()->with('error', "Đã quá thời gian cho phép chỉnh sửa ({$orderChangeTime} giờ).");
+        }
+
+        $validated = $request->validate([
+            'customer_id' => 'nullable|exists:customers,id',
+            'branch_id' => 'nullable',
+            'subtotal' => 'required|numeric',
+            'discount' => 'nullable|numeric',
+            'total' => 'required|numeric',
+            'customer_paid' => 'nullable|numeric',
+            'note' => 'nullable|string',
+            'is_delivery' => 'boolean',
+            'delivery_partner' => 'nullable|string',
+            'delivery_fee' => 'nullable|numeric',
+            'payment_method' => 'nullable|string',
+            'price_book_name' => 'nullable|string|max:255',
+            'items' => 'required|array|min:1',
+            'items.*.product_id' => 'required|exists:products,id',
+            'items.*.quantity' => 'required|numeric|min:1',
+            'items.*.price' => 'required|numeric',
+            'items.*.discount' => 'nullable|numeric',
+            'items.*.note' => 'nullable|string',
+        ]);
+
+        // Restore stock from old items
+        foreach ($invoice->items as $oldItem) {
+            $product = \App\Models\Product::find($oldItem->product_id);
+            if ($product) {
+                $product->increment('stock_quantity', $oldItem->quantity);
+            }
+        }
+
+        // Update invoice header
+        $invoice->update([
+            'customer_id' => $validated['customer_id'] ?? $invoice->customer_id,
+            'branch_id' => $validated['branch_id'] ?? $invoice->branch_id,
+            'subtotal' => $validated['subtotal'],
+            'discount' => $validated['discount'] ?? 0,
+            'total' => $validated['total'],
+            'customer_paid' => $validated['customer_paid'] ?? 0,
+            'note' => $validated['note'] ?? null,
+            'is_delivery' => $validated['is_delivery'] ?? false,
+            'delivery_partner' => $validated['delivery_partner'] ?? null,
+            'delivery_fee' => $validated['delivery_fee'] ?? 0,
+            'payment_method' => $validated['payment_method'] ?? 'Tiền mặt',
+            'price_book_name' => $validated['price_book_name'] ?? $invoice->price_book_name,
+        ]);
+
+        // Delete old items and create new ones
+        $invoice->items()->delete();
+
+        foreach ($validated['items'] as $item) {
+            $product = \App\Models\Product::find($item['product_id']);
+            $invoice->items()->create([
+                'product_id' => $item['product_id'],
+                'quantity' => $item['quantity'],
+                'price' => $item['price'],
+                'cost_price' => (float) ($product->cost_price ?? 0),
+                'discount' => $item['discount'] ?? 0,
+                'subtotal' => ($item['price'] * $item['quantity']) - ($item['discount'] ?? 0),
+                'note' => $item['note'] ?? null,
+            ]);
+
+            // Deduct stock for new items
+            if ($product) {
+                $product->decrement('stock_quantity', $item['quantity']);
+            }
+        }
+
+        return redirect()->route('invoices.index')->with('success', 'Hóa đơn đã được cập nhật thành công.');
+    }
+
     public function destroy(Invoice $invoice)
     {
         // Block cancel if e-invoice issued
