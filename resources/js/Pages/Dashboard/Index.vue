@@ -266,6 +266,7 @@ const orderStatusOptions = {
                <div class="border-t border-gray-100 pt-2">
                    <div class="text-xs text-gray-500 mb-0.5">Tồn kho</div>
                    <div class="font-bold text-gray-800">{{ fmt(totalProductsInStock) }} <span class="text-xs text-gray-400 font-normal">SP</span></div>
+                   <div class="text-xs text-gray-500 mt-0.5">Giá trị: <span class="font-semibold text-gray-700">{{ fmt(totalStockValue) }} ₫</span></div>
                    <div v-if="outOfStockCount > 0" class="text-xs text-red-500 mt-0.5">⚠ {{ outOfStockCount }} hết hàng</div>
                </div>
                <div class="border-t border-gray-100 pt-2">
