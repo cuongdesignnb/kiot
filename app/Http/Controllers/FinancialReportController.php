@@ -47,12 +47,17 @@ class FinancialReportController extends Controller
         if ($branchId) $invoiceQ->where('branch_id', $branchId);
         $totalSales = (float) (clone $invoiceQ)->sum('total');
 
-        // (2) Cost of Goods Sold (COGS) - fallback to products.cost_price if invoice_items.cost_price is NULL
+        // (2) Cost of Goods Sold (COGS)
+        // Use invoice_items.cost_price snapshot if available, otherwise fallback to products.cost_price
         $invoiceIds = (clone $invoiceQ)->pluck('id');
+        $hasItemCostCol = Schema::hasColumn('invoice_items', 'cost_price');
+        $costExpr = $hasItemCostCol
+            ? 'invoice_items.quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0)'
+            : 'invoice_items.quantity * COALESCE(products.cost_price, 0)';
         $cogs = (float) DB::table('invoice_items')
             ->join('products', 'invoice_items.product_id', '=', 'products.id')
             ->whereIn('invoice_items.invoice_id', $invoiceIds)
-            ->sum(DB::raw('invoice_items.quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0)'));
+            ->sum(DB::raw($costExpr));
 
         // (3) Sales Returns
         $returnsQ = OrderReturn::whereBetween('created_at', [$startDate, $endDate])

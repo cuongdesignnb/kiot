@@ -10,6 +10,7 @@ use App\Models\OrderReturn;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Inertia\Inertia;
 
 class SalesReportController extends Controller
@@ -201,13 +202,17 @@ class SalesReportController extends Controller
 
         // Cost per period (from invoice_items * product cost_price)
         $invoiceIds = (clone $invoiceQuery)->pluck('id');
+        $hasItemCostCol = Schema::hasColumn('invoice_items', 'cost_price');
+        $costCalc = $hasItemCostCol
+            ? 'invoice_items.quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0)'
+            : 'invoice_items.quantity * COALESCE(products.cost_price, 0)';
         $costs = DB::table('invoice_items')
             ->whereIn('invoice_items.invoice_id', $invoiceIds)
             ->join('invoices', 'invoice_items.invoice_id', '=', 'invoices.id')
             ->join('products', 'invoice_items.product_id', '=', 'products.id')
             ->select(
                 DB::raw("DATE_FORMAT(invoices.created_at, '{$format}') as period"),
-                DB::raw('COALESCE(SUM(invoice_items.quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0)), 0) as total_cost')
+                DB::raw("COALESCE(SUM({$costCalc}), 0) as total_cost")
             )
             ->groupBy('period')
             ->pluck('total_cost', 'period');

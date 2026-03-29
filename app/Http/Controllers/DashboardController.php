@@ -14,6 +14,7 @@ use App\Models\Purchase;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Inertia\Inertia;
 
 class DashboardController extends Controller
@@ -46,12 +47,16 @@ class DashboardController extends Controller
         $totalProductCount = Product::count();
 
         // Lợi nhuận gộp tháng này = Doanh thu - Giá vốn - Tổng chi phí
-        // 1) Giá vốn hàng bán (COGS) - dùng snapshot cost_price nếu có, fallback sang products.cost_price
+        // 1) Giá vốn hàng bán (COGS)
         $invoiceIdsThisMonth = Invoice::where('created_at', '>=', $startOfMonth)->pluck('id');
+        $hasItemCostCol = Schema::hasColumn('invoice_items', 'cost_price');
+        $costExpr = $hasItemCostCol
+            ? 'invoice_items.quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0)'
+            : 'invoice_items.quantity * COALESCE(products.cost_price, 0)';
         $thisMonthCost = (float) DB::table('invoice_items')
             ->join('products', 'invoice_items.product_id', '=', 'products.id')
             ->whereIn('invoice_items.invoice_id', $invoiceIdsThisMonth)
-            ->sum(DB::raw('invoice_items.quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0)'));
+            ->sum(DB::raw($costExpr));
 
         // 2) Tổng chi phí (phiếu chi) tháng này - trừ các khoản trả NCC (đã tính vào giá vốn)
         $thisMonthExpenses = CashFlow::where('type', 'payment')
