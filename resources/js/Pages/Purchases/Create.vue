@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
 import QuickCreateCustomerModal from '@/Components/QuickCreateCustomerModal.vue';
@@ -117,13 +117,147 @@ const removeOtherCost = (index) => {
     otherCosts.value.splice(index, 1);
 };
 
+// ═══ AUTO-SAVE DRAFT ═══
+const DRAFT_KEY = 'purchase_draft_v1';
+const draftSavedAt = ref(null);
+const showDraftRestoreBar = ref(false);
+let autoSaveInterval = null;
+
+const getDraftData = () => ({
+    items: items.value.map(item => ({
+        product_id: item.product_id,
+        sku: item.sku,
+        name: item.name,
+        has_serial: item.has_serial,
+        has_variants: item.has_variants,
+        variants: item.variants || [],
+        quantity: item.quantity,
+        price: item.price,
+        retail_price: item.retail_price,
+        technician_price: item.technician_price,
+        discount: item.discount,
+        stock_quantity: item.stock_quantity,
+        serials: item.serials || [],
+        serialInput: '',
+        serialVariantId: null,
+        showSerialArea: !!item.has_serial,
+        warranty_months: item.warranty_months || 0,
+    })),
+    selectedSupplierId: selectedSupplierId.value,
+    selectedEmployeeId: selectedEmployeeId.value,
+    discount: discount.value,
+    paidAmount: paidAmount.value,
+    isPaidAmountEdited: isPaidAmountEdited.value,
+    note: note.value,
+    status: status.value,
+    paymentMethod: paymentMethod.value,
+    bankAccountInfo: bankAccountInfo.value,
+    otherCosts: otherCosts.value,
+    savedAt: new Date().toISOString(),
+});
+
+const saveDraftToStorage = () => {
+    // Chỉ lưu nếu có dữ liệu
+    if (items.value.length === 0 && !selectedSupplierId.value && !note.value) return;
+    try {
+        localStorage.setItem(DRAFT_KEY, JSON.stringify(getDraftData()));
+        draftSavedAt.value = new Date();
+    } catch (e) {
+        console.warn('Không thể lưu nháp:', e);
+    }
+};
+
+const loadDraftFromStorage = () => {
+    try {
+        const raw = localStorage.getItem(DRAFT_KEY);
+        if (!raw) return null;
+        return JSON.parse(raw);
+    } catch (e) {
+        return null;
+    }
+};
+
+const restoreDraft = (draft) => {
+    items.value = draft.items || [];
+    selectedSupplierId.value = draft.selectedSupplierId || '';
+    selectedEmployeeId.value = draft.selectedEmployeeId || '';
+    discount.value = draft.discount || 0;
+    note.value = draft.note || '';
+    status.value = draft.status || 'completed';
+    paymentMethod.value = draft.paymentMethod || 'cash';
+    bankAccountInfo.value = draft.bankAccountInfo || '';
+    otherCosts.value = draft.otherCosts || [];
+    if (draft.isPaidAmountEdited) {
+        isPaidAmountEdited.value = true;
+        paidAmount.value = draft.paidAmount || 0;
+    }
+    showDraftRestoreBar.value = false;
+};
+
+const clearDraft = () => {
+    try { localStorage.removeItem(DRAFT_KEY); } catch (e) {}
+    draftSavedAt.value = null;
+    showDraftRestoreBar.value = false;
+};
+
+const manualSaveDraft = () => {
+    saveDraftToStorage();
+    alert('Đã lưu nháp thành công!');
+};
+
+// Warn before leaving if form has data
+const hasFormData = computed(() => items.value.length > 0 || !!selectedSupplierId.value);
+
+const onBeforeUnload = (e) => {
+    if (hasFormData.value && !submitRef.value) {
+        saveDraftToStorage();
+        e.preventDefault();
+        e.returnValue = '';
+    }
+};
+
 onMounted(() => {
     if (props.purchaseOrderInfo) {
         selectedSupplierId.value = props.purchaseOrderInfo.supplier_id || '';
         discount.value = props.purchaseOrderInfo.discount || 0;
         items.value = props.purchaseOrderInfo.items || [];
+    } else {
+        // Check for saved draft
+        const draft = loadDraftFromStorage();
+        if (draft && (draft.items?.length > 0 || draft.selectedSupplierId)) {
+            showDraftRestoreBar.value = true;
+            // Store draft for restore
+            window.__purchaseDraft = draft;
+        }
     }
+
+    // Auto-save every 5 seconds
+    autoSaveInterval = setInterval(() => {
+        if (hasFormData.value) {
+            saveDraftToStorage();
+        }
+    }, 5000);
+
+    window.addEventListener('beforeunload', onBeforeUnload);
 });
+
+onBeforeUnmount(() => {
+    if (autoSaveInterval) clearInterval(autoSaveInterval);
+    window.removeEventListener('beforeunload', onBeforeUnload);
+});
+
+const onRestoreDraft = () => {
+    const draft = window.__purchaseDraft;
+    if (draft) {
+        restoreDraft(draft);
+        delete window.__purchaseDraft;
+    }
+};
+
+const onDismissDraft = () => {
+    clearDraft();
+    delete window.__purchaseDraft;
+};
 
 const filteredProducts = ref([]);
 const isSearchingProduct = ref(false);
@@ -257,6 +391,8 @@ const save = async () => {
         alert("Vui lòng chọn nhà cung cấp!");
         return;
     }
+    // Clear draft on successful submit
+    clearDraft();
 
     submitRef.value = true;
     
@@ -394,6 +530,18 @@ const saveQuickProduct = async () => {
 <template>
     <Head title="Nhập hàng - KiotViet Clone" />
     <div class="h-screen flex flex-col bg-[#eef1f5] text-[13px] overflow-hidden font-sans">
+
+        <!-- Draft Restore Bar -->
+        <div v-if="showDraftRestoreBar" class="bg-amber-50 border-b border-amber-200 px-4 py-2.5 flex items-center justify-between flex-shrink-0 z-50">
+            <div class="flex items-center gap-2">
+                <svg class="w-5 h-5 text-amber-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z"></path></svg>
+                <span class="text-[13px] text-amber-800 font-medium">Có phiếu nhập nháp chưa hoàn thành. Bạn có muốn khôi phục?</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <button @click="onRestoreDraft" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-[12px] font-bold rounded transition-colors">Khôi phục</button>
+                <button @click="onDismissDraft" class="px-3 py-1.5 bg-white hover:bg-gray-100 text-gray-600 text-[12px] font-medium rounded border border-gray-300 transition-colors">Bỏ qua</button>
+            </div>
+        </div>
         
         <!-- Header -->
         <header class="bg-white text-gray-800 px-4 h-[56px] flex items-center justify-between border-b border-gray-200 shadow-sm flex-shrink-0">
@@ -437,7 +585,14 @@ const saveQuickProduct = async () => {
                     </div>
                 </div>
             </div>
-            <div class="flex items-center gap-3 text-gray-500">
+            <div class="flex items-center gap-2 text-gray-500">
+                 <div v-if="draftSavedAt" class="text-[11px] text-gray-400 flex items-center gap-1 mr-1">
+                     <svg class="w-3.5 h-3.5 text-green-500" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path></svg>
+                     Nháp đã lưu
+                 </div>
+                 <button @click="manualSaveDraft" class="hover:bg-gray-100 p-2 rounded" title="Lưu nháp">
+                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
+                 </button>
                  <button class="hover:bg-gray-100 p-2 rounded"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg></button>
             </div>
         </header>
@@ -727,7 +882,11 @@ const saveQuickProduct = async () => {
                     <button @click="save" :disabled="submitRef" class="w-full bg-[#2ebc5b] hover:bg-[#209644] text-white font-bold py-3 rounded text-[15px] uppercase tracking-wide transition-colors flex justify-center items-center gap-2 disabled:opacity-50">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Hoàn thành
                     </button>
-                    <div class="mt-2 text-center">
+                    <div class="mt-2 flex items-center justify-center gap-4">
+                        <button @click="manualSaveDraft" class="text-amber-600 hover:text-amber-700 text-[13px] font-medium flex items-center gap-1">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
+                            Lưu nháp
+                        </button>
                         <Link href="/purchases" class="text-gray-500 hover:text-gray-800 text-[13px] underline">Hủy bỏ</Link>
                     </div>
                 </div>

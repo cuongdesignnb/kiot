@@ -450,7 +450,10 @@ const printPurchase = (order) => {
                                 </td>
                                 <td class="px-4 py-2 text-center">
                                     <span
-                                        class="inline-block px-2 text-[11px] py-0.5 rounded border font-medium bg-green-50 text-green-700 border-green-200"
+                                        class="inline-block px-2 text-[11px] py-0.5 rounded border font-medium"
+                                        :class="order.status === 'completed'
+                                            ? 'bg-green-50 text-green-700 border-green-200'
+                                            : 'bg-amber-50 text-amber-700 border-amber-200'"
                                     >
                                         {{
                                             order.status === "completed"
@@ -612,8 +615,9 @@ const printPurchase = (order) => {
                                                     >Trạng thái:</span
                                                 >
                                                 <span
-                                                    class="font-bold text-green-600"
-                                                    >Hoàn thành</span
+                                                    class="font-bold"
+                                                    :class="order.status === 'completed' ? 'text-green-600' : 'text-amber-600'"
+                                                    >{{ order.status === 'completed' ? 'Hoàn thành' : 'Phiếu tạm' }}</span
                                                 >
                                             </div>
                                             <div
