@@ -75,6 +75,29 @@ class TaskService
     }
 
     /**
+     * Đồng bộ serial.cost_price = task.total_cost sau mỗi thay đổi linh kiện.
+     * Luôn chính xác vì task.total_cost = original_cost + SUM(export) - SUM(import).
+     */
+    protected function syncSerialCostFromTask(Task $task): void
+    {
+        if ($task->serial_imei_id) {
+            $serial = $task->serialImei;
+            if ($serial) {
+                $serial->cost_price = max(0, (float) $task->total_cost);
+                $serial->save();
+                $this->syncProductCostFromSerials($serial->product_id);
+            }
+        } elseif ($task->product_id) {
+            // Sản phẩm không serial → gán trực tiếp vào product
+            $repairedProduct = Product::find($task->product_id);
+            if ($repairedProduct) {
+                $repairedProduct->cost_price = max(0, (float) $task->total_cost);
+                $repairedProduct->save();
+            }
+        }
+    }
+
+    /**
      * Tạo công việc mới (general hoặc repair).
      */
     public function createTask(array $data): Task
@@ -350,39 +373,9 @@ class TaskService
                 if (($part->direction ?? 'export') === 'export') {
                     // Linh kiện đã lắp vào → trả lại tồn kho
                     Product::where('id', $part->product_id)->increment('stock_quantity', $part->quantity);
-
-                    // Trừ giá vốn đã cộng vào serial/product
-                    if ($task->serial_imei_id) {
-                        $serial = $task->serialImei;
-                        if ($serial) {
-                            $serial->cost_price = max(0, (float) $serial->cost_price - (float) $part->total_cost);
-                            $serial->save();
-                        }
-                    } elseif ($task->product_id) {
-                        $repairedProduct = Product::find($task->product_id);
-                        if ($repairedProduct) {
-                            $repairedProduct->cost_price = max(0, (float) $repairedProduct->cost_price - (float) $part->total_cost);
-                            $repairedProduct->save();
-                        }
-                    }
                 } elseif ($part->direction === 'import') {
                     // Linh kiện bóc ra từ máy → trừ lại tồn kho (hoàn nguyên)
                     Product::where('id', $part->product_id)->decrement('stock_quantity', $part->quantity);
-
-                    // Cộng lại giá vốn đã trừ từ serial/product
-                    if ($task->serial_imei_id) {
-                        $serial = $task->serialImei;
-                        if ($serial) {
-                            $serial->cost_price = (float) $serial->cost_price + (float) $part->total_cost;
-                            $serial->save();
-                        }
-                    } elseif ($task->product_id) {
-                        $repairedProduct = Product::find($task->product_id);
-                        if ($repairedProduct) {
-                            $repairedProduct->cost_price = (float) $repairedProduct->cost_price + (float) $part->total_cost;
-                            $repairedProduct->save();
-                        }
-                    }
                 }
             }
 
@@ -390,9 +383,20 @@ class TaskService
             $task->parts()->delete();
             $task->recalculateCosts();
 
-            // Sync lại product.cost_price sau khi hoàn trả tất cả
-            if ($task->serial_imei_id && $task->product_id) {
-                $this->syncProductCostFromSerials($task->product_id);
+            // Huỷ = trả về original_cost (vì tất cả linh kiện đã hoàn trả)
+            if ($task->serial_imei_id) {
+                $serial = $task->serialImei;
+                if ($serial) {
+                    $serial->cost_price = (float) $task->original_cost;
+                    $serial->save();
+                    $this->syncProductCostFromSerials($serial->product_id);
+                }
+            } elseif ($task->product_id) {
+                $repairedProduct = Product::find($task->product_id);
+                if ($repairedProduct) {
+                    $repairedProduct->cost_price = (float) $task->original_cost;
+                    $repairedProduct->save();
+                }
             }
 
             $actorName = $this->resolveActorName($cancelledBy);
@@ -446,22 +450,8 @@ class TaskService
             $product->decrement('stock_quantity', $quantity);
             $task->recalculateCosts();
 
-            // Cộng giá vốn vào đúng nơi (repair only)
-            if ($task->serial_imei_id) {
-                // Sản phẩm có serial → cộng vào giá vốn serial cụ thể đó
-                $serial = $task->serialImei;
-                $serial->cost_price = (float) $serial->cost_price + $totalCost;
-                $serial->save();
-                // Sync lại product.cost_price = bình quân các serial
-                $this->syncProductCostFromSerials($serial->product_id);
-            } elseif ($task->product_id) {
-                // Sản phẩm không theo dõi serial → cộng vào giá vốn product chung
-                $repairedProduct = Product::find($task->product_id);
-                if ($repairedProduct) {
-                    $repairedProduct->cost_price = (float) $repairedProduct->cost_price + $totalCost;
-                    $repairedProduct->save();
-                }
-            }
+            // Đồng bộ giá vốn serial = task.total_cost (luôn chính xác)
+            $this->syncSerialCostFromTask($task);
 
             $productName = $product->name;
             $actorName = $this->resolveActorName($exportedBy);
@@ -490,22 +480,6 @@ class TaskService
 
             Product::where('id', $part->product_id)->increment('stock_quantity', $part->quantity);
 
-            if ($task->serial_imei_id) {
-                // Sản phẩm có serial → trừ từ giá vốn serial cụ thể
-                $serial = $task->serialImei;
-                $serial->cost_price = max(0, (float) $serial->cost_price - (float) $part->total_cost);
-                $serial->save();
-                // Sync lại product.cost_price = bình quân các serial
-                $this->syncProductCostFromSerials($serial->product_id);
-            } elseif ($task->product_id) {
-                // Sản phẩm không theo dõi serial → trừ từ giá vốn product chung
-                $repairedProduct = Product::find($task->product_id);
-                if ($repairedProduct) {
-                    $repairedProduct->cost_price = max(0, (float) $repairedProduct->cost_price - (float) $part->total_cost);
-                    $repairedProduct->save();
-                }
-            }
-
             $productName = $part->product?->name ?? 'N/A';
             $qty = $part->quantity;
             $taskCode = $task->code;
@@ -514,6 +488,9 @@ class TaskService
 
             $part->delete();
             $task->recalculateCosts();
+
+            // Đồng bộ giá vốn serial = task.total_cost (luôn chính xác)
+            $this->syncSerialCostFromTask($task);
 
             ActivityLog::log('part_remove', "NV {$actorName} gỡ {$qty}x {$productName} khỏi {$machineInfo} — phiếu {$taskCode}", $task, [
                 'task_code' => $taskCode,
@@ -552,22 +529,10 @@ class TaskService
             // Cộng tồn kho linh kiện
             $product->increment('stock_quantity', $quantity);
 
-            // Trừ giá vốn máy
-            if ($task->serial_imei_id) {
-                $serial = $task->serialImei;
-                $serial->cost_price = max(0, (float) $serial->cost_price - $totalCost);
-                $serial->save();
-                // Sync lại product.cost_price = bình quân các serial
-                $this->syncProductCostFromSerials($serial->product_id);
-            } elseif ($task->product_id) {
-                $repairedProduct = Product::find($task->product_id);
-                if ($repairedProduct) {
-                    $repairedProduct->cost_price = max(0, (float) $repairedProduct->cost_price - $totalCost);
-                    $repairedProduct->save();
-                }
-            }
-
             $task->recalculateCosts();
+
+            // Đồng bộ giá vốn serial = task.total_cost (luôn chính xác)
+            $this->syncSerialCostFromTask($task);
 
             $actorName = $this->resolveActorName($exportedBy);
             $machineInfo = $this->buildMachineInfo($task);
