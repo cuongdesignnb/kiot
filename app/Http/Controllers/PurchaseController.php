@@ -302,6 +302,7 @@ class PurchaseController extends Controller
                                 'status' => 'in_stock',
                                 'purchase_id' => $purchase->id,
                                 'cost_price' => $item['price'] ?? $product->cost_price ?? 0,
+                                'original_cost' => $item['price'] ?? $product->cost_price ?? 0,
                             ]);
                         }
                     }

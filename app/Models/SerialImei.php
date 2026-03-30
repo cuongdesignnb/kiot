@@ -14,6 +14,7 @@ class SerialImei extends Model
         'purchase_id',
         'repair_status',
         'cost_price',
+        'original_cost',
         'sold_at',
         'invoice_id',
         'warranty_expires_at',
@@ -21,6 +22,7 @@ class SerialImei extends Model
 
     protected $casts = [
         'cost_price' => 'decimal:0',
+        'original_cost' => 'decimal:0',
         'sold_at' => 'datetime',
         'warranty_expires_at' => 'datetime',
     ];

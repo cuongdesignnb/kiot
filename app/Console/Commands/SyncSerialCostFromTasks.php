@@ -5,15 +5,30 @@ namespace App\Console\Commands;
 use App\Models\SerialImei;
 use App\Models\Task;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 
 class SyncSerialCostFromTasks extends Command
 {
     protected $signature = 'serial:sync-cost-from-tasks';
-    protected $description = 'Sync serial cost_price from their latest completed/in-progress repair task total_cost';
+    protected $description = 'Sync serial cost_price from their latest repair task total_cost, and backfill original_cost from purchase items';
 
     public function handle()
     {
-        // Lấy tất cả task repair có serial
+        // ── Step 1: Backfill original_cost từ purchase_items ──
+        $this->info('=== Step 1: Backfill original_cost từ phiếu nhập ===');
+
+        $backfilled = DB::update("
+            UPDATE serial_imeis s
+            LEFT JOIN purchase_items pi ON pi.purchase_id = s.purchase_id
+                AND pi.product_id = s.product_id
+            SET s.original_cost = COALESCE(pi.price, s.cost_price)
+            WHERE s.original_cost = 0 OR s.original_cost IS NULL
+        ");
+        $this->info("Backfilled original_cost cho {$backfilled} serial(s).");
+
+        // ── Step 2: Sync cost_price từ task.total_cost ──
+        $this->info('=== Step 2: Sync cost_price từ task.total_cost ===');
+
         $tasks = Task::where('type', 'repair')
             ->whereNotNull('serial_imei_id')
             ->whereIn('status', ['completed', 'in_progress', 'pending'])
@@ -36,12 +51,14 @@ class SyncSerialCostFromTasks extends Command
                 $serial->cost_price = $newCost;
                 $serial->save();
 
-                $this->info("Serial {$serial->serial_number}: {$oldCost} → {$newCost} (Task {$task->code})");
+                $this->info("Serial {$serial->serial_number}: cost_price {$oldCost} → {$newCost} (Task {$task->code})");
                 $updated++;
             }
         }
 
-        // Sync product average costs
+        // ── Step 3: Sync product average costs ──
+        $this->info('=== Step 3: Sync product cost (avg of serials) ===');
+
         $productIds = $tasks->pluck('product_id')->unique()->filter();
         foreach ($productIds as $productId) {
             $product = \App\Models\Product::find($productId);
@@ -60,6 +77,6 @@ class SyncSerialCostFromTasks extends Command
             }
         }
 
-        $this->info("Done! Updated {$updated} serial(s).");
+        $this->info("Done! Updated {$updated} serial cost_price(s).");
     }
 }

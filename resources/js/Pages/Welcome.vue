@@ -853,7 +853,7 @@ const formatDate = (val) => {
                                                     <div
                                                         class="text-xs text-gray-400 uppercase tracking-wider mb-1"
                                                     >
-                                                        Giá vốn gốc
+                                                        Giá vốn
                                                     </div>
                                                     <div
                                                         class="font-medium text-gray-600"
@@ -1458,7 +1458,7 @@ const formatDate = (val) => {
                                                         <span class="text-gray-400 font-normal ml-1">({{ product.serialsData?.length || 0 }})</span>
                                                     </span>
                                                     <div class="flex items-center gap-3 text-[12px]">
-                                                        <span class="text-gray-500">Giá vốn gốc: <span class="font-bold text-gray-700">{{ formatCurrency(product.cost_price) }}</span></span>
+                                                        <span class="text-gray-500">Giá vốn BQ sản phẩm: <span class="font-bold text-gray-700">{{ formatCurrency(product.cost_price) }}</span></span>
                                                     </div>
                                                 </div>
 
@@ -1475,7 +1475,7 @@ const formatDate = (val) => {
                                                             <tr>
                                                                 <th class="p-2.5">Serial/IMEI</th>
                                                                 <th class="p-2.5 text-center">Trạng thái</th>
-                                                                <th class="p-2.5 text-right">Giá vốn gốc</th>
+                                                                <th class="p-2.5 text-right">Giá nhập gốc</th>
                                                                 <th class="p-2.5 text-right">Giá vốn cuối</th>
                                                                 <th class="p-2.5 text-right">Chênh lệch</th>
                                                             </tr>
@@ -1485,7 +1485,7 @@ const formatDate = (val) => {
                                                                 v-for="s in product.serialsData"
                                                                 :key="s.id"
                                                                 class="hover:bg-gray-50/50"
-                                                                :class="(s.cost_price || 0) !== (product.cost_price || 0) ? 'bg-yellow-50/30' : ''"
+                                                                :class="(s.cost_price || 0) !== (s.original_cost || 0) ? 'bg-yellow-50/30' : ''"
                                                             >
                                                                 <td class="p-2.5">
                                                                     <div class="flex items-center gap-2">
@@ -1503,17 +1503,17 @@ const formatDate = (val) => {
                                                                     >{{ serialStatusLabel(s.status) }}</span>
                                                                 </td>
                                                                 <td class="p-2.5 text-right text-gray-500">
-                                                                    {{ formatCurrency(product.cost_price) }}
+                                                                    {{ formatCurrency(s.original_cost || 0) }}
                                                                 </td>
                                                                 <td class="p-2.5 text-right font-bold"
-                                                                    :class="(s.cost_price || 0) > (product.cost_price || 0) ? 'text-red-600' : (s.cost_price || 0) < (product.cost_price || 0) ? 'text-green-600' : 'text-gray-800'"
+                                                                    :class="(s.cost_price || 0) > (s.original_cost || 0) ? 'text-red-600' : (s.cost_price || 0) < (s.original_cost || 0) ? 'text-green-600' : 'text-gray-800'"
                                                                 >
                                                                     {{ formatCurrency(s.cost_price || 0) }}
                                                                 </td>
                                                                 <td class="p-2.5 text-right font-semibold"
-                                                                    :class="(s.cost_price || 0) - (product.cost_price || 0) > 0 ? 'text-red-500' : (s.cost_price || 0) - (product.cost_price || 0) < 0 ? 'text-green-500' : 'text-gray-400'"
+                                                                    :class="(s.cost_price || 0) - (s.original_cost || 0) > 0 ? 'text-red-500' : (s.cost_price || 0) - (s.original_cost || 0) < 0 ? 'text-green-500' : 'text-gray-400'"
                                                                 >
-                                                                    {{ (s.cost_price || 0) - (product.cost_price || 0) > 0 ? '+' : '' }}{{ formatCurrency((s.cost_price || 0) - (product.cost_price || 0)) }}
+                                                                    {{ (s.cost_price || 0) - (s.original_cost || 0) > 0 ? '+' : '' }}{{ formatCurrency((s.cost_price || 0) - (s.original_cost || 0)) }}
                                                                 </td>
                                                             </tr>
                                                         </tbody>
@@ -1523,15 +1523,15 @@ const formatDate = (val) => {
                                                                     Tổng cộng ({{ product.serialsData.filter(s => s.status === 'in_stock').length }} còn tồn)
                                                                 </td>
                                                                 <td class="p-2.5 text-right text-gray-500">
-                                                                    {{ formatCurrency((product.cost_price || 0) * product.serialsData.filter(s => s.status === 'in_stock').length) }}
+                                                                    {{ formatCurrency(product.serialsData.filter(s => s.status === 'in_stock').reduce((sum, s) => sum + (s.original_cost || 0), 0)) }}
                                                                 </td>
                                                                 <td class="p-2.5 text-right text-blue-700">
                                                                     {{ formatCurrency(product.serialsData.filter(s => s.status === 'in_stock').reduce((sum, s) => sum + (s.cost_price || 0), 0)) }}
                                                                 </td>
                                                                 <td class="p-2.5 text-right"
-                                                                    :class="product.serialsData.filter(s => s.status === 'in_stock').reduce((sum, s) => sum + ((s.cost_price || 0) - (product.cost_price || 0)), 0) > 0 ? 'text-red-500' : 'text-green-500'"
+                                                                    :class="product.serialsData.filter(s => s.status === 'in_stock').reduce((sum, s) => sum + ((s.cost_price || 0) - (s.original_cost || 0)), 0) > 0 ? 'text-red-500' : 'text-green-500'"
                                                                 >
-                                                                    {{ product.serialsData.filter(s => s.status === 'in_stock').reduce((sum, s) => sum + ((s.cost_price || 0) - (product.cost_price || 0)), 0) > 0 ? '+' : '' }}{{ formatCurrency(product.serialsData.filter(s => s.status === 'in_stock').reduce((sum, s) => sum + ((s.cost_price || 0) - (product.cost_price || 0)), 0)) }}
+                                                                    {{ product.serialsData.filter(s => s.status === 'in_stock').reduce((sum, s) => sum + ((s.cost_price || 0) - (s.original_cost || 0)), 0) > 0 ? '+' : '' }}{{ formatCurrency(product.serialsData.filter(s => s.status === 'in_stock').reduce((sum, s) => sum + ((s.cost_price || 0) - (s.original_cost || 0)), 0)) }}
                                                                 </td>
                                                             </tr>
                                                         </tfoot>
@@ -1546,7 +1546,7 @@ const formatDate = (val) => {
 
                                                 <!-- Info Note -->
                                                 <div class="mt-3 px-3 py-2 bg-blue-50 rounded text-[12px] text-blue-700 border border-blue-100">
-                                                    <strong>💡 Lưu ý:</strong> Giá vốn cuối = Giá vốn gốc ± linh kiện bóc tách/lắp thêm từ phiếu sửa chữa. Lợi nhuận tính = Giá bán − Giá vốn cuối.
+                                                    <strong>💡 Lưu ý:</strong> Giá nhập gốc = giá từ phiếu nhập hàng. Giá vốn cuối = Giá nhập gốc ± linh kiện bóc tách/lắp thêm từ phiếu sửa chữa. Lợi nhuận = Giá bán − Giá vốn cuối.
                                                 </div>
                                             </div>
                                         </div>
