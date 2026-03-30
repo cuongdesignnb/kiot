@@ -178,7 +178,14 @@ const loadDraftFromStorage = () => {
 };
 
 const restoreDraft = (draft) => {
-    items.value = draft.items || [];
+    items.value = (draft.items || []).map(item => ({
+        ...item,
+        price: Number(item.price) || 0,
+        retail_price: Number(item.retail_price) || 0,
+        technician_price: Number(item.technician_price) || 0,
+        discount: Number(item.discount) || 0,
+        quantity: Number(item.quantity) || 0,
+    }));
     selectedSupplierId.value = draft.selectedSupplierId || '';
     selectedEmployeeId.value = draft.selectedEmployeeId || '';
     discount.value = draft.discount || 0;
@@ -297,9 +304,9 @@ const selectProduct = (product) => {
             has_variants: !!product.has_variants,
             variants: product.variants || [],
             quantity: product.has_serial ? 0 : 1,
-            price: product.cost_price || 0,
-            retail_price: product.retail_price || 0,
-            technician_price: product.technician_price || 0,
+            price: Number(product.cost_price) || 0,
+            retail_price: Number(product.retail_price) || 0,
+            technician_price: Number(product.technician_price) || 0,
             discount: 0,
             stock_quantity: product.stock_quantity || 0,
             serials: [],
