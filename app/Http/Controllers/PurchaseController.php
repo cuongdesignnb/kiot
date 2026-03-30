@@ -295,15 +295,19 @@ class PurchaseController extends Controller
                             }
                             if (!$serialNumber) continue;
 
-                            SerialImei::create([
+                            $serialData = [
                                 'product_id' => $product->id,
                                 'variant_id' => $variantId,
                                 'serial_number' => $serialNumber,
                                 'status' => 'in_stock',
                                 'purchase_id' => $purchase->id,
                                 'cost_price' => $item['price'] ?? $product->cost_price ?? 0,
-                                'original_cost' => $item['price'] ?? $product->cost_price ?? 0,
-                            ]);
+                            ];
+                            // Thêm original_cost nếu cột đã tồn tại (sau khi chạy migration)
+                            if (\Schema::hasColumn('serial_imeis', 'original_cost')) {
+                                $serialData['original_cost'] = $item['price'] ?? $product->cost_price ?? 0;
+                            }
+                            SerialImei::create($serialData);
                         }
                     }
                 }
@@ -614,12 +618,17 @@ class PurchaseController extends Controller
                         // Create Serial/IMEI records
                         if ($product->has_serial && !empty($item['serials'])) {
                             foreach ($item['serials'] as $serialNumber) {
-                                SerialImei::create([
+                                $serialData = [
                                     'product_id' => $product->id,
                                     'serial_number' => trim($serialNumber),
                                     'status' => 'in_stock',
                                     'purchase_id' => $purchase->id,
-                                ]);
+                                    'cost_price' => $item['price'] ?? $product->cost_price ?? 0,
+                                ];
+                                if (\Schema::hasColumn('serial_imeis', 'original_cost')) {
+                                    $serialData['original_cost'] = $item['price'] ?? $product->cost_price ?? 0;
+                                }
+                                SerialImei::create($serialData);
                             }
                         }
                     }
