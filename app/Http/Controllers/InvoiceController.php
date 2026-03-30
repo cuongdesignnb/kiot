@@ -124,11 +124,25 @@ class InvoiceController extends Controller
 
         foreach ($validated['items'] as $item) {
             $product = \App\Models\Product::find($item['product_id']);
+
+            // Snapshot cost_price: ưu tiên serial.cost_price (giá vốn cuối) nếu có serial
+            $snapshotCostPrice = (float) ($product->cost_price ?? 0);
+            if ($product && $product->has_serial && !empty($item['serial_ids'])) {
+                $serialIds = is_array($item['serial_ids']) ? $item['serial_ids'] : [$item['serial_ids']];
+                $serials = \App\Models\SerialImei::whereIn('id', $serialIds)
+                    ->where('product_id', $product->id)
+                    ->get();
+                if ($serials->count() > 0) {
+                    $totalCost = $serials->sum(fn($s) => (float) ($s->cost_price ?: $product->cost_price ?? 0));
+                    $snapshotCostPrice = round($totalCost / $serials->count(), 2);
+                }
+            }
+
             $invoice->items()->create([
                 'product_id' => $item['product_id'],
                 'quantity' => $item['quantity'],
                 'price' => $item['price'],
-                'cost_price' => (float) ($product->cost_price ?? 0),
+                'cost_price' => $snapshotCostPrice,
                 'discount' => $item['discount'] ?? 0,
                 'subtotal' => ($item['price'] * $item['quantity']) - ($item['discount'] ?? 0),
                 'note' => $item['note'] ?? null,
@@ -200,11 +214,25 @@ class InvoiceController extends Controller
 
         foreach ($validated['items'] as $item) {
             $product = \App\Models\Product::find($item['product_id']);
+
+            // Snapshot cost_price: ưu tiên serial.cost_price (giá vốn cuối) nếu có serial
+            $snapshotCostPrice = (float) ($product->cost_price ?? 0);
+            if ($product && $product->has_serial && !empty($item['serial_ids'])) {
+                $serialIds = is_array($item['serial_ids']) ? $item['serial_ids'] : [$item['serial_ids']];
+                $serials = \App\Models\SerialImei::whereIn('id', $serialIds)
+                    ->where('product_id', $product->id)
+                    ->get();
+                if ($serials->count() > 0) {
+                    $totalCost = $serials->sum(fn($s) => (float) ($s->cost_price ?: $product->cost_price ?? 0));
+                    $snapshotCostPrice = round($totalCost / $serials->count(), 2);
+                }
+            }
+
             $invoice->items()->create([
                 'product_id' => $item['product_id'],
                 'quantity' => $item['quantity'],
                 'price' => $item['price'],
-                'cost_price' => (float) ($product->cost_price ?? 0),
+                'cost_price' => $snapshotCostPrice,
                 'discount' => $item['discount'] ?? 0,
                 'subtotal' => ($item['price'] * $item['quantity']) - ($item['discount'] ?? 0),
                 'note' => $item['note'] ?? null,
