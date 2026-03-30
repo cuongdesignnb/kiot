@@ -723,8 +723,20 @@ class SalaryCalculationService
         $grossProfit = 0;
         foreach ($orders as $order) {
             foreach ($order->items as $item) {
-                $costPrice = $item->product?->cost_price ?? 0;
+                $costPrice = $item->cost_price ?: ($item->product?->cost_price ?? 0);
                 $grossProfit += $item->subtotal - ($item->qty * $costPrice);
+            }
+        }
+
+        $invoices = Invoice::where('created_by', $employee->id)
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->with('items.product:id,cost_price')
+            ->get();
+
+        foreach ($invoices as $invoice) {
+            foreach ($invoice->items as $item) {
+                $costPrice = $item->cost_price ?: ($item->product?->cost_price ?? 0);
+                $grossProfit += $item->subtotal - ($item->quantity * $costPrice);
             }
         }
 

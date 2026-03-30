@@ -195,6 +195,11 @@ class ProductReportController extends Controller
     // ═══════════════
     private function buildProfitCharts($invoiceIds, $returnIds, $productFilter)
     {
+        $hasItemCostCol = \Illuminate\Support\Facades\Schema::hasColumn('invoice_items', 'cost_price');
+        $costCalc = $hasItemCostCol
+            ? 'invoice_items.quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0)'
+            : 'invoice_items.quantity * COALESCE(products.cost_price, 0)';
+
         $soldQuery = InvoiceItem::whereIn('invoice_id', $invoiceIds)
             ->join('products', 'invoice_items.product_id', '=', 'products.id')
             ->tap($productFilter)
@@ -202,7 +207,7 @@ class ProductReportController extends Controller
                 'invoice_items.product_id',
                 DB::raw('SUM(invoice_items.quantity) as total_qty'),
                 DB::raw('SUM(invoice_items.quantity * invoice_items.price) as total_revenue'),
-                DB::raw('SUM(invoice_items.quantity * products.cost_price) as total_cost')
+                DB::raw("SUM({$costCalc}) as total_cost")
             )
             ->groupBy('invoice_items.product_id')
             ->get();

@@ -1343,35 +1343,30 @@ const formatDate = (val) => {
                                                         class="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 last:border-b-0 hover:bg-gray-50/50 text-[13px]"
                                                         :class="s.repair_status === 'repairing' || s.repair_status === 'not_started' ? 'bg-yellow-50/50' : ''"
                                                     >
-                                                        <div class="flex items-center gap-2">
-                                                            <span
-                                                                class="font-medium"
-                                                                :class="s.repair_status === 'repairing' || s.repair_status === 'not_started' ? 'text-orange-700' : 'text-gray-800'"
-                                                            >{{ s.serial_number }}</span>
-                                                            <span v-if="s.repair_status === 'repairing'" class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 font-bold">🔧 Đang sửa</span>
-                                                            <span v-else-if="s.repair_status === 'not_started'" class="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-600 font-bold">⏳ Chờ sửa</span>
-                                                            <span v-else-if="s.repair_status === 'ready'" class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-600 font-bold">✓ Sẵn bán</span>
+                                                        <div class="flex items-center justify-between w-full">
+                                                            <div class="flex flex-col gap-1 w-2/3">
+                                                                <div class="flex items-center gap-2">
+                                                                    <span
+                                                                        class="font-medium"
+                                                                        :class="s.repair_status === 'repairing' || s.repair_status === 'not_started' ? 'text-orange-700' : 'text-gray-800'"
+                                                                    >{{ s.serial_number }}</span>
+                                                                    <span v-if="s.repair_status === 'repairing'" class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 font-bold">🔧 Đang sửa</span>
+                                                                    <span v-else-if="s.repair_status === 'not_started'" class="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-600 font-bold">⏳ Chờ sửa</span>
+                                                                    <span v-else-if="s.repair_status === 'ready'" class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-600 font-bold">✓ Sẵn bán</span>
+                                                                </div>
+                                                                <div class="text-[12px] text-gray-500 font-medium" v-if="canViewCostPrice">
+                                                                    Giá vốn: <span class="text-gray-700 font-semibold">{{ formatCurrency(s.cost_price || 0) }}</span>
+                                                                </div>
+                                                            </div>
+                                                            <div class="flex flex-col items-end w-1/3">
+                                                                <span
+                                                                    :class="[
+                                                                        'text-[12px] font-medium text-right',
+                                                                        s.status === 'in_stock' ? 'text-green-600' : s.status === 'sold' ? 'text-gray-400' : s.status === 'warranty' ? 'text-orange-500' : 'text-red-500',
+                                                                    ]"
+                                                                >{{ serialStatusLabel(s.status) }}</span>
+                                                            </div>
                                                         </div>
-                                                        <span
-                                                            :class="[
-                                                                'text-[12px] font-medium',
-                                                                s.status ===
-                                                                'in_stock'
-                                                                    ? 'text-green-600'
-                                                                    : s.status ===
-                                                                        'sold'
-                                                                      ? 'text-gray-400'
-                                                                      : s.status ===
-                                                                          'warranty'
-                                                                        ? 'text-orange-500'
-                                                                        : 'text-red-500',
-                                                            ]"
-                                                            >{{
-                                                                serialStatusLabel(
-                                                                    s.status,
-                                                                )
-                                                            }}</span
-                                                        >
                                                     </div>
                                                 </div>
                                                 <div
