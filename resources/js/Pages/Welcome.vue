@@ -253,6 +253,17 @@ const setTab = async (product, tab) => {
             product.loadingSerials = false;
         }
     }
+    if (tab === "final_cost" && !product.serialsData) {
+        product.loadingSerials = true;
+        try {
+            const res = await axios.get(`/products/${product.id}/serials`);
+            product.serialsData = res.data;
+        } catch (e) {
+            console.error(e);
+        } finally {
+            product.loadingSerials = false;
+        }
+    }
     if (tab === "warranties" && !product.warrantiesData) {
         product.loadingWarranties = true;
         try {
@@ -542,7 +553,7 @@ const formatDate = (val) => {
                             <SortableHeader label="Tên hàng" field="name" :current-sort="sortBy" :current-direction="sortDirection" class="p-3" @sort="handleSort" />
                             <th class="p-3">Nhóm hàng</th>
                             <SortableHeader label="Giá bán" field="retail_price" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right" @sort="handleSort" />
-                            <SortableHeader v-if="canViewCostPrice" label="Giá vốn" field="cost_price" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right" @sort="handleSort" />
+                            <SortableHeader v-if="canViewCostPrice" label="Giá vốn (BQ)" field="cost_price" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right" @sort="handleSort" />
                             <SortableHeader label="Tồn kho" field="stock_quantity" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right" @sort="handleSort" />
                         </tr>
                     </thead>
@@ -716,6 +727,27 @@ const formatDate = (val) => {
                                                 Serial/IMEI
                                             </button>
                                             <button
+                                                v-if="
+                                                    canViewCostPrice &&
+                                                    product.has_serial &&
+                                                    ($page.props.app_settings
+                                                        ?.product_use_serial ??
+                                                        true)
+                                                "
+                                                @click="
+                                                    setTab(product, 'final_cost')
+                                                "
+                                                :class="[
+                                                    'pb-2 text-sm font-bold transition-all border-b-2',
+                                                    product.activeTab ===
+                                                    'final_cost'
+                                                        ? 'border-blue-600 text-blue-600'
+                                                        : 'border-transparent text-gray-400 hover:text-gray-600',
+                                                ]"
+                                            >
+                                                💰 Giá vốn cuối
+                                            </button>
+                                            <button
                                                 @click="
                                                     setTab(
                                                         product,
@@ -821,7 +853,7 @@ const formatDate = (val) => {
                                                     <div
                                                         class="text-xs text-gray-400 uppercase tracking-wider mb-1"
                                                     >
-                                                        Giá vốn
+                                                        Giá vốn gốc
                                                     </div>
                                                     <div
                                                         class="font-medium text-gray-600"
@@ -1396,6 +1428,125 @@ const formatDate = (val) => {
                                                         </svg>
                                                         Xuất file
                                                     </button>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <!-- Final Cost Tab (Giá vốn cuối) -->
+                                        <div
+                                            v-if="
+                                                product.activeTab === 'final_cost'
+                                            "
+                                            class="py-2 min-h-[100px]"
+                                        >
+                                            <div
+                                                v-if="product.loadingSerials"
+                                                class="flex justify-center py-6"
+                                            >
+                                                <i
+                                                    class="fas fa-circle-notch fa-spin text-blue-500 text-xl"
+                                                ></i>
+                                            </div>
+                                            <div v-else>
+                                                <!-- Header -->
+                                                <div
+                                                    class="flex items-center justify-between mb-3 bg-gradient-to-r from-green-50 to-blue-50 rounded px-4 py-2.5 border border-green-200"
+                                                >
+                                                    <span
+                                                        class="font-bold text-[13px] text-gray-700"
+                                                        >💰 Giá vốn cuối theo Serial/IMEI
+                                                        <span class="text-gray-400 font-normal ml-1">({{ product.serialsData?.length || 0 }})</span>
+                                                    </span>
+                                                    <div class="flex items-center gap-3 text-[12px]">
+                                                        <span class="text-gray-500">Giá vốn gốc: <span class="font-bold text-gray-700">{{ formatCurrency(product.cost_price) }}</span></span>
+                                                    </div>
+                                                </div>
+
+                                                <!-- Cost Table -->
+                                                <div
+                                                    v-if="
+                                                        product.serialsData &&
+                                                        product.serialsData.length > 0
+                                                    "
+                                                    class="border border-gray-200 rounded overflow-hidden"
+                                                >
+                                                    <table class="w-full text-left border-collapse text-[13px]">
+                                                        <thead class="bg-gray-100/80 text-gray-600 font-bold uppercase tracking-tight text-[11px]">
+                                                            <tr>
+                                                                <th class="p-2.5">Serial/IMEI</th>
+                                                                <th class="p-2.5 text-center">Trạng thái</th>
+                                                                <th class="p-2.5 text-right">Giá vốn gốc</th>
+                                                                <th class="p-2.5 text-right">Giá vốn cuối</th>
+                                                                <th class="p-2.5 text-right">Chênh lệch</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody class="divide-y divide-gray-100 bg-white">
+                                                            <tr
+                                                                v-for="s in product.serialsData"
+                                                                :key="s.id"
+                                                                class="hover:bg-gray-50/50"
+                                                                :class="(s.cost_price || 0) !== (product.cost_price || 0) ? 'bg-yellow-50/30' : ''"
+                                                            >
+                                                                <td class="p-2.5">
+                                                                    <div class="flex items-center gap-2">
+                                                                        <span class="font-medium text-gray-800">{{ s.serial_number }}</span>
+                                                                        <span v-if="s.repair_status === 'repairing'" class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 font-bold">🔧</span>
+                                                                        <span v-else-if="s.repair_status === 'ready'" class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-600 font-bold">✓</span>
+                                                                    </div>
+                                                                </td>
+                                                                <td class="p-2.5 text-center">
+                                                                    <span
+                                                                        :class="[
+                                                                            'text-[11px] px-2 py-0.5 rounded-full font-bold',
+                                                                            s.status === 'in_stock' ? 'bg-green-100 text-green-700' : s.status === 'sold' ? 'bg-gray-100 text-gray-500' : s.status === 'warranty' ? 'bg-orange-100 text-orange-600' : 'bg-red-100 text-red-600',
+                                                                        ]"
+                                                                    >{{ serialStatusLabel(s.status) }}</span>
+                                                                </td>
+                                                                <td class="p-2.5 text-right text-gray-500">
+                                                                    {{ formatCurrency(product.cost_price) }}
+                                                                </td>
+                                                                <td class="p-2.5 text-right font-bold"
+                                                                    :class="(s.cost_price || 0) > (product.cost_price || 0) ? 'text-red-600' : (s.cost_price || 0) < (product.cost_price || 0) ? 'text-green-600' : 'text-gray-800'"
+                                                                >
+                                                                    {{ formatCurrency(s.cost_price || 0) }}
+                                                                </td>
+                                                                <td class="p-2.5 text-right font-semibold"
+                                                                    :class="(s.cost_price || 0) - (product.cost_price || 0) > 0 ? 'text-red-500' : (s.cost_price || 0) - (product.cost_price || 0) < 0 ? 'text-green-500' : 'text-gray-400'"
+                                                                >
+                                                                    {{ (s.cost_price || 0) - (product.cost_price || 0) > 0 ? '+' : '' }}{{ formatCurrency((s.cost_price || 0) - (product.cost_price || 0)) }}
+                                                                </td>
+                                                            </tr>
+                                                        </tbody>
+                                                        <tfoot class="bg-gray-50 font-bold text-[12px] border-t-2 border-gray-200">
+                                                            <tr>
+                                                                <td class="p-2.5 text-gray-600" colspan="2">
+                                                                    Tổng cộng ({{ product.serialsData.filter(s => s.status === 'in_stock').length }} còn tồn)
+                                                                </td>
+                                                                <td class="p-2.5 text-right text-gray-500">
+                                                                    {{ formatCurrency((product.cost_price || 0) * product.serialsData.filter(s => s.status === 'in_stock').length) }}
+                                                                </td>
+                                                                <td class="p-2.5 text-right text-blue-700">
+                                                                    {{ formatCurrency(product.serialsData.filter(s => s.status === 'in_stock').reduce((sum, s) => sum + (s.cost_price || 0), 0)) }}
+                                                                </td>
+                                                                <td class="p-2.5 text-right"
+                                                                    :class="product.serialsData.filter(s => s.status === 'in_stock').reduce((sum, s) => sum + ((s.cost_price || 0) - (product.cost_price || 0)), 0) > 0 ? 'text-red-500' : 'text-green-500'"
+                                                                >
+                                                                    {{ product.serialsData.filter(s => s.status === 'in_stock').reduce((sum, s) => sum + ((s.cost_price || 0) - (product.cost_price || 0)), 0) > 0 ? '+' : '' }}{{ formatCurrency(product.serialsData.filter(s => s.status === 'in_stock').reduce((sum, s) => sum + ((s.cost_price || 0) - (product.cost_price || 0)), 0)) }}
+                                                                </td>
+                                                            </tr>
+                                                        </tfoot>
+                                                    </table>
+                                                </div>
+                                                <div
+                                                    v-else
+                                                    class="text-center py-8 text-gray-400 italic text-[13px]"
+                                                >
+                                                    Chưa có Serial/IMEI nào.
+                                                </div>
+
+                                                <!-- Info Note -->
+                                                <div class="mt-3 px-3 py-2 bg-blue-50 rounded text-[12px] text-blue-700 border border-blue-100">
+                                                    <strong>💡 Lưu ý:</strong> Giá vốn cuối = Giá vốn gốc ± linh kiện bóc tách/lắp thêm từ phiếu sửa chữa. Lợi nhuận tính = Giá bán − Giá vốn cuối.
                                                 </div>
                                             </div>
                                         </div>
