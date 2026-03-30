@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\DB;
 class SyncSerialCostFromTasks extends Command
 {
     protected $signature = 'serial:sync-cost-from-tasks';
-    protected $description = 'Sync serial cost_price from their latest repair task total_cost, and backfill original_cost from purchase items';
+    protected $description = 'Sync serial cost_price from repair tasks, backfill original_cost, and fix product.cost_price';
 
     public function handle()
     {
@@ -27,7 +27,7 @@ class SyncSerialCostFromTasks extends Command
         $this->info("Backfilled original_cost cho {$backfilled} serial(s).");
 
         // ── Step 2: Sync cost_price từ task.total_cost ──
-        $this->info('=== Step 2: Sync cost_price từ task.total_cost ===');
+        $this->info('=== Step 2: Sync serial.cost_price từ task.total_cost ===');
 
         $tasks = Task::where('type', 'repair')
             ->whereNotNull('serial_imei_id')
@@ -36,6 +36,7 @@ class SyncSerialCostFromTasks extends Command
             ->get();
 
         $updated = 0;
+        $affectedProductIds = collect();
 
         foreach ($tasks as $task) {
             $serial = $task->serialImei;
@@ -54,26 +55,29 @@ class SyncSerialCostFromTasks extends Command
                 $this->info("Serial {$serial->serial_number}: cost_price {$oldCost} → {$newCost} (Task {$task->code})");
                 $updated++;
             }
+
+            $affectedProductIds->push($serial->product_id);
         }
 
-        // ── Step 3: Sync product average costs ──
-        $this->info('=== Step 3: Sync product cost (avg of serials) ===');
+        // ── Step 3: Reset product.cost_price về giá nhập gốc (original_cost) ──
+        $this->info('=== Step 3: Reset product.cost_price về giá nhập gốc ===');
 
-        $productIds = $tasks->pluck('product_id')->unique()->filter();
+        $productIds = $affectedProductIds->unique()->filter();
         foreach ($productIds as $productId) {
             $product = \App\Models\Product::find($productId);
             if (!$product) continue;
 
-            $avgCost = SerialImei::where('product_id', $productId)
+            // Lấy trung bình original_cost (giá nhập gốc) thay vì cost_price (giá cuối)
+            $avgOriginalCost = SerialImei::where('product_id', $productId)
                 ->where('status', 'in_stock')
-                ->where('cost_price', '>', 0)
-                ->avg('cost_price');
+                ->where('original_cost', '>', 0)
+                ->avg('original_cost');
 
-            if ($avgCost !== null) {
+            if ($avgOriginalCost !== null) {
                 $old = $product->cost_price;
-                $product->cost_price = round((float) $avgCost, 0);
+                $product->cost_price = round((float) $avgOriginalCost, 0);
                 $product->save();
-                $this->info("Product #{$productId} ({$product->name}): cost_price {$old} → {$product->cost_price}");
+                $this->info("Product #{$productId} ({$product->name}): cost_price {$old} → {$product->cost_price} (avg original_cost)");
             }
         }
 

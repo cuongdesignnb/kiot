@@ -85,7 +85,6 @@ class TaskService
             if ($serial) {
                 $serial->cost_price = max(0, (float) $task->total_cost);
                 $serial->save();
-                $this->syncProductCostFromSerials($serial->product_id);
             }
         } elseif ($task->product_id) {
             // Sản phẩm không serial → gán trực tiếp vào product
@@ -389,7 +388,6 @@ class TaskService
                 if ($serial) {
                     $serial->cost_price = (float) $task->original_cost;
                     $serial->save();
-                    $this->syncProductCostFromSerials($serial->product_id);
                 }
             } elseif ($task->product_id) {
                 $repairedProduct = Product::find($task->product_id);
