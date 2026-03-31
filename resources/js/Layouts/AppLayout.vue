@@ -218,7 +218,7 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                                     >Nhập hàng</Link
                                 >
                                 <Link
-                                    href="/purchases"
+                                    href="/purchase-returns"
                                     class="block px-4 py-3 hover:bg-gray-100 bg-gray-100 border-t border-gray-200"
                                     >Trả hàng nhập</Link
                                 >

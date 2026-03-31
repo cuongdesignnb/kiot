@@ -17,7 +17,7 @@ class PurchaseReturnController extends Controller
 {
     public function index(Request $request)
     {
-        $query = PurchaseReturn::with(['supplier', 'purchase', 'items'])->latest();
+        $query = PurchaseReturn::with(['supplier', 'purchase', 'items', 'user', 'employee'])->latest();
 
         if ($request->search) {
             $search = $request->search;
@@ -27,11 +27,29 @@ class PurchaseReturnController extends Controller
             });
         }
 
+        if ($request->status && is_array($request->status)) {
+            $query->whereIn('status', $request->status);
+        }
+
+        if ($request->date_filter === 'this_month') {
+            $query->whereMonth('return_date', now()->month)
+                  ->whereYear('return_date', now()->year);
+        }
+
+        // Summary
+        $summaryQuery = (clone $query);
+        $summary = [
+            'total_amount' => $summaryQuery->sum('total_amount'),
+            'total_refund' => $summaryQuery->sum('refund_amount'),
+            'total_refunded' => (clone $summaryQuery)->where('status', 'completed')->sum('refund_amount'),
+        ];
+
         $returns = $query->paginate(20)->withQueryString();
 
         return Inertia::render('PurchaseReturns/Index', [
             'returns' => $returns,
-            'filters' => $request->only(['search']),
+            'filters' => $request->only(['search', 'status', 'date_filter']),
+            'summary' => $summary,
         ]);
     }
 
@@ -187,7 +205,7 @@ class PurchaseReturnController extends Controller
 
             DB::commit();
 
-            return redirect()->route('purchases.show', $purchase->id)
+            return redirect()->route('purchase-returns.index')
                 ->with('success', 'Tạo phiếu trả hàng nhập thành công! Tồn kho và công nợ đã được cập nhật.');
         } catch (\Exception $e) {
             DB::rollBack();
@@ -260,7 +278,7 @@ class PurchaseReturnController extends Controller
             $purchaseReturn->save();
 
             DB::commit();
-            return redirect()->route('purchases.show', $purchaseReturn->purchase_id)
+            return redirect()->route('purchase-returns.index')
                 ->with('success', 'Đã hủy phiếu trả hàng. Tồn kho và công nợ đã được hoàn lại.');
         } catch (\Exception $e) {
             DB::rollBack();
