@@ -3,7 +3,6 @@ import { ref, watch } from "vue";
 import { Head, router, Link } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
-import SortableHeader from "@/Components/SortableHeader.vue";
 
 const props = defineProps({
     purchases: Object,
@@ -14,23 +13,12 @@ const props = defineProps({
 const search = ref(props.filters?.search || "");
 const statusFilters = ref(props.filters?.status || []);
 const dateFilter = ref(props.filters?.date_filter || "this_month");
-const sortBy = ref(props.filters?.sort_by || "");
-const sortDirection = ref(props.filters?.sort_direction || "");
 
 const allStatuses = [
     { value: "draft", label: "Phiếu tạm" },
     { value: "completed", label: "Hoàn thành" },
+    { value: "cancelled", label: "Đã hủy" },
 ];
-
-const handleSort = (field, direction) => {
-    sortBy.value = field;
-    sortDirection.value = direction;
-    router.get(
-        "/purchases",
-        { search: search.value, status: statusFilters.value, date_filter: dateFilter.value, sort_by: field, sort_direction: direction },
-        { preserveState: true, replace: true },
-    );
-};
 
 let searchTimeout;
 const updateFilters = () => {
@@ -42,8 +30,6 @@ const updateFilters = () => {
                 search: search.value,
                 status: statusFilters.value,
                 date_filter: dateFilter.value,
-                sort_by: sortBy.value,
-                sort_direction: sortDirection.value,
             },
             {
                 preserveState: true,
@@ -89,6 +75,13 @@ const printPurchase = (order) => {
         "_blank",
         "width=400,height=600",
     );
+};
+
+const cancelPurchase = (order) => {
+    if (!confirm(`Bạn có chắc muốn hủy phiếu nhập hàng ${order.code}? Tồn kho và công nợ sẽ được hoàn lại.`)) return;
+    router.delete(`/purchases/${order.id}`, {
+        preserveState: false,
+    });
 };
 </script>
 
@@ -332,14 +325,16 @@ const printPurchase = (order) => {
                                     ></path>
                                 </svg>
                             </th>
-                            <SortableHeader label="Mã nhập hàng" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
-                            <SortableHeader label="Thời gian" field="created_at" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
+                            <th class="px-2 py-2">Mã nhập hàng</th>
+                            <th class="px-2 py-2">Thời gian</th>
                             <th class="px-2 py-2">Nhà cung cấp</th>
-                            <SortableHeader label="Tổng cộng" field="total_amount" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <th class="px-4 py-2 text-right">Tổng cộng</th>
                             <th class="px-4 py-2 text-right">Cần trả NCC</th>
-                            <SortableHeader label="Đã trả NCC" field="paid_amount" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
-                            <SortableHeader label="Còn nợ" field="debt_amount" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
-                            <SortableHeader label="Trạng thái" field="status" :current-sort="sortBy" :current-direction="sortDirection" align="center" class="px-4 py-2 text-center w-24" @sort="handleSort" />
+                            <th class="px-4 py-2 text-right">Đã trả NCC</th>
+                            <th class="px-4 py-2 text-right">Còn nợ</th>
+                            <th class="px-4 py-2 text-center w-24">
+                                Trạng thái
+                            </th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100 bg-white">
@@ -451,15 +446,13 @@ const printPurchase = (order) => {
                                 <td class="px-4 py-2 text-center">
                                     <span
                                         class="inline-block px-2 text-[11px] py-0.5 rounded border font-medium"
-                                        :class="order.status === 'completed'
-                                            ? 'bg-green-50 text-green-700 border-green-200'
-                                            : 'bg-amber-50 text-amber-700 border-amber-200'"
+                                        :class="{
+                                            'bg-green-50 text-green-700 border-green-200': order.status === 'completed',
+                                            'bg-gray-50 text-gray-500 border-gray-200': order.status === 'draft',
+                                            'bg-red-50 text-red-600 border-red-200': order.status === 'cancelled',
+                                        }"
                                     >
-                                        {{
-                                            order.status === "completed"
-                                                ? "Hoàn thành"
-                                                : "Phiếu tạm"
-                                        }}
+                                        {{ order.status === 'completed' ? 'Hoàn thành' : order.status === 'cancelled' ? 'Đã hủy' : 'Phiếu tạm' }}
                                     </span>
                                 </td>
                             </tr>
@@ -616,8 +609,12 @@ const printPurchase = (order) => {
                                                 >
                                                 <span
                                                     class="font-bold"
-                                                    :class="order.status === 'completed' ? 'text-green-600' : 'text-amber-600'"
-                                                    >{{ order.status === 'completed' ? 'Hoàn thành' : 'Phiếu tạm' }}</span
+                                                    :class="{
+                                                        'text-green-600': order.status === 'completed',
+                                                        'text-gray-500': order.status === 'draft',
+                                                        'text-red-600': order.status === 'cancelled',
+                                                    }"
+                                                    >{{ order.status === 'completed' ? 'Hoàn thành' : order.status === 'cancelled' ? 'Đã hủy' : 'Phiếu tạm' }}</span
                                                 >
                                             </div>
                                             <div
@@ -634,6 +631,7 @@ const printPurchase = (order) => {
                                                 class="border-t border-gray-200 pt-3 mt-3 flex gap-2"
                                             >
                                                 <button
+                                                    v-if="order.status !== 'cancelled'"
                                                     class="bg-blue-600 text-white px-4 py-1.5 rounded font-medium hover:bg-blue-700 w-full"
                                                 >
                                                     Thanh toán
@@ -645,6 +643,22 @@ const printPurchase = (order) => {
                                                     class="bg-gray-100 text-gray-600 px-4 py-1.5 rounded font-medium hover:bg-gray-200 w-full border border-gray-300"
                                                 >
                                                     In
+                                                </button>
+                                                <button
+                                                    v-if="order.status === 'completed'"
+                                                    @click.stop="cancelPurchase(order)"
+                                                    class="bg-red-500 text-white px-4 py-1.5 rounded font-medium hover:bg-red-600 w-full flex items-center justify-center gap-1"
+                                                >
+                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                                    Hủy
+                                                </button>
+                                                <button
+                                                    v-if="order.status === 'draft'"
+                                                    @click.stop="cancelPurchase(order)"
+                                                    class="bg-red-500 text-white px-4 py-1.5 rounded font-medium hover:bg-red-600 w-full flex items-center justify-center gap-1"
+                                                >
+                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                                    Xóa
                                                 </button>
                                             </div>
                                         </div>
