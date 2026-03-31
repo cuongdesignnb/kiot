@@ -148,7 +148,7 @@ const save = () => {
                             <template v-for="item in items" :key="item.product_id">
                                 <tr class="hover:bg-blue-50/30 cursor-pointer" :class="{ 'bg-blue-50/50': item.selected }" @click="toggleItem(item)">
                                     <td class="p-3 text-center" @click.stop>
-                                        <input type="checkbox" v-model="item.selected" @change="toggleItem(item)" class="rounded border-gray-300 text-green-600 focus:ring-green-500 w-4 h-4">
+                                        <input type="checkbox" :checked="item.selected" @change="toggleItem(item)" class="rounded border-gray-300 text-green-600 focus:ring-green-500 w-4 h-4">
                                     </td>
                                     <td class="p-3 text-blue-600 font-medium">{{ item.product_code }}</td>
                                     <td class="p-3">
