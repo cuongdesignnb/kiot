@@ -203,6 +203,10 @@ class PurchaseReturnController extends Controller
                 ]);
             }
 
+            // Update purchase status to 'returned'
+            $purchase->status = 'returned';
+            $purchase->save();
+
             DB::commit();
 
             return redirect()->route('purchase-returns.index')
@@ -273,9 +277,22 @@ class PurchaseReturnController extends Controller
                 ->where('reference_code', $purchaseReturn->code)
                 ->delete();
 
-            $purchaseReturn->items()->delete();
             $purchaseReturn->status = 'cancelled';
             $purchaseReturn->save();
+
+            // Restore purchase status back to completed
+            $purchase = Purchase::find($purchaseReturn->purchase_id);
+            if ($purchase) {
+                // Check if there are other active returns for this purchase
+                $otherActiveReturns = PurchaseReturn::where('purchase_id', $purchase->id)
+                    ->where('id', '!=', $purchaseReturn->id)
+                    ->where('status', 'completed')
+                    ->exists();
+                if (!$otherActiveReturns) {
+                    $purchase->status = 'completed';
+                    $purchase->save();
+                }
+            }
 
             DB::commit();
             return redirect()->route('purchase-returns.index')

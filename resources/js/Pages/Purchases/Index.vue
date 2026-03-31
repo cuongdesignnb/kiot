@@ -17,6 +17,7 @@ const dateFilter = ref(props.filters?.date_filter || "this_month");
 const allStatuses = [
     { value: "draft", label: "Phiếu tạm" },
     { value: "completed", label: "Hoàn thành" },
+    { value: "returned", label: "Đã trả hàng" },
     { value: "cancelled", label: "Đã hủy" },
 ];
 
@@ -449,10 +450,11 @@ const cancelPurchase = (order) => {
                                         :class="{
                                             'bg-green-50 text-green-700 border-green-200': order.status === 'completed',
                                             'bg-gray-50 text-gray-500 border-gray-200': order.status === 'draft',
+                                            'bg-orange-50 text-orange-600 border-orange-200': order.status === 'returned',
                                             'bg-red-50 text-red-600 border-red-200': order.status === 'cancelled',
                                         }"
                                     >
-                                        {{ order.status === 'completed' ? 'Hoàn thành' : order.status === 'cancelled' ? 'Đã hủy' : 'Phiếu tạm' }}
+                                        {{ formatStatus(order.status) }}
                                     </span>
                                 </td>
                             </tr>
@@ -612,9 +614,10 @@ const cancelPurchase = (order) => {
                                                     :class="{
                                                         'text-green-600': order.status === 'completed',
                                                         'text-gray-500': order.status === 'draft',
+                                                        'text-orange-600': order.status === 'returned',
                                                         'text-red-600': order.status === 'cancelled',
                                                     }"
-                                                    >{{ order.status === 'completed' ? 'Hoàn thành' : order.status === 'cancelled' ? 'Đã hủy' : 'Phiếu tạm' }}</span
+                                                    >{{ formatStatus(order.status) }}</span
                                                 >
                                             </div>
                                             <div
