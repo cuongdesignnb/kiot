@@ -6,6 +6,8 @@ use Illuminate\Http\Request;
 
 use App\Models\Purchase;
 use App\Models\PurchaseItem;
+use App\Models\PurchaseReturn;
+use App\Models\PurchaseReturnItem;
 use App\Models\Product;
 use App\Models\Customer;
 use App\Models\CashFlow;
@@ -322,8 +324,25 @@ class PurchaseController extends Controller
             ->orderBy('created_at', 'desc')
             ->get();
 
+        // Load purchase returns for this purchase
+        $purchaseReturns = PurchaseReturn::with(['items', 'user', 'employee'])
+            ->where('purchase_id', $purchase->id)
+            ->where('status', 'completed')
+            ->get();
+
+        // Calculate returned qty per product
+        $returnedQty = PurchaseReturnItem::whereHas('purchaseReturn', function ($q) use ($purchase) {
+            $q->where('purchase_id', $purchase->id)->where('status', 'completed');
+        })->selectRaw('product_id, SUM(quantity) as total_returned')
+            ->groupBy('product_id')->pluck('total_returned', 'product_id');
+
+        foreach ($purchase->items as $item) {
+            $item->returned_qty = $returnedQty[$item->product_id] ?? 0;
+        }
+
         return Inertia::render('Purchases/Show', [
             'purchase' => $purchase,
+            'purchaseReturns' => $purchaseReturns,
             'bankAccounts' => \App\Models\BankAccount::where('status', 'active')->get(),
             'employees' => \App\Models\Employee::where('is_active', true)->get(['id', 'name', 'code']),
         ]);

@@ -5,6 +5,7 @@ import AppLayout from '@/Layouts/AppLayout.vue';
 
 const props = defineProps({
     purchase: Object,
+    purchaseReturns: Array,
     bankAccounts: Array,
     employees: Array,
 });
@@ -189,9 +190,9 @@ const paymentMethodLabel = (method) => {
                                     <th class="px-3 py-2 font-medium text-gray-600 w-24">Mã hàng</th>
                                     <th class="px-3 py-2 font-medium text-gray-600">Tên hàng</th>
                                     <th class="px-3 py-2 font-medium text-gray-600 text-center w-24">Số lượng</th>
+                                    <th class="px-3 py-2 font-medium text-gray-600 text-center w-20">Đã trả</th>
                                     <th class="px-3 py-2 font-medium text-gray-600 text-right w-28">Đơn giá</th>
                                     <th class="px-3 py-2 font-medium text-gray-600 text-right w-24">Giảm giá</th>
-                                    <th class="px-3 py-2 font-medium text-gray-600 text-right w-28">Giá nhập</th>
                                     <th class="px-3 py-2 font-medium text-gray-600 text-center w-24">BH (tháng)</th>
                                     <th class="px-3 py-2 font-medium text-gray-600 text-right w-28 pr-4">Thành tiền</th>
                                 </tr>
@@ -213,9 +214,12 @@ const paymentMethodLabel = (method) => {
                                         <td class="px-3 py-2 text-blue-600 font-medium">{{ item.product_code }}</td>
                                         <td class="px-3 py-2 text-gray-800">{{ item.product_name }}</td>
                                         <td class="px-3 py-2 text-center font-medium">{{ item.quantity }}</td>
+                                        <td class="px-3 py-2 text-center">
+                                            <span v-if="item.returned_qty > 0" class="text-orange-600 font-bold">{{ item.returned_qty }}</span>
+                                            <span v-else class="text-gray-300">0</span>
+                                        </td>
                                         <td class="px-3 py-2 text-right">{{ formatCurrency(item.price) }}</td>
                                         <td class="px-3 py-2 text-right">{{ formatCurrency(item.discount) }}</td>
-                                        <td class="px-3 py-2 text-right">{{ formatCurrency(item.price) }}</td>
                                         <td class="px-3 py-2 text-center">
                                             <span v-if="item.warranty_months > 0" class="text-orange-600 font-medium">{{ item.warranty_months }}</span>
                                             <span v-else class="text-gray-400">-</span>
@@ -228,8 +232,10 @@ const paymentMethodLabel = (method) => {
                                         <td colspan="8" class="px-6 py-1.5 bg-gray-50/50">
                                             <div class="flex flex-wrap gap-1.5">
                                                 <span v-for="serial in item.serials" :key="serial.id"
-                                                    class="inline-flex items-center bg-blue-50 border border-blue-200 text-blue-700 text-[11px] font-medium px-2 py-0.5 rounded">
+                                                    class="inline-flex items-center text-[11px] font-medium px-2 py-0.5 rounded border"
+                                                    :class="serial.status === 'returned' ? 'bg-orange-50 border-orange-200 text-orange-600 line-through' : 'bg-blue-50 border-blue-200 text-blue-700'">
                                                     {{ serial.serial_number }}
+                                                    <span v-if="serial.status === 'returned'" class="ml-1 text-[9px] no-underline">đã trả</span>
                                                 </span>
                                             </div>
                                         </td>
@@ -237,6 +243,29 @@ const paymentMethodLabel = (method) => {
                                 </template>
                             </tbody>
                         </table>
+                    </div>
+
+                    <!-- Purchase Returns Section -->
+                    <div v-if="purchaseReturns && purchaseReturns.length > 0" class="mt-4 border border-orange-200 rounded overflow-hidden">
+                        <div class="bg-orange-50 px-4 py-2 border-b border-orange-200 flex items-center gap-2">
+                            <svg class="w-4 h-4 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"></path></svg>
+                            <span class="font-bold text-orange-700 text-[13px]">Phiếu trả hàng nhập ({{ purchaseReturns.length }})</span>
+                        </div>
+                        <div v-for="ret in purchaseReturns" :key="ret.id" class="px-4 py-3 border-b border-gray-100 last:border-b-0 hover:bg-orange-50/30">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-3">
+                                    <Link :href="'/purchase-returns/' + ret.id" class="text-blue-600 font-medium hover:underline text-[13px]">{{ ret.code }}</Link>
+                                    <span class="text-[12px] text-gray-500">{{ new Date(ret.return_date || ret.created_at).toLocaleString('vi-VN') }}</span>
+                                    <span class="text-[12px] text-gray-400">NV: {{ ret.employee?.name || ret.user?.name || '—' }}</span>
+                                </div>
+                                <span class="font-bold text-orange-600 text-[13px]">-{{ formatCurrency(ret.total_amount) }}</span>
+                            </div>
+                            <div class="mt-1 flex flex-wrap gap-2 text-[12px] text-gray-500">
+                                <span v-for="item in ret.items" :key="item.id" class="bg-gray-100 px-2 py-0.5 rounded">
+                                    {{ item.product_name }} x{{ item.quantity }}
+                                </span>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Summary -->
