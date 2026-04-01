@@ -80,17 +80,12 @@ class DashboardController extends Controller
         $totalCustomers = Customer::count();
 
         // Nợ phải thu (khách nợ)
-        try {
-            $totalCustomerDebt = Customer::where('debt', '>', 0)->sum('debt');
-        } catch (\Exception $e) {
-            $totalCustomerDebt = 0;
-        }
+        $totalCustomerDebt = Customer::where('debt_amount', '>', 0)->sum('debt_amount');
 
-        // Nợ phải trả (nợ NCC)
-        $totalSupplierDebt = Purchase::where('status', 'completed')
-            ->whereRaw('total_amount > paid_amount')
-            ->selectRaw('COALESCE(SUM(total_amount - paid_amount), 0) as total_debt')
-            ->value('total_debt') ?? 0;
+        // Nợ phải trả (nợ NCC) - dùng supplier_debt_amount đã được cập nhật khi nhập/trả hàng
+        $totalSupplierDebt = Customer::where('is_supplier', true)
+            ->where('supplier_debt_amount', '>', 0)
+            ->sum('supplier_debt_amount');
 
         // ═══════════════════════════════════════
         // 2. BIỂU ĐỒ DOANH THU 30 NGÀY

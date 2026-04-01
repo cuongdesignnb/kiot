@@ -51,10 +51,18 @@ class CustomerController extends Controller
             'customer_manage_by_branch' => Setting::get('customer_manage_by_branch', false),
         ];
 
+        // Summary totals
+        $summary = [
+            'total_debt' => Customer::where('debt_amount', '>', 0)->sum('debt_amount'),
+            'total_spent' => Customer::sum('total_spent'),
+            'total_returns' => Customer::sum('total_returns'),
+        ];
+
         return Inertia::render('Customers/Index', [
             'customers' => $customers,
             'filters' => ['search' => $search, 'type' => $type, 'gender' => $gender, 'sort_by' => $request->sort_by, 'sort_direction' => $request->sort_direction],
             'customerSettings' => $customerSettings,
+            'summary' => $summary,
         ]);
     }
 

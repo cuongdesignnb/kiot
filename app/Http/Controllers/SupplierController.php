@@ -49,44 +49,15 @@ class SupplierController extends Controller
             }
         }
 
-        $suppliers = $query
-            ->when($request->filled('sort_by'), function ($q) use ($request) {
-                $allowed = ['code', 'name', 'phone', 'email', 'created_at'];
-                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'id';
-                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
-                $q->orderBy($sortBy, $dir);
-            }, function ($q) {
-                $q->latest();
-            })
-            ->paginate(50)->withQueryString();
+        $suppliers = $query->latest()->paginate(50)->withQueryString();
 
-        // Recalculate supplier_debt_amount from actual purchase data
-        $supplierIds = $suppliers->pluck('id');
-        $debts = Purchase::whereIn('supplier_id', $supplierIds)
-            ->where('status', 'completed')
-            ->groupBy('supplier_id')
-            ->select('supplier_id', DB::raw('SUM(debt_amount) as real_debt'), DB::raw('SUM(total_amount) as real_total'))
-            ->pluck('real_debt', 'supplier_id');
-        $totals = Purchase::whereIn('supplier_id', $supplierIds)
-            ->where('status', 'completed')
-            ->groupBy('supplier_id')
-            ->select('supplier_id', DB::raw('SUM(total_amount) as real_total'))
-            ->pluck('real_total', 'supplier_id');
-
-        $suppliers->getCollection()->transform(function ($s) use ($debts, $totals) {
-            $s->supplier_debt_amount = $debts[$s->id] ?? 0;
-            $s->total_bought = $totals[$s->id] ?? 0;
-            return $s;
-        });
-
-        // Summary totals
+        // Summary totals - use supplier_debt_amount which is maintained by purchase/return flows
         $summary = [
-            'total_debt' => Purchase::where('status', 'completed')
-                ->whereHas('supplier', fn($q) => $q->where('is_supplier', true))
-                ->sum('debt_amount'),
-            'total_bought' => Purchase::where('status', 'completed')
-                ->whereHas('supplier', fn($q) => $q->where('is_supplier', true))
-                ->sum('total_amount'),
+            'total_debt' => Customer::where('is_supplier', true)
+                ->where('supplier_debt_amount', '>', 0)
+                ->sum('supplier_debt_amount'),
+            'total_bought' => Customer::where('is_supplier', true)
+                ->sum('total_bought'),
         ];
 
         $groups = Customer::where('is_supplier', true)->whereNotNull('customer_group')->distinct()->pluck('customer_group');
@@ -94,27 +65,13 @@ class SupplierController extends Controller
         return Inertia::render('Suppliers/Index', [
             'suppliers' => $suppliers,
             'groups' => $groups,
-            'filters' => array_merge($request->only(['search', 'customer_group', 'date_filter', 'partner_type']), [
-                'sort_by' => $request->sort_by,
-                'sort_direction' => $request->sort_direction,
-            ]),
+            'filters' => $request->only(['search', 'customer_group', 'date_filter', 'partner_type']),
             'summary' => $summary,
         ]);
     }
 
     public function store(Request $request)
     {
-        if ($request->filled('link_existing_id')) {
-            $customer = Customer::find($request->input('link_existing_id'));
-            if ($customer) {
-                $customer->update(['is_supplier' => true]);
-                if ($request->wantsJson()) {
-                    return response()->json(['supplier' => $customer]);
-                }
-                return redirect()->route('suppliers.index')->with('success', 'Đã liên kết nhà cung cấp thành công.');
-            }
-        }
-
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'code' => 'nullable|string|max:255|unique:customers,code',
@@ -134,11 +91,7 @@ class SupplierController extends Controller
         // If the toggle 'is_customer' is false, it means they are only a supplier.
         $validated['is_customer'] = $request->input('is_customer', false);
 
-        $customer = Customer::create($validated);
-
-        if ($request->wantsJson()) {
-            return response()->json(['supplier' => $customer]);
-        }
+        Customer::create($validated);
 
         return redirect()->route('suppliers.index')->with('success', 'Tạo nhà cung cấp thành công.');
     }
@@ -147,41 +100,14 @@ class SupplierController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'code' => 'nullable|string|max:255|unique:customers,code',
             'phone' => 'nullable|string|max:255',
-            'phone2' => 'nullable|string|max:255',
-            'birthday' => 'nullable|date',
-            'gender' => 'nullable|in:none,male,female',
             'email' => 'nullable|email|max:255',
-            'facebook' => 'nullable|string|max:255',
             'address' => 'nullable|string',
-            'city' => 'nullable|string',
-            'district' => 'nullable|string',
-            'ward' => 'nullable|string',
-            'customer_group' => 'nullable|string',
-            'note' => 'nullable|string',
-            'type' => 'nullable|in:individual,company',
-            'invoice_name' => 'nullable|string|max:255',
-            'id_card' => 'nullable|string|max:255',
-            'passport' => 'nullable|string|max:255',
-            'tax_code' => 'nullable|string|max:255',
-            'invoice_address' => 'nullable|string',
-            'invoice_city' => 'nullable|string',
-            'invoice_district' => 'nullable|string',
-            'invoice_ward' => 'nullable|string',
-            'invoice_email' => 'nullable|email|max:255',
-            'invoice_phone' => 'nullable|string|max:255',
-            'bank_name' => 'nullable|string|max:255',
-            'bank_account' => 'nullable|string|max:255',
-            'is_customer' => 'boolean',
         ]);
 
-        if (empty($validated['code'])) {
-            $validated['code'] = 'NCC' . time() . rand(10, 99);
-        }
-
+        $validated['code'] = 'NCC' . time() . rand(10, 99);
         $validated['is_supplier'] = true;
-        $validated['is_customer'] = $request->input('is_customer', false);
+        $validated['is_customer'] = false;
 
         $supplier = Customer::create($validated);
 
@@ -217,23 +143,6 @@ class SupplierController extends Controller
     }
 
     // ===== API METHODS =====
-
-    public function apiSearch(Request $request)
-    {
-        $search = $request->input('search');
-        $suppliers = Customer::where('is_supplier', true)
-            ->when($search, function($q) use ($search) {
-                $q->where(function($query) use ($search) {
-                    $query->where('name', 'like', "%{$search}%")
-                          ->orWhere('code', 'like', "%{$search}%")
-                          ->orWhere('phone', 'like', "%{$search}%");
-                });
-            })
-            ->take(20)
-            ->get(['id', 'name', 'phone']);
-            
-        return response()->json($suppliers);
-    }
 
     /**
      * Lịch sử nhập/trả hàng
