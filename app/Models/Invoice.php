@@ -27,4 +27,9 @@ class Invoice extends Model
     {
         return $this->belongsTo(Employee::class, 'created_by');
     }
+
+    public function employee()
+    {
+        return $this->belongsTo(Employee::class);
+    }
 }
