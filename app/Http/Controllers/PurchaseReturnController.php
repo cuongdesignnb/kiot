@@ -302,4 +302,31 @@ class PurchaseReturnController extends Controller
             return back()->with('error', 'Lỗi: ' . $e->getMessage());
         }
     }
+
+    public function export(Request $request)
+    {
+        $returns = PurchaseReturn::with(['supplier', 'purchase', 'user'])
+            ->when($request->search, function ($q, $s) {
+                $q->where('code', 'LIKE', "%{$s}%")
+                    ->orWhereHas('supplier', fn($sq) => $sq->where('name', 'LIKE', "%{$s}%"));
+            })
+            ->latest()
+            ->get();
+
+        return \App\Services\CsvService::export(
+            ['Mã phiếu trả', 'Mã phiếu nhập', 'Nhà cung cấp', 'Ngày trả', 'Tổng tiền hàng trả', 'Tiền hoàn lại', 'Trạng thái', 'Người tạo', 'Ghi chú'],
+            $returns->map(fn($r) => [
+                $r->code,
+                $r->purchase?->code,
+                $r->supplier?->name,
+                $r->return_date,
+                $r->total_amount,
+                $r->refund_amount,
+                $r->status === 'completed' ? 'Đã trả hàng' : ($r->status === 'cancelled' ? 'Đã hủy' : $r->status),
+                $r->user?->name,
+                $r->note,
+            ]),
+            'tra_hang_nhap.csv'
+        );
+    }
 }

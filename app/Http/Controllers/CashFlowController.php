@@ -15,22 +15,12 @@ class CashFlowController extends Controller
 
         // Lấy danh sách phiếu thu/chi có phân trang
         $cashFlows = CashFlow::when($search, function ($query, $search) {
-            return $query->where(function ($q) use ($search) {
-                $q->where('code', 'LIKE', "%{$search}%")
-                    ->orWhere('description', 'LIKE', "%{$search}%")
-                    ->orWhere('reference_code', 'LIKE', "%{$search}%")
-                    ->orWhere('target_name', 'LIKE', "%{$search}%")
-                    ->orWhere('category', 'LIKE', "%{$search}%");
-            });
+            return $query->where('code', 'LIKE', "%{$search}%")
+                ->orWhere('description', 'LIKE', "%{$search}%")
+                ->orWhere('reference_code', 'LIKE', "%{$search}%");
         })
-            ->when($request->filled('sort_by'), function ($query) use ($request) {
-                $allowed = ['code', 'time', 'type', 'amount', 'target_name', 'category', 'created_at'];
-                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'time';
-                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
-                $query->orderBy($sortBy, $dir);
-            }, function ($query) {
-                $query->orderBy('time', 'desc')->orderBy('created_at', 'desc');
-            })
+            ->orderBy('time', 'desc')
+            ->orderBy('created_at', 'desc')
             ->paginate(15)
             ->withQueryString();
 
@@ -53,7 +43,7 @@ class CashFlowController extends Controller
 
         return Inertia::render('CashFlows/Index', [
             'cashFlows' => $cashFlows,
-            'filters' => ['search' => $search, 'sort_by' => $request->sort_by, 'sort_direction' => $request->sort_direction],
+            'filters' => ['search' => $search],
             'metrics' => [
                 'totalReceipts' => $totalReceipts,
                 'totalPayments' => $totalPayments,
@@ -115,8 +105,10 @@ class CashFlowController extends Controller
             'is_supplier' => 'boolean'
         ]);
 
-        $validated['code'] = ($request->input('is_supplier', false) ? 'NCC' : 'KH') . time() . rand(10, 99);
-        $validated['is_supplier'] = $request->input('is_supplier', false);
+        $isSupplier = $request->input('is_supplier', false);
+        $validated['code'] = ($isSupplier ? 'NCC' : 'KH') . time() . rand(10, 99);
+        $validated['is_supplier'] = $isSupplier;
+        $validated['is_customer'] = !$isSupplier;
 
         \App\Models\Customer::create($validated);
 

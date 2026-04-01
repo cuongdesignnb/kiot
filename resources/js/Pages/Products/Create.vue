@@ -15,7 +15,6 @@ const props = defineProps({
     showRetailPrice: Boolean,
     showTechnicianPrice: Boolean,
     productAttributes: { type: Array, default: () => [] },
-    redirectBack: { type: String, default: null },
 });
 
 const form = useForm({
@@ -40,7 +39,6 @@ const form = useForm({
     base_unit_name: '',
     units: [],
     variants: [],
-    redirect_back: props.redirectBack || '',
 });
 
 // Reactive local copies for inline creation
@@ -266,17 +264,10 @@ const generateVariants = () => {
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
                         Lưu
                     </button>
-                    <Link :href="props.redirectBack || '/'" class="bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 px-5 py-2.5 rounded font-medium transition-colors shadow-sm inline-block">
+                    <Link href="/" class="bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 px-5 py-2.5 rounded font-medium transition-colors shadow-sm inline-block">
                         Bỏ qua
                     </Link>
                 </div>
-            </div>
-
-            <!-- Return info banner -->
-            <div v-if="props.redirectBack" class="bg-blue-50 border-b border-blue-200 px-6 py-2.5 flex items-center gap-2 text-sm text-blue-700">
-                <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                <span>Sau khi lưu, bạn sẽ được quay lại trang trước đó.</span>
-                <Link :href="props.redirectBack" class="ml-auto text-blue-600 hover:text-blue-800 font-semibold underline text-xs">← Quay lại không lưu</Link>
             </div>
 
             <!-- Main Form Container -->

@@ -512,4 +512,35 @@ class PurchaseController extends Controller
         $purchase->load(['items.product', 'supplier']);
         return view('prints.purchase', compact('purchase'));
     }
+
+    public function detail(Purchase $purchase)
+    {
+        $purchase->load(['supplier', 'items.product', 'user', 'employee']);
+
+        return response()->json([
+            'id' => $purchase->id,
+            'code' => $purchase->code,
+            'status' => $purchase->status,
+            'status_label' => $purchase->status === 'completed' ? 'Đã nhập hàng' : ($purchase->status === 'returned' ? 'Đã trả hàng' : ($purchase->status === 'cancelled' ? 'Đã hủy' : ucfirst($purchase->status))),
+            'purchase_date' => $purchase->purchase_date ? $purchase->purchase_date->format('d/m/Y H:i') : ($purchase->created_at ? $purchase->created_at->format('d/m/Y H:i') : ''),
+            'user_name' => $purchase->user->name ?? 'Admin',
+            'employee_name' => $purchase->employee->name ?? null,
+            'supplier_name' => $purchase->supplier->name ?? '',
+            'supplier_code' => $purchase->supplier->code ?? '',
+            'note' => $purchase->note,
+            'total_amount' => $purchase->total_amount,
+            'discount' => $purchase->discount,
+            'paid_amount' => $purchase->paid_amount,
+            'debt_amount' => $purchase->debt_amount,
+            'payment_method' => $purchase->payment_method,
+            'items' => $purchase->items->map(fn($item) => [
+                'product_code' => $item->product->code ?? '',
+                'product_name' => $item->product->name ?? '',
+                'quantity' => $item->quantity,
+                'price' => $item->price,
+                'discount' => $item->discount ?? 0,
+                'subtotal' => $item->subtotal,
+            ]),
+        ]);
+    }
 }

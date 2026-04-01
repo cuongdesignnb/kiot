@@ -99,12 +99,10 @@ class RepairService
             // Cập nhật chi phí phiếu sửa
             $repair->recalculateCosts();
 
-            // Đồng bộ giá vốn serial = repair.total_cost (luôn chính xác)
+            // Cộng giá vốn vào serial
             $serial = $repair->serialImei;
-            if ($serial) {
-                $serial->cost_price = max(0, (float) $repair->total_cost);
-                $serial->save();
-            }
+            $serial->cost_price = (float) $serial->cost_price + $totalCost;
+            $serial->save();
 
             return $part;
         });
@@ -121,17 +119,15 @@ class RepairService
             // Cộng lại tồn kho
             Product::where('id', $part->product_id)->increment('stock_quantity', $part->quantity);
 
+            // Trừ giá vốn serial
+            $serial = $repair->serialImei;
+            $serial->cost_price = max(0, (float) $serial->cost_price - (float) $part->total_cost);
+            $serial->save();
+
             $part->delete();
 
             // Recalc repair costs
             $repair->recalculateCosts();
-
-            // Đồng bộ giá vốn serial = repair.total_cost (luôn chính xác)
-            $serial = $repair->serialImei;
-            if ($serial) {
-                $serial->cost_price = max(0, (float) $repair->total_cost);
-                $serial->save();
-            }
         });
     }
 

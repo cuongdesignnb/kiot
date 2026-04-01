@@ -34,9 +34,4 @@ class ProductVariant extends Model
             'attribute_value_id'
         );
     }
-
-    public function serials(): \Illuminate\Database\Eloquent\Relations\HasMany
-    {
-        return $this->hasMany(SerialImei::class, 'variant_id');
-    }
 }

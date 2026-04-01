@@ -2,22 +2,24 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
-import QuickCreateCustomerModal from '@/Components/QuickCreateCustomerModal.vue';
 
 const props = defineProps({
     customers: Array,
     branches: Array,
     priceBooks: Array,
     invoice: Object,
-    action: { type: String, default: 'edit' },
 });
 
-// Date helper
-const pad = (n) => String(n).padStart(2, '0');
-const getLocalNow = () => {
+const currentTime = computed(() => {
     const now = new Date();
-    return `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
-};
+    return now.toLocaleString('vi-VN', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+});
 
 // Create an initial tab state template
 // Create an initial tab state template
@@ -56,7 +58,6 @@ const createInitialTab = (index) => ({
     selectedBranchId: null,
     selectedPriceBookId: null,
     selectedPriceBookName: 'Bảng giá chung',
-    orderDate: getLocalNow(),
 });
 
 const tabs = ref([createInitialTab(1)]);
@@ -159,27 +160,16 @@ const handlePriceBookChange = async () => {
 };
 
 const selectProduct = (product) => {
-    // If product has serial → open serial picker
-    if (product.has_serial) {
-        openSerialModal(product);
-        activeTab.value.searchQuery = '';
-        activeTab.value.showSuggestions = false;
-        return;
-    }
-
     const existing = activeTab.value.items.find(i => i.product_id === product.id);
     if (!existing) {
         activeTab.value.items.unshift({ 
             product_id: product.id,
             sku: product.sku,
             name: product.name,
-            has_serial: false,
             qty: 1,
             price: product.selling_price || product.retail_price || product.cost_price || 0,
             discount: 0,
             stock_quantity: product.stock_quantity || 0,
-            serial_ids: [],
-            serial_names: [],
         });
     } else {
         existing.qty++;
@@ -188,121 +178,12 @@ const selectProduct = (product) => {
     activeTab.value.showSuggestions = false;
 };
 
-// ── Serial/IMEI Selection Modal ──
-const showSerialModal = ref(false);
-const serialModalProduct = ref(null);
-const availableSerials = ref([]);
-const selectedSerialIds = ref([]);
-const serialSearch = ref('');
-const serialLoading = ref(false);
-
-const filteredSerials = computed(() => {
-    if (!serialSearch.value) return availableSerials.value;
-    const q = serialSearch.value.toLowerCase();
-    return availableSerials.value.filter(s => s.serial_number.toLowerCase().includes(q));
-});
-
-const isSerialSelected = (id) => selectedSerialIds.value.includes(id);
-
-const toggleSerial = (id) => {
-    const idx = selectedSerialIds.value.indexOf(id);
-    if (idx > -1) {
-        selectedSerialIds.value.splice(idx, 1);
-    } else {
-        selectedSerialIds.value.push(id);
-    }
-};
-
-const toggleAllSerials = () => {
-    if (selectedSerialIds.value.length === filteredSerials.value.length) {
-        selectedSerialIds.value = [];
-    } else {
-        selectedSerialIds.value = filteredSerials.value.map(s => s.id);
-    }
-};
-
-const openSerialModal = async (product) => {
-    serialModalProduct.value = product;
-    selectedSerialIds.value = [];
-    serialSearch.value = '';
-    availableSerials.value = [];
-    showSerialModal.value = true;
-    serialLoading.value = true;
-    try {
-        const res = await axios.get(`/api/products/${product.id}/serials`);
-        availableSerials.value = res.data || [];
-    } catch (e) {
-        console.error('Error fetching serials:', e);
-    } finally {
-        serialLoading.value = false;
-    }
-};
-
-const confirmSerialSelection = () => {
-    if (!serialModalProduct.value || selectedSerialIds.value.length === 0) return;
-    const product = serialModalProduct.value;
-
-    // Each serial = 1 separate line item (1 serial = 1 máy)
-    selectedSerialIds.value.forEach(serialId => {
-        // Skip if already in cart
-        const alreadyInCart = activeTab.value.items.some(i => i.serial_id === serialId);
-        if (alreadyInCart) return;
-
-        const serial = availableSerials.value.find(s => s.id === serialId);
-        activeTab.value.items.unshift({
-            product_id: product.id,
-            sku: product.sku,
-            name: product.name,
-            is_serial_product: true,
-            serial_id: serialId,
-            serial_number: serial?.serial_number || '',
-            qty: 1,
-            price: product.selling_price || product.retail_price || product.cost_price || 0,
-            discount: 0,
-            stock_quantity: product.stock_quantity || 0,
-        });
-    });
-
-    showSerialModal.value = false;
-};
-
 const hideSuggestions = () => {
     window.setTimeout(() => { if(activeTab.value) activeTab.value.showSuggestions = false; }, 200);
 };
 
 const hideCustomerDropdown = () => {
     window.setTimeout(() => { if(activeTab.value) activeTab.value.showCustomerDropdown = false; }, 200);
-};
-
-// Filter customers by search text
-const filteredCustomers = computed(() => {
-    const query = (activeTab.value?.searchCustomer || '').trim().toLowerCase();
-    if (!query) return props.customers || [];
-    return (props.customers || []).filter(c => {
-        return (c.name || '').toLowerCase().includes(query)
-            || (c.phone || '').includes(query)
-            || (c.code || '').toLowerCase().includes(query);
-    });
-});
-
-// Quick create customer modal
-const showQuickCreateCustomer = ref(false);
-
-const openQuickCreateCustomer = () => {
-    showQuickCreateCustomer.value = true;
-};
-
-const onCustomerCreated = (customer) => {
-    showQuickCreateCustomer.value = false;
-    // Add to local list and select
-    if (customer) {
-        props.customers.push(customer);
-        activeTab.value.selectedCustomer = customer;
-        activeTab.value.searchCustomer = customer.name;
-        activeTab.value.receiverName = customer.name;
-        activeTab.value.receiverPhone = customer.phone || '';
-        activeTab.value.receiverAddress = customer.address || '';
-    }
 };
 
 const removeItem = (index) => {
@@ -331,76 +212,40 @@ const save = async () => {
     submitRef.value = true;
     try {
         const isReturn = activeTab.value.status === 'return';
-        const isEdit = activeTab.value.invoice_id && !isReturn;
-
-        let endpoint;
-        let method;
-        let payload;
-
-        if (isEdit) {
-            // Editing existing invoice → PUT /invoices/{id}
-            endpoint = `/invoices/${activeTab.value.invoice_id}`;
-            method = 'put';
-            payload = {
-                customer_id: activeTab.value.selectedCustomer?.id || null,
-                branch_id: activeTab.value.selectedBranchId || (props.branches?.[0]?.id || null),
-                note: activeTab.value.note,
-                subtotal: totalAmount.value,
-                discount: activeTab.value.discount,
-                total: totalPayment.value,
-                customer_paid: activeTab.value.amountPaid,
-                price_book_name: activeTab.value.selectedPriceBookName,
-                is_delivery: activeTab.value.isDelivery,
-                delivery_partner: null,
-                delivery_fee: activeTab.value.deliveryFee,
-                payment_method: 'Tiền mặt',
-                items: itemsComputed.value.map(item => ({
-                    product_id: item.product_id,
-                    quantity: parseInt(item.qty) || 1,
-                    price: parseFloat(item.price) || 0,
-                    discount: parseFloat(item.discount) || 0,
-                })),
-            };
-        } else {
-            // New order or return → POST
-            endpoint = isReturn ? '/returns' : '/orders';
-            method = 'post';
-            payload = {
-                status: activeTab.value.status,
-                customer_id: activeTab.value.selectedCustomer?.id || null,
-                branch_id: activeTab.value.selectedBranchId || (props.branches?.[0]?.id || null),
-                note: activeTab.value.note,
-                total_price: totalAmount.value,
-                discount: activeTab.value.discount,
-                total_payment: totalPayment.value,
-                amount_paid: activeTab.value.amountPaid,
-                price_book_id: activeTab.value.selectedPriceBookId,
-                price_book_name: activeTab.value.selectedPriceBookName,
-                order_date: activeTab.value.orderDate || null,
-                items: itemsComputed.value,
-                invoice_id: activeTab.value.invoice_id,
-                subtotal: totalAmount.value,
-                total: totalPayment.value,
-                paid_to_customer: activeTab.value.amountPaid,
-                other_fees: activeTab.value.otherFees,
-                is_delivery: activeTab.value.isDelivery,
-                receiver_name: activeTab.value.receiverName,
-                receiver_phone: activeTab.value.receiverPhone,
-                receiver_address: activeTab.value.receiverAddress,
-                receiver_ward: activeTab.value.receiverWard,
-                receiver_district: activeTab.value.receiverDistrict,
-                receiver_city: activeTab.value.receiverCity,
-                weight: activeTab.value.weight,
-                delivery_fee: activeTab.value.deliveryFee,
-                delivery_note: activeTab.value.deliveryNote,
-                cod_amount: activeTab.value.isCod ? totalPayment.value : 0,
-                length: activeTab.value.sizeL,
-                width: activeTab.value.sizeW,
-                height: activeTab.value.sizeH,
-            };
-        }
-
-        await router[method](endpoint, payload);
+        const endpoint = isReturn ? '/returns' : '/orders';
+        const payload = {
+            status: activeTab.value.status,
+            customer_id: activeTab.value.selectedCustomer?.id || null,
+            branch_id: activeTab.value.selectedBranchId || (props.branches?.[0]?.id || null),
+            note: activeTab.value.note,
+            total_price: totalAmount.value,
+            discount: activeTab.value.discount,
+            total_payment: totalPayment.value,
+            amount_paid: activeTab.value.amountPaid,
+            price_book_id: activeTab.value.selectedPriceBookId,
+            price_book_name: activeTab.value.selectedPriceBookName,
+            items: itemsComputed.value,
+            invoice_id: activeTab.value.invoice_id,
+            subtotal: totalAmount.value,
+            total: totalPayment.value,
+            paid_to_customer: activeTab.value.amountPaid,
+            other_fees: activeTab.value.otherFees,
+            is_delivery: activeTab.value.isDelivery,
+            receiver_name: activeTab.value.receiverName,
+            receiver_phone: activeTab.value.receiverPhone,
+            receiver_address: activeTab.value.receiverAddress,
+            receiver_ward: activeTab.value.receiverWard,
+            receiver_district: activeTab.value.receiverDistrict,
+            receiver_city: activeTab.value.receiverCity,
+            weight: activeTab.value.weight,
+            delivery_fee: activeTab.value.deliveryFee,
+            delivery_note: activeTab.value.deliveryNote,
+            cod_amount: activeTab.value.isCod ? totalPayment.value : 0,
+            length: activeTab.value.sizeL,
+            width: activeTab.value.sizeW,
+            height: activeTab.value.sizeH,
+        };
+        await router.post(endpoint, payload);
         if (tabs.value.length > 1) {
             closeTab(activeTabIndex.value);
         } else {
@@ -454,32 +299,6 @@ const selectInvoiceForReturn = (invoice) => {
     showReturnModal.value = false;
 };
 
-const selectInvoiceForEdit = (invoice) => {
-    activeTab.value.selectedCustomer = invoice.customer;
-    activeTab.value.searchCustomer = invoice.customer?.name || '';
-    activeTab.value.name = `Sửa HĐ ${invoice.code}`;
-    activeTab.value.status = 'draft';
-    activeTab.value.invoice_id = invoice.id;
-    activeTab.value.selectedPriceBookId = null;
-    activeTab.value.selectedPriceBookName = invoice.price_book_name || 'Bảng giá chung';
-    activeTab.value.discount = invoice.discount || 0;
-    activeTab.value.amountPaid = invoice.customer_paid || 0;
-    activeTab.value.note = invoice.note || '';
-    activeTab.value.receiverName = invoice.customer?.name || '';
-    activeTab.value.receiverPhone = invoice.customer?.phone || '';
-    activeTab.value.receiverAddress = invoice.customer?.address || '';
-    activeTab.value.items = (invoice.items || []).map(item => ({
-        product_id: item.product_id,
-        sku: item.product?.sku || '',
-        name: item.product?.name || 'Sản phẩm',
-        qty: item.quantity,
-        price: item.price, 
-        discount: item.discount || 0,
-        stock_quantity: item.product?.stock_quantity || 0,
-        subtotal: (item.quantity * item.price) - (item.discount || 0)
-    }));
-};
-
 const saveAndPrint = async () => {
     if (activeTab.value.items.length === 0) {
         alert("Vui lòng chọn ít nhất 1 hàng hóa.");
@@ -487,85 +306,44 @@ const saveAndPrint = async () => {
     }
     submitRef.value = true;
     try {
-        const isReturn = activeTab.value.status === 'return';
-        const isEdit = activeTab.value.invoice_id && !isReturn;
-
-        let endpoint;
-        let method;
-        let payload;
-
-        if (isEdit) {
-            endpoint = `/invoices/${activeTab.value.invoice_id}`;
-            method = 'put';
-            payload = {
-                customer_id: activeTab.value.selectedCustomer?.id || null,
-                branch_id: activeTab.value.selectedBranchId || (props.branches?.[0]?.id || null),
-                note: activeTab.value.note,
-                subtotal: totalAmount.value,
-                discount: activeTab.value.discount,
-                total: totalPayment.value,
-                customer_paid: activeTab.value.amountPaid,
-                price_book_name: activeTab.value.selectedPriceBookName,
-                is_delivery: activeTab.value.isDelivery,
-                delivery_partner: null,
-                delivery_fee: activeTab.value.deliveryFee,
-                payment_method: 'Tiền mặt',
-                items: itemsComputed.value.map(item => ({
-                    product_id: item.product_id,
-                    quantity: parseInt(item.qty) || 1,
-                    price: parseFloat(item.price) || 0,
-                    discount: parseFloat(item.discount) || 0,
-                })),
-            };
-        } else {
-            endpoint = isReturn ? '/returns' : '/orders';
-            method = 'post';
-            payload = {
-                status: activeTab.value.status,
-                customer_id: activeTab.value.selectedCustomer?.id || null,
-                branch_id: activeTab.value.selectedBranchId || (props.branches?.[0]?.id || null),
-                note: activeTab.value.note,
-                total_price: totalAmount.value,
-                discount: activeTab.value.discount,
-                total_payment: totalPayment.value,
-                amount_paid: activeTab.value.amountPaid,
-                price_book_id: activeTab.value.selectedPriceBookId,
-                price_book_name: activeTab.value.selectedPriceBookName,
-                order_date: activeTab.value.orderDate || null,
-                items: itemsComputed.value,
-                invoice_id: activeTab.value.invoice_id,
-                subtotal: totalAmount.value,
-                total: totalPayment.value,
-                paid_to_customer: activeTab.value.amountPaid,
-                other_fees: activeTab.value.otherFees,
-                is_delivery: activeTab.value.isDelivery,
-                receiver_name: activeTab.value.receiverName,
-                receiver_phone: activeTab.value.receiverPhone,
-                receiver_address: activeTab.value.receiverAddress,
-                receiver_ward: activeTab.value.receiverWard,
-                receiver_district: activeTab.value.receiverDistrict,
-                receiver_city: activeTab.value.receiverCity,
-                weight: activeTab.value.weight,
-                delivery_fee: activeTab.value.deliveryFee,
-                delivery_note: activeTab.value.deliveryNote,
-                cod_amount: activeTab.value.isCod ? totalPayment.value : 0,
-                length: activeTab.value.sizeL,
-                width: activeTab.value.sizeW,
-                height: activeTab.value.sizeH,
-                _print: true,
-            };
+        const endpoint = activeTab.value.status === 'return' ? '/returns' : '/orders';
+        const payload = {
+            status: activeTab.value.status,
+            customer_id: activeTab.value.selectedCustomer?.id || null,
+            branch_id: activeTab.value.selectedBranchId || (props.branches?.[0]?.id || null),
+            note: activeTab.value.note,
+            total_price: totalAmount.value,
+            discount: activeTab.value.discount,
+            total_payment: totalPayment.value,
+            amount_paid: activeTab.value.amountPaid,
+            price_book_id: activeTab.value.selectedPriceBookId,
+            price_book_name: activeTab.value.selectedPriceBookName,
+            items: itemsComputed.value,
+            invoice_id: activeTab.value.invoice_id,
+            subtotal: totalAmount.value,
+            total: totalPayment.value,
+            paid_to_customer: activeTab.value.amountPaid,
+            other_fees: activeTab.value.otherFees,
+            is_delivery: activeTab.value.isDelivery,
+            receiver_name: activeTab.value.receiverName,
+            receiver_phone: activeTab.value.receiverPhone,
+            receiver_address: activeTab.value.receiverAddress,
+            receiver_ward: activeTab.value.receiverWard,
+            receiver_district: activeTab.value.receiverDistrict,
+            receiver_city: activeTab.value.receiverCity,
+            weight: activeTab.value.weight,
+            delivery_fee: activeTab.value.deliveryFee,
+            delivery_note: activeTab.value.deliveryNote,
+            cod_amount: activeTab.value.isCod ? totalPayment.value : 0,
+            length: activeTab.value.sizeL,
+            width: activeTab.value.sizeW,
+            height: activeTab.value.sizeH,
+            _print: true,
+        };
+        const res = await axios.post(endpoint, payload);
+        if (res.data?.id) {
+            window.open(`/orders/${res.data.id}/print`, '_blank');
         }
-
-        if (isEdit) {
-            await axios.put(endpoint, payload);
-            window.open(`/invoices/${activeTab.value.invoice_id}/print`, '_blank');
-        } else {
-            const res = await axios.post(endpoint, payload);
-            if (res.data?.id) {
-                window.open(`/orders/${res.data.id}/print`, '_blank');
-            }
-        }
-
         if (tabs.value.length > 1) {
             closeTab(activeTabIndex.value);
         } else {
@@ -585,18 +363,12 @@ const handleKeydown = (e) => {
 onMounted(() => {
     window.addEventListener('keydown', handleKeydown);
     const params = new URLSearchParams(window.location.search);
-    const action = params.get('action') || props.action || 'edit';
-
-    if (action === 'return' && !props.invoice) {
-        // No invoice pre-loaded, show modal to select one
+    if (params.get('action') === 'return' && !props.invoice) {
         showReturnModal.value = true;
         fetchReturnInvoices();
-    } else if (props.invoice) {
-        if (action === 'return') {
-            selectInvoiceForReturn(props.invoice);
-        } else {
-            selectInvoiceForEdit(props.invoice);
-        }
+    }
+    if (props.invoice) {
+        selectInvoiceForReturn(props.invoice);
     }
 });
 
@@ -692,25 +464,16 @@ onUnmounted(() => {
                                 <td class="p-3 text-gray-800 text-[12px]">{{ item.sku }}</td>
                                 <td class="p-3 font-medium text-gray-800">
                                     <div class="truncate w-[150px] lg:w-[250px] xl:w-[350px]">{{ item.name }}</div>
-                                    <!-- Serial number chip -->
-                                    <span v-if="item.is_serial_product && item.serial_number" class="inline-block bg-blue-50 text-blue-700 text-[10px] px-2 py-0.5 rounded font-mono mt-1 border border-blue-200">
-                                        SN: {{ item.serial_number }}
-                                    </span>
                                 </td>
                                 <td class="p-3">
-                                    <template v-if="item.is_serial_product">
-                                        <div class="text-center text-blue-600 font-bold text-[13px]">1</div>
-                                    </template>
-                                    <template v-else>
-                                        <div class="flex items-center justify-center gap-1 border border-transparent hover:border-blue-400 rounded overflow-hidden w-fit mx-auto transition-colors">
-                                            <button class="px-2 py-1 text-gray-400 hover:text-gray-700 font-bold" @click="activeTab.items[index].qty > 1 ? activeTab.items[index].qty-- : null"><i class="fas fa-minus text-[10px]"></i></button>
-                                            <input type="text" v-model="activeTab.items[index].qty" class="w-10 text-center outline-none text-[13px] border-b border-transparent focus:border-blue-500 py-0.5 text-blue-600 font-bold">
-                                            <button class="px-2 py-1 text-gray-400 hover:text-gray-700 font-bold" @click="activeTab.items[index].qty++"><i class="fas fa-plus text-[10px]"></i></button>
-                                        </div>
-                                    </template>
+                                    <div class="flex items-center justify-center gap-1 border border-transparent hover:border-blue-400 rounded overflow-hidden w-fit mx-auto transition-colors">
+                                        <button class="px-2 py-1 text-gray-400 hover:text-gray-700 font-bold" @click="item.qty > 1 ? item.qty-- : null"><i class="fas fa-minus text-[10px]"></i></button>
+                                        <input type="text" v-model="item.qty" class="w-10 text-center outline-none text-[13px] border-b border-transparent focus:border-blue-500 py-0.5 text-blue-600 font-bold">
+                                        <button class="px-2 py-1 text-gray-400 hover:text-gray-700 font-bold" @click="item.qty++"><i class="fas fa-plus text-[10px]"></i></button>
+                                    </div>
                                 </td>
                                 <td class="p-3 text-right font-medium text-gray-800">
-                                    <input type="text" :value="formatCurrency(item.price)" @change="e => activeTab.items[index].price = Number(e.target.value.replace(/\D/g,''))" class="w-24 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-right outline-none bg-transparent">
+                                    <input type="text" :value="formatCurrency(item.price)" @change="e => item.price = e.target.value.replace(/\D/g,'')" class="w-24 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-right outline-none bg-transparent">
                                 </td>
                                 <td class="p-3 text-right font-bold text-gray-800 pr-4">{{ formatCurrency(item.subtotal) }}</td>
                             </tr>
@@ -782,12 +545,10 @@ onUnmounted(() => {
                            <i class="fas fa-walking text-gray-400"></i> 
                            <i class="fas fa-caret-down text-gray-400"></i>
                        </div>
-                       <div class="text-[12px] text-gray-500">
-                           <input type="datetime-local" v-model="activeTab.orderDate" class="bg-transparent border-b border-dashed border-gray-300 outline-none focus:border-blue-500 text-[12px] text-gray-500 py-0.5 w-[170px]" />
-                       </div>
+                       <div class="text-[12px] text-gray-500">{{ currentTime }}</div>
                     </div>
                     <div v-else class="flex justify-end text-[12px] text-gray-500 mb-2">
-                        <input type="datetime-local" v-model="activeTab.orderDate" class="bg-transparent border-b border-dashed border-gray-300 outline-none focus:border-blue-500 text-[12px] text-gray-500 py-0.5 w-[170px]" />
+                        {{ currentTime }}
                     </div>
                     
                     <div class="flex gap-2 relative">
@@ -795,18 +556,14 @@ onUnmounted(() => {
                        <div class="relative flex-1">
                           <i class="fas fa-search absolute left-2 top-2 text-gray-400"></i>
                            <input v-model="activeTab.searchCustomer" @focus="activeTab.showCustomerDropdown = true" @blur="hideCustomerDropdown" placeholder="Tìm khách hàng (F4)" class="w-full border-b border-gray-300 outline-none focus:border-blue-500 py-1 pl-7 pr-6 text-[13px]" />
-                          <button type="button" @click="openQuickCreateCustomer" class="absolute right-0 top-0.5 text-gray-400 hover:text-blue-600 font-bold px-1" title="Thêm khách hàng mới"><i class="fas fa-plus"></i></button>
+                          <button class="absolute right-0 top-0.5 text-gray-400 hover:text-blue-600 font-bold px-1"><i class="fas fa-plus"></i></button>
                           
                           <!-- Dropdown Results -->
-                          <div v-if="activeTab.showCustomerDropdown && filteredCustomers.length > 0" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded z-50 max-h-[200px] overflow-auto">
-                              <div v-for="c in filteredCustomers" :key="c.id" @mousedown.prevent="activeTab.selectedCustomer = c; activeTab.searchCustomer = c.name; activeTab.receiverName = c.name; activeTab.receiverPhone = c.phone || ''; activeTab.receiverAddress = c.address || '';" class="p-2 border-b border-gray-100 hover:bg-blue-50 cursor-pointer">
+                          <div v-if="activeTab.showCustomerDropdown" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded z-50 max-h-[200px] overflow-auto">
+                              <div v-for="c in customers" :key="c.id" @mousedown.prevent="activeTab.selectedCustomer = c; activeTab.receiverName = c.name; activeTab.receiverPhone = c.phone;" class="p-2 border-b border-gray-100 hover:bg-blue-50 cursor-pointer">
                                   <div class="font-bold text-gray-800">{{ c.name }}</div>
-                                  <div v-if="c.phone" class="text-[12px] text-green-600">{{ c.phone }}</div>
+                                  <div class="text-[12px] text-gray-500">{{ c.phone }}</div>
                               </div>
-                          </div>
-                          <div v-if="activeTab.showCustomerDropdown && activeTab.searchCustomer && filteredCustomers.length === 0" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded z-50 p-3 text-center text-gray-400 text-[13px]">
-                              Không tìm thấy khách hàng
-                              <button @mousedown.prevent="openQuickCreateCustomer" class="block mx-auto mt-2 text-blue-600 hover:underline font-medium">+ Tạo khách hàng mới</button>
                           </div>
                        </div>
                        <select
@@ -930,7 +687,7 @@ onUnmounted(() => {
                 <div class="p-3 bg-white border-t border-[#dce3ec] flex-shrink-0">
                     <button @click="save" :disabled="submitRef" class="w-full bg-[#0062c3] hover:bg-blue-700 text-white font-bold py-3 px-4 rounded transition-colors text-[16px] shadow-sm flex items-center justify-center gap-2">
                         <i v-if="submitRef" class="fas fa-circle-notch fa-spin"></i>
-                        {{ activeTab.status === 'return' ? 'TRẢ HÀNG' : (activeTab.invoice_id ? 'CẬP NHẬT HÓA ĐƠN' : 'ĐẶT HÀNG') }}
+                        {{ activeTab.status === 'return' ? 'TRẢ HÀNG' : 'ĐẶT HÀNG' }}
                     </button>
                     <div @click="saveAndPrint" class="text-center font-bold text-gray-500 mt-2 text-[12px] cursor-pointer hover:text-blue-600"><i class="fas fa-print"></i> (F9)</div>
                 </div>
@@ -1004,72 +761,6 @@ onUnmounted(() => {
             </div>
         </div>
     </div>
-
-    <!-- ═══ Serial/IMEI Selection Modal ═══ -->
-    <div v-if="showSerialModal" class="fixed inset-0 z-[200] bg-black/40 flex items-center justify-center font-sans text-[13px]">
-        <div class="bg-white rounded-lg shadow-2xl w-[520px] max-h-[80vh] flex flex-col">
-            <div class="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
-                <h3 class="text-lg font-bold text-gray-800">Chọn Serial/IMEI</h3>
-                <button @click="showSerialModal = false" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer">&times;</button>
-            </div>
-            <div class="px-5 pt-3 pb-2">
-                <div class="relative">
-                    <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
-                    <input v-model="serialSearch" type="text" placeholder="Tìm serial/IMEI..." class="w-full pl-9 pr-3 py-2 border border-gray-300 rounded text-sm outline-none focus:border-blue-500">
-                </div>
-            </div>
-            <div class="flex-1 overflow-auto px-5 py-3 min-h-[200px]">
-                <div v-if="serialLoading" class="flex items-center justify-center h-32 text-gray-400">
-                    <i class="fas fa-spinner fa-spin text-blue-500 mr-2"></i> Đang tải...
-                </div>
-                <div v-else-if="filteredSerials.length === 0" class="flex flex-col items-center justify-center h-32 text-gray-400">
-                    <span class="text-sm">Không tìm thấy serial nào</span>
-                </div>
-                <div v-else class="flex flex-wrap gap-2">
-                    <button 
-                        v-for="serial in filteredSerials" 
-                        :key="serial.id"
-                        @click="toggleSerial(serial.id)"
-                        class="px-3 py-1.5 rounded border text-sm font-mono transition-all cursor-pointer"
-                        :class="isSerialSelected(serial.id) 
-                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm' 
-                            : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400 hover:bg-blue-50'"
-                    >
-                        {{ serial.serial_number }}
-                    </button>
-                </div>
-            </div>
-            <div class="px-5 py-3 border-t border-gray-200 flex items-center justify-between bg-gray-50/50">
-                <label class="flex items-center gap-2 cursor-pointer text-sm text-gray-600">
-                    <input 
-                        type="checkbox" 
-                        :checked="filteredSerials.length > 0 && selectedSerialIds.length === filteredSerials.length"
-                        @change="toggleAllSerials"
-                        class="rounded border-gray-300 text-blue-600 w-4 h-4"
-                    >
-                    Chọn tất cả <span v-if="selectedSerialIds.length > 0" class="text-blue-600 font-bold">({{ selectedSerialIds.length }})</span>
-                </label>
-                <div class="flex gap-2">
-                    <button @click="showSerialModal = false" class="px-5 py-2 border border-gray-300 rounded text-sm font-semibold text-gray-600 hover:bg-gray-100 cursor-pointer">Hủy</button>
-                    <button 
-                        @click="confirmSerialSelection" 
-                        :disabled="selectedSerialIds.length === 0"
-                        class="px-5 py-2 bg-blue-600 text-white rounded text-sm font-bold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                    >Xong</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Quick Create Customer Modal -->
-    <QuickCreateCustomerModal
-        :show="showQuickCreateCustomer"
-        :initial-name="activeTab?.searchCustomer || ''"
-        api-url="/api/pos/customers"
-        entity-label="khách hàng"
-        @close="showQuickCreateCustomer = false"
-        @created="onCustomerCreated"
-    />
 </template>
 
 <style scoped>

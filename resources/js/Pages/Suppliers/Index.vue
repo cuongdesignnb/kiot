@@ -3,7 +3,6 @@ import { ref, watch, reactive } from "vue";
 import { Head, router, Link, useForm } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
-import SortableHeader from "@/Components/SortableHeader.vue";
 import axios from "axios";
 
 const props = defineProps({
@@ -17,26 +16,7 @@ const search = ref(props.filters?.search || "");
 const customerGroup = ref(props.filters?.customer_group || "");
 const dateFilter = ref(props.filters?.date_filter || "all");
 const partnerType = ref(props.filters?.partner_type || "all");
-const sortBy = ref(props.filters?.sort_by || "");
-const sortDirection = ref(props.filters?.sort_direction || "");
 const expandedRows = ref([]); // array of expanded supplier IDs
-
-const handleSort = (field, direction) => {
-    sortBy.value = field;
-    sortDirection.value = direction;
-    router.get(
-        "/suppliers",
-        {
-            search: search.value,
-            customer_group: customerGroup.value,
-            date_filter: dateFilter.value,
-            partner_type: partnerType.value,
-            sort_by: field,
-            sort_direction: direction,
-        },
-        { preserveState: true, replace: true },
-    );
-};
 
 let searchTimeout;
 const updateFilters = () => {
@@ -49,8 +29,6 @@ const updateFilters = () => {
                 customer_group: customerGroup.value,
                 date_filter: dateFilter.value,
                 partner_type: partnerType.value,
-                sort_by: sortBy.value,
-                sort_direction: sortDirection.value,
             },
             {
                 preserveState: true,
@@ -152,6 +130,22 @@ const setSupplierTab = async (id, tab) => {
     }
 };
 
+const formatCurrency = (val) => Number(val || 0).toLocaleString('vi-VN');
+
+// ====== PURCHASE DETAIL MODAL ======
+const purchaseDetail = reactive({ show: false, loading: false, data: null });
+const showPurchaseDetail = async (purchaseId) => {
+    purchaseDetail.show = true;
+    purchaseDetail.loading = true;
+    try {
+        const { data } = await axios.get(`/purchases/${purchaseId}/detail`);
+        purchaseDetail.data = data;
+    } catch (e) {
+        purchaseDetail.data = null;
+    }
+    purchaseDetail.loading = false;
+};
+
 const filteredDebt = (id) => {
     const data = supplierDebt[id] || [];
     if (debtFilter.value === 'all') return data;
@@ -208,6 +202,74 @@ const submitDebtAction = async () => {
     } finally {
         debtSubmitting.value = false;
     }
+};
+
+// ====== MERGE SUPPLIER ↔ CUSTOMER ======
+const mergeModal = reactive({
+    show: false,
+    source: null,
+    searchQuery: '',
+    searchResults: [],
+    searching: false,
+    selected: null,
+    submitting: false,
+});
+
+let mergeSearchTimeout;
+const openMergeModal = (supplier) => {
+    mergeModal.show = true;
+    mergeModal.source = supplier;
+    mergeModal.searchQuery = '';
+    mergeModal.searchResults = [];
+    mergeModal.selected = null;
+    mergeModal.submitting = false;
+};
+
+const searchMergeTarget = () => {
+    clearTimeout(mergeSearchTimeout);
+    mergeModal.selected = null;
+    if (!mergeModal.searchQuery || mergeModal.searchQuery.length < 1) {
+        mergeModal.searchResults = [];
+        return;
+    }
+    mergeSearchTimeout = setTimeout(async () => {
+        mergeModal.searching = true;
+        try {
+            const { data } = await axios.get('/customers/search-for-merge', {
+                params: {
+                    q: mergeModal.searchQuery,
+                    type: 'customer',
+                    exclude: mergeModal.source?.id,
+                },
+            });
+            mergeModal.searchResults = data;
+        } catch (e) {
+            mergeModal.searchResults = [];
+        }
+        mergeModal.searching = false;
+    }, 300);
+};
+
+const selectMergeTarget = (target) => {
+    mergeModal.selected = target;
+    mergeModal.searchResults = [];
+};
+
+const submitMerge = () => {
+    if (!mergeModal.selected || mergeModal.submitting) return;
+    mergeModal.submitting = true;
+    router.post(`/customers/${mergeModal.source.id}/merge`, {
+        merge_with_id: mergeModal.selected.id,
+    }, {
+        onSuccess: () => {
+            mergeModal.show = false;
+            mergeModal.source = null;
+            mergeModal.selected = null;
+        },
+        onFinish: () => {
+            mergeModal.submitting = false;
+        },
+    });
 };
 </script>
 
@@ -593,10 +655,10 @@ const submitDebtAction = async () => {
                                     class="rounded border-gray-300"
                                 />
                             </th>
-                            <SortableHeader label="Mã nhà cung cấp" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
-                            <SortableHeader label="Tên nhà cung cấp" field="name" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
-                            <SortableHeader label="Điện thoại" field="phone" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
-                            <SortableHeader label="Email" field="email" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
+                            <th class="px-4 py-3">Mã nhà cung cấp</th>
+                            <th class="px-4 py-3">Tên nhà cung cấp</th>
+                            <th class="px-4 py-3">Điện thoại</th>
+                            <th class="px-4 py-3">Email</th>
                             <th class="px-4 py-3 text-right">
                                 Nợ cần trả hiện tại
                             </th>
@@ -753,6 +815,13 @@ const submitDebtAction = async () => {
                                                     <button class="text-white bg-blue-600 rounded px-4 py-1.5 font-bold hover:bg-blue-700 flex items-center gap-1 shadow-sm">
                                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>Cập nhật
                                                     </button>
+                                                    <button
+                                                        v-if="!supplier.is_customer"
+                                                        @click.stop="openMergeModal(supplier)"
+                                                        class="text-white bg-orange-500 rounded px-4 py-1.5 font-bold hover:bg-orange-600 flex items-center gap-1 shadow-sm"
+                                                    >
+                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>Gộp KH
+                                                    </button>
                                                     <button class="text-gray-700 bg-white border border-gray-300 rounded px-4 py-1.5 font-bold hover:bg-gray-50 shadow-sm">Ngừng hoạt động</button>
                                                 </div>
                                             </div>
@@ -776,7 +845,7 @@ const submitDebtAction = async () => {
                                                     <tbody class="divide-y">
                                                         <tr v-if="!supplierHistory[supplier.id]?.length"><td colspan="6" class="px-3 py-6 text-center text-gray-400">Chưa có phiếu nhập/trả hàng.</td></tr>
                                                         <tr v-for="h in supplierHistory[supplier.id]" :key="h.id" class="hover:bg-gray-50">
-                                                            <td class="px-3 py-2 text-blue-600 font-semibold cursor-pointer hover:underline">{{ h.code }}</td>
+                                                            <td class="px-3 py-2 text-blue-600 font-semibold cursor-pointer hover:underline" @click="showPurchaseDetail(h.id)">{{ h.code }}</td>
                                                             <td class="px-3 py-2">{{ h.date }}</td>
                                                             <td class="px-3 py-2">{{ h.user_name }}</td>
                                                             <td class="px-3 py-2">{{ h.branch }}</td>
@@ -1465,6 +1534,157 @@ const submitDebtAction = async () => {
                         {{ debtSubmitting ? 'Đang xử lý...' : 'Xác nhận' }}
                     </button>
                 </div>
+            </div>
+        </div>
+
+        <!-- MERGE CONFIRMATION DIALOG -->
+        <div v-if="mergeModal.show" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4">
+                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+                    <h3 class="text-lg font-bold text-gray-800">Xác nhận gộp nhà cung cấp và khách hàng</h3>
+                    <button @click="mergeModal.show = false" class="text-gray-400 hover:text-gray-600">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                <div class="px-6 py-4 space-y-4">
+                    <!-- Source info -->
+                    <div class="bg-green-50 border border-green-200 rounded-lg p-4">
+                        <div class="text-sm text-gray-500 mb-1">Nhà cung cấp (nguồn gộp)</div>
+                        <div class="font-bold text-gray-800">{{ mergeModal.source?.name }} <span class="text-gray-500 font-normal">{{ mergeModal.source?.code }}</span></div>
+                        <div class="text-sm mt-1">Nợ NCC hiện tại: <span class="font-bold text-green-600">{{ formatCurrency(mergeModal.source?.supplier_debt_amount || 0) }}</span></div>
+                    </div>
+
+                    <!-- Search for target -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Tìm khách hàng để gộp vào</label>
+                        <input
+                            v-model="mergeModal.searchQuery"
+                            @input="searchMergeTarget"
+                            type="text"
+                            class="w-full border border-gray-300 rounded px-3 py-2 focus:border-blue-500 outline-none text-sm"
+                            placeholder="Nhập tên, SĐT hoặc mã KH..."
+                        />
+                        <div v-if="mergeModal.searchResults.length > 0" class="border border-gray-200 rounded mt-1 max-h-40 overflow-y-auto bg-white shadow-lg">
+                            <button
+                                v-for="r in mergeModal.searchResults"
+                                :key="r.id"
+                                @click="selectMergeTarget(r)"
+                                class="w-full text-left px-3 py-2 hover:bg-blue-50 flex justify-between items-center text-sm border-b last:border-b-0"
+                            >
+                                <div>
+                                    <span class="font-medium">{{ r.name }}</span>
+                                    <span class="text-gray-400 ml-2">{{ r.code }}</span>
+                                    <span v-if="r.phone" class="text-gray-400 ml-2">{{ r.phone }}</span>
+                                </div>
+                                <span class="text-gray-500 text-xs">Nợ KH: {{ formatCurrency(r.debt_amount || 0) }}</span>
+                            </button>
+                        </div>
+                        <div v-if="mergeModal.searching" class="text-sm text-gray-400 mt-1">Đang tìm...</div>
+                    </div>
+
+                    <!-- Selected target -->
+                    <div v-if="mergeModal.selected" class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                        <div class="text-sm text-gray-500 mb-1">Khách hàng (đích gộp)</div>
+                        <div class="font-bold text-gray-800">{{ mergeModal.selected.name }} <span class="text-gray-500 font-normal">{{ mergeModal.selected.code }}</span></div>
+                        <div class="text-sm mt-1">Nợ KH hiện tại: <span class="font-bold text-blue-600">{{ formatCurrency(mergeModal.selected.debt_amount || 0) }}</span></div>
+                    </div>
+
+                    <!-- Preview after merge -->
+                    <div v-if="mergeModal.selected" class="bg-gray-50 border border-gray-300 rounded-lg p-4">
+                        <div class="text-sm font-bold text-gray-700 mb-2">Thông tin sau khi gộp</div>
+                        <div class="grid grid-cols-2 gap-2 text-sm">
+                            <div>Nợ cần thu (KH):</div>
+                            <div class="font-bold text-right">{{ formatCurrency((mergeModal.selected.debt_amount || 0) + (mergeModal.source?.debt_amount || 0)) }}</div>
+                            <div>Nợ cần trả (NCC):</div>
+                            <div class="font-bold text-right">{{ formatCurrency((mergeModal.selected.supplier_debt_amount || 0) + (mergeModal.source?.supplier_debt_amount || 0)) }}</div>
+                        </div>
+                        <div class="text-xs text-gray-500 mt-2">NCC <strong>{{ mergeModal.source?.name }}</strong> sẽ bị xóa, mọi giao dịch sẽ chuyển sang <strong>{{ mergeModal.selected.name }}</strong>.</div>
+                    </div>
+                </div>
+                <div class="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+                    <button @click="mergeModal.show = false" class="px-5 py-2 border border-gray-300 rounded text-gray-700 font-medium hover:bg-gray-50">Bỏ qua</button>
+                    <button
+                        @click="submitMerge"
+                        :disabled="!mergeModal.selected || mergeModal.submitting"
+                        class="px-5 py-2 rounded text-white font-medium bg-orange-500 hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {{ mergeModal.submitting ? 'Đang gộp...' : 'Xác nhận gộp' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Purchase Detail Modal -->
+        <div v-if="purchaseDetail.show" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="purchaseDetail.show = false">
+            <div class="bg-white rounded-lg shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+                <div v-if="purchaseDetail.loading" class="p-12 text-center text-gray-400">Đang tải...</div>
+                <template v-else-if="purchaseDetail.data">
+                    <!-- Header -->
+                    <div class="flex items-center justify-between px-6 py-4 border-b">
+                        <div>
+                            <h3 class="text-lg font-bold text-gray-800">{{ purchaseDetail.data.code }}</h3>
+                            <span class="inline-block mt-1 px-2 py-0.5 rounded text-xs font-semibold"
+                                :class="purchaseDetail.data.status === 'completed' ? 'bg-green-100 text-green-700' : purchaseDetail.data.status === 'cancelled' ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'">
+                                {{ purchaseDetail.data.status_label }}
+                            </span>
+                        </div>
+                        <button @click="purchaseDetail.show = false" class="text-gray-400 hover:text-gray-600">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        </button>
+                    </div>
+                    <!-- Meta info -->
+                    <div class="px-6 py-3 grid grid-cols-2 gap-x-8 gap-y-2 text-sm border-b bg-gray-50">
+                        <div><span class="text-gray-500">Người tạo:</span> <span class="font-medium">{{ purchaseDetail.data.user_name }}</span></div>
+                        <div v-if="purchaseDetail.data.employee_name"><span class="text-gray-500">Người nhận:</span> <span class="font-medium">{{ purchaseDetail.data.employee_name }}</span></div>
+                        <div><span class="text-gray-500">Ngày nhập:</span> <span class="font-medium">{{ purchaseDetail.data.purchase_date }}</span></div>
+                        <div><span class="text-gray-500">NCC:</span> <span class="font-medium">{{ purchaseDetail.data.supplier_name }}</span> <span class="text-gray-400">{{ purchaseDetail.data.supplier_code }}</span></div>
+                    </div>
+                    <!-- Items table -->
+                    <div class="px-6 py-4">
+                        <table class="w-full text-sm">
+                            <thead class="bg-gray-50 text-gray-600 text-xs uppercase">
+                                <tr>
+                                    <th class="px-3 py-2 text-left">Mã hàng</th>
+                                    <th class="px-3 py-2 text-left">Tên hàng</th>
+                                    <th class="px-3 py-2 text-right">SL</th>
+                                    <th class="px-3 py-2 text-right">Đơn giá</th>
+                                    <th class="px-3 py-2 text-right">Giảm giá</th>
+                                    <th class="px-3 py-2 text-right">Thành tiền</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y">
+                                <tr v-for="(item, idx) in purchaseDetail.data.items" :key="idx" class="hover:bg-gray-50">
+                                    <td class="px-3 py-2 text-blue-600 font-medium">{{ item.product_code }}</td>
+                                    <td class="px-3 py-2">{{ item.product_name }}</td>
+                                    <td class="px-3 py-2 text-right">{{ item.quantity }}</td>
+                                    <td class="px-3 py-2 text-right">{{ formatCurrency(item.price) }}</td>
+                                    <td class="px-3 py-2 text-right">{{ formatCurrency(item.discount) }}</td>
+                                    <td class="px-3 py-2 text-right font-medium">{{ formatCurrency(item.subtotal) }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <!-- Totals -->
+                    <div class="px-6 py-4 border-t bg-gray-50">
+                        <div class="flex justify-end">
+                            <div class="w-72 space-y-1 text-sm">
+                                <div class="flex justify-between"><span class="text-gray-500">Số lượng mặt hàng:</span><span class="font-medium">{{ purchaseDetail.data.items.length }}</span></div>
+                                <div class="flex justify-between"><span class="text-gray-500">Tổng tiền hàng:</span><span class="font-medium">{{ formatCurrency(purchaseDetail.data.total_amount) }}</span></div>
+                                <div v-if="purchaseDetail.data.discount > 0" class="flex justify-between"><span class="text-gray-500">Giảm giá:</span><span class="font-medium text-red-500">-{{ formatCurrency(purchaseDetail.data.discount) }}</span></div>
+                                <div class="flex justify-between font-bold text-base border-t pt-1"><span>Cần trả NCC:</span><span class="text-blue-600">{{ formatCurrency(purchaseDetail.data.total_amount - (purchaseDetail.data.discount || 0)) }}</span></div>
+                                <div class="flex justify-between"><span class="text-gray-500">Đã trả NCC:</span><span class="font-medium">{{ formatCurrency(purchaseDetail.data.paid_amount) }}</span></div>
+                                <div v-if="purchaseDetail.data.debt_amount > 0" class="flex justify-between"><span class="text-gray-500">Còn nợ:</span><span class="font-medium text-red-500">{{ formatCurrency(purchaseDetail.data.debt_amount) }}</span></div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Note & actions -->
+                    <div class="px-6 py-3 border-t flex items-center justify-between">
+                        <div v-if="purchaseDetail.data.note" class="text-sm text-gray-500"><span class="font-medium">Ghi chú:</span> {{ purchaseDetail.data.note }}</div>
+                        <div v-else></div>
+                        <a :href="`/purchases/${purchaseDetail.data.id}`" class="px-4 py-2 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700">Mở phiếu</a>
+                    </div>
+                </template>
+                <div v-else class="p-12 text-center text-gray-400">Không tìm thấy thông tin phiếu nhập</div>
             </div>
         </div>
 

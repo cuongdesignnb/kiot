@@ -6,7 +6,10 @@ use App\Models\CashFlow;
 use App\Models\Customer;
 use App\Models\Invoice;
 use App\Models\OrderReturn;
+use App\Models\Purchase;
+use App\Models\PurchaseReturn;
 use App\Models\Setting;
+use App\Models\SupplierDebtTransaction;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -106,6 +109,7 @@ class CustomerController extends Controller
         }
 
         $validated['is_supplier'] = $request->input('is_supplier', false);
+        $validated['is_customer'] = true;
 
         if ($request->filled('link_existing_id')) {
             $existing = Customer::findOrFail($request->link_existing_id);
@@ -352,6 +356,72 @@ class CustomerController extends Controller
         $customer->update(['debt_amount' => max(0, $customer->debt_amount - $adjustAmount)]);
 
         return back()->with('success', 'Đã điều chỉnh công nợ thành công.');
+    }
+
+    public function searchForMerge(Request $request)
+    {
+        $q = $request->input('q');
+        $type = $request->input('type'); // 'customer' or 'supplier'
+        $exclude = $request->input('exclude');
+
+        $results = Customer::query()
+            ->when($q, function ($query, $q) {
+                $query->where(function ($qb) use ($q) {
+                    $qb->where('name', 'LIKE', "%{$q}%")
+                       ->orWhere('phone', 'LIKE', "%{$q}%")
+                       ->orWhere('code', 'LIKE', "%{$q}%");
+                });
+            })
+            ->when($type === 'supplier', fn($qb) => $qb->where('is_supplier', true))
+            ->when($type === 'customer', fn($qb) => $qb->where('is_customer', true))
+            ->when($exclude, fn($qb, $id) => $qb->where('id', '!=', $id))
+            ->limit(20)
+            ->get(['id', 'code', 'name', 'phone', 'debt_amount', 'supplier_debt_amount', 'is_customer', 'is_supplier']);
+
+        return response()->json($results);
+    }
+
+    public function merge(Request $request, Customer $customer)
+    {
+        $validated = $request->validate([
+            'merge_with_id' => 'required|integer|exists:customers,id',
+        ]);
+
+        $target = Customer::findOrFail($validated['merge_with_id']);
+
+        if ($target->id === $customer->id) {
+            return back()->with('error', 'Không thể gộp với chính mình.');
+        }
+
+        // Transfer all relations from $customer (source) into $target
+        Invoice::where('customer_id', $customer->id)->update(['customer_id' => $target->id]);
+        OrderReturn::where('customer_id', $customer->id)->update(['customer_id' => $target->id]);
+        Purchase::where('supplier_id', $customer->id)->update(['supplier_id' => $target->id]);
+        PurchaseReturn::where('supplier_id', $customer->id)->update(['supplier_id' => $target->id]);
+        SupplierDebtTransaction::where('supplier_id', $customer->id)->update(['supplier_id' => $target->id]);
+
+        CashFlow::where('target_id', $customer->id)->whereIn('target_type', ['Khách hàng', 'Nhà cung cấp'])->update([
+            'target_id' => $target->id,
+            'target_name' => $target->name,
+        ]);
+
+        // Merge financial figures
+        $target->debt_amount += $customer->debt_amount;
+        $target->total_spent += $customer->total_spent;
+        $target->total_returns += $customer->total_returns;
+        $target->supplier_debt_amount += $customer->supplier_debt_amount;
+        $target->total_bought += $customer->total_bought;
+
+        // Set both flags
+        $target->is_customer = $target->is_customer || $customer->is_customer;
+        $target->is_supplier = $target->is_supplier || $customer->is_supplier;
+
+        $target->save();
+
+        // Delete source
+        $customer->delete();
+
+        return back()->with('success', "Đã gộp thành công vào {$target->name} ({$target->code}).");
     }
 
     public function export(Request $request)

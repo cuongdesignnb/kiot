@@ -327,4 +327,36 @@ class InvoiceController extends Controller
             'hoa_don.csv'
         );
     }
+
+    public function detail(Invoice $invoice)
+    {
+        $invoice->load(['customer', 'items.product']);
+
+        return response()->json([
+            'id' => $invoice->id,
+            'code' => $invoice->code,
+            'status' => $invoice->status,
+            'created_at' => $invoice->created_at ? $invoice->created_at->format('d/m/Y H:i') : '',
+            'created_by_name' => $invoice->created_by_name ?? 'Admin',
+            'customer_name' => $invoice->customer->name ?? 'Khách lẻ',
+            'customer_code' => $invoice->customer->code ?? '',
+            'note' => $invoice->note,
+            'subtotal' => $invoice->subtotal,
+            'discount' => $invoice->discount,
+            'total' => $invoice->total,
+            'customer_paid' => $invoice->customer_paid,
+            'delivery_fee' => $invoice->delivery_fee ?? 0,
+            'is_delivery' => $invoice->is_delivery,
+            'delivery_partner' => $invoice->delivery_partner,
+            'payment_method' => $invoice->payment_method,
+            'items' => $invoice->items->map(fn($item) => [
+                'product_code' => $item->product->code ?? '',
+                'product_name' => $item->product->name ?? '',
+                'quantity' => $item->quantity,
+                'price' => $item->price,
+                'discount' => $item->discount ?? 0,
+                'subtotal' => $item->subtotal,
+            ]),
+        ]);
+    }
 }

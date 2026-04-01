@@ -13,8 +13,6 @@ class Purchase extends Model
         'employee_id',
         'total_amount',
         'discount',
-        'other_costs',
-        'other_costs_total',
         'paid_amount',
         'debt_amount',
         'note',
@@ -26,7 +24,6 @@ class Purchase extends Model
 
     protected $casts = [
         'purchase_date' => 'datetime',
-        'other_costs' => 'array',
     ];
 
     public function items()

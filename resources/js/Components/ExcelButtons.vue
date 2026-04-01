@@ -1,9 +1,9 @@
 <template>
     <div class="flex gap-1.5">
         <!-- Export button -->
-        <a
+        <button
             v-if="exportUrl"
-            :href="exportUrl"
+            @click="handleExport"
             class="bg-white text-gray-600 border border-gray-300 px-3 py-1.5 text-sm font-medium rounded hover:bg-gray-50 transition flex items-center gap-1"
             title="Xuất Excel/CSV"
         >
@@ -21,7 +21,7 @@
                 ></path>
             </svg>
             <span>Xuất file</span>
-        </a>
+        </button>
         <!-- Import button -->
         <template v-if="importUrl">
             <button
@@ -62,6 +62,10 @@ const props = defineProps({
     exportUrl: { type: String, default: "" },
     importUrl: { type: String, default: "" },
 });
+
+function handleExport() {
+    window.location.href = props.exportUrl;
+}
 
 function handleImport(e) {
     const file = e.target.files[0];

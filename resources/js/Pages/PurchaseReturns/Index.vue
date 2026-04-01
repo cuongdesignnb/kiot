@@ -2,6 +2,7 @@
 import { ref, watch } from "vue";
 import { Head, router, Link, usePage } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
+import ExcelButtons from "@/Components/ExcelButtons.vue";
 
 const page = usePage();
 const props = defineProps({
@@ -148,6 +149,7 @@ const cancelReturn = (ret) => {
                 </div>
 
                 <div class="flex gap-2 ml-auto">
+                    <ExcelButtons export-url="/purchase-returns/export" />
                     <Link href="/purchases" class="bg-white text-green-600 border border-green-600 px-3 py-1.5 text-sm font-medium rounded hover:bg-green-50 transition flex items-center gap-1">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
                         Trả hàng nhập

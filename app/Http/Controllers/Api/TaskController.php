@@ -76,25 +76,15 @@ class TaskController extends Controller
     /**
      * Chi tiết công việc.
      */
-    public function show(Request $request, Task $task)
+    public function show(Task $task)
     {
-        $user = $request->user();
-
-        // Nhân viên (không có quyền tasks.view) chỉ xem được task được giao cho mình
-        if ($user && !$user->hasPermission('tasks.view')) {
-            $employee = $user->employee;
-            if (!$employee || !$task->assignments()->where('employee_id', $employee->id)->exists()) {
-                return response()->json(['message' => 'Bạn không có quyền xem công việc này.'], 403);
-            }
-        }
-
         $task->load([
             'product:id,name,sku,image',
             'serialImei:id,serial_number,repair_status,cost_price',
             'assignedEmployee:id,name',
             'branch:id,name',
             'category:id,name,color,type',
-            'parts.product:id,name,sku,stock_quantity',
+            'parts.product:id,name,sku',
             'creator:id,name',
             'assignments.employee:id,name',
             'assignments.assigner:id,name',
@@ -165,44 +155,16 @@ class TaskController extends Controller
 
     /**
      * Xóa / hủy công việc.
-     * - Pending: ai cũng huỷ được
-     * - In_progress: chỉ người nhận việc mới huỷ được
-     * - Completed/Cancelled: không huỷ được
      */
-    public function destroy(Request $request, Task $task)
+    public function destroy(Task $task)
     {
-        // Không cho huỷ việc đã hoàn thành hoặc đã huỷ
         if ($task->status === Task::STATUS_COMPLETED) {
-            return response()->json(['message' => 'Không thể huỷ công việc đã hoàn thành.'], 422);
-        }
-        if ($task->status === Task::STATUS_CANCELLED) {
-            return response()->json(['message' => 'Công việc đã được huỷ trước đó.'], 422);
+            return response()->json(['message' => 'Không thể xóa công việc đã hoàn thành.'], 422);
         }
 
-        // Nếu đang sửa (in_progress) → chỉ người nhận việc mới huỷ được
-        if ($task->status === Task::STATUS_IN_PROGRESS) {
-            $user = $request->user();
-            $isAssigned = false;
+        $this->service->changeStatus($task, Task::STATUS_CANCELLED, request()->user()?->id);
 
-            if ($user) {
-                // Kiểm tra user có phải là nhân viên được giao không
-                $employee = \App\Models\Employee::where('user_id', $user->id)->first();
-                if ($employee) {
-                    $isAssigned = $task->assigned_employee_id === $employee->id
-                        || $task->assignments()->where('employee_id', $employee->id)->exists();
-                }
-            }
-
-            if (!$isAssigned) {
-                return response()->json([
-                    'message' => 'Công việc đang thực hiện, chỉ người nhận việc mới có thể huỷ.'
-                ], 403);
-            }
-        }
-
-        $this->service->cancelTask($task, $request->user()?->id);
-
-        return response()->json(['message' => 'Đã huỷ công việc. Serial đã được thu hồi về trạng thái sẵn bán. Tất cả linh kiện đã hoàn trả về kho.']);
+        return response()->json(['message' => 'Đã hủy công việc.']);
     }
 
     /**
@@ -234,10 +196,9 @@ class TaskController extends Controller
         }
 
         $data = $request->validate([
-            'product_id'     => 'required|exists:products,id',
-            'quantity'       => 'required|integer|min:1',
-            'notes'          => 'nullable|string|max:500',
-            'allow_negative' => 'nullable|boolean',
+            'product_id' => 'required|exists:products,id',
+            'quantity'   => 'required|integer|min:1',
+            'notes'      => 'nullable|string|max:500',
         ]);
 
         try {
@@ -246,22 +207,14 @@ class TaskController extends Controller
                 $data['product_id'],
                 $data['quantity'],
                 $data['notes'] ?? null,
-                $request->user()?->id,
-                !empty($data['allow_negative'])
+                $request->user()?->id
             );
-            $part->load('product:id,name,sku,stock_quantity');
+            $part->load('product:id,name,sku');
             $task->refresh();
-
-            $product = Product::find($data['product_id']);
-            $warning = null;
-            if ($product && $product->stock_quantity < 0) {
-                $warning = "⚠ Linh kiện \"{$product->name}\" tồn kho âm: {$product->stock_quantity}. Cần nhập thêm hàng.";
-            }
 
             return response()->json([
                 'part' => $part,
                 'task' => $task->only(['parts_cost', 'total_cost']),
-                'warning' => $warning,
             ], 201);
         } catch (\RuntimeException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
@@ -375,25 +328,14 @@ class TaskController extends Controller
         $request->validate([
             'month' => 'required|integer|between:1,12',
             'year'  => 'required|integer|min:2020',
-            'employee_id' => 'nullable|exists:employees,id',
         ]);
 
         $from = Carbon::create($request->year, $request->month, 1)->startOfMonth();
         $to = $from->copy()->endOfMonth();
 
-        $employeeQuery = Employee::where('is_active', true);
-
-        // Filter by employee_id if provided
-        if ($request->filled('employee_id')) {
-            $employeeQuery->where('id', $request->employee_id);
-        } else {
-            // Only show employees who have assignments in the period
-            $employeeQuery->whereHas('taskAssignments', function ($q) use ($from, $to) {
-                $q->whereBetween('assigned_at', [$from, $to->copy()->endOfDay()]);
-            });
-        }
-
-        $employees = $employeeQuery->get();
+        $employees = Employee::whereHas('tasks', function ($q) use ($from, $to) {
+            $q->whereBetween('assigned_at', [$from, $to]);
+        })->get();
 
         $results = [];
         foreach ($employees as $emp) {

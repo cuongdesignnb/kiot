@@ -92,9 +92,6 @@ class EmployeeSalarySettingController extends Controller
             'custom_allowances.*.amount' => 'required|numeric|min:0',
             'custom_deductions' => 'nullable|array',
             'custom_deductions.*.name' => 'required|string|max:255',
-            'custom_deductions.*.deduction_category' => 'nullable|string|in:,late,early_leave,absence,violation',
-            'custom_deductions.*.calculation_type' => 'nullable|string|in:fixed_per_month,per_occurrence,per_minute',
-            'custom_deductions.*.per_minutes' => 'nullable|integer|min:1',
             'custom_deductions.*.amount' => 'required|numeric|min:0',
         ]);
 

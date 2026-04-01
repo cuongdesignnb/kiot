@@ -24,10 +24,7 @@ class ProductController extends Controller
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
                     ->orWhere('sku', 'like', "%{$search}%")
-                    ->orWhere('barcode', 'like', "%{$search}%")
-                    ->orWhereHas('serials', function ($sq) use ($search) {
-                        $sq->where('serial_number', 'like', "%{$search}%");
-                    });
+                    ->orWhere('barcode', 'like', "%{$search}%");
             });
         }
 
@@ -45,7 +42,7 @@ class ProductController extends Controller
             $query->limit(20);
         }
 
-        $products = $query->with('variants')->get();
+        $products = $query->get();
         $priceBookId = $request->input('price_book_id');
         $priceBookName = 'Bảng giá chung';
         $bookPriceByProductId = collect();
@@ -87,88 +84,13 @@ class ProductController extends Controller
             });
         }
 
-        // Filter by category
-        if ($request->filled('category_id')) {
-            $categoryId = $request->input('category_id');
-            // Include child categories as well
-            $categoryIds = [$categoryId];
-            $childIds = Category::where('parent_id', $categoryId)->pluck('id')->toArray();
-            $categoryIds = array_merge($categoryIds, $childIds);
-            $query->whereIn('category_id', $categoryIds);
-        }
-
-        // Filter by brand
-        if ($request->filled('brand_id')) {
-            $query->where('brand_id', $request->input('brand_id'));
-        }
-
-        // Filter by status (active / inactive)
-        if ($request->filled('status')) {
-            $status = $request->input('status');
-            if ($status === 'active') {
-                $query->where(function ($q) {
-                    $q->where('is_active', true)->orWhereNull('is_active');
-                });
-            } elseif ($status === 'inactive') {
-                $query->where('is_active', false);
-            }
-            // 'all' => no filter
-        } else {
-            // Default: show only active products
-            $query->where(function ($q) {
-                $q->where('is_active', true)->orWhereNull('is_active');
-            });
-        }
-
-        // Filter by stock level
-        if ($request->filled('stock_filter')) {
-            $stockFilter = $request->input('stock_filter');
-            if ($stockFilter === 'in_stock') {
-                $query->where('stock_quantity', '>', 0);
-            } elseif ($stockFilter === 'out_of_stock') {
-                $query->where('stock_quantity', '<=', 0);
-            } elseif ($stockFilter === 'below_min') {
-                $query->whereColumn('stock_quantity', '<', 'min_stock');
-            }
-        }
-
-        // Filter by product type
-        if ($request->filled('type')) {
-            $query->where('type', $request->input('type'));
-        }
-
-        $products = $query
-            ->withCount([
-                'serialImeis as total_serial_count' => function ($q) {
-                    $q->where('status', 'in_stock');
-                },
-                'serialImeis as repairing_count' => function ($q) {
-                    $q->where('status', 'in_stock')
-                      ->whereIn('repair_status', ['not_started', 'repairing']);
-                },
-                'serialImeis as ready_count' => function ($q) {
-                    $q->where('status', 'in_stock')
-                      ->where(function ($q2) {
-                          $q2->where('repair_status', 'ready')
-                             ->orWhereNull('repair_status');
-                      });
-                },
-            ])
-            ->when($request->filled('sort_by'), function ($q) use ($request) {
-                $allowed = ['sku', 'name', 'retail_price', 'cost_price', 'stock_quantity', 'created_at'];
-                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'id';
-                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
-                $q->orderBy($sortBy, $dir);
-            }, function ($q) {
-                $q->orderBy('id', 'desc');
-            })
-            ->paginate(50)->withQueryString();
+        $products = $query->orderBy('id', 'desc')->paginate(50)->withQueryString();
 
         return Inertia::render('Welcome', [
             'products' => $products,
             'categories' => Category::with('children')->whereNull('parent_id')->orderBy('name')->get(),
             'brands' => Brand::all(),
-            'filters' => $request->only('search', 'sort_by', 'sort_direction', 'category_id', 'brand_id', 'status', 'stock_filter', 'type'),
+            'filters' => $request->only('search'),
             'canViewCostPrice' => auth()->check() && auth()->user()->hasPermission('products.view_cost_price'),
         ]);
     }
@@ -189,7 +111,6 @@ class ProductController extends Controller
             'showRetailPrice' => $priceBooks->contains('enable_retail_price', true),
             'showTechnicianPrice' => $priceBooks->contains('enable_technician_price', true),
             'productAttributes' => ProductAttribute::with('values')->orderBy('sort_order')->orderBy('name')->get(),
-            'redirectBack' => $request->input('redirect_back'),
         ]);
     }
 
@@ -301,12 +222,6 @@ class ProductController extends Controller
                     $variant->attributeValues()->sync($vData['attribute_value_ids']);
                 }
             }
-        }
-
-        // If redirect_back param was provided (e.g., from Purchases/Create or Tasks), redirect there
-        $redirectBack = $request->input('redirect_back');
-        if ($redirectBack && str_starts_with($redirectBack, '/')) {
-            return redirect($redirectBack)->with('success', 'Hàng hóa "' . $product->name . '" được tạo thành công!');
         }
 
         return redirect()->route('products.index')->with('success', 'Hàng hóa được tạo thành công!');
@@ -650,21 +565,7 @@ class ProductController extends Controller
         $query = $product->serials();
 
         if ($request->filled('status') && $request->status !== 'all') {
-            $status = $request->status;
-
-            // Filter by repair status
-            if ($status === 'repairing') {
-                $query->where('status', 'in_stock')
-                      ->whereIn('repair_status', ['not_started', 'repairing']);
-            } elseif ($status === 'ready') {
-                $query->where('status', 'in_stock')
-                      ->where(function ($q) {
-                          $q->where('repair_status', 'ready')
-                             ->orWhereNull('repair_status');
-                      });
-            } else {
-                $query->where('status', $status);
-            }
+            $query->where('status', $request->status);
         }
 
         if ($request->filled('search')) {
@@ -811,100 +712,12 @@ class ProductController extends Controller
         }
     }
 
-    /**
-     * Check if a product has related transaction data.
-     */
-    private function productHasTransactions(int $productId): array
-    {
-        $relations = [];
-
-        if (\App\Models\InvoiceItem::where('product_id', $productId)->exists()) {
-            $relations[] = 'hóa đơn bán hàng';
-        }
-        if (\App\Models\PurchaseItem::where('product_id', $productId)->exists()) {
-            $relations[] = 'phiếu nhập hàng';
-        }
-        if (\Illuminate\Support\Facades\DB::table('order_items')->where('product_id', $productId)->exists()) {
-            $relations[] = 'đơn hàng';
-        }
-        if (\Illuminate\Support\Facades\DB::table('return_items')->where('product_id', $productId)->exists()) {
-            $relations[] = 'phiếu trả hàng';
-        }
-        if (SerialImei::where('product_id', $productId)->exists()) {
-            $relations[] = 'serial/IMEI';
-        }
-        if (\Illuminate\Support\Facades\DB::table('task_parts')->where('product_id', $productId)->exists()) {
-            $relations[] = 'công việc sửa chữa';
-        }
-        if (\Illuminate\Support\Facades\DB::table('stock_transfer_items')->where('product_id', $productId)->exists()) {
-            $relations[] = 'chuyển kho';
-        }
-        if (\Illuminate\Support\Facades\DB::table('damage_items')->where('product_id', $productId)->exists()) {
-            $relations[] = 'xuất hủy';
-        }
-        if (\Illuminate\Support\Facades\DB::table('stock_take_items')->where('product_id', $productId)->exists()) {
-            $relations[] = 'kiểm kho';
-        }
-
-        return $relations;
-    }
-
     public function destroy(Product $product)
     {
-        $relations = $this->productHasTransactions($product->id);
-
-        if (!empty($relations)) {
-            // Has transactions → deactivate instead of delete
-            $product->update(['is_active' => false]);
-            $list = implode(', ', $relations);
-            return redirect()->back()->with('warning', "Hàng hóa \"{$product->name}\" đang có phát sinh ({$list}) nên không thể xóa. Đã chuyển sang trạng thái Ngừng kinh doanh.");
-        }
-
         $product->delete();
-        return redirect()->back()->with('success', "Đã xoá hàng hóa \"{$product->name}\"!");
+
+        return redirect()->back()->with('success', 'Đã xoá hàng hóa!');
     }
-
-    public function bulkDestroy(Request $request)
-    {
-        $request->validate([
-            'product_ids' => 'required|array|min:1',
-            'product_ids.*' => 'integer|exists:products,id',
-        ]);
-
-        $products = Product::whereIn('id', $request->product_ids)->get();
-        $deleted = 0;
-        $deactivated = 0;
-        $deactivatedNames = [];
-
-        foreach ($products as $product) {
-            $relations = $this->productHasTransactions($product->id);
-
-            if (!empty($relations)) {
-                $product->update(['is_active' => false]);
-                $deactivated++;
-                $deactivatedNames[] = $product->name;
-            } else {
-                $product->delete();
-                $deleted++;
-            }
-        }
-
-        $messages = [];
-        if ($deleted > 0) {
-            $messages[] = "Đã xóa {$deleted} hàng hóa";
-        }
-        if ($deactivated > 0) {
-            $names = implode(', ', array_slice($deactivatedNames, 0, 3));
-            if ($deactivated > 3) $names .= '...';
-            $messages[] = "{$deactivated} hàng hóa có phát sinh giao dịch ({$names}) đã chuyển sang Ngừng kinh doanh";
-        }
-
-        $msg = implode('. ', $messages) . '.';
-        $type = $deactivated > 0 ? 'warning' : 'success';
-
-        return redirect()->back()->with($type, $msg);
-    }
-
     public function export(Request $request)
     {
         $products = Product::with(['category', 'brand'])

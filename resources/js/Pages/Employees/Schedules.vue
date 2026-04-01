@@ -381,11 +381,6 @@ const serverSchedules = ref([])
 const loading = ref(false)
 const currentDate = ref(new Date())
 
-const getLocalIsoDate = (d = new Date()) => {
-    const date = new Date(d);
-    return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().split('T')[0];
-};
-
 // Biến cho shift list (có thể thêm mới inline)
 const shifts = ref([...props.shifts])
 const showNewShiftForm = ref(false)
@@ -402,13 +397,13 @@ const currentWeekStart = computed(() => {
 
 const weekStart = computed(() => {
     const d = new Date(currentWeekStart.value)
-    return getLocalIsoDate(d)
+    return d.toISOString().split('T')[0]
 })
 
 const weekEnd = computed(() => {
     const d = new Date(currentWeekStart.value)
     d.setDate(d.getDate() + 6)
-    return getLocalIsoDate(d)
+    return d.toISOString().split('T')[0]
 })
 
 const weekNumber = computed(() => {
@@ -425,7 +420,7 @@ const weekDays = computed(() => {
         const d = new Date(start)
         d.setDate(start.getDate() + i)
         days.push({
-            date: getLocalIsoDate(d),
+            date: d.toISOString().split('T')[0],
             dayName: names[i]
         })
     }
@@ -607,7 +602,7 @@ const saveSchedule = async () => {
             for (let i = 1; i <= weeks; i++) {
                 const d = new Date(form.work_date)
                 d.setDate(d.getDate() + i * 7)
-                dates.push(getLocalIsoDate(d))
+                dates.push(d.toISOString().split('T')[0])
             }
         }
 

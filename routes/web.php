@@ -45,16 +45,19 @@ Route::get('/check-schema', function () {
 Route::get('/products', [ProductController::class, 'index'])->name('products.index');
 Route::get('/customers', [CustomerController::class, 'index'])->name('customers.index');
 Route::post('/customers', [CustomerController::class, 'store'])->name('customers.store');
+Route::get('/customers/search-for-merge', [CustomerController::class, 'searchForMerge']);
 Route::put('/customers/{customer}', [CustomerController::class, 'update'])->name('customers.update');
 Route::delete('/customers/{customer}', [CustomerController::class, 'destroy'])->name('customers.destroy');
 Route::get('/customers/{customer}/sales-history', [CustomerController::class, 'salesHistory']);
 Route::get('/customers/{customer}/debt-history', [CustomerController::class, 'debtHistory']);
+Route::post('/customers/{customer}/merge', [CustomerController::class, 'merge']);
 Route::get('/suppliers', [SupplierController::class, 'index'])->name('suppliers.index');
 Route::post('/suppliers', [SupplierController::class, 'store'])->name('suppliers.store');
 
 Route::get('/purchases', [PurchaseController::class, 'index'])->name('purchases.index');
 Route::get('/purchases/create', [PurchaseController::class, 'create'])->name('purchases.create');
 Route::post('/purchases', [PurchaseController::class, 'store'])->name('purchases.store');
+Route::get('/purchases/{purchase}/detail', [PurchaseController::class, 'detail']);
 Route::get('/purchases/{purchase}', [PurchaseController::class, 'show'])->name('purchases.show');
 Route::put('/purchases/{purchase}', [PurchaseController::class, 'update'])->name('purchases.update');
 Route::delete('/purchases/{purchase}', [PurchaseController::class, 'destroy'])->name('purchases.destroy');
@@ -200,6 +203,7 @@ Route::get('/run-migrate-2', function () {
 
 Route::get('/invoices', [InvoiceController::class, 'index'])->name('invoices.index');
 Route::get('/api/invoices/search', [InvoiceController::class, 'apiSearch'])->name('api.invoices.search');
+Route::get('/invoices/{invoice}/detail', [InvoiceController::class, 'detail']);
 Route::post('/invoices', [InvoiceController::class, 'store'])->name('invoices.store');
 
 Route::get('/returns', [OrderReturnController::class, 'index'])->name('returns.index');
@@ -338,6 +342,7 @@ Route::get('/cash-flows/export', [App\Http\Controllers\CashFlowController::class
 Route::post('/cash-flows/import', [App\Http\Controllers\CashFlowController::class, 'import'])->name('cash_flows.import');
 
 Route::get('/purchases/export', [App\Http\Controllers\PurchaseController::class, 'export'])->name('purchases.export');
+Route::get('/purchase-returns/export', [App\Http\Controllers\PurchaseReturnController::class, 'export'])->name('purchase-returns.export');
 Route::get('/purchase-orders/export', [App\Http\Controllers\PurchaseOrderController::class, 'export'])->name('purchase-orders.export');
 Route::get('/stock-takes/export', [App\Http\Controllers\StockTakeController::class, 'export'])->name('stock-takes.export');
 Route::get('/stock-transfers/export', [App\Http\Controllers\StockTransferController::class, 'export'])->name('stock-transfers.export');

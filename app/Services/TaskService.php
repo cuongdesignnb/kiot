@@ -9,7 +9,6 @@ use App\Models\TaskPart;
 use App\Models\Product;
 use App\Models\SerialImei;
 use App\Models\User;
-use App\Models\ActivityLog;
 use App\Notifications\TaskAssignedNotification;
 use App\Notifications\TaskStatusChangedNotification;
 use App\Notifications\TaskCommentNotification;
@@ -17,85 +16,6 @@ use Illuminate\Support\Facades\DB;
 
 class TaskService
 {
-    /**
-     * Helper: resolve employee/user name from user ID.
-     */
-    protected function resolveActorName(?int $userId): string
-    {
-        if (!$userId) {
-            $user = auth()->user();
-            $userId = $user?->id;
-        }
-        if (!$userId) return 'Hệ thống';
-
-        $user = User::find($userId);
-        if (!$user) return 'Hệ thống';
-
-        // Try to find linked employee name first
-        $employee = \App\Models\Employee::where('user_id', $userId)->first();
-        return $employee?->name ?? $user->name ?? 'Hệ thống';
-    }
-
-    /**
-     * Helper: build machine description for activity logs.
-     */
-    protected function buildMachineInfo(Task $task): string
-    {
-        $machineName = $task->product?->name ?? '';
-        $serialNumber = $task->serialImei?->serial_number ?? '';
-
-        if ($machineName && $serialNumber) {
-            return "máy {$machineName} (SN: {$serialNumber})";
-        } elseif ($machineName) {
-            return "máy {$machineName}";
-        } elseif ($serialNumber) {
-            return "máy SN: {$serialNumber}";
-        }
-        return "phiếu {$task->code}";
-    }
-
-    /**
-     * Sync product.cost_price = bình quân giá vốn tất cả serial in_stock.
-     * Gọi mỗi khi serial.cost_price thay đổi (lắp/bóc linh kiện).
-     */
-    protected function syncProductCostFromSerials(int $productId): void
-    {
-        $product = Product::find($productId);
-        if (!$product) return;
-
-        $avgCost = SerialImei::where('product_id', $productId)
-            ->where('status', 'in_stock')
-            ->where('cost_price', '>', 0)
-            ->avg('cost_price');
-
-        if ($avgCost !== null) {
-            $product->cost_price = round((float) $avgCost, 0);
-            $product->save();
-        }
-    }
-
-    /**
-     * Đồng bộ serial.cost_price = task.total_cost sau mỗi thay đổi linh kiện.
-     * Luôn chính xác vì task.total_cost = original_cost + SUM(export) - SUM(import).
-     */
-    protected function syncSerialCostFromTask(Task $task): void
-    {
-        if ($task->serial_imei_id) {
-            $serial = $task->serialImei;
-            if ($serial) {
-                $serial->cost_price = max(0, (float) $task->total_cost);
-                $serial->save();
-            }
-        } elseif ($task->product_id) {
-            // Sản phẩm không serial → gán trực tiếp vào product
-            $repairedProduct = Product::find($task->product_id);
-            if ($repairedProduct) {
-                $repairedProduct->cost_price = max(0, (float) $task->total_cost);
-                $repairedProduct->save();
-            }
-        }
-    }
-
     /**
      * Tạo công việc mới (general hoặc repair).
      */
@@ -124,13 +44,6 @@ class TaskService
                 'created_by'        => $data['created_by'] ?? null,
             ]);
 
-            $actorName = $this->resolveActorName($data['created_by'] ?? null);
-            ActivityLog::log('task_create', "NV {$actorName} tạo công việc {$task->code}: {$task->title}", $task, [
-                'task_code' => $task->code,
-                'title' => $task->title,
-                'employee' => $actorName,
-            ]);
-
             return $task;
         });
     }
@@ -141,22 +54,6 @@ class TaskService
     protected function createRepairTask(array $data): Task
     {
         $serial = SerialImei::findOrFail($data['serial_imei_id']);
-
-        // Prevent duplicate: check if serial already has active repair task
-        $existingTask = Task::where('serial_imei_id', $serial->id)
-            ->where('type', Task::TYPE_REPAIR)
-            ->whereNotIn('status', [Task::STATUS_COMPLETED, Task::STATUS_CANCELLED])
-            ->first();
-
-        if ($existingTask) {
-            throw new \Illuminate\Validation\ValidationException(
-                \Illuminate\Support\Facades\Validator::make([], []),
-                new \Illuminate\Http\JsonResponse([
-                    'message' => "Serial {$serial->serial_number} đang có phiếu sửa chữa {$existingTask->code} chưa hoàn thành. Không thể tạo thêm.",
-                    'errors' => ['serial_imei_id' => ["Serial này đang trong phiếu sửa chữa {$existingTask->code}."]]
-                ], 422)
-            );
-        }
 
         $task = Task::create([
             'code'              => Task::generateCode(Task::TYPE_REPAIR),
@@ -188,15 +85,6 @@ class TaskService
         }
         $serial->repair_status = 'not_started';
         $serial->save();
-
-        $actorName = $this->resolveActorName($data['created_by'] ?? null);
-        $machineInfo = $this->buildMachineInfo($task);
-        ActivityLog::log('task_create', "NV {$actorName} tạo phiếu sửa chữa {$task->code} cho {$machineInfo}", $task, [
-            'task_code' => $task->code,
-            'employee' => $actorName,
-            'product' => $task->product?->name,
-            'serial' => $serial->serial_number,
-        ], $data['created_by'] ?? null);
 
         return $task;
     }
@@ -338,76 +226,7 @@ class TaskService
      */
     public function markCompleted(Task $task, ?int $completedBy = null): Task
     {
-        $task = $this->changeStatus($task, Task::STATUS_COMPLETED, $completedBy);
-
-        $actorName = $this->resolveActorName($completedBy);
-        $machineInfo = $this->buildMachineInfo($task);
-        ActivityLog::log('task_complete', "NV {$actorName} hoàn thành công việc {$task->code} — {$machineInfo}", $task, [
-            'task_code' => $task->code,
-            'employee' => $actorName,
-            'serial' => $task->serialImei?->serial_number,
-            'product' => $task->product?->name,
-        ], $completedBy);
-
-        return $task;
-    }
-
-    /**
-     * Huỷ công việc — reset serial về trạng thái sẵn bán.
-     */
-    public function cancelTask(Task $task, ?int $cancelledBy = null): Task
-    {
-        return DB::transaction(function () use ($task, $cancelledBy) {
-            // Đổi trạng thái sang cancelled
-            $task = $this->changeStatus($task, Task::STATUS_CANCELLED, $cancelledBy);
-
-            // Reset repair_status serial về null (sẵn bán)
-            if ($task->is_repair && $task->serial_imei_id) {
-                $task->serialImei?->update(['repair_status' => null]);
-            }
-
-            // ── Hoàn trả tất cả linh kiện về kho ──
-            $parts = $task->parts()->get();
-            foreach ($parts as $part) {
-                if (($part->direction ?? 'export') === 'export') {
-                    // Linh kiện đã lắp vào → trả lại tồn kho
-                    Product::where('id', $part->product_id)->increment('stock_quantity', $part->quantity);
-                } elseif ($part->direction === 'import') {
-                    // Linh kiện bóc ra từ máy → trừ lại tồn kho (hoàn nguyên)
-                    Product::where('id', $part->product_id)->decrement('stock_quantity', $part->quantity);
-                }
-            }
-
-            // Xoá tất cả part records
-            $task->parts()->delete();
-            $task->recalculateCosts();
-
-            // Huỷ = trả về original_cost (vì tất cả linh kiện đã hoàn trả)
-            if ($task->serial_imei_id) {
-                $serial = $task->serialImei;
-                if ($serial) {
-                    $serial->cost_price = (float) $task->original_cost;
-                    $serial->save();
-                }
-            } elseif ($task->product_id) {
-                $repairedProduct = Product::find($task->product_id);
-                if ($repairedProduct) {
-                    $repairedProduct->cost_price = (float) $task->original_cost;
-                    $repairedProduct->save();
-                }
-            }
-
-            $actorName = $this->resolveActorName($cancelledBy);
-            $machineInfo = $this->buildMachineInfo($task);
-            ActivityLog::log('task_cancel', "NV {$actorName} huỷ công việc {$task->code} — {$machineInfo}", $task, [
-                'task_code' => $task->code,
-                'employee' => $actorName,
-                'serial' => $task->serialImei?->serial_number,
-                'product' => $task->product?->name,
-            ], $cancelledBy);
-
-            return $task;
-        });
+        return $this->changeStatus($task, Task::STATUS_COMPLETED, $completedBy);
     }
 
     /**
@@ -422,13 +241,13 @@ class TaskService
     /**
      * Xuất linh kiện (chỉ cho repair task).
      */
-    public function addPart(Task $task, int $productId, int $quantity = 1, ?string $notes = null, ?int $exportedBy = null, bool $allowNegative = false): TaskPart
+    public function addPart(Task $task, int $productId, int $quantity = 1, ?string $notes = null, ?int $exportedBy = null): TaskPart
     {
-        return DB::transaction(function () use ($task, $productId, $quantity, $notes, $exportedBy, $allowNegative) {
+        return DB::transaction(function () use ($task, $productId, $quantity, $notes, $exportedBy) {
             $product = Product::findOrFail($productId);
 
-            if (!$allowNegative && $product->stock_quantity < $quantity) {
-                throw new \RuntimeException("Tồn kho linh kiện \"{$product->name}\" không đủ (còn {$product->stock_quantity}, cần {$quantity}). Tích chọn \"Cho phép lắp khi hết hàng\" để lắp âm kho.");
+            if ($product->stock_quantity < $quantity) {
+                throw new \RuntimeException("Tồn kho linh kiện \"{$product->name}\" không đủ (còn {$product->stock_quantity}, cần {$quantity}).");
             }
 
             $unitCost = $product->cost_price ?? 0;
@@ -448,21 +267,20 @@ class TaskService
             $product->decrement('stock_quantity', $quantity);
             $task->recalculateCosts();
 
-            // Đồng bộ giá vốn serial = task.total_cost (luôn chính xác)
-            $this->syncSerialCostFromTask($task);
-
-            $productName = $product->name;
-            $actorName = $this->resolveActorName($exportedBy);
-            $machineInfo = $this->buildMachineInfo($task);
-            ActivityLog::log('part_install', "NV {$actorName} lắp {$quantity}x {$productName} vào {$machineInfo} — phiếu {$task->code}", $task, [
-                'task_code' => $task->code,
-                'employee' => $actorName,
-                'linh_kien' => $productName,
-                'so_luong' => $quantity,
-                'may' => $task->product?->name,
-                'serial' => $task->serialImei?->serial_number,
-                'gia_von' => $totalCost,
-            ], $exportedBy);
+            // Cộng giá vốn vào đúng nơi (repair only)
+            if ($task->serial_imei_id) {
+                // Sản phẩm có serial → cộng vào giá vốn serial cụ thể đó, KHÔNG cộng vào product chung
+                $serial = $task->serialImei;
+                $serial->cost_price = (float) $serial->cost_price + $totalCost;
+                $serial->save();
+            } elseif ($task->product_id) {
+                // Sản phẩm không theo dõi serial → cộng vào giá vốn product chung
+                $repairedProduct = Product::find($task->product_id);
+                if ($repairedProduct) {
+                    $repairedProduct->cost_price = (float) $repairedProduct->cost_price + $totalCost;
+                    $repairedProduct->save();
+                }
+            }
 
             return $part;
         });
@@ -478,26 +296,22 @@ class TaskService
 
             Product::where('id', $part->product_id)->increment('stock_quantity', $part->quantity);
 
-            $productName = $part->product?->name ?? 'N/A';
-            $qty = $part->quantity;
-            $taskCode = $task->code;
-            $actorName = $this->resolveActorName(null);
-            $machineInfo = $this->buildMachineInfo($task);
+            if ($task->serial_imei_id) {
+                // Sản phẩm có serial → trừ từ giá vốn serial cụ thể
+                $serial = $task->serialImei;
+                $serial->cost_price = max(0, (float) $serial->cost_price - (float) $part->total_cost);
+                $serial->save();
+            } elseif ($task->product_id) {
+                // Sản phẩm không theo dõi serial → trừ từ giá vốn product chung
+                $repairedProduct = Product::find($task->product_id);
+                if ($repairedProduct) {
+                    $repairedProduct->cost_price = max(0, (float) $repairedProduct->cost_price - (float) $part->total_cost);
+                    $repairedProduct->save();
+                }
+            }
 
             $part->delete();
             $task->recalculateCosts();
-
-            // Đồng bộ giá vốn serial = task.total_cost (luôn chính xác)
-            $this->syncSerialCostFromTask($task);
-
-            ActivityLog::log('part_remove', "NV {$actorName} gỡ {$qty}x {$productName} khỏi {$machineInfo} — phiếu {$taskCode}", $task, [
-                'task_code' => $taskCode,
-                'employee' => $actorName,
-                'linh_kien' => $productName,
-                'so_luong' => $qty,
-                'may' => $task->product?->name,
-                'serial' => $task->serialImei?->serial_number,
-            ]);
         });
     }
 
@@ -527,22 +341,20 @@ class TaskService
             // Cộng tồn kho linh kiện
             $product->increment('stock_quantity', $quantity);
 
+            // Trừ giá vốn máy
+            if ($task->serial_imei_id) {
+                $serial = $task->serialImei;
+                $serial->cost_price = max(0, (float) $serial->cost_price - $totalCost);
+                $serial->save();
+            } elseif ($task->product_id) {
+                $repairedProduct = Product::find($task->product_id);
+                if ($repairedProduct) {
+                    $repairedProduct->cost_price = max(0, (float) $repairedProduct->cost_price - $totalCost);
+                    $repairedProduct->save();
+                }
+            }
+
             $task->recalculateCosts();
-
-            // Đồng bộ giá vốn serial = task.total_cost (luôn chính xác)
-            $this->syncSerialCostFromTask($task);
-
-            $actorName = $this->resolveActorName($exportedBy);
-            $machineInfo = $this->buildMachineInfo($task);
-            ActivityLog::log('part_disassemble', "NV {$actorName} bóc {$quantity}x {$product->name} từ {$machineInfo} — phiếu {$task->code}", $task, [
-                'task_code' => $task->code,
-                'employee' => $actorName,
-                'linh_kien' => $product->name,
-                'so_luong' => $quantity,
-                'may' => $task->product?->name,
-                'serial' => $task->serialImei?->serial_number,
-                'gia_von' => $totalCost,
-            ], $exportedBy);
 
             return $part;
         });
@@ -578,72 +390,29 @@ class TaskService
     }
 
     /**
-     * Tính hiệu suất NV trong kỳ (chi tiết).
+     * Tính % hoàn thành của NV trong kỳ.
      */
     public function getEmployeePerformance(int $employeeId, string $from, string $to): array
     {
-        // Get all tasks assigned to this employee in the period via assignments table
-        $taskIds = TaskAssignment::where('employee_id', $employeeId)
-            ->whereBetween('assigned_at', [$from, $to . ' 23:59:59'])
-            ->pluck('task_id')
-            ->unique();
+        $assigned = Task::where('assigned_employee_id', $employeeId)
+            ->whereBetween('assigned_at', [$from, $to])
+            ->count();
 
-        $tasks = Task::with(['product:id,name,sku', 'serialImei:id,serial_number,product_id'])
-            ->whereIn('id', $taskIds)
-            ->get();
+        $completed = Task::where('assigned_employee_id', $employeeId)
+            ->where('status', Task::STATUS_COMPLETED)
+            ->whereBetween('completed_at', [$from, $to])
+            ->count();
 
-        $total = $tasks->count();
-        $completed = $tasks->where('status', Task::STATUS_COMPLETED)->count();
-        $inProgress = $tasks->where('status', Task::STATUS_IN_PROGRESS)->count();
-        $pending = $tasks->where('status', Task::STATUS_PENDING)->count();
-        $cancelled = $tasks->where('status', Task::STATUS_CANCELLED)->count();
-
-        $activeTasks = $tasks->whereIn('status', [Task::STATUS_IN_PROGRESS, Task::STATUS_PENDING]);
-        $avgProgress = $activeTasks->count() > 0
-            ? round($activeTasks->avg('progress'), 1)
-            : ($completed > 0 ? 100 : 0);
-
-        $now = now();
-        $overdue = $tasks->filter(function ($t) use ($now) {
-            return $t->deadline
-                && $t->status !== Task::STATUS_COMPLETED
-                && $t->status !== Task::STATUS_CANCELLED
-                && \Carbon\Carbon::parse($t->deadline)->lt($now);
-        })->count();
-
-        $rate = $total > 0 ? round(($completed / $total) * 100, 1) : 0;
+        $rate = $assigned > 0 ? round(($completed / $assigned) * 100, 1) : 0;
 
         $tier = \App\Models\RepairPerformanceTier::getTierForPercent($rate);
 
-        // Detail list for expandable view
-        $taskDetails = $tasks->map(function ($t) {
-            return [
-                'id' => $t->id,
-                'code' => $t->code,
-                'title' => $t->title,
-                'type' => $t->type,
-                'status' => $t->status,
-                'progress' => $t->progress ?? 0,
-                'deadline' => $t->deadline,
-                'completed_at' => $t->completed_at,
-                'product_name' => $t->product?->name,
-                'serial_number' => $t->serialImei?->serial_number,
-            ];
-        })->values();
-
         return [
-            'total'           => $total,
-            'assigned'        => $total,
+            'assigned'        => $assigned,
             'completed'       => $completed,
-            'in_progress'     => $inProgress,
-            'pending'         => $pending,
-            'cancelled'       => $cancelled,
-            'avg_progress'    => $avgProgress,
-            'overdue'         => $overdue,
-            'completion_rate' => $rate,
+            'completion_rate'  => $rate,
             'tier'            => $tier,
             'salary_percent'  => $tier?->salary_percent ?? 100,
-            'tasks'           => $taskDetails,
         ];
     }
 }

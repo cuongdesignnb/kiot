@@ -8,42 +8,30 @@ use Illuminate\Support\Facades\DB;
 return new class extends Migration {
     public function up(): void
     {
-        if (!Schema::hasTable('task_assignments')) {
-            Schema::create('task_assignments', function (Blueprint $table) {
-                $table->id();
-                $table->foreignId('task_id')->constrained('tasks')->cascadeOnDelete();
-                $table->foreignId('employee_id')->constrained('employees')->cascadeOnDelete();
-                $table->unsignedBigInteger('assigned_by')->nullable();
-                $table->foreign('assigned_by')->references('id')->on('users')->nullOnDelete();
-                $table->string('status', 20)->default('pending')->comment('pending | accepted | rejected');
-                $table->timestamp('assigned_at')->nullable();
-                $table->timestamp('responded_at')->nullable();
-                $table->text('notes')->nullable();
-                $table->timestamps();
+        Schema::create('task_assignments', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('task_id')->constrained('tasks')->cascadeOnDelete();
+            $table->foreignId('employee_id')->constrained('employees')->cascadeOnDelete();
+            $table->unsignedBigInteger('assigned_by')->nullable();
+            $table->foreign('assigned_by')->references('id')->on('users')->nullOnDelete();
+            $table->string('status', 20)->default('pending')->comment('pending | accepted | rejected');
+            $table->timestamp('assigned_at')->nullable();
+            $table->timestamp('responded_at')->nullable();
+            $table->text('notes')->nullable();
+            $table->timestamps();
 
-                $table->unique(['task_id', 'employee_id']);
-                $table->index('employee_id');
-                $table->index('status');
-            });
-        }
+            $table->unique(['task_id', 'employee_id']);
+            $table->index('employee_id');
+            $table->index('status');
+        });
 
         // Migrate existing assigned_employee_id data from tasks
-        try {
-            $tasks = DB::table('tasks')->whereNotNull('assigned_employee_id')->get();
-            foreach ($tasks as $task) {
-                DB::table('task_assignments')->insertOrIgnore([
-                    'task_id' => $task->id,
-                    'employee_id' => $task->assigned_employee_id,
-                    'assigned_by' => $task->created_by,
-                    'status' => 'accepted',
-                    'assigned_at' => $task->assigned_at,
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
-            }
-        } catch (\Exception $e) {
-            // Silence if table is missing or columns differ
-        }
+        DB::statement("
+            INSERT INTO task_assignments (task_id, employee_id, assigned_by, status, assigned_at, created_at, updated_at)
+            SELECT id, assigned_employee_id, created_by, 'accepted', assigned_at, NOW(), NOW()
+            FROM tasks
+            WHERE assigned_employee_id IS NOT NULL
+        ");
     }
 
     public function down(): void
