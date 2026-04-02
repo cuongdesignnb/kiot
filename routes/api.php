@@ -228,6 +228,8 @@ Route::post('/suppliers/quick-store', [\App\Http\Controllers\SupplierController:
 Route::prefix('suppliers/{id}')->group(function () {
     Route::get('/purchase-history', [\App\Http\Controllers\SupplierController::class, 'purchaseHistory']);
     Route::get('/debt-transactions', [\App\Http\Controllers\SupplierController::class, 'debtTransactions']);
+    Route::get('/export-debt', [\App\Http\Controllers\SupplierController::class, 'exportDebtHistory']);
+    Route::get('/export-purchases', [\App\Http\Controllers\SupplierController::class, 'exportPurchaseHistory']);
     Route::post('/payment', [\App\Http\Controllers\SupplierController::class, 'recordPayment']);
     Route::post('/adjust-debt', [\App\Http\Controllers\SupplierController::class, 'adjustDebt']);
 });

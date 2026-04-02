@@ -200,6 +200,11 @@ class PosController extends Controller
                 ]);
             }
 
+            // Tự động đối trừ công nợ NCC↔KH
+            if ($customer) {
+                \App\Services\DebtOffsetService::offsetDebts($customer);
+            }
+
             \Illuminate\Support\Facades\DB::commit();
             return response()->json(['success' => true, 'invoice_code' => $invoice->code, 'message' => 'Thanh toán thành công!']);
         } catch (\Exception $e) {

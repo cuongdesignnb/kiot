@@ -39,6 +39,44 @@ class OrderReturnController extends Controller
             'filters' => ['search' => $search, 'sort_by' => $request->sort_by, 'sort_direction' => $request->sort_direction]
         ]);
     }
+
+    public function show(OrderReturn $return)
+    {
+        $return->load(['customer', 'items.product', 'invoice']);
+
+        return Inertia::render('Returns/Show', [
+            'returnOrder' => [
+                'id' => $return->id,
+                'code' => $return->code,
+                'status' => $return->status,
+                'created_at' => $return->created_at?->format('d/m/Y H:i'),
+                'created_by_name' => $return->created_by_name ?? 'Admin',
+                'invoice_code' => $return->invoice?->code,
+                'invoice_id' => $return->invoice_id,
+                'customer' => $return->customer ? [
+                    'id' => $return->customer->id,
+                    'name' => $return->customer->name,
+                    'code' => $return->customer->code,
+                    'phone' => $return->customer->phone,
+                ] : null,
+                'note' => $return->note,
+                'subtotal' => $return->subtotal,
+                'discount' => $return->discount,
+                'fee' => $return->fee ?? 0,
+                'total' => $return->total,
+                'paid_to_customer' => $return->paid_to_customer,
+                'items' => $return->items->map(fn($item) => [
+                    'product_code' => $item->product->code ?? '',
+                    'product_name' => $item->product->name ?? '',
+                    'quantity' => $item->quantity,
+                    'price' => $item->price,
+                    'discount' => $item->discount ?? 0,
+                    'subtotal' => $item->subtotal ?? ($item->quantity * $item->price - ($item->discount ?? 0)),
+                ]),
+            ],
+        ]);
+    }
+
     public function store(Request $request)
     {
         $validated = $request->validate([

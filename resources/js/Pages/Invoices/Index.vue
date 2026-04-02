@@ -449,7 +449,7 @@ const printInvoice = (invoice) => {
                                             : 'text-blue-600'
                                     "
                                 >
-                                    {{ invoice.code }}
+                                    <a :href="`/invoices/${invoice.id}/show`" class="hover:underline" @click.stop>{{ invoice.code }}</a>
                                 </td>
                                 <td class="px-2 py-2">
                                     {{

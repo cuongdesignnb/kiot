@@ -14,6 +14,7 @@ use App\Models\CashFlow;
 use App\Models\SerialImei;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
+use App\Services\DebtOffsetService;
 
 class PurchaseController extends Controller
 {
@@ -270,6 +271,11 @@ class PurchaseController extends Controller
                         'description' => 'Chi tiền trả NCC cho phiếu ' . $purchase->code
                     ]);
                 }
+
+                // Tự động đối trừ công nợ NCC↔KH
+                if ($supplier) {
+                    DebtOffsetService::offsetDebts($supplier);
+                }
             }
 
             DB::commit();
@@ -404,6 +410,9 @@ class PurchaseController extends Controller
                         'description' => 'Trả thêm tiền NCC cho phiếu ' . $purchase->code,
                     ]);
                 }
+
+                // Tự động đối trừ công nợ NCC↔KH
+                DebtOffsetService::offsetDebts($purchase->supplier);
             }
 
             DB::commit();

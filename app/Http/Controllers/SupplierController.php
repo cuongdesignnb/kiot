@@ -8,6 +8,7 @@ use App\Models\SupplierDebtTransaction;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
+use App\Services\DebtOffsetService;
 
 class SupplierController extends Controller
 {
@@ -127,6 +128,28 @@ class SupplierController extends Controller
         );
     }
 
+    public function exportDebtHistory($id)
+    {
+        $data = $this->debtTransactions($id)->getData(true);
+
+        return \App\Services\CsvService::export(
+            ['Mã chứng từ', 'Loại', 'Giá trị', 'Còn nợ', 'Ngày', 'Ghi chú'],
+            collect($data)->map(fn($t) => [$t['code'], $t['type_label'], $t['amount'], $t['debt_remain'], $t['date'], $t['note'] ?? '']),
+            "cong_no_ncc_{$id}.csv"
+        );
+    }
+
+    public function exportPurchaseHistory($id)
+    {
+        $data = $this->purchaseHistory($id)->getData(true);
+
+        return \App\Services\CsvService::export(
+            ['Mã phiếu nhập', 'Ngày', 'Người tạo', 'Chi nhánh', 'Tổng tiền', 'Trạng thái'],
+            collect($data)->map(fn($p) => [$p['code'], $p['date'], $p['user_name'], $p['branch'], $p['total'], $p['status_label']]),
+            "lich_su_nhap_{$id}.csv"
+        );
+    }
+
     public function import(Request $request)
     {
         [$headers, $rows] = \App\Services\CsvService::parse($request);
@@ -230,6 +253,9 @@ class SupplierController extends Controller
         // Update cached debt
         $supplier->update(['supplier_debt_amount' => $currentDebt - abs($data['amount'])]);
 
+        // Tự động đối trừ công nợ NCC↔KH
+        DebtOffsetService::offsetDebts($supplier);
+
         return response()->json(['success' => true, 'message' => 'Đã ghi thanh toán.']);
     }
 
@@ -262,6 +288,9 @@ class SupplierController extends Controller
         ]);
 
         $supplier->update(['supplier_debt_amount' => $currentDebt + $amount]);
+
+        // Tự động đối trừ công nợ NCC↔KH
+        DebtOffsetService::offsetDebts($supplier);
 
         return response()->json(['success' => true, 'message' => 'Đã cập nhật công nợ.']);
     }

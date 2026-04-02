@@ -12,6 +12,7 @@ use App\Models\CashFlow;
 use App\Models\SerialImei;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
+use App\Services\DebtOffsetService;
 
 class PurchaseReturnController extends Controller
 {
@@ -201,6 +202,11 @@ class PurchaseReturnController extends Controller
                     'reference_code' => $return->code,
                     'description' => 'NCC hoàn tiền trả hàng nhập ' . $return->code . ' (phiếu nhập ' . $purchase->code . ')',
                 ]);
+            }
+
+            // Tự động đối trừ công nợ NCC↔KH
+            if ($purchase->supplier) {
+                DebtOffsetService::offsetDebts($purchase->supplier);
             }
 
             // Update purchase status to 'returned'

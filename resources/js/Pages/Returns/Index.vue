@@ -454,7 +454,7 @@ const printReturn = (ret) => {
                                             : 'text-blue-600'
                                     "
                                 >
-                                    {{ ret.code }}
+                                    <a :href="`/returns/${ret.id}/show`" class="hover:underline" @click.stop>{{ ret.code }}</a>
                                 </td>
                                 <td class="px-2 py-2">
                                     {{ ret.seller_name || "Trần Văn Tiến" }}

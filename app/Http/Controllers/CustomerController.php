@@ -12,6 +12,7 @@ use App\Models\Setting;
 use App\Models\SupplierDebtTransaction;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
+use App\Services\DebtOffsetService;
 
 class CustomerController extends Controller
 {
@@ -325,6 +326,9 @@ class CustomerController extends Controller
 
         $customer->decrement('debt_amount', $validated['amount']);
 
+        // Tự động đối trừ công nợ NCC↔KH
+        DebtOffsetService::offsetDebts($customer);
+
         return back()->with('success', 'Đã thu nợ ' . number_format($validated['amount']) . ' từ khách hàng.');
     }
 
@@ -354,6 +358,9 @@ class CustomerController extends Controller
         ]);
 
         $customer->update(['debt_amount' => max(0, $customer->debt_amount - $adjustAmount)]);
+
+        // Tự động đối trừ công nợ NCC↔KH
+        DebtOffsetService::offsetDebts($customer);
 
         return back()->with('success', 'Đã điều chỉnh công nợ thành công.');
     }
@@ -418,6 +425,9 @@ class CustomerController extends Controller
 
         $target->save();
 
+        // Tự động đối trừ công nợ NCC↔KH sau khi gộp
+        DebtOffsetService::offsetDebts($target);
+
         // Delete source
         $customer->delete();
 
@@ -434,6 +444,35 @@ class CustomerController extends Controller
             ['Mã KH', 'Tên khách hàng', 'Điện thoại', 'Email', 'Nhóm KH', 'Địa chỉ', 'Phường/Xã', 'Quận/Huyện', 'Tỉnh/TP', 'Công nợ', 'Tổng mua', 'Ghi chú'],
             $customers->map(fn($c) => [$c->code, $c->name, $c->phone, $c->email, $c->customer_group, $c->address, $c->ward, $c->district, $c->city, $c->debt_amount, $c->total_spent, $c->note]),
             'khach_hang.csv'
+        );
+    }
+
+    public function exportDebtHistory(Customer $customer)
+    {
+        $data = $this->debtHistory($customer)->getData(true);
+        $entries = $data['entries'] ?? [];
+
+        return \App\Services\CsvService::export(
+            ['Mã chứng từ', 'Loại', 'Giá trị', 'Dư nợ sau GD', 'Ngày'],
+            collect($entries)->map(fn($e) => [$e['code'], $e['type'], $e['amount'], $e['balance'], $e['created_at']]),
+            "cong_no_kh_{$customer->code}.csv"
+        );
+    }
+
+    public function exportSalesHistory(Customer $customer)
+    {
+        $invoices = Invoice::where('customer_id', $customer->id)->orderByDesc('created_at')
+            ->get(['code', 'total', 'status', 'created_at']);
+        $returns = OrderReturn::where('customer_id', $customer->id)->orderByDesc('created_at')
+            ->get(['code', 'total', 'status', 'created_at']);
+
+        $rows = $invoices->map(fn($i) => [$i->code, 'Hóa đơn', $i->total, $i->status, $i->created_at])
+            ->merge($returns->map(fn($r) => [$r->code, 'Trả hàng', $r->total, $r->status, $r->created_at]));
+
+        return \App\Services\CsvService::export(
+            ['Mã chứng từ', 'Loại', 'Giá trị', 'Trạng thái', 'Ngày'],
+            $rows,
+            "lich_su_ban_{$customer->code}.csv"
         );
     }
 

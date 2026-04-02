@@ -1,7 +1,7 @@
 <script setup>
-import { Head, Link } from '@inertiajs/vue3';
+import { Head, Link, router } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 
 import {
   Chart as ChartJS,
@@ -77,6 +77,20 @@ const pctChange = (current, prev) => {
 const revenuePct = computed(() => pctChange(props.todayRevenue, props.yesterdayRevenue));
 const ordersPct = computed(() => pctChange(props.todayOrders, props.yesterdayOrders));
 const monthPct = computed(() => pctChange(props.thisMonthRevenue, props.lastMonthRevenue));
+
+// Auto-refresh key metrics every 60 seconds
+let pollTimer = null;
+onMounted(() => {
+    pollTimer = setInterval(() => {
+        router.reload({
+            only: ['todayRevenue', 'todayOrders', 'totalCustomerDebt', 'totalSupplierDebt', 'totalStockValue', 'outOfStockCount'],
+            preserveScroll: true,
+        });
+    }, 60000);
+});
+onUnmounted(() => {
+    if (pollTimer) clearInterval(pollTimer);
+});
 
 const timeAgo = (dateStr) => {
     const d = new Date(dateStr);

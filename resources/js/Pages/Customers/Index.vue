@@ -725,18 +725,20 @@ const submit = () => {
                 </div>
             </div>
 
+            <!-- Summary Bar -->
+            <div class="flex items-center gap-6 px-4 py-2 bg-blue-50 border-b border-blue-200 text-sm">
+                <div>Tổng nợ phải thu: <span class="font-bold text-red-600">{{ formatCurrency(summary?.total_debt || 0) }}₫</span></div>
+                <div>Tổng bán: <span class="font-bold text-gray-800">{{ formatCurrency(summary?.total_spent || 0) }}₫</span></div>
+                <div>Tổng bán trừ trả: <span class="font-bold text-gray-800">{{ formatCurrency((summary?.total_spent || 0) - (summary?.total_returns || 0)) }}₫</span></div>
+            </div>
+
             <!-- Table -->
             <div class="flex-1 overflow-auto bg-gray-50/20">
                 <table class="w-full text-sm text-left whitespace-nowrap">
-                    <thead
-                        class="text-[13px] font-bold text-gray-700 bg-white border-b border-gray-200 sticky top-0 z-10 shadow-sm"
-                    >
+                    <thead class="text-[13px] font-bold text-gray-700 bg-white border-b border-gray-200 sticky top-0 z-10 shadow-sm">
                         <tr>
                             <th class="px-4 py-3 w-10 text-center">
-                                <input
-                                    type="checkbox"
-                                    class="rounded border-gray-300"
-                                />
+                                <input type="checkbox" class="rounded border-gray-300" />
                             </th>
                             <th class="px-4 py-3">Mã khách hàng</th>
                             <th class="px-4 py-3">Tên khách hàng</th>
@@ -790,15 +792,19 @@ const submit = () => {
                                         class="rounded border-gray-300 text-blue-500 focus:ring-blue-500"
                                     />
                                 </td>
-                                <td class="px-4 py-3">{{ customer.code }}</td>
+                                <td class="px-4 py-3">
+                                    <div class="flex items-center gap-2">
+                                        <svg v-if="customer.is_supplier" class="w-4 h-4 text-green-500" fill="currentColor" viewBox="0 0 20 20"><path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"/></svg>
+                                        {{ customer.code }}
+                                    </div>
+                                </td>
                                 <td class="px-4 py-3">{{ customer.name }}</td>
                                 <td class="px-4 py-3">{{ customer.phone }}</td>
                                 <td class="px-4 py-3 text-right">
-                                    {{
-                                        Number(
-                                            customer.debt_amount,
-                                        ).toLocaleString()
-                                    }}
+                                    <div>{{ Number(customer.debt_amount).toLocaleString() }}</div>
+                                    <div v-if="customer.is_supplier && customer.supplier_debt_amount > 0" class="text-xs text-green-600">
+                                        NCC: -{{ formatCurrency(customer.supplier_debt_amount) }}
+                                    </div>
                                 </td>
                                 <td class="px-4 py-3 text-right text-gray-400">
                                     ---
@@ -1647,6 +1653,7 @@ const submit = () => {
                                                         class="flex gap-3 text-[13px]"
                                                     >
                                                         <button
+                                                            @click="window.open(`/customers/${customer.id}/export-debt`)"
                                                             class="text-blue-600 hover:text-blue-800 flex items-center gap-1 font-medium"
                                                         >
                                                             <svg
@@ -1665,6 +1672,7 @@ const submit = () => {
                                                             Xuất file công nợ
                                                         </button>
                                                         <button
+                                                            @click="window.open(`/customers/${customer.id}/export-sales`)"
                                                             class="text-blue-600 hover:text-blue-800 flex items-center gap-1 font-medium"
                                                         >
                                                             <svg
