@@ -282,6 +282,8 @@ Route::middleware('permission:pos.use')->group(function () {
     Route::get('/api/pos/products', [PosController::class, 'searchProducts']);
     Route::post('/api/pos/checkout', [PosController::class, 'checkout']);
     Route::get('/api/products/{product}/serials', [PosController::class, 'getProductSerials']);
+    Route::get('/api/pos/customers', [PosController::class, 'searchCustomers']);
+    Route::post('/api/pos/customers', [PosController::class, 'quickCreateCustomer']);
 });
 
 // Product search API (shared by Orders, POS, etc.)
