@@ -379,8 +379,6 @@ class CustomerController extends Controller
                        ->orWhere('code', 'LIKE', "%{$q}%");
                 });
             })
-            ->when($type === 'supplier', fn($qb) => $qb->where('is_supplier', true))
-            ->when($type === 'customer', fn($qb) => $qb->where('is_customer', true))
             ->when($exclude, fn($qb, $id) => $qb->where('id', '!=', $id))
             ->limit(20)
             ->get(['id', 'code', 'name', 'phone', 'debt_amount', 'supplier_debt_amount', 'is_customer', 'is_supplier']);

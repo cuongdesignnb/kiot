@@ -71,9 +71,9 @@ Route::put('/products/{product}/serials/{serial}', [ProductController::class, 'u
 Route::delete('/products/{product}/serials/{serial}', [ProductController::class, 'destroySerial'])->name('products.serials.destroy')->middleware('permission:serials.delete');
 
 // ===== CUSTOMERS =====
+Route::get('/customers/search-for-merge', [CustomerController::class, 'searchForMerge']);
 Route::middleware('permission:customers.view')->group(function () {
     Route::get('/customers', [CustomerController::class, 'index'])->name('customers.index');
-    Route::get('/customers/search-for-merge', [CustomerController::class, 'searchForMerge']);
     Route::get('/customers/{customer}/sales-history', [CustomerController::class, 'salesHistory']);
     Route::get('/customers/{customer}/debt-history', [CustomerController::class, 'debtHistory']);
     Route::get('/customers/{customer}/export-debt', [CustomerController::class, 'exportDebtHistory']);

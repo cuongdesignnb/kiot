@@ -2674,6 +2674,9 @@ const submit = () => {
                                     <span class="font-medium">{{ r.name }}</span>
                                     <span class="text-gray-400 ml-2">{{ r.code }}</span>
                                     <span v-if="r.phone" class="text-gray-400 ml-2">{{ r.phone }}</span>
+                                    <span v-if="r.is_customer && r.is_supplier" class="ml-2 text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded">KH+NCC</span>
+                                    <span v-else-if="r.is_supplier" class="ml-2 text-xs bg-green-100 text-green-600 px-1.5 py-0.5 rounded">NCC</span>
+                                    <span v-else-if="r.is_customer" class="ml-2 text-xs bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">KH</span>
                                 </div>
                                 <span class="text-gray-500 text-xs">Nợ NCC: {{ formatCurrency(r.supplier_debt_amount || 0) }}</span>
                             </button>
