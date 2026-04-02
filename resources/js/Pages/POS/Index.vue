@@ -410,7 +410,8 @@ const processCheckout = async () => {
         }
     } catch(err) {
         console.error("Checkout Error:", err);
-        alert("Lỗi khi kết nối tới máy chủ.");
+        const msg = err.response?.data?.message || err.message || "Lỗi khi kết nối tới máy chủ.";
+        alert("Lỗi: " + msg);
     } finally {
         isCheckingOut.value = false;
     }

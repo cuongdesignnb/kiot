@@ -208,6 +208,11 @@ class PosController extends Controller
             return response()->json(['success' => true, 'invoice_code' => $invoice->code, 'message' => 'Thanh toán thành công!']);
         } catch (\Exception $e) {
             \Illuminate\Support\Facades\DB::rollBack();
+            \Illuminate\Support\Facades\Log::error('POS Checkout Error', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
             return response()->json(['success' => false, 'message' => 'Có lỗi xảy ra: ' . $e->getMessage()], 500);
         }
     }
