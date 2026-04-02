@@ -35,7 +35,7 @@ class PosController extends Controller
         // Return top 20 matches for POS search
         $products = $query
             ->withCount([
-                'serialImeis as repairing_count' => function ($q) {
+                'serials as repairing_count' => function ($q) {
                     $q->where('status', 'in_stock')
                       ->whereIn('repair_status', ['not_started', 'repairing']);
                 },
@@ -63,9 +63,8 @@ class PosController extends Controller
                 $q->whereNull('repair_status')
                   ->orWhereNotIn('repair_status', ['not_started', 'repairing']);
             })
-            ->with('variant:id,name,sku,cost_price,retail_price')
             ->orderBy('serial_number')
-            ->get(['id', 'serial_number', 'status', 'variant_id', 'cost_price', 'warranty_expires_at']);
+            ->get(['id', 'serial_number', 'status', 'cost_price']);
 
         return response()->json($serials);
     }
