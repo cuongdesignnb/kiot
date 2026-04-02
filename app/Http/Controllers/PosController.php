@@ -119,7 +119,7 @@ class PosController extends Controller
                 // Deduct stock & resolve product
                 $product = Product::lockForUpdate()->find($item['product_id']);
                 if ($product) {
-                    $allowOversell = \App\Models\Setting::get('inventory_allow_oversell', false);
+                    $allowOversell = \App\Models\Setting::get('inventory_allow_oversell', true);
                     if (!$allowOversell && $product->stock_quantity < $item['quantity']) {
                         throw new \Exception("Sản phẩm [{$product->sku}] {$product->name} không đủ tồn kho (Còn: {$product->stock_quantity})");
                     }

@@ -89,25 +89,25 @@ Route::get('/suppliers', [SupplierController::class, 'index'])->name('suppliers.
 Route::post('/suppliers', [SupplierController::class, 'store'])->name('suppliers.store')->middleware('permission:suppliers.create');
 
 // ===== PURCHASES =====
+Route::get('/purchases/create', [PurchaseController::class, 'create'])->name('purchases.create')->middleware('permission:purchases.create');
 Route::middleware('permission:purchases.view')->group(function () {
     Route::get('/purchases', [PurchaseController::class, 'index'])->name('purchases.index');
     Route::get('/purchases/{purchase}/detail', [PurchaseController::class, 'detail']);
     Route::get('/purchases/{purchase}', [PurchaseController::class, 'show'])->name('purchases.show');
 });
 Route::middleware('permission:purchases.create')->group(function () {
-    Route::get('/purchases/create', [PurchaseController::class, 'create'])->name('purchases.create');
     Route::post('/purchases', [PurchaseController::class, 'store'])->name('purchases.store');
     Route::put('/purchases/{purchase}', [PurchaseController::class, 'update'])->name('purchases.update');
     Route::delete('/purchases/{purchase}', [PurchaseController::class, 'destroy'])->name('purchases.destroy');
 });
 
 // ===== PURCHASE RETURNS =====
+Route::get('/purchase-returns/create', [PurchaseReturnController::class, 'create'])->name('purchase-returns.create')->middleware('permission:purchases.create');
 Route::middleware('permission:purchases.view')->group(function () {
     Route::get('/purchase-returns', [PurchaseReturnController::class, 'index'])->name('purchase-returns.index');
     Route::get('/purchase-returns/{purchaseReturn}', [PurchaseReturnController::class, 'show'])->name('purchase-returns.show');
 });
 Route::middleware('permission:purchases.create')->group(function () {
-    Route::get('/purchase-returns/create', [PurchaseReturnController::class, 'create'])->name('purchase-returns.create');
     Route::post('/purchase-returns', [PurchaseReturnController::class, 'store'])->name('purchase-returns.store');
     Route::delete('/purchase-returns/{purchaseReturn}', [PurchaseReturnController::class, 'destroy'])->name('purchase-returns.destroy');
 });
