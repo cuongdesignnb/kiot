@@ -190,10 +190,10 @@ loadRepairs();
                             <th class="px-4 py-3 text-left">NV phụ trách</th>
                             <SortableHeader label="Trạng thái" field="status" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="center" class="px-4 py-3 text-center" @sort="handleSort" />
                             <th class="px-4 py-3 text-center">Serial ST</th>
-                            <SortableHeader label="Deadline" field="deadline" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="center" class="px-4 py-3 text-center" @sort="handleSort" />
-                            <SortableHeader label="Giá gốc" field="original_price" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
-                            <SortableHeader label="Giá LK" field="parts_cost" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
-                            <SortableHeader label="Tổng giá vốn" field="total_cost" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
+                            <SortableHeader label="Deadline" field="deadline" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="center" class="px-4 py-3 text-center" @sort="handleSort" />
+                            <SortableHeader label="Giá gốc" field="original_price" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
+                            <SortableHeader label="Giá LK" field="parts_cost" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
+                            <SortableHeader label="Tổng giá vốn" field="total_cost" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
                         </tr>
                     </thead>
                     <tbody>

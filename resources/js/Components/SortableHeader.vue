@@ -5,6 +5,7 @@ const props = defineProps({
     currentSort: { type: String, default: '' },
     currentDirection: { type: String, default: 'asc' },
     align: { type: String, default: 'left' }, // 'left', 'right', 'center'
+    defaultDirection: { type: String, default: 'asc' }, // first-click direction: 'asc' for codes/names, 'desc' for dates/amounts
 });
 
 const emit = defineEmits(['sort']);
@@ -14,10 +15,12 @@ const isAsc = () => isActive() && props.currentDirection === 'asc';
 const isDesc = () => isActive() && props.currentDirection === 'desc';
 
 const toggleSort = () => {
+    const first = props.defaultDirection || 'asc';
+    const second = first === 'asc' ? 'desc' : 'asc';
     if (!isActive()) {
-        emit('sort', props.field, 'asc');
-    } else if (isAsc()) {
-        emit('sort', props.field, 'desc');
+        emit('sort', props.field, first);
+    } else if (props.currentDirection === first) {
+        emit('sort', props.field, second);
     } else {
         emit('sort', '', '');
     }

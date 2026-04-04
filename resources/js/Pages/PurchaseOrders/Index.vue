@@ -430,13 +430,13 @@ const printPurchaseOrder = (order) => {
                                 </svg>
                             </th>
                             <SortableHeader label="Mã đặt hàng nhập" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
-                            <SortableHeader label="Thời gian" field="created_at" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
+                            <SortableHeader label="Thời gian" field="created_at" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
                             <th class="px-2 py-2">Nhà cung cấp</th>
                             <th class="px-2 py-2 text-center">
                                 Ngày nhập dự kiến
                             </th>
                             <th class="px-2 py-2 text-center">Số ngày chờ</th>
-                            <SortableHeader label="Cần trả NCC" field="total_payment" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader label="Cần trả NCC" field="total_payment" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
                             <SortableHeader label="Trạng thái" field="status" :current-sort="sortBy" :current-direction="sortDirection" align="center" class="px-4 py-2 text-center w-24" @sort="handleSort" />
                         </tr>
                     </thead>

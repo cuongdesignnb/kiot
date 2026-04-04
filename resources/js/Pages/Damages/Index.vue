@@ -381,8 +381,8 @@ const printDamage = (damage) => {
                                     </svg>
                                 </th>
                                 <SortableHeader label="Mã xuất hủy" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
-                                <SortableHeader label="Tổng giá trị hủy" field="total_value" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right border-b border-[#dce3ec]" @sort="handleSort" />
-                                <SortableHeader label="Thời gian" field="created_at" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-b border-[#dce3ec] pl-10" @sort="handleSort" />
+                                <SortableHeader label="Tổng giá trị hủy" field="total_value" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right border-b border-[#dce3ec]" @sort="handleSort" />
+                                <SortableHeader label="Thời gian" field="created_at" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-b border-[#dce3ec] pl-10" @sort="handleSort" />
                                 <th class="p-3 border-b border-[#dce3ec]">
                                     Chi nhánh
                                 </th>

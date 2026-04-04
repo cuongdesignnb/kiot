@@ -318,7 +318,7 @@ const printTransfer = (item) => {
                                     class="p-3 w- diez border-b border-[#dce3ec]"
                                 ></th>
                                 <SortableHeader label="Mã chuyển hàng" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
-                                <SortableHeader label="Ngày chuyển" field="sent_date" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
+                                <SortableHeader label="Ngày chuyển" field="sent_date" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
                                 <th class="p-3 border-b border-[#dce3ec]">
                                     Ngày nhận
                                 </th>
@@ -328,7 +328,7 @@ const printTransfer = (item) => {
                                 <th class="p-3 border-b border-[#dce3ec]">
                                     Tới chi nhánh
                                 </th>
-                                <SortableHeader label="Giá trị chuyển" field="total_price" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right border-b border-[#dce3ec]" @sort="handleSort" />
+                                <SortableHeader label="Giá trị chuyển" field="total_price" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right border-b border-[#dce3ec]" @sort="handleSort" />
                                 <SortableHeader label="Trạng thái" field="status" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
                                 <th
                                     class="p-3 border-b border-[#dce3ec] text-center w-16"

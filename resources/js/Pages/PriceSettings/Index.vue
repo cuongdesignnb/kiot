@@ -556,9 +556,9 @@ const formulaBaseOptions = computed(() => {
                             <tr>
                                 <SortableHeader label="Mã hàng" field="sku" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 whitespace-nowrap border-r border-[#e1eaf5] font-semibold" style="width:140px" @sort="handleSort" />
                                 <SortableHeader label="Tên hàng" field="name" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-r border-[#e1eaf5] font-semibold" @sort="handleSort" />
-                                <SortableHeader label="Giá vốn" field="cost_price" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right whitespace-nowrap border-r border-[#e1eaf5] font-semibold" style="width:130px" @sort="handleSort" />
-                                <SortableHeader label="Giá nhập cuối" field="last_purchase_price" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right whitespace-nowrap border-r border-[#e1eaf5] font-semibold" style="width:130px" @sort="handleSort" />
-                                <SortableHeader label="Giá bán" field="retail_price" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right whitespace-nowrap font-semibold pr-6" style="width:160px" @sort="handleSort" />
+                                <SortableHeader label="Giá vốn" field="cost_price" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right whitespace-nowrap border-r border-[#e1eaf5] font-semibold" style="width:130px" @sort="handleSort" />
+                                <SortableHeader label="Giá nhập cuối" field="last_purchase_price" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right whitespace-nowrap border-r border-[#e1eaf5] font-semibold" style="width:130px" @sort="handleSort" />
+                                <SortableHeader label="Giá bán" field="retail_price" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right whitespace-nowrap font-semibold pr-6" style="width:160px" @sort="handleSort" />
                                 <th v-if="showRetailColumn" class="p-3 text-right whitespace-nowrap font-semibold pr-6" style="width:160px">
                                     Giá lẻ
                                 </th>

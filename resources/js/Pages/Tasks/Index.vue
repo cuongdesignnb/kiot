@@ -417,7 +417,7 @@ loadTasks();
                             <th class="px-4 py-3 text-left">NV phụ trách</th>
                             <SortableHeader label="Trạng thái" field="status" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="center" class="px-4 py-3 text-center" @sort="handleSort" />
                             <SortableHeader label="Tiến độ" field="progress" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="center" class="px-4 py-3 text-center" @sort="handleSort" />
-                            <SortableHeader label="Deadline" field="deadline" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="center" class="px-4 py-3 text-center" @sort="handleSort" />
+                            <SortableHeader label="Deadline" field="deadline" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="center" class="px-4 py-3 text-center" @sort="handleSort" />
                             <th class="px-4 py-3 text-center"></th>
                         </tr>
                     </thead>

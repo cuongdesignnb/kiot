@@ -683,8 +683,8 @@ const submitMerge = () => {
                             <SortableHeader label="Tên nhà cung cấp" field="name" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
                             <SortableHeader label="Điện thoại" field="phone" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
                             <SortableHeader label="Email" field="email" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
-                            <SortableHeader label="Nợ cần trả hiện tại" field="supplier_debt_amount" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
-                            <SortableHeader label="Tổng mua" field="total_bought" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
+                            <SortableHeader label="Nợ cần trả hiện tại" field="supplier_debt_amount" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
+                            <SortableHeader label="Tổng mua" field="total_bought" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-200 text-gray-800">
