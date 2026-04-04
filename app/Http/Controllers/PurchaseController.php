@@ -23,14 +23,19 @@ class PurchaseController extends Controller
         $search = $request->input('search');
         $statuses = $request->input('status');
         $dateFilter = $request->input('date_filter');
+        $dateFrom = $request->input('date_from');
+        $dateTo = $request->input('date_to');
+        $supplierId = $request->input('supplier_id');
+        $createdBy = $request->input('created_by');
 
-        $query = Purchase::with(['supplier', 'items'])->latest();
+        $query = Purchase::with(['supplier:id,code,name', 'items'])->latest();
 
         if ($search) {
             $query->where(function ($q) use ($search) {
                 $q->where('code', 'LIKE', "%{$search}%")
                     ->orWhereHas('supplier', function ($sq) use ($search) {
-                        $sq->where('name', 'LIKE', "%{$search}%");
+                        $sq->where('name', 'LIKE', "%{$search}%")
+                           ->orWhere('code', 'LIKE', "%{$search}%");
                     });
             });
         }
@@ -39,27 +44,61 @@ class PurchaseController extends Controller
             $query->whereIn('status', $statuses);
         }
 
-        if ($dateFilter) {
-            if ($dateFilter === 'this_month') {
-                $query->whereMonth('created_at', now()->month)
-                    ->whereYear('created_at', now()->year);
-            }
+        if ($supplierId) {
+            $query->where('supplier_id', $supplierId);
+        }
+
+        if ($createdBy) {
+            $query->where('employee_id', $createdBy);
+        }
+
+        if ($dateFilter === 'this_month') {
+            $query->whereMonth('created_at', now()->month)
+                ->whereYear('created_at', now()->year);
+        } elseif ($dateFilter === 'custom' && $dateFrom && $dateTo) {
+            $query->whereDate('created_at', '>=', $dateFrom)
+                ->whereDate('created_at', '<=', $dateTo);
         }
 
         $purchases = $query->paginate(20)->withQueryString();
 
-        // Tổng công nợ NCC (toàn bộ, không phụ thuộc filter)
+        // Summary based on filtered query (clone before paginate)
+        $summaryQuery = Purchase::query();
+        if ($search) {
+            $summaryQuery->where(function ($q) use ($search) {
+                $q->where('code', 'LIKE', "%{$search}%")
+                    ->orWhereHas('supplier', fn($sq) => $sq->where('name', 'LIKE', "%{$search}%")->orWhere('code', 'LIKE', "%{$search}%"));
+            });
+        }
+        if ($statuses && is_array($statuses) && count($statuses) > 0) {
+            $summaryQuery->whereIn('status', $statuses);
+        }
+        if ($supplierId) $summaryQuery->where('supplier_id', $supplierId);
+        if ($createdBy) $summaryQuery->where('employee_id', $createdBy);
+        if ($dateFilter === 'this_month') {
+            $summaryQuery->whereMonth('created_at', now()->month)->whereYear('created_at', now()->year);
+        } elseif ($dateFilter === 'custom' && $dateFrom && $dateTo) {
+            $summaryQuery->whereDate('created_at', '>=', $dateFrom)->whereDate('created_at', '<=', $dateTo);
+        }
+
         $summary = [
-            'total_amount' => Purchase::sum('total_amount'),
-            'total_discount' => Purchase::sum('discount'),
-            'total_paid' => Purchase::sum('paid_amount'),
-            'total_debt' => Purchase::sum('debt_amount'),
+            'total_amount' => $summaryQuery->sum('total_amount'),
+            'total_discount' => $summaryQuery->sum('discount'),
+            'total_paid' => $summaryQuery->sum('paid_amount'),
+            'total_debt' => $summaryQuery->sum('debt_amount'),
+            'total_count' => $summaryQuery->count(),
+            'total_items' => (clone $summaryQuery)->join('purchase_items', 'purchases.id', '=', 'purchase_items.purchase_id')->sum('purchase_items.quantity'),
         ];
+
+        $suppliers = Customer::where('is_supplier', true)->orderBy('name')->get(['id', 'code', 'name']);
+        $employees = \App\Models\Employee::where('is_active', true)->orderBy('name')->get(['id', 'code', 'name']);
 
         return Inertia::render('Purchases/Index', [
             'purchases' => $purchases,
-            'filters' => $request->only(['search', 'status', 'date_filter']),
+            'filters' => $request->only(['search', 'status', 'date_filter', 'date_from', 'date_to', 'supplier_id', 'created_by']),
             'summary' => $summary,
+            'suppliers' => $suppliers,
+            'employees' => $employees,
         ]);
     }
 
