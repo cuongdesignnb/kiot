@@ -290,7 +290,10 @@ const cancelReturn = (ret) => {
                                                     <tbody class="divide-y divide-gray-200 border-b border-gray-200">
                                                         <tr v-for="item in ret.items" :key="item.id">
                                                             <td class="p-2 text-blue-600">{{ item.product_code }}</td>
-                                                            <td class="p-2 font-medium">{{ item.product_name }}</td>
+                                                            <td class="p-2 font-medium">
+                                                                {{ item.product_name }}
+                                                                <span v-if="item.product?.has_serial" class="ml-1 text-[10px] text-orange-500 bg-orange-50 border border-orange-200 rounded px-1 py-0.5">Serial/IMEI</span>
+                                                            </td>
                                                             <td class="p-2 text-center font-bold">{{ item.quantity }}</td>
                                                             <td class="p-2 text-right">{{ formatCurrency(item.price) }}</td>
                                                             <td class="p-2 text-right">{{ formatCurrency(item.price) }}</td>

@@ -106,7 +106,10 @@ const cancelReturn = () => {
                             <tr v-for="(item, i) in ret.items" :key="item.id" class="hover:bg-gray-50/50">
                                 <td class="p-3 text-center text-gray-400">{{ i + 1 }}</td>
                                 <td class="p-3 text-blue-600 font-medium">{{ item.product_code }}</td>
-                                <td class="p-3 font-medium">{{ item.product_name }}</td>
+                                <td class="p-3 font-medium">
+                                    {{ item.product_name }}
+                                    <span v-if="item.product?.has_serial" class="ml-1 text-[10px] text-orange-500 bg-orange-50 border border-orange-200 rounded px-1 py-0.5">Serial/IMEI</span>
+                                </td>
                                 <td class="p-3 text-center font-bold">{{ item.quantity }}</td>
                                 <td class="p-3 text-right">{{ formatCurrency(item.price) }}</td>
                                 <td class="p-3 text-right pr-5 font-bold">{{ formatCurrency(item.subtotal) }}</td>

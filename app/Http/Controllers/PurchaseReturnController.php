@@ -18,7 +18,7 @@ class PurchaseReturnController extends Controller
 {
     public function index(Request $request)
     {
-        $query = PurchaseReturn::with(['supplier', 'purchase', 'items', 'user', 'employee']);
+        $query = PurchaseReturn::with(['supplier', 'purchase', 'items.product:id,has_serial', 'user', 'employee']);
 
         if ($request->search) {
             $search = $request->search;
