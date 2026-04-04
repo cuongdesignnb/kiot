@@ -5,6 +5,13 @@ import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import axios from "axios";
 
+const formatDateTime = (val) => {
+    if (!val) return '';
+    const d = new Date(val);
+    if (isNaN(d)) return val;
+    return d.toLocaleDateString('vi-VN') + ' ' + d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+};
+
 const props = defineProps({
     suppliers: Object,
     groups: Array,
@@ -881,6 +888,9 @@ const submitMerge = () => {
                                                         <option value="payment">Thanh toán</option>
                                                         <option value="adjustment">Điều chỉnh</option>
                                                         <option value="discount">Chiết khấu</option>
+                                                        <option value="sale">Bán hàng</option>
+                                                        <option value="sale_return">Trả hàng bán</option>
+                                                        <option value="offset">Đối trừ CN</option>
                                                     </select>
                                                 </div>
                                                 <table class="w-full text-sm text-left mb-4">
@@ -897,7 +907,7 @@ const submitMerge = () => {
                                                         <tr v-if="!filteredDebt(supplier.id)?.length"><td colspan="5" class="px-3 py-6 text-center text-gray-400">Chưa có giao dịch công nợ.</td></tr>
                                                         <tr v-for="d in filteredDebt(supplier.id)" :key="d.id" class="hover:bg-gray-50">
                                                             <td class="px-3 py-2 text-blue-600 font-semibold">{{ d.code }}</td>
-                                                            <td class="px-3 py-2">{{ d.date }}</td>
+                                                            <td class="px-3 py-2">{{ formatDateTime(d.created_at) }}</td>
                                                             <td class="px-3 py-2">{{ d.type_label }}</td>
                                                             <td class="px-3 py-2 text-right font-semibold" :class="d.amount < 0 ? 'text-green-600' : ''">{{ Number(d.amount).toLocaleString() }}</td>
                                                             <td class="px-3 py-2 text-right font-semibold">{{ Number(d.debt_remain).toLocaleString() }}</td>

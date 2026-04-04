@@ -4,7 +4,11 @@ namespace App\Http\Controllers;
 
 use App\Models\OrderReturn;
 use App\Models\Setting;
+use App\Models\CashFlow;
+use App\Models\SerialImei;
+use App\Services\DebtOffsetService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 
 class OrderReturnController extends Controller
@@ -113,7 +117,7 @@ class OrderReturnController extends Controller
             }
 
             $return = OrderReturn::create([
-                'code' => 'TH' . time(),
+                'code' => 'TH' . date('YmdHis') . rand(10, 99),
                 'invoice_id' => $validated['invoice_id'] ?? null,
                 'customer_id' => $validated['customer_id'] ?? null,
                 'branch_id' => $validated['branch_id'] ?? null,
@@ -124,7 +128,7 @@ class OrderReturnController extends Controller
                 'total' => $validated['total'],
                 'paid_to_customer' => $validated['paid_to_customer'] ?? $validated['total'],
                 'note' => $validated['note'] ?? null,
-                'created_by_name' => 'Admin',
+                'created_by_name' => auth()->user()?->name ?? 'Admin',
             ]);
 
             foreach ($validated['items'] as $item) {
@@ -133,27 +137,61 @@ class OrderReturnController extends Controller
                     'quantity' => $item['qty'],
                     'price' => $item['price'],
                     'discount' => $item['discount'] ?? 0,
-                    'import_price' => $item['price'], // Simple assumption for now
+                    'import_price' => $item['price'],
                 ]);
 
-                // Update stock
+                // Restore stock
                 $product = \App\Models\Product::find($item['product_id']);
                 if ($product) {
                     $product->increment('stock_quantity', $item['qty']);
+
+                    // Restore serials back to in_stock if product has serial
+                    if ($product->has_serial && !empty($validated['invoice_id'])) {
+                        // Find serials that were sold with this invoice for this product, limit to qty returned
+                        SerialImei::where('invoice_id', $validated['invoice_id'])
+                            ->where('product_id', $product->id)
+                            ->where('status', 'sold')
+                            ->limit($item['qty'])
+                            ->update([
+                                'status' => 'in_stock',
+                                'sold_at' => null,
+                                'invoice_id' => null,
+                            ]);
+                    }
                 }
             }
 
-            // Record cash flow (Expense/Payment to customer)
+            // Reverse customer debt & total_spent
+            if (!empty($validated['customer_id'])) {
+                $customer = \App\Models\Customer::find($validated['customer_id']);
+                if ($customer) {
+                    $customer->decrement('debt_amount', min($validated['total'], $customer->debt_amount));
+                    $customer->decrement('total_spent', min($validated['total'], $customer->total_spent));
+                }
+            }
+
+            // Record cash flow with correct field names matching CashFlow $fillable
+            $customer = !empty($validated['customer_id']) ? \App\Models\Customer::find($validated['customer_id']) : null;
             if ($return->paid_to_customer > 0) {
-                \App\Models\CashFlow::create([
-                    'code' => 'PC' . time(),
+                CashFlow::create([
+                    'code' => 'PC' . date('YmdHis') . rand(10, 99),
                     'type' => 'payment',
                     'amount' => $return->paid_to_customer,
-                    'method' => 'Tiền mặt',
-                    'description' => "Chi trả hàng khách cho phiếu {$return->code}",
-                    'partner_type' => 'customer',
-                    'partner_id' => $return->customer_id,
+                    'time' => now(),
+                    'category' => 'Chi tiền trả hàng khách',
+                    'target_type' => 'Khách hàng',
+                    'target_id' => $return->customer_id,
+                    'target_name' => $customer?->name ?? 'Khách lẻ',
+                    'reference_type' => 'OrderReturn',
+                    'reference_code' => $return->code,
+                    'payment_method' => 'cash',
+                    'description' => "Chi trả hàng khách cho phiếu {$return->code}" . ($customer ? " - {$customer->name}" : ''),
                 ]);
+            }
+
+            // Auto offset customer↔supplier debt
+            if ($customer) {
+                DebtOffsetService::offsetDebts($customer);
             }
 
             // Cho phép chọn ngày trả hàng (kế toán nhập sau)

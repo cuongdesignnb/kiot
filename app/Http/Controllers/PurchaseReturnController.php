@@ -209,8 +209,17 @@ class PurchaseReturnController extends Controller
                 DebtOffsetService::offsetDebts($purchase->supplier);
             }
 
-            // Update purchase status to 'returned'
-            $purchase->status = 'returned';
+            // Update purchase status based on total returned qty
+            $totalPurchasedQty = $purchase->items->sum('quantity');
+            $totalReturnedQty = \App\Models\PurchaseReturnItem::whereHas('purchaseReturn', function ($q) use ($purchase) {
+                $q->where('purchase_id', $purchase->id)->where('status', 'completed');
+            })->sum('quantity');
+
+            if ($totalReturnedQty >= $totalPurchasedQty) {
+                $purchase->status = 'returned';
+            } else {
+                $purchase->status = 'partial_return';
+            }
             $purchase->save();
 
             DB::commit();
