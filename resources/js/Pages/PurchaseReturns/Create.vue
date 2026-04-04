@@ -172,14 +172,13 @@ const save = () => {
                                     <td :colspan="8" class="px-6 py-2">
                                         <div class="text-[12px] text-gray-500 mb-1.5">Chọn Serial/IMEI cần trả:</div>
                                         <div class="flex flex-wrap gap-1.5">
-                                            <label v-for="s in item.serials" :key="s.id"
+                                            <span v-for="s in item.serials" :key="s.id"
                                                 class="inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[12px] cursor-pointer transition-colors"
                                                 :class="s.selected ? 'bg-red-50 border-red-300 text-red-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'"
                                                 @click.stop="toggleSerial(item, s)">
-                                                <input type="checkbox" :checked="s.selected" class="hidden">
                                                 {{ s.serial_number }}
                                                 <svg v-if="s.selected" class="w-3 h-3 text-red-500" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
-                                            </label>
+                                            </span>
                                         </div>
                                         <div v-if="item.serials.length === 0" class="text-[12px] text-gray-400 italic">Không có serial nào trong kho để trả</div>
                                     </td>
