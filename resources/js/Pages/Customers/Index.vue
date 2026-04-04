@@ -3,6 +3,7 @@ import { ref, watch, reactive } from "vue";
 import { Head, router, Link, useForm } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
+import SortableHeader from "@/Components/SortableHeader.vue";
 import axios from "axios";
 
 const props = defineProps({
@@ -14,6 +15,8 @@ const props = defineProps({
 const search = ref(props.filters?.search || "");
 const filterType = ref(props.filters?.type || "");
 const filterGender = ref(props.filters?.gender || "");
+const sortBy = ref(props.filters?.sort_by || "");
+const sortDirection = ref(props.filters?.sort_direction || "");
 const expandedRows = ref([]); // array of expanded customer IDs
 
 // Tab state per customer
@@ -80,6 +83,8 @@ const applyFilters = () => {
                 search: search.value || undefined,
                 type: filterType.value || undefined,
                 gender: filterGender.value || undefined,
+                sort_by: sortBy.value || undefined,
+                sort_direction: sortDirection.value || undefined,
             },
             {
                 preserveState: true,
@@ -89,6 +94,12 @@ const applyFilters = () => {
     }, 300);
 };
 watch([search, filterType, filterGender], applyFilters);
+
+const handleSort = (field, direction) => {
+    sortBy.value = field;
+    sortDirection.value = direction;
+    applyFilters();
+};
 
 const toggleExpand = (customerId) => {
     const index = expandedRows.value.indexOf(customerId);
@@ -740,12 +751,12 @@ const submit = () => {
                             <th class="px-4 py-3 w-10 text-center">
                                 <input type="checkbox" class="rounded border-gray-300" />
                             </th>
-                            <th class="px-4 py-3">Mã khách hàng</th>
-                            <th class="px-4 py-3">Tên khách hàng</th>
-                            <th class="px-4 py-3">Điện thoại</th>
-                            <th class="px-4 py-3 text-right">Nợ hiện tại</th>
+                            <SortableHeader label="Mã khách hàng" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Tên khách hàng" field="name" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Điện thoại" field="phone" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Nợ hiện tại" field="debt_amount" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
                             <th class="px-4 py-3 text-right">Số ngày nợ</th>
-                            <th class="px-4 py-3 text-right">Tổng bán</th>
+                            <SortableHeader label="Tổng bán" field="total_spent" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
                             <th class="px-4 py-3 text-right">
                                 Tổng bán trừ trả hàng
                             </th>

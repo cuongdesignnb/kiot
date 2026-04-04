@@ -3,6 +3,7 @@ import { ref, watch, computed } from "vue";
 import { Head, router, Link } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
+import SortableHeader from "@/Components/SortableHeader.vue";
 
 const props = defineProps({
     purchases: Object,
@@ -20,6 +21,8 @@ const dateFrom = ref(props.filters?.date_from || "");
 const dateTo = ref(props.filters?.date_to || "");
 const supplierId = ref(props.filters?.supplier_id || "");
 const createdBy = ref(props.filters?.created_by || "");
+const sortBy = ref(props.filters?.sort_by || "");
+const sortDirection = ref(props.filters?.sort_direction || "");
 
 const allStatuses = [
     { value: "draft", label: "Phiếu tạm" },
@@ -40,12 +43,20 @@ const updateFilters = () => {
             date_to: dateFilter.value === 'custom' ? dateTo.value || undefined : undefined,
             supplier_id: supplierId.value || undefined,
             created_by: createdBy.value || undefined,
+            sort_by: sortBy.value || undefined,
+            sort_direction: sortDirection.value || undefined,
         };
         router.get("/purchases", params, { preserveState: true, replace: true });
     }, 400);
 };
 
 watch([search, statusFilters, dateFilter, dateFrom, dateTo, supplierId, createdBy], updateFilters, { deep: true });
+
+const handleSort = (field, direction) => {
+    sortBy.value = field;
+    sortDirection.value = direction;
+    updateFilters();
+};
 
 const removeStatusFilter = (val) => {
     const idx = statusFilters.value.indexOf(val);
@@ -281,10 +292,10 @@ const clearSupplier = () => {
                             <th class="px-3 py-2 text-center w-10">
                                 <svg class="w-4 h-4 mx-auto text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path></svg>
                             </th>
-                            <th v-if="isColVisible('code')" class="px-2 py-2">Mã nhập hàng</th>
+                            <SortableHeader v-if="isColVisible('code')" label="Mã nhập hàng" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
                             <th v-if="isColVisible('purchase_order_code')" class="px-2 py-2">Mã đặt hàng nhập</th>
                             <th v-if="isColVisible('return_code')" class="px-2 py-2">Mã trả hàng nhập</th>
-                            <th v-if="isColVisible('time')" class="px-2 py-2">Thời gian</th>
+                            <SortableHeader v-if="isColVisible('time')" label="Thời gian" field="created_at" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
                             <th v-if="isColVisible('created_time')" class="px-2 py-2">Thời gian tạo</th>
                             <th v-if="isColVisible('updated_at')" class="px-2 py-2">Ngày cập nhật</th>
                             <th v-if="isColVisible('supplier_code')" class="px-2 py-2">Mã NCC</th>
@@ -294,15 +305,15 @@ const clearSupplier = () => {
                             <th v-if="isColVisible('creator')" class="px-2 py-2">Người tạo</th>
                             <th v-if="isColVisible('total_quantity')" class="px-4 py-2 text-right">Tổng số lượng</th>
                             <th v-if="isColVisible('item_count')" class="px-4 py-2 text-right">SL mặt hàng</th>
-                            <th v-if="isColVisible('total_amount')" class="px-4 py-2 text-right">Tổng tiền hàng</th>
-                            <th v-if="isColVisible('discount')" class="px-4 py-2 text-right">Giảm giá</th>
+                            <SortableHeader v-if="isColVisible('total_amount')" label="Tổng tiền hàng" field="total_amount" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader v-if="isColVisible('discount')" label="Giảm giá" field="discount" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
                             <th v-if="isColVisible('other_cost')" class="px-4 py-2 text-right">CP nhập trả NCC</th>
-                            <th v-if="isColVisible('need_pay')" class="px-4 py-2 text-right">Cần trả NCC</th>
+                            <SortableHeader v-if="isColVisible('need_pay')" label="Cần trả NCC" field="debt_amount" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
                             <th v-if="isColVisible('payment_discount')" class="px-4 py-2 text-right">CK thanh toán</th>
-                            <th v-if="isColVisible('paid')" class="px-4 py-2 text-right">Tiền đã trả NCC</th>
+                            <SortableHeader v-if="isColVisible('paid')" label="Tiền đã trả NCC" field="paid_amount" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
                             <th v-if="isColVisible('other_import_cost')" class="px-4 py-2 text-right">CP nhập khác</th>
                             <th v-if="isColVisible('note')" class="px-2 py-2">Ghi chú</th>
-                            <th v-if="isColVisible('status')" class="px-4 py-2 text-center w-24">Trạng thái</th>
+                            <SortableHeader v-if="isColVisible('status')" label="Trạng thái" field="status" :current-sort="sortBy" :current-direction="sortDirection" align="center" class="px-4 py-2 text-center w-24" @sort="handleSort" />
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100 bg-white">

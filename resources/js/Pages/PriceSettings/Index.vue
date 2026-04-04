@@ -2,6 +2,7 @@
 import { ref, watch, onMounted, computed } from 'vue';
 import { Head, router, Link } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
+import SortableHeader from '@/Components/SortableHeader.vue';
 import axios from 'axios';
 
 const props = defineProps({
@@ -19,6 +20,8 @@ const priceCondition = ref(props.filters.price_condition || '');
 const priceValue = ref(props.filters.price_value || '');
 const activePriceBookId = ref(props.filters.price_book_id || null);
 const comparePrice = ref('');
+const sortBy = ref(props.filters.sort_by || '');
+const sortDirection = ref(props.filters.sort_direction || '');
 
 // Local state for instant updating
 const localProducts = ref([]);
@@ -51,11 +54,19 @@ const fetchFiltered = () => {
             price_condition: priceCondition.value,
             price_value: priceValue.value,
             price_book_id: activePriceBookId.value || undefined,
+            sort_by: sortBy.value || undefined,
+            sort_direction: sortDirection.value || undefined,
         }, { preserveState: true, preserveScroll: true, replace: true });
     }, 500);
 };
 
 watch([search, categoryId, stockFilter, priceCondition], fetchFiltered);
+
+const handleSort = (field, direction) => {
+    sortBy.value = field;
+    sortDirection.value = direction;
+    fetchFiltered();
+};
 
 // Switch price book
 const switchPriceBook = (id) => {
@@ -543,14 +554,11 @@ const formulaBaseOptions = computed(() => {
                     <table class="w-full text-left border-collapse">
                         <thead class="bg-[#f2f9ff] text-[#005fb8] text-[13px] font-bold sticky top-0 z-10 shadow-[0_1px_0_rgba(200,200,200,0.5)]">
                             <tr>
-                                <th class="p-3 whitespace-nowrap border-r border-[#e1eaf5] font-semibold" style="width:140px">Mã hàng</th>
-                                <th class="p-3 border-r border-[#e1eaf5] font-semibold">Tên hàng</th>
-                                <th class="p-3 text-right whitespace-nowrap border-r border-[#e1eaf5] font-semibold" style="width:130px">Giá vốn</th>
-                                <th class="p-3 text-right whitespace-nowrap border-r border-[#e1eaf5] font-semibold" style="width:130px">Giá nhập cuối</th>
-                                <th class="p-3 text-right whitespace-nowrap font-semibold pr-6" style="width:160px">
-                                    {{ activePriceBookName }}
-                                    <svg class="w-3 h-3 inline-block ml-1 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
-                                </th>
+                                <SortableHeader label="Mã hàng" field="sku" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 whitespace-nowrap border-r border-[#e1eaf5] font-semibold" style="width:140px" @sort="handleSort" />
+                                <SortableHeader label="Tên hàng" field="name" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-r border-[#e1eaf5] font-semibold" @sort="handleSort" />
+                                <SortableHeader label="Giá vốn" field="cost_price" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right whitespace-nowrap border-r border-[#e1eaf5] font-semibold" style="width:130px" @sort="handleSort" />
+                                <SortableHeader label="Giá nhập cuối" field="last_purchase_price" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right whitespace-nowrap border-r border-[#e1eaf5] font-semibold" style="width:130px" @sort="handleSort" />
+                                <SortableHeader label="Giá bán" field="retail_price" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right whitespace-nowrap font-semibold pr-6" style="width:160px" @sort="handleSort" />
                                 <th v-if="showRetailColumn" class="p-3 text-right whitespace-nowrap font-semibold pr-6" style="width:160px">
                                     Giá lẻ
                                 </th>

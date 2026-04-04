@@ -40,14 +40,23 @@ class UserController extends Controller
             $query->where('branch_id', $request->branch_id);
         }
 
-        $users = $query->latest()->paginate(20)->withQueryString();
+        $query->when($request->filled('sort_by'), function ($q) use ($request) {
+            $allowed = ['name', 'email', 'phone', 'status', 'created_at'];
+            $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'created_at';
+            $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+            $q->orderBy($sortBy, $dir);
+        }, function ($q) {
+            $q->latest();
+        });
+
+        $users = $query->paginate(20)->withQueryString();
 
         return Inertia::render('Users/Index', [
             'users' => $users,
             'roles' => Role::select('id', 'name')->orderBy('name')->get(),
             'branches' => Branch::select('id', 'name')->orderBy('name')->get(),
             'employees' => Employee::whereNull('user_id')->select('id', 'name', 'code')->orderBy('name')->get(),
-            'filters' => $request->only('search', 'status', 'role_id', 'branch_id'),
+            'filters' => $request->only('search', 'status', 'role_id', 'branch_id', 'sort_by', 'sort_direction'),
         ]);
     }
 

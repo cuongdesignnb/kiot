@@ -15,7 +15,7 @@ class PriceSettingController extends Controller
 {
     private function buildQuery(Request $request)
     {
-        $query = Product::with('category')->orderBy('id', 'desc');
+        $query = Product::with('category');
 
         if ($request->filled('search')) {
             $search = $request->input('search');
@@ -70,6 +70,15 @@ class PriceSettingController extends Controller
             );
         }
 
+        $query->when($request->filled('sort_by'), function ($q) use ($request) {
+            $allowed = ['sku', 'name', 'cost_price', 'last_purchase_price', 'retail_price'];
+            $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'id';
+            $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+            $q->orderBy($sortBy, $dir);
+        }, function ($q) {
+            $q->orderBy('id', 'desc');
+        });
+
         $products = $query->paginate(20)->withQueryString();
 
         $priceBooks = PriceBook::withCount('priceBookProducts')
@@ -84,7 +93,7 @@ class PriceSettingController extends Controller
             'categories' => $categories,
             'priceBooks' => $priceBooks,
             'branches' => $branches,
-            'filters' => $request->only(['search', 'category_id', 'stock_filter', 'price_condition', 'price_value', 'price_book_id']),
+            'filters' => $request->only(['search', 'category_id', 'stock_filter', 'price_condition', 'price_value', 'price_book_id', 'sort_by', 'sort_direction']),
         ]);
     }
 

@@ -2,6 +2,7 @@
 import { ref, watch, computed } from "vue";
 import { Head, Link, usePage } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
+import SortableHeader from "@/Components/SortableHeader.vue";
 import axios from "axios";
 
 const props = defineProps({
@@ -20,6 +21,8 @@ const filters = ref({
     to: "",
     per_page: 20,
     page: 1,
+    sort_by: "",
+    sort_direction: "",
 });
 const showCreateModal = ref(false);
 const createForm = ref({
@@ -62,6 +65,13 @@ watch(() => [filters.value.status, filters.value.assigned_employee_id, filters.v
     filters.value.page = 1;
     loadRepairs();
 });
+
+const handleSort = (field, direction) => {
+    filters.value.sort_by = field;
+    filters.value.sort_direction = direction;
+    filters.value.page = 1;
+    loadRepairs();
+};
 
 // Serial search for create modal
 let serialTimeout;
@@ -174,16 +184,16 @@ loadRepairs();
                 <table v-else class="w-full text-sm">
                     <thead class="bg-gray-50 text-gray-600 uppercase text-xs">
                         <tr>
-                            <th class="px-4 py-3 text-left">Mã phiếu</th>
+                            <SortableHeader label="Mã phiếu" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3 text-left" @sort="handleSort" />
                             <th class="px-4 py-3 text-left">Serial</th>
                             <th class="px-4 py-3 text-left">Sản phẩm</th>
                             <th class="px-4 py-3 text-left">NV phụ trách</th>
-                            <th class="px-4 py-3 text-center">Trạng thái</th>
+                            <SortableHeader label="Trạng thái" field="status" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="center" class="px-4 py-3 text-center" @sort="handleSort" />
                             <th class="px-4 py-3 text-center">Serial ST</th>
-                            <th class="px-4 py-3 text-center">Deadline</th>
-                            <th class="px-4 py-3 text-right">Giá gốc</th>
-                            <th class="px-4 py-3 text-right">Giá LK</th>
-                            <th class="px-4 py-3 text-right">Tổng giá vốn</th>
+                            <SortableHeader label="Deadline" field="deadline" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="center" class="px-4 py-3 text-center" @sort="handleSort" />
+                            <SortableHeader label="Giá gốc" field="original_price" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
+                            <SortableHeader label="Giá LK" field="parts_cost" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
+                            <SortableHeader label="Tổng giá vốn" field="total_cost" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
                         </tr>
                     </thead>
                     <tbody>

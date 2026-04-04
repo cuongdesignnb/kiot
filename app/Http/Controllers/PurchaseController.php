@@ -28,7 +28,7 @@ class PurchaseController extends Controller
         $supplierId = $request->input('supplier_id');
         $createdBy = $request->input('created_by');
 
-        $query = Purchase::with(['supplier:id,code,name', 'items'])->latest();
+        $query = Purchase::with(['supplier:id,code,name', 'items']);
 
         if ($search) {
             $query->where(function ($q) use ($search) {
@@ -59,6 +59,15 @@ class PurchaseController extends Controller
             $query->whereDate('created_at', '>=', $dateFrom)
                 ->whereDate('created_at', '<=', $dateTo);
         }
+
+        $query->when($request->filled('sort_by'), function ($q) use ($request) {
+            $allowed = ['code', 'created_at', 'total_amount', 'discount', 'paid_amount', 'debt_amount', 'status'];
+            $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'created_at';
+            $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+            $q->orderBy($sortBy, $dir);
+        }, function ($q) {
+            $q->latest();
+        });
 
         $purchases = $query->paginate(20)->withQueryString();
 
@@ -95,7 +104,7 @@ class PurchaseController extends Controller
 
         return Inertia::render('Purchases/Index', [
             'purchases' => $purchases,
-            'filters' => $request->only(['search', 'status', 'date_filter', 'date_from', 'date_to', 'supplier_id', 'created_by']),
+            'filters' => $request->only(['search', 'status', 'date_filter', 'date_from', 'date_to', 'supplier_id', 'created_by', 'sort_by', 'sort_direction']),
             'summary' => $summary,
             'suppliers' => $suppliers,
             'employees' => $employees,

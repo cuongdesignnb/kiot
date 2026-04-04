@@ -2,6 +2,7 @@
 import { ref, watch, computed } from "vue";
 import { Head, Link, router } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
+import SortableHeader from "@/Components/SortableHeader.vue";
 import axios from "axios";
 
 const props = defineProps({
@@ -23,6 +24,8 @@ const filters = ref({
     branch_id: "",
     per_page: 20,
     page: 1,
+    sort_by: "",
+    sort_direction: "",
 });
 
 // ── Create modal ──
@@ -83,6 +86,13 @@ watch(() => [filters.value.type, filters.value.status, filters.value.priority, f
     filters.value.page = 1;
     loadTasks();
 });
+
+const handleSort = (field, direction) => {
+    filters.value.sort_by = field;
+    filters.value.sort_direction = direction;
+    filters.value.page = 1;
+    loadTasks();
+};
 
 // ── Serial search (for repair) ──
 let serialTimeout;
@@ -398,16 +408,16 @@ loadTasks();
                 <table v-else class="w-full text-sm">
                     <thead class="bg-gray-50 text-gray-600 uppercase text-xs">
                         <tr>
-                            <th class="px-4 py-3 text-left">Mã</th>
-                            <th class="px-4 py-3 text-left">Tiêu đề</th>
+                            <SortableHeader label="Mã" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3 text-left" @sort="handleSort" />
+                            <SortableHeader label="Tiêu đề" field="title" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3 text-left" @sort="handleSort" />
                             <th class="px-4 py-3 text-left">Tên máy</th>
                             <th class="px-4 py-3 text-left">Serial</th>
-                            <th class="px-4 py-3 text-center">Loại</th>
-                            <th class="px-4 py-3 text-center">Ưu tiên</th>
+                            <SortableHeader label="Loại" field="type" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="center" class="px-4 py-3 text-center" @sort="handleSort" />
+                            <SortableHeader label="Ưu tiên" field="priority" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="center" class="px-4 py-3 text-center" @sort="handleSort" />
                             <th class="px-4 py-3 text-left">NV phụ trách</th>
-                            <th class="px-4 py-3 text-center">Trạng thái</th>
-                            <th class="px-4 py-3 text-center">Tiến độ</th>
-                            <th class="px-4 py-3 text-center">Deadline</th>
+                            <SortableHeader label="Trạng thái" field="status" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="center" class="px-4 py-3 text-center" @sort="handleSort" />
+                            <SortableHeader label="Tiến độ" field="progress" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="center" class="px-4 py-3 text-center" @sort="handleSort" />
+                            <SortableHeader label="Deadline" field="deadline" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="center" class="px-4 py-3 text-center" @sort="handleSort" />
                             <th class="px-4 py-3 text-center"></th>
                         </tr>
                     </thead>

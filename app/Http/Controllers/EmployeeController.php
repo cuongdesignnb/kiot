@@ -329,7 +329,16 @@ class EmployeeController extends Controller
             $query->where('job_title_id', $request->job_title_id);
         }
 
-        $employees = $query->latest()->paginate(20)->withQueryString();
+        $query->when($request->filled('sort_by'), function ($q) use ($request) {
+            $allowed = ['code', 'attendance_code', 'name', 'phone', 'id_number', 'created_at'];
+            $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'created_at';
+            $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+            $q->orderBy($sortBy, $dir);
+        }, function ($q) {
+            $q->latest();
+        });
+
+        $employees = $query->paginate(20)->withQueryString();
 
         $branches = Branch::select('id', 'name')->get();
         $departments = Department::select('id', 'name')->get();
@@ -341,7 +350,7 @@ class EmployeeController extends Controller
             'departments' => $departments,
             'jobTitles' => $jobTitles,
             'salaryTemplates' => SalaryTemplate::select('id', 'name')->get(),
-            'filters' => $request->only('search', 'is_active', 'branch_id', 'department_id', 'job_title_id')
+            'filters' => $request->only('search', 'is_active', 'branch_id', 'department_id', 'job_title_id', 'sort_by', 'sort_direction')
         ]);
     }
 

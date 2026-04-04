@@ -18,7 +18,7 @@ class PurchaseReturnController extends Controller
 {
     public function index(Request $request)
     {
-        $query = PurchaseReturn::with(['supplier', 'purchase', 'items', 'user', 'employee'])->latest();
+        $query = PurchaseReturn::with(['supplier', 'purchase', 'items', 'user', 'employee']);
 
         if ($request->search) {
             $search = $request->search;
@@ -45,11 +45,20 @@ class PurchaseReturnController extends Controller
             'total_refunded' => (clone $summaryQuery)->where('status', 'completed')->sum('refund_amount'),
         ];
 
+        $query->when($request->filled('sort_by'), function ($q) use ($request) {
+            $allowed = ['code', 'created_at', 'return_date', 'total_amount', 'refund_amount', 'status'];
+            $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'created_at';
+            $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+            $q->orderBy($sortBy, $dir);
+        }, function ($q) {
+            $q->latest();
+        });
+
         $returns = $query->paginate(20)->withQueryString();
 
         return Inertia::render('PurchaseReturns/Index', [
             'returns' => $returns,
-            'filters' => $request->only(['search', 'status', 'date_filter']),
+            'filters' => $request->only(['search', 'status', 'date_filter', 'sort_by', 'sort_direction']),
             'summary' => $summary,
         ]);
     }

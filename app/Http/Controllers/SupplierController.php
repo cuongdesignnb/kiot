@@ -53,7 +53,16 @@ class SupplierController extends Controller
             }
         }
 
-        $suppliers = $query->latest()->paginate(50)->withQueryString();
+        $query->when($request->filled('sort_by'), function ($q) use ($request) {
+            $allowed = ['code', 'name', 'phone', 'email', 'supplier_debt_amount', 'total_bought', 'created_at'];
+            $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'created_at';
+            $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+            $q->orderBy($sortBy, $dir);
+        }, function ($q) {
+            $q->latest();
+        });
+
+        $suppliers = $query->paginate(50)->withQueryString();
 
         // Summary totals - use supplier_debt_amount which is maintained by purchase/return flows
         $summary = [
@@ -69,7 +78,7 @@ class SupplierController extends Controller
         return Inertia::render('Suppliers/Index', [
             'suppliers' => $suppliers,
             'groups' => $groups,
-            'filters' => $request->only(['search', 'customer_group', 'date_filter', 'partner_type']),
+            'filters' => $request->only(['search', 'customer_group', 'date_filter', 'partner_type', 'sort_by', 'sort_direction']),
             'summary' => $summary,
         ]);
     }

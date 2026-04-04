@@ -3,6 +3,7 @@ import { ref, watch, reactive, computed } from "vue";
 import { Head, router, Link, useForm, usePage } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
+import SortableHeader from "@/Components/SortableHeader.vue";
 import axios from "axios";
 
 const props = defineProps({
@@ -15,6 +16,8 @@ const props = defineProps({
 });
 
 const search = ref(props.filters?.search || "");
+const sortBy = ref(props.filters?.sort_by || "");
+const sortDirection = ref(props.filters?.sort_direction || "");
 const expandedRows = ref([]);
 
 let searchTimeout;
@@ -23,7 +26,7 @@ watch(search, (value) => {
     searchTimeout = setTimeout(() => {
         router.get(
             "/employees",
-            { search: value },
+            { search: value, sort_by: sortBy.value || undefined, sort_direction: sortDirection.value || undefined },
             {
                 preserveState: true,
                 replace: true,
@@ -31,6 +34,16 @@ watch(search, (value) => {
         );
     }, 500);
 });
+
+const handleSort = (field, direction) => {
+    sortBy.value = field;
+    sortDirection.value = direction;
+    router.get(
+        "/employees",
+        { search: search.value || undefined, sort_by: field || undefined, sort_direction: direction || undefined },
+        { preserveState: true, replace: true },
+    );
+};
 
 const toggleExpand = (employeeId) => {
     const index = expandedRows.value.indexOf(employeeId);
@@ -576,11 +589,11 @@ const bonusCalcLabel = (calc) => {
                                 />
                             </th>
                             <th class="px-4 py-3 w-12">Ảnh</th>
-                            <th class="px-4 py-3">Mã nhân viên</th>
-                            <th class="px-4 py-3">Mã chấm công</th>
-                            <th class="px-4 py-3">Tên nhân viên</th>
-                            <th class="px-4 py-3">Số điện thoại</th>
-                            <th class="px-4 py-3">Số CMND/CCCD</th>
+                            <SortableHeader label="Mã nhân viên" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Mã chấm công" field="attendance_code" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Tên nhân viên" field="name" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Số điện thoại" field="phone" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Số CMND/CCCD" field="id_number" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
                             <th class="px-4 py-3 text-right">Nợ và tạm ứng</th>
                             <th class="px-4 py-3">Ghi chú</th>
                         </tr>

@@ -19,8 +19,14 @@ class CashFlowController extends Controller
                 ->orWhere('description', 'LIKE', "%{$search}%")
                 ->orWhere('reference_code', 'LIKE', "%{$search}%");
         })
-            ->orderBy('time', 'desc')
-            ->orderBy('created_at', 'desc')
+            ->when($request->filled('sort_by'), function ($q) use ($request) {
+                $allowed = ['code', 'time', 'type', 'amount', 'category', 'created_at'];
+                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'time';
+                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+                $q->orderBy($sortBy, $dir);
+            }, function ($q) {
+                $q->orderBy('time', 'desc')->orderBy('created_at', 'desc');
+            })
             ->paginate(15)
             ->withQueryString();
 
@@ -43,7 +49,7 @@ class CashFlowController extends Controller
 
         return Inertia::render('CashFlows/Index', [
             'cashFlows' => $cashFlows,
-            'filters' => ['search' => $search],
+            'filters' => ['search' => $search, 'sort_by' => $request->sort_by, 'sort_direction' => $request->sort_direction],
             'metrics' => [
                 'totalReceipts' => $totalReceipts,
                 'totalPayments' => $totalPayments,

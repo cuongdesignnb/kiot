@@ -3,6 +3,7 @@ import { ref, watch } from "vue";
 import { Head, router, Link, usePage } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
+import SortableHeader from "@/Components/SortableHeader.vue";
 
 const page = usePage();
 const props = defineProps({
@@ -14,6 +15,8 @@ const props = defineProps({
 const search = ref(props.filters?.search || "");
 const statusFilters = ref(props.filters?.status || []);
 const dateFilter = ref(props.filters?.date_filter || "this_month");
+const sortBy = ref(props.filters?.sort_by || "");
+const sortDirection = ref(props.filters?.sort_direction || "");
 
 const allStatuses = [
     { value: "draft", label: "Phiếu tạm" },
@@ -31,6 +34,8 @@ const updateFilters = () => {
                 search: search.value,
                 status: statusFilters.value,
                 date_filter: dateFilter.value,
+                sort_by: sortBy.value || undefined,
+                sort_direction: sortDirection.value || undefined,
             },
             { preserveState: true, replace: true },
         );
@@ -38,6 +43,12 @@ const updateFilters = () => {
 };
 
 watch([search, statusFilters, dateFilter], updateFilters, { deep: true });
+
+const handleSort = (field, direction) => {
+    sortBy.value = field;
+    sortDirection.value = direction;
+    updateFilters();
+};
 
 const removeStatusFilter = (val) => {
     const idx = statusFilters.value.indexOf(val);
@@ -170,13 +181,13 @@ const cancelReturn = (ret) => {
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path>
                                 </svg>
                             </th>
-                            <th class="px-2 py-2">Mã trả hàng nhập</th>
-                            <th class="px-2 py-2">Thời gian</th>
+                            <SortableHeader label="Mã trả hàng nhập" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
+                            <SortableHeader label="Thời gian" field="created_at" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
                             <th class="px-2 py-2">Nhà cung cấp</th>
-                            <th class="px-4 py-2 text-right">Tổng tiền hàng</th>
-                            <th class="px-4 py-2 text-right">NCC cần trả</th>
+                            <SortableHeader label="Tổng tiền hàng" field="total_amount" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader label="NCC cần trả" field="refund_amount" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
                             <th class="px-4 py-2 text-right">NCC đã trả</th>
-                            <th class="px-4 py-2 text-center w-28">Trạng thái</th>
+                            <SortableHeader label="Trạng thái" field="status" :current-sort="sortBy" :current-direction="sortDirection" align="center" class="px-4 py-2 text-center w-28" @sort="handleSort" />
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100 bg-white">

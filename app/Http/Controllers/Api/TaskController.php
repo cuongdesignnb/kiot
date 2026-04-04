@@ -34,7 +34,7 @@ class TaskController extends Controller
             'branch:id,name',
             'category:id,name,color',
             'assignments.employee:id,name',
-        ])->latest();
+        ]);
 
         if ($request->filled('type')) {
             $query->where('type', $request->type);
@@ -69,6 +69,15 @@ class TaskController extends Controller
                     ->orWhereHas('product', fn($q2) => $q2->where('name', 'like', "%{$s}%"));
             });
         }
+
+        $query->when($request->filled('sort_by'), function ($q) use ($request) {
+            $allowed = ['code', 'title', 'type', 'priority', 'status', 'progress', 'deadline', 'created_at'];
+            $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'created_at';
+            $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+            $q->orderBy($sortBy, $dir);
+        }, function ($q) {
+            $q->latest();
+        });
 
         return response()->json($query->paginate($request->per_page ?? 20));
     }

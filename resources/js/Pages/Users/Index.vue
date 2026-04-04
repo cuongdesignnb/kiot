@@ -2,6 +2,7 @@
 import { ref, watch, computed } from "vue";
 import { Head, Link, router, useForm } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
+import SortableHeader from "@/Components/SortableHeader.vue";
 
 const props = defineProps({
     users: Object,
@@ -15,6 +16,8 @@ const search = ref(props.filters?.search || "");
 const filterStatus = ref(props.filters?.status || "");
 const filterRole = ref(props.filters?.role_id || "");
 const filterBranch = ref(props.filters?.branch_id || "");
+const sortBy = ref(props.filters?.sort_by || "");
+const sortDirection = ref(props.filters?.sort_direction || "");
 
 let searchTimeout;
 watch(search, (value) => {
@@ -29,7 +32,15 @@ const applyFilters = () => {
     if (filterStatus.value) params.status = filterStatus.value;
     if (filterRole.value) params.role_id = filterRole.value;
     if (filterBranch.value) params.branch_id = filterBranch.value;
+    if (sortBy.value) params.sort_by = sortBy.value;
+    if (sortDirection.value) params.sort_direction = sortDirection.value;
     router.get("/users", params, { preserveState: true, replace: true });
+};
+
+const handleSort = (field, direction) => {
+    sortBy.value = field;
+    sortDirection.value = direction;
+    applyFilters();
 };
 
 // ── Selected user (detail view) ──
@@ -212,11 +223,11 @@ const statusBadge = (status) => {
                     <table class="w-full text-sm">
                         <thead class="bg-gray-50 sticky top-0 z-10">
                             <tr class="text-left text-gray-600 font-semibold border-b">
-                                <th class="px-4 py-3">Tên hiển thị</th>
-                                <th class="px-4 py-3">Tên đăng nhập</th>
-                                <th class="px-4 py-3">Điện thoại</th>
+                                <SortableHeader label="Tên hiển thị" field="name" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
+                                <SortableHeader label="Tên đăng nhập" field="email" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
+                                <SortableHeader label="Điện thoại" field="phone" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
                                 <th class="px-4 py-3">Vai trò</th>
-                                <th class="px-4 py-3 text-center">Trạng thái</th>
+                                <SortableHeader label="Trạng thái" field="status" :current-sort="sortBy" :current-direction="sortDirection" align="center" class="px-4 py-3 text-center" @sort="handleSort" />
                             </tr>
                         </thead>
                         <tbody class="divide-y">

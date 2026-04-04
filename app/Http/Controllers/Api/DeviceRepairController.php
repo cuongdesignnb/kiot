@@ -25,8 +25,7 @@ class DeviceRepairController extends Controller
      */
     public function index(Request $request)
     {
-        $query = DeviceRepair::with(['product:id,name,sku', 'serialImei:id,serial_number,repair_status', 'assignedEmployee:id,name', 'branch:id,name'])
-            ->latest();
+        $query = DeviceRepair::with(['product:id,name,sku', 'serialImei:id,serial_number,repair_status', 'assignedEmployee:id,name', 'branch:id,name']);
 
         if ($request->filled('status')) {
             $query->where('status', $request->status);
@@ -48,6 +47,15 @@ class DeviceRepairController extends Controller
                     ->orWhereHas('product', fn($q2) => $q2->where('name', 'like', "%{$s}%"));
             });
         }
+
+        $query->when($request->filled('sort_by'), function ($q) use ($request) {
+            $allowed = ['code', 'status', 'deadline', 'original_price', 'parts_cost', 'total_cost', 'created_at'];
+            $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'created_at';
+            $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+            $q->orderBy($sortBy, $dir);
+        }, function ($q) {
+            $q->latest();
+        });
 
         return response()->json($query->paginate($request->per_page ?? 20));
     }
