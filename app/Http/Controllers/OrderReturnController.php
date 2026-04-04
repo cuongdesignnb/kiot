@@ -27,7 +27,7 @@ class OrderReturnController extends Controller
                     });
             })
             ->when($request->filled('sort_by'), function ($query) use ($request) {
-                $allowed = ['code', 'created_at', 'total', 'paid_to_customer', 'status'];
+                $allowed = ['code', 'created_at', 'subtotal', 'total', 'paid_to_customer', 'status'];
                 $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'created_at';
                 $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
                 $query->orderBy($sortBy, $dir);

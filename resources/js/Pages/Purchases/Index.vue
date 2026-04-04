@@ -295,7 +295,7 @@ const clearSupplier = () => {
                             <SortableHeader v-if="isColVisible('code')" label="Mã nhập hàng" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
                             <th v-if="isColVisible('purchase_order_code')" class="px-2 py-2">Mã đặt hàng nhập</th>
                             <th v-if="isColVisible('return_code')" class="px-2 py-2">Mã trả hàng nhập</th>
-                            <SortableHeader v-if="isColVisible('time')" label="Thời gian" field="created_at" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
+                            <SortableHeader v-if="isColVisible('time')" label="Thời gian" field="purchase_date" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
                             <th v-if="isColVisible('created_time')" class="px-2 py-2">Thời gian tạo</th>
                             <th v-if="isColVisible('updated_at')" class="px-2 py-2">Ngày cập nhật</th>
                             <th v-if="isColVisible('supplier_code')" class="px-2 py-2">Mã NCC</th>
@@ -308,7 +308,7 @@ const clearSupplier = () => {
                             <SortableHeader v-if="isColVisible('total_amount')" label="Tổng tiền hàng" field="total_amount" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
                             <SortableHeader v-if="isColVisible('discount')" label="Giảm giá" field="discount" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
                             <th v-if="isColVisible('other_cost')" class="px-4 py-2 text-right">CP nhập trả NCC</th>
-                            <SortableHeader v-if="isColVisible('need_pay')" label="Cần trả NCC" field="debt_amount" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader v-if="isColVisible('need_pay')" label="Cần trả NCC" field="need_pay" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
                             <th v-if="isColVisible('payment_discount')" class="px-4 py-2 text-right">CK thanh toán</th>
                             <SortableHeader v-if="isColVisible('paid')" label="Tiền đã trả NCC" field="paid_amount" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
                             <th v-if="isColVisible('other_import_cost')" class="px-4 py-2 text-right">CP nhập khác</th>

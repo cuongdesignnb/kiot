@@ -49,7 +49,7 @@ class DeviceRepairController extends Controller
         }
 
         $query->when($request->filled('sort_by'), function ($q) use ($request) {
-            $allowed = ['code', 'status', 'deadline', 'original_price', 'parts_cost', 'total_cost', 'created_at'];
+            $allowed = ['code', 'status', 'deadline', 'original_cost', 'parts_cost', 'total_cost', 'created_at'];
             $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'created_at';
             $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
             $q->orderBy($sortBy, $dir);

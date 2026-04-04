@@ -395,7 +395,7 @@ const printFlow = (flow) => {
                         <tr>
                             <SortableHeader label="Mã Phiếu" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3 font-semibold" @sort="handleSort" />
                             <SortableHeader label="Thời gian" field="time" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3 font-semibold" @sort="handleSort" />
-                            <SortableHeader label="Loại thu chi" field="type" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3 font-semibold" @sort="handleSort" />
+                            <SortableHeader label="Loại thu chi" field="category" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3 font-semibold" @sort="handleSort" />
                             <th class="px-4 py-3 font-semibold">
                                 Người nộp/nhận
                             </th>

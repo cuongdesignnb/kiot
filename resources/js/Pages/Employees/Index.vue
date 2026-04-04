@@ -593,7 +593,7 @@ const bonusCalcLabel = (calc) => {
                             <SortableHeader label="Mã chấm công" field="attendance_code" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
                             <SortableHeader label="Tên nhân viên" field="name" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
                             <SortableHeader label="Số điện thoại" field="phone" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
-                            <SortableHeader label="Số CMND/CCCD" field="id_number" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Số CMND/CCCD" field="cccd" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
                             <th class="px-4 py-3 text-right">Nợ và tạm ứng</th>
                             <th class="px-4 py-3">Ghi chú</th>
                         </tr>

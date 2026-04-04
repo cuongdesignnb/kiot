@@ -182,7 +182,7 @@ const cancelReturn = (ret) => {
                                 </svg>
                             </th>
                             <SortableHeader label="Mã trả hàng nhập" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
-                            <SortableHeader label="Thời gian" field="created_at" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
+                            <SortableHeader label="Thời gian" field="return_date" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
                             <th class="px-2 py-2">Nhà cung cấp</th>
                             <SortableHeader label="Tổng tiền hàng" field="total_amount" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
                             <SortableHeader label="NCC cần trả" field="refund_amount" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />

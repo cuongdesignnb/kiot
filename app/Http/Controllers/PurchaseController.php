@@ -61,10 +61,17 @@ class PurchaseController extends Controller
         }
 
         $query->when($request->filled('sort_by'), function ($q) use ($request) {
-            $allowed = ['code', 'created_at', 'total_amount', 'discount', 'paid_amount', 'debt_amount', 'status'];
-            $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'created_at';
+            $allowed = ['code', 'created_at', 'total_amount', 'discount', 'paid_amount', 'status'];
             $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
-            $q->orderBy($sortBy, $dir);
+            if ($request->sort_by === 'need_pay') {
+                $q->orderByRaw("(total_amount - COALESCE(discount, 0)) $dir");
+            } elseif ($request->sort_by === 'purchase_date') {
+                $q->orderByRaw("COALESCE(purchase_date, created_at) $dir");
+            } elseif (in_array($request->sort_by, $allowed)) {
+                $q->orderBy($request->sort_by, $dir);
+            } else {
+                $q->orderBy('created_at', $dir);
+            }
         }, function ($q) {
             $q->latest();
         });

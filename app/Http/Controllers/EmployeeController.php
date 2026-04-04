@@ -330,7 +330,7 @@ class EmployeeController extends Controller
         }
 
         $query->when($request->filled('sort_by'), function ($q) use ($request) {
-            $allowed = ['code', 'attendance_code', 'name', 'phone', 'id_number', 'created_at'];
+            $allowed = ['code', 'attendance_code', 'name', 'phone', 'cccd', 'created_at'];
             $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'created_at';
             $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
             $q->orderBy($sortBy, $dir);
