@@ -40,4 +40,9 @@ class PurchaseReturn extends Model
     {
         return $this->hasMany(PurchaseReturnItem::class);
     }
+
+    public function returnedSerials()
+    {
+        return $this->hasMany(SerialImei::class, 'purchase_return_id');
+    }
 }

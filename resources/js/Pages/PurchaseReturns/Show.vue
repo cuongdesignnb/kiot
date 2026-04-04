@@ -9,6 +9,7 @@ const props = defineProps({
 const ret = props.purchaseReturn;
 
 const formatCurrency = (val) => Number(val || 0).toLocaleString('vi-VN');
+const getReturnedSerials = (item) => (ret.returned_serials || []).filter(s => s.product_id === item.product_id);
 const formatStatus = (status) => {
     const map = { completed: 'Đã trả hàng', draft: 'Phiếu tạm', cancelled: 'Đã hủy' };
     return map[status] || status;
@@ -103,17 +104,28 @@ const cancelReturn = () => {
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-gray-100">
-                            <tr v-for="(item, i) in ret.items" :key="item.id" class="hover:bg-gray-50/50">
-                                <td class="p-3 text-center text-gray-400">{{ i + 1 }}</td>
-                                <td class="p-3 text-blue-600 font-medium">{{ item.product_code }}</td>
-                                <td class="p-3 font-medium">
-                                    {{ item.product_name }}
-                                    <span v-if="item.product?.has_serial" class="ml-1 text-[10px] text-orange-500 bg-orange-50 border border-orange-200 rounded px-1 py-0.5">Serial/IMEI</span>
-                                </td>
-                                <td class="p-3 text-center font-bold">{{ item.quantity }}</td>
-                                <td class="p-3 text-right">{{ formatCurrency(item.price) }}</td>
-                                <td class="p-3 text-right pr-5 font-bold">{{ formatCurrency(item.subtotal) }}</td>
-                            </tr>
+                            <template v-for="(item, i) in ret.items" :key="item.id">
+                                <tr class="hover:bg-gray-50/50">
+                                    <td class="p-3 text-center text-gray-400">{{ i + 1 }}</td>
+                                    <td class="p-3 text-blue-600 font-medium">{{ item.product_code }}</td>
+                                    <td class="p-3 font-medium">
+                                        {{ item.product_name }}
+                                        <span v-if="item.product?.has_serial" class="ml-1 text-[10px] text-orange-500 bg-orange-50 border border-orange-200 rounded px-1 py-0.5">Serial/IMEI</span>
+                                    </td>
+                                    <td class="p-3 text-center font-bold">{{ item.quantity }}</td>
+                                    <td class="p-3 text-right">{{ formatCurrency(item.price) }}</td>
+                                    <td class="p-3 text-right pr-5 font-bold">{{ formatCurrency(item.subtotal) }}</td>
+                                </tr>
+                                <tr v-if="getReturnedSerials(item).length > 0">
+                                    <td></td>
+                                    <td colspan="5" class="px-3 py-1.5 bg-gray-50/80">
+                                        <div class="flex flex-wrap items-center gap-1">
+                                            <span class="text-[11px] text-gray-400 mr-1">Serial/IMEI đã trả:</span>
+                                            <span v-for="s in getReturnedSerials(item)" :key="s.id" class="inline-flex items-center text-[11px] px-1.5 py-0.5 rounded bg-red-50 border border-red-200 text-red-600 font-mono">{{ s.serial_number }}</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </template>
                         </tbody>
                     </table>
                 </div>

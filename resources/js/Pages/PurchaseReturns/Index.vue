@@ -64,6 +64,7 @@ const toggleExpand = (id) => {
 const isExpanded = (id) => expandedRows.value.includes(id);
 
 const formatCurrency = (val) => Number(val || 0).toLocaleString("vi-VN");
+const getReturnedSerials = (ret, item) => (ret.returned_serials || []).filter(s => s.product_id === item.product_id);
 const formatStatus = (val) => {
     const s = allStatuses.find((x) => x.value === val);
     return s ? s.label : val;
@@ -288,17 +289,27 @@ const cancelReturn = (ret) => {
                                                         </tr>
                                                     </thead>
                                                     <tbody class="divide-y divide-gray-200 border-b border-gray-200">
-                                                        <tr v-for="item in ret.items" :key="item.id">
-                                                            <td class="p-2 text-blue-600">{{ item.product_code }}</td>
-                                                            <td class="p-2 font-medium">
-                                                                {{ item.product_name }}
-                                                                <span v-if="item.product?.has_serial" class="ml-1 text-[10px] text-orange-500 bg-orange-50 border border-orange-200 rounded px-1 py-0.5">Serial/IMEI</span>
-                                                            </td>
-                                                            <td class="p-2 text-center font-bold">{{ item.quantity }}</td>
-                                                            <td class="p-2 text-right">{{ formatCurrency(item.price) }}</td>
-                                                            <td class="p-2 text-right">{{ formatCurrency(item.price) }}</td>
-                                                            <td class="p-2 text-right pr-4 font-medium">{{ formatCurrency(item.subtotal) }}</td>
-                                                        </tr>
+                                                        <template v-for="item in ret.items" :key="item.id">
+                                                            <tr>
+                                                                <td class="p-2 text-blue-600">{{ item.product_code }}</td>
+                                                                <td class="p-2 font-medium">
+                                                                    {{ item.product_name }}
+                                                                    <span v-if="item.product?.has_serial" class="ml-1 text-[10px] text-orange-500 bg-orange-50 border border-orange-200 rounded px-1 py-0.5">Serial/IMEI</span>
+                                                                </td>
+                                                                <td class="p-2 text-center font-bold">{{ item.quantity }}</td>
+                                                                <td class="p-2 text-right">{{ formatCurrency(item.price) }}</td>
+                                                                <td class="p-2 text-right">{{ formatCurrency(item.price) }}</td>
+                                                                <td class="p-2 text-right pr-4 font-medium">{{ formatCurrency(item.subtotal) }}</td>
+                                                            </tr>
+                                                            <tr v-if="getReturnedSerials(ret, item).length > 0">
+                                                                <td colspan="6" class="px-3 py-1.5 bg-gray-50/80">
+                                                                    <div class="flex flex-wrap items-center gap-1">
+                                                                        <span class="text-[11px] text-gray-400 mr-1">Serial/IMEI:</span>
+                                                                        <span v-for="s in getReturnedSerials(ret, item)" :key="s.id" class="inline-flex items-center text-[11px] px-1.5 py-0.5 rounded bg-red-50 border border-red-200 text-red-600 font-mono">{{ s.serial_number }}</span>
+                                                                    </div>
+                                                                </td>
+                                                            </tr>
+                                                        </template>
                                                     </tbody>
                                                 </table>
 

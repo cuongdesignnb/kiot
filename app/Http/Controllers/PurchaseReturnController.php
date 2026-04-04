@@ -18,7 +18,7 @@ class PurchaseReturnController extends Controller
 {
     public function index(Request $request)
     {
-        $query = PurchaseReturn::with(['supplier', 'purchase', 'items.product:id,has_serial', 'user', 'employee']);
+        $query = PurchaseReturn::with(['supplier', 'purchase', 'items.product:id,has_serial', 'user', 'employee', 'returnedSerials:id,product_id,serial_number,purchase_return_id']);
 
         if ($request->search) {
             $search = $request->search;
@@ -186,7 +186,7 @@ class PurchaseReturnController extends Controller
                     SerialImei::whereIn('id', $item['serial_ids'])
                         ->where('product_id', $product->id)
                         ->where('status', 'in_stock')
-                        ->update(['status' => 'returned']);
+                        ->update(['status' => 'returned', 'purchase_return_id' => $return->id]);
                 }
             }
 
@@ -243,7 +243,7 @@ class PurchaseReturnController extends Controller
 
     public function show(PurchaseReturn $purchaseReturn)
     {
-        $purchaseReturn->load(['supplier', 'purchase', 'items.product', 'user', 'employee']);
+        $purchaseReturn->load(['supplier', 'purchase', 'items.product:id,has_serial', 'user', 'employee', 'returnedSerials:id,product_id,serial_number,purchase_return_id']);
 
         return Inertia::render('PurchaseReturns/Show', [
             'purchaseReturn' => $purchaseReturn,
@@ -282,10 +282,10 @@ class PurchaseReturnController extends Controller
 
                 // Restore serial status
                 if ($product->has_serial) {
-                    SerialImei::where('purchase_id', $purchaseReturn->purchase_id)
+                    SerialImei::where('purchase_return_id', $purchaseReturn->id)
                         ->where('product_id', $product->id)
                         ->where('status', 'returned')
-                        ->update(['status' => 'in_stock']);
+                        ->update(['status' => 'in_stock', 'purchase_return_id' => null]);
                 }
             }
 

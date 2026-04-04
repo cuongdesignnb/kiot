@@ -11,6 +11,7 @@ class SerialImei extends Model
         'serial_number',
         'status',
         'purchase_id',
+        'purchase_return_id',
         'repair_status',
         'cost_price',
     ];
