@@ -71,12 +71,12 @@ class PriceSettingController extends Controller
         }
 
         $query->when($request->filled('sort_by'), function ($q) use ($request) {
-            $allowed = ['sku', 'name', 'cost_price', 'last_purchase_price', 'retail_price'];
-            $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'id';
+            $allowed = ['sku' => 'products.sku', 'name' => 'products.name', 'cost_price' => 'products.cost_price', 'last_purchase_price' => 'products.last_purchase_price', 'retail_price' => 'products.retail_price'];
+            $sortBy = isset($allowed[$request->sort_by]) ? $allowed[$request->sort_by] : 'products.id';
             $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
             $q->orderBy($sortBy, $dir);
         }, function ($q) {
-            $q->orderBy('id', 'desc');
+            $q->orderBy('products.id', 'desc');
         });
 
         $products = $query->paginate(20)->withQueryString();

@@ -85,9 +85,9 @@ class PurchaseController extends Controller
         if ($supplierId) $summaryQuery->where('supplier_id', $supplierId);
         if ($createdBy) $summaryQuery->where('employee_id', $createdBy);
         if ($dateFilter === 'this_month') {
-            $summaryQuery->whereMonth('created_at', now()->month)->whereYear('created_at', now()->year);
+            $summaryQuery->whereMonth('purchases.created_at', now()->month)->whereYear('purchases.created_at', now()->year);
         } elseif ($dateFilter === 'custom' && $dateFrom && $dateTo) {
-            $summaryQuery->whereDate('created_at', '>=', $dateFrom)->whereDate('created_at', '<=', $dateTo);
+            $summaryQuery->whereDate('purchases.created_at', '>=', $dateFrom)->whereDate('purchases.created_at', '<=', $dateTo);
         }
 
         $summary = [
