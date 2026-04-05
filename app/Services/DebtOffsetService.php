@@ -45,9 +45,15 @@ class DebtOffsetService
         $person = $debtOffset->customer;
         $amount = (float) $debtOffset->amount;
 
-        // Đảo ngược: tăng lại cả 2 bên
-        $person->debt_amount += $amount;
-        $person->supplier_debt_amount += $amount;
+        // Đảo ngược: tăng lại cả 2 bên (hỗ trợ DB lưu âm hoặc dương)
+        $rawCustomer = (float) $person->debt_amount;
+        $rawSupplier = (float) $person->supplier_debt_amount;
+        $person->debt_amount = $rawCustomer >= 0
+            ? $rawCustomer + $amount
+            : $rawCustomer - $amount;
+        $person->supplier_debt_amount = $rawSupplier >= 0
+            ? $rawSupplier + $amount
+            : $rawSupplier - $amount;
         $person->save();
 
         $code = 'HDTCN' . date('ymdHis') . rand(10, 99);
@@ -104,8 +110,8 @@ class DebtOffsetService
             return null;
         }
 
-        $customerDebt = (float) $person->debt_amount;
-        $supplierDebt = (float) $person->supplier_debt_amount;
+        $customerDebt = abs((float) $person->debt_amount);
+        $supplierDebt = abs((float) $person->supplier_debt_amount);
 
         if ($customerDebt <= 0 || $supplierDebt <= 0) {
             return null;
@@ -121,8 +127,15 @@ class DebtOffsetService
         $receivableBefore = $customerDebt;
         $payableBefore = $supplierDebt;
 
-        $person->debt_amount -= $offsetAmount;
-        $person->supplier_debt_amount -= $offsetAmount;
+        // Giảm trị tuyệt đối về 0 (hỗ trợ cả giá trị âm lẫn dương trong DB)
+        $rawCustomer = (float) $person->debt_amount;
+        $rawSupplier = (float) $person->supplier_debt_amount;
+        $person->debt_amount = $rawCustomer >= 0
+            ? $rawCustomer - $offsetAmount
+            : $rawCustomer + $offsetAmount;
+        $person->supplier_debt_amount = $rawSupplier >= 0
+            ? $rawSupplier - $offsetAmount
+            : $rawSupplier + $offsetAmount;
         $person->save();
 
         $code = 'DTCN' . date('ymdHis') . rand(10, 99);

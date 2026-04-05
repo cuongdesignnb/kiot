@@ -1623,17 +1623,17 @@ const submit = () => {
                                                     </div>
                                                     <div class="grid grid-cols-4 gap-4 text-center">
                                                         <div>
-                                                            <div class="text-xs text-gray-500 mb-1">Nợ phải thu</div>
+                                                            <div class="text-xs text-gray-500 mb-1">Nợ phải thu (bán hàng)</div>
                                                             <div class="text-base font-bold text-blue-600">{{ formatCurrency(debtHistoryData[customer.id].summary.receivable) }}</div>
                                                         </div>
                                                         <div>
-                                                            <div class="text-xs text-gray-500 mb-1">Nợ phải trả</div>
+                                                            <div class="text-xs text-gray-500 mb-1">Nợ phải trả (mua hàng)</div>
                                                             <div class="text-base font-bold text-red-600">{{ formatCurrency(debtHistoryData[customer.id].summary.payable) }}</div>
                                                         </div>
                                                         <div>
                                                             <div class="text-xs text-gray-500 mb-1">Công nợ ròng</div>
-                                                            <div class="text-base font-bold" :class="debtHistoryData[customer.id].summary.net > 0 ? 'text-blue-600' : debtHistoryData[customer.id].summary.net < 0 ? 'text-red-600' : 'text-gray-600'">
-                                                                {{ debtHistoryData[customer.id].summary.net >= 0 ? '' : '-' }}{{ formatCurrency(Math.abs(debtHistoryData[customer.id].summary.net)) }}
+                                                            <div class="text-base font-bold" :class="debtHistoryData[customer.id].summary.net > 0 ? 'text-blue-600' : debtHistoryData[customer.id].summary.net < 0 ? 'text-red-600' : 'text-green-600'">
+                                                                {{ formatCurrency(Math.abs(debtHistoryData[customer.id].summary.net)) }}
                                                             </div>
                                                         </div>
                                                         <div>

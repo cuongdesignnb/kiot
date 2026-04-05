@@ -364,8 +364,8 @@ class CustomerController extends Controller
         });
 
         // Return newest first for display
-        $receivable = (float) $customer->debt_amount;
-        $payable = (float) $customer->supplier_debt_amount;
+        $receivable = abs((float) $customer->debt_amount);
+        $payable = abs((float) $customer->supplier_debt_amount);
         $net = $receivable - $payable;
 
         return response()->json([
@@ -582,8 +582,8 @@ class CustomerController extends Controller
             return back()->with('error', 'Đối tác phải đồng thời là khách hàng và nhà cung cấp.');
         }
 
-        $receivable = (float) $customer->debt_amount;
-        $payable = (float) $customer->supplier_debt_amount;
+        $receivable = abs((float) $customer->debt_amount);
+        $payable = abs((float) $customer->supplier_debt_amount);
 
         if ($receivable <= 0 || $payable <= 0) {
             return back()->with('error', 'Cả hai bên công nợ phải lớn hơn 0 để cấn bằng.');
