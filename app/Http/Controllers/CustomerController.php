@@ -112,19 +112,11 @@ class CustomerController extends Controller
         $validated['is_supplier'] = $request->input('is_supplier', false);
         $validated['is_customer'] = true;
 
-        if ($request->filled('link_existing_id')) {
-            $existing = Customer::findOrFail($request->link_existing_id);
-            $existing->update([
-                'name' => $validated['name'],
-                'phone' => $validated['phone'] ?? $existing->phone,
-                'is_customer' => true,
-                'is_supplier' => true,
-                'address' => $validated['address'] ?? $existing->address,
-                'note' => $validated['note'] ?? $existing->note,
-            ]);
-            $customer = $existing;
-        } elseif ($request->input('supplier_linking_mode') === 'link_existing' && $request->filled('linked_supplier_id')) {
-            $existing = Customer::findOrFail($request->linked_supplier_id);
+        $linkId = $request->input('linked_supplier_id') ?: $request->input('link_existing_id');
+        $linkMode = $request->input('supplier_linking_mode');
+
+        if (($linkMode === 'link_existing' || $linkId) && $linkId) {
+            $existing = Customer::findOrFail($linkId);
             $existing->update([
                 'name' => $validated['name'],
                 'phone' => $validated['phone'] ?? $existing->phone,
@@ -175,8 +167,11 @@ class CustomerController extends Controller
              $validated['is_supplier'] = false;
         }
 
-        if ($request->input('supplier_linking_mode') === 'link_existing' && $request->filled('linked_supplier_id') && $request->linked_supplier_id != $customer->id) {
-            $existing = Customer::findOrFail($request->linked_supplier_id);
+        $linkId = $request->input('linked_supplier_id') ?: $request->input('link_existing_id');
+        $linkMode = $request->input('supplier_linking_mode');
+
+        if (($linkMode === 'link_existing' || $linkId) && $linkId && $linkId != $customer->id) {
+            $existing = Customer::findOrFail($linkId);
             
             // Merge relations
             Invoice::where('customer_id', $customer->id)->update(['customer_id' => $existing->id]);
@@ -369,8 +364,19 @@ class CustomerController extends Controller
         });
 
         // Return newest first for display
+        $receivable = (float) $customer->debt_amount;
+        $payable = (float) $customer->supplier_debt_amount;
+        $net = $receivable - $payable;
+
         return response()->json([
             'entries' => $ledger->reverse()->values(),
+            'summary' => [
+                'receivable' => $receivable,
+                'payable' => $payable,
+                'net' => $net,
+                'status' => $net > 0 ? 'receivable' : ($net < 0 ? 'payable' : 'balanced'),
+                'is_dual_role' => $customer->is_customer && $customer->is_supplier,
+            ],
         ]);
     }
 
@@ -558,5 +564,99 @@ class CustomerController extends Controller
             $count++;
         }
         return back()->with('success', "Đã nhập {$count} khách hàng từ file.");
+    }
+
+    // ===== CẤN BẰNG CÔNG NỢ =====
+
+    /**
+     * Cấn bằng công nợ thủ công
+     */
+    public function debtOffset(Request $request, Customer $customer)
+    {
+        $validated = $request->validate([
+            'amount' => 'required|numeric|min:1',
+            'note' => 'nullable|string|max:500',
+        ]);
+
+        if (!$customer->is_customer || !$customer->is_supplier) {
+            return back()->with('error', 'Đối tác phải đồng thời là khách hàng và nhà cung cấp.');
+        }
+
+        $receivable = (float) $customer->debt_amount;
+        $payable = (float) $customer->supplier_debt_amount;
+
+        if ($receivable <= 0 || $payable <= 0) {
+            return back()->with('error', 'Cả hai bên công nợ phải lớn hơn 0 để cấn bằng.');
+        }
+
+        $maxOffset = min($receivable, $payable);
+        if ($validated['amount'] > $maxOffset) {
+            return back()->with('error', 'Số tiền cấn bằng không được vượt quá ' . number_format($maxOffset) . '₫.');
+        }
+
+        $result = DebtOffsetService::manualOffset($customer, $validated['amount'], $validated['note']);
+
+        if (!$result) {
+            return back()->with('error', 'Không thể cấn bằng công nợ.');
+        }
+
+        if ($request->wantsJson()) {
+            return response()->json(['success' => true, 'data' => $result]);
+        }
+
+        return back()->with('success', 'Cấn bằng công nợ thành công: ' . number_format($validated['amount']) . '₫');
+    }
+
+    /**
+     * Hủy cấn bằng công nợ
+     */
+    public function cancelDebtOffset(Request $request, Customer $customer, \App\Models\DebtOffset $debtOffset)
+    {
+        $validated = $request->validate([
+            'reason' => 'nullable|string|max:500',
+        ]);
+
+        if ($debtOffset->customer_id !== $customer->id) {
+            return back()->with('error', 'Chứng từ cấn bằng không thuộc đối tác này.');
+        }
+
+        if ($debtOffset->status !== 'active') {
+            return back()->with('error', 'Chứng từ cấn bằng đã bị hủy trước đó.');
+        }
+
+        $result = DebtOffsetService::cancelOffset($debtOffset, $validated['reason'] ?? null);
+
+        if ($request->wantsJson()) {
+            return response()->json(['success' => true, 'data' => $result]);
+        }
+
+        return back()->with('success', 'Đã hủy cấn bằng công nợ: ' . number_format($debtOffset->amount) . '₫');
+    }
+
+    /**
+     * Lịch sử cấn bằng công nợ
+     */
+    public function debtOffsetHistory(Customer $customer)
+    {
+        $offsets = \App\Models\DebtOffset::where('customer_id', $customer->id)
+            ->orderByDesc('created_at')
+            ->get()
+            ->map(fn($o) => [
+                'id' => $o->id,
+                'code' => $o->code,
+                'amount' => $o->amount,
+                'receivable_before' => $o->receivable_before,
+                'payable_before' => $o->payable_before,
+                'receivable_after' => $o->receivable_after,
+                'payable_after' => $o->payable_after,
+                'is_auto' => $o->is_auto,
+                'note' => $o->note,
+                'status' => $o->status,
+                'cancel_reason' => $o->cancel_reason,
+                'cancelled_at' => $o->cancelled_at,
+                'created_at' => $o->created_at,
+            ]);
+
+        return response()->json($offsets);
     }
 }

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\CashFlow;
 use App\Models\Category;
 use App\Models\Customer;
+use App\Models\DebtOffset;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\OrderReturn;
@@ -925,6 +926,167 @@ class ReportController extends Controller
             'topByAmount' => $topByAmount,
             'topByDays' => $topByDays,
             'branches' => Branch::orderBy('name')->get(['id', 'name']),
+        ]);
+    }
+
+    // ═══════════════════════════════════════
+    // 9. ĐỐI SOÁT CÔNG NỢ (Debt Reconciliation)
+    // ═══════════════════════════════════════
+    public function debtReconciliation(Request $request)
+    {
+        $branchId = $request->input('branch_id');
+        $dateFrom = $request->input('date_from')
+            ? Carbon::parse($request->input('date_from'))->startOfDay()
+            : null;
+        $dateTo = $request->input('date_to')
+            ? Carbon::parse($request->input('date_to'))->endOfDay()
+            : null;
+        $partnerType = $request->input('partner_type', 'all'); // all, dual, customer_only, supplier_only
+        $search = $request->input('search');
+
+        // Dual-role partners
+        $query = Customer::query()
+            ->where(function ($q) {
+                $q->where(function ($sub) {
+                    $sub->where('is_customer', true)->where('is_supplier', true);
+                })->orWhere(function ($sub) {
+                    $sub->where('debt_amount', '!=', 0)->where('supplier_debt_amount', '!=', 0);
+                });
+            })
+            ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
+            ->when($search, fn($q) => $q->where(function ($sub) use ($search) {
+                $sub->where('name', 'like', "%{$search}%")
+                    ->orWhere('code', 'like', "%{$search}%")
+                    ->orWhere('phone', 'like', "%{$search}%");
+            }));
+
+        if ($partnerType === 'dual') {
+            $query->where('is_customer', true)->where('is_supplier', true);
+        } elseif ($partnerType === 'customer_only') {
+            $query->where('is_customer', true)->where('is_supplier', false);
+        } elseif ($partnerType === 'supplier_only') {
+            $query->where('is_customer', false)->where('is_supplier', true);
+        }
+
+        $partners = $query->orderByRaw('ABS(debt_amount) + ABS(supplier_debt_amount) DESC')
+            ->get(['id', 'code', 'name', 'phone', 'is_customer', 'is_supplier', 'debt_amount', 'supplier_debt_amount']);
+
+        // Offset history per partner
+        $offsetQuery = DebtOffset::query()
+            ->whereIn('customer_id', $partners->pluck('id'))
+            ->when($dateFrom, fn($q) => $q->where('created_at', '>=', $dateFrom))
+            ->when($dateTo, fn($q) => $q->where('created_at', '<=', $dateTo));
+
+        $offsetsByPartner = $offsetQuery->get()->groupBy('customer_id');
+
+        $rows = $partners->map(function ($p) use ($offsetsByPartner) {
+            $offsets = $offsetsByPartner->get($p->id, collect());
+            $totalOffset = $offsets->where('status', 'active')->sum('amount');
+            $autoOffset = $offsets->where('status', 'active')->where('is_auto', true)->sum('amount');
+            $manualOffset = $offsets->where('status', 'active')->where('is_auto', false)->sum('amount');
+            $cancelledOffset = $offsets->where('status', 'cancelled')->sum('amount');
+            $receivable = (float) $p->debt_amount;
+            $payable = (float) $p->supplier_debt_amount;
+            $net = $receivable - $payable;
+
+            return [
+                'id' => $p->id,
+                'code' => $p->code,
+                'name' => $p->name,
+                'phone' => $p->phone,
+                'is_customer' => $p->is_customer,
+                'is_supplier' => $p->is_supplier,
+                'receivable' => $receivable,
+                'payable' => $payable,
+                'net' => $net,
+                'total_offset' => (float) $totalOffset,
+                'auto_offset' => (float) $autoOffset,
+                'manual_offset' => (float) $manualOffset,
+                'cancelled_offset' => (float) $cancelledOffset,
+                'offset_count' => $offsets->where('status', 'active')->count(),
+                'status' => $receivable == 0 && $payable == 0
+                    ? 'clear'
+                    : ($net == 0 ? 'balanced' : ($net > 0 ? 'receivable' : 'payable')),
+            ];
+        });
+
+        // Summary totals
+        $summary = [
+            'total_partners' => $rows->count(),
+            'total_receivable' => $rows->sum('receivable'),
+            'total_payable' => $rows->sum('payable'),
+            'total_net' => $rows->sum('net'),
+            'total_offset_amount' => $rows->sum('total_offset'),
+            'total_auto_offset' => $rows->sum('auto_offset'),
+            'total_manual_offset' => $rows->sum('manual_offset'),
+            'total_cancelled' => $rows->sum('cancelled_offset'),
+            'clear_count' => $rows->where('status', 'clear')->count(),
+            'balanced_count' => $rows->where('status', 'balanced')->count(),
+            'receivable_count' => $rows->where('status', 'receivable')->count(),
+            'payable_count' => $rows->where('status', 'payable')->count(),
+        ];
+
+        return Inertia::render('Reports/DebtReconciliation', [
+            'filters' => [
+                'branch_id' => $branchId,
+                'date_from' => $dateFrom?->toDateString(),
+                'date_to' => $dateTo?->toDateString(),
+                'partner_type' => $partnerType,
+                'search' => $search,
+            ],
+            'rows' => $rows->values(),
+            'summary' => $summary,
+            'branches' => Branch::orderBy('name')->get(['id', 'name']),
+        ]);
+    }
+
+    public function exportDebtReconciliation(Request $request)
+    {
+        $branchId = $request->input('branch_id');
+        $dateFrom = $request->input('date_from')
+            ? Carbon::parse($request->input('date_from'))->startOfDay()
+            : null;
+        $dateTo = $request->input('date_to')
+            ? Carbon::parse($request->input('date_to'))->endOfDay()
+            : null;
+
+        $partners = Customer::query()
+            ->where(function ($q) {
+                $q->where(function ($sub) {
+                    $sub->where('is_customer', true)->where('is_supplier', true);
+                })->orWhere(function ($sub) {
+                    $sub->where('debt_amount', '!=', 0)->where('supplier_debt_amount', '!=', 0);
+                });
+            })
+            ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
+            ->orderByRaw('ABS(debt_amount) + ABS(supplier_debt_amount) DESC')
+            ->get(['id', 'code', 'name', 'phone', 'debt_amount', 'supplier_debt_amount']);
+
+        $offsetsByPartner = DebtOffset::whereIn('customer_id', $partners->pluck('id'))
+            ->when($dateFrom, fn($q) => $q->where('created_at', '>=', $dateFrom))
+            ->when($dateTo, fn($q) => $q->where('created_at', '<=', $dateTo))
+            ->where('status', 'active')
+            ->get()
+            ->groupBy('customer_id');
+
+        $csvHeader = "Mã,Tên,SĐT,Nợ phải thu,Nợ phải trả,Đã cấn bằng,Còn lại\n";
+        $csvRows = $partners->map(function ($p) use ($offsetsByPartner) {
+            $totalOffset = $offsetsByPartner->get($p->id, collect())->sum('amount');
+            $net = (float) $p->debt_amount - (float) $p->supplier_debt_amount;
+            return implode(',', [
+                $p->code,
+                '"' . str_replace('"', '""', $p->name) . '"',
+                $p->phone ?? '',
+                $p->debt_amount,
+                $p->supplier_debt_amount,
+                $totalOffset,
+                $net,
+            ]);
+        })->implode("\n");
+
+        return response($csvHeader . $csvRows, 200, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => 'attachment; filename="doi-soat-cong-no-' . now()->format('Y-m-d') . '.csv"',
         ]);
     }
 }

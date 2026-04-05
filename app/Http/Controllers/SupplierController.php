@@ -143,10 +143,11 @@ class SupplierController extends Controller
     public function exportDebtHistory($id)
     {
         $data = $this->debtTransactions($id)->getData(true);
+        $entries = $data['entries'] ?? $data;
 
         return \App\Services\CsvService::export(
             ['Mã chứng từ', 'Loại', 'Giá trị', 'Còn nợ', 'Ngày', 'Ghi chú'],
-            collect($data)->map(fn($t) => [$t['code'], $t['type_label'], $t['amount'], $t['debt_remain'], $t['date'], $t['note'] ?? '']),
+            collect($entries)->map(fn($t) => [$t['code'], $t['type_label'], $t['amount'], $t['debt_remain'], $t['date'] ?? ($t['created_at'] ?? ''), $t['note'] ?? '']),
             "cong_no_ncc_{$id}.csv"
         );
     }
@@ -319,7 +320,20 @@ class SupplierController extends Controller
             return $entry;
         });
 
-        return response()->json($ledger->values());
+        $payable = $supplier ? (float) $supplier->supplier_debt_amount : 0;
+        $receivable = $supplier ? (float) $supplier->debt_amount : 0;
+        $net = $receivable - $payable;
+
+        return response()->json([
+            'entries' => $ledger->values(),
+            'summary' => [
+                'receivable' => $receivable,
+                'payable' => $payable,
+                'net' => $net,
+                'status' => $net > 0 ? 'receivable' : ($net < 0 ? 'payable' : 'balanced'),
+                'is_dual_role' => $supplier && $supplier->is_customer && $supplier->is_supplier,
+            ],
+        ]);
     }
 
     /**

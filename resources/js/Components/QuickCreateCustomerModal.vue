@@ -120,7 +120,17 @@ const submit = async () => {
     if (!form.value.name.trim()) return;
     creating.value = true;
     try {
-        const res = await axios.post(props.apiUrl, form.value);
+        const payload = { ...form.value };
+        // Map linking fields to what backend expects
+        if (form.value.is_supplier && linkOption.value === 'existing' && form.value.link_existing_id) {
+            payload.supplier_linking_mode = 'link_existing';
+            payload.linked_supplier_id = form.value.link_existing_id;
+        }
+        if (form.value.is_customer && linkOption.value === 'existing' && form.value.link_existing_id) {
+            payload.supplier_linking_mode = 'link_existing';
+            payload.linked_supplier_id = form.value.link_existing_id;
+        }
+        const res = await axios.post(props.apiUrl, payload);
         emit('created', res.data.customer || res.data.supplier || res.data);
         emit('close');
     } catch (e) {
@@ -131,6 +141,43 @@ const submit = async () => {
 };
 
 const close = () => emit('close');
+
+// ====== XÁC NHẬN GỘP (KiotViet style) ======
+const dualRoleConfirm = reactive({
+    show: false,
+    type: '', // 'supplier' or 'customer'
+});
+
+const onToggleIsSupplier = () => {
+    if (!form.value.is_supplier) {
+        dualRoleConfirm.type = 'supplier';
+        dualRoleConfirm.show = true;
+    } else {
+        form.value.is_supplier = false;
+    }
+};
+
+const onToggleIsCustomer = () => {
+    if (!form.value.is_customer) {
+        dualRoleConfirm.type = 'customer';
+        dualRoleConfirm.show = true;
+    } else {
+        form.value.is_customer = false;
+    }
+};
+
+const confirmDualRole = () => {
+    if (dualRoleConfirm.type === 'supplier') {
+        form.value.is_supplier = true;
+    } else {
+        form.value.is_customer = true;
+    }
+    dualRoleConfirm.show = false;
+};
+
+const cancelDualRole = () => {
+    dualRoleConfirm.show = false;
+};
 </script>
 
 <template>
@@ -331,8 +378,8 @@ const close = () => emit('close');
                                 <h3 class="font-bold text-[14px] text-gray-800">Khách hàng là nhà cung cấp</h3>
                                 <p class="text-[12px] text-gray-500 mt-0.5">Công nợ của khách hàng và nhà cung cấp sẽ được gộp với nhau</p>
                             </div>
-                            <label class="relative inline-flex items-center cursor-pointer">
-                                <input type="checkbox" v-model="form.is_supplier" class="sr-only peer" />
+                            <label class="relative inline-flex items-center cursor-pointer" @click.prevent="onToggleIsSupplier">
+                                <input type="checkbox" :checked="form.is_supplier" class="sr-only peer" />
                                 <div class="w-11 h-6 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
                             </label>
                         </div>
@@ -377,8 +424,8 @@ const close = () => emit('close');
                                 <h3 class="font-bold text-[14px] text-gray-800">Nhà cung cấp đồng thời là khách hàng</h3>
                                 <p class="text-[12px] text-gray-500 mt-0.5">Công nợ của nhà cung cấp và khách hàng sẽ được gộp với nhau</p>
                             </div>
-                            <label class="relative inline-flex items-center cursor-pointer">
-                                <input type="checkbox" v-model="form.is_customer" class="sr-only peer" />
+                            <label class="relative inline-flex items-center cursor-pointer" @click.prevent="onToggleIsCustomer">
+                                <input type="checkbox" :checked="form.is_customer" class="sr-only peer" />
                                 <div class="w-11 h-6 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
                             </label>
                         </div>
@@ -426,6 +473,62 @@ const close = () => emit('close');
                 <button @click="submit" :disabled="creating || !form.name.trim()" class="px-8 py-2 border border-transparent rounded text-white bg-blue-600 font-bold hover:bg-blue-700 transition shadow-sm" :class="{ 'opacity-50 cursor-not-allowed': creating || !form.name.trim() }">
                     {{ creating ? 'Đang tạo...' : 'Lưu' }}
                 </button>
+            </div>
+        </div>
+
+        <!-- XÁC NHẬN GỘP (KiotViet style) -->
+        <div v-if="dualRoleConfirm.show" class="fixed inset-0 z-[110] flex items-center justify-center bg-black/40">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+                    <h3 class="text-lg font-bold text-gray-800">
+                        {{ dualRoleConfirm.type === 'supplier' ? 'Xác nhận gộp khách hàng và nhà cung cấp' : 'Xác nhận gộp nhà cung cấp và khách hàng' }}
+                    </h3>
+                    <button @click="cancelDualRole" class="text-gray-400 hover:text-gray-600">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                <div class="px-6 py-5 space-y-4">
+                    <div>
+                        <div class="text-sm font-bold text-gray-700 mb-2">Thông tin trước khi gộp:</div>
+                        <div class="text-sm text-gray-600 space-y-1">
+                            <div>- {{ dualRoleConfirm.type === 'supplier' ? 'Khách hàng' : 'Nhà cung cấp' }} <strong class="text-blue-600">{{ form.code || '(Mã tự động)' }}</strong>:</div>
+                            <div class="flex items-center gap-2 ml-4">
+                                <span class="w-2 h-2 rounded-full bg-green-500"></span>
+                                Nợ hiện tại: 0 <template v-if="dualRoleConfirm.type === 'supplier'">- Điểm: 0</template>
+                            </div>
+                            <div class="mt-2">- {{ dualRoleConfirm.type === 'supplier' ? 'Nhà cung cấp' : 'Khách hàng' }}: <span class="text-gray-400">(tạo mới)</span></div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="text-sm font-bold text-gray-700 mb-2">Thông tin sau khi gộp:</div>
+                        <div class="text-sm text-gray-600 space-y-1">
+                            <div class="flex items-center gap-2 ml-4">
+                                <span class="w-2 h-2 rounded-full bg-green-500"></span>
+                                Nợ hiện tại: 0
+                            </div>
+                            <div class="flex items-center gap-2 ml-4">
+                                <span class="w-2 h-2 rounded-full bg-green-500"></span>
+                                Nhóm khách hàng: Có thể thay đổi do công nợ của khách hàng thay đổi
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="text-sm text-gray-500 border-t border-gray-200 pt-3">
+                        Hệ thống sẽ gộp công nợ, giao dịch khách hàng và nhà cung cấp. Thông tin <strong>Tên, Điện thoại, Địa chỉ...</strong> sẽ được đồng bộ.
+                    </div>
+                    <div class="text-sm text-gray-600 font-medium">
+                        Bạn có chắc chắn muốn thực hiện?
+                    </div>
+                </div>
+                <div class="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+                    <button @click="confirmDualRole" class="px-5 py-2 rounded text-white font-medium bg-blue-600 hover:bg-blue-700">
+                        Đồng ý
+                    </button>
+                    <button @click="cancelDualRole" class="px-5 py-2 border border-gray-300 rounded text-gray-700 font-medium hover:bg-gray-50">
+                        Bỏ qua
+                    </button>
+                </div>
             </div>
         </div>
     </div>

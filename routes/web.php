@@ -21,6 +21,7 @@ use App\Http\Controllers\OrderReturnController;
 use App\Http\Controllers\PurchaseReturnController;
 use App\Http\Controllers\SettingController;
 use App\Http\Controllers\TaskPageController;
+use App\Http\Controllers\ReportController;
 
 // Auth routes (guest)
 Route::middleware('guest')->group(function () {
@@ -83,6 +84,9 @@ Route::post('/customers', [CustomerController::class, 'store'])->name('customers
 Route::put('/customers/{customer}', [CustomerController::class, 'update'])->name('customers.update')->middleware('permission:customers.edit');
 Route::delete('/customers/{customer}', [CustomerController::class, 'destroy'])->name('customers.destroy')->middleware('permission:customers.delete');
 Route::post('/customers/{customer}/merge', [CustomerController::class, 'merge'])->middleware('permission:customers.edit');
+Route::post('/customers/{customer}/debt-offset', [CustomerController::class, 'debtOffset'])->middleware('permission:customers.edit');
+Route::post('/customers/{customer}/cancel-debt-offset/{debtOffset}', [CustomerController::class, 'cancelDebtOffset'])->middleware('permission:customers.edit');
+Route::get('/customers/{customer}/debt-offset-history', [CustomerController::class, 'debtOffsetHistory'])->middleware('permission:customers.view');
 
 // ===== SUPPLIERS =====
 Route::get('/suppliers', [SupplierController::class, 'index'])->name('suppliers.index')->middleware('permission:suppliers.view');
@@ -392,6 +396,12 @@ Route::get('/employees/attendance/settings/devices', [App\Http\Controllers\Emplo
 Route::get('/employees/payroll/settings', [App\Http\Controllers\EmployeeController::class, 'payrollSettings'])->name('employees.payroll-settings')->middleware('permission:payroll_settings.view');
 Route::get('/employees/workday/settings', [App\Http\Controllers\EmployeeController::class, 'workdaySettings'])->name('employees.workday-settings')->middleware('permission:workday_settings.view');
 Route::get('/employees/workday/settings/holidays', [App\Http\Controllers\EmployeeController::class, 'holidayManagement'])->name('employees.workday-settings.holidays')->middleware('permission:workday_settings.manage');
+
+// ═══════════════════════════════════════
+// REPORT routes
+// ═══════════════════════════════════════
+Route::get('/reports/debt-reconciliation', [ReportController::class, 'debtReconciliation'])->name('reports.debt-reconciliation');
+Route::get('/reports/debt-reconciliation/export', [ReportController::class, 'exportDebtReconciliation'])->name('reports.debt-reconciliation.export');
 
 Route::get('/employees/attendance', function () {
     return inertia('Employees/Attendance');

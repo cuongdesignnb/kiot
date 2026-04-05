@@ -65,6 +65,11 @@ const sections = ref([
                 href: "/reports/customer-debt",
                 key: "customer-debt",
             },
+            {
+                label: "Đối soát công nợ",
+                href: "/reports/debt-reconciliation",
+                key: "debt-reconciliation",
+            },
         ],
     },
 ]);

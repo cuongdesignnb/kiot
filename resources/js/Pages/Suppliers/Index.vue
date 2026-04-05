@@ -107,8 +107,30 @@ const form = useForm({
     bank_name: "",
     bank_account: "",
 
-    is_supplier: false,
+    is_customer: false,
 });
+
+// ====== XÁC NHẬN GỘP NCC + KH (KiotViet style) ======
+const customerConfirm = reactive({
+    show: false,
+});
+
+const onToggleIsCustomer = () => {
+    if (!form.is_customer) {
+        customerConfirm.show = true;
+    } else {
+        form.is_customer = false;
+    }
+};
+
+const confirmCustomerToggle = () => {
+    form.is_customer = true;
+    customerConfirm.show = false;
+};
+
+const cancelCustomerToggle = () => {
+    customerConfirm.show = false;
+};
 
 const submit = () => {
     form.post("/suppliers", {
@@ -143,8 +165,9 @@ const setSupplierTab = async (id, tab) => {
         try {
             const res = await axios.get(`/api/suppliers/${id}/debt-transactions`);
             supplierDebt[id] = res.data;
-        } catch (e) { supplierDebt[id] = []; }
+        } catch (e) { supplierDebt[id] = { entries: [], summary: null }; }
         supplierDataLoading[id] = false;
+        if (!offsetHistoryData[id]) loadOffsetHistory(id);
     }
 };
 
@@ -165,7 +188,8 @@ const showPurchaseDetail = async (purchaseId) => {
 };
 
 const filteredDebt = (id) => {
-    const data = supplierDebt[id] || [];
+    const raw = supplierDebt[id];
+    const data = Array.isArray(raw) ? raw : (raw?.entries || []);
     if (debtFilter.value === 'all') return data;
     return data.filter(d => d.type === debtFilter.value);
 };
@@ -288,6 +312,82 @@ const submitMerge = () => {
             mergeModal.submitting = false;
         },
     });
+};
+
+// ====== CẤN BẰNG CÔNG NỢ (SUPPLIER VIEW) ======
+const offsetModal = reactive({
+    show: false,
+    customerId: null,
+    customerName: '',
+    receivable: 0,
+    payable: 0,
+    maxOffset: 0,
+    submitting: false,
+});
+const offsetForm = reactive({ amount: 0, note: '' });
+const offsetHistoryData = reactive({});
+
+const openOffsetModal = (supplier) => {
+    offsetModal.show = true;
+    offsetModal.customerId = supplier.id;
+    offsetModal.customerName = supplier.name;
+    offsetModal.receivable = Number(supplier.debt_amount) || 0;
+    offsetModal.payable = Number(supplier.supplier_debt_amount) || 0;
+    offsetModal.maxOffset = Math.min(offsetModal.receivable, offsetModal.payable);
+    offsetModal.submitting = false;
+    offsetForm.amount = offsetModal.maxOffset;
+    offsetForm.note = '';
+};
+
+const submitOffset = async () => {
+    if (!offsetForm.amount || offsetForm.amount <= 0) {
+        alert('Vui lòng nhập số tiền hợp lệ');
+        return;
+    }
+    if (offsetForm.amount > offsetModal.maxOffset) {
+        alert('Số tiền cấn bằng không được vượt quá ' + formatCurrency(offsetModal.maxOffset) + '₫');
+        return;
+    }
+    offsetModal.submitting = true;
+    try {
+        await axios.post(`/customers/${offsetModal.customerId}/debt-offset`, {
+            amount: offsetForm.amount,
+            note: offsetForm.note,
+        });
+        offsetModal.show = false;
+        // Reload debt & offset data
+        delete supplierDebt[offsetModal.customerId];
+        await setSupplierTab(offsetModal.customerId, 'debt');
+        await loadOffsetHistory(offsetModal.customerId);
+        router.reload({ only: ['suppliers', 'summary'], preserveScroll: true });
+    } catch (e) {
+        alert(e.response?.data?.message || 'Có lỗi xảy ra khi cấn bằng công nợ');
+    } finally {
+        offsetModal.submitting = false;
+    }
+};
+
+const loadOffsetHistory = async (supplierId) => {
+    try {
+        const { data } = await axios.get(`/customers/${supplierId}/debt-offset-history`);
+        offsetHistoryData[supplierId] = data;
+    } catch (e) {
+        offsetHistoryData[supplierId] = [];
+    }
+};
+
+const cancelOffset = async (supplierId, offsetId) => {
+    const reason = prompt('Lý do hủy cấn bằng (không bắt buộc):');
+    if (reason === null) return;
+    try {
+        await axios.post(`/customers/${supplierId}/cancel-debt-offset/${offsetId}`, { reason });
+        delete supplierDebt[supplierId];
+        await setSupplierTab(supplierId, 'debt');
+        await loadOffsetHistory(supplierId);
+        router.reload({ only: ['suppliers', 'summary'], preserveScroll: true });
+    } catch (e) {
+        alert(e.response?.data?.message || 'Có lỗi xảy ra khi hủy cấn bằng');
+    }
 };
 </script>
 
@@ -890,6 +990,42 @@ const submitMerge = () => {
                                         <template v-if="getSupplierTab(supplier.id) === 'debt'">
                                             <div v-if="supplierDataLoading[supplier.id]" class="text-center py-8 text-gray-400">Đang tải...</div>
                                             <template v-else>
+                                                <!-- ===== CÔNG NỢ HAI CHIỀU SUMMARY ===== -->
+                                                <div v-if="supplierDebt[supplier.id]?.summary?.is_dual_role" class="mb-4 bg-gradient-to-r from-green-50 to-blue-50 border border-green-200 rounded-lg p-4">
+                                                    <div class="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
+                                                        <svg class="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
+                                                        Công nợ hai chiều (NCC + KH)
+                                                    </div>
+                                                    <div class="grid grid-cols-4 gap-4 text-center">
+                                                        <div>
+                                                            <div class="text-xs text-gray-500 mb-1">Nợ phải trả</div>
+                                                            <div class="text-base font-bold text-red-600">{{ formatCurrency(supplierDebt[supplier.id].summary.payable) }}</div>
+                                                        </div>
+                                                        <div>
+                                                            <div class="text-xs text-gray-500 mb-1">Nợ phải thu</div>
+                                                            <div class="text-base font-bold text-blue-600">{{ formatCurrency(supplierDebt[supplier.id].summary.receivable) }}</div>
+                                                        </div>
+                                                        <div>
+                                                            <div class="text-xs text-gray-500 mb-1">Công nợ ròng</div>
+                                                            <div class="text-base font-bold" :class="supplierDebt[supplier.id].summary.net > 0 ? 'text-blue-600' : supplierDebt[supplier.id].summary.net < 0 ? 'text-red-600' : 'text-gray-600'">
+                                                                {{ supplierDebt[supplier.id].summary.net >= 0 ? '' : '-' }}{{ formatCurrency(Math.abs(supplierDebt[supplier.id].summary.net)) }}
+                                                            </div>
+                                                        </div>
+                                                        <div>
+                                                            <div class="text-xs text-gray-500 mb-1">Trạng thái</div>
+                                                            <span v-if="supplierDebt[supplier.id].summary.status === 'receivable'" class="inline-block text-xs font-bold bg-blue-100 text-blue-700 px-2 py-1 rounded-full">Còn phải thu</span>
+                                                            <span v-else-if="supplierDebt[supplier.id].summary.status === 'payable'" class="inline-block text-xs font-bold bg-red-100 text-red-700 px-2 py-1 rounded-full">Còn phải trả</span>
+                                                            <span v-else class="inline-block text-xs font-bold bg-green-100 text-green-700 px-2 py-1 rounded-full">Đã cân bằng</span>
+                                                        </div>
+                                                    </div>
+                                                    <div v-if="supplierDebt[supplier.id].summary.receivable > 0 && supplierDebt[supplier.id].summary.payable > 0" class="mt-3 flex justify-center">
+                                                        <button @click="openOffsetModal(supplier)" class="text-sm font-bold text-white bg-purple-600 hover:bg-purple-700 px-4 py-1.5 rounded shadow-sm flex items-center gap-1.5">
+                                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
+                                                            Cấn bằng công nợ
+                                                        </button>
+                                                    </div>
+                                                </div>
+
                                                 <div class="flex justify-end mb-3">
                                                     <select v-model="debtFilter" class="border border-gray-300 rounded px-3 py-1.5 text-sm outline-none">
                                                         <option value="all">Tất cả giao dịch</option>
@@ -944,6 +1080,47 @@ const submitMerge = () => {
                                                             Chiết khấu TT
                                                         </button>
                                                     </div>
+                                                </div>
+
+                                                <!-- ===== LỊCH SỬ CẤN BẰNG CÔNG NỢ ===== -->
+                                                <div v-if="offsetHistoryData[supplier.id] && offsetHistoryData[supplier.id].length > 0" class="mt-6 border-t border-gray-200 pt-4">
+                                                    <h4 class="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
+                                                        <svg class="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
+                                                        Lịch sử cấn bằng công nợ
+                                                    </h4>
+                                                    <table class="w-full text-[13px]">
+                                                        <thead class="bg-purple-50 text-gray-600 font-semibold">
+                                                            <tr>
+                                                                <th class="px-3 py-2 text-left">Mã chứng từ</th>
+                                                                <th class="px-3 py-2 text-left">Thời gian</th>
+                                                                <th class="px-3 py-2 text-right">Số tiền cấn</th>
+                                                                <th class="px-3 py-2 text-left">Loại</th>
+                                                                <th class="px-3 py-2 text-left">Trạng thái</th>
+                                                                <th class="px-3 py-2 text-left">Ghi chú</th>
+                                                                <th class="px-3 py-2 text-center">Thao tác</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody class="divide-y divide-gray-100">
+                                                            <tr v-for="offset in offsetHistoryData[supplier.id]" :key="offset.id" class="hover:bg-purple-50/30">
+                                                                <td class="px-3 py-2 text-purple-600 font-medium">{{ offset.code }}</td>
+                                                                <td class="px-3 py-2">{{ formatDateTime(offset.created_at) }}</td>
+                                                                <td class="px-3 py-2 text-right font-bold text-purple-700">{{ formatCurrency(offset.amount) }}</td>
+                                                                <td class="px-3 py-2">
+                                                                    <span v-if="offset.is_auto" class="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">Tự động</span>
+                                                                    <span v-else class="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded">Thủ công</span>
+                                                                </td>
+                                                                <td class="px-3 py-2">
+                                                                    <span v-if="offset.status === 'active'" class="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-medium">Hiệu lực</span>
+                                                                    <span v-else class="text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-medium">Đã hủy</span>
+                                                                </td>
+                                                                <td class="px-3 py-2 text-gray-500 text-xs max-w-[200px] truncate">{{ offset.note || offset.cancel_reason || '' }}</td>
+                                                                <td class="px-3 py-2 text-center">
+                                                                    <button v-if="offset.status === 'active'" @click="cancelOffset(supplier.id, offset.id)" class="text-xs text-red-600 hover:text-red-800 font-medium hover:underline">Hủy cấn bằng</button>
+                                                                    <span v-else class="text-xs text-gray-400">{{ formatDateTime(offset.cancelled_at) }}</span>
+                                                                </td>
+                                                            </tr>
+                                                        </tbody>
+                                                    </table>
                                                 </div>
                                             </template>
                                         </template>
@@ -1477,10 +1654,11 @@ const submitMerge = () => {
                             </div>
                             <label
                                 class="relative inline-flex items-center cursor-pointer"
+                                @click.prevent="onToggleIsCustomer"
                             >
                                 <input
                                     type="checkbox"
-                                    v-model="form.is_customer"
+                                    :checked="form.is_customer"
                                     class="sr-only peer"
                                 />
                                 <div
@@ -1561,6 +1739,60 @@ const submitMerge = () => {
             </div>
         </div>
 
+        <!-- XÁC NHẬN GỘP NCC + KH (KiotViet style) -->
+        <div v-if="customerConfirm.show" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+                    <h3 class="text-lg font-bold text-gray-800">Xác nhận gộp nhà cung cấp và khách hàng</h3>
+                    <button @click="cancelCustomerToggle" class="text-gray-400 hover:text-gray-600">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                <div class="px-6 py-5 space-y-4">
+                    <div>
+                        <div class="text-sm font-bold text-gray-700 mb-2">Thông tin trước khi gộp:</div>
+                        <div class="text-sm text-gray-600 space-y-1">
+                            <div>- Nhà cung cấp <strong class="text-green-600">{{ form.code || '(Mã tự động)' }}</strong>:</div>
+                            <div class="flex items-center gap-2 ml-4">
+                                <span class="w-2 h-2 rounded-full bg-green-500"></span>
+                                Nợ hiện tại: 0
+                            </div>
+                            <div class="mt-2">- Khách hàng: <span class="text-gray-400">(tạo mới)</span></div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="text-sm font-bold text-gray-700 mb-2">Thông tin sau khi gộp:</div>
+                        <div class="text-sm text-gray-600 space-y-1">
+                            <div class="flex items-center gap-2 ml-4">
+                                <span class="w-2 h-2 rounded-full bg-green-500"></span>
+                                Nợ hiện tại: 0
+                            </div>
+                            <div class="flex items-center gap-2 ml-4">
+                                <span class="w-2 h-2 rounded-full bg-green-500"></span>
+                                Nhóm khách hàng: Có thể thay đổi do công nợ của khách hàng thay đổi
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="text-sm text-gray-500 border-t border-gray-200 pt-3">
+                        Hệ thống sẽ gộp công nợ, giao dịch nhà cung cấp và khách hàng. Thông tin <strong>Tên, Điện thoại, Địa chỉ...</strong> của khách hàng sẽ cập nhật theo nhà cung cấp.
+                    </div>
+                    <div class="text-sm text-gray-600 font-medium">
+                        Bạn có chắc chắn muốn thực hiện?
+                    </div>
+                </div>
+                <div class="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+                    <button @click="confirmCustomerToggle" class="px-5 py-2 rounded text-white font-medium bg-blue-600 hover:bg-blue-700">
+                        Đồng ý
+                    </button>
+                    <button @click="cancelCustomerToggle" class="px-5 py-2 border border-gray-300 rounded text-gray-700 font-medium hover:bg-gray-50">
+                        Bỏ qua
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- MERGE CONFIRMATION DIALOG -->
         <div v-if="mergeModal.show" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
             <div class="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4">
@@ -1636,6 +1868,68 @@ const submitMerge = () => {
                         class="px-5 py-2 rounded text-white font-medium bg-orange-500 hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         {{ mergeModal.submitting ? 'Đang gộp...' : 'Xác nhận gộp' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- CẤN BẰNG CÔNG NỢ MODAL -->
+        <div v-if="offsetModal.show" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-purple-50">
+                    <h3 class="text-lg font-bold text-gray-800 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
+                        Cấn bằng công nợ
+                    </h3>
+                    <button @click="offsetModal.show = false" class="text-gray-400 hover:text-gray-600">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                <div class="px-6 py-5 space-y-4">
+                    <div class="text-sm text-gray-600">
+                        Đối tác: <strong>{{ offsetModal.customerName }}</strong>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-red-50 border border-red-200 rounded-lg p-3 text-center">
+                            <div class="text-xs text-gray-500 mb-1">Nợ phải trả (Nợ NCC)</div>
+                            <div class="text-lg font-bold text-red-600">{{ formatCurrency(offsetModal.payable) }}</div>
+                        </div>
+                        <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">
+                            <div class="text-xs text-gray-500 mb-1">Nợ phải thu (KH nợ)</div>
+                            <div class="text-lg font-bold text-blue-600">{{ formatCurrency(offsetModal.receivable) }}</div>
+                        </div>
+                    </div>
+                    <div class="bg-purple-50 border border-purple-200 rounded-lg p-3 text-center">
+                        <div class="text-xs text-gray-500 mb-1">Số tiền cấn bằng tối đa</div>
+                        <div class="text-lg font-bold text-purple-700">{{ formatCurrency(offsetModal.maxOffset) }}</div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Số tiền cấn bằng</label>
+                        <input v-model.number="offsetForm.amount" type="number" min="1" :max="offsetModal.maxOffset"
+                            class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-purple-500 focus:border-purple-500"
+                            placeholder="Nhập số tiền cấn bằng"/>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Ghi chú</label>
+                        <textarea v-model="offsetForm.note" rows="2"
+                            class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-purple-500 focus:border-purple-500"
+                            placeholder="Ghi chú (không bắt buộc)"></textarea>
+                    </div>
+                    <div class="bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm">
+                        <div class="font-bold text-gray-700 mb-2">Kết quả sau cấn bằng:</div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>Nợ phải trả còn:</div>
+                            <div class="font-bold text-right text-red-600">{{ formatCurrency(Math.max(0, offsetModal.payable - (offsetForm.amount || 0))) }}</div>
+                            <div>Nợ phải thu còn:</div>
+                            <div class="font-bold text-right text-blue-600">{{ formatCurrency(Math.max(0, offsetModal.receivable - (offsetForm.amount || 0))) }}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+                    <button @click="offsetModal.show = false" class="px-5 py-2 border border-gray-300 rounded text-gray-700 font-medium hover:bg-gray-50">Bỏ qua</button>
+                    <button @click="submitOffset" :disabled="offsetModal.submitting || !offsetForm.amount || offsetForm.amount <= 0 || offsetForm.amount > offsetModal.maxOffset"
+                        class="px-5 py-2 rounded text-white font-medium bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                        {{ offsetModal.submitting ? 'Đang xử lý...' : 'Xác nhận cấn bằng' }}
                     </button>
                 </div>
             </div>
