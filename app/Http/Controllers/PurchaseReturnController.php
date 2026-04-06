@@ -167,7 +167,10 @@ class PurchaseReturnController extends Controller
 
                 // Reduce stock
                 $currentStock = $product->stock_quantity;
-                $newStock = max(0, $currentStock - $item['quantity']);
+                if ($currentStock < $item['quantity']) {
+                    throw new \Exception("Sản phẩm '{$product->name}' không đủ tồn kho để trả hàng nhập (Còn: {$currentStock}, Cần trả: {$item['quantity']}).");
+                }
+                $newStock = $currentStock - $item['quantity'];
 
                 // Reverse cost price
                 if ($costingMethod === 'average' && $currentStock > 0) {

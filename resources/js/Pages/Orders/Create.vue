@@ -21,7 +21,13 @@ const currentTime = computed(() => {
     });
 });
 
-// Create an initial tab state template
+// Format datetime-local input value
+const formatDatetimeLocal = (date) => {
+    const d = new Date(date);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
 // Create an initial tab state template
 const createInitialTab = (index) => ({
     id: Date.now() + index,
@@ -40,6 +46,7 @@ const createInitialTab = (index) => ({
     otherFees: 0,
     amountPaid: 0,
     note: '',
+    orderDate: formatDatetimeLocal(new Date()),
     
     isDelivery: true,
     receiverName: '',
@@ -244,6 +251,7 @@ const save = async () => {
             length: activeTab.value.sizeL,
             width: activeTab.value.sizeW,
             height: activeTab.value.sizeH,
+            order_date: activeTab.value.orderDate || null,
         };
         await router.post(endpoint, payload);
         if (tabs.value.length > 1) {
@@ -338,6 +346,7 @@ const saveAndPrint = async () => {
             length: activeTab.value.sizeL,
             width: activeTab.value.sizeW,
             height: activeTab.value.sizeH,
+            order_date: activeTab.value.orderDate || null,
             _print: true,
         };
         const res = await axios.post(endpoint, payload);
@@ -464,6 +473,11 @@ onUnmounted(() => {
                                 <td class="p-3 text-gray-800 text-[12px]">{{ item.sku }}</td>
                                 <td class="p-3 font-medium text-gray-800">
                                     <div class="truncate w-[150px] lg:w-[250px] xl:w-[350px]">{{ item.name }}</div>
+                                    <div v-if="item.stock_quantity !== undefined" class="text-[11px] mt-0.5" :class="item.stock_quantity <= 0 ? 'text-red-500 font-bold' : item.stock_quantity < item.qty ? 'text-orange-500' : 'text-gray-400'">
+                                        Tồn: {{ item.stock_quantity }}
+                                        <span v-if="item.stock_quantity <= 0"> — Hết hàng!</span>
+                                        <span v-else-if="item.stock_quantity < item.qty"> — Không đủ!</span>
+                                    </div>
                                 </td>
                                 <td class="p-3">
                                     <div class="flex items-center justify-center gap-1 border border-transparent hover:border-blue-400 rounded overflow-hidden w-fit mx-auto transition-colors">
@@ -545,10 +559,10 @@ onUnmounted(() => {
                            <i class="fas fa-walking text-gray-400"></i> 
                            <i class="fas fa-caret-down text-gray-400"></i>
                        </div>
-                       <div class="text-[12px] text-gray-500">{{ currentTime }}</div>
+                       <input type="datetime-local" v-model="activeTab.orderDate" class="text-[12px] text-gray-500 border border-gray-200 rounded px-1.5 py-0.5 outline-none focus:border-blue-500 cursor-pointer" @click.stop />
                     </div>
-                    <div v-else class="flex justify-end text-[12px] text-gray-500 mb-2">
-                        {{ currentTime }}
+                    <div v-else class="flex justify-end mb-2">
+                        <input type="datetime-local" v-model="activeTab.orderDate" class="text-[12px] text-gray-500 border border-gray-200 rounded px-1.5 py-0.5 outline-none focus:border-blue-500 cursor-pointer" />
                     </div>
                     
                     <div class="flex gap-2 relative">

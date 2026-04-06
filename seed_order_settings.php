@@ -8,7 +8,7 @@ $settings = [
     ['order_allow_when_out_of_stock', '1', 'order', 'boolean'],
     ['order_allow_sell_reserved', '1', 'order', 'boolean'],
     ['order_allow_cross_branch', '0', 'order', 'boolean'],
-    ['allow_transaction_when_out_of_stock', '1', 'order', 'boolean'],
+    ['allow_transaction_when_out_of_stock', '0', 'order', 'boolean'],
     ['allow_print_quote', '0', 'order', 'boolean'],
     ['order_confirm_before_complete', '0', 'order', 'boolean'],
     ['return_time_limit_enabled', '1', 'order', 'boolean'],

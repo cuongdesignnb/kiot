@@ -11,6 +11,7 @@ use App\Services\DebtOffsetService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
+use Carbon\Carbon;
 
 class InvoiceController extends Controller
 {
@@ -98,8 +99,26 @@ class InvoiceController extends Controller
             $priceBookName = $validated['price_book_name'];
         }
 
+        // Xác định ngày giao dịch (cho phép chỉnh sửa thời gian)
+        $transactionDate = $request->filled('order_date')
+            ? Carbon::parse($request->order_date)
+            : now();
+
+        // Validate: không được bán sản phẩm trước ngày nhập hàng đầu tiên
+        foreach ($validated['items'] as $item) {
+            $product = \App\Models\Product::find($item['product_id']);
+            if ($product) {
+                $earliestImport = $product->getEarliestImportDate();
+                if ($earliestImport && $transactionDate->lt($earliestImport)) {
+                    return back()->withErrors([
+                        'items' => "Không thể bán sản phẩm '{$product->name}' trước ngày nhập hàng đầu tiên (" . $earliestImport->format('d/m/Y H:i') . ")."
+                    ])->withInput();
+                }
+            }
+        }
+
         // Check stock if setting disallows out-of-stock transactions
-        if (!Setting::get('allow_transaction_when_out_of_stock', true)) {
+        if (!Setting::get('allow_transaction_when_out_of_stock', false)) {
             foreach ($validated['items'] as $item) {
                 $product = \App\Models\Product::find($item['product_id']);
                 if ($product && $product->stock_quantity < $item['quantity']) {
@@ -129,7 +148,12 @@ class InvoiceController extends Controller
                 'price_book_name' => $priceBookName,
             ]);
 
-            $allowOversell = Setting::get('inventory_allow_oversell', true);
+            // Cho phép chọn ngày giao dịch (kế toán nhập sau)
+            if ($request->filled('order_date')) {
+                $invoice->update(['created_at' => $transactionDate]);
+            }
+
+            $allowOversell = Setting::get('inventory_allow_oversell', false);
 
             foreach ($validated['items'] as $item) {
                 $product = \App\Models\Product::lockForUpdate()->find($item['product_id']);
@@ -172,10 +196,10 @@ class InvoiceController extends Controller
                     'serial' => $serialStr,
                 ]);
 
-                // Deduct stock
+                // Deduct stock (with lock to prevent race conditions)
                 if ($product) {
                     if (!$allowOversell && $product->stock_quantity < $item['quantity']) {
-                        throw new \Exception("Sản phẩm [{$product->sku}] {$product->name} không đủ tồn kho (Còn: {$product->stock_quantity})");
+                        throw new \Exception("Sản phẩm [{$product->sku}] {$product->name} không đủ tồn kho (Còn: {$product->stock_quantity}). Không cho phép tồn kho âm.");
                     }
                     $product->stock_quantity -= $item['quantity'];
                     $product->save();

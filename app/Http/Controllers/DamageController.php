@@ -144,11 +144,10 @@ class DamageController extends Controller
                 if ($request->status === 'completed') {
                     $product = Product::find($item['product_id']);
                     if ($product) {
-                        $product->stock_quantity -= $item['qty'];
-                        // Prevent negative stock for simple prototype
-                        if ($product->stock_quantity < 0) {
-                            $product->stock_quantity = 0;
+                        if ($product->stock_quantity < $item['qty']) {
+                            throw new \Exception("Sản phẩm '{$product->name}' không đủ tồn kho để xuất hủy (Còn: {$product->stock_quantity}, Cần: {$item['qty']}).");
                         }
+                        $product->stock_quantity -= $item['qty'];
                         $product->save();
                     }
                 }

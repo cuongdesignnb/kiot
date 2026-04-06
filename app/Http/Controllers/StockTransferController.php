@@ -113,6 +113,14 @@ class StockTransferController extends Controller
             }
 
             foreach ($request->items as $item) {
+                // Validate stock before transfer
+                if ($request->status !== 'draft') {
+                    $product = Product::find($item['product_id']);
+                    if ($product && $product->stock_quantity < $item['quantity']) {
+                        throw new \Exception("Sản phẩm '{$product->name}' không đủ tồn kho để chuyển hàng (Còn: {$product->stock_quantity}, Cần: {$item['quantity']}).");
+                    }
+                }
+
                 StockTransferItem::create([
                     'stock_transfer_id' => $transfer->id,
                     'product_id' => $item['product_id'],
@@ -120,9 +128,13 @@ class StockTransferController extends Controller
                     'price' => $item['price'] ?? 0
                 ]);
 
-                // Real system logic for transferring stock happens here, 
-                // e.g., deducting from branch A, adding to branch B.
-                // But simplified for the scope.
+                // Deduct stock from source branch when transferring
+                if ($request->status !== 'draft') {
+                    $product = $product ?? Product::find($item['product_id']);
+                    if ($product) {
+                        $product->decrement('stock_quantity', $item['quantity']);
+                    }
+                }
             }
 
             DB::commit();

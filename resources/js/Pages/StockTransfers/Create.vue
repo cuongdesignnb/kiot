@@ -196,7 +196,11 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                                 <td class="p-3 text-blue-600 w-[120px] break-all">{{ item.sku }}</td>
                                 <td class="p-3 font-medium text-gray-800">{{ item.name }}</td>
                                 <td class="p-3 text-center w-16">Cái</td>
-                                <td class="p-3 text-right w-20">{{ item.stock_quantity || 0 }}</td>
+                                <td class="p-3 text-right w-20" :class="(item.stock_quantity || 0) <= 0 ? 'text-red-500 font-bold' : (item.stock_quantity || 0) < (item.quantity || 0) ? 'text-orange-500 font-semibold' : ''">
+                                    {{ item.stock_quantity || 0 }}
+                                    <div v-if="(item.stock_quantity || 0) <= 0" class="text-[10px]">Hết hàng!</div>
+                                    <div v-else-if="(item.stock_quantity || 0) < (item.quantity || 0)" class="text-[10px]">Không đủ!</div>
+                                </td>
                                 <td class="p-3 text-right w-24">0</td>
                                 <td class="p-3 text-center w-28">
                                     <input type="number" v-model="item.quantity" min="1" class="w-16 border border-gray-300 rounded p-1 text-center outline-none focus:border-blue-500 text-[13px] transition-colors mx-auto block">

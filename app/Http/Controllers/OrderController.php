@@ -11,6 +11,7 @@ use App\Models\Customer;
 use App\Models\Employee;
 use App\Models\PriceBook;
 use App\Models\Setting;
+use Carbon\Carbon;
 
 class OrderController extends Controller
 {
@@ -166,7 +167,22 @@ class OrderController extends Controller
 
         // Cho phép chọn ngày (kế toán nhập sau)
         if ($request->filled('order_date')) {
-            $order->update(['created_at' => \Carbon\Carbon::parse($request->order_date)]);
+            $orderDate = Carbon::parse($request->order_date);
+
+            // Validate: không được đặt hàng trước ngày nhập hàng đầu tiên
+            foreach ($validated['items'] as $item) {
+                $product = Product::find($item['product_id']);
+                if ($product) {
+                    $earliestImport = $product->getEarliestImportDate();
+                    if ($earliestImport && $orderDate->lt($earliestImport)) {
+                        return back()->withErrors([
+                            'items' => "Không thể đặt hàng sản phẩm '{$product->name}' trước ngày nhập hàng đầu tiên (" . $earliestImport->format('d/m/Y H:i') . ")."
+                        ])->withInput();
+                    }
+                }
+            }
+
+            $order->update(['created_at' => $orderDate]);
         }
 
         foreach ($validated['items'] as $item) {

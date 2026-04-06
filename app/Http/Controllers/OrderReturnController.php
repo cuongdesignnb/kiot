@@ -196,7 +196,17 @@ class OrderReturnController extends Controller
 
             // Cho phép chọn ngày trả hàng (kế toán nhập sau)
             if (request()->filled('order_date')) {
-                $return->update(['created_at' => \Carbon\Carbon::parse(request()->order_date)]);
+                $returnDate = \Carbon\Carbon::parse(request()->order_date);
+
+                // Validate: ngày trả hàng không được trước ngày hóa đơn gốc
+                if (!empty($validated['invoice_id'])) {
+                    $invoice = \App\Models\Invoice::find($validated['invoice_id']);
+                    if ($invoice && $returnDate->lt($invoice->created_at)) {
+                        throw new \Exception("Ngày trả hàng không thể trước ngày hóa đơn gốc (" . $invoice->created_at->format('d/m/Y H:i') . ").");
+                    }
+                }
+
+                $return->update(['created_at' => $returnDate]);
             }
         });
 
