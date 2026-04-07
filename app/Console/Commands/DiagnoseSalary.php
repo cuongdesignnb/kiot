@@ -642,9 +642,10 @@ class DiagnoseSalary extends Command
             $this->line("base = " . number_format($setting->base_salary) . "đ (không đổi theo chấm công)");
         }
 
-        $this->line("total = base + bonus + commission + allowances - deductions");
+        $this->line("total = base + bonus + commission + allowances + ot_pay + holiday_pay - deductions");
         $this->line("      = " . number_format($calc['base']) . " + " . number_format($calc['bonus'] ?? 0) .
             " + " . number_format($calc['commission'] ?? 0) . " + " . number_format($calc['allowances']) .
+            " + " . number_format($calc['ot_pay'] ?? 0) . " + " . number_format($calc['holiday_pay'] ?? 0) .
             " - " . number_format($calc['deductions']));
         $this->line("      = " . number_format($calc['total']) . "đ");
 
