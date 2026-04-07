@@ -212,6 +212,44 @@ class PaysheetController extends Controller
     }
 
     /**
+     * PUT /api/paysheets/{id}/payslips/{slipId} — Cập nhật phiếu lương inline
+     */
+    public function updatePayslip(Request $request, $id, $slipId)
+    {
+        $paysheet = Paysheet::findOrFail($id);
+        if ($paysheet->status === 'locked') {
+            return response()->json(['success' => false, 'message' => 'Bảng lương đã chốt.'], 422);
+        }
+
+        $slip = Payslip::where('paysheet_id', $id)->findOrFail($slipId);
+
+        $fields = $request->only([
+            'base_salary', 'bonus', 'commission', 'allowances', 'deductions', 'ot_pay',
+        ]);
+
+        // Cập nhật các field được gửi
+        foreach ($fields as $key => $value) {
+            $slip->$key = (int) $value;
+        }
+
+        // Tính lại total
+        $slip->total_salary = $slip->base_salary + $slip->bonus + $slip->commission
+            + $slip->allowances + $slip->ot_pay - $slip->deductions;
+        $slip->total_salary = max(0, $slip->total_salary);
+        $slip->remaining = max(0, $slip->total_salary - $slip->paid_amount);
+        $slip->save();
+
+        // Cập nhật tổng paysheet
+        $paysheet->recalculateTotals();
+
+        return response()->json([
+            'success' => true,
+            'data' => $slip->load('employee:id,code,name'),
+            'paysheet' => $paysheet->fresh(),
+        ]);
+    }
+
+    /**
      * PUT /api/paysheets/{id}/lock — Chốt lương
      */
     public function lock($id)

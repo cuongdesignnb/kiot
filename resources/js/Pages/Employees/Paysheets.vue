@@ -791,154 +791,142 @@
                                                     class="w-full text-sm"
                                                 >
                                                     <thead
-                                                        class="bg-gray-50 border-b border-gray-200"
+                                                        class="bg-gray-50 border-b border-gray-200 sticky top-0"
                                                     >
                                                         <tr>
-                                                            <th
-                                                                class="w-10 px-4 py-2"
-                                                            >
+                                                            <th class="w-10 px-3 py-2">
                                                                 <input
                                                                     type="checkbox"
-                                                                    v-model="
-                                                                        selectAllSlips
-                                                                    "
-                                                                    @change="
-                                                                        toggleSelectAllSlips
-                                                                    "
+                                                                    v-model="selectAllSlips"
+                                                                    @change="toggleSelectAllSlips"
                                                                     class="rounded border-gray-300 text-blue-600 h-4 w-4"
                                                                 />
                                                             </th>
-                                                            <th
-                                                                class="px-4 py-2 text-left text-xs font-medium text-gray-500"
-                                                            >
-                                                                Mã phiếu
-                                                            </th>
-                                                            <th
-                                                                class="px-4 py-2 text-left text-xs font-medium text-gray-500"
-                                                            >
-                                                                Tên nhân viên
-                                                            </th>
-                                                            <th
-                                                                class="px-4 py-2 text-right text-xs font-medium text-gray-500"
-                                                            >
-                                                                Tổng lương
-                                                            </th>
-                                                            <th
-                                                                class="px-4 py-2 text-right text-xs font-medium text-gray-500"
-                                                            >
-                                                                Đã trả NV
-                                                            </th>
-                                                            <th
-                                                                class="px-4 py-2 text-right text-xs font-medium text-gray-500"
-                                                            >
-                                                                Còn cần trả
-                                                            </th>
+                                                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 w-10">STT</th>
+                                                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 min-w-[140px]">Tên nhân viên</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Lương chính</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Làm thêm</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Hoa hồng</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Phụ cấp</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Thưởng</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Giảm trừ</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Tổng lương</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Đã trả NV</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Còn cần trả</th>
                                                         </tr>
                                                     </thead>
                                                     <tbody>
-                                                        <!-- Summary -->
-                                                        <tr
-                                                            class="bg-gray-50 border-b font-semibold"
-                                                        >
+                                                        <!-- Summary row -->
+                                                        <tr class="bg-blue-50 border-b font-semibold text-sm">
                                                             <td></td>
                                                             <td></td>
                                                             <td></td>
-                                                            <td
-                                                                class="px-4 py-2 text-right"
-                                                            >
-                                                                {{
-                                                                    formatMoney(
-                                                                        payslipSummary.total,
-                                                                    )
-                                                                }}
-                                                            </td>
-                                                            <td
-                                                                class="px-4 py-2 text-right"
-                                                            >
-                                                                {{
-                                                                    formatMoney(
-                                                                        payslipSummary.paid,
-                                                                    )
-                                                                }}
-                                                            </td>
-                                                            <td
-                                                                class="px-4 py-2 text-right"
-                                                            >
-                                                                {{
-                                                                    formatMoney(
-                                                                        payslipSummary.remaining,
-                                                                    )
-                                                                }}
-                                                            </td>
+                                                            <td class="px-3 py-2 text-right">{{ formatMoney(editSummary.base_salary) }}</td>
+                                                            <td class="px-3 py-2 text-right">{{ formatMoney(editSummary.ot_pay) }}</td>
+                                                            <td class="px-3 py-2 text-right">{{ formatMoney(editSummary.commission) }}</td>
+                                                            <td class="px-3 py-2 text-right">{{ formatMoney(editSummary.allowances) }}</td>
+                                                            <td class="px-3 py-2 text-right">{{ formatMoney(editSummary.bonus) }}</td>
+                                                            <td class="px-3 py-2 text-right">{{ formatMoney(editSummary.deductions) }}</td>
+                                                            <td class="px-3 py-2 text-right text-blue-700">{{ formatMoney(editSummary.total_salary) }}</td>
+                                                            <td class="px-3 py-2 text-right">{{ formatMoney(editSummary.paid_amount) }}</td>
+                                                            <td class="px-3 py-2 text-right text-orange-600">{{ formatMoney(editSummary.remaining) }}</td>
                                                         </tr>
 
                                                         <template
-                                                            v-for="slip in detailPayslips"
+                                                            v-for="(slip, idx) in detailPayslips"
                                                             :key="slip.id"
                                                         >
                                                         <tr
-                                                            class="border-b border-gray-200 hover:bg-gray-50 cursor-pointer"
-                                                            @click="toggleSlipDetail(slip.id)"
+                                                            class="border-b border-gray-200 hover:bg-gray-50"
+                                                            :class="{ 'bg-yellow-50': slip._dirty }"
                                                         >
-                                                            <td
-                                                                class="px-4 py-2.5"
-                                                                @click.stop
-                                                            >
+                                                            <td class="px-3 py-1.5">
                                                                 <input
                                                                     type="checkbox"
-                                                                    v-model="
-                                                                        selectedSlipIds
-                                                                    "
-                                                                    :value="
-                                                                        slip.id
-                                                                    "
+                                                                    v-model="selectedSlipIds"
+                                                                    :value="slip.id"
                                                                     class="rounded border-gray-300 text-blue-600 h-4 w-4"
                                                                 />
                                                             </td>
-                                                            <td
-                                                                class="px-4 py-2.5 font-medium text-blue-600"
-                                                            >
-                                                                {{ slip.code }}
+                                                            <td class="px-3 py-1.5 text-gray-400 text-xs">{{ idx + 1 }}</td>
+                                                            <td class="px-3 py-1.5">
+                                                                <div class="font-medium text-blue-600 cursor-pointer" @click="toggleSlipDetail(slip.id)">
+                                                                    {{ slip.employee?.name }}
+                                                                </div>
+                                                                <div class="text-xs text-gray-400">{{ slip.employee?.code || slip.code }}</div>
                                                             </td>
-                                                            <td
-                                                                class="px-4 py-2.5 text-gray-800"
-                                                            >
-                                                                {{
-                                                                    slip
-                                                                        .employee
-                                                                        ?.name
-                                                                }}
+                                                            <td class="px-2 py-1">
+                                                                <input
+                                                                    type="text"
+                                                                    :value="formatNumber(slip.base_salary)"
+                                                                    @focus="$event.target.select()"
+                                                                    @blur="updateSlipField(slip, 'base_salary', $event)"
+                                                                    :disabled="ps.status === 'locked'"
+                                                                    class="w-28 text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+                                                                />
                                                             </td>
-                                                            <td
-                                                                class="px-4 py-2.5 text-right text-gray-800"
-                                                            >
-                                                                {{
-                                                                    formatMoney(
-                                                                        slip.total_salary,
-                                                                    )
-                                                                }}
+                                                            <td class="px-2 py-1">
+                                                                <input
+                                                                    type="text"
+                                                                    :value="formatNumber(slip.ot_pay)"
+                                                                    @focus="$event.target.select()"
+                                                                    @blur="updateSlipField(slip, 'ot_pay', $event)"
+                                                                    :disabled="ps.status === 'locked'"
+                                                                    class="w-24 text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+                                                                />
                                                             </td>
-                                                            <td
-                                                                class="px-4 py-2.5 text-right text-gray-600"
-                                                            >
-                                                                {{
-                                                                    formatMoney(
-                                                                        slip.paid_amount,
-                                                                    )
-                                                                }}
+                                                            <td class="px-2 py-1">
+                                                                <input
+                                                                    type="text"
+                                                                    :value="formatNumber(slip.commission)"
+                                                                    @focus="$event.target.select()"
+                                                                    @blur="updateSlipField(slip, 'commission', $event)"
+                                                                    :disabled="ps.status === 'locked'"
+                                                                    class="w-24 text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+                                                                />
                                                             </td>
-                                                            <td
-                                                                class="px-4 py-2.5 text-right text-gray-600"
-                                                            >
-                                                                {{
-                                                                    formatMoney(
-                                                                        slip.remaining,
-                                                                    )
-                                                                }}
+                                                            <td class="px-2 py-1">
+                                                                <input
+                                                                    type="text"
+                                                                    :value="formatNumber(slip.allowances)"
+                                                                    @focus="$event.target.select()"
+                                                                    @blur="updateSlipField(slip, 'allowances', $event)"
+                                                                    :disabled="ps.status === 'locked'"
+                                                                    class="w-24 text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+                                                                />
+                                                            </td>
+                                                            <td class="px-2 py-1">
+                                                                <input
+                                                                    type="text"
+                                                                    :value="formatNumber(slip.bonus)"
+                                                                    @focus="$event.target.select()"
+                                                                    @blur="updateSlipField(slip, 'bonus', $event)"
+                                                                    :disabled="ps.status === 'locked'"
+                                                                    class="w-24 text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+                                                                />
+                                                            </td>
+                                                            <td class="px-2 py-1">
+                                                                <input
+                                                                    type="text"
+                                                                    :value="formatNumber(slip.deductions)"
+                                                                    @focus="$event.target.select()"
+                                                                    @blur="updateSlipField(slip, 'deductions', $event)"
+                                                                    :disabled="ps.status === 'locked'"
+                                                                    class="w-24 text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+                                                                />
+                                                            </td>
+                                                            <td class="px-3 py-1.5 text-right font-semibold text-blue-700">
+                                                                {{ formatMoney(slip.total_salary) }}
+                                                            </td>
+                                                            <td class="px-3 py-1.5 text-right text-gray-600">
+                                                                {{ formatMoney(slip.paid_amount) }}
+                                                            </td>
+                                                            <td class="px-3 py-1.5 text-right font-medium" :class="slip.remaining > 0 ? 'text-orange-600' : 'text-green-600'">
+                                                                {{ formatMoney(slip.remaining) }}
                                                             </td>
                                                         </tr>
 
-                                                        <!-- Chi tiết phiếu lương -->
+                                                        <!-- Chi tiết phiếu lương (expandable) -->
                                                         <tr v-if="expandedSlipId === slip.id">
                                                             <td colspan="6" class="bg-gray-50 px-6 py-4">
                                                                 <div class="grid grid-cols-2 gap-6 text-sm">
@@ -1503,6 +1491,61 @@ const payslipSummary = computed(() => ({
     paid: detailPayslips.value.reduce((s, p) => s + (p.paid_amount || 0), 0),
     remaining: detailPayslips.value.reduce((s, p) => s + (p.remaining || 0), 0),
 }));
+
+// ===== Inline edit summary =====
+const editSummary = computed(() => {
+    const slips = detailPayslips.value;
+    return {
+        base_salary: slips.reduce((s, p) => s + (p.base_salary || 0), 0),
+        ot_pay: slips.reduce((s, p) => s + (p.ot_pay || 0), 0),
+        commission: slips.reduce((s, p) => s + (p.commission || 0), 0),
+        allowances: slips.reduce((s, p) => s + (p.allowances || 0), 0),
+        bonus: slips.reduce((s, p) => s + (p.bonus || 0), 0),
+        deductions: slips.reduce((s, p) => s + (p.deductions || 0), 0),
+        total_salary: slips.reduce((s, p) => s + (p.total_salary || 0), 0),
+        paid_amount: slips.reduce((s, p) => s + (p.paid_amount || 0), 0),
+        remaining: slips.reduce((s, p) => s + (p.remaining || 0), 0),
+    };
+});
+
+const formatNumber = (v) => {
+    if (!v && v !== 0) return '0';
+    return new Intl.NumberFormat('vi-VN').format(v);
+};
+
+const parseNumber = (str) => {
+    if (!str) return 0;
+    return parseInt(String(str).replace(/[^\d-]/g, '')) || 0;
+};
+
+const updateSlipField = async (slip, field, event) => {
+    const newVal = parseNumber(event.target.value);
+    if (newVal === slip[field]) return; // Không thay đổi
+
+    const oldVal = slip[field];
+    slip[field] = newVal;
+
+    // Tính lại total local
+    slip.total_salary = Math.max(0, (slip.base_salary || 0) + (slip.bonus || 0) + (slip.commission || 0)
+        + (slip.allowances || 0) + (slip.ot_pay || 0) - (slip.deductions || 0));
+    slip.remaining = Math.max(0, slip.total_salary - (slip.paid_amount || 0));
+    slip._dirty = true;
+
+    // Lưu vào DB
+    try {
+        const psId = expandedPaysheet.value?.id;
+        await axios.put(`/api/paysheets/${psId}/payslips/${slip.id}`, {
+            [field]: newVal,
+        });
+        slip._dirty = false;
+    } catch (e) {
+        console.error('Update payslip failed:', e);
+        slip[field] = oldVal; // Rollback
+        slip.total_salary = Math.max(0, (slip.base_salary || 0) + (slip.bonus || 0) + (slip.commission || 0)
+            + (slip.allowances || 0) + (slip.ot_pay || 0) - (slip.deductions || 0));
+        slip.remaining = Math.max(0, slip.total_salary - (slip.paid_amount || 0));
+    }
+};
 
 // ===== Create modal =====
 const showCreateModal = ref(false);
