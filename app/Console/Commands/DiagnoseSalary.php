@@ -135,6 +135,20 @@ class DiagnoseSalary extends Command
             $this->error("   → Cần chạy recalculate: POST /api/timekeeping-records/recalculate");
             $this->error("   → Hoặc: POST /api/attendance-agent/force-recalculate?from={$periodStart->toDateString()}&to={$periodEnd->toDateString()}");
         }
+        if ($totalTimekeeping > 0 && $withCheckIn == 0) {
+            $this->error("❌ CÓ {$totalTimekeeping} timekeeping_records nhưng KHÔNG CÓ check_in → work_units = 0!");
+            $this->error("   → Logs không match vào time window của schedule, hoặc employee_id chưa map.");
+            // Hiện mẫu
+            $sampleTk = TimekeepingRecord::whereBetween('work_date', [$periodStart, $periodEnd])
+                ->whereNull('check_in_at')
+                ->limit(3)->get();
+            foreach ($sampleTk as $tk) {
+                $logsForDay = AttendanceLog::where('employee_id', $tk->employee_id)
+                    ->whereDate('punched_at', $tk->work_date)
+                    ->pluck('punched_at')->implode(', ');
+                $this->line("  TK: emp={$tk->employee_id} date={$tk->work_date} schedule={$tk->scheduled_start_at}→{$tk->scheduled_end_at} | Logs ngày đó: " . ($logsForDay ?: 'KHÔNG CÓ'));
+            }
+        }
         $this->newLine();
 
         // Kiểm tra tổng NV active vs NV trong paysheet
@@ -418,6 +432,86 @@ class DiagnoseSalary extends Command
                 $this->warn("  attendance_code NV: " . ($employee->attendance_code ?? 'CHƯA CÀI'));
             } else {
                 $this->warn("⚠ Không có attendance_logs nào cho NV này trong kỳ.");
+            }
+        }
+
+        // Debug sâu: Khi có cả logs + lịch nhưng timekeeping_records vẫn trống hoặc work_units=0
+        if ($empLogs > 0 && $empSchedules > 0) {
+            $tkCount = TimekeepingRecord::where('employee_id', $employee->id)
+                ->whereBetween('work_date', [$from, $to])
+                ->count();
+            $tkWithCheckIn = TimekeepingRecord::where('employee_id', $employee->id)
+                ->whereBetween('work_date', [$from, $to])
+                ->whereNotNull('check_in_at')
+                ->count();
+
+            $this->info("  timekeeping_records: {$tkCount} bản ghi, {$tkWithCheckIn} có check_in");
+
+            if ($tkCount == 0 || $tkWithCheckIn == 0) {
+                $this->newLine();
+                $this->error("── DEBUG: TẠI SAO LOGS KHÔNG MATCH VỚI LỊCH? ──");
+
+                // Hiện mẫu schedules
+                $sampleSchedules = EmployeeWorkSchedule::where('employee_id', $employee->id)
+                    ->whereBetween('work_date', [$from, $to])
+                    ->orderBy('work_date')
+                    ->limit(5)
+                    ->get();
+                $this->line("Mẫu employee_work_schedules (5 đầu):");
+                foreach ($sampleSchedules as $s) {
+                    $this->line("  {$s->work_date} | shift_id={$s->shift_id} | start={$s->start_time} | end={$s->end_time} | slot={$s->slot}");
+                }
+
+                // Hiện mẫu logs
+                $sampleLogs = AttendanceLog::where('employee_id', $employee->id)
+                    ->whereBetween('punched_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])
+                    ->orderBy('punched_at')
+                    ->limit(10)
+                    ->get();
+                $this->line("Mẫu attendance_logs (10 đầu):");
+                foreach ($sampleLogs as $l) {
+                    $this->line("  id={$l->id} | punched_at={$l->punched_at} | device_user_id={$l->device_user_id} | employee_id={$l->employee_id} | device_id={$l->attendance_device_id}");
+                }
+
+                // Kiểm tra: logs có nằm trong window ±8h của schedule không?
+                if ($sampleSchedules->isNotEmpty() && $sampleLogs->isNotEmpty()) {
+                    $firstSchedule = $sampleSchedules->first();
+                    $scheduleDate = Carbon::parse($firstSchedule->work_date);
+                    $windowStart = $scheduleDate->copy()->startOfDay()->subHours(8);
+                    $windowEnd = $scheduleDate->copy()->endOfDay()->addHours(8);
+
+                    $logsInWindow = AttendanceLog::where('employee_id', $employee->id)
+                        ->whereBetween('punched_at', [$windowStart, $windowEnd])
+                        ->count();
+                    $this->line("Logs trong window ±8h của ngày {$firstSchedule->work_date}: {$logsInWindow}");
+
+                    if ($logsInWindow == 0) {
+                        $this->error("  → Logs tồn tại nhưng KHÔNG NẰM trong time window của schedule!");
+                        $this->error("    Schedule ngày: {$firstSchedule->work_date}");
+                        $this->error("    Window: {$windowStart} → {$windowEnd}");
+                        $this->error("    Log gần nhất: {$sampleLogs->first()->punched_at}");
+                    }
+                }
+
+                // Kiểm tra attendance_code mapping
+                $this->newLine();
+                $this->line("NV attendance_code: " . ($employee->attendance_code ?? 'NULL'));
+                $uniqueDeviceUsers = AttendanceLog::where('employee_id', $employee->id)
+                    ->whereBetween('punched_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])
+                    ->distinct()->pluck('device_user_id');
+                $this->line("device_user_id(s) trong logs: " . $uniqueDeviceUsers->implode(', '));
+
+                // Kiểm tra unmapped logs với cùng device_user_id
+                if ($employee->attendance_code) {
+                    $unmappedWithCode = AttendanceLog::whereNull('employee_id')
+                        ->where('device_user_id', $employee->attendance_code)
+                        ->whereBetween('punched_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])
+                        ->count();
+                    if ($unmappedWithCode > 0) {
+                        $this->error("  → {$unmappedWithCode} logs chưa map có device_user_id = attendance_code ({$employee->attendance_code})!");
+                        $this->error("    Chạy: POST /api/attendance-logs/refresh-mapping");
+                    }
+                }
             }
         }
         $this->newLine();
