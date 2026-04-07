@@ -101,7 +101,7 @@ class TimekeepingService
                     // Nếu gần giờ kết thúc ca hơn → coi là check_out (nhân viên quên chấm vào)
                     $punch = Carbon::parse($logs->first()->punched_at);
                     $midShift = $scheduleStart->copy()->addMinutes(
-                        $scheduleStart->diffInMinutes($scheduleEnd) / 2
+                        abs($scheduleStart->diffInMinutes($scheduleEnd)) / 2
                     );
                     if ($punch->greaterThan($midShift)) {
                         $checkOut = $logs->first()->punched_at;
@@ -126,23 +126,23 @@ class TimekeepingService
             $lateMinutes = $earlyMinutes = $otMinutes = $workedMinutes = 0;
 
             if ($checkIn && $checkOut) {
-                $workedMinutes = max(0, Carbon::parse($checkOut)->diffInMinutes(Carbon::parse($checkIn)));
+                $workedMinutes = abs(Carbon::parse($checkOut)->diffInMinutes(Carbon::parse($checkIn)));
             } elseif ($checkIn && !$checkOut && $scheduleEnd) {
                 // Chỉ có check_in, không có check_out → ước tính làm đến hết ca
-                $workedMinutes = max(0, $scheduleEnd->diffInMinutes(Carbon::parse($checkIn)));
+                $workedMinutes = abs($scheduleEnd->diffInMinutes(Carbon::parse($checkIn)));
             } elseif (!$checkIn && $checkOut && $scheduleStart) {
                 // Chỉ có check_out, không có check_in → ước tính làm từ đầu ca
-                $workedMinutes = max(0, Carbon::parse($checkOut)->diffInMinutes($scheduleStart));
+                $workedMinutes = abs(Carbon::parse($checkOut)->diffInMinutes($scheduleStart));
             }
 
             if ($scheduleStart && $checkIn) {
-                $diff = Carbon::parse($checkIn)->diffInMinutes($scheduleStart, false);
-                $lateMinutes = max(0, $diff - $allowLate);
+                $checkInCarbon = Carbon::parse($checkIn);
+                $lateMinutes = max(0, (int) $checkInCarbon->diffInMinutes($scheduleStart, false));
+                $lateMinutes = max(0, $lateMinutes - $allowLate);
 
                 if ($overtimeBeforeEnabled) {
-                    $checkInCarbon = Carbon::parse($checkIn);
                     if ($checkInCarbon->lessThan($scheduleStart)) {
-                        $rawBeforeOt = $scheduleStart->diffInMinutes($checkInCarbon);
+                        $rawBeforeOt = abs($scheduleStart->diffInMinutes($checkInCarbon));
                         $rawBeforeOt = max(0, $rawBeforeOt - $overtimeBeforeMinutes);
                         if ($otRounding > 0) {
                             $rawBeforeOt = intdiv($rawBeforeOt, $otRounding) * $otRounding;
@@ -156,10 +156,10 @@ class TimekeepingService
                 $checkOutCarbon = Carbon::parse($checkOut);
 
                 if ($checkOutCarbon->lessThan($scheduleEnd)) {
-                    $diffEarly = $scheduleEnd->diffInMinutes($checkOutCarbon);
+                    $diffEarly = abs($scheduleEnd->diffInMinutes($checkOutCarbon));
                     $earlyMinutes = max(0, $diffEarly - $allowEarly);
                 } elseif ($checkOutCarbon->greaterThan($scheduleEnd)) {
-                    $rawOt = $checkOutCarbon->diffInMinutes($scheduleEnd);
+                    $rawOt = abs($checkOutCarbon->diffInMinutes($scheduleEnd));
                     $rawOt = max(0, $rawOt - $otAfter);
                     if ($otRounding > 0) {
                         $rawOt = intdiv($rawOt, $otRounding) * $otRounding;
