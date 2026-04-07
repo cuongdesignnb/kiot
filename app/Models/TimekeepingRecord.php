@@ -42,6 +42,8 @@ class TimekeepingRecord extends Model
         'check_out_at' => 'datetime',
         'manual_override' => 'boolean',
         'is_holiday' => 'boolean',
+        'work_units' => 'decimal:2',
+        'holiday_multiplier' => 'decimal:2',
         'raw' => 'array',
     ];
 

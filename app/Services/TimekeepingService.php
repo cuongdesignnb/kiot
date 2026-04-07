@@ -127,6 +127,12 @@ class TimekeepingService
 
             if ($checkIn && $checkOut) {
                 $workedMinutes = max(0, Carbon::parse($checkOut)->diffInMinutes(Carbon::parse($checkIn)));
+            } elseif ($checkIn && !$checkOut && $scheduleEnd) {
+                // Chỉ có check_in, không có check_out → ước tính làm đến hết ca
+                $workedMinutes = max(0, $scheduleEnd->diffInMinutes(Carbon::parse($checkIn)));
+            } elseif (!$checkIn && $checkOut && $scheduleStart) {
+                // Chỉ có check_out, không có check_in → ước tính làm từ đầu ca
+                $workedMinutes = max(0, Carbon::parse($checkOut)->diffInMinutes($scheduleStart));
             }
 
             if ($scheduleStart && $checkIn) {
