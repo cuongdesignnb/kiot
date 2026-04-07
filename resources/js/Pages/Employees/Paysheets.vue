@@ -937,14 +937,11 @@
                                                                 />
                                                             </td>
                                                             <td class="px-2 py-1">
-                                                                <input
-                                                                    type="text"
-                                                                    :value="formatNumber(slip.deductions)"
-                                                                    @focus="$event.target.select()"
-                                                                    @blur="updateSlipField(slip, 'deductions', $event)"
-                                                                    :disabled="ps.status === 'locked'"
-                                                                    class="w-24 text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
-                                                                />
+                                                                <div
+                                                                    @click="ps.status !== 'locked' && openDeductionModal(slip)"
+                                                                    class="w-24 text-right border border-gray-200 rounded px-2 py-1 text-sm cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition"
+                                                                    :class="ps.status === 'locked' ? 'bg-gray-100 cursor-not-allowed' : ''"
+                                                                >{{ formatNumber(slip.deductions) }}</div>
                                                             </td>
                                                             <td class="px-3 py-1.5 text-right font-semibold text-blue-700">
                                                                 {{ formatMoney(slip.total_salary) }}
@@ -1485,6 +1482,89 @@
             </div>
         </div>
     </AppLayout>
+
+    <!-- Modal Các khoản giảm trừ -->
+    <Teleport to="body">
+        <div v-if="showDeductionModal" class="fixed inset-0 z-50 flex items-center justify-center">
+            <div class="fixed inset-0 bg-black/40" @click="closeDeductionModal"></div>
+            <div class="relative bg-white rounded-lg shadow-xl w-[560px] max-h-[80vh] overflow-hidden">
+                <!-- Header -->
+                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+                    <div>
+                        <h3 class="text-lg font-semibold text-gray-800">Các khoản giảm trừ</h3>
+                        <p class="text-sm text-gray-500">Nhân viên: {{ deductionModalSlip?.employee?.name }}</p>
+                    </div>
+                    <button @click="closeDeductionModal" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+                </div>
+
+                <!-- Body -->
+                <div class="px-6 py-4 overflow-y-auto max-h-[60vh]">
+                    <!-- Header row -->
+                    <div class="flex justify-between text-xs font-medium text-gray-500 uppercase tracking-wide pb-2 border-b border-gray-200 mb-3">
+                        <span>Loại giảm trừ</span>
+                        <span>Tiền giảm trừ</span>
+                    </div>
+
+                    <!-- Tổng giảm trừ -->
+                    <div class="flex justify-between py-2 mb-2">
+                        <span class="font-semibold text-gray-700"></span>
+                        <span class="font-bold text-blue-600 text-lg">{{ formatMoney(deductionModalSlip?.deductions || 0) }}</span>
+                    </div>
+
+                    <!-- Giảm trừ đi muộn, về sớm, cố định -->
+                    <div class="border-t border-gray-100 py-3">
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-700">Giảm trừ đi muộn, về sớm, cố định</span>
+                            <span class="font-medium" :class="fixedDeductionTotal > 0 ? 'text-red-600' : 'text-blue-600'">{{ formatMoney(fixedDeductionTotal) }}</span>
+                        </div>
+                        <div v-if="fixedDeductionItems.length" class="mt-2 ml-4 space-y-1">
+                            <div v-for="(ded, i) in fixedDeductionItems" :key="'fd-'+i" class="flex justify-between text-sm text-gray-500">
+                                <span>{{ ded.name }} <span class="text-xs">({{ calcTypeLabel(ded.calc_type) }})</span></span>
+                                <span class="text-red-500">-{{ formatMoney(ded.calculated) }}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Phạt vi phạm theo ngày -->
+                    <div class="border-t border-gray-100 py-3">
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-700">Phạt vi phạm theo ngày</span>
+                            <div class="flex items-center gap-2">
+                                <span class="font-medium" :class="latePenaltyTotal > 0 ? 'text-red-600' : 'text-blue-600'">{{ formatMoney(latePenaltyTotal) }}</span>
+                            </div>
+                        </div>
+                        <div v-if="latePenaltyItems.length" class="mt-2 ml-4 space-y-1">
+                            <div v-for="(lp, j) in latePenaltyItems" :key="'lp-'+j" class="flex justify-between text-sm text-gray-500">
+                                <span>{{ lp.date }} (muộn {{ lp.late_minutes }} phút)</span>
+                                <span class="text-red-500">-{{ formatMoney(lp.penalty) }}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Giảm trừ khác (manual) -->
+                    <div class="border-t border-gray-100 py-3">
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-700">Giảm trừ khác</span>
+                            <div class="flex items-center gap-2">
+                                <input
+                                    type="text"
+                                    :value="formatNumber(manualDeduction)"
+                                    @blur="updateManualDeduction($event)"
+                                    @focus="$event.target.select()"
+                                    class="w-28 text-right border border-gray-300 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Footer -->
+                <div class="flex justify-end px-6 py-3 border-t border-gray-200 bg-gray-50">
+                    <button @click="closeDeductionModal" class="px-5 py-2 text-sm font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-100 transition">Bỏ qua</button>
+                </div>
+            </div>
+        </div>
+    </Teleport>
 </template>
 
 <script setup>
@@ -1559,6 +1639,53 @@ const selectedSlipIds = ref([]);
 const selectAllSlips = ref(false);
 const isPaying = ref(false);
 const expandedSlipId = ref(null);
+
+// ===== Deduction modal =====
+const showDeductionModal = ref(false);
+const deductionModalSlip = ref(null);
+const manualDeduction = ref(0);
+
+const fixedDeductionItems = computed(() => {
+    const deds = deductionModalSlip.value?.details?.details?.deductions || [];
+    return deds.filter(d => d.category !== 'violation');
+});
+const fixedDeductionTotal = computed(() => fixedDeductionItems.value.reduce((s, d) => s + (d.calculated || 0), 0));
+
+const latePenaltyItems = computed(() => deductionModalSlip.value?.details?.details?.late_penalty || []);
+const latePenaltyTotal = computed(() => latePenaltyItems.value.reduce((s, lp) => s + (lp.penalty || 0), 0));
+
+const openDeductionModal = (slip) => {
+    deductionModalSlip.value = slip;
+    const autoTotal = fixedDeductionTotal.value + latePenaltyTotal.value;
+    manualDeduction.value = Math.max(0, (slip.deductions || 0) - autoTotal);
+    showDeductionModal.value = true;
+};
+
+const closeDeductionModal = () => {
+    showDeductionModal.value = false;
+    deductionModalSlip.value = null;
+};
+
+const updateManualDeduction = async (event) => {
+    const newVal = parseNumber(event.target.value);
+    manualDeduction.value = newVal;
+    const slip = deductionModalSlip.value;
+    if (!slip) return;
+    const autoTotal = fixedDeductionTotal.value + latePenaltyTotal.value;
+    const totalDed = autoTotal + newVal;
+    slip.deductions = totalDed;
+    slip.total_salary = Math.max(0, (slip.base_salary || 0) + (slip.bonus || 0) + (slip.commission || 0)
+        + (slip.allowances || 0) + (slip.ot_pay || 0) - totalDed);
+    slip.remaining = Math.max(0, slip.total_salary - (slip.paid_amount || 0));
+    slip._dirty = true;
+    try {
+        const psId = paysheets.value.find(p => p.id === expandedId.value)?.id;
+        await axios.put(`/api/paysheets/${psId}/payslips/${slip.id}`, { deductions: totalDed });
+        slip._dirty = false;
+    } catch (e) {
+        console.error('Update deduction failed:', e);
+    }
+};
 
 const toggleSlipDetail = (slipId) => {
     expandedSlipId.value = expandedSlipId.value === slipId ? null : slipId;
