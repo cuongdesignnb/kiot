@@ -38,7 +38,7 @@ class DiagnoseSalary extends Command
         // Nếu có employee + khoảng thời gian
         if ($employeeId && $from && $to) {
             return $this->diagnoseEmployee(
-                (int) $employeeId,
+                $employeeId,
                 Carbon::parse($from),
                 Carbon::parse($to)
             );
@@ -211,11 +211,24 @@ class DiagnoseSalary extends Command
         return 0;
     }
 
-    private function diagnoseEmployee(int $employeeId, Carbon $from, Carbon $to): int
+    private function diagnoseEmployee(int|string $employeeId, Carbon $from, Carbon $to): int
     {
-        $employee = Employee::with('salarySetting')->find($employeeId);
+        // Hỗ trợ cả ID số và mã NV (VD: NV000028)
+        if (is_numeric($employeeId)) {
+            $employee = Employee::with('salarySetting')->find((int) $employeeId);
+        } else {
+            $employee = Employee::with('salarySetting')->where('code', $employeeId)->first();
+        }
         if (!$employee) {
-            $this->error("Không tìm thấy nhân viên ID: {$employeeId}");
+            // Thử tìm theo code nếu tìm theo ID không có
+            if (is_numeric($employeeId)) {
+                $employee = Employee::with('salarySetting')->where('code', 'LIKE', "%{$employeeId}%")->first();
+            }
+        }
+        if (!$employee) {
+            $this->error("Không tìm thấy nhân viên ID/Mã: {$employeeId}");
+            $this->line("Danh sách NV active:");
+            Employee::where('is_active', true)->get()->each(fn($e) => $this->line("  ID={$e->id} | {$e->code} | {$e->name}"));
             return 1;
         }
 
