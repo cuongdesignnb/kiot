@@ -681,7 +681,7 @@
                                                                 ps.status !==
                                                                     'cancelled'
                                                             "
-                                                            @click="
+                                                            @click.stop="
                                                                 recalculatePaysheet(
                                                                     ps,
                                                                 )
@@ -708,8 +708,8 @@
                                                                 ps.status ===
                                                                 'calculated'
                                                             "
-                                                            @click="
-                                                                toggleExpand(ps.id)
+                                                            @click.stop="
+                                                                activeTab = 'payslips'
                                                             "
                                                             class="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 transition"
                                                         >
@@ -739,7 +739,7 @@
                                                                 ps.status ===
                                                                 'calculated'
                                                             "
-                                                            @click="
+                                                            @click.stop="
                                                                 lockPaysheet(ps)
                                                             "
                                                             class="flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white rounded-md text-sm hover:bg-green-700 transition"
