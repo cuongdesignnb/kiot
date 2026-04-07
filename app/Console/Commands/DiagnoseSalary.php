@@ -413,6 +413,22 @@ class DiagnoseSalary extends Command
             $service = new \App\Services\TimekeepingService();
             $result = $service->recalculateForRange($from, $to, $employee->id);
             $this->info("   → Created: {$result['created']}, Updated: {$result['updated']}");
+
+            // Verify: kiểm tra DB sau recalculate
+            $verify = TimekeepingRecord::where('employee_id', $employee->id)
+                ->whereBetween('work_date', [$from, $to])
+                ->limit(5)->get();
+            $this->info("   DEBUG sau recalculate (5 ngày đầu):");
+            foreach ($verify as $v) {
+                $this->line("     {$v->work_date->format('Y-m-d')} | units={$v->work_units} | minutes={$v->worked_minutes} | in=" .
+                    ($v->check_in_at ? $v->check_in_at->format('H:i') : 'NULL') . " | out=" .
+                    ($v->check_out_at ? $v->check_out_at->format('H:i') : 'NULL'));
+            }
+            $totalUnitsAfterFix = TimekeepingRecord::where('employee_id', $employee->id)
+                ->whereBetween('work_date', [$from, $to])
+                ->where('attendance_type', 'work')
+                ->sum('work_units');
+            $this->info("   TỔNG work_units sau fix: {$totalUnitsAfterFix}");
             $this->newLine();
         }
 
