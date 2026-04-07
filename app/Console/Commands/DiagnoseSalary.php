@@ -7,6 +7,9 @@ use App\Models\Paysheet;
 use App\Models\Payslip;
 use App\Models\Employee;
 use App\Models\EmployeeSalarySetting;
+use App\Models\AttendanceLog;
+use App\Models\EmployeeWorkSchedule;
+use App\Models\TimekeepingRecord;
 use App\Services\SalaryCalculationService;
 use Carbon\Carbon;
 
@@ -85,6 +88,53 @@ class DiagnoseSalary extends Command
             $paysheet->branch_id, $periodStart, $periodEnd,
         ]);
         $this->info("Ngày công chuẩn (kỳ này): {$standardUnits} ngày");
+        $this->newLine();
+
+        // ===== KIỂM TRA PIPELINE CHẤM CÔNG =====
+        $this->info("═══ PIPELINE CHẤM CÔNG ═══");
+
+        // 1. attendance_logs (raw từ máy)
+        $totalLogs = AttendanceLog::whereBetween('punched_at', [
+            $periodStart->copy()->startOfDay(),
+            $periodEnd->copy()->endOfDay(),
+        ])->count();
+        $unmappedLogs = AttendanceLog::whereBetween('punched_at', [
+            $periodStart->copy()->startOfDay(),
+            $periodEnd->copy()->endOfDay(),
+        ])->whereNull('employee_id')->count();
+        $mappedLogs = $totalLogs - $unmappedLogs;
+
+        // 2. employee_work_schedules
+        $totalSchedules = EmployeeWorkSchedule::whereBetween('work_date', [$periodStart, $periodEnd])->count();
+
+        // 3. timekeeping_records
+        $totalTimekeeping = TimekeepingRecord::whereBetween('work_date', [$periodStart, $periodEnd])->count();
+        $withCheckIn = TimekeepingRecord::whereBetween('work_date', [$periodStart, $periodEnd])
+            ->whereNotNull('check_in_at')->count();
+
+        $this->table(['Bước', 'Số lượng', 'Trạng thái'], [
+            ['1. attendance_logs (máy chấm công)', $totalLogs, $totalLogs > 0 ? '✓' : '❌ TRỐNG!'],
+            ['   → Đã map employee_id', $mappedLogs, $unmappedLogs > 0 ? "⚠ {$unmappedLogs} chưa map" : '✓'],
+            ['2. employee_work_schedules (lịch làm)', $totalSchedules, $totalSchedules > 0 ? '✓' : '❌ TRỐNG!'],
+            ['3. timekeeping_records (kết quả)', $totalTimekeeping, $totalTimekeeping > 0 ? '✓' : '❌ TRỐNG!'],
+            ['   → Có check_in', $withCheckIn, ''],
+        ]);
+
+        if ($totalLogs > 0 && $totalSchedules == 0) {
+            $this->error("❌ CÓ DỮ LIỆU MÁY CHẤM CÔNG nhưng KHÔNG CÓ LỊCH LÀM VIỆC!");
+            $this->error("   → Cần tạo employee_work_schedules (lịch làm việc) cho NV trong kỳ này.");
+            $this->error("   → Không có lịch → TimekeepingService không thể tạo timekeeping_records → lương = 0.");
+        }
+        if ($totalLogs > 0 && $unmappedLogs > 0) {
+            $this->warn("⚠ Có {$unmappedLogs} attendance_logs chưa map employee_id!");
+            $this->warn("  → Kiểm tra employees.attendance_code có khớp với device_user_id không.");
+            $this->warn("  → Gọi API: POST /api/attendance-logs/refresh-mapping");
+        }
+        if ($totalSchedules > 0 && $totalTimekeeping == 0) {
+            $this->error("❌ CÓ LỊCH LÀM VIỆC nhưng KHÔNG CÓ TIMEKEEPING RECORDS!");
+            $this->error("   → Cần chạy recalculate: POST /api/timekeeping-records/recalculate");
+            $this->error("   → Hoặc: POST /api/attendance-agent/force-recalculate?from={$periodStart->toDateString()}&to={$periodEnd->toDateString()}");
+        }
         $this->newLine();
 
         // Kiểm tra tổng NV active vs NV trong paysheet
@@ -238,7 +288,23 @@ class DiagnoseSalary extends Command
 
         // Check 4: Không có dữ liệu chấm công
         if ($calc['work_units'] == 0 && $calc['paid_leave_units'] == 0) {
-            $issues[] = "[{$empLabel}] work_units = 0, paid_leave_units = 0 → Không có chấm công!";
+            // Kiểm tra sâu hơn: xem pipeline bị đứt ở đâu
+            $hasLogs = AttendanceLog::where('employee_id', $employee->id)
+                ->whereBetween('punched_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])
+                ->exists();
+            $hasSchedules = EmployeeWorkSchedule::where('employee_id', $employee->id)
+                ->whereBetween('work_date', [$from, $to])
+                ->exists();
+
+            if (!$hasSchedules && $hasLogs) {
+                $issues[] = "[{$empLabel}] Có attendance_logs nhưng KHÔNG CÓ LỊCH LÀM VIỆC (employee_work_schedules) → timekeeping_records không tạo được!";
+            } elseif (!$hasSchedules && !$hasLogs) {
+                $issues[] = "[{$empLabel}] Không có attendance_logs VÀ không có lịch làm việc → lương = 0!";
+            } elseif ($hasSchedules && !$hasLogs) {
+                $issues[] = "[{$empLabel}] Có lịch nhưng không có attendance_logs (máy chấm công chưa map?) → work_units = 0!";
+            } else {
+                $issues[] = "[{$empLabel}] work_units = 0 dù có cả logs + lịch → Cần recalculate timekeeping!";
+            }
         }
 
         // Check 5: OT có nhưng ot_pay = 0
@@ -325,6 +391,37 @@ class DiagnoseSalary extends Command
         // Timekeeping records
         $this->newLine();
         $this->info("── DỮ LIỆU CHẤM CÔNG ──");
+
+        // Kiểm tra pipeline cho NV cụ thể
+        $empLogs = AttendanceLog::where('employee_id', $employee->id)
+            ->whereBetween('punched_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])
+            ->count();
+        $empSchedules = EmployeeWorkSchedule::where('employee_id', $employee->id)
+            ->whereBetween('work_date', [$from, $to])
+            ->count();
+
+        $this->table(['Pipeline', 'Số lượng'], [
+            ['attendance_logs (máy chấm công)', $empLogs],
+            ['employee_work_schedules (lịch)', $empSchedules],
+        ]);
+
+        if ($empLogs > 0 && $empSchedules == 0) {
+            $this->error("❌ CÓ {$empLogs} logs từ máy chấm công nhưng KHÔNG CÓ LỊCH LÀM VIỆC → Không thể tạo timekeeping_records!");
+        }
+        if ($empLogs == 0) {
+            // Kiểm tra xem có log chưa map không
+            $unmappedForEmployee = AttendanceLog::whereNull('employee_id')
+                ->whereBetween('punched_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])
+                ->count();
+            if ($unmappedForEmployee > 0) {
+                $this->warn("⚠ Có {$unmappedForEmployee} attendance_logs chưa map employee_id (có thể của NV này)");
+                $this->warn("  attendance_code NV: " . ($employee->attendance_code ?? 'CHƯA CÀI'));
+            } else {
+                $this->warn("⚠ Không có attendance_logs nào cho NV này trong kỳ.");
+            }
+        }
+        $this->newLine();
+
         $records = $employee->timekeepingRecords()
             ->whereBetween('work_date', [$from, $to])
             ->orderBy('work_date')

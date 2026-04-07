@@ -7,6 +7,7 @@ use App\Models\Paysheet;
 use App\Models\Payslip;
 use App\Models\PaysheetPayment;
 use App\Models\Employee;
+use App\Services\TimekeepingService;
 use Carbon\Carbon;
 
 class PaysheetController extends Controller
@@ -115,6 +116,12 @@ class PaysheetController extends Controller
         }
         $employees = $empQuery->get();
 
+        // Auto-recalculate timekeeping trước khi tính lương
+        $timekeepingService = app(TimekeepingService::class);
+        foreach ($employees as $employee) {
+            $timekeepingService->recalculateForRange($periodStart, $periodEnd, $employee->id);
+        }
+
         // Calculate salary for each employee
         $slipNumber = (int) substr(Payslip::orderByDesc('id')->value('code') ?? 'PL000000', 2);
         foreach ($employees as $employee) {
@@ -165,6 +172,13 @@ class PaysheetController extends Controller
 
         $periodStart = Carbon::parse($paysheet->period_start);
         $periodEnd = Carbon::parse($paysheet->period_end);
+
+        // Auto-recalculate timekeeping trước khi tính lại lương
+        $timekeepingService = app(TimekeepingService::class);
+        $employeeIds = $paysheet->payslips->pluck('employee_id')->unique()->toArray();
+        foreach ($employeeIds as $empId) {
+            $timekeepingService->recalculateForRange($periodStart, $periodEnd, $empId);
+        }
 
         foreach ($paysheet->payslips as $slip) {
             $employee = Employee::with(['salarySetting'])->find($slip->employee_id);
