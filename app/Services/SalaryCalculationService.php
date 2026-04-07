@@ -168,33 +168,46 @@ class SalaryCalculationService
             $otPay = ($otMinutes / 60) * $hourlyRate * $overtimeRate;
         }
 
-        // ===== TÍNH PHẦN CHÊNH LỆCH NGÀY LỄ (HOLIDAY PAY) =====
+        // ===== TÍNH PHẦN CHÊNH LỆCH NGÀY NGHỈ + NGÀY LỄ =====
         $holidayPay = 0;
         $holidayPayDetails = [];
-        $holidayRate = ($setting->holiday_rate ?? 200) / 100; // 200% = 2x (chỉ tính phần chênh thêm)
-        if ($holidayRate > 1) {
-            $holidayRecords = $records->where('is_holiday', true)->where('work_units', '>', 0);
-            foreach ($holidayRecords as $hRec) {
-                $multiplier = (float) ($hRec->holiday_multiplier ?? $holidayRate);
-                if ($multiplier > 1) {
-                    if ($setting->salary_type === 'hourly') {
-                        $dayPay = $hRec->work_units * $standardHoursPerDay * $setting->base_salary;
-                    } elseif ($setting->salary_type === 'by_workday' && $standardWorkUnits > 0) {
-                        $dayPay = $setting->base_salary * $hRec->work_units / $standardWorkUnits;
-                    } else {
-                        $dayPay = ($standardWorkUnits > 0)
-                            ? $setting->base_salary * $hRec->work_units / $standardWorkUnits
-                            : 0;
-                    }
-                    $extra = $dayPay * ($multiplier - 1); // phần chênh thêm
-                    $holidayPay += $extra;
-                    $holidayPayDetails[] = [
-                        'date' => $hRec->work_date,
-                        'work_units' => $hRec->work_units,
-                        'multiplier' => $multiplier,
-                        'extra_pay' => round($extra),
-                    ];
+        $restDayRate = ($setting->holiday_rate ?? 200) / 100;  // Ngày nghỉ tuần (CN): 200% = x2
+        $tetRate = ($setting->tet_rate ?? 300) / 100;          // Ngày lễ, tết: 300% = x3
+
+        // Lấy danh sách ngày lễ chính thức trong kỳ
+        $officialHolidays = Holiday::whereBetween('holiday_date', [$from, $to])
+            ->where('status', 'active')
+            ->pluck('holiday_date')
+            ->map(fn($d) => Carbon::parse($d)->toDateString())
+            ->toArray();
+
+        $holidayRecords = $records->where('is_holiday', true)->where('work_units', '>', 0);
+        foreach ($holidayRecords as $hRec) {
+            $dateStr = Carbon::parse($hRec->work_date)->toDateString();
+            $isOfficialHoliday = in_array($dateStr, $officialHolidays);
+
+            // Ngày lễ chính thức → dùng tet_rate, ngày nghỉ tuần → dùng holiday_rate
+            $multiplier = $isOfficialHoliday ? $tetRate : $restDayRate;
+
+            if ($multiplier > 1) {
+                if ($setting->salary_type === 'hourly') {
+                    $dayPay = $hRec->work_units * $standardHoursPerDay * $setting->base_salary;
+                } elseif ($setting->salary_type === 'by_workday' && $standardWorkUnits > 0) {
+                    $dayPay = $setting->base_salary * $hRec->work_units / $standardWorkUnits;
+                } else {
+                    $dayPay = ($standardWorkUnits > 0)
+                        ? $setting->base_salary * $hRec->work_units / $standardWorkUnits
+                        : 0;
                 }
+                $extra = $dayPay * ($multiplier - 1); // phần chênh thêm (x2 → +100%, x3 → +200%)
+                $holidayPay += $extra;
+                $holidayPayDetails[] = [
+                    'date' => $hRec->work_date,
+                    'work_units' => $hRec->work_units,
+                    'type' => $isOfficialHoliday ? 'holiday/tet' : 'rest_day',
+                    'multiplier' => $multiplier,
+                    'extra_pay' => round($extra),
+                ];
             }
         }
 

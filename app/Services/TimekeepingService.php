@@ -21,6 +21,10 @@ class TimekeepingService
             ->where('status', 'active')
             ->get()->keyBy(fn($h) => \Carbon\Carbon::parse($h->holiday_date)->toDateString());
 
+        // Lấy danh sách ngày làm việc trong tuần (VD: [1,2,3,4,5,6] = T2→T7)
+        // Ngày KHÔNG nằm trong danh sách = ngày nghỉ tuần (VD: CN = 0)
+        $workdaySettings = WorkdaySetting::all();
+
         $schedules = EmployeeWorkSchedule::whereBetween('work_date', [$from, $to])
             ->when($employeeId, fn($q) => $q->where('employee_id', $employeeId))
             ->orderBy('work_date')->orderBy('slot')
@@ -170,6 +174,16 @@ class TimekeepingService
 
             $holiday = $holidayMap->get(Carbon::parse($schedule->work_date)->toDateString());
 
+            // Kiểm tra ngày nghỉ tuần (VD: Chủ nhật không nằm trong week_days)
+            $isRestDay = false;
+            if (!$holiday) {
+                $dayOfWeek = Carbon::parse($schedule->work_date)->dayOfWeek; // 0=CN, 1=T2...6=T7
+                $branchWorkday = $workdaySettings->firstWhere('branch_id', $schedule->branch_id);
+                $globalWorkday = $workdaySettings->firstWhere('branch_id', null);
+                $weekDays = ($branchWorkday ?? $globalWorkday)?->week_days ?? [1, 2, 3, 4, 5, 6]; // Mặc định T2-T7
+                $isRestDay = !in_array($dayOfWeek, $weekDays);
+            }
+
             // Tính work_units: 0 (vắng), 0.5 (nửa ngày), 1 (đủ ngày)
             $standardHours = (float) ($setting?->standard_hours_per_day ?? 8);
             $halfDayThreshold = $standardHours / 2;
@@ -217,8 +231,8 @@ class TimekeepingService
                 'ot_minutes' => $otMinutes,
                 'worked_minutes' => $workedMinutes,
                 'work_units' => $workUnits,
-                'is_holiday' => (bool) $holiday,
-                'holiday_multiplier' => $holiday ? (float) $holiday->multiplier : 1,
+                'is_holiday' => (bool) $holiday || $isRestDay,
+                'holiday_multiplier' => $holiday ? (float) $holiday->multiplier : ($isRestDay ? 2.0 : 1),
                 'raw' => [
                     'log_ids' => $logs->pluck('id')->values()->all(),
                     'device_ids' => $logs->pluck('attendance_device_id')->unique()->values()->all(),
