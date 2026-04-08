@@ -194,7 +194,7 @@
                         <div class="mt-4">
                             <h4 class="text-sm font-semibold text-gray-600 mb-2">Điều chỉnh thủ công</h4>
                             <div v-for="adj in popupAdjustments" :key="adj.id" class="flex items-center gap-2 mb-2">
-                                <input v-model="adj.name" :disabled="isLocked" class="flex-1 text-sm border rounded px-2 py-1" />
+                                <span class="flex-1 text-sm text-gray-700">{{ adj.name }}</span>
                                 <input v-model.number="adj.amount" :disabled="isLocked" type="number" class="w-32 text-sm border rounded px-2 py-1 text-right" />
                                 <button v-if="!isLocked" @click="deleteAdjustment(adj)" class="text-red-400 hover:text-red-600 text-lg">&times;</button>
                             </div>
@@ -287,16 +287,25 @@
                             </tfoot>
                         </table>
 
-                        <!-- Manual allowance adjustments -->
+                        <!-- Thêm phụ cấp từ cài đặt -->
                         <div class="mt-4">
                             <h4 class="text-sm font-semibold text-gray-600 mb-2">Phụ cấp thủ công</h4>
                             <div v-for="adj in popupAdjustments" :key="adj.id" class="flex items-center gap-2 mb-2">
-                                <input v-model="adj.name" :disabled="isLocked" class="flex-1 text-sm border rounded px-2 py-1" placeholder="Tên phụ cấp" />
+                                <span class="flex-1 text-sm text-gray-700">{{ adj.name }}</span>
                                 <input v-model.number="adj.amount" :disabled="isLocked" type="number" class="w-32 text-sm border rounded px-2 py-1 text-right" />
                                 <button v-if="!isLocked" @click="deleteAdjustment(adj)" class="text-red-400 hover:text-red-600 text-lg">&times;</button>
                             </div>
+                            <!-- Dropdown thêm từ cài đặt -->
+                            <div v-if="!isLocked && unusedSettingsOptions.length" class="mt-2">
+                                <select @change="addFromSettingsDropdown($event, 'allowance')" class="text-sm border rounded px-2 py-1.5 text-blue-600 w-full">
+                                    <option value="">+ Thêm phụ cấp từ cài đặt...</option>
+                                    <option v-for="opt in unusedSettingsOptions" :key="opt.name" :value="opt.name">
+                                        {{ opt.name }} — {{ fmt(opt.amount) }}
+                                    </option>
+                                </select>
+                            </div>
                             <button v-if="!isLocked" @click="addAdjustmentRow('allowance')"
-                                class="text-sm text-blue-600 hover:underline mt-1">+ Thêm phụ cấp khác</button>
+                                class="text-sm text-blue-600 hover:underline mt-1">+ Thêm phụ cấp tùy chỉnh</button>
                         </div>
                     </div>
                     <div class="px-5 py-3 border-t flex justify-between items-center bg-gray-50">
@@ -345,16 +354,25 @@
                             </tfoot>
                         </table>
 
-                        <!-- Manual bonus adjustments -->
+                        <!-- Thêm thưởng từ cài đặt -->
                         <div class="mt-4">
                             <h4 class="text-sm font-semibold text-gray-600 mb-2">Thưởng thủ công</h4>
                             <div v-for="adj in popupAdjustments" :key="adj.id" class="flex items-center gap-2 mb-2">
-                                <input v-model="adj.name" :disabled="isLocked" class="flex-1 text-sm border rounded px-2 py-1" placeholder="Tên thưởng" />
+                                <span class="flex-1 text-sm text-gray-700">{{ adj.name }}</span>
                                 <input v-model.number="adj.amount" :disabled="isLocked" type="number" class="w-32 text-sm border rounded px-2 py-1 text-right" />
                                 <button v-if="!isLocked" @click="deleteAdjustment(adj)" class="text-red-400 hover:text-red-600 text-lg">&times;</button>
                             </div>
+                            <!-- Dropdown thêm từ cài đặt -->
+                            <div v-if="!isLocked && unusedSettingsOptions.length" class="mt-2">
+                                <select @change="addFromSettingsDropdown($event, 'bonus')" class="text-sm border rounded px-2 py-1.5 text-blue-600 w-full">
+                                    <option value="">+ Thêm thưởng từ cài đặt...</option>
+                                    <option v-for="opt in unusedSettingsOptions" :key="opt.name" :value="opt.name">
+                                        {{ opt.name }} — {{ opt.is_percentage ? opt.value + '%' : fmt(opt.amount) }}
+                                    </option>
+                                </select>
+                            </div>
                             <button v-if="!isLocked" @click="addAdjustmentRow('bonus')"
-                                class="text-sm text-blue-600 hover:underline mt-1">+ Thêm thưởng khác</button>
+                                class="text-sm text-blue-600 hover:underline mt-1">+ Thêm thưởng tùy chỉnh</button>
                         </div>
                     </div>
                     <div class="px-5 py-3 border-t flex justify-between items-center bg-gray-50">
@@ -425,16 +443,25 @@
                             </tfoot>
                         </table>
 
-                        <!-- Manual deduction adjustments -->
+                        <!-- Thêm giảm trừ từ cài đặt -->
                         <div class="mt-2">
                             <h4 class="text-sm font-semibold text-gray-600 mb-2">Giảm trừ thủ công</h4>
                             <div v-for="adj in popupAdjustments" :key="adj.id" class="flex items-center gap-2 mb-2">
-                                <input v-model="adj.name" :disabled="isLocked" class="flex-1 text-sm border rounded px-2 py-1" placeholder="Tên khoản giảm trừ" />
+                                <span class="flex-1 text-sm text-gray-700">{{ adj.name }}</span>
                                 <input v-model.number="adj.amount" :disabled="isLocked" type="number" class="w-32 text-sm border rounded px-2 py-1 text-right" />
                                 <button v-if="!isLocked" @click="deleteAdjustment(adj)" class="text-red-400 hover:text-red-600 text-lg">&times;</button>
                             </div>
+                            <!-- Dropdown thêm từ cài đặt -->
+                            <div v-if="!isLocked && unusedSettingsOptions.length" class="mt-2">
+                                <select @change="addFromSettingsDropdown($event, 'deduction')" class="text-sm border rounded px-2 py-1.5 text-blue-600 w-full">
+                                    <option value="">+ Thêm giảm trừ từ cài đặt...</option>
+                                    <option v-for="opt in unusedSettingsOptions" :key="opt.name" :value="opt.name">
+                                        {{ opt.name }} — {{ fmt(opt.amount) }}
+                                    </option>
+                                </select>
+                            </div>
                             <button v-if="!isLocked" @click="addAdjustmentRow('deduction')"
-                                class="text-sm text-blue-600 hover:underline mt-1">+ Thêm giảm trừ khác</button>
+                                class="text-sm text-blue-600 hover:underline mt-1">+ Thêm giảm trừ tùy chỉnh</button>
                         </div>
                     </div>
                     <div class="px-5 py-3 border-t flex justify-between items-center bg-gray-50">
@@ -503,6 +530,64 @@ const popup = reactive({
 
 const popupAdjustments = ref([]);
 const pendingDeletes = ref([]); // adjustment IDs to delete on save
+let tempIdCounter = -1;
+
+// ===== Employee salary settings for current popup =====
+const empSettings = computed(() => {
+    if (!popup.slip) return null;
+    const eid = popup.slip.employee_id;
+    return props.salarySettings[eid] || null;
+});
+
+// Options from employee settings based on popup type (excluding already-added ones)
+const settingsOptionsAll = computed(() => {
+    const s = empSettings.value;
+    if (!s) return [];
+    const type = popup.type;
+    if (type === 'allowance') {
+        return (s.custom_allowances || []).map(a => ({
+            name: a.name || 'Phụ cấp',
+            amount: a.amount || 0,
+        }));
+    }
+    if (type === 'bonus') {
+        return (s.custom_bonuses || []).map(b => ({
+            name: bonusRoleLabel(b.role_type) + (b.revenue_from ? ` (từ ${fmt(b.revenue_from)})` : ''),
+            amount: b.bonus_value || 0,
+            is_percentage: b.bonus_is_percentage,
+            value: b.bonus_value,
+        }));
+    }
+    if (type === 'deduction') {
+        return (s.custom_deductions || []).map(d => ({
+            name: d.name || 'Giảm trừ',
+            amount: d.amount || 0,
+            calculation_type: d.calculation_type,
+        }));
+    }
+    return [];
+});
+
+const unusedSettingsOptions = computed(() => {
+    const usedNames = new Set(popupAdjustments.value.map(a => a.name));
+    return settingsOptionsAll.value.filter(o => !usedNames.has(o.name));
+});
+
+function addFromSettingsDropdown(event, type) {
+    const name = event.target.value;
+    if (!name) return;
+    const opt = settingsOptionsAll.value.find(o => o.name === name);
+    if (!opt) return;
+    popupAdjustments.value.push({
+        id: tempIdCounter--,
+        type: type,
+        name: opt.name,
+        amount: opt.amount || 0,
+        notes: '',
+        _existing: false,
+    });
+    event.target.value = '';
+}
 
 // ===== Popup computed items =====
 const otBreakdown = computed(() => {
@@ -580,12 +665,14 @@ function closePopup() {
     pendingDeletes.value = [];
 }
 
-let tempIdCounter = -1;
 function addAdjustmentRow(type) {
+    const typeLabels = { ot: 'OT', allowance: 'phụ cấp', bonus: 'thưởng', deduction: 'giảm trừ' };
+    const name = prompt(`Nhập tên ${typeLabels[type] || 'khoản'}:`);
+    if (!name) return;
     popupAdjustments.value.push({
         id: tempIdCounter--,
         type: type,
-        name: '',
+        name: name,
         amount: 0,
         notes: '',
         _existing: false,
