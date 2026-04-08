@@ -263,6 +263,10 @@ Route::prefix('paysheets')->group(function () {
     Route::post('/{id}/pay', [PaysheetController::class, 'pay']);
     Route::put('/{id}/notes', [PaysheetController::class, 'updateNotes']);
     Route::put('/{id}/payslips/{slipId}', [PaysheetController::class, 'updatePayslip']);
+    Route::get('/{id}/payslips/{slipId}/adjustments', [PaysheetController::class, 'listAdjustments']);
+    Route::post('/{id}/payslips/{slipId}/adjustments', [PaysheetController::class, 'storeAdjustment']);
+    Route::put('/{id}/payslips/{slipId}/adjustments/{adjId}', [PaysheetController::class, 'updateAdjustment']);
+    Route::delete('/{id}/payslips/{slipId}/adjustments/{adjId}', [PaysheetController::class, 'deleteAdjustment']);
     Route::delete('/{id}', [PaysheetController::class, 'destroy']);
 });
 

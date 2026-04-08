@@ -416,6 +416,9 @@ Route::get('/employees/paysheets', function () {
     ]);
 })->name('employees.paysheets')->middleware('permission:paysheets.view');
 
+Route::get('/employees/paysheets/{id}/edit', [\App\Http\Controllers\PaysheetController::class, 'edit'])
+    ->name('employees.paysheets.edit')->middleware('permission:paysheets.view');
+
 // ===== Export / Import routes =====
 Route::get('/customers/export', [App\Http\Controllers\CustomerController::class, 'export'])->name('customers.export')->middleware('permission:customers.export');
 Route::post('/customers/import', [App\Http\Controllers\CustomerController::class, 'import'])->name('customers.import')->middleware('permission:customers.import');

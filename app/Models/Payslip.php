@@ -57,6 +57,11 @@ class Payslip extends Model
         return $this->hasMany(PaysheetPayment::class);
     }
 
+    public function adjustments()
+    {
+        return $this->hasMany(PayslipAdjustment::class);
+    }
+
     /**
      * Auto-generate next code: PL000001
      */

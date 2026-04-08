@@ -709,7 +709,7 @@
                                                                 'calculated'
                                                             "
                                                             @click.stop="
-                                                                activeTab = 'payslips'
+                                                                router.visit(`/employees/paysheets/${ps.id}/edit`)
                                                             "
                                                             class="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 transition"
                                                         >
@@ -1568,7 +1568,7 @@
 </template>
 
 <script setup>
-import { Head } from "@inertiajs/vue3";
+import { Head, router } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import { ref, computed, reactive, onMounted, watch } from "vue";
