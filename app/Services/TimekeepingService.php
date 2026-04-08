@@ -263,6 +263,93 @@ class TimekeepingService
             }
         }
 
+        // ===== XỬ LÝ NGÀY NGHỈ không có schedule nhưng có chấm công =====
+        // Tìm tất cả attendance log trong khoảng thời gian, nhóm theo employee+date
+        $allLogs = AttendanceLog::whereBetween('punched_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])
+            ->when($employeeId, fn($q) => $q->where('employee_id', $employeeId))
+            ->orderBy('punched_at')
+            ->get();
+
+        $logsByEmpDate = $allLogs->groupBy(function ($log) {
+            return $log->employee_id . '_' . Carbon::parse($log->punched_at)->toDateString();
+        });
+
+        foreach ($logsByEmpDate as $key => $logs) {
+            [$empId, $dateStr] = explode('_', $key, 2);
+            $empId = (int) $empId;
+
+            // Nếu đã có TimekeepingRecord cho ngày này (từ schedule) → bỏ qua
+            $existingRecord = TimekeepingRecord::where('employee_id', $empId)
+                ->where('work_date', $dateStr)
+                ->first();
+            if ($existingRecord && $existingRecord->manual_override) continue;
+            if ($existingRecord && $existingRecord->employee_work_schedule_id) continue;
+
+            // Kiểm tra có phải ngày nghỉ không
+            $dayOfWeek = Carbon::parse($dateStr)->dayOfWeek;
+            $employee = \App\Models\Employee::find($empId);
+            if (!$employee) continue;
+
+            $holiday = $holidayMap->get($dateStr);
+            $isRestDay = false;
+            if (!$holiday) {
+                $branchWorkday = $workdaySettings->firstWhere('branch_id', $employee->branch_id);
+                $globalWorkday = $workdaySettings->firstWhere('branch_id', null);
+                $weekDays = ($branchWorkday ?? $globalWorkday)?->week_days ?? [1, 2, 3, 4, 5, 6];
+                $isRestDay = !in_array($dayOfWeek, $weekDays);
+            }
+
+            // Chỉ tạo record cho ngày nghỉ/lễ (ngày thường không có schedule = không tính)
+            if (!$holiday && !$isRestDay) continue;
+
+            // Tính check_in / check_out từ logs
+            $checkIn = $logs->first()->punched_at;
+            $checkOut = $logs->count() > 1 ? $logs->last()->punched_at : null;
+
+            $workedMinutes = 0;
+            if ($checkIn && $checkOut) {
+                $workedMinutes = abs(Carbon::parse($checkOut)->diffInMinutes(Carbon::parse($checkIn)));
+            }
+
+            // Ngày nghỉ: toàn bộ giờ làm = OT
+            $otMinutes = $workedMinutes;
+
+            $attributes = [
+                'employee_id' => $empId,
+                'employee_work_schedule_id' => null,
+                'branch_id' => $employee->branch_id,
+                'shift_id' => null,
+                'work_date' => $dateStr,
+                'slot' => 1,
+                'scheduled_start_at' => null,
+                'scheduled_end_at' => null,
+                'check_in_at' => $checkIn,
+                'check_out_at' => $checkOut,
+                'source' => 'device',
+                'attendance_type' => 'work',
+                'manual_override' => false,
+                'late_minutes' => 0,
+                'early_minutes' => 0,
+                'ot_minutes' => $otMinutes,
+                'worked_minutes' => $workedMinutes,
+                'work_units' => 0, // Không tính công, lương qua OT
+                'is_holiday' => true,
+                'holiday_multiplier' => $holiday ? (float) $holiday->multiplier : 2.0,
+                'raw' => [
+                    'log_ids' => $logs->pluck('id')->values()->all(),
+                    'device_ids' => $logs->pluck('attendance_device_id')->unique()->values()->all(),
+                ],
+            ];
+
+            if ($existingRecord) {
+                $existingRecord->fill($attributes)->save();
+                $updated++;
+            } else {
+                TimekeepingRecord::create($attributes);
+                $created++;
+            }
+        }
+
         return compact('created', 'updated');
     }
 
