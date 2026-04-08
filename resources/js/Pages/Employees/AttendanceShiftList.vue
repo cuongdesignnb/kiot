@@ -48,8 +48,8 @@ const openCreate = () => {
 const openEdit = (shift) => {
     editingId.value = shift.id;
     form.name = shift.name;
-    form.start_time = shift.start_time;
-    form.end_time = shift.end_time;
+    form.start_time = (shift.start_time || '').slice(0, 5);
+    form.end_time = (shift.end_time || '').slice(0, 5);
     form.allow_late_minutes = shift.allow_late_minutes || 0;
     form.allow_early_minutes = shift.allow_early_minutes || 0;
     form.notes = shift.notes || '';
@@ -96,15 +96,20 @@ const submit = async () => {
     errorMessage.value = '';
 
     try {
+        const payload = {
+            ...form,
+            start_time: (form.start_time || '').slice(0, 5),
+            end_time: (form.end_time || '').slice(0, 5),
+        };
         if (editingId.value) {
-            const response = await axios.put(`/api/shifts/${editingId.value}`, { ...form });
+            const response = await axios.put(`/api/shifts/${editingId.value}`, payload);
             const updated = response?.data?.data;
             const index = localShifts.value.findIndex((item) => item.id === editingId.value);
             if (index !== -1 && updated) {
                 localShifts.value[index] = updated;
             }
         } else {
-            const response = await axios.post('/api/shifts', { ...form });
+            const response = await axios.post('/api/shifts', payload);
             const created = response?.data?.data;
             if (created) {
                 localShifts.value.push(created);

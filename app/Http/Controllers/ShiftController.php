@@ -25,6 +25,13 @@ class ShiftController extends Controller
 
     public function store(Request $request)
     {
+        // Normalize time fields to H:i
+        foreach (['start_time', 'end_time', 'checkin_start_time', 'checkin_end_time'] as $f) {
+            if ($request->has($f) && $request->$f) {
+                $request->merge([$f => substr($request->$f, 0, 5)]);
+            }
+        }
+
         $data = $request->validate([
             'branch_id' => 'nullable|integer',
             'name' => 'required|string|max:255',
@@ -65,6 +72,13 @@ class ShiftController extends Controller
 
     public function update(Request $request, Shift $shift)
     {
+        // Normalize time fields to H:i
+        foreach (['start_time', 'end_time', 'checkin_start_time', 'checkin_end_time'] as $f) {
+            if ($request->has($f) && $request->$f) {
+                $request->merge([$f => substr($request->$f, 0, 5)]);
+            }
+        }
+
         $data = $request->validate([
             'branch_id' => 'nullable|integer',
             'name' => 'required|string|max:255',
