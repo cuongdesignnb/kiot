@@ -819,7 +819,7 @@
                                                 </div>
                                                 <table
                                                     v-else
-                                                    class="w-full text-sm"
+                                                    class="w-full text-sm table-fixed"
                                                 >
                                                     <thead
                                                         class="bg-gray-50 border-b border-gray-200 sticky top-0"
@@ -835,15 +835,15 @@
                                                             </th>
                                                             <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 w-10">STT</th>
                                                             <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 min-w-[140px]">Tên nhân viên</th>
-                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Lương chính</th>
-                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Làm thêm</th>
-                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Hoa hồng</th>
-                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Phụ cấp</th>
-                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Thưởng</th>
-                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Giảm trừ</th>
-                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Tổng lương</th>
-                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Đã trả NV</th>
-                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Còn cần trả</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[120px]">Lương chính</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[110px]">Làm thêm</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[110px]">Hoa hồng</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[110px]">Phụ cấp</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[110px]">Thưởng</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[110px]">Giảm trừ</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[120px]">Tổng lương</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[100px]">Đã trả NV</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[110px]">Còn cần trả</th>
                                                         </tr>
                                                     </thead>
                                                     <tbody>
@@ -893,7 +893,7 @@
                                                                     @focus="$event.target.select()"
                                                                     @blur="updateSlipField(slip, 'base_salary', $event)"
                                                                     :disabled="ps.status === 'locked'"
-                                                                    class="w-28 text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+                                                                    class="w-full text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
                                                                 />
                                                             </td>
                                                             <td class="px-2 py-1">
@@ -903,7 +903,7 @@
                                                                     @focus="$event.target.select()"
                                                                     @blur="updateSlipField(slip, 'ot_pay', $event)"
                                                                     :disabled="ps.status === 'locked'"
-                                                                    class="w-24 text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+                                                                    class="w-full text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
                                                                 />
                                                             </td>
                                                             <td class="px-2 py-1">
@@ -913,7 +913,7 @@
                                                                     @focus="$event.target.select()"
                                                                     @blur="updateSlipField(slip, 'commission', $event)"
                                                                     :disabled="ps.status === 'locked'"
-                                                                    class="w-24 text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+                                                                    class="w-full text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
                                                                 />
                                                             </td>
                                                             <td class="px-2 py-1">
@@ -923,7 +923,7 @@
                                                                     @focus="$event.target.select()"
                                                                     @blur="updateSlipField(slip, 'allowances', $event)"
                                                                     :disabled="ps.status === 'locked'"
-                                                                    class="w-24 text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+                                                                    class="w-full text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
                                                                 />
                                                             </td>
                                                             <td class="px-2 py-1">
@@ -933,13 +933,13 @@
                                                                     @focus="$event.target.select()"
                                                                     @blur="updateSlipField(slip, 'bonus', $event)"
                                                                     :disabled="ps.status === 'locked'"
-                                                                    class="w-24 text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+                                                                    class="w-full text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
                                                                 />
                                                             </td>
                                                             <td class="px-2 py-1">
                                                                 <div
                                                                     @click="ps.status !== 'locked' && openDeductionModal(slip)"
-                                                                    class="w-24 text-right border border-gray-200 rounded px-2 py-1 text-sm cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition"
+                                                                    class="w-full text-right border border-gray-200 rounded px-2 py-1 text-sm cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition"
                                                                     :class="ps.status === 'locked' ? 'bg-gray-100 cursor-not-allowed' : ''"
                                                                 >{{ formatNumber(slip.deductions) }}</div>
                                                             </td>
