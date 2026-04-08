@@ -197,9 +197,15 @@ class PaysheetController extends Controller
             $adjOt = $adjs->where('type', 'ot')->sum('amount');
 
             $autoOt = ($calc['ot_pay'] ?? 0) + ($calc['holiday_pay'] ?? 0);
-            $totalBonus = ($calc['bonus'] ?? 0) + $adjBonus;
-            $totalAllowance = ($calc['allowances'] ?? 0) + $adjAllowance;
-            $totalDeduction = ($calc['deductions'] ?? 0) + $adjDeduction;
+            $autoLatePenalty = $calc['late_penalty'] ?? 0;
+
+            // Bonus/Allowance/Deduction: adjustments REPLACE auto (items from settings)
+            // OT: adjustments ADD to auto. Late penalty always from auto.
+            $totalBonus = $adjs->where('type', 'bonus')->count() > 0 ? $adjBonus : ($calc['bonus'] ?? 0);
+            $totalAllowance = $adjs->where('type', 'allowance')->count() > 0 ? $adjAllowance : ($calc['allowances'] ?? 0);
+            $totalDeduction = $adjs->where('type', 'deduction')->count() > 0
+                ? ($adjDeduction + $autoLatePenalty)
+                : ($calc['deductions'] ?? 0);
             $totalOt = $autoOt + $adjOt;
             $totalSalary = max(0, $calc['base'] + $totalBonus + ($calc['commission'] ?? 0) + $totalAllowance + $totalOt - $totalDeduction);
 
@@ -518,13 +524,18 @@ class PaysheetController extends Controller
         $autoCommission = $details['commission'] ?? 0;
         $autoAllowance = $details['allowances'] ?? 0;
         $autoDeduction = $details['deductions'] ?? 0;
+        $autoLatePenalty = $details['late_penalty'] ?? 0;
         $autoOt = ($details['ot_pay'] ?? 0) + ($details['holiday_pay'] ?? 0);
-        $autoBase = $details['base'] ?? $slip->base_salary;
 
-        $slip->bonus = $autoBonus + $adjBonus;
-        $slip->allowances = $autoAllowance + $adjAllowance;
-        $slip->deductions = $autoDeduction + $adjDeduction;
+        // Bonus/Allowance/Deduction: adjustments REPLACE auto values (items from settings)
+        // OT: adjustments ADD to auto. Late penalty always from auto.
+        $slip->bonus = $adjs->where('type', 'bonus')->count() > 0 ? $adjBonus : $autoBonus;
+        $slip->allowances = $adjs->where('type', 'allowance')->count() > 0 ? $adjAllowance : $autoAllowance;
+        $slip->deductions = $adjs->where('type', 'deduction')->count() > 0
+            ? ($adjDeduction + $autoLatePenalty)
+            : $autoDeduction;
         $slip->ot_pay = $autoOt + $adjOt;
+
         $slip->total_salary = max(0, $slip->base_salary + $slip->bonus + $autoCommission + $slip->allowances + $slip->ot_pay - $slip->deductions);
         $slip->remaining = max(0, $slip->total_salary - $slip->paid_amount);
         $slip->save();
