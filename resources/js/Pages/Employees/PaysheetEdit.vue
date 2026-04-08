@@ -255,41 +255,51 @@
                 </div>
 
                 <!-- Allowance Popup -->
-                <div v-if="popup.type === 'allowance'" class="relative bg-white rounded-lg shadow-xl w-[600px] max-h-[80vh] overflow-hidden z-10">
+                <div v-if="popup.type === 'allowance'" class="relative bg-white rounded-lg shadow-xl w-[700px] max-h-[80vh] overflow-hidden z-10">
                     <div class="px-5 py-3 border-b flex justify-between items-center">
                         <h3 class="font-bold text-gray-800">Phụ cấp - {{ popup.slip?.employee?.name }}</h3>
                         <button @click="closePopup" class="text-gray-400 hover:text-gray-600">&times;</button>
                     </div>
                     <div class="p-5 overflow-auto max-h-[60vh]">
                         <table class="w-full text-sm">
-                            <thead class="bg-gray-50">
-                                <tr class="text-left text-xs text-gray-500 uppercase">
-                                    <th class="px-3 py-2">Tên phụ cấp</th>
-                                    <th class="px-3 py-2 text-right w-40">Thành tiền</th>
-                                    <th class="px-3 py-2 w-10"></th>
+                            <thead class="bg-gray-100">
+                                <tr>
+                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600">Tên phụ cấp</th>
+                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[160px]">Loại phụ cấp</th>
+                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[140px]">Số tiền</th>
+                                    <th class="w-8"></th>
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr v-for="adj in popupAdjustments" :key="adj.id" class="border-t">
-                                    <td class="px-3 py-2">
-                                        <span class="font-medium">{{ adj.name }}</span>
-                                        <span v-if="adj._fromSettings" class="text-xs text-gray-400 ml-1">(cài đặt)</span>
+                                <tr v-for="(adj, i) in popupAdjustments" :key="adj.id" class="border-t">
+                                    <td class="px-2 py-1">
+                                        <input v-model="adj.name" :disabled="isLocked" type="text"
+                                            class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:border-blue-500 outline-none"
+                                            placeholder="Ăn trưa, đi lại..." />
                                     </td>
-                                    <td class="px-3 py-2 text-right">
-                                        <input v-model.number="adj.amount" :disabled="isLocked" type="number"
-                                            class="w-full text-sm border rounded px-2 py-1 text-right" />
+                                    <td class="px-2 py-1">
+                                        <select v-model="adj.meta.allowance_type" :disabled="isLocked"
+                                            class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:border-blue-500 outline-none">
+                                            <option value="fixed_per_month">Cố định/tháng</option>
+                                            <option value="fixed_per_day">Theo ngày công</option>
+                                            <option value="percentage">% lương</option>
+                                        </select>
                                     </td>
-                                    <td class="px-3 py-1 text-center">
-                                        <button v-if="!isLocked" @click="deleteAdjustment(adj)" class="text-red-400 hover:text-red-600 text-lg">&times;</button>
+                                    <td class="px-2 py-1">
+                                        <input v-model.number="adj.amount" :disabled="isLocked" type="number" min="0"
+                                            class="w-full border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
+                                    </td>
+                                    <td class="px-1 py-1 text-center">
+                                        <button v-if="!isLocked" @click="deleteAdjustment(adj)" class="text-red-400 hover:text-red-600">&times;</button>
                                     </td>
                                 </tr>
                                 <tr v-if="popupAdjustments.length === 0" class="border-t">
-                                    <td colspan="3" class="px-3 py-4 text-center text-gray-400">Chưa có phụ cấp nào</td>
+                                    <td colspan="4" class="px-3 py-4 text-center text-gray-400">Chưa có phụ cấp nào</td>
                                 </tr>
                             </tbody>
                         </table>
                         <button v-if="!isLocked" @click="addAdjustmentRow('allowance')"
-                            class="text-sm text-blue-600 hover:underline mt-3">+ Thêm phụ cấp khác</button>
+                            class="text-sm text-blue-600 hover:underline mt-3">+ Thêm phụ cấp</button>
                     </div>
                     <div class="px-5 py-3 border-t flex justify-between items-center bg-gray-50">
                         <div class="font-semibold">Tổng: {{ fmt(popupTotal) }}</div>
@@ -301,41 +311,61 @@
                 </div>
 
                 <!-- Bonus Popup -->
-                <div v-if="popup.type === 'bonus'" class="relative bg-white rounded-lg shadow-xl w-[650px] max-h-[80vh] overflow-hidden z-10">
+                <div v-if="popup.type === 'bonus'" class="relative bg-white rounded-lg shadow-xl w-[750px] max-h-[80vh] overflow-hidden z-10">
                     <div class="px-5 py-3 border-b flex justify-between items-center">
                         <h3 class="font-bold text-gray-800">Thưởng - {{ popup.slip?.employee?.name }}</h3>
                         <button @click="closePopup" class="text-gray-400 hover:text-gray-600">&times;</button>
                     </div>
                     <div class="p-5 overflow-auto max-h-[60vh]">
                         <table class="w-full text-sm">
-                            <thead class="bg-gray-50">
-                                <tr class="text-left text-xs text-gray-500 uppercase">
-                                    <th class="px-3 py-2">Loại thưởng</th>
-                                    <th class="px-3 py-2 text-right w-40">Thành tiền</th>
-                                    <th class="px-3 py-2 w-10"></th>
+                            <thead class="bg-gray-100">
+                                <tr>
+                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600">Vai trò</th>
+                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[130px]">Doanh thu từ</th>
+                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[120px]">Giá trị thưởng</th>
+                                    <th class="text-center px-2 py-1.5 font-semibold text-gray-600 w-[50px]">%</th>
+                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[130px]">Thành tiền</th>
+                                    <th class="w-8"></th>
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr v-for="adj in popupAdjustments" :key="adj.id" class="border-t">
-                                    <td class="px-3 py-2">
-                                        <span class="font-medium">{{ adj.name }}</span>
-                                        <span v-if="adj._fromSettings" class="text-xs text-gray-400 ml-1">(cài đặt)</span>
+                                <tr v-for="(adj, i) in popupAdjustments" :key="adj.id" class="border-t">
+                                    <td class="px-2 py-1">
+                                        <select v-model="adj.meta.role_type" :disabled="isLocked"
+                                            class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:border-blue-500 outline-none">
+                                            <option value="sales">Tư vấn bán hàng</option>
+                                            <option value="cashier">Thu ngân</option>
+                                            <option value="technician">Kỹ thuật viên</option>
+                                            <option value="manager">Quản lý</option>
+                                            <option value="other">Khác</option>
+                                        </select>
                                     </td>
-                                    <td class="px-3 py-2 text-right">
-                                        <input v-model.number="adj.amount" :disabled="isLocked" type="number"
-                                            class="w-full text-sm border rounded px-2 py-1 text-right" />
+                                    <td class="px-2 py-1">
+                                        <input v-model.number="adj.meta.revenue_from" :disabled="isLocked" type="number" min="0"
+                                            class="w-full border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
                                     </td>
-                                    <td class="px-3 py-1 text-center">
-                                        <button v-if="!isLocked" @click="deleteAdjustment(adj)" class="text-red-400 hover:text-red-600 text-lg">&times;</button>
+                                    <td class="px-2 py-1">
+                                        <input v-model.number="adj.meta.bonus_value" :disabled="isLocked" type="number" min="0"
+                                            class="w-full border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
+                                    </td>
+                                    <td class="px-2 py-1 text-center">
+                                        <input type="checkbox" v-model="adj.meta.bonus_is_percentage" :disabled="isLocked" class="accent-blue-600" />
+                                    </td>
+                                    <td class="px-2 py-1">
+                                        <input v-model.number="adj.amount" :disabled="isLocked" type="number" min="0"
+                                            class="w-full border border-gray-300 rounded px-2 py-1 text-sm text-right font-semibold focus:border-blue-500 outline-none" />
+                                    </td>
+                                    <td class="px-1 py-1 text-center">
+                                        <button v-if="!isLocked" @click="deleteAdjustment(adj)" class="text-red-400 hover:text-red-600">&times;</button>
                                     </td>
                                 </tr>
                                 <tr v-if="popupAdjustments.length === 0" class="border-t">
-                                    <td colspan="3" class="px-3 py-4 text-center text-gray-400">Chưa có thưởng nào</td>
+                                    <td colspan="6" class="px-3 py-4 text-center text-gray-400">Chưa có thưởng nào</td>
                                 </tr>
                             </tbody>
                         </table>
                         <button v-if="!isLocked" @click="addAdjustmentRow('bonus')"
-                            class="text-sm text-blue-600 hover:underline mt-3">+ Thêm thưởng khác</button>
+                            class="text-sm text-blue-600 hover:underline mt-3">+ Thêm mức thưởng</button>
                     </div>
                     <div class="px-5 py-3 border-t flex justify-between items-center bg-gray-50">
                         <div class="font-semibold">Tổng: {{ fmt(popupTotal) }}</div>
@@ -347,43 +377,77 @@
                 </div>
 
                 <!-- Deduction Popup -->
-                <div v-if="popup.type === 'deduction'" class="relative bg-white rounded-lg shadow-xl w-[700px] max-h-[80vh] overflow-hidden z-10">
+                <div v-if="popup.type === 'deduction'" class="relative bg-white rounded-lg shadow-xl w-[800px] max-h-[80vh] overflow-hidden z-10">
                     <div class="px-5 py-3 border-b flex justify-between items-center">
                         <h3 class="font-bold text-gray-800">Giảm trừ - {{ popup.slip?.employee?.name }}</h3>
                         <button @click="closePopup" class="text-gray-400 hover:text-gray-600">&times;</button>
                     </div>
                     <div class="p-5 overflow-auto max-h-[60vh]">
-                        <!-- Giảm trừ từ cài đặt (editable) -->
+                        <!-- Giảm trừ (editable, matching settings form) -->
                         <h4 class="text-sm font-semibold text-gray-600 mb-2">Giảm trừ</h4>
                         <table class="w-full text-sm mb-4">
-                            <thead class="bg-gray-50">
-                                <tr class="text-left text-xs text-gray-500 uppercase">
-                                    <th class="px-3 py-2">Tên</th>
-                                    <th class="px-3 py-2 text-right w-40">Thành tiền</th>
-                                    <th class="px-3 py-2 w-10"></th>
+                            <thead class="bg-gray-100">
+                                <tr>
+                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600">Tên giảm trừ</th>
+                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[140px]">Loại giảm trừ</th>
+                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[140px]">Loại tính</th>
+                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[90px]">Mỗi (phút)</th>
+                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[120px]">Số tiền</th>
+                                    <th class="w-8"></th>
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr v-for="adj in popupAdjustments" :key="adj.id" class="border-t">
-                                    <td class="px-3 py-2">
-                                        <span class="font-medium">{{ adj.name }}</span>
-                                        <span v-if="adj._fromSettings" class="text-xs text-gray-400 ml-1">(cài đặt)</span>
+                                <tr v-for="(adj, i) in popupAdjustments" :key="adj.id" class="border-t">
+                                    <td class="px-2 py-1">
+                                        <input v-model="adj.name" :disabled="isLocked" type="text"
+                                            class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:border-blue-500 outline-none"
+                                            placeholder="Đi muộn, BHXH..." />
                                     </td>
-                                    <td class="px-3 py-2 text-right">
-                                        <input v-model.number="adj.amount" :disabled="isLocked" type="number"
-                                            class="w-full text-sm border rounded px-2 py-1 text-right" />
+                                    <td class="px-2 py-1">
+                                        <select v-model="adj.meta.deduction_category" :disabled="isLocked"
+                                            @change="onDeductionCategoryChange(adj)"
+                                            class="w-full border border-gray-300 rounded px-2 py-1 text-[13px] focus:border-blue-500 outline-none">
+                                            <option value="">Cố định</option>
+                                            <option value="late">Đi muộn</option>
+                                            <option value="early_leave">Về sớm</option>
+                                            <option value="absence">Vắng mặt</option>
+                                            <option value="violation">Vi phạm nội quy</option>
+                                        </select>
                                     </td>
-                                    <td class="px-3 py-1 text-center">
-                                        <button v-if="!isLocked" @click="deleteAdjustment(adj)" class="text-red-400 hover:text-red-600 text-lg">&times;</button>
+                                    <td class="px-2 py-1">
+                                        <select v-model="adj.meta.calculation_type" :disabled="isLocked || !adj.meta.deduction_category || adj.meta.deduction_category === 'absence' || adj.meta.deduction_category === 'violation'"
+                                            class="w-full border border-gray-300 rounded px-2 py-1 text-[13px] focus:border-blue-500 outline-none">
+                                            <option value="fixed_per_month">Cố định/tháng</option>
+                                            <option v-if="adj.meta.deduction_category === 'late' || adj.meta.deduction_category === 'early_leave'" value="per_minute">Theo số phút</option>
+                                            <option v-if="adj.meta.deduction_category === 'late' || adj.meta.deduction_category === 'early_leave'" value="per_occurrence">Theo số lần</option>
+                                        </select>
+                                    </td>
+                                    <td class="px-2 py-1">
+                                        <input v-if="adj.meta.calculation_type === 'per_minute'"
+                                            v-model.number="adj.meta.per_minutes" :disabled="isLocked"
+                                            type="number" min="1"
+                                            class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:border-blue-500 outline-none"
+                                            placeholder="15" />
+                                        <span v-else class="text-gray-300 text-xs">—</span>
+                                    </td>
+                                    <td class="px-2 py-1">
+                                        <input v-model.number="adj.amount" :disabled="isLocked" type="number" min="0"
+                                            class="w-full border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
+                                        <div v-if="adj.meta.calculation_type === 'per_minute' && adj.meta.per_minutes" class="text-[10px] text-gray-400 mt-0.5">
+                                            Trừ {{ fmt(adj.amount || 0) }}đ / {{ adj.meta.per_minutes }} phút
+                                        </div>
+                                    </td>
+                                    <td class="px-1 py-1 text-center">
+                                        <button v-if="!isLocked" @click="deleteAdjustment(adj)" class="text-red-400 hover:text-red-600">&times;</button>
                                     </td>
                                 </tr>
                                 <tr v-if="popupAdjustments.length === 0" class="border-t">
-                                    <td colspan="3" class="px-3 py-3 text-center text-gray-400">Chưa có giảm trừ nào</td>
+                                    <td colspan="6" class="px-3 py-3 text-center text-gray-400">Chưa có giảm trừ nào</td>
                                 </tr>
                             </tbody>
                         </table>
                         <button v-if="!isLocked" @click="addAdjustmentRow('deduction')"
-                            class="text-sm text-blue-600 hover:underline mb-4">+ Thêm giảm trừ khác</button>
+                            class="text-sm text-blue-600 hover:underline mb-4">+ Thêm giảm trừ</button>
 
                         <!-- Late penalty (read-only, auto from attendance) -->
                         <div v-if="latePenaltyItems.length > 0">
@@ -534,6 +598,9 @@ function getSettingsItems(type, slip) {
                 name: a.name || 'Phụ cấp',
                 amount: calc ? (calc.calculated || 0) : (a.amount || 0),
                 notes: '',
+                meta: {
+                    allowance_type: a.allowance_type || 'fixed_per_month',
+                },
                 _existing: false,
                 _fromSettings: true,
             };
@@ -551,6 +618,12 @@ function getSettingsItems(type, slip) {
                 name: label,
                 amount: calc ? (calc.calculated || 0) : (b.bonus_value || 0),
                 notes: '',
+                meta: {
+                    role_type: b.role_type || 'sales',
+                    revenue_from: b.revenue_from || 0,
+                    bonus_value: b.bonus_value || 0,
+                    bonus_is_percentage: b.bonus_is_percentage || false,
+                },
                 _existing: false,
                 _fromSettings: true,
             };
@@ -567,6 +640,11 @@ function getSettingsItems(type, slip) {
                 name: d.name || 'Giảm trừ',
                 amount: calc ? (calc.calculated || 0) : (d.amount || 0),
                 notes: '',
+                meta: {
+                    deduction_category: d.deduction_category || '',
+                    calculation_type: d.calculation_type || 'fixed_per_month',
+                    per_minutes: d.per_minutes || null,
+                },
                 _existing: false,
                 _fromSettings: true,
             };
@@ -587,8 +665,12 @@ function openPopup(type, slip) {
     const existingAdj = (slip.adjustments || []).filter(a => a.type === type);
 
     if (existingAdj.length > 0) {
-        // Already saved adjustments — use them
-        popupAdjustments.value = existingAdj.map(a => ({ ...a, _existing: true }));
+        // Already saved adjustments — use them, ensuring meta is an object
+        popupAdjustments.value = existingAdj.map(a => ({
+            ...a,
+            meta: a.meta || {},
+            _existing: true,
+        }));
     } else if (type === 'allowance' || type === 'bonus' || type === 'deduction') {
         // Pre-populate from employee salary settings with calculated amounts
         popupAdjustments.value = getSettingsItems(type, slip);
@@ -606,17 +688,58 @@ function closePopup() {
 }
 
 function addAdjustmentRow(type) {
-    const typeLabels = { ot: 'OT', allowance: 'phụ cấp', bonus: 'thưởng', deduction: 'giảm trừ' };
-    const name = prompt(`Nhập tên ${typeLabels[type] || 'khoản'}:`);
-    if (!name) return;
-    popupAdjustments.value.push({
-        id: tempIdCounter--,
-        type: type,
-        name: name,
-        amount: 0,
-        notes: '',
-        _existing: false,
-    });
+    if (type === 'allowance') {
+        popupAdjustments.value.push({
+            id: tempIdCounter--,
+            type: 'allowance',
+            name: '',
+            amount: 0,
+            notes: '',
+            meta: { allowance_type: 'fixed_per_month' },
+            _existing: false,
+        });
+    } else if (type === 'bonus') {
+        popupAdjustments.value.push({
+            id: tempIdCounter--,
+            type: 'bonus',
+            name: '',
+            amount: 0,
+            notes: '',
+            meta: { role_type: 'sales', revenue_from: 0, bonus_value: 0, bonus_is_percentage: false },
+            _existing: false,
+        });
+    } else if (type === 'deduction') {
+        popupAdjustments.value.push({
+            id: tempIdCounter--,
+            type: 'deduction',
+            name: '',
+            amount: 0,
+            notes: '',
+            meta: { deduction_category: '', calculation_type: 'fixed_per_month', per_minutes: null },
+            _existing: false,
+        });
+    } else {
+        // OT - simple name+amount
+        const name = prompt('Nhập tên khoản OT:');
+        if (!name) return;
+        popupAdjustments.value.push({
+            id: tempIdCounter--,
+            type: 'ot',
+            name: name,
+            amount: 0,
+            notes: '',
+            meta: {},
+            _existing: false,
+        });
+    }
+}
+
+function onDeductionCategoryChange(adj) {
+    const cat = adj.meta.deduction_category;
+    if (!cat || cat === 'absence' || cat === 'violation') {
+        adj.meta.calculation_type = 'fixed_per_month';
+        adj.meta.per_minutes = null;
+    }
 }
 
 function deleteAdjustment(adj) {
@@ -640,12 +763,18 @@ async function saveAdjustments() {
 
         // Update existing or create new
         for (const adj of popupAdjustments.value) {
-            if (!adj.name || !adj.amount) continue;
+            if (!adj.amount && adj.amount !== 0) continue;
+            // For bonus: auto-generate name from meta
+            if (type === 'bonus' && adj.meta?.role_type) {
+                adj.name = bonusRoleLabel(adj.meta.role_type) + (adj.meta.revenue_from ? ` (từ ${fmt(adj.meta.revenue_from)})` : '');
+            }
+            if (!adj.name) adj.name = type === 'allowance' ? 'Phụ cấp' : type === 'bonus' ? 'Thưởng' : type === 'deduction' ? 'Giảm trừ' : 'OT';
             if (adj._existing && adj.id > 0) {
                 await axios.put(`/api/paysheets/${psId}/payslips/${slipId}/adjustments/${adj.id}`, {
                     name: adj.name,
                     amount: adj.amount,
                     notes: adj.notes || '',
+                    meta: adj.meta || {},
                 });
             } else {
                 await axios.post(`/api/paysheets/${psId}/payslips/${slipId}/adjustments`, {
@@ -653,6 +782,7 @@ async function saveAdjustments() {
                     name: adj.name,
                     amount: adj.amount,
                     notes: adj.notes || '',
+                    meta: adj.meta || {},
                 });
             }
         }

@@ -459,6 +459,7 @@ class PaysheetController extends Controller
             'name' => 'required|string|max:255',
             'amount' => 'required|integer|min:0',
             'notes' => 'nullable|string|max:500',
+            'meta' => 'nullable|array',
         ]);
 
         $adj = PayslipAdjustment::create([
@@ -485,6 +486,7 @@ class PaysheetController extends Controller
             'name' => 'sometimes|string|max:255',
             'amount' => 'sometimes|integer|min:0',
             'notes' => 'nullable|string|max:500',
+            'meta' => 'nullable|array',
         ]);
 
         $adj->update($data);

@@ -12,10 +12,12 @@ class PayslipAdjustment extends Model
         'name',
         'amount',
         'notes',
+        'meta',
     ];
 
     protected $casts = [
         'amount' => 'integer',
+        'meta' => 'array',
     ];
 
     public function payslip()
