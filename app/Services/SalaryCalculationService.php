@@ -123,7 +123,7 @@ class SalaryCalculationService
         if ($hasDeduction && $deductionList->count()) {
             $result = $this->calculateDeductionsFromList(
                 $deductionList, $lateCount, $lateTotalMinutes,
-                $earlyLeaveCount, $earlyTotalMinutes
+                $earlyLeaveCount, $earlyTotalMinutes, $records
             );
             $deductionAmount = $result['amount'];
             $deductionDetails = $result['details'];
@@ -140,12 +140,17 @@ class SalaryCalculationService
                     $mins = (int) $rec->late_minutes;
                     $matched = $tiers->first(fn($t) => $mins >= (int) $t['minutes']);
                     if ($matched) {
-                        $latePenaltyAmount += (float) $matched['amount'];
+                        $tierMinutes = (int) $matched['minutes'];
+                        $tierAmount = (float) $matched['amount'];
+                        // Block-based: mỗi khối X phút phạt Y đồng
+                        // VD: tier 10 phút / 10.000đ → 25 phút = floor(25/10)*10000 = 20.000
+                        $penalty = floor($mins / $tierMinutes) * $tierAmount;
+                        $latePenaltyAmount += $penalty;
                         $latePenaltyDetails[] = [
                             'date' => $rec->work_date,
                             'late_minutes' => $mins,
-                            'tier_minutes' => (int) $matched['minutes'],
-                            'penalty' => (float) $matched['amount'],
+                            'tier_minutes' => $tierMinutes,
+                            'penalty' => $penalty,
                         ];
                     }
                 }
@@ -672,7 +677,8 @@ class SalaryCalculationService
     private function calculateDeductionsFromList(
         Collection $deductionList,
         int $lateCount, int $lateTotalMinutes,
-        int $earlyLeaveCount, int $earlyTotalMinutes
+        int $earlyLeaveCount, int $earlyTotalMinutes,
+        Collection $records = null
     ): array {
         $amount = 0;
         $details = [];
@@ -683,6 +689,7 @@ class SalaryCalculationService
             $category = data_get($deduction, 'deduction_category');
             $calcType = data_get($deduction, 'calculation_type');
             $amt = data_get($deduction, 'amount', 0);
+            $perMinutes = data_get($deduction, 'per_minutes');
 
             // Per-employee custom deductions: chỉ có name + amount (cố định/tháng)
             // Template deductions: có đầy đủ category + calc_type
@@ -697,7 +704,16 @@ class SalaryCalculationService
                         if ($calcType === 'per_occurrence') {
                             $dedAmount = $amt * $lateCount;
                         } elseif ($calcType === 'per_minute') {
-                            $dedAmount = $amt * $lateTotalMinutes;
+                            // Block-based: mỗi khối X phút phạt Y đồng, tính theo từng ngày
+                            $blockSize = $perMinutes && $perMinutes > 0 ? (int) $perMinutes : 1;
+                            if ($records) {
+                                foreach ($records->where('late_minutes', '>', 0) as $rec) {
+                                    $mins = (int) $rec->late_minutes;
+                                    $dedAmount += floor($mins / $blockSize) * $amt;
+                                }
+                            } else {
+                                $dedAmount = floor($lateTotalMinutes / $blockSize) * $amt;
+                            }
                         } else {
                             $dedAmount = $amt;
                         }
@@ -707,7 +723,15 @@ class SalaryCalculationService
                         if ($calcType === 'per_occurrence') {
                             $dedAmount = $amt * $earlyLeaveCount;
                         } elseif ($calcType === 'per_minute') {
-                            $dedAmount = $amt * $earlyTotalMinutes;
+                            $blockSize = $perMinutes && $perMinutes > 0 ? (int) $perMinutes : 1;
+                            if ($records) {
+                                foreach ($records->where('early_minutes', '>', 0) as $rec) {
+                                    $mins = (int) $rec->early_minutes;
+                                    $dedAmount += floor($mins / $blockSize) * $amt;
+                                }
+                            } else {
+                                $dedAmount = floor($earlyTotalMinutes / $blockSize) * $amt;
+                            }
                         } else {
                             $dedAmount = $amt;
                         }
@@ -732,6 +756,7 @@ class SalaryCalculationService
                 'category' => $category ?? 'fixed',
                 'calc_type' => $calcType ?? 'fixed_per_month',
                 'config_amount' => $amt,
+                'per_minutes' => $perMinutes,
                 'occurrences' => $occurrences,
                 'total_minutes' => $totalMinutes,
                 'calculated' => round($dedAmount),

@@ -462,7 +462,7 @@
                                 </thead>
                                 <tbody>
                                     <tr v-for="(lp, li) in latePenaltyItems" :key="'lp'+li" class="border-t">
-                                        <td class="px-3 py-2">{{ lp.date }}</td>
+                                        <td class="px-3 py-2">{{ formatDate(lp.date) }}</td>
                                         <td class="px-3 py-2 text-right">{{ lp.late_minutes }} phút</td>
                                         <td class="px-3 py-2 text-right font-semibold text-red-600">{{ fmt(lp.penalty || 0) }}</td>
                                     </tr>
