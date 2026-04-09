@@ -459,9 +459,13 @@ class SupplierController extends Controller
 
         if ($purchases->isEmpty()) return;
 
-        // Delete old purchase-linked entries (keeps manual payments/adjustments)
+        // Delete old purchase-linked entries AND offset entries (may have wrong sign)
+        // Keeps only manual payments/adjustments/discounts (purchase_id is NULL, type != offset)
         SupplierDebtTransaction::where('supplier_id', $supplierId)
-            ->whereNotNull('purchase_id')
+            ->where(function ($q) {
+                $q->whereNotNull('purchase_id')
+                  ->orWhere('type', 'offset');
+            })
             ->delete();
 
         foreach ($purchases as $p) {
