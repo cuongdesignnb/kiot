@@ -187,6 +187,59 @@ const showPurchaseDetail = async (purchaseId) => {
     purchaseDetail.loading = false;
 };
 
+// ====== INVOICE DETAIL MODAL ======
+const invoiceDetail = reactive({ show: false, loading: false, data: null });
+const showInvoiceDetail = async (invoiceId) => {
+    invoiceDetail.show = true;
+    invoiceDetail.loading = true;
+    try {
+        const { data } = await axios.get(`/invoices/${invoiceId}/detail`);
+        invoiceDetail.data = data;
+    } catch (e) {
+        invoiceDetail.data = null;
+    }
+    invoiceDetail.loading = false;
+};
+
+// ====== ADJUSTMENT DETAIL MODAL ======
+const adjustmentDetail = reactive({ show: false, data: null });
+const showAdjustmentDetail = (entry) => {
+    adjustmentDetail.data = entry;
+    adjustmentDetail.show = true;
+};
+
+// ====== CLICK CODE → OPEN DETAIL ======
+const onCodeClick = (entry) => {
+    const code = entry.code || '';
+    const id = (entry.id || '').toString();
+
+    // PN* = Phiếu nhập (Purchase) → purchase detail modal
+    if (code.startsWith('PN') && id.startsWith('stx-')) {
+        // Find purchase_id from transactions if available
+        const purchaseId = entry.purchase_id;
+        if (purchaseId) {
+            showPurchaseDetail(purchaseId);
+        } else {
+            // Try to find purchase by code
+            axios.get(`/purchases/find-by-code/${code}`).then(res => {
+                if (res.data?.id) showPurchaseDetail(res.data.id);
+            }).catch(() => {});
+        }
+        return;
+    }
+
+    // HD* = Hóa đơn (Invoice) → invoice detail modal
+    if (code.startsWith('HD') && id.startsWith('inv-')) {
+        const invoiceId = id.replace('inv-', '');
+        showInvoiceDetail(invoiceId);
+        return;
+    }
+
+    // PCPN*, TTHD* = Thanh toán → show adjustment info
+    // DC*, CB*, CKNCC* = Điều chỉnh/Chiết khấu → adjustment detail
+    showAdjustmentDetail(entry);
+};
+
 const filteredDebt = (id) => {
     const raw = supplierDebt[id];
     const data = Array.isArray(raw) ? raw : (raw?.entries || []);
@@ -200,6 +253,7 @@ const debtActionType = ref('payment'); // 'payment', 'adjustment', 'discount'
 const debtActionSupplier = ref(null);
 const debtAmount = ref(0);
 const debtNote = ref('');
+const debtDate = ref(new Date().toISOString().slice(0, 10));
 const debtSubmitting = ref(false);
 
 const debtActionLabels = {
@@ -213,6 +267,7 @@ const openDebtAction = (supplier, type) => {
     debtActionType.value = type;
     debtAmount.value = 0;
     debtNote.value = '';
+    debtDate.value = new Date().toISOString().slice(0, 10);
     showDebtModal.value = true;
 };
 
@@ -225,12 +280,14 @@ const submitDebtAction = async () => {
             await axios.post(`/api/suppliers/${id}/payment`, {
                 amount: debtAmount.value,
                 note: debtNote.value,
+                payment_date: debtDate.value,
             });
         } else {
             await axios.post(`/api/suppliers/${id}/adjust-debt`, {
                 amount: debtAmount.value,
                 note: debtNote.value,
                 type: debtActionType.value,
+                payment_date: debtDate.value,
             });
         }
         // Reload debt data
@@ -328,11 +385,14 @@ const offsetForm = reactive({ amount: 0, note: '' });
 const offsetHistoryData = reactive({});
 
 const openOffsetModal = (supplier) => {
+    const rawReceivable = Number(supplier.debt_amount) || 0;
+    const rawPayable = Number(supplier.supplier_debt_amount) || 0;
+    // Only allow offset when both sides are positive (actual debt, not overpaid)
     offsetModal.show = true;
     offsetModal.customerId = supplier.id;
     offsetModal.customerName = supplier.name;
-    offsetModal.receivable = Math.abs(Number(supplier.debt_amount) || 0);
-    offsetModal.payable = Math.abs(Number(supplier.supplier_debt_amount) || 0);
+    offsetModal.receivable = rawReceivable > 0 ? rawReceivable : 0;
+    offsetModal.payable = rawPayable > 0 ? rawPayable : 0;
     offsetModal.maxOffset = Math.min(offsetModal.receivable, offsetModal.payable);
     offsetModal.submitting = false;
     offsetForm.amount = offsetModal.maxOffset;
@@ -847,9 +907,9 @@ const cancelOffset = async (supplierId, offsetId) => {
                                 <td class="px-4 py-3">{{ supplier.phone }}</td>
                                 <td class="px-4 py-3">{{ supplier.email }}</td>
                                 <td class="px-4 py-3 text-right">
-                                    <div>{{ Math.abs(Number(supplier.supplier_debt_amount)).toLocaleString() }}</div>
-                                    <div v-if="supplier.is_customer && Math.abs(supplier.debt_amount) > 0" class="text-xs text-blue-600">
-                                        KH nợ: {{ formatCurrency(Math.abs(supplier.debt_amount)) }}
+                                    <div :class="Number(supplier.supplier_debt_amount) < 0 ? 'text-green-600' : Number(supplier.supplier_debt_amount) > 0 ? 'text-red-600' : ''">{{ Number(supplier.supplier_debt_amount).toLocaleString() }}</div>
+                                    <div v-if="supplier.is_customer && Number(supplier.debt_amount) != 0" class="text-xs text-blue-600">
+                                        KH nợ: {{ formatCurrency(supplier.debt_amount) }}
                                     </div>
                                 </td>
                                 <td class="px-4 py-3 text-right">
@@ -999,16 +1059,16 @@ const cancelOffset = async (supplierId, offsetId) => {
                                                     <div class="grid grid-cols-4 gap-4 text-center">
                                                         <div>
                                                             <div class="text-xs text-gray-500 mb-1">Nợ phải trả (mua hàng)</div>
-                                                            <div class="text-base font-bold text-red-600">{{ formatCurrency(Math.abs(supplierDebt[supplier.id].summary.payable)) }}</div>
+                                                            <div class="text-base font-bold" :class="supplierDebt[supplier.id].summary.payable < 0 ? 'text-green-600' : 'text-red-600'">{{ formatCurrency(supplierDebt[supplier.id].summary.payable) }}</div>
                                                         </div>
                                                         <div>
                                                             <div class="text-xs text-gray-500 mb-1">Nợ phải thu (bán hàng)</div>
-                                                            <div class="text-base font-bold text-blue-600">{{ formatCurrency(Math.abs(supplierDebt[supplier.id].summary.receivable)) }}</div>
+                                                            <div class="text-base font-bold text-blue-600">{{ formatCurrency(supplierDebt[supplier.id].summary.receivable) }}</div>
                                                         </div>
                                                         <div>
                                                             <div class="text-xs text-gray-500 mb-1">Công nợ ròng</div>
                                                             <div class="text-base font-bold" :class="supplierDebt[supplier.id].summary.net > 0 ? 'text-blue-600' : supplierDebt[supplier.id].summary.net < 0 ? 'text-red-600' : 'text-green-600'">
-                                                                {{ formatCurrency(Math.abs(supplierDebt[supplier.id].summary.net)) }}
+                                                                {{ formatCurrency(supplierDebt[supplier.id].summary.net) }}
                                                             </div>
                                                         </div>
                                                         <div>
@@ -1018,7 +1078,7 @@ const cancelOffset = async (supplierId, offsetId) => {
                                                             <span v-else class="inline-block text-xs font-bold bg-green-100 text-green-700 px-2 py-1 rounded-full">Đã cân bằng</span>
                                                         </div>
                                                     </div>
-                                                    <div v-if="Math.abs(supplierDebt[supplier.id].summary.receivable) > 0 && Math.abs(supplierDebt[supplier.id].summary.payable) > 0" class="mt-3 flex justify-center">
+                                                    <div v-if="supplierDebt[supplier.id].summary.receivable > 0 && supplierDebt[supplier.id].summary.payable > 0" class="mt-3 flex justify-center">
                                                         <button @click="openOffsetModal(supplier)" class="text-sm font-bold text-white bg-purple-600 hover:bg-purple-700 px-4 py-1.5 rounded shadow-sm flex items-center gap-1.5">
                                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
                                                             Cấn bằng công nợ
@@ -1051,7 +1111,7 @@ const cancelOffset = async (supplierId, offsetId) => {
                                                     <tbody class="divide-y">
                                                         <tr v-if="!filteredDebt(supplier.id)?.length"><td colspan="5" class="px-3 py-6 text-center text-gray-400">Chưa có giao dịch công nợ.</td></tr>
                                                         <tr v-for="d in filteredDebt(supplier.id)" :key="d.id" class="hover:bg-gray-50">
-                                                            <td class="px-3 py-2 text-blue-600 font-semibold">{{ d.code }}</td>
+                                                            <td class="px-3 py-2 text-blue-600 font-semibold cursor-pointer hover:underline" @click="onCodeClick(d)">{{ d.code }}</td>
                                                             <td class="px-3 py-2">{{ formatDateTime(d.created_at) }}</td>
                                                             <td class="px-3 py-2">{{ d.type_label }}</td>
                                                             <td class="px-3 py-2 text-right font-semibold" :class="d.amount < 0 ? 'text-green-600' : ''">{{ Number(d.amount).toLocaleString() }}</td>
@@ -1708,7 +1768,7 @@ const cancelOffset = async (supplierId, offsetId) => {
                         </div>
                         <div class="flex justify-between mt-1">
                             <span>Nợ hiện tại:</span>
-                            <span class="font-bold text-red-600">{{ Math.abs(Number(debtActionSupplier?.supplier_debt_amount || 0)).toLocaleString() }}₫</span>
+                            <span class="font-bold" :class="Number(debtActionSupplier?.supplier_debt_amount || 0) < 0 ? 'text-green-600' : 'text-red-600'">{{ Number(debtActionSupplier?.supplier_debt_amount || 0).toLocaleString() }}₫</span>
                         </div>
                     </div>
                     <div>
@@ -1721,6 +1781,10 @@ const cancelOffset = async (supplierId, offsetId) => {
                             <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₫</span>
                         </div>
                         <p v-if="debtActionType === 'adjustment'" class="text-xs text-gray-400 mt-1">Nhập số dương để tăng nợ, số âm để giảm nợ.</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">Ngày giao dịch</label>
+                        <input v-model="debtDate" type="date" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
                     </div>
                     <div>
                         <label class="block text-sm font-semibold text-gray-700 mb-1">Ghi chú</label>
@@ -2006,6 +2070,131 @@ const cancelOffset = async (supplierId, offsetId) => {
                     </div>
                 </template>
                 <div v-else class="p-12 text-center text-gray-400">Không tìm thấy thông tin phiếu nhập</div>
+            </div>
+        </div>
+        <!-- Invoice Detail Modal (Hóa đơn bán hàng) -->
+        <div v-if="invoiceDetail.show" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="invoiceDetail.show = false">
+            <div class="bg-white rounded-lg shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+                <div v-if="invoiceDetail.loading" class="p-12 text-center text-gray-400">Đang tải...</div>
+                <template v-else-if="invoiceDetail.data">
+                    <!-- Header -->
+                    <div class="flex items-center justify-between px-6 py-4 border-b">
+                        <div>
+                            <h3 class="text-lg font-bold text-gray-800">Hóa đơn</h3>
+                            <div class="flex items-center gap-2 mt-1">
+                                <span class="font-medium text-gray-600">{{ invoiceDetail.data.customer_name }}</span>
+                                <span class="text-blue-600 font-bold">{{ invoiceDetail.data.code }}</span>
+                                <span class="px-2 py-0.5 rounded text-xs font-semibold bg-green-100 text-green-700">Hoàn thành</span>
+                            </div>
+                        </div>
+                        <button @click="invoiceDetail.show = false" class="text-gray-400 hover:text-gray-600">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        </button>
+                    </div>
+                    <!-- Meta info -->
+                    <div class="px-6 py-3 grid grid-cols-3 gap-4 text-sm border-b bg-gray-50">
+                        <div><span class="text-gray-500">Người tạo:</span> <span class="font-medium">{{ invoiceDetail.data.user_name || 'Admin' }}</span></div>
+                        <div><span class="text-gray-500">Người bán:</span> <span class="font-medium">{{ invoiceDetail.data.seller_name || invoiceDetail.data.user_name || 'Admin' }}</span></div>
+                        <div><span class="text-gray-500">Ngày bán:</span> <span class="font-medium">{{ formatDateTime(invoiceDetail.data.created_at) }}</span></div>
+                    </div>
+                    <!-- Items table -->
+                    <div class="px-6 py-4">
+                        <table class="w-full text-sm">
+                            <thead class="bg-gray-50 text-gray-600 text-xs uppercase">
+                                <tr>
+                                    <th class="px-3 py-2 text-left">Mã hàng</th>
+                                    <th class="px-3 py-2 text-left">Tên hàng</th>
+                                    <th class="px-3 py-2 text-right">Số lượng</th>
+                                    <th class="px-3 py-2 text-right">Đơn giá</th>
+                                    <th class="px-3 py-2 text-right">Giảm giá</th>
+                                    <th class="px-3 py-2 text-right">Thành tiền</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y">
+                                <tr v-for="(item, idx) in invoiceDetail.data.items" :key="idx" class="hover:bg-gray-50">
+                                    <td class="px-3 py-2 text-blue-600 font-medium">{{ item.product_code || item.code }}</td>
+                                    <td class="px-3 py-2">{{ item.product_name || item.name }}</td>
+                                    <td class="px-3 py-2 text-right">{{ item.quantity }}</td>
+                                    <td class="px-3 py-2 text-right">{{ formatCurrency(item.price) }}</td>
+                                    <td class="px-3 py-2 text-right">{{ formatCurrency(item.discount || 0) }}</td>
+                                    <td class="px-3 py-2 text-right font-medium">{{ formatCurrency(item.subtotal || (item.quantity * item.price)) }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <!-- Totals -->
+                    <div class="px-6 py-4 border-t bg-gray-50">
+                        <div class="flex justify-end">
+                            <div class="w-72 space-y-1 text-sm">
+                                <div class="flex justify-between"><span class="text-gray-500">Tổng tiền hàng:</span><span class="font-medium">{{ formatCurrency(invoiceDetail.data.total) }}</span></div>
+                                <div v-if="invoiceDetail.data.discount > 0" class="flex justify-between"><span class="text-gray-500">Giảm giá:</span><span class="font-medium text-red-500">-{{ formatCurrency(invoiceDetail.data.discount) }}</span></div>
+                                <div class="flex justify-between font-bold text-base border-t pt-1"><span>Khách cần trả:</span><span class="text-blue-600">{{ formatCurrency(invoiceDetail.data.total - (invoiceDetail.data.discount || 0)) }}</span></div>
+                                <div class="flex justify-between"><span class="text-gray-500">Khách đã trả:</span><span class="font-medium">{{ formatCurrency(invoiceDetail.data.customer_paid || 0) }}</span></div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Footer -->
+                    <div class="px-6 py-3 border-t flex items-center justify-between">
+                        <div v-if="invoiceDetail.data.note" class="text-sm text-gray-500 flex items-center gap-1">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                            {{ invoiceDetail.data.note }}
+                        </div>
+                        <div v-else class="text-sm text-gray-400 flex items-center gap-1">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                            Chưa có ghi chú
+                        </div>
+                        <a :href="`/orders/${invoiceDetail.data.id}`" class="px-4 py-2 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 flex items-center gap-1">
+                            📋 Mở phiếu
+                        </a>
+                    </div>
+                </template>
+                <div v-else class="p-12 text-center text-gray-400">Không tìm thấy thông tin hóa đơn</div>
+            </div>
+        </div>
+
+        <!-- Adjustment/Payment Detail Modal (Điều chỉnh / Thanh toán) -->
+        <div v-if="adjustmentDetail.show" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="adjustmentDetail.show = false">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+                    <h3 class="text-lg font-bold text-gray-800 flex items-center gap-2">
+                        {{ adjustmentDetail.data?.type_label || 'Chi tiết' }}
+                        <span class="text-gray-400 text-sm font-normal">ⓘ</span>
+                    </h3>
+                    <button @click="adjustmentDetail.show = false" class="text-gray-400 hover:text-gray-600">✕</button>
+                </div>
+                <div class="px-6 py-5 space-y-4" v-if="adjustmentDetail.data">
+                    <div class="grid grid-cols-[120px_1fr] gap-y-3 text-sm">
+                        <span class="text-gray-500">Mã</span>
+                        <span class="font-semibold text-gray-800">{{ adjustmentDetail.data.code }}</span>
+
+                        <span class="text-gray-500">Giá trị</span>
+                        <span class="font-bold text-lg" :class="adjustmentDetail.data.amount < 0 ? 'text-green-600' : 'text-red-600'">
+                            {{ formatCurrency(adjustmentDetail.data.amount) }}
+                        </span>
+
+                        <span class="text-gray-500">Ngày</span>
+                        <span class="font-medium">{{ formatDateTime(adjustmentDetail.data.created_at) }}</span>
+
+                        <span class="text-gray-500">Loại</span>
+                        <span class="font-medium">{{ adjustmentDetail.data.type_label }}</span>
+
+                        <template v-if="adjustmentDetail.data.note">
+                            <span class="text-gray-500">Mô tả</span>
+                            <div class="bg-gray-50 border border-gray-200 rounded p-2 text-sm text-gray-700">
+                                <span class="flex items-start gap-1">
+                                    <svg class="w-4 h-4 mt-0.5 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                                    {{ adjustmentDetail.data.note }}
+                                </span>
+                            </div>
+                        </template>
+
+                        <span class="text-gray-500">Dư nợ sau</span>
+                        <span class="font-bold">{{ formatCurrency(adjustmentDetail.data.debt_remain) }}</span>
+                    </div>
+                </div>
+                <div class="px-6 py-4 border-t border-gray-200 flex justify-end">
+                    <button @click="adjustmentDetail.show = false" class="px-5 py-2 border border-gray-300 rounded text-gray-700 font-medium hover:bg-gray-50">Bỏ qua</button>
+                </div>
             </div>
         </div>
 

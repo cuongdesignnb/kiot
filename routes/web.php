@@ -96,6 +96,7 @@ Route::post('/suppliers', [SupplierController::class, 'store'])->name('suppliers
 Route::get('/purchases/create', [PurchaseController::class, 'create'])->name('purchases.create')->middleware('permission:purchases.create');
 Route::middleware('permission:purchases.view')->group(function () {
     Route::get('/purchases', [PurchaseController::class, 'index'])->name('purchases.index');
+    Route::get('/purchases/find-by-code/{code}', [PurchaseController::class, 'findByCode']);
     Route::get('/purchases/{purchase}/detail', [PurchaseController::class, 'detail']);
     Route::get('/purchases/{purchase}', [PurchaseController::class, 'show'])->name('purchases.show');
 });
