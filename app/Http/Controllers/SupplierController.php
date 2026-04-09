@@ -467,24 +467,28 @@ class SupplierController extends Controller
         foreach ($purchases as $p) {
             $txDate = $p->created_at;
 
-            // debt_amount = the unpaid portion = what actually adds to supplier debt
-            // This matches PurchaseController::store: debt_amount = (total - discount) - paid
-            $debtForThisPurchase = (float) ($p->debt_amount ?? 0);
-
-            // Only create entry if there's actual debt from this purchase
-            if (abs($debtForThisPurchase) > 0.01) {
-                SupplierDebtTransaction::create([
-                    'supplier_id' => $supplierId,
-                    'code' => $p->code,
-                    'type' => 'purchase',
-                    'amount' => $debtForThisPurchase,
-                    'debt_remain' => 0,
-                    'purchase_id' => $p->id,
-                    'user_id' => $p->user_id,
-                    'created_at' => $txDate,
-                    'updated_at' => $txDate,
-                ]);
+            // Calculate debt: use debt_amount if available, otherwise calculate
+            // PurchaseController::store formula: debt_amount = (total_amount - discount) - paid_amount
+            if ($p->debt_amount !== null) {
+                $debtForThisPurchase = (float) $p->debt_amount;
+            } else {
+                $debtForThisPurchase = (float) ($p->total_amount - ($p->discount ?? 0) - ($p->paid_amount ?? 0));
             }
+
+            // Create entry showing the full purchase amount (what we owe from this purchase)
+            // If fully paid at purchase time (debt=0), still show it for historical record
+            SupplierDebtTransaction::create([
+                'supplier_id' => $supplierId,
+                'code' => $p->code,
+                'type' => 'purchase',
+                'amount' => $debtForThisPurchase,
+                'debt_remain' => 0,
+                'purchase_id' => $p->id,
+                'user_id' => $p->user_id,
+                'note' => 'Nhập hàng: ' . number_format($p->total_amount) . ($p->paid_amount > 0 ? ', Đã trả: ' . number_format($p->paid_amount) : ''),
+                'created_at' => $txDate,
+                'updated_at' => $txDate,
+            ]);
         }
 
         // Recalculate running debt_remain for ALL entries (seeded + manual)
@@ -498,7 +502,7 @@ class SupplierController extends Controller
             $entry->update(['debt_remain' => $runningDebt]);
         }
 
-        // Sync supplier_debt_amount to match reality
+        // Sync supplier_debt_amount to match the calculated reality
         Customer::where('id', $supplierId)->update(['supplier_debt_amount' => $runningDebt]);
     }
 }
