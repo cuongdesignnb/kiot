@@ -15,6 +15,8 @@ class SupplierDebtTransaction extends Model
         'purchase_id',
         'note',
         'user_id',
+        'created_at',
+        'updated_at',
     ];
 
     public function supplier()

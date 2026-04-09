@@ -456,31 +456,22 @@ class SupplierController extends Controller
             ->where('status', 'completed')
             ->count();
 
-        $seededPurchases = SupplierDebtTransaction::where('supplier_id', $supplierId)
-            ->where('type', 'purchase')
-            ->count();
+        if ($completedPurchases === 0) return;
 
-        // Already seeded and all purchases accounted for
-        if ($seededPurchases > 0 && $seededPurchases >= $completedPurchases) return;
-
-        // Need to (re)seed: delete purchase-linked entries, keep manual ones
+        // Always reseed purchase-linked entries to ensure correct dates
+        // Manual entries (payment, adjustment without purchase_id) are preserved
         SupplierDebtTransaction::where('supplier_id', $supplierId)
             ->whereNotNull('purchase_id')
             ->delete();
 
+
         $purchases = Purchase::where('supplier_id', $supplierId)
             ->where('status', 'completed')
-            ->orderBy('purchase_date')
             ->orderBy('created_at')
             ->get();
 
         foreach ($purchases as $p) {
-            // Check if already exists (to avoid duplicates)
-            $exists = SupplierDebtTransaction::where('supplier_id', $supplierId)
-                ->where('purchase_id', $p->id)
-                ->where('type', 'purchase')
-                ->exists();
-            if ($exists) continue;
+            $txDate = $p->created_at;
 
             // Purchase entry
             SupplierDebtTransaction::create([
@@ -488,11 +479,11 @@ class SupplierController extends Controller
                 'code' => $p->code,
                 'type' => 'purchase',
                 'amount' => $p->total_amount,
-                'debt_remain' => 0, // Will be recalculated below
+                'debt_remain' => 0,
                 'purchase_id' => $p->id,
                 'user_id' => $p->user_id,
-                'created_at' => $p->purchase_date ?? $p->created_at,
-                'updated_at' => $p->purchase_date ?? $p->created_at,
+                'created_at' => $txDate,
+                'updated_at' => $txDate,
             ]);
 
             // Payment entry (if paid at purchase time)
@@ -503,11 +494,11 @@ class SupplierController extends Controller
                     'code' => 'PCPN' . substr($p->code, 2),
                     'type' => 'payment',
                     'amount' => -$paid,
-                    'debt_remain' => 0, // Will be recalculated below
+                    'debt_remain' => 0,
                     'purchase_id' => $p->id,
                     'user_id' => $p->user_id,
-                    'created_at' => $p->purchase_date ?? $p->created_at,
-                    'updated_at' => $p->purchase_date ?? $p->created_at,
+                    'created_at' => $txDate,
+                    'updated_at' => $txDate,
                 ]);
             }
         }
