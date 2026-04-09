@@ -110,32 +110,30 @@ class DebtOffsetService
             return null;
         }
 
-        $customerDebt = abs((float) $person->debt_amount);
-        $supplierDebt = abs((float) $person->supplier_debt_amount);
+        $rawCustomer = (float) $person->debt_amount;
+        $rawSupplier = (float) $person->supplier_debt_amount;
 
-        if ($customerDebt <= 0 || $supplierDebt <= 0) {
+        // Only offset when BOTH sides have genuine POSITIVE debt:
+        // customer_debt > 0 = they owe us (as customer)
+        // supplier_debt > 0 = we owe them (as supplier)
+        // If either is negative (overpaid), no offset needed
+        if ($rawCustomer <= 0 || $rawSupplier <= 0) {
             return null;
         }
 
-        $maxOffset = min($customerDebt, $supplierDebt);
+        $maxOffset = min($rawCustomer, $rawSupplier);
         $offsetAmount = $forceAmount > 0 ? min($forceAmount, $maxOffset) : $maxOffset;
 
         if ($offsetAmount <= 0) {
             return null;
         }
 
-        $receivableBefore = $customerDebt;
-        $payableBefore = $supplierDebt;
+        $receivableBefore = $rawCustomer;
+        $payableBefore = $rawSupplier;
 
-        // Giảm trị tuyệt đối về 0 (hỗ trợ cả giá trị âm lẫn dương trong DB)
-        $rawCustomer = (float) $person->debt_amount;
-        $rawSupplier = (float) $person->supplier_debt_amount;
-        $person->debt_amount = $rawCustomer >= 0
-            ? $rawCustomer - $offsetAmount
-            : $rawCustomer + $offsetAmount;
-        $person->supplier_debt_amount = $rawSupplier >= 0
-            ? $rawSupplier - $offsetAmount
-            : $rawSupplier + $offsetAmount;
+        // Both are positive, reduce both by offsetAmount
+        $person->debt_amount = $rawCustomer - $offsetAmount;
+        $person->supplier_debt_amount = $rawSupplier - $offsetAmount;
         $person->save();
 
         $code = 'DTCN' . date('ymdHis') . rand(10, 99);
@@ -171,6 +169,7 @@ class DebtOffsetService
         ]);
 
         // SupplierDebtTransaction cho phía NCC (giảm nợ phải trả)
+        // Amount is negative because offset REDUCES supplier debt
         SupplierDebtTransaction::create([
             'supplier_id' => $person->id,
             'code' => $code,
