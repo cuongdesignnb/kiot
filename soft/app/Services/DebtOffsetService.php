@@ -40,9 +40,9 @@ class DebtOffsetService
 
             $supplier = Supplier::lockForUpdate()->findOrFail($customer->linked_supplier_id);
 
-            // 2. Calculate offset amounts
-            $receivable = max(0, $customer->total_debt ?? 0); // KH nợ mình
-            $payable    = max(0, $supplier->total_debt ?? 0);  // Mình nợ NCC
+            // 2. Calculate offset amounts (abs() vì DB có thể lưu âm)
+            $receivable = abs($customer->total_debt ?? 0); // KH nợ mình
+            $payable    = abs($supplier->total_debt ?? 0);  // Mình nợ NCC
 
             if ($receivable <= 0 && $payable <= 0) {
                 throw new \Exception('Không có công nợ nào để cấn bằng.');
@@ -175,5 +175,64 @@ class DebtOffsetService
             ->orderByDesc('created_at')
             ->with(['user:id,name', 'cancelledByUser:id,name'])
             ->get();
+    }
+
+    /**
+     * Tự động cấn bằng khi phát sinh giao dịch mới
+     * Gọi sau khi tạo CustomerDebt hoặc SupplierDebt
+     *
+     * @param string $side 'customer' hoặc 'supplier'  
+     * @param int $entityId ID của customer hoặc supplier vừa phát sinh nợ
+     */
+    public static function tryAutoOffset(string $side, int $entityId): void
+    {
+        try {
+            if ($side === 'customer') {
+                $customer = Customer::find($entityId);
+                if (!$customer || !$customer->linked_supplier_id) return;
+                $customerId = $customer->id;
+            } else {
+                $supplier = Supplier::find($entityId);
+                if (!$supplier || !$supplier->linked_customer_id) return;
+                $customerId = $supplier->linked_customer_id;
+            }
+
+            // Kiểm tra cả 2 bên đều có nợ
+            $customer = Customer::find($customerId);
+            if (!$customer || !$customer->linked_supplier_id) return;
+            
+            $supplier = Supplier::find($customer->linked_supplier_id);
+            if (!$supplier) return;
+
+            $receivable = abs($customer->total_debt ?? 0);
+            $payable    = abs($supplier->total_debt ?? 0);
+            $maxOffset  = min($receivable, $payable);
+
+            // Chỉ tự cấn bằng khi cả 2 bên đều > 0
+            if ($maxOffset <= 0) return;
+
+            // Thực hiện cấn bằng tự động
+            $service = new self();
+            $service->executeOffset(
+                customerId: $customerId,
+                customAmount: null, // cấn bằng tối đa
+                note: 'Tự động cấn bằng khi phát sinh giao dịch',
+                isAuto: true
+            );
+
+            Log::info('Auto debt offset triggered', [
+                'side' => $side,
+                'entity_id' => $entityId,
+                'customer_id' => $customerId,
+                'amount' => $maxOffset,
+            ]);
+        } catch (\Exception $e) {
+            // Không throw — auto-offset lỗi không ảnh hưởng giao dịch chính
+            Log::warning('Auto offset failed (non-blocking)', [
+                'side' => $side,
+                'entity_id' => $entityId,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 }

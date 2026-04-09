@@ -292,6 +292,8 @@ class Supplier extends Model
             'credit_remaining' => max(0, $this->credit_limit - $this->total_debt),
             'is_over_credit_limit' => $this->total_debt > $this->credit_limit,
             'has_related_data' => $this->hasRelatedData(),
+            'linked_customer_id' => $this->linked_customer_id,
+            'partner_debt_summary' => $this->getPartnerDebtSummary(),
             'created_at' => $this->created_at?->format('d/m/Y H:i'),
             'updated_at' => $this->updated_at?->format('d/m/Y H:i'),
         ];
@@ -360,8 +362,8 @@ public function purchaseReceipts()
         $customer = $this->linkedCustomer;
         if (!$customer) return null;
 
-        $payable = $this->total_debt ?? 0;      // Mình nợ NCC (phải trả)
-        $receivable = $customer->total_debt ?? 0; // KH nợ mình (phải thu)
+        $payable = abs($this->total_debt ?? 0);      // Mình nợ NCC (luôn dương)
+        $receivable = abs($customer->total_debt ?? 0); // KH nợ mình (luôn dương)
         $netDebt = $receivable - $payable;
 
         return [

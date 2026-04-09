@@ -199,10 +199,13 @@
             <td class="p-4">
               <span 
                 class="font-medium"
-                :class="supplier.total_debt > 0 ? 'text-red-600' : 'text-gray-400'"
+                :class="Math.abs(supplier.total_debt) > 0 ? 'text-red-600' : 'text-gray-400'"
               >
-                {{ formatCurrency(supplier.total_debt) }}
+                {{ formatCurrency(Math.abs(supplier.total_debt)) }}
               </span>
+              <div v-if="supplier.linked_customer_id && supplier.partner_debt_summary" class="text-xs text-indigo-600 mt-0.5">
+                🔗 ròng: {{ formatCurrency(Math.abs(supplier.partner_debt_summary.net_debt)) }}
+              </div>
             </td>
             <td class="p-4">
               <div class="flex items-center space-x-2">

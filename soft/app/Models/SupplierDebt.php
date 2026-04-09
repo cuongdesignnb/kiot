@@ -112,6 +112,12 @@ class SupplierDebt extends Model
             ]);
 
             DB::commit();
+
+            // Auto-offset nếu đối tác có liên kết (chỉ khi KHÔNG phải giao dịch offset)
+            if (!in_array($type, ['offset', 'adjustment'])) {
+                \App\Services\DebtOffsetService::tryAutoOffset('supplier', $supplierId);
+            }
+
             return $debt;
 
         } catch (\Exception $e) {

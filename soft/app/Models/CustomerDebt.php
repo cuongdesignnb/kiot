@@ -129,6 +129,12 @@ class CustomerDebt extends Model
             ]);
 
             DB::commit();
+
+            // Auto-offset nếu đối tác có liên kết (chỉ khi KHÔNG phải giao dịch offset)
+            if (!in_array($type, [self::TYPE_OFFSET, self::TYPE_ADJUSTMENT])) {
+                \App\Services\DebtOffsetService::tryAutoOffset('customer', $customerId);
+            }
+
             return $debt;
 
         } catch (\Exception $e) {

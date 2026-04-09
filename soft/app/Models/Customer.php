@@ -117,8 +117,8 @@ class Customer extends Model
         $supplier = $this->linkedSupplier;
         if (!$supplier) return null;
 
-        $receivable = $this->total_debt ?? 0;  // KH nợ mình
-        $payable = $supplier->total_debt ?? 0;  // Mình nợ NCC
+        $receivable = abs($this->total_debt ?? 0);  // KH nợ mình (luôn dương)
+        $payable = abs($supplier->total_debt ?? 0);  // Mình nợ NCC (luôn dương)
         $netDebt = $receivable - $payable;
 
         return [
