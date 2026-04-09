@@ -331,8 +331,8 @@ const openOffsetModal = (supplier) => {
     offsetModal.show = true;
     offsetModal.customerId = supplier.id;
     offsetModal.customerName = supplier.name;
-    offsetModal.receivable = Number(supplier.debt_amount) || 0;
-    offsetModal.payable = Number(supplier.supplier_debt_amount) || 0;
+    offsetModal.receivable = Math.abs(Number(supplier.debt_amount) || 0);
+    offsetModal.payable = Math.abs(Number(supplier.supplier_debt_amount) || 0);
     offsetModal.maxOffset = Math.min(offsetModal.receivable, offsetModal.payable);
     offsetModal.submitting = false;
     offsetForm.amount = offsetModal.maxOffset;
@@ -847,9 +847,9 @@ const cancelOffset = async (supplierId, offsetId) => {
                                 <td class="px-4 py-3">{{ supplier.phone }}</td>
                                 <td class="px-4 py-3">{{ supplier.email }}</td>
                                 <td class="px-4 py-3 text-right">
-                                    <div>{{ Number(supplier.supplier_debt_amount).toLocaleString() }}</div>
-                                    <div v-if="supplier.is_customer && supplier.debt_amount > 0" class="text-xs text-blue-600">
-                                        KH nợ: {{ formatCurrency(supplier.debt_amount) }}
+                                    <div>{{ Math.abs(Number(supplier.supplier_debt_amount)).toLocaleString() }}</div>
+                                    <div v-if="supplier.is_customer && Math.abs(supplier.debt_amount) > 0" class="text-xs text-blue-600">
+                                        KH nợ: {{ formatCurrency(Math.abs(supplier.debt_amount)) }}
                                     </div>
                                 </td>
                                 <td class="px-4 py-3 text-right">
@@ -999,11 +999,11 @@ const cancelOffset = async (supplierId, offsetId) => {
                                                     <div class="grid grid-cols-4 gap-4 text-center">
                                                         <div>
                                                             <div class="text-xs text-gray-500 mb-1">Nợ phải trả (mua hàng)</div>
-                                                            <div class="text-base font-bold text-red-600">{{ formatCurrency(supplierDebt[supplier.id].summary.payable) }}</div>
+                                                            <div class="text-base font-bold text-red-600">{{ formatCurrency(Math.abs(supplierDebt[supplier.id].summary.payable)) }}</div>
                                                         </div>
                                                         <div>
                                                             <div class="text-xs text-gray-500 mb-1">Nợ phải thu (bán hàng)</div>
-                                                            <div class="text-base font-bold text-blue-600">{{ formatCurrency(supplierDebt[supplier.id].summary.receivable) }}</div>
+                                                            <div class="text-base font-bold text-blue-600">{{ formatCurrency(Math.abs(supplierDebt[supplier.id].summary.receivable)) }}</div>
                                                         </div>
                                                         <div>
                                                             <div class="text-xs text-gray-500 mb-1">Công nợ ròng</div>
@@ -1018,7 +1018,7 @@ const cancelOffset = async (supplierId, offsetId) => {
                                                             <span v-else class="inline-block text-xs font-bold bg-green-100 text-green-700 px-2 py-1 rounded-full">Đã cân bằng</span>
                                                         </div>
                                                     </div>
-                                                    <div v-if="supplierDebt[supplier.id].summary.receivable > 0 && supplierDebt[supplier.id].summary.payable > 0" class="mt-3 flex justify-center">
+                                                    <div v-if="Math.abs(supplierDebt[supplier.id].summary.receivable) > 0 && Math.abs(supplierDebt[supplier.id].summary.payable) > 0" class="mt-3 flex justify-center">
                                                         <button @click="openOffsetModal(supplier)" class="text-sm font-bold text-white bg-purple-600 hover:bg-purple-700 px-4 py-1.5 rounded shadow-sm flex items-center gap-1.5">
                                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
                                                             Cấn bằng công nợ
@@ -1708,7 +1708,7 @@ const cancelOffset = async (supplierId, offsetId) => {
                         </div>
                         <div class="flex justify-between mt-1">
                             <span>Nợ hiện tại:</span>
-                            <span class="font-bold text-red-600">{{ Number(debtActionSupplier?.supplier_debt_amount || 0).toLocaleString() }}₫</span>
+                            <span class="font-bold text-red-600">{{ Math.abs(Number(debtActionSupplier?.supplier_debt_amount || 0)).toLocaleString() }}₫</span>
                         </div>
                     </div>
                     <div>
