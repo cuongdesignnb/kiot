@@ -111,6 +111,61 @@ Route::get('/fix-schedules', function () {
     return response()->json($result);
 });
 
+// TEMP: Debug chi tiết OT theo ngày (có giây) — xóa sau debug
+Route::get('/debug-ot2', function (\Illuminate\Http\Request $request) {
+    $code = $request->query('employee', 'NV000028');
+    $emp = \App\Models\Employee::where('code', $code)->first();
+    if (!$emp) return response()->json(['error' => 'Not found']);
+
+    $recs = \App\Models\TimekeepingRecord::where('employee_id', $emp->id)
+        ->whereBetween('work_date', ['2026-03-01', '2026-03-31'])
+        ->orderBy('work_date')->get();
+
+    $weekdayOt = 0; $satOt = 0; $rows = [];
+
+    foreach ($recs as $r) {
+        $dow = \Carbon\Carbon::parse($r->work_date)->dayOfWeek;
+        $type = $r->is_holiday ? 'Holiday' : ($dow === 0 ? 'CN' : ($dow === 6 ? 'T7' : 'Weekday'));
+
+        if ($r->ot_minutes > 0) {
+            if ($type === 'T7') $satOt += $r->ot_minutes;
+            elseif ($type === 'Weekday') $weekdayOt += $r->ot_minutes;
+        }
+
+        // Tính toán OT (manual check) để so sánh
+        $manualOt = 0;
+        if ($r->check_out_at && $r->scheduled_end_at) {
+            $co = \Carbon\Carbon::parse($r->check_out_at);
+            $se = \Carbon\Carbon::parse($r->scheduled_end_at);
+            if ($co->greaterThan($se)) {
+                $manualOt = (int) round(abs($co->diffInSeconds($se)) / 60);
+            }
+        }
+
+        $rows[] = [
+            'date' => \Carbon\Carbon::parse($r->work_date)->format('d/m D'),
+            'type' => $type,
+            'check_in' => $r->check_in_at ? \Carbon\Carbon::parse($r->check_in_at)->format('H:i:s') : null,
+            'check_out' => $r->check_out_at ? \Carbon\Carbon::parse($r->check_out_at)->format('H:i:s') : null,
+            'schedule_end' => $r->scheduled_end_at ? \Carbon\Carbon::parse($r->scheduled_end_at)->format('H:i:s') : null,
+            'shift_id' => $r->shift_id,
+            'ot_db' => $r->ot_minutes,
+            'ot_round' => $manualOt,
+            'diff' => $manualOt - $r->ot_minutes,
+            'manual_override' => $r->manual_override,
+        ];
+    }
+
+    return response()->json([
+        'employee' => $emp->name,
+        'weekday_ot' => $weekdayOt . 'min = ' . floor($weekdayOt/60) . 'h' . ($weekdayOt%60) . 'p',
+        'saturday_ot' => $satOt . 'min = ' . floor($satOt/60) . 'h' . ($satOt%60) . 'p',
+        'total' => ($weekdayOt + $satOt) . 'min',
+        'kiotviet' => 'weekday=339min(5h39p), sat=146min(2h26p), total=485min',
+        'records' => $rows,
+    ]);
+});
+
 // ===== PRODUCTS =====
 Route::middleware('permission:products.view')->group(function () {
     Route::get('/products', [ProductController::class, 'index'])->name('products.index');
