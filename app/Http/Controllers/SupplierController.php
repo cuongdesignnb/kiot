@@ -244,60 +244,74 @@ class SupplierController extends Controller
         }
 
         // 2) If dual-role (also customer): include invoice entries (mirrored)
-        // Supplier debt view: positive = we owe them more, negative = they owe us more
+        // In KiotViet supplier view: sales show as NEGATIVE (they owe us → offsets what we owe them)
         if ($supplier && $supplier->is_customer) {
             $invoices = Invoice::where('customer_id', $id)
                 ->orderBy('created_at')
                 ->get(['id', 'code', 'total', 'customer_paid', 'created_at']);
 
             foreach ($invoices as $inv) {
-                // On supplier view: sale = negative (they owe us → reduces our net debt to them)
-                // Only the UNPAID portion counts as actual debt offset
-                $debtFromSale = $inv->total - ($inv->customer_paid ?? 0);
-                if ($debtFromSale != 0) {
+                $entries->push([
+                    'id' => 'inv-' . $inv->id,
+                    'code' => $inv->code,
+                    'type' => 'sale',
+                    'type_label' => 'Bán hàng',
+                    'amount' => -$inv->total, // Negative: they owe us → offsets our debt to them
+                    'note' => null,
+                    'created_at' => $inv->created_at,
+                ]);
+                if ($inv->customer_paid > 0) {
                     $entries->push([
-                        'id' => 'inv-' . $inv->id,
-                        'code' => $inv->code,
-                        'type' => 'sale',
-                        'type_label' => 'Bán hàng',
-                        'amount' => -$debtFromSale, // Negative: they owe us this much
-                        'note' => $inv->customer_paid > 0
-                            ? 'Tổng HĐ: ' . number_format($inv->total) . ', KH đã trả: ' . number_format($inv->customer_paid)
-                            : null,
+                        'id' => 'invpay-' . $inv->id,
+                        'code' => 'TTHD' . preg_replace('/^HD/', '', $inv->code),
+                        'type' => 'sale_payment',
+                        'type_label' => 'TT bán hàng',
+                        'amount' => $inv->customer_paid, // Positive: customer paid us → increases what we owe net
+                        'note' => null,
                         'created_at' => $inv->created_at,
                     ]);
                 }
-                // NOTE: TTHD (sale payment) entries are NOT shown on supplier view
-                // because customer paying us does NOT change what we owe the supplier
             }
 
-            // Order returns: we refund customer → reduces what they owe us → increases our net debt to supplier
+            // Order returns = positive (we refund customer → increases what we owe net)
             $returns = OrderReturn::where('customer_id', $id)
                 ->orderBy('created_at')
                 ->get(['id', 'code', 'total', 'paid_to_customer', 'created_at']);
 
             foreach ($returns as $ret) {
-                $debtFromReturn = $ret->total - ($ret->paid_to_customer ?? 0);
-                if ($debtFromReturn != 0) {
-                    $entries->push([
-                        'id' => 'ret-' . $ret->id,
-                        'code' => $ret->code,
-                        'type' => 'sale_return',
-                        'type_label' => 'Trả hàng bán',
-                        'amount' => $debtFromReturn, // Positive: increases what we owe net
-                        'note' => null,
-                        'created_at' => $ret->created_at,
-                    ]);
-                }
+                $entries->push([
+                    'id' => 'ret-' . $ret->id,
+                    'code' => $ret->code,
+                    'type' => 'sale_return',
+                    'type_label' => 'Trả hàng bán',
+                    'amount' => $ret->total, // Positive: we refund → more we owe
+                    'note' => null,
+                    'created_at' => $ret->created_at,
+                ]);
             }
 
-            // NOTE: Customer-side cash_flows (debt payment, adjustment) are NOT included here
-            // They affect customer debt_amount, not supplier_debt_amount
-            // The auto-offset mechanism already handles the reconciliation
+            // Customer-side cash_flows (non-invoice receipts like debt payment, adjustment)
+            $cashFlows = CashFlow::where('target_type', 'Khách hàng')
+                ->where('target_id', $id)
+                ->where('type', 'receipt')
+                ->whereNotIn('reference_type', ['Invoice', 'DebtOffset']) // Skip duplicates
+                ->orderBy('created_at')
+                ->get();
+
+            foreach ($cashFlows as $cf) {
+                $entries->push([
+                    'id' => 'cf-' . $cf->id,
+                    'code' => $cf->code,
+                    'type' => 'customer_payment',
+                    'type_label' => 'Thu nợ KH',
+                    'amount' => $cf->amount, // Positive: customer paid debt → increases our net obligation
+                    'note' => $cf->description,
+                    'created_at' => $cf->created_at,
+                ]);
+            }
         }
 
         // Sort by date asc, compute running debt balance
-        // Positive balance = we owe supplier | Negative balance = supplier owes us
         $sorted = $entries->sortBy('created_at')->values();
         $balance = 0;
         $ledger = $sorted->map(function ($entry) use (&$balance) {
@@ -306,36 +320,9 @@ class SupplierController extends Controller
             return $entry;
         });
 
-        // Calculate supplier-only balance (exclude dual-role sale/return entries)
-        // This is the actual supplier_debt_amount
-        $supplierOnlyBalance = $entries
-            ->whereNotIn('type', ['sale', 'sale_payment', 'sale_return', 'customer_payment'])
-            ->sum('amount');
-
-        // Auto-sync: if supplier_debt_amount in DB is wrong, fix it
-        if ($supplier) {
-            $currentDbValue = (float) $supplier->supplier_debt_amount;
-            if (abs($currentDbValue - $supplierOnlyBalance) > 0.01) {
-                $supplier->update(['supplier_debt_amount' => $supplierOnlyBalance]);
-                $supplier->refresh();
-            }
-        }
-
-        // Use synced values for summary
-        $rawSupplierDebt = $supplier ? (float) $supplier->supplier_debt_amount : 0;
-        $rawCustomerDebt = $supplier ? (float) $supplier->debt_amount : 0;
-
-        $payable = $rawSupplierDebt;
-        $receivable = $rawCustomerDebt;
+        $payable = $supplier ? abs((float) $supplier->supplier_debt_amount) : 0;
+        $receivable = $supplier ? abs((float) $supplier->debt_amount) : 0;
         $net = $receivable - $payable;
-
-        if ($net > 0) {
-            $status = 'receivable';
-        } elseif ($net < 0) {
-            $status = 'payable';
-        } else {
-            $status = 'balanced';
-        }
 
         return response()->json([
             'entries' => $ledger->values(),
@@ -343,7 +330,7 @@ class SupplierController extends Controller
                 'receivable' => $receivable,
                 'payable' => $payable,
                 'net' => $net,
-                'status' => $status,
+                'status' => $net > 0 ? 'receivable' : ($net < 0 ? 'payable' : 'balanced'),
                 'is_dual_role' => $supplier && $supplier->is_customer && $supplier->is_supplier,
             ],
         ]);
@@ -357,33 +344,24 @@ class SupplierController extends Controller
         $data = $request->validate([
             'amount' => 'required|numeric|min:0.01',
             'note' => 'nullable|string',
-            'payment_date' => 'nullable|date',
         ]);
 
         $supplier = Customer::findOrFail($id);
-        $paymentAmount = abs($data['amount']);
-
-        $paymentDate = !empty($data['payment_date'])
-            ? \Carbon\Carbon::parse($data['payment_date'])
-            : now();
-
-        // Decrement from actual DB value (NOT from transaction ledger which may be incomplete)
-        $supplier->decrement('supplier_debt_amount', $paymentAmount);
-        $supplier->refresh();
-        $newDebt = (float) $supplier->supplier_debt_amount;
+        $currentDebt = $this->calculateDebt($id);
 
         $code = 'PCPN' . date('ymd') . rand(100, 999);
         SupplierDebtTransaction::create([
             'supplier_id' => $id,
             'code' => $code,
             'type' => 'payment',
-            'amount' => -$paymentAmount,
-            'debt_remain' => $newDebt,
+            'amount' => -abs($data['amount']),
+            'debt_remain' => $currentDebt - abs($data['amount']),
             'note' => $data['note'] ?? 'Thanh toán công nợ',
             'user_id' => auth()->id(),
-            'created_at' => $paymentDate,
-            'updated_at' => $paymentDate,
         ]);
+
+        // Update cached debt
+        $supplier->update(['supplier_debt_amount' => $currentDebt - abs($data['amount'])]);
 
         // Tự động đối trừ công nợ NCC↔KH
         DebtOffsetService::offsetDebts($supplier);
@@ -400,35 +378,26 @@ class SupplierController extends Controller
             'amount' => 'required|numeric',
             'note' => 'nullable|string',
             'type' => 'nullable|string', // 'adjustment' or 'discount'
-            'payment_date' => 'nullable|date',
         ]);
 
         $supplier = Customer::findOrFail($id);
+        $currentDebt = $this->calculateDebt($id);
         $type = $data['type'] ?? 'adjustment';
-
-        $adjustDate = !empty($data['payment_date'])
-            ? \Carbon\Carbon::parse($data['payment_date'])
-            : now();
 
         $code = ($type === 'discount' ? 'CKNCC' : 'DCNCC') . date('ymd') . rand(100, 999);
         $amount = $type === 'discount' ? -abs($data['amount']) : $data['amount'];
-
-        // Update DB value directly (increment handles negative = decrement)
-        $supplier->increment('supplier_debt_amount', $amount);
-        $supplier->refresh();
-        $newDebt = (float) $supplier->supplier_debt_amount;
 
         SupplierDebtTransaction::create([
             'supplier_id' => $id,
             'code' => $code,
             'type' => $type,
             'amount' => $amount,
-            'debt_remain' => $newDebt,
+            'debt_remain' => $currentDebt + $amount,
             'note' => $data['note'] ?? ($type === 'discount' ? 'Chiết khấu thanh toán' : 'Điều chỉnh công nợ'),
             'user_id' => auth()->id(),
-            'created_at' => $adjustDate,
-            'updated_at' => $adjustDate,
         ]);
+
+        $supplier->update(['supplier_debt_amount' => $currentDebt + $amount]);
 
         // Tự động đối trừ công nợ NCC↔KH
         DebtOffsetService::offsetDebts($supplier);
@@ -452,62 +421,47 @@ class SupplierController extends Controller
 
     private function seedDebtTransactions($supplierId)
     {
+        if (SupplierDebtTransaction::where('supplier_id', $supplierId)->exists()) return;
+
         $purchases = Purchase::where('supplier_id', $supplierId)
             ->where('status', 'completed')
+            ->orderBy('purchase_date')
             ->orderBy('created_at')
             ->get();
 
-        if ($purchases->isEmpty()) return;
-
-        // Delete old purchase-linked entries AND offset entries (may have wrong sign)
-        // Keeps only manual payments/adjustments/discounts (purchase_id is NULL, type != offset)
-        SupplierDebtTransaction::where('supplier_id', $supplierId)
-            ->where(function ($q) {
-                $q->whereNotNull('purchase_id')
-                  ->orWhere('type', 'offset');
-            })
-            ->delete();
-
+        $runningDebt = 0;
         foreach ($purchases as $p) {
-            $txDate = $p->created_at;
-
-            // Calculate debt: use debt_amount if available, otherwise calculate
-            // PurchaseController::store formula: debt_amount = (total_amount - discount) - paid_amount
-            if ($p->debt_amount !== null) {
-                $debtForThisPurchase = (float) $p->debt_amount;
-            } else {
-                $debtForThisPurchase = (float) ($p->total_amount - ($p->discount ?? 0) - ($p->paid_amount ?? 0));
-            }
-
-            // Create entry showing the full purchase amount (what we owe from this purchase)
-            // If fully paid at purchase time (debt=0), still show it for historical record
+            // Purchase entry
+            $runningDebt += $p->total_amount;
             SupplierDebtTransaction::create([
                 'supplier_id' => $supplierId,
                 'code' => $p->code,
                 'type' => 'purchase',
-                'amount' => $debtForThisPurchase,
-                'debt_remain' => 0,
+                'amount' => $p->total_amount,
+                'debt_remain' => $runningDebt,
                 'purchase_id' => $p->id,
                 'user_id' => $p->user_id,
-                'note' => 'Nhập hàng: ' . number_format($p->total_amount) . ($p->paid_amount > 0 ? ', Đã trả: ' . number_format($p->paid_amount) : ''),
-                'created_at' => $txDate,
-                'updated_at' => $txDate,
+                'created_at' => $p->purchase_date ?? $p->created_at,
+                'updated_at' => $p->purchase_date ?? $p->created_at,
             ]);
-        }
 
-        // Recalculate running debt_remain for ALL entries (seeded + manual)
-        $allEntries = SupplierDebtTransaction::where('supplier_id', $supplierId)
-            ->orderBy('created_at')
-            ->orderBy('id')
-            ->get();
-        $runningDebt = 0;
-        foreach ($allEntries as $entry) {
-            $runningDebt += $entry->amount;
-            $entry->update(['debt_remain' => $runningDebt]);
+            // Payment entry (if paid)
+            $paid = $p->paid_amount ?? ($p->total_amount - ($p->debt_amount ?? 0));
+            if ($paid > 0) {
+                $runningDebt -= $paid;
+                SupplierDebtTransaction::create([
+                    'supplier_id' => $supplierId,
+                    'code' => 'PCPN' . substr($p->code, 2),
+                    'type' => 'payment',
+                    'amount' => -$paid,
+                    'debt_remain' => $runningDebt,
+                    'purchase_id' => $p->id,
+                    'user_id' => $p->user_id,
+                    'created_at' => $p->purchase_date ?? $p->created_at,
+                    'updated_at' => $p->purchase_date ?? $p->created_at,
+                ]);
+            }
         }
-
-        // Sync supplier_debt_amount to match the calculated reality
-        Customer::where('id', $supplierId)->update(['supplier_debt_amount' => $runningDebt]);
     }
 }
 

@@ -164,17 +164,20 @@
                                 <tr class="text-left text-xs text-gray-500 uppercase">
                                     <th class="px-3 py-2">Loại ngày</th>
                                     <th class="px-3 py-2 text-right">Hệ số (%)</th>
-                                    <th class="px-3 py-2 text-right">Lương/giờ</th>
-                                    <th class="px-3 py-2 text-right">Số giờ</th>
+                                    <th class="px-3 py-2 text-right">Đơn giá</th>
+                                    <th class="px-3 py-2 text-right">Số lượng</th>
                                     <th class="px-3 py-2 text-right">Thành tiền</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 <tr v-for="ob in otBreakdown" :key="ob.type" class="border-t">
-                                    <td class="px-3 py-2 font-medium">{{ ob.label }}</td>
+                                    <td class="px-3 py-2 font-medium">
+                                        {{ ob.label }}
+                                        <div v-if="ob.note" class="text-xs text-gray-400 font-normal mt-0.5">{{ ob.note }}</div>
+                                    </td>
                                     <td class="px-3 py-2 text-right">{{ ob.rate_percent }}%</td>
-                                    <td class="px-3 py-2 text-right">{{ fmt(ob.hourly_rate) }}</td>
-                                    <td class="px-3 py-2 text-right">{{ formatHours(ob.minutes) }}</td>
+                                    <td class="px-3 py-2 text-right">{{ ob.daily_wage ? fmt(ob.daily_wage) + '/ngày' : fmt(ob.hourly_rate) + '/giờ' }}</td>
+                                    <td class="px-3 py-2 text-right">{{ ob.days ? ob.days + ' ngày' : formatHours(ob.minutes) }}</td>
                                     <td class="px-3 py-2 text-right font-semibold">{{ fmt(ob.amount) }}</td>
                                 </tr>
                                 <tr v-if="otBreakdown.length === 0" class="border-t">
@@ -183,8 +186,7 @@
                             </tbody>
                             <tfoot class="bg-gray-50 font-semibold border-t-2">
                                 <tr>
-                                    <td class="px-3 py-2" colspan="3">Tổng OT (tự động)</td>
-                                    <td class="px-3 py-2 text-right">{{ formatHours(otBreakdown.reduce((s, o) => s + (o.minutes || 0), 0)) }}</td>
+                                    <td class="px-3 py-2" colspan="4">Tổng OT (tự động)</td>
                                     <td class="px-3 py-2 text-right">{{ fmt(otBreakdown.reduce((s, o) => s + (o.amount || 0), 0)) }}</td>
                                 </tr>
                             </tfoot>
@@ -360,7 +362,8 @@
                             <thead class="bg-gray-100">
                                 <tr>
                                     <th class="text-left px-2 py-1.5 font-semibold text-gray-600">Tên giảm trừ</th>
-                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[150px]">Số tiền</th>
+                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[140px]">Loại</th>
+                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[130px]">Số tiền</th>
                                     <th class="w-8"></th>
                                 </tr>
                             </thead>
@@ -372,6 +375,19 @@
                                             placeholder="BHXH, tạm ứng..." />
                                     </td>
                                     <td class="px-2 py-1">
+                                        <select v-model="adj.meta.category" :disabled="isLocked"
+                                            class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:border-blue-500 outline-none bg-white">
+                                            <option value="">-- Chọn --</option>
+                                            <option value="late">Đi muộn</option>
+                                            <option value="early_leave">Về sớm</option>
+                                            <option value="bhxh">BHXH</option>
+                                            <option value="advance">Tạm ứng</option>
+                                            <option value="fixed">Cố định</option>
+                                            <option value="penalty">Phạt</option>
+                                            <option value="other">Khác</option>
+                                        </select>
+                                    </td>
+                                    <td class="px-2 py-1">
                                         <input v-model.number="adj.amount" :disabled="isLocked" type="number" min="0"
                                             class="w-full border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
                                     </td>
@@ -379,8 +395,15 @@
                                         <button v-if="!isLocked" @click="deleteAdjustment(adj)" class="text-red-400 hover:text-red-600">&times;</button>
                                     </td>
                                 </tr>
+                                <tr v-for="(adj, i) in popupAdjustments" :key="'note-'+adj.id" class="bg-gray-50/50">
+                                    <td colspan="4" class="px-2 py-1">
+                                        <input v-model="adj.notes" :disabled="isLocked" type="text"
+                                            class="w-full border border-gray-200 rounded px-2 py-1 text-xs text-gray-600 focus:border-blue-400 outline-none"
+                                            placeholder="Ghi chú diễn giải (tùy chọn)..." />
+                                    </td>
+                                </tr>
                                 <tr v-if="popupAdjustments.length === 0" class="border-t">
-                                    <td colspan="3" class="px-3 py-3 text-center text-gray-400">Chưa có giảm trừ nào</td>
+                                    <td colspan="4" class="px-3 py-3 text-center text-gray-400">Chưa có giảm trừ nào</td>
                                 </tr>
                             </tbody>
                         </table>

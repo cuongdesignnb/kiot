@@ -607,13 +607,4 @@ class PurchaseController extends Controller
             ]),
         ]);
     }
-
-    public function findByCode($code)
-    {
-        $purchase = Purchase::where('code', $code)->first();
-        if (!$purchase) {
-            return response()->json(['id' => null], 404);
-        }
-        return response()->json(['id' => $purchase->id]);
-    }
 }

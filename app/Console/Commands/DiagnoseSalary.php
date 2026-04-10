@@ -348,11 +348,11 @@ class DiagnoseSalary extends Command
             }
         }
 
-        // Check 5: OT có nhưng ot_pay = 0
-        if ($calc['ot_minutes'] > 0) {
+        // Check 5: OT có nhưng ot_pay = 0 (chỉ khi has_overtime = true)
+        if ($calc['ot_minutes'] > 0 && ($setting->has_overtime ?? false) && ($calc['ot_pay'] ?? 0) == 0) {
             $otPayExpected = $this->estimateOtPay($setting, $calc);
             if ($otPayExpected > 0) {
-                $issues[] = "[{$empLabel}] Có {$calc['ot_minutes']} phút OT nhưng ot_pay = 0 (ước tính nên = " .
+                $issues[] = "[{$empLabel}] Có {$calc['ot_minutes']} phút OT (has_overtime=true) nhưng ot_pay = 0 (ước tính nên = " .
                     number_format($otPayExpected) . "đ) → BUG: OT Pay chưa được tính!";
             }
         }

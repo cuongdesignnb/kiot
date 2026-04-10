@@ -343,6 +343,7 @@ class PaysheetController extends Controller
                 'type' => 'payment',
                 'amount' => $paidAmount,
                 'time' => now(),
+                'branch_id' => $paysheet->branch_id,
                 'category' => 'Chi lương nhân viên',
                 'target_type' => 'employee',
                 'target_id' => $slip->employee_id,
