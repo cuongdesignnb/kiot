@@ -57,16 +57,17 @@ class TimekeepingService
             $shift = $schedule->shift_id ? ($shifts->all()[$schedule->shift_id] ?? null) : null;
             $setting = $settings->all()[(string) $schedule->branch_id] ?? $globalSetting;
 
-            // Xác định thời gian ca
+            // Xác định thời gian ca: ưu tiên Shift khi có (KiotViet luôn dùng Shift definition)
+            // Schedule override chỉ dùng khi không gán Shift
             $scheduleStart = $this->buildScheduleDateTime(
                 $schedule->work_date,
-                $schedule->start_time,
-                $shift?->start_time
+                $shift?->start_time,        // Shift ưu tiên
+                $schedule->start_time       // Schedule fallback
             );
             $scheduleEnd = $this->buildScheduleDateTime(
                 $schedule->work_date,
-                $schedule->end_time,
-                $shift?->end_time
+                $shift?->end_time,          // Shift ưu tiên
+                $schedule->end_time         // Schedule fallback
             );
 
             // Ca đêm
