@@ -197,16 +197,16 @@ Route::get('/debug-ot2', function (\Illuminate\Http\Request $request) {
 Route::get('/fix-and-recalc', function () {
     if (function_exists('opcache_reset')) opcache_reset();
 
-    // Bước 1: Fix timekeeping OT
+    // Bước 1: Fix timekeeping OT — xử lý TẤT CẢ records (kể cả thiếu shift_id)
     $shifts = \App\Models\Shift::all()->keyBy('id');
+    $defaultShift = $shifts->first(); // Shift mặc định (ID=1)
     $fixed = 0;
 
-    $tkRecords = \App\Models\TimekeepingRecord::whereNotNull('shift_id')
-        ->whereBetween('work_date', ['2026-03-01', '2026-03-31'])
+    $tkRecords = \App\Models\TimekeepingRecord::whereBetween('work_date', ['2026-03-01', '2026-03-31'])
         ->get();
 
     foreach ($tkRecords as $tk) {
-        $shift = $shifts[$tk->shift_id] ?? null;
+        $shift = ($tk->shift_id ? ($shifts[$tk->shift_id] ?? null) : null) ?? $defaultShift;
         if (!$shift) continue;
 
         $workDate = \Carbon\Carbon::parse($tk->work_date)->startOfDay();
