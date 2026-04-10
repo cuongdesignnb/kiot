@@ -187,9 +187,11 @@ class TimekeepingService
                 $isRestDay = !in_array($dayOfWeek, $weekDays);
             }
 
-            // Ngày nghỉ / ngày lễ: toàn bộ giờ làm = OT, không tính muộn/sớm
+            // Ngày nghỉ / ngày lễ: OT chỉ tính giờ VƯỢT CA (không phải toàn bộ giờ)
+            // work_units vẫn tính bình thường (1.0 / 0.5), sẽ được nhân hệ số trong SalaryCalculationService
             if (((bool) $holiday || $isRestDay) && $workedMinutes > 0) {
-                $otMinutes = $workedMinutes;
+                $standardMinutesPerDay = $standardHours * 60;
+                $otMinutes = max(0, $workedMinutes - $standardMinutesPerDay);
                 $lateMinutes = 0;
                 $earlyMinutes = 0;
             }
@@ -222,10 +224,9 @@ class TimekeepingService
                 $workUnits = 0.5;
             }
 
-            // Ngày nghỉ/lễ: không tính công (lương đã tính qua OT 200%)
-            if (((bool) $holiday || $isRestDay) && $workedMinutes > 0) {
-                $workUnits = 0;
-            }
+            // Ngày nghỉ/lễ: work_units GIỮ NGUYÊN (1.0 hoặc 0.5)
+            // Hệ số nhân (2x, 3x) sẽ được áp dụng trong SalaryCalculationService
+            // qua trường holiday_multiplier
 
             $attributes = [
                 'employee_id' => $schedule->employee_id,

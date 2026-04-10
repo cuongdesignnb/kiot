@@ -97,7 +97,11 @@
                                 <div class="text-xs text-gray-400">{{ slip.employee?.code }}</div>
                             </td>
                             <td class="px-3 py-2 text-right text-gray-700">
-                                {{ slip.work_units || 0 }}<span class="text-gray-400">/{{ slip.details?.standard_work_units || 26 }}</span>
+                                <span v-if="slip.details?.normal_work_units && slip.details.normal_work_units !== slip.work_units">
+                                    {{ slip.details.normal_work_units }}(<span class="text-blue-600 font-medium">{{ slip.work_units || 0 }}</span>)
+                                </span>
+                                <span v-else>{{ slip.work_units || 0 }}</span>
+                                <span class="text-gray-400">/{{ slip.details?.standard_work_units || 26 }}</span>
                             </td>
                             <td class="px-3 py-2 text-right font-medium">{{ fmt(slip.base_salary) }}</td>
                             <td class="px-3 py-2 text-right">

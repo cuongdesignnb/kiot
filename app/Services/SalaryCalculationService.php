@@ -49,7 +49,16 @@ class SalaryCalculationService
             ->whereBetween('work_date', [$from, $to])
             ->get();
 
-        $workUnits = $records->where('attendance_type', 'work')->sum('work_units');
+        // Tính ngày công: áp dụng hệ số nhân cho ngày nghỉ/lễ
+        // VD: 1 ngày CN (2x) → 2 ngày công, 1 ngày lễ (3x) → 3 ngày công
+        $workUnits = 0;
+        $normalWorkUnits = 0; // Ngày công bình thường (không nhân hệ số, dùng cho debug)
+        foreach ($records->where('attendance_type', 'work') as $rec) {
+            $units = (float) $rec->work_units;
+            $multiplier = ($rec->is_holiday && $units > 0) ? (float) ($rec->holiday_multiplier ?? 1) : 1;
+            $workUnits += $units * $multiplier;
+            $normalWorkUnits += $units;
+        }
         $paidLeaveUnits = $records->where('attendance_type', 'leave_paid')->sum('work_units');
         $totalUnits = $workUnits + $paidLeaveUnits;
         $otMinutes = $records->sum('ot_minutes');
@@ -289,54 +298,51 @@ class SalaryCalculationService
                     ];
                 }
 
-                // Bước 2: Tính lương ngày nghỉ/lễ → theo ngày công × hệ số
-                // VD: Lương 9tr/26 ngày = 346K/ngày. CN làm = 346K × 2 = 692K
-                // Ý nghĩa: 1 ngày công bình thường × hệ số (200% hoặc 300%)
-                $restDayCount = 0;
-                $restDayAmount = 0;
-                $holidayCount = 0;
-                $holidayAmount = 0;
+                // Bước 2: OT giờ vượt ca trên ngày nghỉ/lễ
+                // Lương ngày nghỉ đã tính qua work_units × multiplier ở lương chính
+                // Ở đây chỉ tính phần giờ VƯỢT ca chuẩn (VD: làm 10h, ca 8h → 2h OT)
+                $restDayOtMins = 0;
+                $holidayOtMins = 0;
 
-                foreach ($records->where('is_holiday', true)->where('worked_minutes', '>', 0) as $rec) {
+                foreach ($records->where('is_holiday', true)->where('ot_minutes', '>', 0) as $rec) {
                     $dateStr = Carbon::parse($rec->work_date)->toDateString();
                     $isOfficialHoliday = in_array($dateStr, $officialHolidayDates);
-                    $multiplier = $isOfficialHoliday ? $tetOtRate : $restDayOtRate;
-                    $dayAmount = round($dailyWage * $multiplier);
+                    $mins = (int) $rec->ot_minutes;
 
                     if ($isOfficialHoliday) {
-                        $holidayCount++;
-                        $holidayAmount += $dayAmount;
+                        $holidayOtMins += $mins;
                     } else {
-                        $restDayCount++;
-                        $restDayAmount += $dayAmount;
+                        $restDayOtMins += $mins;
                     }
                 }
 
-                if ($restDayCount > 0) {
-                    $otPay += $restDayAmount;
+                if ($restDayOtMins > 0) {
+                    $hours = round($restDayOtMins / 60, 2);
+                    $amount = round($hours * $hourlyRate * $restDayOtRate);
+                    $otPay += $amount;
                     $otBreakdown[] = [
                         'type' => 'rest_day',
-                        'label' => 'Ngày nghỉ',
+                        'label' => 'Vượt ca ngày nghỉ',
                         'rate_percent' => round($restDayOtRate * 100),
-                        'daily_wage' => round($dailyWage),
-                        'days' => $restDayCount,
-                        'minutes' => 0,
-                        'amount' => $restDayAmount,
-                        'note' => "Lương ngày = " . number_format($dailyWage) . " × {$restDayOtRate} × {$restDayCount} ngày",
+                        'hourly_rate' => round($hourlyRate),
+                        'hours' => $hours,
+                        'minutes' => $restDayOtMins,
+                        'amount' => $amount,
                     ];
                 }
 
-                if ($holidayCount > 0) {
-                    $otPay += $holidayAmount;
+                if ($holidayOtMins > 0) {
+                    $hours = round($holidayOtMins / 60, 2);
+                    $amount = round($hours * $hourlyRate * $tetOtRate);
+                    $otPay += $amount;
                     $otBreakdown[] = [
                         'type' => 'holiday',
-                        'label' => 'Ngày lễ tết',
+                        'label' => 'Vượt ca ngày lễ tết',
                         'rate_percent' => round($tetOtRate * 100),
-                        'daily_wage' => round($dailyWage),
-                        'days' => $holidayCount,
-                        'minutes' => 0,
-                        'amount' => $holidayAmount,
-                        'note' => "Lương ngày = " . number_format($dailyWage) . " × {$tetOtRate} × {$holidayCount} ngày",
+                        'hourly_rate' => round($hourlyRate),
+                        'hours' => $hours,
+                        'minutes' => $holidayOtMins,
+                        'amount' => $amount,
                     ];
                 }
             }
@@ -411,6 +417,7 @@ class SalaryCalculationService
             'ot_minutes' => $otMinutes,
             'standard_work_units' => $standardWorkUnits,
             'work_units' => $totalUnits,
+            'normal_work_units' => $normalWorkUnits, // Ngày công thật (không nhân hệ số)
             'total_worked_minutes' => $totalWorkedMinutes,
             'paid_leave_units' => $paidLeaveUnits,
             'late_count' => $lateCount,
