@@ -142,7 +142,7 @@ class TimekeepingService
             if ($scheduleStart && $checkIn) {
                 $checkInCarbon = Carbon::parse($checkIn);
                 if ($checkInCarbon->greaterThan($scheduleStart)) {
-                    $lateMinutes = max(0, (int) round(abs($checkInCarbon->diffInSeconds($scheduleStart)) / 60) - $allowLate);
+                    $lateMinutes = max(0, intdiv(abs($checkInCarbon->diffInSeconds($scheduleStart)), 60) - $allowLate);
                 }
             }
 
@@ -150,11 +150,11 @@ class TimekeepingService
                 $checkOutCarbon = Carbon::parse($checkOut);
 
                 if ($checkOutCarbon->lessThan($scheduleEnd)) {
-                    $diffEarly = (int) round(abs($scheduleEnd->diffInSeconds($checkOutCarbon)) / 60);
+                    $diffEarly = intdiv(abs($scheduleEnd->diffInSeconds($checkOutCarbon)), 60);
                     $earlyMinutes = max(0, $diffEarly - $allowEarly);
                 } elseif ($checkOutCarbon->greaterThan($scheduleEnd)) {
-                    // OT SAU CA: dùng diffInSeconds + round() for precision (Carbon 3 diffInMinutes truncate sai)
-                    $rawOt = (int) round(abs($checkOutCarbon->diffInSeconds($scheduleEnd)) / 60);
+                    // OT SAU CA: dùng intdiv(seconds, 60) = floor — khớp KiotViet
+                    $rawOt = intdiv(abs($checkOutCarbon->diffInSeconds($scheduleEnd)), 60);
                     $rawOt = max(0, $rawOt - $otAfter);
                     if ($otRounding > 0) {
                         $rawOt = intdiv($rawOt, $otRounding) * $otRounding;

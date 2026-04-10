@@ -78,7 +78,7 @@ Route::get('/fix-schedules', function () {
         if ($tk->check_out_at && !$tk->is_holiday) {
             $checkOut = \Carbon\Carbon::parse($tk->check_out_at);
             if ($checkOut->greaterThan($newEnd)) {
-                $otMinutes = (int) round(abs($checkOut->diffInSeconds($newEnd)) / 60);
+                $otMinutes = intdiv(abs($checkOut->diffInSeconds($newEnd)), 60);
             }
         }
 
@@ -136,7 +136,7 @@ Route::get('/debug-ot2', function (\Illuminate\Http\Request $request) {
             $co = \Carbon\Carbon::parse($r->check_out_at);
             $se = \Carbon\Carbon::parse($r->scheduled_end_at);
             if ($co->greaterThan($se)) {
-                $manualOt = (int) round(abs($co->diffInSeconds($se)) / 60);
+                $manualOt = intdiv(abs($co->diffInSeconds($se)), 60);
             }
         }
 
@@ -189,7 +189,7 @@ Route::get('/fix-and-recalc', function () {
         if ($tk->check_out_at && !$tk->is_holiday) {
             $checkOut = \Carbon\Carbon::parse($tk->check_out_at);
             if ($checkOut->greaterThan($newEnd)) {
-                $otMinutes = (int) round(abs($checkOut->diffInSeconds($newEnd)) / 60);
+                $otMinutes = intdiv(abs($checkOut->diffInSeconds($newEnd)), 60);
             }
         }
 
