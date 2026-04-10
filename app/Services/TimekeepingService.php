@@ -171,7 +171,7 @@ class TimekeepingService
                     if ($otRounding > 0) {
                         $rawOt = intdiv($rawOt, $otRounding) * $otRounding;
                     }
-                    $otMinutes = $rawOt;
+                    $otMinutes += $rawOt; // Cộng dồn với OT trước ca (nếu có)
                 }
             }
 

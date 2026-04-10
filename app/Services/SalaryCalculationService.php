@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Employee;
+use App\Models\EmployeeWorkSchedule;
 use App\Models\Holiday;
 use App\Models\SalaryTemplate;
 use App\Models\CommissionTable;
@@ -189,15 +190,18 @@ class SalaryCalculationService
         $otPay = 0;
         $otBreakdown = [];
 
-        // Tính giờ ca chuẩn từ lịch làm việc thực tế (VD: 8:30-18:30 = 10h)
-        $shiftRecords = $records->filter(fn($r) => $r->scheduled_start_at && $r->scheduled_end_at);
-        if ($shiftRecords->isNotEmpty()) {
-            $avgShiftMinutes = $shiftRecords->avg(fn($r) =>
-                Carbon::parse($r->scheduled_start_at)->diffInMinutes(Carbon::parse($r->scheduled_end_at))
-            );
-            $standardHoursPerDay = round($avgShiftMinutes / 60, 2);
-        } else {
-            $standardHoursPerDay = (float) ($setting->standard_hours_per_day ?? 8);
+        // Tính giờ ca chuẩn từ CA LÀM VIỆC (Shift model) — không auto-detect từ records
+        // VD: ca 8:30-18:30 → duration_minutes = 600 → 10h
+        $standardHoursPerDay = 8; // fallback
+        $employeeShift = EmployeeWorkSchedule::where('employee_id', $employee->id)
+            ->whereBetween('work_date', [$from, $to])
+            ->whereNotNull('shift_id')
+            ->first();
+        if ($employeeShift?->shift) {
+            $shiftDuration = $employeeShift->shift->duration_minutes;
+            if ($shiftDuration > 0) {
+                $standardHoursPerDay = round($shiftDuration / 60, 2); // 600/60 = 10h
+            }
         }
         if ($otMinutes > 0 && ($setting->has_overtime ?? false)) {
             // Hệ số OT từ cài đặt lương NV (dùng chung cho mọi loại ngày)
