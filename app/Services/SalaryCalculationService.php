@@ -168,12 +168,21 @@ class SalaryCalculationService
         $deductionAmount += $latePenaltyAmount;
 
         // ===== TÍNH TIỀN TĂNG CA (OT PAY) =====
-        // Logic: Ngày nghỉ/lễ → tính theo ngày công × hệ số (không theo giờ)
-        //        Ngày thường/T7 → tính theo giờ OT vượt ca × hourlyRate × hệ số
-        //        Lương giờ → luôn tính theo giờ
+        // Logic: Ngày nghỉ/lễ → lương đã tính qua work_units × multiplier ở lương chính
+        //        OT = chỉ giờ vượt ca trên mọi loại ngày
         $otPay = 0;
         $otBreakdown = [];
-        $standardHoursPerDay = 8;
+
+        // Tính giờ ca chuẩn từ lịch làm việc thực tế (VD: 8:30-18:30 = 10h)
+        $shiftRecords = $records->filter(fn($r) => $r->scheduled_start_at && $r->scheduled_end_at);
+        if ($shiftRecords->isNotEmpty()) {
+            $avgShiftMinutes = $shiftRecords->avg(fn($r) =>
+                Carbon::parse($r->scheduled_start_at)->diffInMinutes(Carbon::parse($r->scheduled_end_at))
+            );
+            $standardHoursPerDay = round($avgShiftMinutes / 60, 2);
+        } else {
+            $standardHoursPerDay = (float) ($setting->standard_hours_per_day ?? 8);
+        }
         if ($otMinutes > 0 && ($setting->has_overtime ?? false)) {
             $overtimeRate = ($setting->overtime_rate ?? 150) / 100; // 150% = 1.5x
             $restDayOtRate = ($setting->holiday_rate ?? 200) / 100;

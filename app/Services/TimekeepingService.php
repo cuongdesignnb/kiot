@@ -190,8 +190,12 @@ class TimekeepingService
             // Ngày nghỉ / ngày lễ: OT chỉ tính giờ VƯỢT CA (không phải toàn bộ giờ)
             // work_units vẫn tính bình thường (1.0 / 0.5), sẽ được nhân hệ số trong SalaryCalculationService
             if (((bool) $holiday || $isRestDay) && $workedMinutes > 0) {
-                $standardMinutesPerDay = $standardHours * 60;
-                $otMinutes = max(0, $workedMinutes - $standardMinutesPerDay);
+                // Dùng thời lượng ca thực tế (VD: 8:30-18:30 = 600 phút)
+                // Nếu không có lịch ca, fallback về standard_hours
+                $shiftDurationMinutes = ($scheduleStart && $scheduleEnd)
+                    ? abs(Carbon::parse($scheduleStart)->diffInMinutes(Carbon::parse($scheduleEnd)))
+                    : ($standardHours * 60);
+                $otMinutes = max(0, $workedMinutes - $shiftDurationMinutes);
                 $lateMinutes = 0;
                 $earlyMinutes = 0;
             }
