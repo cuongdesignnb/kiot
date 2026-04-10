@@ -35,11 +35,13 @@ Route::middleware('auth')->group(function () {
 
 Route::get('/', [DashboardController::class, 'index'])->middleware('permission:dashboard.view')->name('dashboard');
 
-// ONE-TIME: Sync tất cả EmployeeWorkSchedule.start_time/end_time với Shift definition
+// ONE-TIME: Fix tất cả dữ liệu chấm công theo ca hiện tại
 // Truy cập: /fix-schedules → xóa route này sau khi chạy xong
 Route::get('/fix-schedules', function () {
-    $shifts = \App\Models\Shift::all();
-    $fixed = 0;
+    $shifts = \App\Models\Shift::all()->keyBy('id');
+    $result = ['schedules_fixed' => 0, 'timekeeping_fixed' => 0, 'details' => []];
+
+    // Bước 1: Sync EmployeeWorkSchedule.start_time/end_time với Shift
     foreach ($shifts as $shift) {
         $count = \App\Models\EmployeeWorkSchedule::where('shift_id', $shift->id)
             ->where(function ($q) use ($shift) {
@@ -51,18 +53,62 @@ Route::get('/fix-schedules', function () {
                 'end_time' => $shift->end_time,
                 'shift_name' => $shift->name,
             ]);
-        $fixed += $count;
+        $result['schedules_fixed'] += $count;
     }
-    return response()->json([
-        'success' => true,
-        'message' => "Đã sync {$fixed} lịch làm việc với ca tương ứng. Hãy bấm 'Tính lại' trên bảng lương.",
-        'shifts' => $shifts->map(fn($s) => [
-            'id' => $s->id,
-            'name' => $s->name,
-            'start' => $s->start_time,
-            'end' => $s->end_time,
-        ]),
-    ]);
+
+    // Bước 2: Fix timekeeping_records.scheduled_start_at / scheduled_end_at
+    // Lấy tất cả timekeeping records có shift_id, so sánh với Shift definition
+    $tkRecords = \App\Models\TimekeepingRecord::whereNotNull('shift_id')
+        ->whereBetween('work_date', ['2026-03-01', '2026-03-31'])
+        ->get();
+
+    foreach ($tkRecords as $tk) {
+        $shift = $shifts[$tk->shift_id] ?? null;
+        if (!$shift) continue;
+
+        // Tính scheduled_start_at / scheduled_end_at từ Shift definition
+        $workDate = \Carbon\Carbon::parse($tk->work_date)->startOfDay();
+        $newStart = $workDate->copy()->setTimeFromTimeString((string) $shift->start_time);
+        $newEnd = $workDate->copy()->setTimeFromTimeString((string) $shift->end_time);
+        if ($newEnd <= $newStart) $newEnd->addDay(); // ca đêm
+
+        $oldEnd = $tk->scheduled_end_at ? \Carbon\Carbon::parse($tk->scheduled_end_at) : null;
+
+        // Chỉ fix nếu scheduled_end_at khác
+        if (!$oldEnd || abs($oldEnd->diffInMinutes($newEnd)) > 0) {
+            // Tính lại OT dựa trên schedule mới
+            $otMinutes = 0;
+            if ($tk->check_out_at) {
+                $checkOut = \Carbon\Carbon::parse($tk->check_out_at);
+                if ($checkOut->greaterThan($newEnd)) {
+                    $otMinutes = abs($checkOut->diffInMinutes($newEnd));
+                }
+            }
+
+            // Nếu ngày nghỉ/lễ → OT = worked - shift_duration
+            if ($tk->is_holiday && $tk->worked_minutes > 0) {
+                $shiftDuration = abs($newStart->diffInMinutes($newEnd));
+                $otMinutes = max(0, $tk->worked_minutes - $shiftDuration);
+            }
+
+            $result['details'][] = [
+                'date' => $tk->work_date,
+                'old_end' => $oldEnd?->format('H:i'),
+                'new_end' => $newEnd->format('H:i'),
+                'old_ot' => $tk->ot_minutes,
+                'new_ot' => $otMinutes,
+            ];
+
+            $tk->update([
+                'scheduled_start_at' => $newStart,
+                'scheduled_end_at' => $newEnd,
+                'ot_minutes' => $otMinutes,
+            ]);
+            $result['timekeeping_fixed']++;
+        }
+    }
+
+    return response()->json($result);
 });
 
 // ===== PRODUCTS =====
