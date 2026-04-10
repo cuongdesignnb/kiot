@@ -326,6 +326,33 @@ Route::get('/fix-and-recalc', function () {
                 'details' => $calc,
             ]);
 
+            // Debug: per-day OT + records thiếu shift_id
+            $allRecords = \App\Models\TimekeepingRecord::where('employee_id', $employee->id)
+                ->whereBetween('work_date', [$periodStart, $periodEnd])
+                ->orderBy('work_date')
+                ->get();
+
+            $dayBreakdown = [];
+            $noShiftRecords = [];
+            foreach ($allRecords as $rec) {
+                $entry = [
+                    'date' => $rec->work_date,
+                    'shift_id' => $rec->shift_id,
+                    'ot_minutes' => (int) $rec->ot_minutes,
+                    'is_holiday' => (bool) $rec->is_holiday,
+                    'check_in' => $rec->check_in_at,
+                    'check_out' => $rec->check_out_at,
+                    'scheduled_end' => $rec->scheduled_end_at,
+                    'manual' => (bool) $rec->manual_override,
+                ];
+                if (!$rec->shift_id) {
+                    $noShiftRecords[] = $entry;
+                }
+                if ($rec->ot_minutes > 0) {
+                    $dayBreakdown[] = $entry;
+                }
+            }
+
             $salaryResults[] = [
                 'employee' => $employee->name,
                 'ot_minutes' => $calc['ot_minutes'] ?? 0,
@@ -338,6 +365,11 @@ Route::get('/fix-and-recalc', function () {
                 'repair_performance' => $calc['repair_performance'] ?? null,
                 'total_salary' => $totalSalary,
                 'ot_breakdown' => $calc['details']['ot'] ?? [],
+                'ot_day_detail' => $dayBreakdown,
+                'no_shift_records' => $noShiftRecords,
+                'total_records' => $allRecords->count(),
+                'records_with_shift' => $allRecords->whereNotNull('shift_id')->count(),
+                'records_no_shift' => $allRecords->whereNull('shift_id')->count(),
             ];
         }
 

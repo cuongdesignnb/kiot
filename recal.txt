@@ -1,5 +1,5 @@
 {
-  "timekeeping_fixed": 47,
+  "timekeeping_fixed": 2,
   "paysheet_selected": {
     "id": 4,
     "period_start": "2026-02-28T17:00:00.000000Z",
@@ -65,15 +65,15 @@
     },
     {
       "employee": "Nguyễn Xuân Thành",
-      "ot_minutes": 1839,
-      "ot_pay_calc": 1590923,
+      "ot_minutes": 1857,
+      "ot_pay_calc": 1606500,
       "holiday_pay_calc": 0,
-      "ot_pay_total": 1590923,
+      "ot_pay_total": 1606500,
       "base": 9692308,
       "work_units": 28,
       "standard_work_units": 26,
       "repair_performance": null,
-      "total_salary": 11733231,
+      "total_salary": 11748808,
       "ot_breakdown": []
     },
     {
@@ -86,7 +86,7 @@
       "work_units": 24.5,
       "standard_work_units": 26,
       "repair_performance": null,
-      "total_salary": 8748807,
+      "total_salary": 8758807,
       "ot_breakdown": []
     },
     {
