@@ -213,17 +213,19 @@ Route::get('/fix-and-recalc', function () {
     $allPsDebug = \App\Models\Paysheet::orderBy('period_start', 'desc')
         ->get(['id', 'period_start', 'period_end', 'status', 'branch_id']);
 
-    // Tìm paysheet tháng 3 cụ thể (period_start trong tháng 3)
-    $paysheet = $allPaysheets->first(function ($ps) {
+    // Tìm paysheet tháng 3 cụ thể — ưu tiên period_end mới nhất (full tháng)
+    $marchPaysheets = $allPaysheets->filter(function ($ps) {
         $start = \Carbon\Carbon::parse($ps->period_start);
         return $start->month == 3 && $start->year == 2026;
-    });
+    })->sortByDesc('period_end');
+
+    $paysheet = $marchPaysheets->first();
 
     // Fallback: paysheet đầu tiên overlap tháng 3
     if (!$paysheet) {
-        $paysheet = $allPaysheets->first(function ($ps) {
+        $paysheet = $allPaysheets->filter(function ($ps) {
             return $ps->period_start <= '2026-03-31' && $ps->period_end >= '2026-03-01';
-        });
+        })->sortByDesc('period_end')->first();
     }
 
     $salaryResults = [];
