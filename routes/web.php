@@ -73,14 +73,26 @@ Route::get('/fix-schedules', function () {
         $newEnd = $workDate->copy()->setTimeFromTimeString((string) $shift->end_time);
         if ($newEnd <= $newStart) $newEnd->addDay();
 
-        // Tính lại OT bằng diffInSeconds + round() (khớp KiotViet)
-        $otMinutes = 0;
-        if ($tk->check_out_at && !$tk->is_holiday) {
-            $checkOut = \Carbon\Carbon::parse($tk->check_out_at);
-            if ($checkOut->greaterThan($newEnd)) {
-                $otMinutes = intdiv(abs($checkOut->diffInSeconds($newEnd)), 60);
+        // === CÔNG THỨC KIOTVIET ===
+        $otAfter = 0;
+        $otBefore = 0;
+
+        if (!$tk->is_holiday) {
+            if ($tk->check_out_at) {
+                $checkOut = \Carbon\Carbon::parse($tk->check_out_at);
+                if ($checkOut->greaterThan($newEnd)) {
+                    $otAfter = max(0, intdiv(abs($checkOut->diffInSeconds($newEnd)), 60) - 1);
+                }
+            }
+            if ($tk->check_in_at) {
+                $checkIn = \Carbon\Carbon::parse($tk->check_in_at);
+                if ($checkIn->lessThan($newStart)) {
+                    $earlyMin = intdiv(abs($newStart->diffInSeconds($checkIn)), 60);
+                    if ($earlyMin >= 1) $otBefore = $earlyMin;
+                }
             }
         }
+        $otMinutes = $otAfter + $otBefore;
 
         $oldOt = $tk->ot_minutes;
         if ($oldOt != $otMinutes || $tk->scheduled_end_at != $newEnd->toDateTimeString()) {
@@ -204,13 +216,33 @@ Route::get('/fix-and-recalc', function () {
         $newEnd = $workDate->copy()->setTimeFromTimeString((string) $shift->end_time);
         if ($newEnd <= $newStart) $newEnd->addDay();
 
-        $otMinutes = 0;
-        if ($tk->check_out_at && !$tk->is_holiday) {
-            $checkOut = \Carbon\Carbon::parse($tk->check_out_at);
-            if ($checkOut->greaterThan($newEnd)) {
-                $otMinutes = intdiv(abs($checkOut->diffInSeconds($newEnd)), 60);
+        // === CÔNG THỨC KIOTVIET ===
+        // "Tính làm thêm giờ sau ca: 1 phút" → OT = floor - 1
+        // "Tính làm thêm giờ trước ca: 1 phút" → OT đến sớm, threshold >= 1 phút
+        $otAfter = 0;
+        $otBefore = 0;
+
+        if (!$tk->is_holiday) {
+            // OT SAU CA: checkout - schedule_end, trừ 1 phút
+            if ($tk->check_out_at) {
+                $checkOut = \Carbon\Carbon::parse($tk->check_out_at);
+                if ($checkOut->greaterThan($newEnd)) {
+                    $otAfter = max(0, intdiv(abs($checkOut->diffInSeconds($newEnd)), 60) - 1);
+                }
+            }
+
+            // OT TRƯỚC CA: schedule_start - check_in, threshold >= 1 phút
+            if ($tk->check_in_at) {
+                $checkIn = \Carbon\Carbon::parse($tk->check_in_at);
+                if ($checkIn->lessThan($newStart)) {
+                    $earlyMin = intdiv(abs($newStart->diffInSeconds($checkIn)), 60);
+                    if ($earlyMin >= 1) {
+                        $otBefore = $earlyMin;
+                    }
+                }
             }
         }
+        $otMinutes = $otAfter + $otBefore;
 
         \Illuminate\Support\Facades\DB::table('timekeeping_records')
             ->where('id', $tk->id)

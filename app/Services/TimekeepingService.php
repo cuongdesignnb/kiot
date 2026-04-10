@@ -153,13 +153,25 @@ class TimekeepingService
                     $diffEarly = intdiv(abs($scheduleEnd->diffInSeconds($checkOutCarbon)), 60);
                     $earlyMinutes = max(0, $diffEarly - $allowEarly);
                 } elseif ($checkOutCarbon->greaterThan($scheduleEnd)) {
-                    // OT SAU CA: dùng intdiv(seconds, 60) = floor — khớp KiotViet
+                    // OT SAU CA: floor - otAfter (KiotViet: "Tính làm thêm giờ sau ca: X phút")
                     $rawOt = intdiv(abs($checkOutCarbon->diffInSeconds($scheduleEnd)), 60);
                     $rawOt = max(0, $rawOt - $otAfter);
                     if ($otRounding > 0) {
                         $rawOt = intdiv($rawOt, $otRounding) * $otRounding;
                     }
                     $otMinutes = $rawOt;
+                }
+            }
+
+            // OT TRƯỚC CA: nhân viên đến sớm (KiotViet: "Tính làm thêm giờ trước ca: X phút")
+            $otBeforeShift = (int) ($setting?->ot_before_minutes ?? 0);
+            if ($scheduleStart && $checkIn && $otBeforeShift > 0) {
+                $checkInCarbon = Carbon::parse($checkIn);
+                if ($checkInCarbon->lessThan($scheduleStart)) {
+                    $earlyArrival = intdiv(abs($scheduleStart->diffInSeconds($checkInCarbon)), 60);
+                    if ($earlyArrival >= $otBeforeShift) {
+                        $otMinutes += $earlyArrival;
+                    }
                 }
             }
 
