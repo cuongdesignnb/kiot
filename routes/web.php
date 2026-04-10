@@ -154,8 +154,27 @@ Route::get('/debug-ot2', function (\Illuminate\Http\Request $request) {
         ];
     }
 
+    // Debug: shift + salary settings
+    $shift = \App\Models\Shift::find(1);
+    $salarySetting = $emp->salarySetting;
+
     return response()->json([
         'employee' => $emp->name,
+        'shift_settings' => $shift ? [
+            'name' => $shift->name,
+            'start' => $shift->start_time,
+            'end' => $shift->end_time,
+            'duration_minutes' => $shift->duration_minutes,
+            'allow_late' => $shift->allow_late_minutes,
+            'allow_early' => $shift->allow_early_minutes,
+        ] : null,
+        'salary_settings' => $salarySetting ? [
+            'ot_after_minutes' => $salarySetting->ot_after_minutes,
+            'ot_rounding_minutes' => $salarySetting->ot_rounding_minutes,
+            'has_overtime' => $salarySetting->has_overtime,
+            'overtime_rate' => $salarySetting->overtime_rate,
+            'use_shift_allowances' => $salarySetting->use_shift_allowances,
+        ] : null,
         'weekday_ot' => $weekdayOt . 'min = ' . floor($weekdayOt/60) . 'h' . ($weekdayOt%60) . 'p',
         'saturday_ot' => $satOt . 'min = ' . floor($satOt/60) . 'h' . ($satOt%60) . 'p',
         'total' => ($weekdayOt + $satOt) . 'min',
