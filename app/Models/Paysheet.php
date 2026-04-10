@@ -18,6 +18,7 @@ class Paysheet extends Model
         'branch_id',
         'scope',
         'status',
+        'needs_recalc',
         'total_salary',
         'total_paid',
         'total_remaining',
@@ -35,6 +36,7 @@ class Paysheet extends Model
         'total_salary' => 'integer',
         'total_paid' => 'integer',
         'total_remaining' => 'integer',
+        'needs_recalc' => 'boolean',
     ];
 
     public function branch()

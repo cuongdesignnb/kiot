@@ -63,16 +63,37 @@ class PaysheetController extends Controller
 
     /**
      * GET /api/paysheets/{id} — Chi tiết bảng lương
+     * Nếu needs_recalc = true → tự động tính lại trước khi trả về
      */
     public function show($id)
     {
         $paysheet = Paysheet::with([
             'branch:id,name',
             'payslips.employee:id,code,name',
+            'payslips.adjustments',
             'payments',
         ])->findOrFail($id);
 
-        return response()->json(['success' => true, 'data' => $paysheet]);
+        $autoRecalculated = false;
+
+        // Auto-recalc nếu có dữ liệu thay đổi và chưa chốt
+        if ($paysheet->needs_recalc && !in_array($paysheet->status, ['locked', 'cancelled'])) {
+            $this->performRecalculation($paysheet);
+            $paysheet->refresh();
+            $paysheet->load([
+                'branch:id,name',
+                'payslips.employee:id,code,name',
+                'payslips.adjustments',
+                'payments',
+            ]);
+            $autoRecalculated = true;
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $paysheet,
+            'auto_recalculated' => $autoRecalculated,
+        ]);
     }
 
     /**
@@ -173,16 +194,31 @@ class PaysheetController extends Controller
             return response()->json(['success' => false, 'message' => 'Bảng lương đã chốt, không thể tính lại.'], 422);
         }
 
+        $this->performRecalculation($paysheet);
+
+        return response()->json([
+            'success' => true,
+            'data' => $paysheet->load(['payslips.employee:id,code,name', 'payslips.adjustments', 'branch:id,name']),
+        ]);
+    }
+
+    /**
+     * Thực hiện tính lại bảng lương — dùng chung cho cả auto-recalc và manual recalc.
+     * Tự động: recalculate timekeeping → salary calculation → merge adjustments → save.
+     */
+    private function performRecalculation(Paysheet $paysheet): void
+    {
         $periodStart = Carbon::parse($paysheet->period_start);
         $periodEnd = Carbon::parse($paysheet->period_end);
 
-        // Auto-recalculate timekeeping trước khi tính lại lương
+        // Step 1: Recalculate timekeeping
         $timekeepingService = app(TimekeepingService::class);
         $employeeIds = $paysheet->payslips->pluck('employee_id')->unique()->toArray();
         foreach ($employeeIds as $empId) {
             $timekeepingService->recalculateForRange($periodStart, $periodEnd, $empId);
         }
 
+        // Step 2: Recalculate salary for each payslip
         foreach ($paysheet->payslips as $slip) {
             $employee = Employee::with(['salarySetting'])->find($slip->employee_id);
             if (!$employee) continue;
@@ -225,14 +261,11 @@ class PaysheetController extends Controller
             ]);
         }
 
+        // Step 3: Update paysheet status & totals, clear recalc flag
         $paysheet->status = 'calculated';
+        $paysheet->needs_recalc = false;
         $paysheet->save();
         $paysheet->recalculateTotals();
-
-        return response()->json([
-            'success' => true,
-            'data' => $paysheet->load(['payslips.employee:id,code,name', 'branch:id,name']),
-        ]);
     }
 
     /**

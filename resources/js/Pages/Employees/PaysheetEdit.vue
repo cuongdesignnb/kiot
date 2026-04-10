@@ -40,6 +40,15 @@
                 </div>
             </header>
 
+            <!-- Auto-recalc notification -->
+            <div v-if="autoRecalcMessage" class="bg-green-50 border-b border-green-200 px-6 py-2 flex items-center gap-2 text-sm text-green-700">
+                <svg class="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                </svg>
+                <span>{{ autoRecalcMessage }}</span>
+                <button @click="autoRecalcMessage = ''" class="ml-auto text-green-500 hover:text-green-700">&times;</button>
+            </div>
+
             <!-- Summary Bar -->
             <div class="bg-white border-b px-6 py-2 flex items-center gap-6 text-sm">
                 <div class="flex items-center gap-1.5">
@@ -454,7 +463,7 @@
 <script setup>
 import { Head, router } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
-import { ref, computed, reactive } from "vue";
+import { ref, computed, reactive, onMounted } from "vue";
 import axios from "axios";
 
 const props = defineProps({
@@ -466,8 +475,27 @@ const props = defineProps({
 const localPaysheet = ref(JSON.parse(JSON.stringify(props.paysheet)));
 const searchQuery = ref("");
 const recalculating = ref(false);
+const autoRecalcMessage = ref('');
 
 const isLocked = computed(() => localPaysheet.value.status === 'locked' || localPaysheet.value.status === 'cancelled');
+
+// Auto-recalc khi mở trang nếu có dữ liệu thay đổi
+onMounted(async () => {
+    if (localPaysheet.value.needs_recalc && !isLocked.value) {
+        try {
+            const { data } = await axios.get(`/api/paysheets/${localPaysheet.value.id}`);
+            if (data.success) {
+                localPaysheet.value = data.data;
+                if (data.auto_recalculated) {
+                    autoRecalcMessage.value = 'Bảng lương đã được tự động cập nhật do có thay đổi dữ liệu chấm công/lương.';
+                    setTimeout(() => { autoRecalcMessage.value = ''; }, 8000);
+                }
+            }
+        } catch (e) {
+            console.error('Auto-recalc check failed:', e);
+        }
+    }
+});
 
 const filteredSlips = computed(() => {
     const q = searchQuery.value.toLowerCase().trim();
