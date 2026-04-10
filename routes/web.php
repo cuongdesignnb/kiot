@@ -68,12 +68,12 @@ Route::get('/fix-and-recalc', function () {
         $otAfter = 0;
         $otBefore = 0;
 
-        // OT SAU CA: checkout - schedule_end (floor truncation), threshold >= 1 phút
+        // OT SAU CA: floor(seconds/60) - 1 (KiotViet không tính phút đầu tiên sau ca)
         if ($tk->check_out_at) {
             $checkOut = \Carbon\Carbon::parse($tk->check_out_at);
             if ($checkOut->greaterThan($newEnd)) {
                 $rawOt = intdiv(abs($checkOut->diffInSeconds($newEnd)), 60);
-                $otAfter = ($rawOt >= 1) ? $rawOt : 0;
+                $otAfter = max(0, $rawOt - 1);
             }
         }
 

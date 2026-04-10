@@ -164,8 +164,8 @@ class TimekeepingService
                     $diffEarly = abs($scheduleEnd->diffInMinutes($checkOutCarbon));
                     $earlyMinutes = max(0, $diffEarly - $allowEarly);
                 } elseif ($checkOutCarbon->greaterThan($scheduleEnd)) {
-                    // OT SAU CA: dùng intdiv (floor) thay diffInMinutes (round) — khớp KiotViet
-                    $rawOt = intdiv(abs($checkOutCarbon->diffInSeconds($scheduleEnd)), 60);
+                    // OT SAU CA: floor(seconds/60) - 1 (KiotViet không tính phút đầu tiên sau ca)
+                    $rawOt = max(0, intdiv(abs($checkOutCarbon->diffInSeconds($scheduleEnd)), 60) - 1);
                     // ot_after là ngưỡng tối thiểu: OT < threshold → bỏ qua
                     if ($rawOt < $otAfter) {
                         $rawOt = 0;
