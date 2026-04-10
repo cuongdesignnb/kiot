@@ -35,13 +35,13 @@ Route::middleware('auth')->group(function () {
 
 Route::get('/', [DashboardController::class, 'index'])->middleware('permission:dashboard.view')->name('dashboard');
 
-// ONE-TIME: Fix tất cả dữ liệu chấm công theo ca hiện tại
+// ONE-TIME: Fix TẤT CẢ dữ liệu chấm công theo ca hiện tại
 // Truy cập: /fix-schedules → xóa route này sau khi chạy xong
 Route::get('/fix-schedules', function () {
     $shifts = \App\Models\Shift::all()->keyBy('id');
     $result = ['schedules_fixed' => 0, 'timekeeping_fixed' => 0, 'details' => []];
 
-    // Bước 1: Sync EmployeeWorkSchedule.start_time/end_time với Shift
+    // Bước 1: Sync EmployeeWorkSchedule times với Shift
     foreach ($shifts as $shift) {
         $count = \App\Models\EmployeeWorkSchedule::where('shift_id', $shift->id)
             ->where(function ($q) use ($shift) {
@@ -56,8 +56,7 @@ Route::get('/fix-schedules', function () {
         $result['schedules_fixed'] += $count;
     }
 
-    // Bước 2: Fix timekeeping_records.scheduled_start_at / scheduled_end_at
-    // Lấy tất cả timekeeping records có shift_id, so sánh với Shift definition
+    // Bước 2: Fix TẤT CẢ timekeeping_records (không chỉ sai schedule_end)
     $tkRecords = \App\Models\TimekeepingRecord::whereNotNull('shift_id')
         ->whereBetween('work_date', ['2026-03-01', '2026-03-31'])
         ->get();
@@ -66,44 +65,40 @@ Route::get('/fix-schedules', function () {
         $shift = $shifts[$tk->shift_id] ?? null;
         if (!$shift) continue;
 
-        // Tính scheduled_start_at / scheduled_end_at từ Shift definition
         $workDate = \Carbon\Carbon::parse($tk->work_date)->startOfDay();
         $newStart = $workDate->copy()->setTimeFromTimeString((string) $shift->start_time);
         $newEnd = $workDate->copy()->setTimeFromTimeString((string) $shift->end_time);
-        if ($newEnd <= $newStart) $newEnd->addDay(); // ca đêm
+        if ($newEnd <= $newStart) $newEnd->addDay();
 
-        $oldEnd = $tk->scheduled_end_at ? \Carbon\Carbon::parse($tk->scheduled_end_at) : null;
-
-        // Chỉ fix nếu scheduled_end_at khác
-        if (!$oldEnd || abs($oldEnd->diffInMinutes($newEnd)) > 0) {
-            // Tính lại OT dựa trên schedule mới
-            $otMinutes = 0;
-            if ($tk->check_out_at) {
-                $checkOut = \Carbon\Carbon::parse($tk->check_out_at);
-                if ($checkOut->greaterThan($newEnd)) {
-                    $otMinutes = abs($checkOut->diffInMinutes($newEnd));
-                }
+        // Tính lại OT bằng diffInSeconds + round() (khớp KiotViet)
+        $otMinutes = 0;
+        if ($tk->check_out_at && !$tk->is_holiday) {
+            $checkOut = \Carbon\Carbon::parse($tk->check_out_at);
+            if ($checkOut->greaterThan($newEnd)) {
+                $otMinutes = (int) round(abs($checkOut->diffInSeconds($newEnd)) / 60);
             }
+        }
 
-            // Nếu ngày nghỉ/lễ → OT = worked - shift_duration
-            if ($tk->is_holiday && $tk->worked_minutes > 0) {
-                $shiftDuration = abs($newStart->diffInMinutes($newEnd));
-                $otMinutes = max(0, $tk->worked_minutes - $shiftDuration);
-            }
+        $oldOt = $tk->ot_minutes;
+        if ($oldOt != $otMinutes || $tk->scheduled_end_at != $newEnd->toDateTimeString()) {
+            // Dùng raw DB update để bypass model fillable/guarded
+            \Illuminate\Support\Facades\DB::table('timekeeping_records')
+                ->where('id', $tk->id)
+                ->update([
+                    'scheduled_start_at' => $newStart,
+                    'scheduled_end_at' => $newEnd,
+                    'ot_minutes' => $otMinutes,
+                ]);
 
             $result['details'][] = [
-                'date' => $tk->work_date,
-                'old_end' => $oldEnd?->format('H:i'),
+                'date' => $workDate->format('d/m D'),
+                'employee_id' => $tk->employee_id,
+                'old_end' => $tk->scheduled_end_at ? \Carbon\Carbon::parse($tk->scheduled_end_at)->format('H:i') : null,
                 'new_end' => $newEnd->format('H:i'),
-                'old_ot' => $tk->ot_minutes,
+                'checkout' => $tk->check_out_at ? \Carbon\Carbon::parse($tk->check_out_at)->format('H:i:s') : null,
+                'old_ot' => $oldOt,
                 'new_ot' => $otMinutes,
             ];
-
-            $tk->update([
-                'scheduled_start_at' => $newStart,
-                'scheduled_end_at' => $newEnd,
-                'ot_minutes' => $otMinutes,
-            ]);
             $result['timekeeping_fixed']++;
         }
     }
