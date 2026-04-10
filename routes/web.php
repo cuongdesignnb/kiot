@@ -203,11 +203,15 @@ Route::get('/fix-and-recalc', function () {
         if ($tk->ot_minutes != $otMinutes) $fixed++;
     }
 
-    // Bước 2: Tính lại lương — tìm paysheet THÁNG 3/2026
-    $allPaysheets = \App\Models\Paysheet::where('status', '!=', 'locked')
+    // Bước 2: Tính lại lương — tìm paysheet THÁNG 3/2026 (KHÔNG cancelled, KHÔNG locked)
+    $allPaysheets = \App\Models\Paysheet::whereNotIn('status', ['locked', 'cancelled'])
         ->with('payslips')
         ->orderBy('period_start', 'desc')
         ->get();
+
+    // Debug: liệt kê TẤT CẢ paysheets (kể cả cancelled) để tìm đúng
+    $allPsDebug = \App\Models\Paysheet::orderBy('period_start', 'desc')
+        ->get(['id', 'period_start', 'period_end', 'status', 'branch_id']);
 
     // Tìm paysheet tháng 3 cụ thể (period_start trong tháng 3)
     $paysheet = $allPaysheets->first(function ($ps) {
@@ -295,7 +299,8 @@ Route::get('/fix-and-recalc', function () {
 
     return response()->json([
         'timekeeping_fixed' => $fixed,
-        'paysheet' => $paysheetInfo,
+        'paysheet_selected' => $paysheetInfo,
+        'all_paysheets' => $allPsDebug,
         'salary_results' => $salaryResults,
     ]);
 });
