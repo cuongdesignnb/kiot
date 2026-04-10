@@ -151,6 +151,10 @@ const salaryForm = reactive({
     tet_rate: 300,
     has_overtime: false,
     overtime_rate: 150,
+    saturday_ot_rate: 150,
+    sunday_ot_rate: 150,
+    rest_day_ot_rate: 150,
+    holiday_ot_rate: 150,
     // Per-employee overrides
     has_bonus: false,
     has_commission: false,
@@ -188,6 +192,10 @@ const resetSalaryForm = () => {
     salaryForm.tet_rate = 300;
     salaryForm.has_overtime = false;
     salaryForm.overtime_rate = 150;
+    salaryForm.saturday_ot_rate = 150;
+    salaryForm.sunday_ot_rate = 150;
+    salaryForm.rest_day_ot_rate = 150;
+    salaryForm.holiday_ot_rate = 150;
     salaryForm.has_bonus = false;
     salaryForm.has_commission = false;
     salaryForm.has_allowance = false;
@@ -262,6 +270,10 @@ const loadSalarySetting = async (employeeId) => {
             salaryForm.tet_rate = setting.tet_rate ?? 300;
             salaryForm.has_overtime = Boolean(setting.has_overtime);
             salaryForm.overtime_rate = setting.overtime_rate ?? 150;
+            salaryForm.saturday_ot_rate = setting.saturday_ot_rate ?? 150;
+            salaryForm.sunday_ot_rate = setting.sunday_ot_rate ?? 150;
+            salaryForm.rest_day_ot_rate = setting.rest_day_ot_rate ?? 150;
+            salaryForm.holiday_ot_rate = setting.holiday_ot_rate ?? 150;
 
             // Per-employee overrides take priority, else copy from template
             const hasCustom = setting.custom_bonuses || setting.custom_commissions || setting.custom_allowances || setting.custom_deductions;
@@ -331,6 +343,10 @@ const saveSalarySetting = async (employeeId) => {
             tet_rate: salaryForm.tet_rate,
             has_overtime: salaryForm.has_overtime,
             overtime_rate: salaryForm.overtime_rate,
+            saturday_ot_rate: salaryForm.saturday_ot_rate,
+            sunday_ot_rate: salaryForm.sunday_ot_rate,
+            rest_day_ot_rate: salaryForm.rest_day_ot_rate,
+            holiday_ot_rate: salaryForm.holiday_ot_rate,
             has_bonus: salaryForm.has_bonus,
             has_commission: salaryForm.has_commission,
             has_allowance: salaryForm.has_allowance,
@@ -1010,16 +1026,35 @@ const bonusCalcLabel = (calc) => {
                                 </div>
 
                                 <!-- Lương làm thêm giờ -->
-                                <div class="mt-4">
+                                <div class="mt-4 border border-gray-200 rounded-lg p-4">
                                     <label class="flex items-center gap-2 cursor-pointer select-none">
                                         <input type="checkbox" v-model="salaryForm.has_overtime" class="accent-blue-600 w-4 h-4" />
                                         <span class="font-semibold text-gray-700 text-sm">Lương làm thêm giờ</span>
                                     </label>
-                                </div>
-                                <div v-if="salaryForm.has_overtime" class="mt-2 flex items-center gap-2 pl-6">
-                                    <span class="text-sm text-gray-600">Hệ số:</span>
-                                    <input v-model.number="salaryForm.overtime_rate" type="number" min="0" max="999" class="w-20 border border-gray-300 rounded px-2 py-1 text-right focus:border-blue-500 outline-none" />
-                                    <span class="text-gray-500 text-sm">%</span>
+                                    <div v-if="salaryForm.has_overtime" class="mt-3">
+                                        <table class="w-full text-sm">
+                                            <thead>
+                                                <tr class="text-gray-500 text-xs">
+                                                    <th class="text-left py-1 font-medium"></th>
+                                                    <th class="text-center py-1 font-medium">Ngày thường</th>
+                                                    <th class="text-center py-1 font-medium">Thứ 7</th>
+                                                    <th class="text-center py-1 font-medium">Chủ nhật</th>
+                                                    <th class="text-center py-1 font-medium">Ngày nghỉ</th>
+                                                    <th class="text-center py-1 font-medium">Ngày lễ tết</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr>
+                                                    <td class="py-1 text-gray-600 text-xs">Hệ số lương trên giờ</td>
+                                                    <td class="py-1 text-center"><input v-model.number="salaryForm.overtime_rate" type="number" min="0" max="999" class="w-16 border border-gray-300 rounded px-1.5 py-0.5 text-center text-sm focus:border-blue-500 outline-none" />%</td>
+                                                    <td class="py-1 text-center"><input v-model.number="salaryForm.saturday_ot_rate" type="number" min="0" max="999" class="w-16 border border-gray-300 rounded px-1.5 py-0.5 text-center text-sm focus:border-blue-500 outline-none" />%</td>
+                                                    <td class="py-1 text-center"><input v-model.number="salaryForm.sunday_ot_rate" type="number" min="0" max="999" class="w-16 border border-gray-300 rounded px-1.5 py-0.5 text-center text-sm focus:border-blue-500 outline-none" />%</td>
+                                                    <td class="py-1 text-center"><input v-model.number="salaryForm.rest_day_ot_rate" type="number" min="0" max="999" class="w-16 border border-gray-300 rounded px-1.5 py-0.5 text-center text-sm focus:border-blue-500 outline-none" />%</td>
+                                                    <td class="py-1 text-center"><input v-model.number="salaryForm.holiday_ot_rate" type="number" min="0" max="999" class="w-16 border border-gray-300 rounded px-1.5 py-0.5 text-center text-sm focus:border-blue-500 outline-none" />%</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
                                 </div>
 
                                 <div class="mt-4">

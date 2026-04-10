@@ -185,6 +185,10 @@ const saveCellEdit = async () => {
             advanced_salary: existing.advanced_salary || false,
             holiday_rate: existing.holiday_rate || 200,
             tet_rate: existing.tet_rate || 300,
+            saturday_ot_rate: existing.saturday_ot_rate || 150,
+            sunday_ot_rate: existing.sunday_ot_rate || 150,
+            rest_day_ot_rate: existing.rest_day_ot_rate || 150,
+            holiday_ot_rate: existing.holiday_ot_rate || 150,
             bonus_type: existing.bonus_type || null,
             bonus_calculation: existing.bonus_calculation || null,
         };

@@ -204,10 +204,12 @@ class SalaryCalculationService
             }
         }
         if ($otMinutes > 0 && ($setting->has_overtime ?? false)) {
-            // Hệ số OT từ cài đặt lương riêng của nhân viên
-            $overtimeRate = ($setting->overtime_rate ?? 150) / 100; // VD: 150% = 1.5x
-            $restDayOtRate = ($setting->holiday_rate ?? 200) / 100; // VD: 200% = 2x
-            $tetOtRate = ($setting->tet_rate ?? 300) / 100; // VD: 300% = 3x
+            // Hệ số OT từ cài đặt lương riêng của nhân viên (5 loại ngày)
+            $overtimeRate = ($setting->overtime_rate ?? 150) / 100;       // Ngày thường: VD 150% = 1.5x
+            $saturdayOtRate = ($setting->saturday_ot_rate ?? 150) / 100;  // Thứ 7
+            $sundayOtRate = ($setting->sunday_ot_rate ?? 150) / 100;      // Chủ nhật
+            $restDayOtRate = ($setting->rest_day_ot_rate ?? 150) / 100;   // Ngày nghỉ
+            $holidayOtRate = ($setting->holiday_ot_rate ?? 150) / 100;    // Ngày lễ tết
 
             // Lương theo ngày
             $dailyWage = ($standardWorkUnits > 0) ? $setting->base_salary / $standardWorkUnits : 0;
@@ -231,13 +233,14 @@ class SalaryCalculationService
             $typeLabels = [
                 'weekday' => 'Ngày thường',
                 'saturday' => 'Thứ 7',
+                'sunday' => 'Chủ nhật',
                 'rest_day' => 'Ngày nghỉ',
                 'holiday' => 'Ngày lễ tết',
             ];
 
             if ($setting->salary_type === 'hourly') {
                 // ======= LƯƠNG GIỜ: tính OT theo giờ cho mọi loại ngày =======
-                $otByType = ['weekday' => 0, 'saturday' => 0, 'rest_day' => 0, 'holiday' => 0];
+                $otByType = ['weekday' => 0, 'saturday' => 0, 'sunday' => 0, 'rest_day' => 0, 'holiday' => 0];
                 foreach ($records->where('ot_minutes', '>', 0) as $rec) {
                     $dateStr = Carbon::parse($rec->work_date)->toDateString();
                     $dayOfWeek = Carbon::parse($rec->work_date)->dayOfWeek;
@@ -245,7 +248,9 @@ class SalaryCalculationService
 
                     if (in_array($dateStr, $officialHolidayDates)) {
                         $otByType['holiday'] += $mins;
-                    } elseif ($rec->is_holiday || $dayOfWeek === 0) {
+                    } elseif ($dayOfWeek === 0) {
+                        $otByType['sunday'] += $mins;
+                    } elseif ($rec->is_holiday) {
                         $otByType['rest_day'] += $mins;
                     } elseif ($dayOfWeek === 6) {
                         $otByType['saturday'] += $mins;
@@ -256,9 +261,10 @@ class SalaryCalculationService
 
                 $typeRates = [
                     'weekday' => $overtimeRate,
-                    'saturday' => $overtimeRate,
+                    'saturday' => $saturdayOtRate,
+                    'sunday' => $sundayOtRate,
                     'rest_day' => $restDayOtRate,
-                    'holiday' => $tetOtRate,
+                    'holiday' => $holidayOtRate,
                 ];
 
                 foreach ($otByType as $type => $mins) {
@@ -278,100 +284,48 @@ class SalaryCalculationService
                     ];
                 }
             } else {
-                // ======= LƯƠNG CỐ ĐỊNH / NGÀY CÔNG: ngày nghỉ → tính theo ngày công × hệ số =======
-                // Bước 1: Tính OT ngày thường/T7 (vượt giờ ca) — vẫn theo giờ
-                $weekdayOtMins = 0;
-                $saturdayOtMins = 0;
+                // ======= LƯƠNG CỐ ĐỊNH / NGÀY CÔNG =======
+                // Phân loại OT 5 nhóm: weekday, saturday, sunday, rest_day, holiday
+                $otByType = ['weekday' => 0, 'saturday' => 0, 'sunday' => 0, 'rest_day' => 0, 'holiday' => 0];
                 foreach ($records->where('ot_minutes', '>', 0) as $rec) {
                     $dateStr = Carbon::parse($rec->work_date)->toDateString();
                     $dayOfWeek = Carbon::parse($rec->work_date)->dayOfWeek;
-                    if (in_array($dateStr, $officialHolidayDates) || $rec->is_holiday || $dayOfWeek === 0) {
-                        continue; // Ngày nghỉ/lễ xử lý riêng bên dưới
-                    }
-                    $mins = (int) $rec->ot_minutes;
-                    if ($dayOfWeek === 6) {
-                        $saturdayOtMins += $mins;
-                    } else {
-                        $weekdayOtMins += $mins;
-                    }
-                }
-
-                // OT ngày thường (vượt giờ ca)
-                if ($weekdayOtMins > 0) {
-                    $hours = round($weekdayOtMins / 60, 2);
-                    $amount = round($hours * $hourlyRate * $overtimeRate);
-                    $otPay += $amount;
-                    $otBreakdown[] = [
-                        'type' => 'weekday',
-                        'label' => 'Ngày thường',
-                        'rate_percent' => round($overtimeRate * 100),
-                        'hourly_rate' => round($hourlyRate),
-                        'hours' => $hours,
-                        'minutes' => $weekdayOtMins,
-                        'amount' => $amount,
-                    ];
-                }
-
-                // OT thứ 7 (vượt giờ ca)
-                if ($saturdayOtMins > 0) {
-                    $hours = round($saturdayOtMins / 60, 2);
-                    $amount = round($hours * $hourlyRate * $overtimeRate);
-                    $otPay += $amount;
-                    $otBreakdown[] = [
-                        'type' => 'saturday',
-                        'label' => 'Thứ 7',
-                        'rate_percent' => round($overtimeRate * 100),
-                        'hourly_rate' => round($hourlyRate),
-                        'hours' => $hours,
-                        'minutes' => $saturdayOtMins,
-                        'amount' => $amount,
-                    ];
-                }
-
-                // Bước 2: OT giờ vượt ca trên ngày nghỉ/lễ
-                // Lương ngày nghỉ đã tính qua work_units × multiplier ở lương chính
-                // Ở đây chỉ tính phần giờ VƯỢT ca chuẩn (VD: làm 10h, ca 8h → 2h OT)
-                $restDayOtMins = 0;
-                $holidayOtMins = 0;
-
-                foreach ($records->where('is_holiday', true)->where('ot_minutes', '>', 0) as $rec) {
-                    $dateStr = Carbon::parse($rec->work_date)->toDateString();
-                    $isOfficialHoliday = in_array($dateStr, $officialHolidayDates);
                     $mins = (int) $rec->ot_minutes;
 
-                    if ($isOfficialHoliday) {
-                        $holidayOtMins += $mins;
+                    if (in_array($dateStr, $officialHolidayDates)) {
+                        $otByType['holiday'] += $mins;
+                    } elseif ($dayOfWeek === 0) {
+                        $otByType['sunday'] += $mins;
+                    } elseif ($rec->is_holiday) {
+                        $otByType['rest_day'] += $mins;
+                    } elseif ($dayOfWeek === 6) {
+                        $otByType['saturday'] += $mins;
                     } else {
-                        $restDayOtMins += $mins;
+                        $otByType['weekday'] += $mins;
                     }
                 }
 
-                if ($restDayOtMins > 0) {
-                    $hours = round($restDayOtMins / 60, 2);
-                    $amount = round($hours * $hourlyRate * $restDayOtRate);
-                    $otPay += $amount;
-                    $otBreakdown[] = [
-                        'type' => 'rest_day',
-                        'label' => 'Ngày nghỉ',
-                        'rate_percent' => round($restDayOtRate * 100),
-                        'hourly_rate' => round($hourlyRate),
-                        'hours' => $hours,
-                        'minutes' => $restDayOtMins,
-                        'amount' => $amount,
-                    ];
-                }
+                $typeRates = [
+                    'weekday' => $overtimeRate,
+                    'saturday' => $saturdayOtRate,
+                    'sunday' => $sundayOtRate,
+                    'rest_day' => $restDayOtRate,
+                    'holiday' => $holidayOtRate,
+                ];
 
-                if ($holidayOtMins > 0) {
-                    $hours = round($holidayOtMins / 60, 2);
-                    $amount = round($hours * $hourlyRate * $tetOtRate);
+                foreach ($otByType as $type => $mins) {
+                    if ($mins <= 0) continue;
+                    $rate = $typeRates[$type];
+                    $hours = round($mins / 60, 2);
+                    $amount = round($hours * $hourlyRate * $rate);
                     $otPay += $amount;
                     $otBreakdown[] = [
-                        'type' => 'holiday',
-                        'label' => 'Ngày lễ tết',
-                        'rate_percent' => round($tetOtRate * 100),
+                        'type' => $type,
+                        'label' => $typeLabels[$type],
+                        'rate_percent' => round($rate * 100),
                         'hourly_rate' => round($hourlyRate),
                         'hours' => $hours,
-                        'minutes' => $holidayOtMins,
+                        'minutes' => $mins,
                         'amount' => $amount,
                     ];
                 }
