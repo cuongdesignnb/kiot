@@ -246,14 +246,17 @@ class SalaryCalculationService
                     $dayOfWeek = Carbon::parse($rec->work_date)->dayOfWeek;
                     $mins = (int) $rec->ot_minutes;
 
+                    // Phân loại theo KiotViet: is_holiday (ngày nghỉ, gồm CN) ưu tiên trước dayOfWeek
                     if (in_array($dateStr, $officialHolidayDates)) {
                         $otByType['holiday'] += $mins;
-                    } elseif ($dayOfWeek === 0) {
-                        $otByType['sunday'] += $mins;
                     } elseif ($rec->is_holiday) {
+                        // Ngày nghỉ (gồm CN nếu CN là ngày nghỉ theo workday settings)
                         $otByType['rest_day'] += $mins;
                     } elseif ($dayOfWeek === 6) {
                         $otByType['saturday'] += $mins;
+                    } elseif ($dayOfWeek === 0) {
+                        // Chủ nhật CHỈ khi CN là ngày làm việc (không phải ngày nghỉ)
+                        $otByType['sunday'] += $mins;
                     } else {
                         $otByType['weekday'] += $mins;
                     }
@@ -292,14 +295,17 @@ class SalaryCalculationService
                     $dayOfWeek = Carbon::parse($rec->work_date)->dayOfWeek;
                     $mins = (int) $rec->ot_minutes;
 
+                    // Phân loại theo KiotViet: is_holiday (ngày nghỉ, gồm CN) ưu tiên trước dayOfWeek
                     if (in_array($dateStr, $officialHolidayDates)) {
                         $otByType['holiday'] += $mins;
-                    } elseif ($dayOfWeek === 0) {
-                        $otByType['sunday'] += $mins;
                     } elseif ($rec->is_holiday) {
+                        // Ngày nghỉ (gồm CN nếu CN là ngày nghỉ theo workday settings)
                         $otByType['rest_day'] += $mins;
                     } elseif ($dayOfWeek === 6) {
                         $otByType['saturday'] += $mins;
+                    } elseif ($dayOfWeek === 0) {
+                        // Chủ nhật CHỈ khi CN là ngày làm việc (không phải ngày nghỉ)
+                        $otByType['sunday'] += $mins;
                     } else {
                         $otByType['weekday'] += $mins;
                     }

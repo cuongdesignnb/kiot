@@ -50,6 +50,8 @@ Route::get('/fix-and-recalc', function () {
     // Bước 1: Fix timekeeping OT — xử lý TẤT CẢ records (kể cả thiếu shift_id)
     $shifts = \App\Models\Shift::all()->keyBy('id');
     $defaultShift = $shifts->first();
+    $tkSetting = \App\Models\TimekeepingSetting::first();
+    $otBeforeThreshold = (int) ($tkSetting?->ot_before_minutes ?? 0); // Thiết lập "Tính OT trước ca: X phút"
     $fixed = 0;
 
     $tkRecords = \App\Models\TimekeepingRecord::whereBetween('work_date', ['2026-03-01', '2026-03-31'])
@@ -77,12 +79,12 @@ Route::get('/fix-and-recalc', function () {
             }
         }
 
-        // OT TRƯỚC CA: schedule_start - check_in, threshold >= 1 phút
-        if ($tk->check_in_at) {
+        // OT TRƯỚC CA: schedule_start - check_in, threshold từ cài đặt
+        if ($otBeforeThreshold > 0 && $tk->check_in_at) {
             $checkIn = \Carbon\Carbon::parse($tk->check_in_at);
             if ($checkIn->lessThan($newStart)) {
                 $earlyMin = intdiv(abs($newStart->diffInSeconds($checkIn)), 60);
-                if ($earlyMin >= 1) {
+                if ($earlyMin >= $otBeforeThreshold) {
                     $otBefore = $earlyMin;
                 }
             }
@@ -239,15 +241,15 @@ Route::get('/debug-ot', function (\Illuminate\Http\Request $request) {
         ->get();
 
     $rows = [];
-    $summary = ['weekday' => 0, 'saturday' => 0, 'sunday' => 0, 'total' => 0];
+    $summary = ['weekday' => 0, 'saturday' => 0, 'rest_day' => 0, 'total' => 0];
 
     foreach ($recs as $r) {
         $dow = \Carbon\Carbon::parse($r->work_date)->dayOfWeek;
-        $type = $r->is_holiday ? 'Holiday' : ($dow === 0 ? 'CN' : ($dow === 6 ? 'T7' : 'Weekday'));
+        $type = $r->is_holiday ? 'Ngày nghỉ' : ($dow === 6 ? 'T7' : ($dow === 0 ? 'CN' : 'Weekday'));
 
         if ($r->ot_minutes > 0) {
             $summary['total'] += $r->ot_minutes;
-            if ($dow === 0 || $r->is_holiday) $summary['sunday'] += $r->ot_minutes;
+            if ($r->is_holiday) $summary['rest_day'] += $r->ot_minutes;
             elseif ($dow === 6) $summary['saturday'] += $r->ot_minutes;
             else $summary['weekday'] += $r->ot_minutes;
         }
@@ -291,9 +293,8 @@ Route::get('/debug-ot', function (\Illuminate\Http\Request $request) {
         'summary' => [
             'weekday_ot' => $summary['weekday'] . 'min = ' . round($summary['weekday']/60, 2) . 'h',
             'saturday_ot' => $summary['saturday'] . 'min = ' . round($summary['saturday']/60, 2) . 'h',
-            'sunday_ot' => $summary['sunday'] . 'min = ' . round($summary['sunday']/60, 2) . 'h',
+            'rest_day_ot' => $summary['rest_day'] . 'min = ' . round($summary['rest_day']/60, 2) . 'h',
             'total_ot' => $summary['total'] . 'min = ' . round($summary['total']/60, 2) . 'h',
-            'kiotviet_target' => 'weekday=339min(5.65h), saturday=146min(2.43h), total=485min(8.08h)',
         ],
         'records' => $rows,
     ]);
