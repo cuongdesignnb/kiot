@@ -49,13 +49,29 @@ class SalaryCalculationService
             ->whereBetween('work_date', [$from, $to])
             ->get();
 
+        // Lấy hệ số nhân từ CÀI ĐẶT LƯƠNG NV (không từ timekeeping record)
+        $restDayMultiplier = ($setting->holiday_rate ?? 200) / 100; // VD: 200% = 2.0
+        $holidayMultiplier = ($setting->tet_rate ?? 300) / 100;     // VD: 300% = 3.0
+
+        // Lấy danh sách ngày lễ chính thức để phân biệt CN vs Lễ
+        $officialHolidayDates = Holiday::whereBetween('holiday_date', [$from, $to])
+            ->where('status', 'active')
+            ->pluck('holiday_date')
+            ->map(fn($d) => Carbon::parse($d)->toDateString())
+            ->toArray();
+
         // Tính ngày công: áp dụng hệ số nhân cho ngày nghỉ/lễ
-        // VD: 1 ngày CN (2x) → 2 ngày công, 1 ngày lễ (3x) → 3 ngày công
+        // VD: CN (holiday_rate=200%) → 1 ngày = 2 units, Lễ (tet_rate=300%) → 1 ngày = 3 units
         $workUnits = 0;
-        $normalWorkUnits = 0; // Ngày công bình thường (không nhân hệ số, dùng cho debug)
+        $normalWorkUnits = 0; // Ngày công thật (không nhân hệ số, dùng cho hiển thị)
         foreach ($records->where('attendance_type', 'work') as $rec) {
             $units = (float) $rec->work_units;
-            $multiplier = ($rec->is_holiday && $units > 0) ? (float) ($rec->holiday_multiplier ?? 1) : 1;
+            $multiplier = 1;
+            if ($rec->is_holiday && $units > 0) {
+                $dateStr = Carbon::parse($rec->work_date)->toDateString();
+                $isOfficialHoliday = in_array($dateStr, $officialHolidayDates);
+                $multiplier = $isOfficialHoliday ? $holidayMultiplier : $restDayMultiplier;
+            }
             $workUnits += $units * $multiplier;
             $normalWorkUnits += $units;
         }
@@ -184,11 +200,11 @@ class SalaryCalculationService
             $standardHoursPerDay = (float) ($setting->standard_hours_per_day ?? 8);
         }
         if ($otMinutes > 0 && ($setting->has_overtime ?? false)) {
-            $overtimeRate = ($setting->overtime_rate ?? 150) / 100; // 150% = 1.5x
-            $restDayOtRate = ($setting->holiday_rate ?? 200) / 100;
-            $tetOtRate = ($setting->tet_rate ?? 300) / 100;
+            // Hệ số OT từ cài đặt lương NV (dùng chung cho mọi loại ngày)
+            // Vì hệ số ngày nghỉ/lễ đã nhân vào work_units ở bước tính lương chính
+            $overtimeRate = ($setting->overtime_rate ?? 150) / 100; // VD: 150% = 1.5x
 
-            // Lương theo ngày (dùng cho rest_day/holiday)
+            // Lương theo ngày
             $dailyWage = ($standardWorkUnits > 0) ? $setting->base_salary / $standardWorkUnits : 0;
 
             // Lương theo giờ (dùng cho OT ngày thường/T7 và lương giờ)
