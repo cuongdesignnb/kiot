@@ -147,10 +147,10 @@ class TimekeepingService
                     $lateMinutes = max(0, abs($checkInCarbon->diffInMinutes($scheduleStart)) - $allowLate);
                 }
 
-                // OT TRƯỚC CA: nhân viên đến sớm — TRỪ threshold (giống sau ca)
+                // OT TRƯỚC CA: ceil(seconds/60) - threshold (KiotViet truncate checkin xuống phút)
                 $otBeforeShift = (int) ($setting?->ot_before_minutes ?? 0);
                 if ($otBeforeShift > 0 && $checkInCarbon->lessThan($scheduleStart)) {
-                    $earlyArrival = intdiv(abs($scheduleStart->diffInSeconds($checkInCarbon)), 60);
+                    $earlyArrival = (int) ceil(abs($scheduleStart->diffInSeconds($checkInCarbon)) / 60);
                     $otMinutes += max(0, $earlyArrival - $otBeforeShift);
                 }
             }
