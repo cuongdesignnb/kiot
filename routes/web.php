@@ -47,11 +47,16 @@ Route::get('/check-schema', function () {
 Route::get('/fix-and-recalc', function () {
     if (function_exists('opcache_reset')) opcache_reset();
 
+    // Bước 0: Đồng bộ settings theo KiotViet (before=1, after=1)
+    \Illuminate\Support\Facades\DB::table('timekeeping_settings')
+        ->update(['ot_before_minutes' => 1, 'ot_after_minutes' => 1]);
+
     // Bước 1: Fix timekeeping OT — xử lý TẤT CẢ records (kể cả thiếu shift_id)
     $shifts = \App\Models\Shift::all()->keyBy('id');
     $defaultShift = $shifts->first();
     $tkSetting = \App\Models\TimekeepingSetting::first();
-    $otBeforeThreshold = (int) ($tkSetting?->ot_before_minutes ?? 0); // Thiết lập "Tính OT trước ca: X phút"
+    $otBeforeThreshold = (int) ($tkSetting?->ot_before_minutes ?? 1);
+    $otAfterThreshold = (int) ($tkSetting?->ot_after_minutes ?? 1);
     $fixed = 0;
 
     $tkRecords = \App\Models\TimekeepingRecord::whereBetween('work_date', ['2026-03-01', '2026-03-31'])
@@ -70,12 +75,12 @@ Route::get('/fix-and-recalc', function () {
         $otAfter = 0;
         $otBefore = 0;
 
-        // OT SAU CA: floor(seconds/60) - 1 (KiotViet không tính phút đầu tiên sau ca)
+        // OT SAU CA: floor(seconds/60) - threshold (KiotViet: bỏ qua X phút đầu sau ca)
         if ($tk->check_out_at) {
             $checkOut = \Carbon\Carbon::parse($tk->check_out_at);
             if ($checkOut->greaterThan($newEnd)) {
                 $rawOt = intdiv(abs($checkOut->diffInSeconds($newEnd)), 60);
-                $otAfter = max(0, $rawOt - 1);
+                $otAfter = max(0, $rawOt - $otAfterThreshold);
             }
         }
 
@@ -227,9 +232,9 @@ Route::get('/fix-and-recalc', function () {
     ]);
 });
 
-// TEMP: Debug OT per day — xóa sau khi fix xong
+// TEMP: Debug OT per day — tách OT trước ca / sau ca
 Route::get('/debug-ot', function (\Illuminate\Http\Request $request) {
-    $code = $request->query('employee', 'NV000028');
+    $code = $request->query('employee', 'NV000026');
     $from = $request->query('from', '2026-03-01');
     $to = $request->query('to', '2026-03-31');
 
@@ -237,36 +242,98 @@ Route::get('/debug-ot', function (\Illuminate\Http\Request $request) {
     if (!$emp) return response()->json(['error' => "Employee {$code} not found"]);
 
     $setting = $emp->salarySetting;
+    $tkSetting = \App\Models\TimekeepingSetting::first();
+    $otBeforeThreshold = (int) ($tkSetting?->ot_before_minutes ?? 0);
+    $otAfterThreshold = (int) ($tkSetting?->ot_after_minutes ?? 1);
+
     $recs = $emp->timekeepingRecords()
         ->whereBetween('work_date', [$from, $to])
         ->orderBy('work_date')
         ->get();
 
+    // Lấy danh sách ngày lễ chính thức
+    $officialHolidayDates = \App\Models\Holiday::whereBetween('holiday_date', [$from, $to])
+        ->where('status', 'active')
+        ->pluck('holiday_date')
+        ->map(fn($d) => \Carbon\Carbon::parse($d)->toDateString())
+        ->toArray();
+
     $rows = [];
-    $summary = ['weekday' => 0, 'saturday' => 0, 'rest_day' => 0, 'total' => 0];
+    $summary = [
+        'weekday' => ['before' => 0, 'after' => 0, 'total' => 0],
+        'saturday' => ['before' => 0, 'after' => 0, 'total' => 0],
+        'sunday' => ['before' => 0, 'after' => 0, 'total' => 0],
+        'rest_day' => ['before' => 0, 'after' => 0, 'total' => 0],
+        'holiday' => ['before' => 0, 'after' => 0, 'total' => 0],
+    ];
 
     foreach ($recs as $r) {
+        $dateStr = \Carbon\Carbon::parse($r->work_date)->toDateString();
         $dow = \Carbon\Carbon::parse($r->work_date)->dayOfWeek;
-        $type = $r->is_holiday ? 'Ngày nghỉ' : ($dow === 6 ? 'T7' : ($dow === 0 ? 'CN' : 'Weekday'));
 
-        if ($r->ot_minutes > 0) {
-            $summary['total'] += $r->ot_minutes;
-            if ($r->is_holiday) $summary['rest_day'] += $r->ot_minutes;
-            elseif ($dow === 6) $summary['saturday'] += $r->ot_minutes;
-            else $summary['weekday'] += $r->ot_minutes;
+        // KiotViet classification
+        if (in_array($dateStr, $officialHolidayDates)) {
+            $dayType = 'holiday';
+            $dayLabel = 'Ngày lễ';
+        } elseif ($r->is_holiday) {
+            $dayType = 'rest_day';
+            $dayLabel = 'Ngày nghỉ';
+        } elseif ($dow === 6) {
+            $dayType = 'saturday';
+            $dayLabel = 'Thứ 7';
+        } elseif ($dow === 0) {
+            $dayType = 'sunday';
+            $dayLabel = 'Chủ nhật';
+        } else {
+            $dayType = 'weekday';
+            $dayLabel = 'Ngày thường';
+        }
+
+        // Tính lại OT trước/sau CA từ raw times
+        $otBefore = 0;
+        $otAfter = 0;
+        $schedStart = $r->scheduled_start_at ? \Carbon\Carbon::parse($r->scheduled_start_at) : null;
+        $schedEnd = $r->scheduled_end_at ? \Carbon\Carbon::parse($r->scheduled_end_at) : null;
+
+        if ($schedEnd && $r->check_out_at) {
+            $checkOut = \Carbon\Carbon::parse($r->check_out_at);
+            if ($checkOut->greaterThan($schedEnd)) {
+                $rawOt = intdiv(abs($checkOut->diffInSeconds($schedEnd)), 60);
+                $otAfter = max(0, $rawOt - $otAfterThreshold);
+            }
+        }
+
+        if ($otBeforeThreshold > 0 && $schedStart && $r->check_in_at) {
+            $checkIn = \Carbon\Carbon::parse($r->check_in_at);
+            if ($checkIn->lessThan($schedStart)) {
+                $earlyMin = intdiv(abs($schedStart->diffInSeconds($checkIn)), 60);
+                if ($earlyMin >= $otBeforeThreshold) {
+                    $otBefore = $earlyMin;
+                }
+            }
+        }
+
+        $otTotal = $otBefore + $otAfter;
+
+        if ($otTotal > 0) {
+            $summary[$dayType]['before'] += $otBefore;
+            $summary[$dayType]['after'] += $otAfter;
+            $summary[$dayType]['total'] += $otTotal;
         }
 
         $rows[] = [
-            'date' => $r->work_date,
-            'day' => $type,
-            'check_in' => $r->check_in_at ? \Carbon\Carbon::parse($r->check_in_at)->format('H:i') : null,
-            'check_out' => $r->check_out_at ? \Carbon\Carbon::parse($r->check_out_at)->format('H:i') : null,
-            'schedule_start' => $r->scheduled_start_at ? \Carbon\Carbon::parse($r->scheduled_start_at)->format('H:i') : null,
-            'schedule_end' => $r->scheduled_end_at ? \Carbon\Carbon::parse($r->scheduled_end_at)->format('H:i') : null,
-            'worked_min' => $r->worked_minutes,
-            'ot_min' => $r->ot_minutes,
-            'work_units' => $r->work_units,
-            'is_holiday' => $r->is_holiday,
+            'date' => $dateStr,
+            'dow' => ['CN','T2','T3','T4','T5','T6','T7'][$dow],
+            'type' => $dayLabel,
+            'check_in' => $r->check_in_at ? \Carbon\Carbon::parse($r->check_in_at)->format('H:i:s') : null,
+            'check_out' => $r->check_out_at ? \Carbon\Carbon::parse($r->check_out_at)->format('H:i:s') : null,
+            'sched_start' => $schedStart ? $schedStart->format('H:i') : null,
+            'sched_end' => $schedEnd ? $schedEnd->format('H:i') : null,
+            'ot_before' => $otBefore,
+            'ot_after' => $otAfter,
+            'ot_total' => $otTotal,
+            'ot_in_db' => (int) $r->ot_minutes,
+            'is_holiday' => (bool) $r->is_holiday,
         ];
     }
 
@@ -277,27 +344,24 @@ Route::get('/debug-ot', function (\Illuminate\Http\Request $request) {
         ->first();
     $shift = $schedule?->shift;
 
+    // Tổng hợp
+    $grandBefore = array_sum(array_column($summary, 'before'));
+    $grandAfter = array_sum(array_column($summary, 'after'));
+    $grandTotal = array_sum(array_column($summary, 'total'));
+
     return response()->json([
-        'employee' => ['id' => $emp->id, 'code' => $emp->code, 'name' => $emp->name],
-        'salary_setting' => [
-            'base_salary' => $setting?->base_salary,
-            'overtime_rate' => $setting?->overtime_rate,
-            'holiday_rate' => $setting?->holiday_rate,
-            'tet_rate' => $setting?->tet_rate,
-            'has_overtime' => $setting?->has_overtime,
+        'employee' => $emp->name . ' (' . $emp->code . ')',
+        'settings' => [
+            'ot_before_minutes' => $otBeforeThreshold,
+            'ot_after_minutes' => $otAfterThreshold,
         ],
-        'shift' => $shift ? [
-            'name' => $shift->name,
-            'start' => $shift->start_time,
-            'end' => $shift->end_time,
-            'duration_minutes' => $shift->duration_minutes,
-        ] : null,
-        'summary' => [
-            'weekday_ot' => $summary['weekday'] . 'min = ' . round($summary['weekday']/60, 2) . 'h',
-            'saturday_ot' => $summary['saturday'] . 'min = ' . round($summary['saturday']/60, 2) . 'h',
-            'rest_day_ot' => $summary['rest_day'] . 'min = ' . round($summary['rest_day']/60, 2) . 'h',
-            'total_ot' => $summary['total'] . 'min = ' . round($summary['total']/60, 2) . 'h',
+        'shift' => $shift ? $shift->name . ' (' . $shift->start_time . '-' . $shift->end_time . ')' : null,
+        'grand_total' => [
+            'ot_before' => $grandBefore . ' min',
+            'ot_after' => $grandAfter . ' min',
+            'ot_total' => $grandTotal . ' min = ' . round($grandTotal/60, 2) . 'h',
         ],
+        'by_type' => $summary,
         'records' => $rows,
     ]);
 });
