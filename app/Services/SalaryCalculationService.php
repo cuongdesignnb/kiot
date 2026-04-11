@@ -65,6 +65,9 @@ class SalaryCalculationService
         // VD: CN (holiday_rate=200%) → 1 ngày = 2 units, Lễ (tet_rate=300%) → 1 ngày = 3 units
         $workUnits = 0;
         $normalWorkUnits = 0; // Ngày công thật (không nhân hệ số, dùng cho hiển thị)
+        $normalDayCount = 0;  // Số ngày thường
+        $restDayCount = 0;    // Số ngày nghỉ (CN)
+        $holidayDayCount = 0; // Số ngày lễ tết
         foreach ($records->where('attendance_type', 'work') as $rec) {
             $units = (float) $rec->work_units;
             $multiplier = 1;
@@ -72,6 +75,13 @@ class SalaryCalculationService
                 $dateStr = Carbon::parse($rec->work_date)->toDateString();
                 $isOfficialHoliday = in_array($dateStr, $officialHolidayDates);
                 $multiplier = $isOfficialHoliday ? $holidayMultiplier : $restDayMultiplier;
+                if ($isOfficialHoliday) {
+                    $holidayDayCount += $units;
+                } else {
+                    $restDayCount += $units;
+                }
+            } else {
+                $normalDayCount += $units;
             }
             $workUnits += $units * $multiplier;
             $normalWorkUnits += $units;
@@ -359,9 +369,12 @@ class SalaryCalculationService
             }
         }
 
+        $dailyRate = $standardWorkUnits > 0 ? $setting->base_salary / $standardWorkUnits : 0;
+
         return [
             'base' => round($baseSalary),
             'base_salary_full' => round($setting->base_salary),
+            'salary_type' => $setting->salary_type ?? 'by_workday',
             'bonus' => round($bonusAmount),
             'commission' => round($commissionAmount),
             'allowances' => round($allowanceAmount),
@@ -382,6 +395,30 @@ class SalaryCalculationService
             'repair_performance' => $repairPerformance,
             'total' => round(max(0, $totalSalary)),
             'late_penalty' => round($latePenaltyAmount),
+            'base_salary_breakdown' => [
+                'daily_rate' => round($dailyRate),
+                'normal' => [
+                    'label' => 'Ngày thường',
+                    'days' => $normalDayCount,
+                    'rate' => round($dailyRate),
+                    'multiplier' => 100,
+                    'amount' => round($dailyRate * $normalDayCount),
+                ],
+                'rest_day' => [
+                    'label' => 'Ngày nghỉ',
+                    'days' => $restDayCount,
+                    'rate' => round($dailyRate * $restDayMultiplier),
+                    'multiplier' => round($restDayMultiplier * 100),
+                    'amount' => round($dailyRate * $restDayMultiplier * $restDayCount),
+                ],
+                'holiday' => [
+                    'label' => 'Ngày lễ tết',
+                    'days' => $holidayDayCount,
+                    'rate' => round($dailyRate * $holidayMultiplier),
+                    'multiplier' => round($holidayMultiplier * 100),
+                    'amount' => round($dailyRate * $holidayMultiplier * $holidayDayCount),
+                ],
+            ],
             'details' => [
                 'bonus' => $bonusDetails,
                 'commission' => $commissionDetails,

@@ -97,13 +97,19 @@
                                 <div class="text-xs text-gray-400">{{ slip.employee?.code }}</div>
                             </td>
                             <td class="px-3 py-2 text-right text-gray-700">
-                                <span v-if="slip.details?.normal_work_units && slip.details.normal_work_units !== slip.work_units">
-                                    {{ slip.details.normal_work_units }}(<span class="text-blue-600 font-medium">{{ slip.work_units || 0 }}</span>)
-                                </span>
-                                <span v-else>{{ slip.work_units || 0 }}</span>
-                                <span class="text-gray-400">/{{ slip.details?.standard_work_units || 26 }}</span>
+                                <button @click="openPopup('workdays', slip)" class="text-blue-600 hover:underline font-medium tabular-nums">
+                                    <span v-if="slip.details?.normal_work_units && slip.details.normal_work_units !== slip.work_units">
+                                        {{ slip.details.normal_work_units }}(<span class="font-semibold">{{ slip.work_units || 0 }}</span>)
+                                    </span>
+                                    <span v-else>{{ slip.work_units || 0 }}</span>
+                                    <span class="text-gray-400">/{{ slip.details?.standard_work_units || 26 }}</span>
+                                </button>
                             </td>
-                            <td class="px-3 py-2 text-right font-medium">{{ fmt(slip.base_salary) }}</td>
+                            <td class="px-3 py-2 text-right">
+                                <button @click="openPopup('base', slip)" class="text-blue-600 hover:underline font-medium tabular-nums">
+                                    {{ fmt(slip.base_salary) }}
+                                </button>
+                            </td>
                             <td class="px-3 py-2 text-right">
                                 <button @click="openPopup('ot', slip)" class="text-blue-600 hover:underline font-medium tabular-nums">
                                     {{ fmt(slip.ot_pay) }}
@@ -130,7 +136,11 @@
                                 </button>
                             </td>
                             <td class="px-3 py-2 text-right font-bold text-gray-900">{{ fmt(slip.total_salary) }}</td>
-                            <td class="px-3 py-2 text-right text-green-700">{{ fmt(slip.paid_amount) }}</td>
+                            <td class="px-3 py-2 text-right">
+                                <button @click="openPopup('paid', slip)" class="text-green-700 hover:underline font-medium tabular-nums">
+                                    {{ fmt(slip.paid_amount) }}
+                                </button>
+                            </td>
                             <td class="px-3 py-2 text-right" :class="slip.remaining > 0 ? 'text-red-600 font-semibold' : 'text-gray-500'">
                                 {{ fmt(slip.remaining) }}
                             </td>
@@ -459,6 +469,200 @@
                     </div>
                 </div>
 
+                <!-- Base Salary Popup (Lương chính) -->
+                <div v-if="popup.type === 'base'" class="relative bg-white rounded-lg shadow-xl w-[750px] max-h-[80vh] overflow-hidden z-10">
+                    <div class="px-5 py-3 border-b flex justify-between items-center">
+                        <div>
+                            <h3 class="font-bold text-gray-800">Lương chính</h3>
+                            <div class="text-sm text-gray-500 mt-0.5">
+                                Nhân viên: {{ popup.slip?.employee?.name }}
+                                | Loại lương: {{ salaryTypeLabel(popup.slip?.details?.salary_type) }}
+                                | Ngày công chuẩn: {{ popup.slip?.details?.standard_work_units || 26 }}
+                            </div>
+                        </div>
+                        <button @click="closePopup" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+                    </div>
+                    <div class="p-5 overflow-auto max-h-[60vh]">
+                        <div class="text-sm text-gray-600 mb-3">
+                            Mức lương: <span class="font-semibold text-gray-800">{{ fmt(popup.slip?.details?.base_salary_full || 0) }}</span>
+                        </div>
+                        <table class="w-full text-sm">
+                            <thead class="bg-gray-50">
+                                <tr class="text-left text-xs text-gray-500 uppercase">
+                                    <th class="px-3 py-2">Ngày</th>
+                                    <th class="px-3 py-2 text-right">Lương mỗi ngày</th>
+                                    <th class="px-3 py-2 text-right">Số ngày chấm công</th>
+                                    <th class="px-3 py-2 text-right">Số ngày tính lương</th>
+                                    <th class="px-3 py-2 text-right">Thành tiền</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Tổng -->
+                                <tr class="border-t bg-blue-50/60 font-semibold">
+                                    <td class="px-3 py-2" colspan="2"></td>
+                                    <td class="px-3 py-2 text-right">{{ popup.slip?.details?.normal_work_units || 0 }}</td>
+                                    <td class="px-3 py-2 text-right">{{ popup.slip?.details?.normal_work_units || 0 }}</td>
+                                    <td class="px-3 py-2 text-right">{{ fmt(popup.slip?.base_salary || 0) }}</td>
+                                </tr>
+                                <!-- Ngày thường -->
+                                <tr class="border-t">
+                                    <td class="px-3 py-2 font-medium">Ngày thường</td>
+                                    <td class="px-3 py-2 text-right">{{ fmt(baseSalaryBreakdown.normal?.rate || 0) }}</td>
+                                    <td class="px-3 py-2 text-right">{{ baseSalaryBreakdown.normal?.days || 0 }}</td>
+                                    <td class="px-3 py-2 text-right">{{ baseSalaryBreakdown.normal?.days || 0 }}</td>
+                                    <td class="px-3 py-2 text-right font-semibold">{{ fmt(baseSalaryBreakdown.normal?.amount || 0) }}</td>
+                                </tr>
+                                <!-- Ngày nghỉ -->
+                                <tr v-if="baseSalaryBreakdown.rest_day?.days > 0" class="border-t">
+                                    <td class="px-3 py-2 font-medium">
+                                        Ngày nghỉ
+                                        <span class="text-xs text-gray-400 ml-1">{{ baseSalaryBreakdown.rest_day?.multiplier || 200 }}%</span>
+                                    </td>
+                                    <td class="px-3 py-2 text-right">{{ fmt(baseSalaryBreakdown.rest_day?.rate || 0) }}</td>
+                                    <td class="px-3 py-2 text-right">{{ baseSalaryBreakdown.rest_day?.days || 0 }}</td>
+                                    <td class="px-3 py-2 text-right">{{ baseSalaryBreakdown.rest_day?.days || 0 }}</td>
+                                    <td class="px-3 py-2 text-right font-semibold">{{ fmt(baseSalaryBreakdown.rest_day?.amount || 0) }}</td>
+                                </tr>
+                                <!-- Ngày lễ tết -->
+                                <tr v-if="baseSalaryBreakdown.holiday?.days > 0" class="border-t">
+                                    <td class="px-3 py-2 font-medium">
+                                        Ngày lễ tết
+                                        <span class="text-xs text-gray-400 ml-1">{{ baseSalaryBreakdown.holiday?.multiplier || 300 }}%</span>
+                                    </td>
+                                    <td class="px-3 py-2 text-right">{{ fmt(baseSalaryBreakdown.holiday?.rate || 0) }}</td>
+                                    <td class="px-3 py-2 text-right">{{ baseSalaryBreakdown.holiday?.days || 0 }}</td>
+                                    <td class="px-3 py-2 text-right">{{ baseSalaryBreakdown.holiday?.days || 0 }}</td>
+                                    <td class="px-3 py-2 text-right font-semibold">{{ fmt(baseSalaryBreakdown.holiday?.amount || 0) }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="px-5 py-3 border-t flex justify-end bg-gray-50">
+                        <div class="flex gap-2">
+                            <button @click="closePopup" class="px-4 py-1.5 text-sm border rounded-md hover:bg-gray-100">Bỏ qua</button>
+                            <button @click="closePopup" class="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700">Xong</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Workdays Popup (Ngày công) -->
+                <div v-if="popup.type === 'workdays'" class="relative bg-white rounded-lg shadow-xl w-[650px] max-h-[80vh] overflow-hidden z-10">
+                    <div class="px-5 py-3 border-b flex justify-between items-center">
+                        <h3 class="font-bold text-gray-800">Ngày công - {{ popup.slip?.employee?.name }}</h3>
+                        <button @click="closePopup" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+                    </div>
+                    <div class="p-5 overflow-auto max-h-[60vh]">
+                        <div class="grid grid-cols-2 gap-4 mb-4">
+                            <div class="bg-blue-50 rounded-lg p-3">
+                                <div class="text-xs text-gray-500 mb-1">Ngày công thực tế</div>
+                                <div class="text-2xl font-bold text-blue-700">{{ popup.slip?.details?.normal_work_units || 0 }}</div>
+                            </div>
+                            <div class="bg-gray-50 rounded-lg p-3">
+                                <div class="text-xs text-gray-500 mb-1">Ngày công chuẩn</div>
+                                <div class="text-2xl font-bold text-gray-700">{{ popup.slip?.details?.standard_work_units || 26 }}</div>
+                            </div>
+                        </div>
+                        <table class="w-full text-sm">
+                            <thead class="bg-gray-50">
+                                <tr class="text-left text-xs text-gray-500 uppercase">
+                                    <th class="px-3 py-2">Loại</th>
+                                    <th class="px-3 py-2 text-right">Hệ số</th>
+                                    <th class="px-3 py-2 text-right">Số ngày</th>
+                                    <th class="px-3 py-2 text-right">Quy đổi</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr class="border-t">
+                                    <td class="px-3 py-2 font-medium">Ngày thường</td>
+                                    <td class="px-3 py-2 text-right">100%</td>
+                                    <td class="px-3 py-2 text-right">{{ baseSalaryBreakdown.normal?.days || 0 }}</td>
+                                    <td class="px-3 py-2 text-right font-semibold">{{ baseSalaryBreakdown.normal?.days || 0 }}</td>
+                                </tr>
+                                <tr v-if="baseSalaryBreakdown.rest_day?.days > 0" class="border-t">
+                                    <td class="px-3 py-2 font-medium">
+                                        Ngày nghỉ (CN)
+                                        <span class="text-xs text-gray-400 ml-1">{{ baseSalaryBreakdown.rest_day?.multiplier || 200 }}%</span>
+                                    </td>
+                                    <td class="px-3 py-2 text-right">{{ baseSalaryBreakdown.rest_day?.multiplier || 200 }}%</td>
+                                    <td class="px-3 py-2 text-right">{{ baseSalaryBreakdown.rest_day?.days || 0 }}</td>
+                                    <td class="px-3 py-2 text-right font-semibold">{{ (baseSalaryBreakdown.rest_day?.days || 0) * (baseSalaryBreakdown.rest_day?.multiplier || 200) / 100 }}</td>
+                                </tr>
+                                <tr v-if="baseSalaryBreakdown.holiday?.days > 0" class="border-t">
+                                    <td class="px-3 py-2 font-medium">
+                                        Ngày lễ tết
+                                        <span class="text-xs text-gray-400 ml-1">{{ baseSalaryBreakdown.holiday?.multiplier || 300 }}%</span>
+                                    </td>
+                                    <td class="px-3 py-2 text-right">{{ baseSalaryBreakdown.holiday?.multiplier || 300 }}%</td>
+                                    <td class="px-3 py-2 text-right">{{ baseSalaryBreakdown.holiday?.days || 0 }}</td>
+                                    <td class="px-3 py-2 text-right font-semibold">{{ (baseSalaryBreakdown.holiday?.days || 0) * (baseSalaryBreakdown.holiday?.multiplier || 300) / 100 }}</td>
+                                </tr>
+                                <tr v-if="popup.slip?.details?.paid_leave_units > 0" class="border-t">
+                                    <td class="px-3 py-2 font-medium text-green-700">Nghỉ phép (có lương)</td>
+                                    <td class="px-3 py-2 text-right">100%</td>
+                                    <td class="px-3 py-2 text-right">{{ popup.slip?.details?.paid_leave_units || 0 }}</td>
+                                    <td class="px-3 py-2 text-right font-semibold text-green-700">{{ popup.slip?.details?.paid_leave_units || 0 }}</td>
+                                </tr>
+                            </tbody>
+                            <tfoot class="bg-gray-50 font-semibold border-t-2">
+                                <tr>
+                                    <td class="px-3 py-2" colspan="2">Tổng quy đổi</td>
+                                    <td class="px-3 py-2 text-right">{{ popup.slip?.details?.normal_work_units || 0 }}</td>
+                                    <td class="px-3 py-2 text-right text-blue-700">{{ popup.slip?.work_units || 0 }}</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                    <div class="px-5 py-3 border-t flex justify-end bg-gray-50">
+                        <button @click="closePopup" class="px-4 py-1.5 text-sm border rounded-md hover:bg-gray-100">Đóng</button>
+                    </div>
+                </div>
+
+                <!-- Paid Amount Popup (Đã trả) -->
+                <div v-if="popup.type === 'paid'" class="relative bg-white rounded-lg shadow-xl w-[450px] max-h-[80vh] overflow-hidden z-10">
+                    <div class="px-5 py-3 border-b flex justify-between items-center">
+                        <h3 class="font-bold text-gray-800">Thanh toán - {{ popup.slip?.employee?.name }}</h3>
+                        <button @click="closePopup" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+                    </div>
+                    <div class="p-5">
+                        <div class="space-y-3">
+                            <div class="flex justify-between text-sm">
+                                <span class="text-gray-500">Tổng lương:</span>
+                                <span class="font-semibold">{{ fmt(popup.slip?.total_salary || 0) }}</span>
+                            </div>
+                            <div class="flex justify-between text-sm">
+                                <span class="text-gray-500">Đã trả:</span>
+                                <span class="font-semibold text-green-700">{{ fmt(popup.slip?.paid_amount || 0) }}</span>
+                            </div>
+                            <div class="flex justify-between text-sm border-t pt-2">
+                                <span class="text-gray-700 font-medium">Còn phải trả:</span>
+                                <span class="font-bold" :class="popup.slip?.remaining > 0 ? 'text-red-600' : 'text-gray-500'">
+                                    {{ fmt(popup.slip?.remaining || 0) }}
+                                </span>
+                            </div>
+                            <div v-if="!isLocked && popup.slip?.remaining > 0" class="mt-4 pt-3 border-t">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Số tiền thanh toán</label>
+                                <input v-model.number="paidAmountInput" type="number" min="0"
+                                    class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-right focus:border-blue-500 outline-none"
+                                    :placeholder="'Tối đa ' + fmt(popup.slip?.remaining || 0)" />
+                                <div class="flex gap-2 mt-2">
+                                    <button @click="paidAmountInput = popup.slip?.remaining || 0"
+                                        class="text-xs text-blue-600 hover:underline">Trả hết</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="px-5 py-3 border-t flex justify-between items-center bg-gray-50">
+                        <div class="text-sm text-gray-500" v-if="popup.slip?.remaining <= 0">Đã thanh toán đầy đủ ✓</div>
+                        <div v-else></div>
+                        <div class="flex gap-2">
+                            <button @click="closePopup" class="px-4 py-1.5 text-sm border rounded-md hover:bg-gray-100">Bỏ qua</button>
+                            <button v-if="!isLocked && popup.slip?.remaining > 0" @click="savePaidAmount"
+                                class="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                                :disabled="!paidAmountInput || paidAmountInput <= 0">Thanh toán</button>
+                        </div>
+                    </div>
+                </div>
+
             </div>
         </Teleport>
     </AppLayout>
@@ -529,12 +733,13 @@ const summaryTotals = computed(() => {
 // ===== Popup State =====
 const popup = reactive({
     show: false,
-    type: '',      // 'ot' | 'commission' | 'allowance' | 'bonus' | 'deduction'
+    type: '',      // 'ot' | 'commission' | 'allowance' | 'bonus' | 'deduction' | 'base' | 'workdays' | 'paid'
     slip: null,
 });
 
 const popupAdjustments = ref([]);
 const pendingDeletes = ref([]); // adjustment IDs to delete on save
+const paidAmountInput = ref(0);
 let tempIdCounter = -1;
 
 // ===== Popup computed items =====
@@ -551,6 +756,11 @@ const commissionItems = computed(() => {
 const latePenaltyItems = computed(() => {
     if (!popup.slip) return [];
     return popup.slip.details?.details?.late_penalty || [];
+});
+
+const baseSalaryBreakdown = computed(() => {
+    if (!popup.slip) return { normal: {}, rest_day: {}, holiday: {} };
+    return popup.slip.details?.base_salary_breakdown || { normal: {}, rest_day: {}, holiday: {} };
 });
 
 const popupTotal = computed(() => {
@@ -641,6 +851,19 @@ function openPopup(type, slip) {
     popup.slip = slip;
     popup.show = true;
     pendingDeletes.value = [];
+
+    // For read-only popups, no adjustments needed
+    if (type === 'base' || type === 'workdays' || type === 'commission') {
+        popupAdjustments.value = [];
+        return;
+    }
+
+    // For paid popup, init input
+    if (type === 'paid') {
+        paidAmountInput.value = slip.remaining || 0;
+        popupAdjustments.value = [];
+        return;
+    }
 
     // Load existing adjustments for this type
     const existingAdj = (slip.adjustments || []).filter(a => a.type === type);
@@ -748,6 +971,34 @@ async function saveAdjustments() {
     }
 }
 
+async function savePaidAmount() {
+    if (!popup.slip || !paidAmountInput.value || paidAmountInput.value <= 0) return;
+    const psId = localPaysheet.value.id;
+    const slipId = popup.slip.id;
+
+    try {
+        const { data } = await axios.post(`/api/paysheets/${psId}/pay`, {
+            payslip_ids: [slipId],
+            method: 'cash',
+            notes: '',
+        });
+
+        if (data.success) {
+            localPaysheet.value = data.data;
+            // Reload full data to get adjustments
+            const { data: full } = await axios.get(`/api/paysheets/${psId}`);
+            if (full.success) {
+                localPaysheet.value = full.data;
+            }
+        }
+
+        closePopup();
+    } catch (e) {
+        console.error('Save paid amount error:', e);
+        alert('Lỗi khi thanh toán.');
+    }
+}
+
 // ===== Paysheet Actions =====
 async function recalculate() {
     recalculating.value = true;
@@ -803,6 +1054,11 @@ function formatHours(minutes) {
 function statusLabel(s) {
     const map = { draft: 'Đang tạo', calculating: 'Đang tính', calculated: 'Tạm tính', locked: 'Đã chốt', cancelled: 'Đã hủy' };
     return map[s] || s;
+}
+
+function salaryTypeLabel(t) {
+    const map = { by_workday: 'Theo ngày công chuẩn', fixed: 'Cố định', hourly: 'Theo giờ' };
+    return map[t] || 'Theo ngày công chuẩn';
 }
 
 function statusClass(s) {
