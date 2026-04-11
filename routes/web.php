@@ -47,11 +47,15 @@ Route::get('/check-schema', function () {
 Route::get('/fix-and-recalc', function () {
     if (function_exists('opcache_reset')) opcache_reset();
 
+    // Bước 0: Fix ot_before_minutes = 0 (KiotViet KHÔNG tính OT trước ca)
+    \Illuminate\Support\Facades\DB::table('timekeeping_settings')
+        ->update(['ot_before_minutes' => 0]);
+
     // Bước 1: Fix timekeeping OT — xử lý TẤT CẢ records (kể cả thiếu shift_id)
     $shifts = \App\Models\Shift::all()->keyBy('id');
     $defaultShift = $shifts->first();
     $tkSetting = \App\Models\TimekeepingSetting::first();
-    $otBeforeThreshold = (int) ($tkSetting?->ot_before_minutes ?? 0); // Thiết lập "Tính OT trước ca: X phút"
+    $otBeforeThreshold = (int) ($tkSetting?->ot_before_minutes ?? 0); // Giờ = 0 → không tính OT trước ca
     $fixed = 0;
 
     $tkRecords = \App\Models\TimekeepingRecord::whereBetween('work_date', ['2026-03-01', '2026-03-31'])

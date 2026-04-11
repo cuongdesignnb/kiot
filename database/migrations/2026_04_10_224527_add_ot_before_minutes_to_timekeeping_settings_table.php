@@ -8,7 +8,7 @@ return new class extends Migration {
     public function up(): void
     {
         Schema::table('timekeeping_settings', function (Blueprint $table) {
-            $table->unsignedSmallInteger('ot_before_minutes')->default(1)->after('ot_after_minutes');
+            $table->unsignedSmallInteger('ot_before_minutes')->default(0)->after('ot_after_minutes');
             // OT trước ca: tính làm thêm giờ khi nhân viên đến sớm >= X phút
         });
     }
