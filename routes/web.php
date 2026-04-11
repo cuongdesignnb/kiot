@@ -62,6 +62,7 @@ Route::get('/fix-and-recalc', function () {
     $tkRecords = \App\Models\TimekeepingRecord::whereBetween('work_date', ['2026-03-01', '2026-03-31'])
         ->get();
 
+    $workUnitsFixed = 0;
     foreach ($tkRecords as $tk) {
         $shift = ($tk->shift_id ? ($shifts[$tk->shift_id] ?? null) : null) ?? $defaultShift;
         if (!$shift) continue;
@@ -94,13 +95,22 @@ Route::get('/fix-and-recalc', function () {
         }
         $otMinutes = $otAfter + $otBefore;
 
+        // Fix work_units: nếu có check_in/check_out nhưng work_units=0 → set 1.0
+        $updateData = [
+            'scheduled_start_at' => $newStart,
+            'scheduled_end_at' => $newEnd,
+            'ot_minutes' => $otMinutes,
+        ];
+
+        if ($tk->check_in_at && (float)$tk->work_units == 0) {
+            $updateData['work_units'] = 1.0;
+            $updateData['attendance_type'] = 'work';
+            $workUnitsFixed++;
+        }
+
         \Illuminate\Support\Facades\DB::table('timekeeping_records')
             ->where('id', $tk->id)
-            ->update([
-                'scheduled_start_at' => $newStart,
-                'scheduled_end_at' => $newEnd,
-                'ot_minutes' => $otMinutes,
-            ]);
+            ->update($updateData);
         if ($tk->ot_minutes != $otMinutes) $fixed++;
     }
 
@@ -225,6 +235,7 @@ Route::get('/fix-and-recalc', function () {
 
     return response()->json([
         'timekeeping_fixed' => $fixed,
+        'work_units_fixed' => $workUnitsFixed,
         'paysheet_selected' => $paysheetInfo,
         'salary_results' => $salaryResults,
     ]);
