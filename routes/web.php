@@ -84,14 +84,12 @@ Route::get('/fix-and-recalc', function () {
             }
         }
 
-        // OT TRƯỚC CA: schedule_start - check_in, threshold từ cài đặt
+        // OT TRƯỚC CA: schedule_start - check_in, TRỪ threshold (giống sau ca)
         if ($otBeforeThreshold > 0 && $tk->check_in_at) {
             $checkIn = \Carbon\Carbon::parse($tk->check_in_at);
             if ($checkIn->lessThan($newStart)) {
                 $earlyMin = intdiv(abs($newStart->diffInSeconds($checkIn)), 60);
-                if ($earlyMin >= $otBeforeThreshold) {
-                    $otBefore = $earlyMin;
-                }
+                $otBefore = max(0, $earlyMin - $otBeforeThreshold);
             }
         }
         $otMinutes = $otAfter + $otBefore;
@@ -307,9 +305,7 @@ Route::get('/debug-ot', function (\Illuminate\Http\Request $request) {
             $checkIn = \Carbon\Carbon::parse($r->check_in_at);
             if ($checkIn->lessThan($schedStart)) {
                 $earlyMin = intdiv(abs($schedStart->diffInSeconds($checkIn)), 60);
-                if ($earlyMin >= $otBeforeThreshold) {
-                    $otBefore = $earlyMin;
-                }
+                $otBefore = max(0, $earlyMin - $otBeforeThreshold);
             }
         }
 
