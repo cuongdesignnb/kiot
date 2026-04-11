@@ -894,15 +894,39 @@ function openPopup(type, slip) {
     popup.show = true;
     pendingDeletes.value = [];
 
-    // For base salary popup → init editable rows from breakdown data
+    // For base salary popup → init editable rows from breakdown data or compute from existing
     if (type === 'base') {
         const bd = slip.details?.base_salary_breakdown || {};
-        baseEditRows.normal.rate = bd.normal?.rate || 0;
-        baseEditRows.normal.payDays = bd.normal?.days || 0;
-        baseEditRows.rest_day.rate = bd.rest_day?.rate || 0;
-        baseEditRows.rest_day.payDays = bd.rest_day?.days || 0;
-        baseEditRows.holiday.rate = bd.holiday?.rate || 0;
-        baseEditRows.holiday.payDays = bd.holiday?.days || 0;
+        const baseFull = slip.details?.base_salary_full || 0;
+        const stdUnits = slip.details?.standard_work_units || 26;
+        const dailyRate = stdUnits > 0 ? Math.round(baseFull / stdUnits) : 0;
+        const normalWU = slip.details?.normal_work_units || slip.work_units || 0;
+        const totalWU = slip.work_units || 0;
+
+        // Nếu có breakdown data từ backend → dùng trực tiếp
+        if (bd.normal?.rate) {
+            baseEditRows.normal.rate = bd.normal.rate;
+            baseEditRows.normal.payDays = bd.normal.days || 0;
+            baseEditRows.rest_day.rate = bd.rest_day?.rate || 0;
+            baseEditRows.rest_day.payDays = bd.rest_day?.days || 0;
+            baseEditRows.holiday.rate = bd.holiday?.rate || 0;
+            baseEditRows.holiday.payDays = bd.holiday?.days || 0;
+        } else {
+            // Fallback: tính từ dữ liệu có sẵn
+            // Ước lượng: tổng work_units - normal_work_units phần chênh / multiplier = rest days
+            const restMultiplier = (bd.rest_day?.multiplier || 200) / 100;
+            const extraUnits = totalWU - normalWU;
+            // extraUnits = restDays * (restMultiplier - 1), vì mỗi rest day đã đếm 1 trong normalWU
+            const restDays = restMultiplier > 1 ? Math.round(extraUnits / (restMultiplier - 1)) : 0;
+            const normalDays = normalWU - restDays;
+
+            baseEditRows.normal.rate = dailyRate;
+            baseEditRows.normal.payDays = normalDays;
+            baseEditRows.rest_day.rate = Math.round(dailyRate * restMultiplier);
+            baseEditRows.rest_day.payDays = restDays;
+            baseEditRows.holiday.rate = Math.round(dailyRate * 3);  // default 300%
+            baseEditRows.holiday.payDays = 0;
+        }
         popupAdjustments.value = [];
         return;
     }
