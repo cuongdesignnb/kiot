@@ -1162,7 +1162,7 @@ function goBack() {
 // ===== Formatters =====
 function fmt(v) {
     if (!v && v !== 0) return '0';
-    return Number(v).toLocaleString('vi-VN');
+    return Math.round(Number(v)).toLocaleString('vi-VN');
 }
 
 function parseNum(str) {
