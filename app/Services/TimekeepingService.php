@@ -49,8 +49,14 @@ class TimekeepingService
 
         foreach ($schedules as $schedule) {
 
-            // Skip bản ghi đã chỉnh tay
+            // Skip bản ghi đã chỉnh tay — tìm bằng schedule_id HOẶC employee+date
             $existing = TimekeepingRecord::where('employee_work_schedule_id', $schedule->id)->first();
+            if (!$existing) {
+                // Fallback: tìm bằng employee_id + work_date (tránh duplicate khi schedule thay đổi)
+                $existing = TimekeepingRecord::where('employee_id', $schedule->employee_id)
+                    ->where('work_date', $schedule->work_date)
+                    ->first();
+            }
             if ($existing && $existing->manual_override)
                 continue;
 
