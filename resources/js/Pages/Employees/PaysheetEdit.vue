@@ -502,18 +502,18 @@
                                     <td class="px-3 py-2" colspan="2"></td>
                                     <td class="px-3 py-2 text-right">{{ baseEditTotalAttendDays }}</td>
                                     <td class="px-3 py-2 text-right">{{ baseEditTotalPayDays }}</td>
-                                    <td class="px-3 py-2 text-right">{{ fmt(baseEditTotalAmount) }}</td>
+                                    <td class="px-3 py-2 text-right">{{ fmt(baseEditDirty ? baseEditTotalAmount : (popup.slip?.base_salary || 0)) }}</td>
                                 </tr>
                                 <!-- Ngày thường -->
                                 <tr class="border-t">
                                     <td class="px-3 py-2 font-medium">Ngày thường</td>
                                     <td class="px-3 py-2 text-right">
-                                        <input :value="fmt(baseEditRows.normal.rate)" @change="baseEditRows.normal.rate = parseNum($event.target.value)" :disabled="isLocked" type="text"
+                                        <input :value="fmt(baseEditRows.normal.rate)" @change="baseEditRows.normal.rate = parseNum($event.target.value); baseEditDirty = true" :disabled="isLocked" type="text"
                                             class="w-28 border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
                                     </td>
                                     <td class="px-3 py-2 text-right text-gray-500">{{ baseEditRows.normal.attendDays }}</td>
                                     <td class="px-3 py-2 text-right">
-                                        <input :value="baseEditRows.normal.payDays" @change="baseEditRows.normal.payDays = parseFloat($event.target.value) || 0" :disabled="isLocked" type="text"
+                                        <input :value="baseEditRows.normal.payDays" @change="baseEditRows.normal.payDays = parseFloat($event.target.value) || 0; baseEditDirty = true" :disabled="isLocked" type="text"
                                             class="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
                                     </td>
                                     <td class="px-3 py-2 text-right font-semibold">{{ fmt(Math.round(baseEditRows.normal.rate * baseEditRows.normal.payDays)) }}</td>
@@ -525,12 +525,12 @@
                                         <div class="text-xs text-gray-400">{{ baseEditRows.rest_day.multiplier || 200 }}%</div>
                                     </td>
                                     <td class="px-3 py-2 text-right">
-                                        <input :value="fmt(baseEditRows.rest_day.rate)" @change="baseEditRows.rest_day.rate = parseNum($event.target.value)" :disabled="isLocked" type="text"
+                                        <input :value="fmt(baseEditRows.rest_day.rate)" @change="baseEditRows.rest_day.rate = parseNum($event.target.value); baseEditDirty = true" :disabled="isLocked" type="text"
                                             class="w-28 border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
                                     </td>
                                     <td class="px-3 py-2 text-right text-gray-500">{{ baseEditRows.rest_day.attendDays }}</td>
                                     <td class="px-3 py-2 text-right">
-                                        <input :value="baseEditRows.rest_day.payDays" @change="baseEditRows.rest_day.payDays = parseFloat($event.target.value) || 0" :disabled="isLocked" type="text"
+                                        <input :value="baseEditRows.rest_day.payDays" @change="baseEditRows.rest_day.payDays = parseFloat($event.target.value) || 0; baseEditDirty = true" :disabled="isLocked" type="text"
                                             class="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
                                     </td>
                                     <td class="px-3 py-2 text-right font-semibold">{{ fmt(Math.round(baseEditRows.rest_day.rate * baseEditRows.rest_day.payDays)) }}</td>
@@ -542,12 +542,12 @@
                                         <div class="text-xs text-gray-400">{{ baseEditRows.holiday.multiplier || 300 }}%</div>
                                     </td>
                                     <td class="px-3 py-2 text-right">
-                                        <input :value="fmt(baseEditRows.holiday.rate)" @change="baseEditRows.holiday.rate = parseNum($event.target.value)" :disabled="isLocked" type="text"
+                                        <input :value="fmt(baseEditRows.holiday.rate)" @change="baseEditRows.holiday.rate = parseNum($event.target.value); baseEditDirty = true" :disabled="isLocked" type="text"
                                             class="w-28 border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
                                     </td>
                                     <td class="px-3 py-2 text-right text-gray-500">{{ baseEditRows.holiday.attendDays }}</td>
                                     <td class="px-3 py-2 text-right">
-                                        <input :value="baseEditRows.holiday.payDays" @change="baseEditRows.holiday.payDays = parseFloat($event.target.value) || 0" :disabled="isLocked" type="text"
+                                        <input :value="baseEditRows.holiday.payDays" @change="baseEditRows.holiday.payDays = parseFloat($event.target.value) || 0; baseEditDirty = true" :disabled="isLocked" type="text"
                                             class="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
                                     </td>
                                     <td class="px-3 py-2 text-right font-semibold">{{ fmt(Math.round(baseEditRows.holiday.rate * baseEditRows.holiday.payDays)) }}</td>
@@ -556,10 +556,14 @@
                         </table>
                     </div>
                     <div class="px-5 py-3 border-t flex justify-between items-center bg-gray-50">
-                        <div class="font-semibold">Tổng: {{ fmt(baseEditTotalAmount) }}</div>
+                        <div class="font-semibold">
+                            Tổng: {{ fmt(baseEditDirty ? baseEditTotalAmount : (popup.slip?.base_salary || 0)) }}
+                            <span v-if="baseEditDirty" class="text-xs text-orange-500 ml-2">(đã sửa)</span>
+                        </div>
                         <div class="flex gap-2">
                             <button @click="closePopup" class="px-4 py-1.5 text-sm border rounded-md hover:bg-gray-100">Bỏ qua</button>
-                            <button v-if="!isLocked" @click="saveBaseSalary" class="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700">Xong</button>
+                            <button v-if="!isLocked" @click="baseEditDirty ? saveBaseSalary() : closePopup()"
+                                class="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700">Xong</button>
                         </div>
                     </div>
                 </div>
@@ -764,6 +768,7 @@ const baseEditRows = reactive({
     rest_day: { rate: 0, payDays: 0, attendDays: 0, multiplier: 200 },
     holiday: { rate: 0, payDays: 0, attendDays: 0, multiplier: 300 },
 });
+const baseEditDirty = ref(false);
 let tempIdCounter = -1;
 
 // ===== Popup computed items =====
@@ -943,6 +948,7 @@ function openPopup(type, slip) {
             baseEditRows.holiday.attendDays = 0;
             baseEditRows.holiday.multiplier = holMult;
         }
+        baseEditDirty.value = false;
         popupAdjustments.value = [];
         return;
     }
