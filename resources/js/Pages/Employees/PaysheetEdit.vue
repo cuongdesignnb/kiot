@@ -508,49 +508,49 @@
                                 <tr class="border-t">
                                     <td class="px-3 py-2 font-medium">Ngày thường</td>
                                     <td class="px-3 py-2 text-right">
-                                        <input v-model.number="baseEditRows.normal.rate" :disabled="isLocked" type="number" min="0"
+                                        <input :value="fmt(baseEditRows.normal.rate)" @blur="baseEditRows.normal.rate = parseNum($event.target.value)" :disabled="isLocked" type="text"
                                             class="w-28 border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
                                     </td>
-                                    <td class="px-3 py-2 text-right text-gray-500">{{ baseSalaryBreakdown.normal?.days || 0 }}</td>
+                                    <td class="px-3 py-2 text-right text-gray-500">{{ baseEditRows.normal.attendDays }}</td>
                                     <td class="px-3 py-2 text-right">
-                                        <input v-model.number="baseEditRows.normal.payDays" :disabled="isLocked" type="number" min="0" step="0.5"
+                                        <input :value="baseEditRows.normal.payDays" @blur="baseEditRows.normal.payDays = parseFloat($event.target.value) || 0" :disabled="isLocked" type="text"
                                             class="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
                                     </td>
-                                    <td class="px-3 py-2 text-right font-semibold">{{ fmt(baseEditRows.normal.rate * baseEditRows.normal.payDays) }}</td>
+                                    <td class="px-3 py-2 text-right font-semibold">{{ fmt(Math.round(baseEditRows.normal.rate * baseEditRows.normal.payDays)) }}</td>
                                 </tr>
                                 <!-- Ngày nghỉ -->
                                 <tr class="border-t">
                                     <td class="px-3 py-2 font-medium">
                                         Ngày nghỉ
-                                        <span class="text-xs text-gray-400 ml-1">{{ baseSalaryBreakdown.rest_day?.multiplier || 200 }}%</span>
+                                        <div class="text-xs text-gray-400">{{ baseEditRows.rest_day.multiplier || 200 }}%</div>
                                     </td>
                                     <td class="px-3 py-2 text-right">
-                                        <input v-model.number="baseEditRows.rest_day.rate" :disabled="isLocked" type="number" min="0"
+                                        <input :value="fmt(baseEditRows.rest_day.rate)" @blur="baseEditRows.rest_day.rate = parseNum($event.target.value)" :disabled="isLocked" type="text"
                                             class="w-28 border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
                                     </td>
-                                    <td class="px-3 py-2 text-right text-gray-500">{{ baseSalaryBreakdown.rest_day?.days || 0 }}</td>
+                                    <td class="px-3 py-2 text-right text-gray-500">{{ baseEditRows.rest_day.attendDays }}</td>
                                     <td class="px-3 py-2 text-right">
-                                        <input v-model.number="baseEditRows.rest_day.payDays" :disabled="isLocked" type="number" min="0" step="0.5"
+                                        <input :value="baseEditRows.rest_day.payDays" @blur="baseEditRows.rest_day.payDays = parseFloat($event.target.value) || 0" :disabled="isLocked" type="text"
                                             class="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
                                     </td>
-                                    <td class="px-3 py-2 text-right font-semibold">{{ fmt(baseEditRows.rest_day.rate * baseEditRows.rest_day.payDays) }}</td>
+                                    <td class="px-3 py-2 text-right font-semibold">{{ fmt(Math.round(baseEditRows.rest_day.rate * baseEditRows.rest_day.payDays)) }}</td>
                                 </tr>
                                 <!-- Ngày lễ tết -->
                                 <tr class="border-t">
                                     <td class="px-3 py-2 font-medium">
                                         Ngày lễ tết
-                                        <span class="text-xs text-gray-400 ml-1">{{ baseSalaryBreakdown.holiday?.multiplier || 300 }}%</span>
+                                        <div class="text-xs text-gray-400">{{ baseEditRows.holiday.multiplier || 300 }}%</div>
                                     </td>
                                     <td class="px-3 py-2 text-right">
-                                        <input v-model.number="baseEditRows.holiday.rate" :disabled="isLocked" type="number" min="0"
+                                        <input :value="fmt(baseEditRows.holiday.rate)" @blur="baseEditRows.holiday.rate = parseNum($event.target.value)" :disabled="isLocked" type="text"
                                             class="w-28 border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
                                     </td>
-                                    <td class="px-3 py-2 text-right text-gray-500">{{ baseSalaryBreakdown.holiday?.days || 0 }}</td>
+                                    <td class="px-3 py-2 text-right text-gray-500">{{ baseEditRows.holiday.attendDays }}</td>
                                     <td class="px-3 py-2 text-right">
-                                        <input v-model.number="baseEditRows.holiday.payDays" :disabled="isLocked" type="number" min="0" step="0.5"
+                                        <input :value="baseEditRows.holiday.payDays" @blur="baseEditRows.holiday.payDays = parseFloat($event.target.value) || 0" :disabled="isLocked" type="text"
                                             class="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
                                     </td>
-                                    <td class="px-3 py-2 text-right font-semibold">{{ fmt(baseEditRows.holiday.rate * baseEditRows.holiday.payDays) }}</td>
+                                    <td class="px-3 py-2 text-right font-semibold">{{ fmt(Math.round(baseEditRows.holiday.rate * baseEditRows.holiday.payDays)) }}</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -760,9 +760,9 @@ const popupAdjustments = ref([]);
 const pendingDeletes = ref([]); // adjustment IDs to delete on save
 const paidAmountInput = ref(0);
 const baseEditRows = reactive({
-    normal: { rate: 0, payDays: 0 },
-    rest_day: { rate: 0, payDays: 0 },
-    holiday: { rate: 0, payDays: 0 },
+    normal: { rate: 0, payDays: 0, attendDays: 0, multiplier: 100 },
+    rest_day: { rate: 0, payDays: 0, attendDays: 0, multiplier: 200 },
+    holiday: { rate: 0, payDays: 0, attendDays: 0, multiplier: 300 },
 });
 let tempIdCounter = -1;
 
@@ -788,9 +788,9 @@ const baseSalaryBreakdown = computed(() => {
 });
 
 const baseEditTotalAttendDays = computed(() => {
-    return (baseSalaryBreakdown.value.normal?.days || 0)
-         + (baseSalaryBreakdown.value.rest_day?.days || 0)
-         + (baseSalaryBreakdown.value.holiday?.days || 0);
+    return (baseEditRows.normal.attendDays || 0)
+         + (baseEditRows.rest_day.attendDays || 0)
+         + (baseEditRows.holiday.attendDays || 0);
 });
 
 const baseEditTotalPayDays = computed(() => {
@@ -903,29 +903,44 @@ function openPopup(type, slip) {
         const normalWU = slip.details?.normal_work_units || slip.work_units || 0;
         const totalWU = slip.work_units || 0;
 
+        // Read multipliers from employee salary settings
+        const empSetting = props.salarySettings[slip.employee_id] || {};
+        const restMult = empSetting.holiday_rate || 200; // % ngày nghỉ
+        const holMult = empSetting.tet_rate || 300;      // % ngày lễ tết
+
         // Nếu có breakdown data từ backend → dùng trực tiếp
         if (bd.normal?.rate) {
             baseEditRows.normal.rate = bd.normal.rate;
             baseEditRows.normal.payDays = bd.normal.days || 0;
-            baseEditRows.rest_day.rate = bd.rest_day?.rate || 0;
+            baseEditRows.normal.attendDays = bd.normal.days || 0;
+            baseEditRows.normal.multiplier = 100;
+            baseEditRows.rest_day.rate = bd.rest_day?.rate || Math.round(dailyRate * restMult / 100);
             baseEditRows.rest_day.payDays = bd.rest_day?.days || 0;
-            baseEditRows.holiday.rate = bd.holiday?.rate || 0;
+            baseEditRows.rest_day.attendDays = bd.rest_day?.days || 0;
+            baseEditRows.rest_day.multiplier = bd.rest_day?.multiplier || restMult;
+            baseEditRows.holiday.rate = bd.holiday?.rate || Math.round(dailyRate * holMult / 100);
             baseEditRows.holiday.payDays = bd.holiday?.days || 0;
+            baseEditRows.holiday.attendDays = bd.holiday?.days || 0;
+            baseEditRows.holiday.multiplier = bd.holiday?.multiplier || holMult;
         } else {
             // Fallback: tính từ dữ liệu có sẵn
-            // Ước lượng: tổng work_units - normal_work_units phần chênh / multiplier = rest days
-            const restMultiplier = (bd.rest_day?.multiplier || 200) / 100;
+            const restMultiplier = restMult / 100;
             const extraUnits = totalWU - normalWU;
-            // extraUnits = restDays * (restMultiplier - 1), vì mỗi rest day đã đếm 1 trong normalWU
             const restDays = restMultiplier > 1 ? Math.round(extraUnits / (restMultiplier - 1)) : 0;
             const normalDays = normalWU - restDays;
 
             baseEditRows.normal.rate = dailyRate;
             baseEditRows.normal.payDays = normalDays;
+            baseEditRows.normal.attendDays = normalDays;
+            baseEditRows.normal.multiplier = 100;
             baseEditRows.rest_day.rate = Math.round(dailyRate * restMultiplier);
             baseEditRows.rest_day.payDays = restDays;
-            baseEditRows.holiday.rate = Math.round(dailyRate * 3);  // default 300%
+            baseEditRows.rest_day.attendDays = restDays;
+            baseEditRows.rest_day.multiplier = restMult;
+            baseEditRows.holiday.rate = Math.round(dailyRate * holMult / 100);
             baseEditRows.holiday.payDays = 0;
+            baseEditRows.holiday.attendDays = 0;
+            baseEditRows.holiday.multiplier = holMult;
         }
         popupAdjustments.value = [];
         return;
@@ -1141,6 +1156,12 @@ function goBack() {
 function fmt(v) {
     if (!v && v !== 0) return '0';
     return Number(v).toLocaleString('vi-VN');
+}
+
+function parseNum(str) {
+    if (!str) return 0;
+    // Remove dots, commas, spaces → parse as int
+    return parseInt(String(str).replace(/[.\s,]/g, ''), 10) || 0;
 }
 
 function formatDate(d) {
