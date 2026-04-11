@@ -59,10 +59,29 @@ Route::get('/fix-and-recalc', function () {
     $otAfterThreshold = (int) ($tkSetting?->ot_after_minutes ?? 1);
     $fixed = 0;
 
+    // Bước 0.5: Revert records bị fix sai work_units bởi lần chạy trước
+    // Records có work_units=1 nhưng KHÔNG có work schedule entry → revert về 0
+    $tkAllRecords = \App\Models\TimekeepingRecord::whereBetween('work_date', ['2026-03-01', '2026-03-31'])->get();
+    $workUnitsReverted = 0;
+    foreach ($tkAllRecords as $tkr) {
+        if ((float)$tkr->work_units == 1.0 && $tkr->check_in_at) {
+            // Kiểm tra có work schedule không
+            $hasSchedule = \App\Models\EmployeeWorkSchedule::where('employee_id', $tkr->employee_id)
+                ->where('work_date', $tkr->work_date)
+                ->exists();
+            if (!$hasSchedule) {
+                // Không có schedule → record này bị fix sai, revert
+                \Illuminate\Support\Facades\DB::table('timekeeping_records')
+                    ->where('id', $tkr->id)
+                    ->update(['work_units' => 0]);
+                $workUnitsReverted++;
+            }
+        }
+    }
+
     $tkRecords = \App\Models\TimekeepingRecord::whereBetween('work_date', ['2026-03-01', '2026-03-31'])
         ->get();
 
-    $workUnitsFixed = 0;
     foreach ($tkRecords as $tk) {
         $shift = ($tk->shift_id ? ($shifts[$tk->shift_id] ?? null) : null) ?? $defaultShift;
         if (!$shift) continue;
@@ -95,23 +114,39 @@ Route::get('/fix-and-recalc', function () {
         }
         $otMinutes = $otAfter + $otBefore;
 
-        // Fix work_units: nếu có check_in/check_out nhưng work_units=0 → set 1.0
         $updateData = [
             'scheduled_start_at' => $newStart,
             'scheduled_end_at' => $newEnd,
             'ot_minutes' => $otMinutes,
         ];
 
-        if ($tk->check_in_at && (float)$tk->work_units == 0) {
-            $updateData['work_units'] = 1.0;
-            $updateData['attendance_type'] = 'work';
-            $workUnitsFixed++;
-        }
-
         \Illuminate\Support\Facades\DB::table('timekeeping_records')
             ->where('id', $tk->id)
             ->update($updateData);
         if ($tk->ot_minutes != $otMinutes) $fixed++;
+    }
+
+    // Bước 1.5: Xóa duplicate records (cùng employee + work_date), giữ record is_holiday=true hoặc record cũ nhất
+    $duplicates = \Illuminate\Support\Facades\DB::table('timekeeping_records')
+        ->select('employee_id', 'work_date', \Illuminate\Support\Facades\DB::raw('COUNT(*) as cnt'))
+        ->whereBetween('work_date', ['2026-03-01', '2026-03-31'])
+        ->groupBy('employee_id', 'work_date')
+        ->havingRaw('COUNT(*) > 1')
+        ->get();
+    $duplicatesRemoved = 0;
+    foreach ($duplicates as $dup) {
+        $dupeRecords = \Illuminate\Support\Facades\DB::table('timekeeping_records')
+            ->where('employee_id', $dup->employee_id)
+            ->where('work_date', $dup->work_date)
+            ->orderByDesc('is_holiday')  // giữ record is_holiday=true
+            ->orderBy('id')              // fallback: giữ record cũ nhất
+            ->get();
+        // Giữ record đầu tiên, xóa còn lại
+        $keep = $dupeRecords->first();
+        foreach ($dupeRecords->skip(1) as $toDelete) {
+            \Illuminate\Support\Facades\DB::table('timekeeping_records')->where('id', $toDelete->id)->delete();
+            $duplicatesRemoved++;
+        }
     }
 
     // Bước 2: Tính lại lương — tìm paysheet THÁNG 3/2026
@@ -235,7 +270,8 @@ Route::get('/fix-and-recalc', function () {
 
     return response()->json([
         'timekeeping_fixed' => $fixed,
-        'work_units_fixed' => $workUnitsFixed,
+        'work_units_reverted' => $workUnitsReverted,
+        'duplicates_removed' => $duplicatesRemoved,
         'paysheet_selected' => $paysheetInfo,
         'salary_results' => $salaryResults,
     ]);
