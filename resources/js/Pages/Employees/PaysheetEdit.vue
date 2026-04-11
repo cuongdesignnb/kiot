@@ -469,7 +469,7 @@
                     </div>
                 </div>
 
-                <!-- Base Salary Popup (Lương chính) -->
+                <!-- Base Salary Popup (Lương chính) — Editable like KiotViet -->
                 <div v-if="popup.type === 'base'" class="relative bg-white rounded-lg shadow-xl w-[750px] max-h-[80vh] overflow-hidden z-10">
                     <div class="px-5 py-3 border-b flex justify-between items-center">
                         <div>
@@ -497,50 +497,69 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <!-- Tổng -->
+                                <!-- Tổng row -->
                                 <tr class="border-t bg-blue-50/60 font-semibold">
                                     <td class="px-3 py-2" colspan="2"></td>
-                                    <td class="px-3 py-2 text-right">{{ popup.slip?.details?.normal_work_units || 0 }}</td>
-                                    <td class="px-3 py-2 text-right">{{ popup.slip?.details?.normal_work_units || 0 }}</td>
-                                    <td class="px-3 py-2 text-right">{{ fmt(popup.slip?.base_salary || 0) }}</td>
+                                    <td class="px-3 py-2 text-right">{{ baseEditTotalAttendDays }}</td>
+                                    <td class="px-3 py-2 text-right">{{ baseEditTotalPayDays }}</td>
+                                    <td class="px-3 py-2 text-right">{{ fmt(baseEditTotalAmount) }}</td>
                                 </tr>
                                 <!-- Ngày thường -->
                                 <tr class="border-t">
                                     <td class="px-3 py-2 font-medium">Ngày thường</td>
-                                    <td class="px-3 py-2 text-right">{{ fmt(baseSalaryBreakdown.normal?.rate || 0) }}</td>
-                                    <td class="px-3 py-2 text-right">{{ baseSalaryBreakdown.normal?.days || 0 }}</td>
-                                    <td class="px-3 py-2 text-right">{{ baseSalaryBreakdown.normal?.days || 0 }}</td>
-                                    <td class="px-3 py-2 text-right font-semibold">{{ fmt(baseSalaryBreakdown.normal?.amount || 0) }}</td>
+                                    <td class="px-3 py-2 text-right">
+                                        <input v-model.number="baseEditRows.normal.rate" :disabled="isLocked" type="number" min="0"
+                                            class="w-28 border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
+                                    </td>
+                                    <td class="px-3 py-2 text-right text-gray-500">{{ baseSalaryBreakdown.normal?.days || 0 }}</td>
+                                    <td class="px-3 py-2 text-right">
+                                        <input v-model.number="baseEditRows.normal.payDays" :disabled="isLocked" type="number" min="0" step="0.5"
+                                            class="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
+                                    </td>
+                                    <td class="px-3 py-2 text-right font-semibold">{{ fmt(baseEditRows.normal.rate * baseEditRows.normal.payDays) }}</td>
                                 </tr>
                                 <!-- Ngày nghỉ -->
-                                <tr v-if="baseSalaryBreakdown.rest_day?.days > 0" class="border-t">
+                                <tr class="border-t">
                                     <td class="px-3 py-2 font-medium">
                                         Ngày nghỉ
                                         <span class="text-xs text-gray-400 ml-1">{{ baseSalaryBreakdown.rest_day?.multiplier || 200 }}%</span>
                                     </td>
-                                    <td class="px-3 py-2 text-right">{{ fmt(baseSalaryBreakdown.rest_day?.rate || 0) }}</td>
-                                    <td class="px-3 py-2 text-right">{{ baseSalaryBreakdown.rest_day?.days || 0 }}</td>
-                                    <td class="px-3 py-2 text-right">{{ baseSalaryBreakdown.rest_day?.days || 0 }}</td>
-                                    <td class="px-3 py-2 text-right font-semibold">{{ fmt(baseSalaryBreakdown.rest_day?.amount || 0) }}</td>
+                                    <td class="px-3 py-2 text-right">
+                                        <input v-model.number="baseEditRows.rest_day.rate" :disabled="isLocked" type="number" min="0"
+                                            class="w-28 border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
+                                    </td>
+                                    <td class="px-3 py-2 text-right text-gray-500">{{ baseSalaryBreakdown.rest_day?.days || 0 }}</td>
+                                    <td class="px-3 py-2 text-right">
+                                        <input v-model.number="baseEditRows.rest_day.payDays" :disabled="isLocked" type="number" min="0" step="0.5"
+                                            class="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
+                                    </td>
+                                    <td class="px-3 py-2 text-right font-semibold">{{ fmt(baseEditRows.rest_day.rate * baseEditRows.rest_day.payDays) }}</td>
                                 </tr>
                                 <!-- Ngày lễ tết -->
-                                <tr v-if="baseSalaryBreakdown.holiday?.days > 0" class="border-t">
+                                <tr class="border-t">
                                     <td class="px-3 py-2 font-medium">
                                         Ngày lễ tết
                                         <span class="text-xs text-gray-400 ml-1">{{ baseSalaryBreakdown.holiday?.multiplier || 300 }}%</span>
                                     </td>
-                                    <td class="px-3 py-2 text-right">{{ fmt(baseSalaryBreakdown.holiday?.rate || 0) }}</td>
-                                    <td class="px-3 py-2 text-right">{{ baseSalaryBreakdown.holiday?.days || 0 }}</td>
-                                    <td class="px-3 py-2 text-right">{{ baseSalaryBreakdown.holiday?.days || 0 }}</td>
-                                    <td class="px-3 py-2 text-right font-semibold">{{ fmt(baseSalaryBreakdown.holiday?.amount || 0) }}</td>
+                                    <td class="px-3 py-2 text-right">
+                                        <input v-model.number="baseEditRows.holiday.rate" :disabled="isLocked" type="number" min="0"
+                                            class="w-28 border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
+                                    </td>
+                                    <td class="px-3 py-2 text-right text-gray-500">{{ baseSalaryBreakdown.holiday?.days || 0 }}</td>
+                                    <td class="px-3 py-2 text-right">
+                                        <input v-model.number="baseEditRows.holiday.payDays" :disabled="isLocked" type="number" min="0" step="0.5"
+                                            class="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
+                                    </td>
+                                    <td class="px-3 py-2 text-right font-semibold">{{ fmt(baseEditRows.holiday.rate * baseEditRows.holiday.payDays) }}</td>
                                 </tr>
                             </tbody>
                         </table>
                     </div>
-                    <div class="px-5 py-3 border-t flex justify-end bg-gray-50">
+                    <div class="px-5 py-3 border-t flex justify-between items-center bg-gray-50">
+                        <div class="font-semibold">Tổng: {{ fmt(baseEditTotalAmount) }}</div>
                         <div class="flex gap-2">
                             <button @click="closePopup" class="px-4 py-1.5 text-sm border rounded-md hover:bg-gray-100">Bỏ qua</button>
-                            <button @click="closePopup" class="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700">Xong</button>
+                            <button v-if="!isLocked" @click="saveBaseSalary" class="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700">Xong</button>
                         </div>
                     </div>
                 </div>
@@ -740,6 +759,11 @@ const popup = reactive({
 const popupAdjustments = ref([]);
 const pendingDeletes = ref([]); // adjustment IDs to delete on save
 const paidAmountInput = ref(0);
+const baseEditRows = reactive({
+    normal: { rate: 0, payDays: 0 },
+    rest_day: { rate: 0, payDays: 0 },
+    holiday: { rate: 0, payDays: 0 },
+});
 let tempIdCounter = -1;
 
 // ===== Popup computed items =====
@@ -761,6 +785,24 @@ const latePenaltyItems = computed(() => {
 const baseSalaryBreakdown = computed(() => {
     if (!popup.slip) return { normal: {}, rest_day: {}, holiday: {} };
     return popup.slip.details?.base_salary_breakdown || { normal: {}, rest_day: {}, holiday: {} };
+});
+
+const baseEditTotalAttendDays = computed(() => {
+    return (baseSalaryBreakdown.value.normal?.days || 0)
+         + (baseSalaryBreakdown.value.rest_day?.days || 0)
+         + (baseSalaryBreakdown.value.holiday?.days || 0);
+});
+
+const baseEditTotalPayDays = computed(() => {
+    return (baseEditRows.normal.payDays || 0)
+         + (baseEditRows.rest_day.payDays || 0)
+         + (baseEditRows.holiday.payDays || 0);
+});
+
+const baseEditTotalAmount = computed(() => {
+    return Math.round((baseEditRows.normal.rate * baseEditRows.normal.payDays)
+         + (baseEditRows.rest_day.rate * baseEditRows.rest_day.payDays)
+         + (baseEditRows.holiday.rate * baseEditRows.holiday.payDays));
 });
 
 const popupTotal = computed(() => {
@@ -852,8 +894,21 @@ function openPopup(type, slip) {
     popup.show = true;
     pendingDeletes.value = [];
 
-    // For read-only popups, no adjustments needed
-    if (type === 'base' || type === 'workdays' || type === 'commission') {
+    // For base salary popup → init editable rows from breakdown data
+    if (type === 'base') {
+        const bd = slip.details?.base_salary_breakdown || {};
+        baseEditRows.normal.rate = bd.normal?.rate || 0;
+        baseEditRows.normal.payDays = bd.normal?.days || 0;
+        baseEditRows.rest_day.rate = bd.rest_day?.rate || 0;
+        baseEditRows.rest_day.payDays = bd.rest_day?.days || 0;
+        baseEditRows.holiday.rate = bd.holiday?.rate || 0;
+        baseEditRows.holiday.payDays = bd.holiday?.days || 0;
+        popupAdjustments.value = [];
+        return;
+    }
+
+    // For read-only popups
+    if (type === 'workdays' || type === 'commission') {
         popupAdjustments.value = [];
         return;
     }
@@ -968,6 +1023,32 @@ async function saveAdjustments() {
     } catch (e) {
         console.error('Save adjustments error:', e);
         alert('Lỗi khi lưu điều chỉnh.');
+    }
+}
+
+async function saveBaseSalary() {
+    if (!popup.slip) return;
+    const psId = localPaysheet.value.id;
+    const slipId = popup.slip.id;
+    const newBase = baseEditTotalAmount.value;
+
+    try {
+        const { data } = await axios.put(`/api/paysheets/${psId}/payslips/${slipId}`, {
+            base_salary: newBase,
+        });
+
+        if (data.success) {
+            // Reload full data to refresh all computed fields
+            const { data: full } = await axios.get(`/api/paysheets/${psId}`);
+            if (full.success) {
+                localPaysheet.value = full.data;
+            }
+        }
+
+        closePopup();
+    } catch (e) {
+        console.error('Save base salary error:', e);
+        alert('Lỗi khi lưu lương chính.');
     }
 }
 
