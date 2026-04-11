@@ -23,6 +23,50 @@ Route::get('/user', function (Request $request) {
 // 🔓 DEBUG ROUTES (public, for testing)
 // =======================
 
+// DELETE a specific timekeeping record by ID (DEBUG ONLY)
+Route::delete('/debug/timekeeping-records/{id}', function ($id) {
+    $record = \App\Models\TimekeepingRecord::find($id);
+    if (!$record) return response()->json(['error' => 'Not found'], 404);
+    $info = ['id' => $record->id, 'employee_id' => $record->employee_id, 'work_date' => $record->work_date];
+    $record->delete();
+    return response()->json(['success' => true, 'deleted' => $info]);
+});
+
+// Auto-dedup: find and remove duplicate timekeeping records for an employee in a date range
+Route::post('/debug/dedup-timekeeping', function (\Illuminate\Http\Request $request) {
+    $employeeId = $request->input('employee_id');
+    $from = $request->input('from', '2026-03-01');
+    $to = $request->input('to', '2026-03-31');
+
+    $records = \App\Models\TimekeepingRecord::where('employee_id', $employeeId)
+        ->whereBetween('work_date', [$from, $to])
+        ->orderBy('work_date')
+        ->orderBy('id')
+        ->get();
+
+    $seen = [];
+    $deleted = [];
+    foreach ($records as $rec) {
+        $dateKey = \Carbon\Carbon::parse($rec->work_date)->format('Y-m-d');
+        if (isset($seen[$dateKey])) {
+            // Duplicate! Delete the newer one
+            $deleted[] = ['id' => $rec->id, 'date' => $dateKey, 'wu' => (float)$rec->work_units];
+            $rec->delete();
+        } else {
+            $seen[$dateKey] = $rec->id;
+        }
+    }
+
+    return response()->json([
+        'success' => true,
+        'employee_id' => $employeeId,
+        'total_records' => $records->count(),
+        'duplicates_removed' => count($deleted),
+        'deleted' => $deleted,
+        'remaining_dates' => count($seen),
+    ]);
+});
+
 Route::get('/attendance-agent/recent-logs', function () {
     $logs = \App\Models\AttendanceLog::query()
         ->orderByDesc('created_at')
