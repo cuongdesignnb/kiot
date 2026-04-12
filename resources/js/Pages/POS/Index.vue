@@ -514,85 +514,81 @@ const resetAfterCheckout = () => {
     <!-- Full screen POS UI -->
     <div class="flex flex-col h-screen overflow-hidden bg-gray-100">
         
-        <!-- Top Navbar for POS -->
-        <header class="bg-blue-600 text-white h-14 flex items-center justify-between px-4 shadow-md flex-shrink-0 z-10">
-            <div class="flex items-center gap-4">
-                <div class="font-bold text-lg flex items-center gap-2">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"></path></svg>
-                    KiotViet POS
-                </div>
-                <!-- Search Bar -->
-                <div class="relative w-[450px] ml-6 font-sans">
-                    <div class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none">
-                        <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-                    </div>
+        <!-- Top Navbar - KiotViet Style -->
+        <header class="bg-gradient-to-r from-blue-500 via-blue-400 to-cyan-400 h-11 flex items-end px-2 flex-shrink-0 z-10 shadow-md">
+            <!-- Search icon + input (compact) -->
+            <div class="flex items-center gap-1.5 self-center mr-2">
+                <button class="w-8 h-8 flex items-center justify-center bg-white/20 hover:bg-white/30 rounded transition-colors" title="Quét Barcode">
+                    <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"></path></svg>
+                </button>
+                <div class="relative w-[170px] font-sans">
                     <input 
                         v-model="query" 
                         @input="handleSearchInput" 
                         type="text" 
-                        placeholder="Nhập mã SP, tên SP hoặc quét Serial/Barcode (F3)" 
-                        class="w-full pl-11 pr-4 py-2.5 bg-gray-50 hover:bg-white focus:bg-white text-gray-900 placeholder-gray-500 rounded-lg shadow-sm outline-none focus:ring-4 focus:ring-blue-300/50 border border-gray-200 focus:border-blue-500 transition-all font-medium text-[15px]"
+                        placeholder="Tìm hàng hóa (F3)" 
+                        class="w-full pl-7 pr-2 py-1.5 bg-white/90 hover:bg-white focus:bg-white text-gray-800 placeholder-gray-400 rounded text-[12px] outline-none focus:ring-2 focus:ring-white/50 border-none font-medium shadow-sm"
                     >
-                    
+                    <svg class="w-3.5 h-3.5 text-gray-400 absolute left-2 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                     <!-- Quick Dropdown Search Results -->
-                    <div v-if="query && products && products.length > 0" class="absolute left-0 right-0 top-full mt-1.5 bg-white shadow-[0_10px_25px_-5px_rgba(0,0,0,0.1),0_8px_10px_-6px_rgba(0,0,0,0.1)] rounded-md border border-gray-200 p-0 z-50 max-h-[350px] overflow-y-auto">
-                        <div v-for="product in products" :key="'dd-'+product.id" @click="addToCart(product); query=''" class="flex items-center justify-between p-3 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-0 transition-colors" :class="product.has_serial && product.sellable_quantity <= 0 ? 'opacity-50 cursor-not-allowed' : ''">
-                            <div class="flex-1 mr-4">
-                                <div class="font-bold text-[14px] text-gray-800">{{ product.name }}</div>
-                                <div class="text-[12px] text-gray-500 mt-0.5">
+                    <div v-if="query && products && products.length > 0" class="absolute left-0 right-0 top-full mt-1 bg-white shadow-xl rounded border border-gray-200 z-50 max-h-[350px] overflow-y-auto w-[450px]">
+                        <div v-for="product in products" :key="'dd-'+product.id" @click="addToCart(product); query=''" class="flex items-center justify-between p-2.5 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-0 transition-colors" :class="product.has_serial && product.sellable_quantity <= 0 ? 'opacity-50 cursor-not-allowed' : ''">
+                            <div class="flex-1 mr-3">
+                                <div class="font-bold text-[13px] text-gray-800">{{ product.name }}</div>
+                                <div class="text-[11px] text-gray-500 mt-0.5">
                                     {{ product.sku }} | Tồn: {{ product.stock_quantity }}
-                                    <span v-if="product.repairing_count > 0" class="text-yellow-600 font-semibold">(🔧 {{ product.repairing_count }} đang sửa)</span>
-                                    <span v-if="product.has_serial && product.sellable_quantity !== undefined" class="text-green-600 font-semibold ml-1">| Sẵn bán: {{ product.sellable_quantity }}</span>
+                                    <span v-if="product.repairing_count > 0" class="text-yellow-600 font-semibold">(🔧 {{ product.repairing_count }} sửa)</span>
+                                    <span v-if="product.has_serial && product.sellable_quantity !== undefined" class="text-green-600 font-semibold ml-1">| Sẵn: {{ product.sellable_quantity }}</span>
                                 </div>
                             </div>
-                            <div class="text-blue-600 font-bold text-sm">{{ Number(product.retail_price || 0).toLocaleString() }} &curren;</div>
+                            <div class="text-blue-600 font-bold text-[12px]">{{ Number(product.retail_price || 0).toLocaleString() }} ₫</div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Tabs in header -->
-            <div class="flex items-center gap-0 ml-2 overflow-x-auto max-w-[400px]">
+            <!-- Tabs - KiotViet browser-tab style -->
+            <div class="flex items-end gap-0.5 flex-1 overflow-x-auto pb-0 min-w-0">
                 <button
                     v-for="(tab, idx) in tabs"
                     :key="tab.id"
                     @click="switchTab(idx)"
-                    class="relative flex items-center gap-1 px-3 py-1.5 text-[13px] font-bold whitespace-nowrap transition-all rounded-t group"
+                    class="relative flex items-center gap-1.5 px-3 h-8 text-[12px] font-semibold whitespace-nowrap transition-all rounded-t-md group flex-shrink-0"
                     :class="idx === activeTabIndex
-                        ? 'bg-white text-blue-700 shadow-sm'
-                        : 'bg-blue-700/40 text-blue-100 hover:bg-blue-700/60 hover:text-white'"
+                        ? 'bg-white text-gray-700 shadow-sm z-[1]'
+                        : 'bg-white/20 text-white hover:bg-white/30'"
                 >
-                    <svg v-if="tab.saleMode === 'quick_order'" class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                    <svg v-else class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                    <!-- Colored dot icon -->
+                    <span class="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                        :class="tab.saleMode === 'quick_order' ? 'bg-orange-400' : tab.saleMode === 'delivery' ? 'bg-green-400' : 'bg-blue-400'"
+                    ></span>
                     {{ tabLabel(tab) }} {{ idx + 1 }}
-                    <span v-if="tab.cart.length > 0" class="text-[9px] bg-red-500 text-white rounded-full min-w-[14px] h-[14px] flex items-center justify-center px-0.5 leading-none">{{ tab.cart.length }}</span>
-                    <button v-if="tabs.length > 1" @click.stop="closeTab(idx)" class="ml-0.5 opacity-0 group-hover:opacity-100 transition-opacity hover:text-red-300" :class="idx === activeTabIndex ? 'text-gray-400 hover:text-red-500' : 'text-blue-200'" title="Đóng">
-                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    <span v-if="tab.cart.length > 0" class="text-[9px] font-bold ml-0.5" :class="idx === activeTabIndex ? 'text-blue-500' : 'text-white/80'">({{ tab.cart.length }})</span>
+                    <button v-if="tabs.length > 1" @click.stop="closeTab(idx)"
+                        class="ml-0.5 w-4 h-4 flex items-center justify-center rounded hover:bg-gray-200 transition-colors"
+                        :class="idx === activeTabIndex ? 'text-gray-400 hover:text-red-500' : 'text-white/60 hover:text-white hover:bg-white/20'"
+                        title="Đóng"
+                    >
+                        <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12"></path></svg>
                     </button>
                 </button>
-                <button @click="addTab" class="px-2 py-1.5 text-lg font-bold text-blue-200 hover:text-white hover:bg-blue-700/60 rounded transition-colors flex-shrink-0" title="Thêm hóa đơn mới">+</button>
+                <!-- Add tab button -->
+                <button @click="addTab" class="flex items-center justify-center w-7 h-7 mb-0.5 rounded-full bg-white/20 hover:bg-white/30 text-white text-sm font-bold transition-colors flex-shrink-0 ml-1" title="Thêm hóa đơn mới">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"></path></svg>
+                </button>
             </div>
-            
-            <div class="flex items-center gap-3">
-                <!-- Employee Selector -->
-                <div class="flex items-center gap-2 bg-blue-700/50 rounded px-3 py-1">
-                    <svg class="w-4 h-4 text-blue-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
-                    <select v-model="selectedEmployeeId" class="bg-transparent text-white text-sm outline-none border-none font-medium appearance-none pr-4 cursor-pointer min-w-[120px]">
-                        <option value="" class="text-gray-800">-- Nhân viên bán --</option>
-                        <option v-for="emp in employees" :key="emp.id" :value="emp.id" class="text-gray-800">{{ emp.name }}</option>
-                    </select>
+
+            <!-- Right controls -->
+            <div class="flex items-center gap-2 self-center ml-2">
+                <select v-model="selectedEmployeeId" class="bg-white/20 text-white text-[11px] outline-none border-none rounded px-2 py-1 font-medium cursor-pointer min-w-[100px]">
+                    <option value="" class="text-gray-800">-- Nhân viên --</option>
+                    <option v-for="emp in employees" :key="emp.id" :value="emp.id" class="text-gray-800">{{ emp.name }}</option>
+                </select>
+                <div class="text-[11px] font-medium text-white/90 bg-white/15 rounded px-2 py-1 whitespace-nowrap tabular-nums">
+                    {{ new Date(saleDate).toLocaleDateString('vi-VN') }} {{ currentTime.split(' ').pop() || '' }}
                 </div>
-                <!-- Ngày bán -->
-                <div class="flex items-center bg-blue-700/50 rounded px-2 py-0.5">
-                    <svg class="w-4 h-4 text-blue-200 mr-1.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-                    <input type="datetime-local" v-model="saleDate" class="bg-transparent text-white text-sm outline-none border-none font-medium w-[170px] cursor-pointer" />
-                </div>
-                <div class="text-xs font-medium text-blue-200 bg-blue-700/50 rounded px-2 py-1 tabular-nums">
-                    {{ currentTime }}
-                </div>
-                <Link href="/" class="text-sm font-medium hover:bg-blue-700 px-3 py-1.5 rounded bg-blue-500 transition-colors flex items-center gap-1">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
-                    Về Quản lý
+                <Link href="/" class="w-7 h-7 flex items-center justify-center bg-white/20 hover:bg-white/30 rounded transition-colors" title="Về Quản lý">
+                    <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
                 </Link>
             </div>
         </header>
