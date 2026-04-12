@@ -550,6 +550,28 @@ const resetAfterCheckout = () => {
                     </div>
                 </div>
             </div>
+
+            <!-- Tabs in header -->
+            <div class="flex items-center gap-0 ml-2 overflow-x-auto max-w-[400px]">
+                <button
+                    v-for="(tab, idx) in tabs"
+                    :key="tab.id"
+                    @click="switchTab(idx)"
+                    class="relative flex items-center gap-1 px-3 py-1.5 text-[13px] font-bold whitespace-nowrap transition-all rounded-t group"
+                    :class="idx === activeTabIndex
+                        ? 'bg-white text-blue-700 shadow-sm'
+                        : 'bg-blue-700/40 text-blue-100 hover:bg-blue-700/60 hover:text-white'"
+                >
+                    <svg v-if="tab.saleMode === 'quick_order'" class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    <svg v-else class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                    {{ tabLabel(tab) }} {{ idx + 1 }}
+                    <span v-if="tab.cart.length > 0" class="text-[9px] bg-red-500 text-white rounded-full min-w-[14px] h-[14px] flex items-center justify-center px-0.5 leading-none">{{ tab.cart.length }}</span>
+                    <button v-if="tabs.length > 1" @click.stop="closeTab(idx)" class="ml-0.5 opacity-0 group-hover:opacity-100 transition-opacity hover:text-red-300" :class="idx === activeTabIndex ? 'text-gray-400 hover:text-red-500' : 'text-blue-200'" title="Đóng">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </button>
+                <button @click="addTab" class="px-2 py-1.5 text-lg font-bold text-blue-200 hover:text-white hover:bg-blue-700/60 rounded transition-colors flex-shrink-0" title="Thêm hóa đơn mới">+</button>
+            </div>
             
             <div class="flex items-center gap-3">
                 <!-- Employee Selector -->
@@ -762,27 +784,6 @@ const resetAfterCheckout = () => {
                     </div>
                 </div>
 
-                <!-- Tabs (Multi-tab: Hóa đơn / Đặt hàng) -->
-                <div class="flex border-b border-gray-200 overflow-x-auto">
-                    <button
-                        v-for="(tab, idx) in tabs"
-                        :key="tab.id"
-                        @click="switchTab(idx)"
-                        class="relative flex items-center gap-1 px-3 py-2.5 text-[13px] font-bold whitespace-nowrap transition-colors border-b-2 group min-w-0"
-                        :class="idx === activeTabIndex
-                            ? (tab.saleMode === 'quick_order' ? 'border-orange-500 text-orange-600 bg-orange-50/50' : tab.saleMode === 'delivery' ? 'border-green-500 text-green-600 bg-green-50/50' : 'border-blue-600 text-blue-600 bg-blue-50/50')
-                            : 'border-transparent text-gray-400 hover:text-gray-600 hover:bg-gray-50'"
-                    >
-                        <svg v-if="tab.saleMode === 'quick_order'" class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                        <svg v-else class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-                        {{ tabLabel(tab) }} {{ idx + 1 }}
-                        <span v-if="tab.cart.length > 0" class="text-[9px] bg-red-500 text-white rounded-full min-w-[16px] h-4 flex items-center justify-center px-1 leading-none">{{ tab.cart.length }}</span>
-                        <button v-if="tabs.length > 1" @click.stop="closeTab(idx)" class="ml-0.5 text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity" title="Đóng">
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"></path></svg>
-                        </button>
-                    </button>
-                    <button @click="addTab" class="px-3 py-2.5 text-lg font-bold text-gray-300 hover:text-blue-600 hover:bg-blue-50 transition-colors flex-shrink-0" title="Thêm hóa đơn mới">+</button>
-                </div>
 
                 <!-- Invoice Details Calculation -->
                 <div class="p-4 space-y-4 text-[15px] flex-1">
