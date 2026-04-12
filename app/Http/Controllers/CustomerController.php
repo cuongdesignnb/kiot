@@ -283,76 +283,11 @@ class CustomerController extends Controller
             ]);
         }
 
-        // 3) If dual-role (is_customer AND is_supplier): include purchase entries (mirrored)
-        // In KiotViet customer view: purchases show as NEGATIVE (we owe them → offsets what they owe us)
-        if ($customer->is_customer && $customer->is_supplier) {
-            $purchases = Purchase::where('supplier_id', $customer->id)
-                ->where('status', 'completed')
-                ->orderBy('created_at', 'desc')
-                ->get(['id', 'code', 'total_amount', 'paid_amount', 'created_at']);
-
-            foreach ($purchases as $p) {
-                $entries->push([
-                    'id' => 'pur-' . $p->id,
-                    'code' => $p->code,
-                    'type' => 'Nhập hàng',
-                    'amount' => -$p->total_amount, // Negative: we owe them
-                    'created_at' => $p->created_at,
-                ]);
-                if ($p->paid_amount > 0) {
-                    $entries->push([
-                        'id' => 'purpay-' . $p->id,
-                        'code' => 'TTNH' . preg_replace('/^PN/', '', $p->code),
-                        'type' => 'TT nhập hàng',
-                        'amount' => $p->paid_amount, // Positive: we paid them → reduces what they owe us net
-                        'created_at' => $p->created_at,
-                    ]);
-                }
-            }
-
-            // Purchase returns = positive (they refund us)
-            $purchaseReturns = PurchaseReturn::where('supplier_id', $customer->id)
-                ->where('status', 'completed')
-                ->orderBy('created_at', 'desc')
-                ->get(['id', 'code', 'total_amount', 'refund_amount', 'created_at']);
-
-            foreach ($purchaseReturns as $pr) {
-                $entries->push([
-                    'id' => 'pret-' . $pr->id,
-                    'code' => $pr->code,
-                    'type' => 'Trả hàng nhập',
-                    'amount' => $pr->total_amount, // Positive: they owe us back
-                    'created_at' => $pr->created_at,
-                ]);
-            }
-
-            // Supplier debt transactions (payment/adjustment/discount/offset) — mirror sign
-            $supplierTxs = SupplierDebtTransaction::where('supplier_id', $customer->id)
-                ->whereNotIn('type', ['purchase']) // purchases already handled above
-                ->orderBy('created_at', 'desc')
-                ->get();
-
-            $typeLabels = [
-                'return' => 'Trả hàng nhập',
-                'payment' => 'TT công nợ NCC',
-                'adjustment' => 'Điều chỉnh NCC',
-                'discount' => 'Chiết khấu NCC',
-                'offset' => 'Đối trừ CN',
-            ];
-
-            // Skip return type since we already show PurchaseReturn entries
-            foreach ($supplierTxs as $stx) {
-                if ($stx->type === 'return') continue;
-                if ($stx->type === 'offset') continue; // Already shown as CashFlow DebtOffset entry
-                $entries->push([
-                    'id' => 'stx-' . $stx->id,
-                    'code' => $stx->code,
-                    'type' => $typeLabels[$stx->type] ?? $stx->type,
-                    'amount' => -$stx->amount, // Mirror sign for customer perspective
-                    'created_at' => $stx->created_at,
-                ]);
-            }
-        }
+        // NOTE: KiotViet Customer debt tab chỉ hiện giao dịch KH thuần:
+        // - Invoices (Bán hàng)
+        // - Payments (Thanh toán)  
+        // - CB offset entries (Đối trừ CN) — đã hiện qua CashFlow reference_type=DebtOffset
+        // Giao dịch NCC (Nhập hàng, TT NCC) hiện riêng ở Supplier debt tab.
 
         // Sort by date asc to compute running balance
         $sorted = $entries->sortBy('created_at')->values();
