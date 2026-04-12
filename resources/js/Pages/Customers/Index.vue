@@ -368,6 +368,34 @@ const cancelOffset = async (customerId, offsetId) => {
     }
 };
 
+// ====== CHI TIẾT PHIẾU CẤN BẰNG (CB) - KiotViet style ======
+const cbDetailModal = reactive({
+    show: false,
+    offset: null,
+    customerId: null,
+});
+
+const openCbDetail = (code, customerId) => {
+    // Tìm offset từ offsetHistoryData
+    const offsets = offsetHistoryData[customerId] || [];
+    const found = offsets.find(o => o.code === code);
+    if (found) {
+        cbDetailModal.show = true;
+        cbDetailModal.offset = { ...found };
+        cbDetailModal.customerId = customerId;
+    }
+};
+
+const isCbCode = (code) => {
+    return code && (code.startsWith('CB') || code.startsWith('DTCN'));
+};
+
+const deleteCbOffset = async () => {
+    if (!cbDetailModal.offset || !confirm('Bạn có chắc muốn xóa phiếu cấn bằng này?')) return;
+    await cancelOffset(cbDetailModal.customerId, cbDetailModal.offset.id);
+    cbDetailModal.show = false;
+};
+
 // Modal for CREATE CUSTOMER
 const showCreateModal = ref(false);
 const form = useForm({
@@ -912,9 +940,11 @@ const submit = () => {
                                 <td class="px-4 py-3">{{ customer.name }}</td>
                                 <td class="px-4 py-3">{{ customer.phone }}</td>
                                 <td class="px-4 py-3 text-right">
-                                    <div>{{ Number(customer.debt_amount).toLocaleString() }}</div>
-                                    <div v-if="customer.is_supplier && customer.supplier_debt_amount > 0" class="text-xs text-green-600">
-                                        NCC: -{{ formatCurrency(customer.supplier_debt_amount) }}
+                                    <div :class="Number(customer.debt_amount) < 0 ? 'text-red-600 font-semibold' : ''">
+                                        {{ Number(customer.debt_amount).toLocaleString() }}
+                                    </div>
+                                    <div v-if="customer.is_supplier && Number(customer.supplier_debt_amount) != 0" class="text-xs" :class="Number(customer.supplier_debt_amount) > 0 ? 'text-green-600' : 'text-blue-500'">
+                                        NCC: {{ Number(customer.supplier_debt_amount) > 0 ? '-' : '' }}{{ formatCurrency(customer.supplier_debt_amount) }}
                                     </div>
                                 </td>
                                 <td class="px-4 py-3 text-right text-gray-400">
@@ -1020,7 +1050,7 @@ const submit = () => {
                                                         : 'hover:text-blue-500'
                                                 "
                                             >
-                                                Nợ cần thu từ khách
+                                                Công nợ
                                             </button>
                                             <button
                                                 @click="
@@ -1726,7 +1756,7 @@ const submit = () => {
                                                             <th
                                                                 class="px-3 py-2 text-right"
                                                             >
-                                                                Dư nợ khách hàng
+                                                                Công nợ
                                                             </th>
                                                         </tr>
                                                     </thead>
@@ -1741,7 +1771,9 @@ const submit = () => {
                                                             class="hover:bg-blue-50/30"
                                                         >
                                                             <td
-                                                                class="px-3 py-2 text-blue-600 font-medium"
+                                                                class="px-3 py-2 font-medium"
+                                                                :class="isCbCode(entry.code) ? 'text-blue-600 cursor-pointer hover:underline' : 'text-blue-600'"
+                                                                @click="isCbCode(entry.code) && openCbDetail(entry.code, customer.id)"
                                                             >
                                                                 {{ entry.code }}
                                                             </td>
@@ -1846,34 +1878,10 @@ const submit = () => {
                                                             @click="
                                                                 openDebtModal(
                                                                     customer,
-                                                                    'payment',
-                                                                )
-                                                            "
-                                                            class="bg-green-600 text-white rounded px-3 py-1.5 font-semibold hover:bg-green-700 flex items-center gap-1"
-                                                        >
-                                                            <svg
-                                                                class="w-4 h-4"
-                                                                fill="none"
-                                                                stroke="currentColor"
-                                                                viewBox="0 0 24 24"
-                                                            >
-                                                                <path
-                                                                    stroke-linecap="round"
-                                                                    stroke-linejoin="round"
-                                                                    stroke-width="2"
-                                                                    d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                                                                ></path>
-                                                            </svg>
-                                                            Thanh toán
-                                                        </button>
-                                                        <button
-                                                            @click="
-                                                                openDebtModal(
-                                                                    customer,
                                                                     'adjust',
                                                                 )
                                                             "
-                                                            class="bg-white border border-gray-300 text-gray-700 rounded px-3 py-1.5 font-semibold hover:bg-gray-50 flex items-center gap-1"
+                                                            class="bg-blue-600 text-white rounded px-3 py-1.5 font-semibold hover:bg-blue-700 flex items-center gap-1"
                                                         >
                                                             <svg
                                                                 class="w-4 h-4"
@@ -1889,6 +1897,30 @@ const submit = () => {
                                                                 ></path>
                                                             </svg>
                                                             Điều chỉnh
+                                                        </button>
+                                                        <button
+                                                            @click="
+                                                                openDebtModal(
+                                                                    customer,
+                                                                    'payment',
+                                                                )
+                                                            "
+                                                            class="bg-white border border-gray-300 text-gray-700 rounded px-3 py-1.5 font-semibold hover:bg-gray-50 flex items-center gap-1"
+                                                        >
+                                                            <svg
+                                                                class="w-4 h-4"
+                                                                fill="none"
+                                                                stroke="currentColor"
+                                                                viewBox="0 0 24 24"
+                                                            >
+                                                                <path
+                                                                    stroke-linecap="round"
+                                                                    stroke-linejoin="round"
+                                                                    stroke-width="2"
+                                                                    d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                                                                ></path>
+                                                            </svg>
+                                                            Thanh toán
                                                         </button>
                                                         <button
                                                             class="bg-white border border-gray-300 text-gray-700 rounded px-3 py-1.5 font-semibold hover:bg-gray-50 flex items-center gap-1"
@@ -3091,6 +3123,54 @@ const submit = () => {
                     </div>
                 </template>
                 <div v-else class="p-12 text-center text-gray-400">Không tìm thấy thông tin hóa đơn</div>
+            </div>
+        </div>
+
+        <!-- CB Detail Modal (KiotViet style - Điều chỉnh) -->
+        <div v-if="cbDetailModal.show" class="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center" @click.self="cbDetailModal.show = false">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-md">
+                <div class="flex items-center justify-between px-6 py-4 border-b">
+                    <h3 class="text-lg font-semibold">Điều chỉnh
+                        <span class="text-gray-400 text-sm ml-1 cursor-help" title="Phiếu cấn bằng công nợ KH↔NCC">ⓘ</span>
+                    </h3>
+                    <button @click="cbDetailModal.show = false" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+                </div>
+                <div v-if="cbDetailModal.offset" class="px-6 py-4 space-y-4">
+                    <div class="flex items-center">
+                        <label class="w-40 text-sm text-gray-600">Mã</label>
+                        <div class="font-medium">{{ cbDetailModal.offset.code }}</div>
+                    </div>
+                    <div class="flex items-center">
+                        <label class="w-40 text-sm text-gray-600">Giá trị nợ điều chỉnh</label>
+                        <div class="font-medium">{{ Number(cbDetailModal.offset.amount).toLocaleString() }}</div>
+                    </div>
+                    <div class="flex items-center">
+                        <label class="w-40 text-sm text-gray-600">Ngày điều chỉnh</label>
+                        <div>{{ formatDateTime(cbDetailModal.offset.created_at) }}</div>
+                    </div>
+                    <div class="flex items-center">
+                        <label class="w-40 text-sm text-gray-600">Người tạo</label>
+                        <div>{{ cbDetailModal.offset.user_name || 'Admin' }}</div>
+                    </div>
+                    <div class="flex items-start">
+                        <label class="w-40 text-sm text-gray-600 pt-1">Mô tả</label>
+                        <div class="flex-1 text-sm text-gray-700 bg-gray-50 rounded p-2">
+                            <span class="text-gray-400">✏</span>
+                            {{ cbDetailModal.offset.note || `Cấn bằng công nợ KH↔NCC` }}
+                        </div>
+                    </div>
+                </div>
+                <div class="px-6 py-3 border-t flex items-center justify-between">
+                    <button
+                        v-if="cbDetailModal.offset?.status !== 'cancelled'"
+                        @click="deleteCbOffset"
+                        class="px-4 py-2 text-red-600 hover:bg-red-50 rounded text-sm font-medium border border-red-200"
+                    >Xóa</button>
+                    <div v-else class="text-sm text-gray-400 italic">Đã hủy</div>
+                    <div class="flex gap-2">
+                        <button @click="cbDetailModal.show = false" class="px-4 py-2 border rounded text-sm font-medium hover:bg-gray-50">Bỏ qua</button>
+                    </div>
+                </div>
             </div>
         </div>
 

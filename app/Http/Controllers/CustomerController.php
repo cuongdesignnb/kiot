@@ -364,8 +364,9 @@ class CustomerController extends Controller
         });
 
         // Return newest first for display
-        $receivable = abs((float) $customer->debt_amount);
-        $payable = abs((float) $customer->supplier_debt_amount);
+        // Giữ nguyên dấu: dương = nợ, âm = có credit (KiotViet style)
+        $receivable = (float) $customer->debt_amount;
+        $payable = (float) $customer->supplier_debt_amount;
         $net = $receivable - $payable;
 
         return response()->json([
@@ -434,7 +435,8 @@ class CustomerController extends Controller
             'description' => $validated['note'] ?? 'Điều chỉnh công nợ khách hàng ' . $customer->name,
         ]);
 
-        $customer->update(['debt_amount' => max(0, $customer->debt_amount - $adjustAmount)]);
+        // debt_amount có thể âm: cửa hàng nợ KH / KH có tín dụng (KiotViet style)
+        $customer->update(['debt_amount' => $customer->debt_amount - $adjustAmount]);
 
         // Tự động đối trừ công nợ NCC↔KH
         DebtOffsetService::offsetDebts($customer);
@@ -639,6 +641,7 @@ class CustomerController extends Controller
     public function debtOffsetHistory(Customer $customer)
     {
         $offsets = \App\Models\DebtOffset::where('customer_id', $customer->id)
+            ->with('user:id,name')
             ->orderByDesc('created_at')
             ->get()
             ->map(fn($o) => [
@@ -655,6 +658,7 @@ class CustomerController extends Controller
                 'cancel_reason' => $o->cancel_reason,
                 'cancelled_at' => $o->cancelled_at,
                 'created_at' => $o->created_at,
+                'user_name' => $o->user?->name ?? 'Admin',
             ]);
 
         return response()->json($offsets);

@@ -45,18 +45,12 @@ class DebtOffsetService
         $person = $debtOffset->customer;
         $amount = (float) $debtOffset->amount;
 
-        // Đảo ngược: tăng lại cả 2 bên (hỗ trợ DB lưu âm hoặc dương)
-        $rawCustomer = (float) $person->debt_amount;
-        $rawSupplier = (float) $person->supplier_debt_amount;
-        $person->debt_amount = $rawCustomer >= 0
-            ? $rawCustomer + $amount
-            : $rawCustomer - $amount;
-        $person->supplier_debt_amount = $rawSupplier >= 0
-            ? $rawSupplier + $amount
-            : $rawSupplier - $amount;
+        // Hủy cấn bằng = tăng lại cả 2 bên nợ
+        $person->debt_amount = (float) $person->debt_amount + $amount;
+        $person->supplier_debt_amount = (float) $person->supplier_debt_amount + $amount;
         $person->save();
 
-        $code = 'HDTCN' . date('ymdHis') . rand(10, 99);
+        $code = 'HCB' . str_pad((DebtOffset::max('id') ?? 0) + 1, 6, '0', STR_PAD_LEFT);
 
         // CashFlow đảo (payment = chi ra = tăng nợ phải thu lại)
         CashFlow::create([
@@ -110,9 +104,10 @@ class DebtOffsetService
             return null;
         }
 
-        $customerDebt = abs((float) $person->debt_amount);
-        $supplierDebt = abs((float) $person->supplier_debt_amount);
+        $customerDebt = (float) $person->debt_amount;
+        $supplierDebt = (float) $person->supplier_debt_amount;
 
+        // Chỉ cấn bằng khi CẢ HAI bên đều dương (KH nợ ta VÀ ta nợ NCC)
         if ($customerDebt <= 0 || $supplierDebt <= 0) {
             return null;
         }
@@ -127,18 +122,12 @@ class DebtOffsetService
         $receivableBefore = $customerDebt;
         $payableBefore = $supplierDebt;
 
-        // Giảm trị tuyệt đối về 0 (hỗ trợ cả giá trị âm lẫn dương trong DB)
-        $rawCustomer = (float) $person->debt_amount;
-        $rawSupplier = (float) $person->supplier_debt_amount;
-        $person->debt_amount = $rawCustomer >= 0
-            ? $rawCustomer - $offsetAmount
-            : $rawCustomer + $offsetAmount;
-        $person->supplier_debt_amount = $rawSupplier >= 0
-            ? $rawSupplier - $offsetAmount
-            : $rawSupplier + $offsetAmount;
+        // Giảm cả 2 bên (cả 2 đều dương, trừ thẳng)
+        $person->debt_amount = $customerDebt - $offsetAmount;
+        $person->supplier_debt_amount = $supplierDebt - $offsetAmount;
         $person->save();
 
-        $code = 'DTCN' . date('ymdHis') . rand(10, 99);
+        $code = 'CB' . str_pad((DebtOffset::max('id') ?? 0) + 1, 6, '0', STR_PAD_LEFT);
 
         // Tạo DebtOffset record
         DebtOffset::create([

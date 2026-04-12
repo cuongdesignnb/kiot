@@ -320,8 +320,9 @@ class SupplierController extends Controller
             return $entry;
         });
 
-        $payable = $supplier ? abs((float) $supplier->supplier_debt_amount) : 0;
-        $receivable = $supplier ? abs((float) $supplier->debt_amount) : 0;
+        // Giữ nguyên dấu: dương = nợ, âm = có credit (KiotViet style)
+        $payable = $supplier ? (float) $supplier->supplier_debt_amount : 0;
+        $receivable = $supplier ? (float) $supplier->debt_amount : 0;
         $net = $receivable - $payable;
 
         return response()->json([

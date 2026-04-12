@@ -209,10 +209,11 @@ class InvoiceController extends Controller
             // Customer debt & total_spent tracking
             $customer = $validated['customer_id'] ? \App\Models\Customer::find($validated['customer_id']) : null;
             $customerName = $customer ? $customer->name : 'Khách lẻ';
-            $debtAmount = max(0, $validated['total'] - ($validated['customer_paid'] ?? 0));
+            // debtAmount > 0: KH nợ ta. debtAmount < 0: KH trả dư (ta nợ KH). Giống KiotViet.
+            $debtAmount = $validated['total'] - ($validated['customer_paid'] ?? 0);
 
             if ($customer) {
-                if ($debtAmount > 0) {
+                if ($debtAmount != 0) {
                     $customer->increment('debt_amount', $debtAmount);
                 }
                 $customer->increment('total_spent', $validated['total']);
@@ -289,7 +290,7 @@ class InvoiceController extends Controller
             // Capture old values for debt diff
             $oldTotal = (float) $invoice->total;
             $oldPaid = (float) ($invoice->customer_paid ?? 0);
-            $oldDebt = max(0, $oldTotal - $oldPaid);
+            $oldDebt = $oldTotal - $oldPaid;
             $oldCustomerId = $invoice->customer_id;
 
             // Restore stock from old items
@@ -383,15 +384,15 @@ class InvoiceController extends Controller
             // Adjust customer debt
             $newTotal = (float) $validated['total'];
             $newPaid = (float) ($validated['customer_paid'] ?? 0);
-            $newDebt = max(0, $newTotal - $newPaid);
+            $newDebt = $newTotal - $newPaid;
             $newCustomerId = $validated['customer_id'] ?? $oldCustomerId;
 
             // If customer changed, reverse old customer and apply to new
             if ($oldCustomerId && $oldCustomerId != $newCustomerId) {
                 $oldCustomer = \App\Models\Customer::find($oldCustomerId);
                 if ($oldCustomer) {
-                    $oldCustomer->decrement('debt_amount', min($oldDebt, $oldCustomer->debt_amount));
-                    $oldCustomer->decrement('total_spent', min($oldTotal, $oldCustomer->total_spent));
+                    $oldCustomer->decrement('debt_amount', $oldDebt);
+                    $oldCustomer->decrement('total_spent', $oldTotal);
                     DebtOffsetService::offsetDebts($oldCustomer);
                 }
             }
@@ -493,11 +494,12 @@ class InvoiceController extends Controller
             if ($invoice->customer_id) {
                 $customer = \App\Models\Customer::find($invoice->customer_id);
                 if ($customer) {
-                    $debtAmount = max(0, $invoice->total - ($invoice->customer_paid ?? 0));
-                    if ($debtAmount > 0) {
-                        $customer->decrement('debt_amount', min($debtAmount, $customer->debt_amount));
+                    // Hủy hóa đơn: hoàn lại debt (bao gồm cả overpayment negative)
+                    $debtAmount = $invoice->total - ($invoice->customer_paid ?? 0);
+                    if ($debtAmount != 0) {
+                        $customer->decrement('debt_amount', $debtAmount);
                     }
-                    $customer->decrement('total_spent', min($invoice->total, $customer->total_spent));
+                    $customer->decrement('total_spent', $invoice->total);
 
                     // Auto offset
                     DebtOffsetService::offsetDebts($customer);
@@ -527,7 +529,7 @@ class InvoiceController extends Controller
         $previousDebt = 0;
         if ($invoice->customer) {
             $currentDebt = $invoice->customer->debt_amount ?? 0;
-            $invoiceDebt = max(0, $invoice->total - ($invoice->customer_paid ?? 0));
+            $invoiceDebt = $invoice->total - ($invoice->customer_paid ?? 0);
             $previousDebt = $currentDebt - $invoiceDebt;
         }
 

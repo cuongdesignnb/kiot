@@ -165,8 +165,9 @@ class OrderReturnController extends Controller
             if (!empty($validated['customer_id'])) {
                 $customer = \App\Models\Customer::find($validated['customer_id']);
                 if ($customer) {
-                    $customer->decrement('debt_amount', min($validated['total'], $customer->debt_amount));
-                    $customer->decrement('total_spent', min($validated['total'], $customer->total_spent));
+                    // Trả hàng luôn giảm nợ KH. debt có thể âm = ta nợ KH (KiotViet style)
+                    $customer->decrement('debt_amount', $validated['total']);
+                    $customer->decrement('total_spent', $validated['total']);
                 }
             }
 

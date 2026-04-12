@@ -389,6 +389,14 @@ const cancelOffset = async (supplierId, offsetId) => {
         alert(e.response?.data?.message || 'Có lỗi xảy ra khi hủy cấn bằng');
     }
 };
+
+// ====== CB TOAST (KiotViet style) ======
+const cbToast = ref({ show: false, timer: null });
+const showCbToast = () => {
+    if (cbToast.value.timer) clearTimeout(cbToast.value.timer);
+    cbToast.value.show = true;
+    cbToast.value.timer = setTimeout(() => { cbToast.value.show = false; }, 4000);
+};
 </script>
 
 <template>
@@ -847,8 +855,10 @@ const cancelOffset = async (supplierId, offsetId) => {
                                 <td class="px-4 py-3">{{ supplier.phone }}</td>
                                 <td class="px-4 py-3">{{ supplier.email }}</td>
                                 <td class="px-4 py-3 text-right">
-                                    <div>{{ Number(supplier.supplier_debt_amount).toLocaleString() }}</div>
-                                    <div v-if="supplier.is_customer && supplier.debt_amount > 0" class="text-xs text-blue-600">
+                                    <div :class="Number(supplier.supplier_debt_amount) < 0 ? 'text-green-600 font-semibold' : 'text-red-600'">
+                                        {{ Number(supplier.supplier_debt_amount).toLocaleString() }}
+                                    </div>
+                                    <div v-if="supplier.is_customer && Number(supplier.debt_amount) != 0" class="text-xs" :class="Number(supplier.debt_amount) > 0 ? 'text-blue-600' : 'text-orange-500'">
                                         KH nợ: {{ formatCurrency(supplier.debt_amount) }}
                                     </div>
                                 </td>
@@ -893,7 +903,7 @@ const cancelOffset = async (supplierId, offsetId) => {
                                                 :class="getSupplierTab(supplier.id) === 'debt' ? 'border-b-2 border-blue-600 text-blue-600' : ''"
                                                 class="px-4 pb-2 hover:text-blue-500 transition"
                                             >
-                                                Nợ cần trả nhà cung cấp
+                                                Công nợ
                                             </button>
                                         </div>
 
@@ -1045,13 +1055,16 @@ const cancelOffset = async (supplierId, offsetId) => {
                                                             <th class="px-3 py-2">Thời gian</th>
                                                             <th class="px-3 py-2">Loại</th>
                                                             <th class="px-3 py-2 text-right">Giá trị</th>
-                                                            <th class="px-3 py-2 text-right">Nợ cần trả NCC</th>
+                                                            <th class="px-3 py-2 text-right">Nợ cần trả nhà cung cấp</th>
                                                         </tr>
                                                     </thead>
                                                     <tbody class="divide-y">
                                                         <tr v-if="!filteredDebt(supplier.id)?.length"><td colspan="5" class="px-3 py-6 text-center text-gray-400">Chưa có giao dịch công nợ.</td></tr>
                                                         <tr v-for="d in filteredDebt(supplier.id)" :key="d.id" class="hover:bg-gray-50">
-                                                            <td class="px-3 py-2 text-blue-600 font-semibold">{{ d.code }}</td>
+                                                            <td class="px-3 py-2 font-semibold"
+                                                                :class="(d.code && (d.code.startsWith('CB') || d.code.startsWith('DTCN'))) ? 'text-blue-600 cursor-pointer hover:underline' : 'text-blue-600'"
+                                                                @click="(d.code && (d.code.startsWith('CB') || d.code.startsWith('DTCN'))) && showCbToast()"
+                                                            >{{ d.code }}</td>
                                                             <td class="px-3 py-2">{{ formatDateTime(d.created_at) }}</td>
                                                             <td class="px-3 py-2">{{ d.type_label }}</td>
                                                             <td class="px-3 py-2 text-right font-semibold" :class="d.amount < 0 ? 'text-green-600' : ''">{{ Number(d.amount).toLocaleString() }}</td>
@@ -2008,6 +2021,16 @@ const cancelOffset = async (supplierId, offsetId) => {
                 <div v-else class="p-12 text-center text-gray-400">Không tìm thấy thông tin phiếu nhập</div>
             </div>
         </div>
+
+        <!-- CB Toast (KiotViet style) -->
+        <transition name="fade">
+            <div v-if="cbToast.show" class="fixed bottom-6 right-6 z-[100] flex items-start gap-3 bg-orange-50 border border-orange-200 rounded-lg shadow-lg px-4 py-3 max-w-sm">
+                <svg class="w-5 h-5 text-orange-500 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                </svg>
+                <span class="text-sm text-orange-800">Giao dịch này thuộc khách hàng, vui lòng sang bên khách hàng để xử lý</span>
+            </div>
+        </transition>
 
     </AppLayout>
 </template>
