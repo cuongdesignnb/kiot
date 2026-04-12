@@ -943,9 +943,6 @@ const submit = () => {
                                     <div :class="Number(customer.debt_amount) < 0 ? 'text-red-600 font-semibold' : ''">
                                         {{ Number(customer.debt_amount).toLocaleString() }}
                                     </div>
-                                    <div v-if="customer.is_supplier && Number(customer.supplier_debt_amount) != 0" class="text-xs" :class="Number(customer.supplier_debt_amount) > 0 ? 'text-green-600' : 'text-blue-500'">
-                                        NCC: {{ Number(customer.supplier_debt_amount) > 0 ? '-' : '' }}{{ formatCurrency(customer.supplier_debt_amount) }}
-                                    </div>
                                 </td>
                                 <td class="px-4 py-3 text-right text-gray-400">
                                     ---
@@ -1645,42 +1642,7 @@ const submit = () => {
                                                     debtHistoryData[customer.id]
                                                 "
                                             >
-                                                <!-- ===== CÔNG NỢ HAI CHIỀU SUMMARY ===== -->
-                                                <div v-if="debtHistoryData[customer.id]?.summary?.is_dual_role" class="mb-4 bg-gradient-to-r from-blue-50 to-green-50 border border-blue-200 rounded-lg p-4">
-                                                    <div class="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
-                                                        <svg class="w-4 h-4 text-purple-500" fill="currentColor" viewBox="0 0 20 20"><path d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                                                        Công nợ hai chiều (KH + NCC)
-                                                    </div>
-                                                    <div class="grid grid-cols-4 gap-4 text-center">
-                                                        <div>
-                                                            <div class="text-xs text-gray-500 mb-1">Nợ phải thu (bán hàng)</div>
-                                                            <div class="text-base font-bold text-blue-600">{{ formatCurrency(debtHistoryData[customer.id].summary.receivable) }}</div>
-                                                        </div>
-                                                        <div>
-                                                            <div class="text-xs text-gray-500 mb-1">Nợ phải trả (mua hàng)</div>
-                                                            <div class="text-base font-bold text-red-600">{{ formatCurrency(debtHistoryData[customer.id].summary.payable) }}</div>
-                                                        </div>
-                                                        <div>
-                                                            <div class="text-xs text-gray-500 mb-1">Công nợ ròng</div>
-                                                            <div class="text-base font-bold" :class="debtHistoryData[customer.id].summary.net > 0 ? 'text-blue-600' : debtHistoryData[customer.id].summary.net < 0 ? 'text-red-600' : 'text-green-600'">
-                                                                {{ formatCurrency(Math.abs(debtHistoryData[customer.id].summary.net)) }}
-                                                            </div>
-                                                        </div>
-                                                        <div>
-                                                            <div class="text-xs text-gray-500 mb-1">Trạng thái</div>
-                                                            <span v-if="debtHistoryData[customer.id].summary.status === 'receivable'" class="inline-block text-xs font-bold bg-blue-100 text-blue-700 px-2 py-1 rounded-full">Còn phải thu</span>
-                                                            <span v-else-if="debtHistoryData[customer.id].summary.status === 'payable'" class="inline-block text-xs font-bold bg-red-100 text-red-700 px-2 py-1 rounded-full">Còn phải trả</span>
-                                                            <span v-else class="inline-block text-xs font-bold bg-green-100 text-green-700 px-2 py-1 rounded-full">Đã cân bằng</span>
-                                                        </div>
-                                                    </div>
-                                                    <!-- Nút cấn bằng -->
-                                                    <div v-if="debtHistoryData[customer.id].summary.receivable > 0 && debtHistoryData[customer.id].summary.payable > 0" class="mt-3 flex justify-center">
-                                                        <button @click="openOffsetModal(customer)" class="text-sm font-bold text-white bg-purple-600 hover:bg-purple-700 px-4 py-1.5 rounded shadow-sm flex items-center gap-1.5">
-                                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
-                                                            Cấn bằng công nợ
-                                                        </button>
-                                                    </div>
-                                                </div>
+
 
                                                 <!-- Filter dropdown -->
                                                 <div

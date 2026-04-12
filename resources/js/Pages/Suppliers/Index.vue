@@ -858,9 +858,6 @@ const showCbToast = () => {
                                     <div :class="Number(supplier.supplier_debt_amount) < 0 ? 'text-green-600 font-semibold' : 'text-red-600'">
                                         {{ Number(supplier.supplier_debt_amount).toLocaleString() }}
                                     </div>
-                                    <div v-if="supplier.is_customer && Number(supplier.debt_amount) != 0" class="text-xs" :class="Number(supplier.debt_amount) > 0 ? 'text-blue-600' : 'text-orange-500'">
-                                        KH nợ: {{ formatCurrency(supplier.debt_amount) }}
-                                    </div>
                                 </td>
                                 <td class="px-4 py-3 text-right">
                                     {{
@@ -1000,42 +997,6 @@ const showCbToast = () => {
                                         <template v-if="getSupplierTab(supplier.id) === 'debt'">
                                             <div v-if="supplierDataLoading[supplier.id]" class="text-center py-8 text-gray-400">Đang tải...</div>
                                             <template v-else>
-                                                <!-- ===== CÔNG NỢ HAI CHIỀU SUMMARY ===== -->
-                                                <div v-if="supplierDebt[supplier.id]?.summary?.is_dual_role" class="mb-4 bg-gradient-to-r from-green-50 to-blue-50 border border-green-200 rounded-lg p-4">
-                                                    <div class="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
-                                                        <svg class="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
-                                                        Công nợ hai chiều (NCC + KH)
-                                                    </div>
-                                                    <div class="grid grid-cols-4 gap-4 text-center">
-                                                        <div>
-                                                            <div class="text-xs text-gray-500 mb-1">Nợ phải trả (mua hàng)</div>
-                                                            <div class="text-base font-bold text-red-600">{{ formatCurrency(supplierDebt[supplier.id].summary.payable) }}</div>
-                                                        </div>
-                                                        <div>
-                                                            <div class="text-xs text-gray-500 mb-1">Nợ phải thu (bán hàng)</div>
-                                                            <div class="text-base font-bold text-blue-600">{{ formatCurrency(supplierDebt[supplier.id].summary.receivable) }}</div>
-                                                        </div>
-                                                        <div>
-                                                            <div class="text-xs text-gray-500 mb-1">Công nợ ròng</div>
-                                                            <div class="text-base font-bold" :class="supplierDebt[supplier.id].summary.net > 0 ? 'text-blue-600' : supplierDebt[supplier.id].summary.net < 0 ? 'text-red-600' : 'text-green-600'">
-                                                                {{ formatCurrency(Math.abs(supplierDebt[supplier.id].summary.net)) }}
-                                                            </div>
-                                                        </div>
-                                                        <div>
-                                                            <div class="text-xs text-gray-500 mb-1">Trạng thái</div>
-                                                            <span v-if="supplierDebt[supplier.id].summary.status === 'receivable'" class="inline-block text-xs font-bold bg-blue-100 text-blue-700 px-2 py-1 rounded-full">Còn phải thu</span>
-                                                            <span v-else-if="supplierDebt[supplier.id].summary.status === 'payable'" class="inline-block text-xs font-bold bg-red-100 text-red-700 px-2 py-1 rounded-full">Còn phải trả</span>
-                                                            <span v-else class="inline-block text-xs font-bold bg-green-100 text-green-700 px-2 py-1 rounded-full">Đã cân bằng</span>
-                                                        </div>
-                                                    </div>
-                                                    <div v-if="supplierDebt[supplier.id].summary.receivable > 0 && supplierDebt[supplier.id].summary.payable > 0" class="mt-3 flex justify-center">
-                                                        <button @click="openOffsetModal(supplier)" class="text-sm font-bold text-white bg-purple-600 hover:bg-purple-700 px-4 py-1.5 rounded shadow-sm flex items-center gap-1.5">
-                                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
-                                                            Cấn bằng công nợ
-                                                        </button>
-                                                    </div>
-                                                </div>
-
                                                 <div class="flex justify-end mb-3">
                                                     <select v-model="debtFilter" class="border border-gray-300 rounded px-3 py-1.5 text-sm outline-none">
                                                         <option value="all">Tất cả giao dịch</option>
@@ -1043,8 +1004,6 @@ const showCbToast = () => {
                                                         <option value="payment">Thanh toán</option>
                                                         <option value="adjustment">Điều chỉnh</option>
                                                         <option value="discount">Chiết khấu</option>
-                                                        <option value="sale">Bán hàng</option>
-                                                        <option value="sale_return">Trả hàng bán</option>
                                                         <option value="offset">Đối trừ CN</option>
                                                     </select>
                                                 </div>
@@ -1084,7 +1043,7 @@ const showCbToast = () => {
                                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
                                                             Điều chỉnh
                                                         </button>
-                                                        <button @click="openDebtAction(supplier, 'payment')" class="text-white bg-green-600 rounded px-4 py-1.5 font-bold hover:bg-green-700 shadow-sm flex items-center gap-1">
+                                                        <button @click="openDebtAction(supplier, 'payment')" class="text-gray-700 bg-white border border-gray-300 rounded px-4 py-1.5 font-bold hover:bg-gray-50 shadow-sm flex items-center gap-1">
                                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2z"></path></svg>
                                                             Thanh toán
                                                         </button>
@@ -1095,46 +1054,8 @@ const showCbToast = () => {
                                                     </div>
                                                 </div>
 
-                                                <!-- ===== LỊCH SỬ CẤN BẰNG CÔNG NỢ ===== -->
-                                                <div v-if="offsetHistoryData[supplier.id] && offsetHistoryData[supplier.id].length > 0" class="mt-6 border-t border-gray-200 pt-4">
-                                                    <h4 class="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
-                                                        <svg class="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
-                                                        Lịch sử cấn bằng công nợ
-                                                    </h4>
-                                                    <table class="w-full text-[13px]">
-                                                        <thead class="bg-purple-50 text-gray-600 font-semibold">
-                                                            <tr>
-                                                                <th class="px-3 py-2 text-left">Mã chứng từ</th>
-                                                                <th class="px-3 py-2 text-left">Thời gian</th>
-                                                                <th class="px-3 py-2 text-right">Số tiền cấn</th>
-                                                                <th class="px-3 py-2 text-left">Loại</th>
-                                                                <th class="px-3 py-2 text-left">Trạng thái</th>
-                                                                <th class="px-3 py-2 text-left">Ghi chú</th>
-                                                                <th class="px-3 py-2 text-center">Thao tác</th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody class="divide-y divide-gray-100">
-                                                            <tr v-for="offset in offsetHistoryData[supplier.id]" :key="offset.id" class="hover:bg-purple-50/30">
-                                                                <td class="px-3 py-2 text-purple-600 font-medium">{{ offset.code }}</td>
-                                                                <td class="px-3 py-2">{{ formatDateTime(offset.created_at) }}</td>
-                                                                <td class="px-3 py-2 text-right font-bold text-purple-700">{{ formatCurrency(offset.amount) }}</td>
-                                                                <td class="px-3 py-2">
-                                                                    <span v-if="offset.is_auto" class="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">Tự động</span>
-                                                                    <span v-else class="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded">Thủ công</span>
-                                                                </td>
-                                                                <td class="px-3 py-2">
-                                                                    <span v-if="offset.status === 'active'" class="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-medium">Hiệu lực</span>
-                                                                    <span v-else class="text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-medium">Đã hủy</span>
-                                                                </td>
-                                                                <td class="px-3 py-2 text-gray-500 text-xs max-w-[200px] truncate">{{ offset.note || offset.cancel_reason || '' }}</td>
-                                                                <td class="px-3 py-2 text-center">
-                                                                    <button v-if="offset.status === 'active'" @click="cancelOffset(supplier.id, offset.id)" class="text-xs text-red-600 hover:text-red-800 font-medium hover:underline">Hủy cấn bằng</button>
-                                                                    <span v-else class="text-xs text-gray-400">{{ formatDateTime(offset.cancelled_at) }}</span>
-                                                                </td>
-                                                            </tr>
-                                                        </tbody>
-                                                    </table>
-                                                </div>
+
+
                                             </template>
                                         </template>
                                     </div>
