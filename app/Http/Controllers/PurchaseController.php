@@ -306,6 +306,11 @@ class PurchaseController extends Controller
                 // Update Supplier Debt & Total Bought
                 $supplier = Customer::find($request->supplier_id);
                 if ($supplier) {
+                    // Auto-enable dual-role: buying from a customer makes them also a supplier
+                    if ($supplier->is_customer && !$supplier->is_supplier) {
+                        $supplier->is_supplier = true;
+                    }
+
                     $supplier->supplier_debt_amount += $debt_amount;
                     $supplier->total_bought += $total_amount;
                     $supplier->save();

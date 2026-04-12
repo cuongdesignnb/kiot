@@ -172,12 +172,19 @@ class PosController extends Controller
 
             // Customer debt tracking
             $customerName = $customer ? $customer->name : 'Khách lẻ';
-            $debtAmount = max(0, $validated['total'] - $validated['customer_paid']);
+            // debtAmount > 0: KH nợ ta. debtAmount < 0: KH trả dư (ta nợ KH). Giống KiotViet.
+            $debtAmount = $validated['total'] - $validated['customer_paid'];
 
-            if ($customer && $debtAmount > 0) {
-                $customer->increment('debt_amount', $debtAmount);
-                $customer->increment('total_spent', $validated['total']);
-            } elseif ($customer) {
+            if ($customer) {
+                // Auto-enable dual-role: selling to a supplier makes them also a customer
+                if ($customer->is_supplier && !$customer->is_customer) {
+                    $customer->is_customer = true;
+                    $customer->save();
+                }
+
+                if ($debtAmount != 0) {
+                    $customer->increment('debt_amount', $debtAmount);
+                }
                 $customer->increment('total_spent', $validated['total']);
             }
 

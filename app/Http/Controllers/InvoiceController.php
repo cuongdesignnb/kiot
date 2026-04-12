@@ -213,6 +213,12 @@ class InvoiceController extends Controller
             $debtAmount = $validated['total'] - ($validated['customer_paid'] ?? 0);
 
             if ($customer) {
+                // Auto-enable dual-role: selling to a supplier makes them also a customer
+                if ($customer->is_supplier && !$customer->is_customer) {
+                    $customer->is_customer = true;
+                    $customer->save();
+                }
+
                 if ($debtAmount != 0) {
                     $customer->increment('debt_amount', $debtAmount);
                 }
