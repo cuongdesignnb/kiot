@@ -286,7 +286,16 @@ class OrderController extends Controller
                 if ($product) {
                     $product = Product::lockForUpdate()->find($product->id);
                     $allowOversell = Setting::get('inventory_allow_oversell', true);
-                    if (!$allowOversell && $product->stock_quantity < $orderItem->qty) {
+
+                    // Serial products: check serial availability
+                    if ($product->has_serial) {
+                        $inStockSerials = \App\Models\SerialImei::where('product_id', $product->id)
+                            ->where('status', 'in_stock')
+                            ->count();
+                        if (!$allowOversell && $inStockSerials < $orderItem->qty) {
+                            throw new \Exception("Sản phẩm [{$product->sku}] {$product->name} không đủ Serial tồn kho (Còn: {$inStockSerials})");
+                        }
+                    } elseif (!$allowOversell && $product->stock_quantity < $orderItem->qty) {
                         throw new \Exception("Sản phẩm [{$product->sku}] {$product->name} không đủ tồn kho (Còn: {$product->stock_quantity})");
                     }
                     $product->stock_quantity -= $orderItem->qty;

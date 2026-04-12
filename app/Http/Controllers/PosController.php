@@ -123,7 +123,17 @@ class PosController extends Controller
                 $product = Product::lockForUpdate()->find($item['product_id']);
                 if ($product) {
                     $allowOversell = \App\Models\Setting::get('inventory_allow_oversell', true);
-                    if (!$allowOversell && $product->stock_quantity < $item['quantity']) {
+
+                    // Sản phẩm serial: kiểm tra serial in_stock thay vì stock_quantity
+                    if ($product->has_serial && !empty($serialIds)) {
+                        $availableSerials = \App\Models\SerialImei::whereIn('id', $serialIds)
+                            ->where('product_id', $product->id)
+                            ->where('status', 'in_stock')
+                            ->count();
+                        if ($availableSerials < count($serialIds)) {
+                            throw new \Exception("Sản phẩm [{$product->sku}] {$product->name} - một số Serial/IMEI đã bán hoặc không tồn tại.");
+                        }
+                    } elseif (!$allowOversell && $product->stock_quantity < $item['quantity']) {
                         throw new \Exception("Sản phẩm [{$product->sku}] {$product->name} không đủ tồn kho (Còn: {$product->stock_quantity})");
                     }
                     $product->stock_quantity -= $item['quantity'];
