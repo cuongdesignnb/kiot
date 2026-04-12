@@ -228,7 +228,7 @@ class SupplierController extends Controller
             'payment' => 'Thanh toán',
             'adjustment' => 'Điều chỉnh',
             'discount' => 'Chiết khấu TT',
-            'offset' => 'Đối trừ CN',
+            'offset' => 'Điều chỉnh',
         ];
 
         foreach ($transactions as $t) {

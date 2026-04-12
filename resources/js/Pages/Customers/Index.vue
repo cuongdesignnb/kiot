@@ -29,6 +29,17 @@ const setActiveTab = (id, tab) => {
     if (tab === "debt" && !offsetHistoryData[id]) loadOffsetHistory(id);
 };
 
+// KiotViet: 'Nợ hiện tại' = NET position for dual-role partners
+const customerNetDebt = (customer) => {
+    const debt = Number(customer.debt_amount) || 0;
+    const supplierDebt = Number(customer.supplier_debt_amount) || 0;
+    // For dual-role: NET = what they owe us minus what we owe them
+    if (customer.is_supplier && supplierDebt > 0) {
+        return debt - supplierDebt;
+    }
+    return debt;
+};
+
 // Lazy-loaded tab data
 const salesHistoryData = reactive({});
 const debtHistoryData = reactive({});
@@ -940,8 +951,8 @@ const submit = () => {
                                 <td class="px-4 py-3">{{ customer.name }}</td>
                                 <td class="px-4 py-3">{{ customer.phone }}</td>
                                 <td class="px-4 py-3 text-right">
-                                    <div :class="Number(customer.debt_amount) < 0 ? 'text-red-600 font-semibold' : ''">
-                                        {{ Number(customer.debt_amount).toLocaleString() }}
+                                    <div :class="customerNetDebt(customer) != 0 ? (customerNetDebt(customer) < 0 ? 'text-red-600 font-semibold' : '') : ''">
+                                        {{ customerNetDebt(customer).toLocaleString() }}
                                     </div>
                                 </td>
                                 <td class="px-4 py-3 text-right text-gray-400">
@@ -1911,46 +1922,7 @@ const submit = () => {
                                                     </div>
                                                 </div>
 
-                                                <!-- ===== LỊCH SỬ CẤN BẰNG CÔNG NỢ ===== -->
-                                                <div v-if="offsetHistoryData[customer.id] && offsetHistoryData[customer.id].length > 0" class="mt-6 border-t border-gray-200 pt-4">
-                                                    <h4 class="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
-                                                        <svg class="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
-                                                        Lịch sử cấn bằng công nợ
-                                                    </h4>
-                                                    <table class="w-full text-[13px]">
-                                                        <thead class="bg-purple-50 text-gray-600 font-semibold">
-                                                            <tr>
-                                                                <th class="px-3 py-2 text-left">Mã chứng từ</th>
-                                                                <th class="px-3 py-2 text-left">Thời gian</th>
-                                                                <th class="px-3 py-2 text-right">Số tiền cấn</th>
-                                                                <th class="px-3 py-2 text-left">Loại</th>
-                                                                <th class="px-3 py-2 text-left">Trạng thái</th>
-                                                                <th class="px-3 py-2 text-left">Ghi chú</th>
-                                                                <th class="px-3 py-2 text-center">Thao tác</th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody class="divide-y divide-gray-100">
-                                                            <tr v-for="offset in offsetHistoryData[customer.id]" :key="offset.id" class="hover:bg-purple-50/30">
-                                                                <td class="px-3 py-2 text-purple-600 font-medium">{{ offset.code }}</td>
-                                                                <td class="px-3 py-2">{{ formatDateTime(offset.created_at) }}</td>
-                                                                <td class="px-3 py-2 text-right font-bold text-purple-700">{{ formatCurrency(offset.amount) }}</td>
-                                                                <td class="px-3 py-2">
-                                                                    <span v-if="offset.is_auto" class="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">Tự động</span>
-                                                                    <span v-else class="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded">Thủ công</span>
-                                                                </td>
-                                                                <td class="px-3 py-2">
-                                                                    <span v-if="offset.status === 'active'" class="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-medium">Hiệu lực</span>
-                                                                    <span v-else class="text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-medium">Đã hủy</span>
-                                                                </td>
-                                                                <td class="px-3 py-2 text-gray-500 text-xs max-w-[200px] truncate">{{ offset.note || offset.cancel_reason || '' }}</td>
-                                                                <td class="px-3 py-2 text-center">
-                                                                    <button v-if="offset.status === 'active'" @click="cancelOffset(customer.id, offset.id)" class="text-xs text-red-600 hover:text-red-800 font-medium hover:underline">Hủy cấn bằng</button>
-                                                                    <span v-else class="text-xs text-gray-400">{{ formatDateTime(offset.cancelled_at) }}</span>
-                                                                </td>
-                                                            </tr>
-                                                        </tbody>
-                                                    </table>
-                                                </div>
+                                                <!-- Offset history section removed - CB entries shown inline in debt table (KiotViet style) -->
                                             </div>
                                         </div>
 

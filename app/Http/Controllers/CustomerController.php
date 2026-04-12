@@ -13,6 +13,7 @@ use App\Models\SupplierDebtTransaction;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use App\Services\DebtOffsetService;
+use App\Models\DebtOffset;
 
 class CustomerController extends Controller
 {
@@ -261,35 +262,110 @@ class CustomerController extends Controller
             }
         }
 
-        // 2) Explicit cash_flow receipts linked to this customer
+        // 2) Explicit cash_flow receipts linked to this customer (skip DebtOffset ones)
         $cashFlows = CashFlow::where('target_type', 'Khách hàng')
             ->where('target_id', $customer->id)
             ->where('type', 'receipt')
             ->orderBy('created_at', 'desc')
             ->get();
 
-        // Avoid duplicates: skip cash_flows whose reference_code matches an invoice we already handled
         $invoiceCodes = $invoices->pluck('code')->toArray();
         foreach ($cashFlows as $cf) {
+            // Skip invoice-linked ones (already handled as implicit payment)
             if ($cf->reference_type === 'Invoice' && in_array($cf->reference_code, $invoiceCodes)) {
+                continue;
+            }
+            // Skip DebtOffset CashFlows — we show DebtOffset records directly below
+            if ($cf->reference_type === 'DebtOffset') {
                 continue;
             }
             $entries->push([
                 'id' => 'cf-' . $cf->id,
                 'code' => $cf->code,
-                'type' => $cf->reference_type === 'DebtOffset' ? 'Đối trừ CN' : ($cf->reference_type === 'OrderReturn' ? 'Trả hàng' : 'Thanh toán'),
+                'type' => $cf->reference_type === 'OrderReturn' ? 'Trả hàng' : 'Thanh toán',
                 'amount' => -$cf->amount,
                 'created_at' => $cf->created_at,
             ]);
         }
 
-        // NOTE: KiotViet Customer debt tab chỉ hiện giao dịch KH thuần:
-        // - Invoices (Bán hàng)
-        // - Payments (Thanh toán)  
-        // - CB offset entries (Đối trừ CN) — đã hiện qua CashFlow reference_type=DebtOffset
-        // Giao dịch NCC (Nhập hàng, TT NCC) hiện riêng ở Supplier debt tab.
+        // 3) Cross-reference supplier transactions for dual-role partners (KiotViet does this!)
+        // Purchases show as NEGATIVE "Nhập hàng" in customer view
+        if ($customer->is_customer && $customer->is_supplier) {
+            $purchases = Purchase::where('supplier_id', $customer->id)
+                ->where('status', 'completed')
+                ->orderBy('created_at', 'desc')
+                ->get(['id', 'code', 'total_amount', 'paid_amount', 'created_at']);
 
-        // Sort by date asc to compute running balance
+            foreach ($purchases as $p) {
+                $entries->push([
+                    'id' => 'pur-' . $p->id,
+                    'code' => $p->code,
+                    'type' => 'Nhập hàng',
+                    'amount' => -$p->total_amount,
+                    'created_at' => $p->created_at,
+                ]);
+                if ($p->paid_amount > 0) {
+                    $entries->push([
+                        'id' => 'purpay-' . $p->id,
+                        'code' => 'TTNH' . preg_replace('/^PN/', '', $p->code),
+                        'type' => 'TT nhập hàng',
+                        'amount' => $p->paid_amount,
+                        'created_at' => $p->created_at,
+                    ]);
+                }
+            }
+
+            // Purchase returns = positive (they refund us)
+            $purchaseReturns = PurchaseReturn::where('supplier_id', $customer->id)
+                ->where('status', 'completed')
+                ->orderBy('created_at', 'desc')
+                ->get(['id', 'code', 'total_amount', 'created_at']);
+
+            foreach ($purchaseReturns as $pr) {
+                $entries->push([
+                    'id' => 'pret-' . $pr->id,
+                    'code' => $pr->code,
+                    'type' => 'Trả hàng nhập',
+                    'amount' => $pr->total_amount,
+                    'created_at' => $pr->created_at,
+                ]);
+            }
+
+            // Supplier debt transactions (payment/adjustment/discount) — mirror sign
+            $supplierTxs = SupplierDebtTransaction::where('supplier_id', $customer->id)
+                ->whereNotIn('type', ['purchase', 'return', 'offset']) // handled above or as DebtOffset
+                ->orderBy('created_at', 'desc')
+                ->get();
+
+            foreach ($supplierTxs as $stx) {
+                $entries->push([
+                    'id' => 'stx-' . $stx->id,
+                    'code' => $stx->code,
+                    'type' => $stx->type === 'payment' ? 'TT công nợ NCC' : ($stx->type === 'adjustment' ? 'Điều chỉnh NCC' : ($stx->type === 'discount' ? 'Chiết khấu NCC' : $stx->type)),
+                    'amount' => -$stx->amount, // Mirror sign for customer perspective
+                    'created_at' => $stx->created_at,
+                ]);
+            }
+        }
+
+        // 4) DebtOffset entries — show as "Điều chỉnh" with NET impact = 0
+        // In KiotViet: CB reduces both customer_debt and supplier_debt equally → NET doesn't change
+        $offsets = DebtOffset::where('customer_id', $customer->id)
+            ->where('status', 'active')
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        foreach ($offsets as $offset) {
+            $entries->push([
+                'id' => 'cb-' . $offset->id,
+                'code' => $offset->code,
+                'type' => 'Điều chỉnh',
+                'amount' => 0, // NET impact = 0 (reduces both sides equally)
+                'created_at' => $offset->created_at,
+            ]);
+        }
+
+        // Sort by date asc to compute running balance (= NET position)
         $sorted = $entries->sortBy('created_at')->values();
         $balance = 0;
         $ledger = $sorted->map(function ($entry) use (&$balance) {
@@ -298,8 +374,7 @@ class CustomerController extends Controller
             return $entry;
         });
 
-        // Return newest first for display
-        // Giữ nguyên dấu: dương = nợ, âm = có credit (KiotViet style)
+        // NET = customer receivable - supplier payable
         $receivable = (float) $customer->debt_amount;
         $payable = (float) $customer->supplier_debt_amount;
         $net = $receivable - $payable;
