@@ -93,7 +93,34 @@ class PosController extends Controller
 
             $customer = $validated['customer_id'] ? \App\Models\Customer::find($validated['customer_id']) : null;
             $employee = !empty($validated['employee_id']) ? \App\Models\Employee::find($validated['employee_id']) : null;
+            $saleTime = $validated['sale_time'] ?? now();
 
+            // 1) Create Order (DH) — giống KiotViet: POS bán hàng → tạo đơn đặt hàng
+            $debtAmount = $validated['total'] - $validated['customer_paid'];
+            $orderStatus = $debtAmount <= 0 ? 'completed' : 'processing';
+
+            $order = \App\Models\Order::create([
+                'code' => 'DH' . time() . rand(10, 99),
+                'customer_id' => $customer?->id,
+                'branch_id' => null,
+                'created_by_name' => $employee?->name ?? auth()->user()?->name ?? 'Admin',
+                'assigned_to_name' => $employee?->name ?? auth()->user()?->name ?? 'Admin',
+                'sales_channel' => 'Bán trực tiếp',
+                'price_book_name' => 'Bảng giá chung',
+                'status' => $orderStatus,
+                'total_price' => $validated['subtotal'],
+                'discount' => $validated['discount'],
+                'other_fees' => 0,
+                'total_payment' => $validated['total'],
+                'amount_paid' => $validated['customer_paid'],
+                'note' => ($validated['payment_method'] ?? 'cash') === 'transfer' && !empty($validated['bank_account_info']) ? 'Chuyển khoản: ' . $validated['bank_account_info'] : null,
+            ]);
+
+            if (!empty($validated['sale_time'])) {
+                $order->update(['created_at' => \Carbon\Carbon::parse($saleTime)]);
+            }
+
+            // 2) Create Invoice (HD) linked to Order
             $invoice = \App\Models\Invoice::create([
                 'code' => 'HD' . time() . rand(10, 99),
                 'subtotal' => $validated['subtotal'],
@@ -103,14 +130,15 @@ class PosController extends Controller
                 'customer_id' => $customer?->id,
                 'created_by' => $employee?->id,
                 'seller_name' => $employee?->name,
-                'sale_time' => $validated['sale_time'] ?? now(),
+                'sale_time' => $saleTime,
                 'payment_method' => $validated['payment_method'] ?? 'cash',
+                'sales_channel' => 'Bán trực tiếp',
                 'note' => ($validated['payment_method'] ?? 'cash') === 'transfer' && !empty($validated['bank_account_info']) ? 'Chuyển khoản: ' . $validated['bank_account_info'] : null,
             ]);
 
             // Cho phép chọn ngày bán (kế toán nhập sau)
             if (!empty($validated['sale_time'])) {
-                $invoice->update(['created_at' => \Carbon\Carbon::parse($validated['sale_time'])]);
+                $invoice->update(['created_at' => \Carbon\Carbon::parse($saleTime)]);
             }
 
             foreach ($validated['items'] as $item) {
@@ -160,20 +188,30 @@ class PosController extends Controller
                     $serialStr = null;
                 }
 
-                // Create Item with cost_price snapshot
-                $invoiceItem = $invoice->items()->create([
+                // Create Invoice Item with cost_price snapshot
+                $invoice->items()->create([
                     'product_id' => $item['product_id'],
                     'quantity'   => $item['quantity'],
                     'price'      => $item['price'],
                     'cost_price' => $snapshotCostPrice,
                     'serial'     => $serialStr,
                 ]);
+
+                // Create Order Item (mirror)
+                $itemDiscount = 0;
+                $itemSubtotal = ($item['quantity'] * $item['price']) - $itemDiscount;
+                $order->items()->create([
+                    'product_id' => $item['product_id'],
+                    'qty'        => $item['quantity'],
+                    'price'      => $item['price'],
+                    'discount'   => $itemDiscount,
+                    'subtotal'   => $itemSubtotal,
+                ]);
             }
 
             // Customer debt tracking
             $customerName = $customer ? $customer->name : 'Khách lẻ';
             // debtAmount > 0: KH nợ ta. debtAmount < 0: KH trả dư (ta nợ KH). Giống KiotViet.
-            $debtAmount = $validated['total'] - $validated['customer_paid'];
 
             if ($customer) {
                 // Auto-enable dual-role: selling to a supplier makes them also a customer
@@ -212,7 +250,12 @@ class PosController extends Controller
             }
 
             \Illuminate\Support\Facades\DB::commit();
-            return response()->json(['success' => true, 'invoice_code' => $invoice->code, 'message' => 'Thanh toán thành công!']);
+            return response()->json([
+                'success' => true,
+                'invoice_code' => $invoice->code,
+                'order_code' => $order->code,
+                'message' => 'Thanh toán thành công!',
+            ]);
         } catch (\Exception $e) {
             \Illuminate\Support\Facades\DB::rollBack();
             \Illuminate\Support\Facades\Log::error('POS Checkout Error', [
