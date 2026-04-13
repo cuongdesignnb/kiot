@@ -521,7 +521,14 @@ const generateVariants = () => {
                                     <template v-if="props.product.type === 'standard'">
                                         <div>
                                             <label class="block text-sm font-semibold text-gray-700 mb-1">Tồn kho</label>
-                                            <input type="number" v-model="form.stock_quantity" class="w-full border border-gray-300 rounded p-2 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow">
+                                            <template v-if="form.has_serial">
+                                                <div class="w-full border border-gray-200 bg-gray-50 rounded p-2 text-gray-600 text-sm cursor-not-allowed">
+                                                    {{ form.stock_quantity }} <span class="text-xs text-orange-500 ml-1">(Tự động theo Serial/IMEI)</span>
+                                                </div>
+                                            </template>
+                                            <template v-else>
+                                                <input type="number" v-model="form.stock_quantity" class="w-full border border-gray-300 rounded p-2 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow">
+                                            </template>
                                         </div>
                                         <div>
                                             <label class="block text-sm font-semibold text-gray-700 mb-1">Định mức tồn ít nhất</label>

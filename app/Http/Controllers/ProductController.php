@@ -345,6 +345,12 @@ class ProductController extends Controller
         $variants = $validated['variants'] ?? [];
         unset($validated['technician_price'], $validated['variants']);
 
+        // Serial products: stock_quantity is managed by purchase/sale flows,
+        // never allow the Edit form to overwrite it
+        if ($product->has_serial) {
+            unset($validated['stock_quantity']);
+        }
+
         $product->update($validated);
 
         // Save technician_price to active price books
