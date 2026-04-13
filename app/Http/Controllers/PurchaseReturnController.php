@@ -216,10 +216,7 @@ class PurchaseReturnController extends Controller
                 ]);
             }
 
-            // Tự động đối trừ công nợ NCC↔KH
-            if ($purchase->supplier) {
-                DebtOffsetService::offsetDebts($purchase->supplier);
-            }
+            // Note: Không gọi DebtOffsetService - unified ledger view tự xử lý bù trừ
 
             // Update purchase status based on total returned qty
             $totalPurchasedQty = $purchase->items->sum('quantity');

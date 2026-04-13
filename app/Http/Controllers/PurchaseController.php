@@ -332,10 +332,7 @@ class PurchaseController extends Controller
                     ]);
                 }
 
-                // Tự động đối trừ công nợ NCC↔KH
-                if ($supplier) {
-                    DebtOffsetService::offsetDebts($supplier);
-                }
+                // Note: Không gọi DebtOffsetService - unified ledger view tự xử lý bù trừ
             }
 
             DB::commit();
@@ -471,8 +468,7 @@ class PurchaseController extends Controller
                     ]);
                 }
 
-                // Tự động đối trừ công nợ NCC↔KH
-                DebtOffsetService::offsetDebts($purchase->supplier);
+                // Note: Không gọi DebtOffsetService - unified ledger view tự xử lý bù trừ
             }
 
             DB::commit();

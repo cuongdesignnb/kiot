@@ -244,10 +244,7 @@ class InvoiceController extends Controller
                 ]);
             }
 
-            // Auto offset customer↔supplier debt
-            if ($customer) {
-                DebtOffsetService::offsetDebts($customer);
-            }
+            // Note: Không gọi DebtOffsetService - unified ledger view tự xử lý bù trừ
 
             DB::commit();
             return redirect()->route('invoices.index')->with('success', 'Hóa đơn đã được tạo thành công.');
@@ -399,7 +396,7 @@ class InvoiceController extends Controller
                 if ($oldCustomer) {
                     $oldCustomer->decrement('debt_amount', $oldDebt);
                     $oldCustomer->decrement('total_spent', $oldTotal);
-                    DebtOffsetService::offsetDebts($oldCustomer);
+
                 }
             }
 
@@ -419,7 +416,7 @@ class InvoiceController extends Controller
                         }
                         $newCustomer->increment('total_spent', $newTotal);
                     }
-                    DebtOffsetService::offsetDebts($newCustomer);
+
                 }
             }
 
@@ -507,8 +504,7 @@ class InvoiceController extends Controller
                     }
                     $customer->decrement('total_spent', $invoice->total);
 
-                    // Auto offset
-                    DebtOffsetService::offsetDebts($customer);
+
                 }
             }
 

@@ -13,6 +13,13 @@ const formatDateTime = (val) => {
     return d.toLocaleDateString('vi-VN') + ' ' + d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 };
 
+// Unified NET supplier balance (dương = DN nợ NCC, âm = NCC nợ DN)
+const supplierNetDebt = (supplier) => {
+    const supplierDebt = Number(supplier.supplier_debt_amount) || 0;
+    const customerDebt = Number(supplier.debt_amount) || 0;
+    return supplierDebt - customerDebt;
+};
+
 const props = defineProps({
     suppliers: Object,
     groups: Array,
@@ -855,8 +862,8 @@ const showCbToast = () => {
                                 <td class="px-4 py-3">{{ supplier.phone }}</td>
                                 <td class="px-4 py-3">{{ supplier.email }}</td>
                                 <td class="px-4 py-3 text-right">
-                                    <div :class="Number(supplier.supplier_debt_amount) < 0 ? 'text-green-600 font-semibold' : 'text-red-600'">
-                                        {{ Number(supplier.supplier_debt_amount).toLocaleString() }}
+                                    <div :class="supplierNetDebt(supplier) < 0 ? 'text-green-600 font-semibold' : 'text-red-600'">
+                                        {{ supplierNetDebt(supplier).toLocaleString() }}
                                     </div>
                                 </td>
                                 <td class="px-4 py-3 text-right">

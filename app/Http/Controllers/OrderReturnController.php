@@ -190,10 +190,7 @@ class OrderReturnController extends Controller
                 ]);
             }
 
-            // Auto offset customer↔supplier debt
-            if ($customer) {
-                DebtOffsetService::offsetDebts($customer);
-            }
+            // Note: Không gọi DebtOffsetService - unified ledger view tự xử lý bù trừ
 
             // Cho phép chọn ngày trả hàng (kế toán nhập sau)
             if (request()->filled('order_date')) {

@@ -29,15 +29,12 @@ const setActiveTab = (id, tab) => {
     if (tab === "debt" && !offsetHistoryData[id]) loadOffsetHistory(id);
 };
 
-// KiotViet: 'Nợ hiện tại' = NET position for dual-role partners
+// KiotViet: 'Nợ hiện tại' = NET position (dương = KH nợ DN, âm = DN nợ KH)
 const customerNetDebt = (customer) => {
     const debt = Number(customer.debt_amount) || 0;
     const supplierDebt = Number(customer.supplier_debt_amount) || 0;
-    // For dual-role: NET = what they owe us minus what we owe them
-    if (customer.is_supplier && supplierDebt > 0) {
-        return debt - supplierDebt;
-    }
-    return debt;
+    // Unified: customer_balance = receivable - payable
+    return debt - supplierDebt;
 };
 
 // Lazy-loaded tab data

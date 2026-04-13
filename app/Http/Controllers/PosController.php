@@ -206,9 +206,7 @@ class PosController extends Controller
                 ]);
             }
 
-            if ($customer) {
-                \App\Services\DebtOffsetService::offsetDebts($customer);
-            }
+            // Note: Không gọi DebtOffsetService - unified ledger view tự xử lý bù trừ
 
             \Illuminate\Support\Facades\DB::commit();
             return response()->json([

@@ -337,10 +337,8 @@ class OrderController extends Controller
                 ]);
             }
 
-            // 5) Auto debt offset
-            if ($customer) {
-                \App\Services\DebtOffsetService::offsetDebts($customer);
-            }
+
+            // Note: Không gọi DebtOffsetService - unified ledger view tự xử lý bù trừ
 
             // 6) Update Order status
             $order->update([
