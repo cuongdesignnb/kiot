@@ -839,4 +839,19 @@ Route::get('/repairs', fn () => redirect('/tasks?type=repair'));
 Route::get('/repairs/performance', fn () => redirect('/tasks/performance'));
 Route::get('/repairs/{id}', fn ($id) => redirect("/tasks/$id"));
 
+// 🔔 NOTIFICATIONS (session auth — called from frontend via axios)
+Route::prefix('api/notifications')->group(function () {
+    Route::get('/', [\App\Http\Controllers\Api\NotificationController::class, 'index']);
+    Route::get('/unread-count', [\App\Http\Controllers\Api\NotificationController::class, 'unreadCount']);
+    Route::post('/{id}/read', [\App\Http\Controllers\Api\NotificationController::class, 'markAsRead']);
+    Route::post('/read-all', [\App\Http\Controllers\Api\NotificationController::class, 'markAllAsRead']);
+});
+
+// 👤 MY TASKS (session auth — called from MyTasks.vue via axios)
+Route::prefix('api/my-tasks')->group(function () {
+    Route::get('/', [\App\Http\Controllers\Api\MyTasksController::class, 'index']);
+    Route::post('/{assignment}/respond', [\App\Http\Controllers\Api\MyTasksController::class, 'respond']);
+    Route::post('/{task}/progress', [\App\Http\Controllers\Api\MyTasksController::class, 'updateProgress']);
+});
+
 }); // end auth middleware
