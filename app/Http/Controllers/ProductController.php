@@ -86,6 +86,25 @@ class ProductController extends Controller
 
         $products = $query->orderBy('id', 'desc')->paginate(50)->withQueryString();
 
+        // Append serial counts for serial products
+        $products->getCollection()->transform(function ($product) {
+            if ($product->has_serial) {
+                $product->total_serial_count = $product->serialImeis()->count();
+                $product->ready_count = $product->serialImeis()
+                    ->where('status', 'in_stock')
+                    ->where(function ($q) {
+                        $q->whereNull('repair_status')
+                          ->orWhereNotIn('repair_status', ['not_started', 'repairing']);
+                    })
+                    ->count();
+                $product->repairing_count = $product->serialImeis()
+                    ->where('status', 'in_stock')
+                    ->whereIn('repair_status', ['not_started', 'repairing'])
+                    ->count();
+            }
+            return $product;
+        });
+
         return Inertia::render('Welcome', [
             'products' => $products,
             'categories' => Category::with('children')->whereNull('parent_id')->orderBy('name')->get(),
@@ -786,6 +805,9 @@ class ProductController extends Controller
             'cost_price' => $product->cost_price ?? 0,
         ]);
 
+        // Sync stock_quantity with serial count
+        $product->increment('stock_quantity');
+
         return response()->json($serial, 201);
     }
 
@@ -816,6 +838,11 @@ class ProductController extends Controller
             $created++;
         }
 
+        // Sync stock_quantity with newly created serials
+        if ($created > 0) {
+            $product->increment('stock_quantity', $created);
+        }
+
         return response()->json([
             'created' => $created,
             'duplicates' => $duplicates,
@@ -832,7 +859,18 @@ class ProductController extends Controller
             'status' => 'nullable|string|in:in_stock,sold,returning,warranty,defective',
         ]);
 
+        $oldStatus = $serial->status;
         $serial->update($data);
+        $newStatus = $serial->status;
+
+        // Sync stock_quantity when serial status changes
+        if ($oldStatus !== $newStatus) {
+            if ($oldStatus === 'in_stock' && $newStatus !== 'in_stock') {
+                $product->decrement('stock_quantity');
+            } elseif ($oldStatus !== 'in_stock' && $newStatus === 'in_stock') {
+                $product->increment('stock_quantity');
+            }
+        }
 
         return response()->json($serial);
     }
@@ -846,7 +884,13 @@ class ProductController extends Controller
             return response()->json(['message' => 'Không thể xóa serial đã bán.'], 422);
         }
 
+        $wasInStock = $serial->status === 'in_stock';
         $serial->delete();
+
+        // Sync stock_quantity when in_stock serial is deleted
+        if ($wasInStock) {
+            $product->decrement('stock_quantity');
+        }
 
         return response()->json(['message' => 'Đã xóa serial.']);
     }

@@ -85,6 +85,11 @@ class Product extends Model
         return $this->hasMany(ProductVariant::class);
     }
 
+    public function serialImeis()
+    {
+        return $this->hasMany(SerialImei::class);
+    }
+
     /**
      * Lấy ngày nhập hàng sớm nhất cho sản phẩm này.
      * Fallback về created_at nếu chưa có phiếu nhập nào.
