@@ -135,10 +135,17 @@ load();
 
                         <!-- Actions -->
                         <div class="flex flex-col items-end gap-2 ml-4">
-                            <!-- Pending assignment: accept/reject -->
-                            <template v-if="t.assignment_status === 'pending'">
+                            <!-- Pending assignment: accept/reject (only if task is still active) -->
+                            <template v-if="t.assignment_status === 'pending' && t.status !== 'completed' && t.status !== 'cancelled'">
                                 <button @click="respond(t.assignment_id, 'accepted')" class="px-4 py-1.5 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700">Nhận việc</button>
                                 <button @click="respond(t.assignment_id, 'rejected')" class="px-4 py-1.5 bg-red-50 text-red-600 rounded-lg text-sm font-semibold hover:bg-red-100 border border-red-200">Từ chối</button>
+                            </template>
+                            <!-- Completed/cancelled: show label only -->
+                            <template v-else-if="t.status === 'completed'">
+                                <span class="px-3 py-1.5 bg-green-50 text-green-600 rounded-lg text-sm font-semibold">✓ Đã hoàn thành</span>
+                            </template>
+                            <template v-else-if="t.status === 'cancelled'">
+                                <span class="px-3 py-1.5 bg-red-50 text-red-500 rounded-lg text-sm font-semibold">Đã hủy</span>
                             </template>
                         </div>
                     </div>
