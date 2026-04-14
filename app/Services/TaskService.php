@@ -394,23 +394,31 @@ class TaskService
      */
     public function getEmployeePerformance(int $employeeId, string $from, string $to): array
     {
-        $assigned = Task::where('assigned_employee_id', $employeeId)
-            ->whereBetween('assigned_at', [$from, $to])
-            ->count();
+        // Lấy tất cả task được giao cho NV trong khoảng thời gian (qua task_assignments)
+        $taskIds = \App\Models\TaskAssignment::where('employee_id', $employeeId)
+            ->whereHas('task', fn($q) => $q->whereBetween('created_at', [$from, $to . ' 23:59:59']))
+            ->pluck('task_id');
 
-        $completed = Task::where('assigned_employee_id', $employeeId)
-            ->where('status', Task::STATUS_COMPLETED)
-            ->whereBetween('completed_at', [$from, $to])
-            ->count();
+        $tasks = Task::whereIn('id', $taskIds)->get();
 
-        $rate = $assigned > 0 ? round(($completed / $assigned) * 100, 1) : 0;
+        $total = $tasks->count();
+        $completed = $tasks->where('status', Task::STATUS_COMPLETED)->count();
+        $inProgress = $tasks->where('status', 'in_progress')->count();
+        $pending = $tasks->where('status', 'pending')->count();
+        $cancelled = $tasks->where('status', 'cancelled')->count();
+
+        $rate = $total > 0 ? round(($completed / $total) * 100, 1) : 0;
 
         $tier = \App\Models\RepairPerformanceTier::getTierForPercent($rate);
 
         return [
-            'assigned'        => $assigned,
+            'total'           => $total,
+            'assigned'        => $total, // backward compat
             'completed'       => $completed,
-            'completion_rate'  => $rate,
+            'in_progress'     => $inProgress,
+            'pending'         => $pending,
+            'cancelled'       => $cancelled,
+            'completion_rate' => $rate,
             'tier'            => $tier,
             'salary_percent'  => $tier?->salary_percent ?? 100,
         ];

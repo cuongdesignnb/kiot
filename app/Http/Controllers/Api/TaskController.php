@@ -342,9 +342,16 @@ class TaskController extends Controller
         $from = Carbon::create($request->year, $request->month, 1)->startOfMonth();
         $to = $from->copy()->endOfMonth();
 
-        $employees = Employee::whereHas('tasks', function ($q) use ($from, $to) {
-            $q->whereBetween('assigned_at', [$from, $to]);
+        // Lấy nhân viên có assignment trong khoảng thời gian (dùng task_assignments thay vì assigned_employee_id)
+        $employees = Employee::whereHas('taskAssignments', function ($q) use ($from, $to) {
+            $q->whereHas('task', fn($tq) => $tq->whereBetween('created_at', [$from, $to]));
         })->get();
+
+        // Nếu lọc theo 1 NV cụ thể
+        if ($request->filled('employee_id')) {
+            $emp = Employee::find($request->employee_id);
+            if ($emp) $employees = collect([$emp]);
+        }
 
         $results = [];
         foreach ($employees as $emp) {
