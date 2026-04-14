@@ -46,4 +46,9 @@ class SerialImei extends Model
     {
         return $this->hasMany(DeviceRepair::class, 'serial_imei_id');
     }
+
+    public function tasks()
+    {
+        return $this->hasMany(Task::class, 'serial_imei_id');
+    }
 }

@@ -136,7 +136,11 @@ class TaskController extends Controller
         $data['type'] = $type;
         $data['created_by'] = $request->user()?->id;
 
-        $task = $this->service->createTask($data);
+        try {
+            $task = $this->service->createTask($data);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
         $task->load(['product:id,name,sku', 'serialImei:id,serial_number', 'category:id,name,color']);
 
         return response()->json($task, 201);
@@ -372,8 +376,13 @@ class TaskController extends Controller
             return response()->json([]);
         }
 
+        // Chỉ trả serial in_stock VÀ không có task active (pending/in_progress)
         $serials = SerialImei::with('product:id,name,sku,cost_price')
             ->where('serial_number', 'like', '%' . $q . '%')
+            ->where('status', 'in_stock')
+            ->whereDoesntHave('tasks', function ($tq) {
+                $tq->whereIn('status', ['pending', 'in_progress']);
+            })
             ->limit(10)
             ->get(['id', 'serial_number', 'product_id', 'status', 'cost_price', 'repair_status']);
 
@@ -410,7 +419,9 @@ class TaskController extends Controller
 
         $serials = SerialImei::where('product_id', $productId)
             ->where('status', 'in_stock')
-            ->whereNull('repair_status')
+            ->whereDoesntHave('tasks', function ($tq) {
+                $tq->whereIn('status', ['pending', 'in_progress']);
+            })
             ->get(['id', 'serial_number', 'product_id', 'status', 'cost_price']);
 
         return response()->json($serials);
@@ -436,6 +447,7 @@ class TaskController extends Controller
         ]);
 
         $createdTasks = [];
+        $errors = [];
         $assignerName = $request->user()?->name ?? 'Hệ thống';
 
         foreach ($data['serial_imei_ids'] as $serialId) {
@@ -451,18 +463,26 @@ class TaskController extends Controller
                 'deadline' => $data['deadline'] ?? null,
                 'created_by' => $request->user()?->id,
             ];
-            $task = $this->service->createTask($taskData);
 
-            if (!empty($data['employee_ids'])) {
-                $this->service->assignEmployees($task, $data['employee_ids'], $request->user()?->id, $assignerName);
+            try {
+                $task = $this->service->createTask($taskData);
+                if (!empty($data['employee_ids'])) {
+                    $this->service->assignEmployees($task, $data['employee_ids'], $request->user()?->id, $assignerName);
+                }
+                $createdTasks[] = $task->id;
+            } catch (\InvalidArgumentException $e) {
+                $errors[] = $e->getMessage();
             }
+        }
 
-            $createdTasks[] = $task->id;
+        if (empty($createdTasks) && !empty($errors)) {
+            return response()->json(['message' => implode('; ', $errors)], 422);
         }
 
         return response()->json([
-            'message' => 'Đã tạo ' . count($createdTasks) . ' phiếu sửa chữa',
+            'message' => 'Đã tạo ' . count($createdTasks) . ' phiếu sửa chữa' . (count($errors) ? ', ' . count($errors) . ' lỗi' : ''),
             'task_ids' => $createdTasks,
+            'errors' => $errors,
         ], 201);
     }
 }

@@ -55,6 +55,28 @@ class TaskService
     {
         $serial = SerialImei::findOrFail($data['serial_imei_id']);
 
+        // ── Validation 1: Serial phải còn trong kho (in_stock), không được đã bán ──
+        if ($serial->status !== 'in_stock') {
+            $statusLabels = [
+                'sold' => 'đã bán',
+                'returned' => 'đã trả',
+                'damaged' => 'hỏng',
+                'transferred' => 'đã chuyển kho',
+            ];
+            $label = $statusLabels[$serial->status] ?? $serial->status;
+            throw new \InvalidArgumentException("Serial {$serial->serial_number} {$label}, không thể tạo phiếu sửa chữa.");
+        }
+
+        // ── Validation 2: Serial không được có task đang active (pending/in_progress) ──
+        $activeTask = Task::where('serial_imei_id', $serial->id)
+            ->whereIn('status', [Task::STATUS_PENDING, 'in_progress'])
+            ->first();
+        if ($activeTask) {
+            throw new \InvalidArgumentException(
+                "Serial {$serial->serial_number} đang có phiếu {$activeTask->code} (trạng thái: {$activeTask->status}). Phải hoàn thành hoặc hủy phiếu cũ trước."
+            );
+        }
+
         $task = Task::create([
             'code'              => Task::generateCode(Task::TYPE_REPAIR),
             'type'              => Task::TYPE_REPAIR,
