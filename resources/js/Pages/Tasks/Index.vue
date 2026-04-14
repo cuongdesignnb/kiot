@@ -243,6 +243,16 @@ const toggleAssignEmployee = (empId) => {
 // ── Helpers ──
 const goPage = (page) => { filters.value.page = page; loadTasks(); };
 const formatCurrency = (v) => v ? Number(v).toLocaleString("vi-VN") : "0";
+const formatDate = (d) => {
+    if (!d) return "-";
+    const dt = new Date(d);
+    const dd = String(dt.getDate()).padStart(2, "0");
+    const mm = String(dt.getMonth() + 1).padStart(2, "0");
+    const yy = dt.getFullYear();
+    const hh = String(dt.getHours()).padStart(2, "0");
+    const mi = String(dt.getMinutes()).padStart(2, "0");
+    return `${dd}/${mm}/${yy} ${hh}:${mi}`;
+};
 
 const statusBadge = (status) => {
     const map = {
@@ -409,6 +419,7 @@ loadTasks();
                     <thead class="bg-gray-50 text-gray-600 uppercase text-xs">
                         <tr>
                             <SortableHeader label="Mã" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3 text-left" @sort="handleSort" />
+                            <SortableHeader label="Ngày tạo" field="created_at" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3 text-left" @sort="handleSort" />
                             <SortableHeader label="Tiêu đề" field="title" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3 text-left" @sort="handleSort" />
                             <th class="px-4 py-3 text-left">Tên máy</th>
                             <th class="px-4 py-3 text-left">Serial</th>
@@ -423,10 +434,11 @@ loadTasks();
                     </thead>
                     <tbody>
                         <tr v-if="!tasks.data?.length">
-                            <td colspan="11" class="text-center py-8 text-gray-400">Chưa có công việc nào.</td>
+                            <td colspan="12" class="text-center py-8 text-gray-400">Chưa có công việc nào.</td>
                         </tr>
                         <tr v-for="t in tasks.data" :key="t.id" class="border-t hover:bg-gray-50 cursor-pointer" @click="router.visit(`/tasks/${t.id}`)">
                             <td class="px-4 py-3 font-semibold text-blue-600">{{ t.code }}</td>
+                            <td class="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">{{ formatDate(t.created_at) }}</td>
                             <td class="px-4 py-3">
                                 <div>{{ t.title || t.code }}</div>
                                 <div v-if="t.category" class="text-xs mt-0.5">
