@@ -584,9 +584,7 @@ const resetAfterCheckout = () => {
                     <option value="" class="text-gray-800">-- Nhân viên --</option>
                     <option v-for="emp in employees" :key="emp.id" :value="emp.id" class="text-gray-800">{{ emp.name }}</option>
                 </select>
-                <div class="text-[11px] font-medium text-white/90 bg-white/15 rounded px-2 py-1 whitespace-nowrap tabular-nums">
-                    {{ new Date(saleDate).toLocaleDateString('vi-VN') }} {{ currentTime.split(' ').pop() || '' }}
-                </div>
+                <input type="datetime-local" v-model="saleDate" class="text-[11px] font-medium text-white bg-white/15 hover:bg-white/25 rounded px-2 py-1 whitespace-nowrap tabular-nums outline-none border-none cursor-pointer focus:ring-1 focus:ring-white/50 w-[155px]" title="Chọn ngày bán (cho phép quá khứ/tương lai)" />
                 <Link href="/" class="w-7 h-7 flex items-center justify-center bg-white/20 hover:bg-white/30 rounded transition-colors" title="Về Quản lý">
                     <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
                 </Link>

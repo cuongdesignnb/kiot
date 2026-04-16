@@ -77,7 +77,7 @@ class CustomerController extends Controller
         $rules = [
             'name' => 'required|string|max:255',
             'code' => 'nullable|string|max:255|unique:customers,code',
-            'phone' => (Setting::get('customer_required_phone', false) ? 'required' : 'nullable') . '|string|max:255',
+            'phone' => (Setting::get('customer_required_phone', false) ? 'required' : 'nullable') . '|string|max:255|unique:customers,phone',
             'phone2' => 'nullable|string|max:255',
             'birthday' => (Setting::get('customer_required_birthday', false) ? 'required' : 'nullable') . '|date',
             'gender' => (Setting::get('customer_required_gender', false) ? 'required' : 'nullable') . '|in:none,male,female',
@@ -142,7 +142,7 @@ class CustomerController extends Controller
     {
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
-            'phone' => (Setting::get('customer_required_phone', false) ? 'required' : 'nullable') . '|string|max:255',
+            'phone' => (Setting::get('customer_required_phone', false) ? 'required' : 'nullable') . '|string|max:255|unique:customers,phone,' . $customer->id,
             'phone2' => 'nullable|string|max:255',
             'birthday' => (Setting::get('customer_required_birthday', false) ? 'required' : 'nullable') . '|date',
             'gender' => (Setting::get('customer_required_gender', false) ? 'required' : 'nullable') . '|in:none,male,female',
@@ -212,6 +212,16 @@ class CustomerController extends Controller
 
     public function destroy(Customer $customer)
     {
+        // Guard: không cho xóa nếu đã có giao dịch — buộc dùng "Ngừng hoạt động"
+        $hasInvoices = Invoice::where('customer_id', $customer->id)->exists();
+        $hasPurchases = \App\Models\Purchase::where('supplier_id', $customer->id)->exists();
+        $hasReturns = OrderReturn::where('customer_id', $customer->id)->exists();
+        $hasDebt = ((float) $customer->debt_amount != 0) || ((float) $customer->supplier_debt_amount != 0);
+
+        if ($hasInvoices || $hasPurchases || $hasReturns || $hasDebt) {
+            return back()->with('error', 'Không thể xóa — đối tác này đã có giao dịch hoặc công nợ. Hãy chuyển sang "Ngừng hoạt động" thay vì xóa.');
+        }
+
         $customer->delete();
         return redirect()->route('customers.index')->with('success', 'Xóa khách hàng thành công.');
     }

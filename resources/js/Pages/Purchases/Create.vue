@@ -56,6 +56,47 @@ const showCreateDropdown = ref(false);
 const items = ref([]);
 
 const selectedSupplierId = ref('');
+const supplierQuery = ref('');
+const showSupplierDropdown = ref(false);
+
+const selectedSupplierObj = computed(() => {
+    if (!selectedSupplierId.value) return null;
+    return localSuppliers.value.find(s => s.id == selectedSupplierId.value);
+});
+
+const filteredSuppliers = computed(() => {
+    const q = (supplierQuery.value || '').toLowerCase().trim();
+    if (!q) return localSuppliers.value.slice(0, 20);
+    return localSuppliers.value.filter(s =>
+        (s.name && s.name.toLowerCase().includes(q)) ||
+        (s.code && s.code.toLowerCase().includes(q)) ||
+        (s.phone && s.phone.includes(q))
+    ).slice(0, 20);
+});
+
+let supplierSearchTimeout;
+const handleSupplierSearch = () => {
+    clearTimeout(supplierSearchTimeout);
+    supplierSearchTimeout = setTimeout(() => {
+        showSupplierDropdown.value = true;
+    }, 100);
+};
+
+const hideSupplierDropdown = () => {
+    setTimeout(() => { showSupplierDropdown.value = false; }, 200);
+};
+
+const pickSupplier = (supplier) => {
+    selectedSupplierId.value = supplier.id;
+    supplierQuery.value = '';
+    showSupplierDropdown.value = false;
+};
+
+const clearSupplier = () => {
+    selectedSupplierId.value = '';
+    supplierQuery.value = '';
+};
+
 const selectedEmployeeId = ref('');
 // Use local time (not UTC) for datetime-local input
 const pad = (n) => String(n).padStart(2, '0');
@@ -542,13 +583,43 @@ const quickCreateBrand = async () => {
                         <div class="relative mb-3">
                             <div class="flex items-center border-b border-gray-300 pb-1">
                                 <svg class="w-4 h-4 text-gray-400 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-                                <select v-model="selectedSupplierId" class="flex-1 py-1 outline-none text-[13px] text-gray-800 bg-transparent appearance-none">
-                                    <option value="">Tìm nhà cung cấp *</option>
-                                    <option v-for="supplier in localSuppliers" :key="supplier.id" :value="supplier.id">{{ supplier.name }}</option>
-                                </select>
+                                <!-- Selected supplier display -->
+                                <div v-if="selectedSupplierId && selectedSupplierObj" class="flex-1 flex items-center justify-between">
+                                    <span class="text-[13px] text-gray-800 font-medium">{{ selectedSupplierObj.name }}</span>
+                                    <button type="button" @click="clearSupplier" class="text-gray-400 hover:text-red-500 ml-1" title="Bỏ chọn">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                    </button>
+                                </div>
+                                <!-- Search input -->
+                                <input
+                                    v-else
+                                    v-model="supplierQuery"
+                                    @input="handleSupplierSearch"
+                                    @focus="showSupplierDropdown = true; handleSupplierSearch()"
+                                    @blur="hideSupplierDropdown"
+                                    type="text"
+                                    class="flex-1 py-1 outline-none text-[13px] text-gray-800 bg-transparent"
+                                    placeholder="Tìm nhà cung cấp (tên, SĐT, mã) *"
+                                >
                                 <button type="button" @click="showCreateSupplierModal = true" class="text-green-600 hover:text-green-700 font-bold text-lg leading-none ml-1" title="Thêm nhà cung cấp">
                                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
                                 </button>
+                            </div>
+                            <!-- Supplier search results dropdown -->
+                            <div v-if="showSupplierDropdown && !selectedSupplierId" class="absolute left-0 right-0 top-full mt-1 bg-white shadow-xl rounded border border-gray-200 z-50 max-h-[200px] overflow-auto">
+                                <div v-if="filteredSuppliers.length === 0" class="px-3 py-3 text-sm text-gray-400 text-center">
+                                    Không tìm thấy "{{ supplierQuery }}"
+                                    <button @mousedown.prevent="showCreateSupplierModal = true" class="block mx-auto mt-1 text-green-600 font-semibold hover:underline text-xs">+ Tạo NCC mới</button>
+                                </div>
+                                <div v-for="s in filteredSuppliers" :key="s.id"
+                                    @mousedown.prevent="pickSupplier(s)"
+                                    class="flex items-center justify-between px-3 py-2 hover:bg-green-50 cursor-pointer border-b border-gray-100 last:border-0 transition-colors text-[13px]">
+                                    <div>
+                                        <div class="font-semibold text-gray-800">{{ s.name }}</div>
+                                        <div class="text-[11px] text-gray-500">{{ s.code }} | {{ s.phone || '—' }}</div>
+                                    </div>
+                                    <div v-if="s.supplier_debt_amount > 0" class="text-[11px] text-red-500 font-semibold">Nợ: {{ Number(s.supplier_debt_amount).toLocaleString() }}</div>
+                                </div>
                             </div>
                         </div>
 

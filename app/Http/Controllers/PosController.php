@@ -324,7 +324,7 @@ class PosController extends Controller
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'code' => 'nullable|string|max:255|unique:customers,code',
-            'phone' => 'nullable|string|max:255',
+            'phone' => 'nullable|string|max:255|unique:customers,phone',
             'phone2' => 'nullable|string|max:255',
             'birthday' => 'nullable|date',
             'gender' => 'nullable|in:none,male,female',
