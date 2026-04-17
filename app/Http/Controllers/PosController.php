@@ -85,6 +85,7 @@ class PosController extends Controller
             'items.*.product_id' => 'required|exists:products,id',
             'items.*.quantity' => 'required|integer|min:1',
             'items.*.price' => 'required|numeric|min:0',
+            'items.*.discount' => 'nullable|numeric|min:0',
             'items.*.serial_ids' => 'nullable|array',
         ]);
 
@@ -166,11 +167,14 @@ class PosController extends Controller
                     $serialStr = null;
                 }
 
+                $itemDiscount = $item['discount'] ?? 0;
                 $invoice->items()->create([
                     'product_id' => $item['product_id'],
                     'quantity'   => $item['quantity'],
                     'price'      => $item['price'],
                     'cost_price' => $snapshotCostPrice,
+                    'discount'   => $itemDiscount,
+                    'subtotal'   => ($item['price'] * $item['quantity']) - $itemDiscount,
                     'serial'     => $serialStr,
                 ]);
             }

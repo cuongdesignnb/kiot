@@ -337,6 +337,7 @@ const addToCart = (product) => {
                 product: product,
                 quantity: 0,
                 price: product.retail_price,
+                discount: 0,
                 is_serial_product: true,
                 serials: [], 
                 serialInput: '',
@@ -363,6 +364,7 @@ const addToCart = (product) => {
             product: product,
             quantity: 1,
             price: product.retail_price,
+            discount: 0,
             is_serial_product: false,
         });
     }
@@ -391,7 +393,7 @@ watch([tabs, activeTabIndex, selectedEmployeeId, saleDate], () => {
 
 // Computed totals
 const subtotal = computed(() => {
-    return cart.value.reduce((total, item) => total + (item.price * item.quantity), 0);
+    return cart.value.reduce((total, item) => total + (item.price * item.quantity) - (Number(item.discount) || 0), 0);
 });
 
 const calculatedDiscount = computed(() => {
@@ -468,6 +470,7 @@ const processCheckout = async () => {
                 product_id: item.product.id,
                 quantity: item.quantity,
                 price: item.price,
+                discount: Number(item.discount) || 0,
                 serial_ids: item.is_serial_product ? item.serials.map(s => s.id) : [],
             }))
         };
@@ -682,8 +685,12 @@ const resetAfterCheckout = () => {
                         <div class="col-span-2 text-right">
                             <input type="number" v-model="item.price" class="w-full text-right outline-none bg-transparent border-b border-dashed border-gray-300 focus:border-blue-500 py-1 font-semibold text-gray-700">
                         </div>
-                        <div class="col-span-2 text-right font-bold text-gray-900 text-[15px]">
-                            {{ (Number(item.price * item.quantity) || 0).toLocaleString() }}
+                        <div class="col-span-2 text-right">
+                            <div class="font-bold text-gray-900 text-[15px]">{{ (Number(item.price * item.quantity - (item.discount || 0)) || 0).toLocaleString() }}</div>
+                            <div class="flex items-center justify-end gap-1 mt-0.5">
+                                <span class="text-[10px] text-gray-400">CK:</span>
+                                <input type="number" v-model="item.discount" min="0" class="w-16 text-right text-[11px] outline-none bg-transparent border-b border-dashed border-gray-300 focus:border-blue-500 py-0 text-gray-500" placeholder="0">
+                            </div>
                         </div>
                         <div class="col-span-1 flex justify-center">
                             <button @click="removeFromCart(index)" class="text-gray-400 hover:text-red-500 hover:bg-red-50 p-2 rounded-full transition-colors">
