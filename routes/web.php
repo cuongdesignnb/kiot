@@ -500,6 +500,7 @@ Route::middleware('permission:purchases.create')->group(function () {
     Route::post('/purchase-returns', [PurchaseReturnController::class, 'store'])->name('purchase-returns.store');
     Route::delete('/purchase-returns/{purchaseReturn}', [PurchaseReturnController::class, 'destroy'])->name('purchase-returns.destroy');
 });
+Route::post('/purchase-returns/quick', [PurchaseReturnController::class, 'quickStore'])->name('purchase-returns.quick-store');
 
 // ===== PRICE SETTINGS =====
 Route::middleware('permission:price_settings.view')->group(function () {

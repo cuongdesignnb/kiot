@@ -241,6 +241,89 @@ class PurchaseReturnController extends Controller
         }
     }
 
+    /**
+     * Quick supplier return — khong can purchase_id (tra nhanh).
+     */
+    public function quickStore(Request $request)
+    {
+        $request->validate([
+            'supplier_id' => 'required|exists:customers,id',
+            'items' => 'required|array|min:1',
+            'items.*.product_id' => 'required|exists:products,id',
+            'items.*.quantity' => 'required|integer|min:1',
+            'items.*.price' => 'required|numeric|min:0',
+            'refund_amount' => 'nullable|numeric|min:0',
+            'note' => 'nullable|string',
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            $totalAmount = collect($request->items)->sum(fn($item) => $item['quantity'] * $item['price']);
+            $refundAmount = $request->refund_amount ?? $totalAmount;
+            $supplier = Customer::findOrFail($request->supplier_id);
+
+            $return = PurchaseReturn::create([
+                'code' => $request->code ?? 'PTN' . time(),
+                'purchase_id' => null,
+                'supplier_id' => $supplier->id,
+                'user_id' => auth()->id(),
+                'employee_id' => $request->employee_id,
+                'total_amount' => $totalAmount,
+                'refund_amount' => $refundAmount,
+                'status' => 'completed',
+                'note' => $request->note,
+                'payment_method' => $request->payment_method ?? 'cash',
+                'return_date' => now(),
+            ]);
+
+            foreach ($request->items as $item) {
+                $product = Product::find($item['product_id']);
+
+                $return->items()->create([
+                    'product_id' => $product->id,
+                    'product_name' => $product->name,
+                    'product_code' => $product->sku,
+                    'quantity' => $item['quantity'],
+                    'price' => $item['price'],
+                    'subtotal' => $item['quantity'] * $item['price'],
+                ]);
+
+                // Reduce stock
+                if ($product->stock_quantity < $item['quantity']) {
+                    throw new \Exception("San pham '{$product->name}' khong du ton kho (Con: {$product->stock_quantity}, Can tra: {$item['quantity']}).");
+                }
+                $product->decrement('stock_quantity', $item['quantity']);
+            }
+
+            // Reduce supplier debt
+            $supplier->decrement('supplier_debt_amount', $refundAmount);
+            $supplier->decrement('total_bought', $totalAmount);
+
+            // CashFlow if refund > 0
+            if ($refundAmount > 0) {
+                CashFlow::create([
+                    'code' => 'PT' . date('YmdHis'),
+                    'type' => 'receipt',
+                    'amount' => $refundAmount,
+                    'time' => now(),
+                    'category' => 'Thu tien NCC tra hang',
+                    'target_type' => 'Nha cung cap',
+                    'target_name' => $supplier->name,
+                    'reference_type' => 'PurchaseReturn',
+                    'reference_code' => $return->code,
+                    'description' => 'NCC hoan tien tra hang nhap ' . $return->code,
+                ]);
+            }
+
+            DB::commit();
+            return response()->json(['success' => true, 'return' => $return]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+    }
+
     public function show(PurchaseReturn $purchaseReturn)
     {
         $purchaseReturn->load(['supplier', 'purchase', 'items.product:id,has_serial', 'user', 'employee', 'returnedSerials:id,product_id,serial_number,purchase_return_id']);
