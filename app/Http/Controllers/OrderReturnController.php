@@ -229,4 +229,61 @@ class OrderReturnController extends Controller
         $return->load(['items.product', 'invoice', 'customer']);
         return view('prints.return', compact('return'));
     }
+
+    /**
+     * Hủy phiếu trả hàng — rollback tồn kho, công nợ, CashFlow.
+     */
+    public function cancel(OrderReturn $return)
+    {
+        if ($return->status === 'Đã hủy') {
+            return back()->with('error', 'Phiếu trả hàng đã bị hủy trước đó.');
+        }
+
+        DB::transaction(function () use ($return) {
+            $return->load('items.product');
+
+            // 1. Rollback stock: trừ lại tồn kho đã cộng
+            foreach ($return->items as $item) {
+                if ($item->product) {
+                    $item->product->decrement('stock_quantity', $item->quantity);
+
+                    // Rollback serials: set back to sold if linked to invoice
+                    if ($item->product->has_serial && $return->invoice_id) {
+                        SerialImei::where('product_id', $item->product_id)
+                            ->where('status', 'in_stock')
+                            ->whereNull('invoice_id')
+                            ->limit($item->quantity)
+                            ->update([
+                                'status' => 'sold',
+                                'sold_at' => now(),
+                                'invoice_id' => $return->invoice_id,
+                            ]);
+                    }
+                }
+            }
+
+            // 2. Rollback customer debt & total_spent
+            if ($return->customer_id) {
+                $customer = \App\Models\Customer::find($return->customer_id);
+                if ($customer) {
+                    $customer->increment('debt_amount', $return->total);
+                    $customer->increment('total_spent', $return->total);
+                }
+            }
+
+            // 3. Cancel related CashFlow
+            CashFlow::where('reference_type', 'OrderReturn')
+                ->where('reference_code', $return->code)
+                ->delete();
+
+            // 4. Mark return as cancelled
+            $return->update(['status' => 'Đã hủy']);
+        });
+
+        if (request()->wantsJson()) {
+            return response()->json(['success' => true, 'message' => 'Đã hủy phiếu trả hàng.']);
+        }
+
+        return back()->with('success', 'Đã hủy phiếu trả hàng ' . $return->code);
+    }
 }

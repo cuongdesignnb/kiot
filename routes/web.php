@@ -637,6 +637,7 @@ Route::delete('/invoices/{invoice}', [InvoiceController::class, 'destroy'])->nam
 // ===== RETURNS =====
 Route::get('/returns', [OrderReturnController::class, 'index'])->name('returns.index')->middleware('permission:returns.view');
 Route::post('/returns', [OrderReturnController::class, 'store'])->name('returns.store')->middleware('permission:returns.create');
+Route::post('/returns/{return}/cancel', [OrderReturnController::class, 'cancel'])->name('returns.cancel')->middleware('permission:returns.create');
 
 // ===== ORDERS =====
 Route::middleware('permission:orders.view')->group(function () {
