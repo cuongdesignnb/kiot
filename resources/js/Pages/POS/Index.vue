@@ -509,6 +509,58 @@ const resetAfterCheckout = () => {
     saveDraft();
     searchProducts();
 };
+
+// ── Quick Create Product Modal ──
+const showCreateProductModal = ref(false);
+const creatingProduct = ref(false);
+const createProductErrors = ref({});
+const newProduct = ref({
+    name: '', sku: '', barcode: '',
+    cost_price: 0, retail_price: 0, has_serial: false,
+});
+
+const openCreateProductModal = () => {
+    newProduct.value = {
+        name: query.value || '', sku: '', barcode: '',
+        cost_price: 0, retail_price: 0, has_serial: false,
+    };
+    createProductErrors.value = {};
+    showCreateProductModal.value = true;
+};
+
+const closeCreateProductModal = () => {
+    showCreateProductModal.value = false;
+};
+
+const submitCreateProduct = async () => {
+    if (!newProduct.value.name) {
+        createProductErrors.value = { name: 'Tên hàng hóa là bắt buộc' };
+        return;
+    }
+    creatingProduct.value = true;
+    createProductErrors.value = {};
+    try {
+        const res = await axios.post('/products/quick-store', newProduct.value);
+        if (res.data.success && res.data.product) {
+            const created = res.data.product;
+            addToCart(created);
+            closeCreateProductModal();
+            query.value = '';
+            searchProducts();
+        }
+    } catch (e) {
+        if (e.response?.status === 422 && e.response.data?.errors) {
+            createProductErrors.value = {};
+            for (const [key, msgs] of Object.entries(e.response.data.errors)) {
+                createProductErrors.value[key] = Array.isArray(msgs) ? msgs[0] : msgs;
+            }
+        } else {
+            alert('Có lỗi xảy ra khi tạo sản phẩm.');
+        }
+    } finally {
+        creatingProduct.value = false;
+    }
+};
 </script>
 
 <template>
@@ -523,6 +575,9 @@ const resetAfterCheckout = () => {
             <div class="flex items-center gap-1.5 self-center mr-2">
                 <button class="w-8 h-8 flex items-center justify-center bg-white/20 hover:bg-white/30 rounded transition-colors" title="Quét Barcode">
                     <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"></path></svg>
+                </button>
+                <button @click="openCreateProductModal" class="w-8 h-8 flex items-center justify-center bg-white/20 hover:bg-white/30 rounded transition-colors" title="Tạo nhanh hàng hóa">
+                    <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"></path></svg>
                 </button>
                 <div class="relative w-[170px] font-sans">
                     <input 
@@ -923,6 +978,60 @@ const resetAfterCheckout = () => {
         @close="showNewCustomerModal = false"
         @created="onCustomerCreated"
     />
+
+    <!-- ═══ Quick Create Product Modal ═══ -->
+    <div v-if="showCreateProductModal" class="fixed inset-0 bg-black bg-opacity-50 z-[100] flex items-center justify-center p-4" @click.self="closeCreateProductModal">
+        <div class="bg-white rounded-lg shadow-2xl w-full max-w-md">
+            <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+                <h2 class="text-lg font-bold text-gray-800">Tạo nhanh hàng hóa</h2>
+                <button @click="closeCreateProductModal" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+            </div>
+            <form @submit.prevent="submitCreateProduct" class="p-6">
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">Tên hàng <span class="text-red-500">*</span></label>
+                        <input type="text" v-model="newProduct.name" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="Nhập tên hàng hóa" ref="productNameInput">
+                        <span v-if="createProductErrors.name" class="text-red-500 text-xs mt-1 block">{{ createProductErrors.name }}</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-1">Mã hàng</label>
+                            <input type="text" v-model="newProduct.sku" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="Tự động">
+                            <span v-if="createProductErrors.sku" class="text-red-500 text-xs mt-1 block">{{ createProductErrors.sku }}</span>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-1">Mã vạch</label>
+                            <input type="text" v-model="newProduct.barcode" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="Nhập mã vạch">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-1">Giá vốn</label>
+                            <input type="number" v-model.number="newProduct.cost_price" min="0" step="1000" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-right" placeholder="0">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán</label>
+                            <input type="number" v-model.number="newProduct.retail_price" min="0" step="1000" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-right" placeholder="0">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="flex items-center gap-2 text-sm text-gray-700 font-medium cursor-pointer">
+                            <input type="checkbox" v-model="newProduct.has_serial" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4">
+                            Quản lý theo Serial/IMEI
+                        </label>
+                    </div>
+                </div>
+                <div class="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
+                    <button type="button" @click="closeCreateProductModal" class="px-5 py-2.5 border border-gray-300 rounded text-sm font-medium text-gray-700 hover:bg-gray-50">Bỏ qua</button>
+                    <button type="submit" :disabled="creatingProduct" class="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium disabled:opacity-50 flex items-center gap-2">
+                        <svg v-if="creatingProduct" class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                        <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                        {{ creatingProduct ? 'Đang lưu...' : 'Lưu & thêm vào đơn' }}
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
 </template>
 
 <style scoped>
