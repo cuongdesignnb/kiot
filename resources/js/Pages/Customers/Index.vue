@@ -197,9 +197,11 @@ const debtModal = ref({
     customerName: "",
     currentDebt: 0,
 });
-const debtForm = reactive({ amount: 0, note: "" });
+const debtForm = reactive({ amount: 0, note: "", mode: "auto" });
+const outstandingInvoices = ref([]);
+const loadingInvoices = ref(false);
 
-const openDebtModal = (customer, type) => {
+const openDebtModal = async (customer, type) => {
     debtModal.value = {
         show: true,
         type,
@@ -209,24 +211,79 @@ const openDebtModal = (customer, type) => {
     };
     debtForm.amount = 0;
     debtForm.note = "";
+    debtForm.mode = "auto";
+    outstandingInvoices.value = [];
+
+    // Load outstanding invoices if payment mode
+    if (type === "payment") {
+        loadingInvoices.value = true;
+        try {
+            const { data } = await axios.get(`/customers/${customer.id}/outstanding-invoices`);
+            outstandingInvoices.value = (data || []).map(inv => ({ ...inv, allocAmount: 0 }));
+        } catch (e) {
+            outstandingInvoices.value = [];
+        }
+        loadingInvoices.value = false;
+    }
 };
+
+const manualTotal = () => outstandingInvoices.value.reduce((sum, inv) => sum + (Number(inv.allocAmount) || 0), 0);
 
 const submitDebtModal = async () => {
     const { type, customerId } = debtModal.value;
+
+    if (type === "payment") {
+        if (debtForm.mode === "manual") {
+            const allocations = outstandingInvoices.value
+                .filter(inv => (Number(inv.allocAmount) || 0) > 0)
+                .map(inv => ({ invoice_id: inv.id, amount: Number(inv.allocAmount) }));
+            if (allocations.length === 0) {
+                alert("Vui lòng nhập số tiền cho ít nhất 1 hóa đơn");
+                return;
+            }
+            try {
+                await axios.post(`/customers/${customerId}/debt-payment`, {
+                    mode: "manual",
+                    allocations,
+                    note: debtForm.note,
+                });
+                debtModal.value.show = false;
+                await loadDebtHistory(customerId);
+                router.reload({ only: ["customers"], preserveScroll: true });
+            } catch (e) {
+                alert(e.response?.data?.message || "Có lỗi xảy ra");
+            }
+            return;
+        }
+        // Auto mode
+        if (!debtForm.amount || debtForm.amount <= 0) {
+            alert("Vui lòng nhập số tiền hợp lệ");
+            return;
+        }
+        try {
+            await axios.post(`/customers/${customerId}/debt-payment`, {
+                mode: "auto",
+                amount: debtForm.amount,
+                note: debtForm.note,
+            });
+            debtModal.value.show = false;
+            await loadDebtHistory(customerId);
+            router.reload({ only: ["customers"], preserveScroll: true });
+        } catch (e) {
+            alert(e.response?.data?.message || "Có lỗi xảy ra");
+        }
+        return;
+    }
+
+    // Adjustment
     if (!debtForm.amount || debtForm.amount <= 0) {
         alert("Vui lòng nhập số tiền hợp lệ");
         return;
     }
     try {
-        const url =
-            type === "payment"
-                ? `/customers/${customerId}/debt-payment`
-                : `/customers/${customerId}/debt-adjust`;
-        await axios.post(url, { amount: debtForm.amount, note: debtForm.note });
+        await axios.post(`/customers/${customerId}/debt-adjust`, { amount: debtForm.amount, note: debtForm.note });
         debtModal.value.show = false;
-        // Reload debt history
         await loadDebtHistory(customerId);
-        // Refresh page to update debt_amount in list
         router.reload({ only: ["customers"], preserveScroll: true });
     } catch (e) {
         alert(e.response?.data?.message || "Có lỗi xảy ra");
@@ -2702,7 +2759,7 @@ const submit = () => {
                 class="fixed inset-0 bg-black/40"
                 @click="debtModal.show = false"
             ></div>
-            <div class="bg-white rounded-lg shadow-xl w-[440px] relative z-10">
+            <div class="bg-white rounded-lg shadow-xl w-[540px] max-h-[90vh] overflow-y-auto relative z-10">
                 <div class="px-6 py-4 border-b border-gray-200">
                     <h3 class="text-lg font-bold text-gray-800">
                         {{
@@ -2717,41 +2774,93 @@ const submit = () => {
                 </div>
                 <div class="px-6 py-4 space-y-4">
                     <div>
-                        <label
-                            class="block text-sm font-medium text-gray-700 mb-1"
-                            >Dư nợ hiện tại</label
-                        >
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Dư nợ hiện tại</label>
                         <div class="text-lg font-bold text-red-600">
                             {{ formatCurrency(debtModal.currentDebt) }}
                         </div>
                     </div>
+
+                    <!-- Payment mode: show auto/manual toggle -->
+                    <template v-if="debtModal.type === 'payment'">
+                        <div class="flex gap-2 text-sm border-b border-gray-200 pb-2">
+                            <button
+                                @click="debtForm.mode = 'auto'"
+                                :class="debtForm.mode === 'auto' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'"
+                                class="px-3 py-1.5 rounded font-medium transition-colors"
+                            >Tự động phân bổ</button>
+                            <button
+                                @click="debtForm.mode = 'manual'"
+                                :class="debtForm.mode === 'manual' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'"
+                                class="px-3 py-1.5 rounded font-medium transition-colors"
+                            >Chỉ định từng HD</button>
+                        </div>
+
+                        <!-- AUTO mode -->
+                        <div v-if="debtForm.mode === 'auto'">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Số tiền thu từ khách</label>
+                            <input
+                                v-model.number="debtForm.amount"
+                                type="number"
+                                min="0"
+                                class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500"
+                                placeholder="Nhập số tiền thu"
+                            />
+                            <p class="text-xs text-gray-400 mt-1">Hệ thống sẽ phân bổ vào hóa đơn cũ trước</p>
+                        </div>
+
+                        <!-- MANUAL mode -->
+                        <div v-if="debtForm.mode === 'manual'">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Hóa đơn còn nợ</label>
+                            <div v-if="loadingInvoices" class="text-sm text-gray-400 py-2">Đang tải...</div>
+                            <div v-else-if="outstandingInvoices.length === 0" class="text-sm text-gray-400 py-2">Không có hóa đơn còn nợ</div>
+                            <div v-else class="space-y-2 max-h-48 overflow-y-auto">
+                                <div
+                                    v-for="inv in outstandingInvoices"
+                                    :key="inv.id"
+                                    class="flex items-center justify-between bg-gray-50 rounded px-3 py-2 text-sm border border-gray-200"
+                                >
+                                    <div class="flex-1 min-w-0">
+                                        <div class="font-semibold text-gray-800">{{ inv.code }}</div>
+                                        <div class="text-xs text-gray-500">
+                                            Tổng: {{ formatCurrency(inv.total) }} |
+                                            Còn nợ: <span class="text-red-500 font-medium">{{ formatCurrency(inv.remaining) }}</span>
+                                        </div>
+                                    </div>
+                                    <div class="ml-3 w-28">
+                                        <input
+                                            v-model.number="inv.allocAmount"
+                                            type="number"
+                                            min="0"
+                                            :max="inv.remaining"
+                                            class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm text-right focus:ring-blue-500 focus:border-blue-500"
+                                            placeholder="0"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="flex justify-between text-sm font-semibold mt-2 pt-2 border-t border-gray-200">
+                                <span>Tổng thu:</span>
+                                <span class="text-green-600">{{ formatCurrency(manualTotal()) }}</span>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- Adjustment mode: simple amount input -->
+                    <template v-else>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Số tiền điều chỉnh</label>
+                            <input
+                                v-model.number="debtForm.amount"
+                                type="number"
+                                min="0"
+                                class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500"
+                                placeholder="Nhập số tiền điều chỉnh (giảm nợ)"
+                            />
+                        </div>
+                    </template>
+
                     <div>
-                        <label
-                            class="block text-sm font-medium text-gray-700 mb-1"
-                        >
-                            {{
-                                debtModal.type === "payment"
-                                    ? "Số tiền thanh toán"
-                                    : "Số tiền điều chỉnh"
-                            }}
-                        </label>
-                        <input
-                            v-model.number="debtForm.amount"
-                            type="number"
-                            min="0"
-                            class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500"
-                            :placeholder="
-                                debtModal.type === 'payment'
-                                    ? 'Nhập số tiền thu'
-                                    : 'Nhập số tiền điều chỉnh (giảm nợ)'
-                            "
-                        />
-                    </div>
-                    <div>
-                        <label
-                            class="block text-sm font-medium text-gray-700 mb-1"
-                            >Ghi chú</label
-                        >
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Ghi chú</label>
                         <textarea
                             v-model="debtForm.note"
                             rows="2"

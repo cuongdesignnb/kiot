@@ -384,32 +384,137 @@ class CustomerController extends Controller
         ]);
     }
 
+    /**
+     * Thu nợ khách hàng — hỗ trợ auto-allocate (cũ trước) hoặc manual allocation.
+     *
+     * Mode AUTO (default):  { amount: 80000, mode: "auto", note: "..." }
+     * Mode MANUAL:          { mode: "manual", allocations: [{invoice_id:1, amount:20000}, ...], note: "..." }
+     */
     public function debtPayment(Request $request, Customer $customer)
     {
-        $validated = $request->validate([
-            'amount' => 'required|numeric|min:1',
-            'note' => 'nullable|string|max:500',
-        ]);
+        $mode = $request->input('mode', 'auto');
 
-        $cf = CashFlow::create([
-            'code' => 'PT' . date('ymdHis') . rand(10, 99),
-            'type' => 'receipt',
-            'amount' => $validated['amount'],
-            'time' => now(),
-            'category' => 'Thu nợ khách hàng',
-            'target_type' => 'Khách hàng',
-            'target_id' => $customer->id,
-            'target_name' => $customer->name,
-            'reference_type' => 'DebtPayment',
-            'reference_code' => null,
-            'description' => $validated['note'] ?? 'Thu nợ khách hàng ' . $customer->name,
-        ]);
+        if ($mode === 'manual') {
+            $validated = $request->validate([
+                'allocations' => 'required|array|min:1',
+                'allocations.*.invoice_id' => 'required|integer|exists:invoices,id',
+                'allocations.*.amount' => 'required|numeric|min:1',
+                'note' => 'nullable|string|max:500',
+            ]);
 
-        $customer->decrement('debt_amount', $validated['amount']);
+            $totalAmount = 0;
+            $allocationCodes = [];
 
+            foreach ($validated['allocations'] as $alloc) {
+                $invoice = Invoice::where('id', $alloc['invoice_id'])
+                    ->where('customer_id', $customer->id)
+                    ->first();
 
+                if (!$invoice) continue;
 
-        return back()->with('success', 'Đã thu nợ ' . number_format($validated['amount']) . ' từ khách hàng.');
+                $remaining = $invoice->total - $invoice->customer_paid;
+                $payAmount = min($alloc['amount'], $remaining);
+
+                if ($payAmount <= 0) continue;
+
+                $invoice->increment('customer_paid', $payAmount);
+                $totalAmount += $payAmount;
+                $allocationCodes[] = $invoice->code . ':' . number_format($payAmount);
+            }
+
+            if ($totalAmount <= 0) {
+                return back()->with('error', 'Không có khoản nào hợp lệ để thu.');
+            }
+
+            $cf = CashFlow::create([
+                'code' => 'PT' . date('ymdHis') . rand(10, 99),
+                'type' => 'receipt',
+                'amount' => $totalAmount,
+                'time' => now(),
+                'category' => 'Thu nợ khách hàng',
+                'target_type' => 'Khách hàng',
+                'target_id' => $customer->id,
+                'target_name' => $customer->name,
+                'reference_type' => 'DebtPayment',
+                'reference_code' => implode('; ', $allocationCodes),
+                'description' => $validated['note'] ?? 'Thu nợ khách hàng ' . $customer->name,
+            ]);
+
+            $customer->decrement('debt_amount', $totalAmount);
+
+        } else {
+            // AUTO mode — allocate to oldest invoices first
+            $validated = $request->validate([
+                'amount' => 'required|numeric|min:1',
+                'note' => 'nullable|string|max:500',
+            ]);
+
+            $remaining = $validated['amount'];
+            $allocationCodes = [];
+
+            // Get invoices with outstanding balance, oldest first
+            $invoices = Invoice::where('customer_id', $customer->id)
+                ->whereRaw('total > customer_paid')
+                ->orderBy('created_at', 'asc')
+                ->get();
+
+            foreach ($invoices as $invoice) {
+                if ($remaining <= 0) break;
+
+                $invoiceDebt = $invoice->total - $invoice->customer_paid;
+                $payAmount = min($remaining, $invoiceDebt);
+
+                $invoice->increment('customer_paid', $payAmount);
+                $remaining -= $payAmount;
+                $allocationCodes[] = $invoice->code . ':' . number_format($payAmount);
+            }
+
+            $actualPaid = $validated['amount'] - $remaining;
+            if ($actualPaid <= 0) $actualPaid = $validated['amount']; // fallback: reduce debt even without invoices
+
+            $cf = CashFlow::create([
+                'code' => 'PT' . date('ymdHis') . rand(10, 99),
+                'type' => 'receipt',
+                'amount' => $actualPaid,
+                'time' => now(),
+                'category' => 'Thu nợ khách hàng',
+                'target_type' => 'Khách hàng',
+                'target_id' => $customer->id,
+                'target_name' => $customer->name,
+                'reference_type' => 'DebtPayment',
+                'reference_code' => !empty($allocationCodes) ? implode('; ', $allocationCodes) : null,
+                'description' => $validated['note'] ?? 'Thu nợ khách hàng ' . $customer->name,
+            ]);
+
+            $customer->decrement('debt_amount', $actualPaid);
+        }
+
+        if ($request->wantsJson()) {
+            return response()->json(['success' => true, 'message' => 'Đã thu nợ ' . number_format($cf->amount) . ' từ khách hàng.']);
+        }
+
+        return back()->with('success', 'Đã thu nợ ' . number_format($cf->amount) . ' từ khách hàng.');
+    }
+
+    /**
+     * Lấy danh sách hóa đơn còn nợ của khách hàng (cho modal thu nợ).
+     */
+    public function outstandingInvoices(Customer $customer)
+    {
+        $invoices = Invoice::where('customer_id', $customer->id)
+            ->whereRaw('total > customer_paid')
+            ->orderBy('created_at', 'asc')
+            ->get(['id', 'code', 'total', 'customer_paid', 'created_at'])
+            ->map(fn($inv) => [
+                'id' => $inv->id,
+                'code' => $inv->code,
+                'total' => $inv->total,
+                'customer_paid' => $inv->customer_paid,
+                'remaining' => $inv->total - $inv->customer_paid,
+                'created_at' => $inv->created_at,
+            ]);
+
+        return response()->json($invoices);
     }
 
     public function debtAdjust(Request $request, Customer $customer)
