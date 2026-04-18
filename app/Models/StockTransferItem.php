@@ -14,6 +14,7 @@ class StockTransferItem extends Model
         'stock_transfer_id',
         'product_id',
         'quantity',
+        'received_quantity',
         'price'
     ];
 

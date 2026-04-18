@@ -164,4 +164,131 @@ class StockTransferController extends Controller
         $stockTransfer->load(['items.product', 'fromBranch', 'toBranch']);
         return view('prints.stock_transfer', compact('stockTransfer'));
     }
+
+    /**
+     * Chi tiet phieu chuyen hang.
+     */
+    public function show(StockTransfer $stockTransfer)
+    {
+        $stockTransfer->load(['items.product', 'fromBranch', 'toBranch']);
+
+        return Inertia::render('StockTransfers/Show', [
+            'transfer' => $stockTransfer,
+        ]);
+    }
+
+    /**
+     * Nhan hang tai kho dich — cap nhat received_quantity, cong stock destination.
+     */
+    public function receive(Request $request, $id)
+    {
+        $transfer = StockTransfer::with('items')->findOrFail($id);
+
+        if ($transfer->status !== 'transferring') {
+            return response()->json(['success' => false, 'message' => 'Chi co the nhan hang voi phieu dang chuyen.'], 422);
+        }
+
+        // Validate receive_date >= sent_date
+        $receiveDate = $request->receive_date ? Carbon::parse($request->receive_date) : Carbon::now();
+        if ($transfer->sent_date && $receiveDate->lt($transfer->sent_date)) {
+            return response()->json(['success' => false, 'message' => 'Ngay nhan khong duoc truoc ngay chuyen.'], 422);
+        }
+
+        // Build received quantities
+        $receivedItems = collect($request->items ?? []);
+        $isPartial = false;
+
+        foreach ($transfer->items as $item) {
+            $recv = $receivedItems->firstWhere('product_id', $item->product_id);
+            $recvQty = $recv ? (int)$recv['received_quantity'] : $item->quantity;
+
+            if ($recvQty < 0) $recvQty = 0;
+            if ($recvQty > $item->quantity) $recvQty = $item->quantity;
+
+            if ($recvQty < $item->quantity) $isPartial = true;
+        }
+
+        // If partial, require note
+        if ($isPartial && empty($request->receive_note)) {
+            return response()->json(['success' => false, 'message' => 'Nhan hang thieu can ghi chu ly do.'], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            foreach ($transfer->items as $item) {
+                $recv = $receivedItems->firstWhere('product_id', $item->product_id);
+                $recvQty = $recv ? (int)$recv['received_quantity'] : $item->quantity;
+
+                if ($recvQty < 0) $recvQty = 0;
+                if ($recvQty > $item->quantity) $recvQty = $item->quantity;
+
+                $item->update(['received_quantity' => $recvQty]);
+
+                // Add stock to destination
+                if ($recvQty > 0) {
+                    $product = Product::find($item->product_id);
+                    if ($product) {
+                        $product->increment('stock_quantity', $recvQty);
+                    }
+                }
+            }
+
+            $transfer->update([
+                'status' => 'received',
+                'receive_date' => $receiveDate,
+                'note' => $isPartial
+                    ? ($transfer->note ? $transfer->note . ' | ' : '') . 'Nhan hang: ' . ($request->receive_note ?? '')
+                    : $transfer->note,
+            ]);
+
+            DB::commit();
+            return response()->json(['success' => true, 'message' => 'Da nhan hang thanh cong.']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Huy phieu chuyen hang — hoan stock theo trang thai hien tai.
+     */
+    public function cancel($id)
+    {
+        $transfer = StockTransfer::with('items')->findOrFail($id);
+
+        if ($transfer->status === 'cancelled') {
+            return response()->json(['success' => false, 'message' => 'Phieu da bi huy truoc do.'], 422);
+        }
+
+        if ($transfer->status === 'draft') {
+            $transfer->update(['status' => 'cancelled']);
+            return response()->json(['success' => true, 'message' => 'Da huy phieu nhap.']);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            foreach ($transfer->items as $item) {
+                $product = Product::find($item->product_id);
+                if (!$product) continue;
+
+                // Restore source stock (was deducted on transfer creation)
+                $product->increment('stock_quantity', $item->quantity);
+
+                // If received, also deduct destination stock
+                if ($transfer->status === 'received' && $item->received_quantity > 0) {
+                    $product->decrement('stock_quantity', $item->received_quantity);
+                }
+            }
+
+            $transfer->update(['status' => 'cancelled']);
+
+            DB::commit();
+            return response()->json(['success' => true, 'message' => 'Da huy phieu chuyen hang.']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
 }

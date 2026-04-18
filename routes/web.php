@@ -527,6 +527,9 @@ Route::middleware('permission:stock_transfers.create')->group(function () {
     Route::get('/stock-transfers/create', [StockTransferController::class, 'create'])->name('stock-transfers.create');
     Route::post('/stock-transfers', [StockTransferController::class, 'store'])->name('stock-transfers.store');
 });
+Route::get('/stock-transfers/{stockTransfer}', [StockTransferController::class, 'show'])->name('stock-transfers.show');
+Route::post('/stock-transfers/{id}/receive', [StockTransferController::class, 'receive'])->name('stock-transfers.receive');
+Route::post('/stock-transfers/{id}/cancel', [StockTransferController::class, 'cancel'])->name('stock-transfers.cancel');
 
 // ===== STOCK TAKES =====
 Route::get('/stock-takes', [StockTakeController::class, 'index'])->name('stock-takes.index')->middleware('permission:stock_takes.view');
