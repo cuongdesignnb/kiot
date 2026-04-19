@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Inertia\Inertia;
+use App\Models\ActivityLog;
 use App\Models\StockTransfer;
 use App\Models\StockTransferItem;
 use App\Models\Branch;
@@ -139,6 +140,8 @@ class StockTransferController extends Controller
 
             DB::commit();
 
+            ActivityLog::log('transfer_create', "Tạo phiếu chuyển kho {$transfer->code}, trạng thái: {$transfer->status}", $transfer);
+
             return redirect()->route('stock-transfers.index')->with('success', 'Tạo phiếu chuyển hàng thành công.');
         } catch (\Exception $e) {
             DB::rollBack();
@@ -243,6 +246,7 @@ class StockTransferController extends Controller
             ]);
 
             DB::commit();
+            ActivityLog::log('transfer_receive', "Nhận hàng chuyển kho {$transfer->code}", $transfer);
             return response()->json(['success' => true, 'message' => 'Da nhan hang thanh cong.']);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -285,6 +289,7 @@ class StockTransferController extends Controller
             $transfer->update(['status' => 'cancelled']);
 
             DB::commit();
+            ActivityLog::log('transfer_cancel', "Hủy phiếu chuyển kho {$transfer->code}", $transfer);
             return response()->json(['success' => true, 'message' => 'Da huy phieu chuyen hang.']);
         } catch (\Exception $e) {
             DB::rollBack();

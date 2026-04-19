@@ -404,3 +404,9 @@ Route::prefix('product-attributes')->group(function () {
     Route::delete('/{attribute}', [\App\Http\Controllers\Api\ProductAttributeController::class, 'destroy']);
     Route::delete('/values/{value}', [\App\Http\Controllers\Api\ProductAttributeController::class, 'destroyValue']);
 });
+
+// 📝 ACTIVITY LOGS
+Route::prefix('activity-logs')->group(function () {
+    Route::get('/', [\App\Http\Controllers\Api\ActivityLogController::class, 'index']);
+    Route::get('/action-types', [\App\Http\Controllers\Api\ActivityLogController::class, 'actionTypes']);
+});

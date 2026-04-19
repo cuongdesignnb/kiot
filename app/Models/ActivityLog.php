@@ -50,6 +50,31 @@ class ActivityLog extends Model
     const ACTION_LOGIN = 'login';
     const ACTION_LOGOUT = 'logout';
 
+    // Bán hàng
+    const ACTION_INVOICE_CREATE = 'invoice_create';
+    const ACTION_INVOICE_CANCEL = 'invoice_cancel';
+    const ACTION_RETURN_CREATE = 'return_create';
+
+    // Sổ quỹ
+    const ACTION_CASHFLOW_CREATE = 'cashflow_create';
+    const ACTION_CASHFLOW_CANCEL = 'cashflow_cancel';
+    const ACTION_CASHFLOW_TRANSFER = 'cashflow_transfer';
+
+    // Chuyển kho
+    const ACTION_TRANSFER_CREATE = 'transfer_create';
+    const ACTION_TRANSFER_RECEIVE = 'transfer_receive';
+    const ACTION_TRANSFER_CANCEL = 'transfer_cancel';
+
+    // Kiểm kho
+    const ACTION_STOCKTAKE_CREATE = 'stocktake_create';
+    const ACTION_STOCKTAKE_COMPLETE = 'stocktake_complete';
+    const ACTION_STOCKTAKE_CANCEL = 'stocktake_cancel';
+
+    // Dữ liệu chính
+    const ACTION_PRODUCT_UPDATE = 'product_update';
+    const ACTION_CUSTOMER_UPDATE = 'customer_update';
+    const ACTION_SUPPLIER_UPDATE = 'supplier_update';
+
     // ── Label map (Vietnamese) ──
     const ACTION_LABELS = [
         'purchase_create'   => 'Tạo phiếu nhập hàng',
@@ -68,6 +93,21 @@ class ActivityLog extends Model
         'comment_add'       => 'Thêm ghi chú',
         'login'             => 'Đăng nhập',
         'logout'            => 'Đăng xuất',
+        'invoice_create'    => 'Tạo hóa đơn',
+        'invoice_cancel'    => 'Hủy hóa đơn',
+        'return_create'     => 'Tạo phiếu trả hàng',
+        'cashflow_create'   => 'Tạo phiếu thu/chi',
+        'cashflow_cancel'   => 'Hủy phiếu thu/chi',
+        'cashflow_transfer' => 'Chuyển quỹ',
+        'transfer_create'   => 'Tạo phiếu chuyển kho',
+        'transfer_receive'  => 'Nhận chuyển kho',
+        'transfer_cancel'   => 'Hủy chuyển kho',
+        'stocktake_create'  => 'Tạo phiếu kiểm kho',
+        'stocktake_complete'=> 'Cân bằng kho',
+        'stocktake_cancel'  => 'Hủy kiểm kho',
+        'product_update'    => 'Cập nhật hàng hóa',
+        'customer_update'   => 'Cập nhật khách hàng',
+        'supplier_update'   => 'Cập nhật nhà cung cấp',
     ];
 
     // ── Icon map (emoji) ──
@@ -88,6 +128,21 @@ class ActivityLog extends Model
         'comment_add'       => '💬',
         'login'             => '🔑',
         'logout'            => '🚪',
+        'invoice_create'    => '🧾',
+        'invoice_cancel'    => '🚫',
+        'return_create'     => '↩️',
+        'cashflow_create'   => '💰',
+        'cashflow_cancel'   => '🚫',
+        'cashflow_transfer' => '🔄',
+        'transfer_create'   => '🚚',
+        'transfer_receive'  => '📥',
+        'transfer_cancel'   => '🚫',
+        'stocktake_create'  => '📋',
+        'stocktake_complete'=> '✅',
+        'stocktake_cancel'  => '🚫',
+        'product_update'    => '📦',
+        'customer_update'   => '👤',
+        'supplier_update'   => '🏭',
     ];
 
     // ── Relationships ──

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Inertia\Inertia;
+use App\Models\ActivityLog;
 use App\Models\StockTake;
 use App\Models\StockTakeItem;
 use App\Models\Product;
@@ -128,6 +129,9 @@ class StockTakeController extends Controller
             }
 
             DB::commit();
+
+            $logAction = $request->status === 'balanced' ? 'stocktake_complete' : 'stocktake_create';
+            ActivityLog::log($logAction, "Tạo phiếu kiểm kho {$stockTake->code}, trạng thái: {$stockTake->status}", $stockTake);
 
             return redirect()->route('stock-takes.index')->with('success', 'Tạo phiếu kiểm kho thành công.');
         } catch (\Exception $e) {
@@ -265,6 +269,7 @@ class StockTakeController extends Controller
             $stockTake->update(['status' => 'cancelled']);
 
             DB::commit();
+            ActivityLog::log('stocktake_cancel', "Hủy phiếu kiểm kho {$stockTake->code}", $stockTake);
             return response()->json(['success' => true, 'message' => 'Da huy phieu kiem kho va hoan ton kho.']);
         } catch (\Exception $e) {
             DB::rollBack();

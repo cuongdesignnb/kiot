@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ActivityLog;
 use App\Models\CashFlow;
 use App\Models\BankAccount;
 use Illuminate\Http\Request;
@@ -101,6 +102,9 @@ class CashFlowController extends Controller
             'description' => $request->description,
         ]);
 
+        $typeLabel = $request->type === 'receipt' ? 'thu' : 'chi';
+        ActivityLog::log('cashflow_create', "Tạo phiếu {$typeLabel} {$cashFlow->code}, số tiền: " . number_format($cashFlow->amount), $cashFlow);
+
         if ($request->boolean('_print')) {
             return redirect()->back()->with(['success' => 'Tạo phiếu thành công', 'print_id' => $cashFlow->id]);
         }
@@ -157,6 +161,7 @@ class CashFlowController extends Controller
 
     public function destroy(CashFlow $cashFlow)
     {
+        ActivityLog::log('cashflow_cancel', "Hủy phiếu {$cashFlow->code}, số tiền: " . number_format($cashFlow->amount), $cashFlow);
         $cashFlow->update(['status' => 'cancelled']);
         $cashFlow->delete(); // soft-delete
         return redirect()->back()->with('success', 'Huỷ phiếu thành công');
@@ -250,6 +255,8 @@ class CashFlowController extends Controller
             'description' => $request->description ?? 'Chuyển quỹ nội bộ',
             'status' => 'active',
         ]);
+
+        ActivityLog::log('cashflow_transfer', "Chuyển quỹ {$refCode}: " . number_format($request->amount) . " ({$request->from_method} -> {$request->to_method})");
 
         return response()->json([
             'success' => true,
