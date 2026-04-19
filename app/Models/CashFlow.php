@@ -3,9 +3,12 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class CashFlow extends Model
 {
+    use SoftDeletes;
+
     protected $fillable = [
         'code',
         'type',
@@ -21,6 +24,7 @@ class CashFlow extends Model
         'reference_type',
         'reference_code',
         'description',
+        'status',
     ];
 
     public function bankAccount()

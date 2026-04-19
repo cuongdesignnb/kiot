@@ -673,6 +673,7 @@ Route::put('/cash-flows/{cash_flow}', [App\Http\Controllers\CashFlowController::
 Route::delete('/cash-flows/{cash_flow}', [App\Http\Controllers\CashFlowController::class, 'destroy'])->name('cash_flows.destroy')->middleware('permission:cash_flows.delete');
 Route::get('/cash-flows/{cash_flow}/print', [App\Http\Controllers\CashFlowController::class, 'print'])->name('cash_flows.print')->middleware('permission:cash_flows.print');
 Route::post('/cash-flows/subject', [App\Http\Controllers\CashFlowController::class, 'storeSubject'])->name('cash_flows.subject')->middleware('permission:cash_flows.create');
+Route::post('/cash-flows/transfer', [App\Http\Controllers\CashFlowController::class, 'transfer'])->name('cash_flows.transfer')->middleware('permission:cash_flows.create');
 
 // ===== POS =====
 Route::middleware('permission:pos.use')->group(function () {

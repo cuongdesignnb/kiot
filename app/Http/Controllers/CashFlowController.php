@@ -19,6 +19,11 @@ class CashFlowController extends Controller
                 ->orWhere('description', 'LIKE', "%{$search}%")
                 ->orWhere('reference_code', 'LIKE', "%{$search}%");
         })
+            ->when($request->filled('type'), fn($q) => $q->where('type', $request->type))
+            ->when($request->filled('payment_method'), fn($q) => $q->where('payment_method', $request->payment_method))
+            ->when($request->filled('status'), fn($q) => $q->where('status', $request->status))
+            ->when($request->filled('time_start'), fn($q) => $q->where('time', '>=', $request->time_start))
+            ->when($request->filled('time_end'), fn($q) => $q->where('time', '<=', $request->time_end))
             ->when($request->filled('sort_by'), function ($q) use ($request) {
                 $allowed = ['code', 'time', 'type', 'amount', 'category', 'created_at'];
                 $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'time';
@@ -30,9 +35,9 @@ class CashFlowController extends Controller
             ->paginate(15)
             ->withQueryString();
 
-        // Tính tồn quỹ tổng quan
-        $totalReceipts = CashFlow::where('type', 'receipt')->sum('amount');
-        $totalPayments = CashFlow::where('type', 'payment')->sum('amount');
+        // Tính tồn quỹ tổng quan (chỉ phiếu active)
+        $totalReceipts = CashFlow::where('type', 'receipt')->where('status', '!=', 'cancelled')->sum('amount');
+        $totalPayments = CashFlow::where('type', 'payment')->where('status', '!=', 'cancelled')->sum('amount');
         $fundBalance = $totalReceipts - $totalPayments;
 
         // Fetch base subjects for UI auto-complete simulation
@@ -152,7 +157,8 @@ class CashFlowController extends Controller
 
     public function destroy(CashFlow $cashFlow)
     {
-        $cashFlow->delete();
+        $cashFlow->update(['status' => 'cancelled']);
+        $cashFlow->delete(); // soft-delete
         return redirect()->back()->with('success', 'Huỷ phiếu thành công');
     }
 
@@ -195,5 +201,62 @@ class CashFlowController extends Controller
             $count++;
         }
         return back()->with('success', "Đã nhập {$count} bút toán từ file.");
+    }
+
+    /**
+     * Chuyen quy noi bo — tao phieu chi nguon + phieu thu doi ung dich.
+     */
+    public function transfer(Request $request)
+    {
+        $request->validate([
+            'amount' => 'required|numeric|min:1',
+            'from_method' => 'required|in:cash,bank,ewallet',
+            'to_method' => 'required|in:cash,bank,ewallet',
+            'description' => 'nullable|string',
+            'bank_account_id' => 'nullable|exists:bank_accounts,id',
+        ]);
+
+        if ($request->from_method === $request->to_method) {
+            return response()->json(['success' => false, 'message' => 'Quy nguon va quy dich phai khac nhau.'], 422);
+        }
+
+        $refCode = 'CQ' . date('ymdHis') . rand(10, 99);
+
+        // Phieu chi o quy nguon
+        $payment = CashFlow::create([
+            'code' => 'PC' . date('ymdHis') . rand(10, 99),
+            'type' => 'payment',
+            'amount' => $request->amount,
+            'time' => now(),
+            'category' => 'Chuyển quỹ nội bộ',
+            'payment_method' => $request->from_method,
+            'reference_type' => 'transfer',
+            'reference_code' => $refCode,
+            'description' => $request->description ?? 'Chuyển quỹ nội bộ',
+            'status' => 'active',
+        ]);
+
+        // Phieu thu doi ung o quy dich
+        $receipt = CashFlow::create([
+            'code' => 'PT' . date('ymdHis') . rand(10, 99),
+            'type' => 'receipt',
+            'amount' => $request->amount,
+            'time' => now(),
+            'category' => 'Chuyển quỹ nội bộ',
+            'payment_method' => $request->to_method,
+            'bank_account_id' => $request->bank_account_id,
+            'reference_type' => 'transfer',
+            'reference_code' => $refCode,
+            'description' => $request->description ?? 'Chuyển quỹ nội bộ',
+            'status' => 'active',
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Chuyển quỹ thành công.',
+            'payment_id' => $payment->id,
+            'receipt_id' => $receipt->id,
+            'reference_code' => $refCode,
+        ]);
     }
 }
