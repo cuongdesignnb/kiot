@@ -105,6 +105,18 @@ class ActivityLog extends Model
     const ACTION_WAYBILL_RTS = 'waybill_rts';
     const ACTION_WAYBILL_RTS_PENDING = 'waybill_rts_pending';
 
+    // Khuyến mại & Bảng giá
+    const ACTION_PROMO_CREATE = 'promo_create';
+    const ACTION_PROMO_UPDATE = 'promo_update';
+    const ACTION_PROMO_DELETE = 'promo_delete';
+    const ACTION_PROMO_COPY = 'promo_copy';
+    const ACTION_PROMO_APPLY = 'promo_apply';
+    const ACTION_PRICE_TABLE_CREATE = 'price_table_create';
+    const ACTION_PRICE_TABLE_UPDATE = 'price_table_update';
+    const ACTION_PRICE_TABLE_DELETE = 'price_table_delete';
+    const ACTION_PRICE_TABLE_ITEMS = 'price_table_items';
+    const ACTION_PRICE_TABLE_FORMULA = 'price_table_formula';
+
     // ── Label map (Vietnamese) ──
     const ACTION_LABELS = [
         'purchase_create'   => 'Tạo phiếu nhập hàng',
@@ -160,6 +172,16 @@ class ActivityLog extends Model
         'waybill_carrier_cancel' => 'Hủy vận đơn qua đối tác',
         'waybill_rts'       => 'Chuyển hoàn tự động',
         'waybill_rts_pending'=> 'Chuyển hoàn chờ xác nhận',
+        'promo_create'      => 'Tạo CTKM',
+        'promo_update'      => 'Cập nhật CTKM',
+        'promo_delete'      => 'Xóa CTKM',
+        'promo_copy'        => 'Sao chép CTKM',
+        'promo_apply'       => 'Áp dụng CTKM',
+        'price_table_create'   => 'Tạo bảng giá',
+        'price_table_update'   => 'Cập nhật bảng giá',
+        'price_table_delete'   => 'Xóa bảng giá',
+        'price_table_items'    => 'Cập nhật SP bảng giá',
+        'price_table_formula'  => 'Áp dụng công thức bảng giá',
     ];
 
     // ── Icon map (emoji) ──
@@ -217,6 +239,16 @@ class ActivityLog extends Model
         'waybill_carrier_cancel' => '📡',
         'waybill_rts'       => '↩️',
         'waybill_rts_pending'=> '⏳',
+        'promo_create'      => '🎁',
+        'promo_update'      => '✏️',
+        'promo_delete'      => '🗑️',
+        'promo_copy'        => '📋',
+        'promo_apply'       => '🎉',
+        'price_table_create'   => '💰',
+        'price_table_update'   => '✏️',
+        'price_table_delete'   => '🗑️',
+        'price_table_items'    => '📦',
+        'price_table_formula'  => '🔢',
     ];
 
     // ── Relationships ──

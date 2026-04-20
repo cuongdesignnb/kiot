@@ -575,6 +575,36 @@ Route::middleware('permission:waybills.edit')->group(function () {
     Route::post('/waybills/bulk-update', [\App\Http\Controllers\WaybillController::class, 'bulkUpdate'])->name('waybills.bulkUpdate');
 });
 
+// ===== PROMOTIONS =====
+Route::get('/promotions', [\App\Http\Controllers\PromotionController::class, 'index'])->name('promotions.index')->middleware('permission:promotions.view');
+Route::get('/promotions/export', [\App\Http\Controllers\PromotionController::class, 'export'])->name('promotions.export')->middleware('permission:promotions.view');
+Route::get('/promotions/{promotion}', [\App\Http\Controllers\PromotionController::class, 'show'])->name('promotions.show')->middleware('permission:promotions.view');
+Route::post('/promotions/check-eligibility', [\App\Http\Controllers\PromotionController::class, 'checkEligibility'])->name('promotions.checkEligibility');
+Route::middleware('permission:promotions.create')->group(function () {
+    Route::post('/promotions', [\App\Http\Controllers\PromotionController::class, 'store'])->name('promotions.store');
+    Route::post('/promotions/{promotion}/copy', [\App\Http\Controllers\PromotionController::class, 'copy'])->name('promotions.copy');
+    Route::post('/promotions/{promotion}/apply', [\App\Http\Controllers\PromotionController::class, 'apply'])->name('promotions.apply');
+});
+Route::middleware('permission:promotions.edit')->group(function () {
+    Route::put('/promotions/{promotion}', [\App\Http\Controllers\PromotionController::class, 'update'])->name('promotions.update');
+    Route::delete('/promotions/{promotion}', [\App\Http\Controllers\PromotionController::class, 'destroy'])->name('promotions.destroy');
+});
+
+// ===== PRICE TABLES =====
+Route::get('/price-tables', [\App\Http\Controllers\PriceTableController::class, 'index'])->name('price-tables.index')->middleware('permission:price_tables.view');
+Route::get('/price-tables/{priceTable}', [\App\Http\Controllers\PriceTableController::class, 'show'])->name('price-tables.show')->middleware('permission:price_tables.view');
+Route::get('/price-tables/{priceTable}/export', [\App\Http\Controllers\PriceTableController::class, 'export'])->name('price-tables.export')->middleware('permission:price_tables.view');
+Route::post('/price-tables/resolve-price', [\App\Http\Controllers\PriceTableController::class, 'resolvePrice'])->name('price-tables.resolvePrice');
+Route::middleware('permission:price_tables.create')->group(function () {
+    Route::post('/price-tables', [\App\Http\Controllers\PriceTableController::class, 'store'])->name('price-tables.store');
+    Route::post('/price-tables/{priceTable}/add-items', [\App\Http\Controllers\PriceTableController::class, 'addItems'])->name('price-tables.addItems');
+    Route::post('/price-tables/{priceTable}/apply-formula', [\App\Http\Controllers\PriceTableController::class, 'applyFormula'])->name('price-tables.applyFormula');
+});
+Route::middleware('permission:price_tables.edit')->group(function () {
+    Route::put('/price-tables/{priceTable}', [\App\Http\Controllers\PriceTableController::class, 'update'])->name('price-tables.update');
+    Route::delete('/price-tables/{priceTable}', [\App\Http\Controllers\PriceTableController::class, 'destroy'])->name('price-tables.destroy');
+});
+
 Route::get('/run-migrate', function () {
     try {
         \Illuminate\Support\Facades\Schema::dropIfExists('return_items');
