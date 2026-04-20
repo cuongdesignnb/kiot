@@ -520,18 +520,25 @@ class CustomerController extends Controller
     public function debtAdjust(Request $request, Customer $customer)
     {
         $validated = $request->validate([
-            'amount' => 'required|numeric',
+            'amount' => 'required|numeric', // Giá trị nợ cuối mong muốn
             'note' => 'nullable|string|max:500',
         ]);
 
-        $adjustAmount = $validated['amount'];
-        $type = $adjustAmount >= 0 ? 'receipt' : 'payment';
-        $prefix = $adjustAmount >= 0 ? 'PT' : 'PC';
+        $targetDebt = $validated['amount']; // Nợ cuối user muốn set
+        $currentDebt = (float) $customer->debt_amount;
+        $diff = $currentDebt - $targetDebt; // diff > 0 = giảm nợ, diff < 0 = tăng nợ
+
+        if ($diff == 0) {
+            return back()->with('info', 'Công nợ không thay đổi.');
+        }
+
+        $type = $diff > 0 ? 'receipt' : 'payment';
+        $prefix = $diff > 0 ? 'PT' : 'PC';
 
         CashFlow::create([
             'code' => $prefix . date('ymdHis') . rand(10, 99),
             'type' => $type,
-            'amount' => abs($adjustAmount),
+            'amount' => abs($diff),
             'time' => now(),
             'category' => 'Điều chỉnh công nợ',
             'target_type' => 'Khách hàng',
@@ -539,15 +546,12 @@ class CustomerController extends Controller
             'target_name' => $customer->name,
             'reference_type' => 'DebtAdjustment',
             'reference_code' => null,
-            'description' => $validated['note'] ?? 'Điều chỉnh công nợ khách hàng ' . $customer->name,
+            'description' => ($validated['note'] ?? 'Điều chỉnh công nợ') . ' | ' . number_format($currentDebt) . ' → ' . number_format($targetDebt),
         ]);
 
-        // debt_amount có thể âm: cửa hàng nợ KH / KH có tín dụng (KiotViet style)
-        $customer->update(['debt_amount' => $customer->debt_amount - $adjustAmount]);
+        $customer->update(['debt_amount' => $targetDebt]);
 
-
-
-        return back()->with('success', 'Đã điều chỉnh công nợ thành công.');
+        return back()->with('success', 'Đã điều chỉnh công nợ: ' . number_format($currentDebt) . ' → ' . number_format($targetDebt) . '₫');
     }
 
     public function searchForMerge(Request $request)

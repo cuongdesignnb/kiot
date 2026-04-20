@@ -209,7 +209,7 @@ const openDebtModal = async (customer, type) => {
         customerName: customer.name,
         currentDebt: customer.debt_amount || 0,
     };
-    debtForm.amount = 0;
+    debtForm.amount = type === 'adjust' ? (customer.debt_amount || 0) : 0;
     debtForm.note = "";
     debtForm.mode = "auto";
     outstandingInvoices.value = [];
@@ -275,9 +275,9 @@ const submitDebtModal = async () => {
         return;
     }
 
-    // Adjustment
-    if (!debtForm.amount || debtForm.amount <= 0) {
-        alert("Vui lòng nhập số tiền hợp lệ");
+    // Adjustment — amount = nợ cuối mong muốn (có thể 0 hoặc âm)
+    if (debtForm.amount === null || debtForm.amount === '') {
+        alert("Vui lòng nhập giá trị nợ cuối");
         return;
     }
     try {
@@ -2845,16 +2845,21 @@ const submit = () => {
                         </div>
                     </template>
 
-                    <!-- Adjustment mode: simple amount input -->
+                    <!-- Adjustment mode: nhập nợ cuối mong muốn -->
                     <template v-else>
+                        <div class="mb-3 p-3 bg-gray-50 rounded text-sm">
+                            <span class="text-gray-500">Nợ hiện tại:</span>
+                            <span class="font-semibold ml-1" :class="debtModal.currentDebt < 0 ? 'text-red-500' : ''">
+                                {{ Number(debtModal.currentDebt).toLocaleString() }}
+                            </span>
+                        </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Số tiền điều chỉnh</label>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Nợ cuối mong muốn</label>
                             <input
                                 v-model.number="debtForm.amount"
                                 type="number"
-                                min="0"
                                 class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500"
-                                placeholder="Nhập số tiền điều chỉnh (giảm nợ)"
+                                placeholder="Nhập giá trị nợ cuối (VD: 0 để xóa nợ)"
                             />
                         </div>
                     </template>
