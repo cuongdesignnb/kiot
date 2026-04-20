@@ -37,4 +37,14 @@ class Invoice extends Model
     {
         return $this->belongsTo(Order::class);
     }
+
+    public function waybills()
+    {
+        return $this->hasMany(Waybill::class);
+    }
+
+    public function activeWaybill()
+    {
+        return $this->hasOne(Waybill::class)->where('is_active', true);
+    }
 }

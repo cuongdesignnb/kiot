@@ -560,6 +560,21 @@ Route::post('/purchase-orders/{purchaseOrder}/finish', [PurchaseOrderController:
 Route::post('/purchase-orders/{purchaseOrder}/copy', [PurchaseOrderController::class, 'copy'])->name('purchase-orders.copy')->middleware('permission:purchase_orders.create');
 Route::post('/purchase-orders/{purchaseOrder}/convert', [PurchaseOrderController::class, 'convertToReceipt'])->name('purchase-orders.convert')->middleware('permission:purchase_orders.create');
 
+// ===== WAYBILLS / DELIVERY =====
+Route::get('/waybills', [\App\Http\Controllers\WaybillController::class, 'index'])->name('waybills.index')->middleware('permission:waybills.view');
+Route::get('/waybills/export', [\App\Http\Controllers\WaybillController::class, 'export'])->name('waybills.export')->middleware('permission:waybills.view');
+Route::get('/waybills/{waybill}', [\App\Http\Controllers\WaybillController::class, 'show'])->name('waybills.show')->middleware('permission:waybills.view');
+Route::get('/waybills/{waybill}/print', [\App\Http\Controllers\WaybillController::class, 'print'])->name('waybills.print')->middleware('permission:waybills.view');
+Route::middleware('permission:waybills.create')->group(function () {
+    Route::post('/waybills', [\App\Http\Controllers\WaybillController::class, 'store'])->name('waybills.store');
+    Route::post('/waybills/{waybill}/rebook', [\App\Http\Controllers\WaybillController::class, 'rebook'])->name('waybills.rebook');
+});
+Route::middleware('permission:waybills.edit')->group(function () {
+    Route::put('/waybills/{waybill}/status', [\App\Http\Controllers\WaybillController::class, 'updateStatus'])->name('waybills.updateStatus');
+    Route::post('/waybills/{waybill}/cancel', [\App\Http\Controllers\WaybillController::class, 'cancel'])->name('waybills.cancel');
+    Route::post('/waybills/bulk-update', [\App\Http\Controllers\WaybillController::class, 'bulkUpdate'])->name('waybills.bulkUpdate');
+});
+
 Route::get('/run-migrate', function () {
     try {
         \Illuminate\Support\Facades\Schema::dropIfExists('return_items');

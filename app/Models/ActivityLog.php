@@ -94,6 +94,17 @@ class ActivityLog extends Model
     const ACTION_PO_COPY = 'po_copy';
     const ACTION_PO_CONVERT = 'po_convert';
 
+    // Vận đơn
+    const ACTION_WAYBILL_CREATE = 'waybill_create';
+    const ACTION_WAYBILL_STATUS = 'waybill_status';
+    const ACTION_WAYBILL_CANCEL = 'waybill_cancel';
+    const ACTION_WAYBILL_REBOOK = 'waybill_rebook';
+    const ACTION_WAYBILL_BULK = 'waybill_bulk';
+    const ACTION_WAYBILL_CARRIER_BOOK = 'waybill_carrier_book';
+    const ACTION_WAYBILL_CARRIER_CANCEL = 'waybill_carrier_cancel';
+    const ACTION_WAYBILL_RTS = 'waybill_rts';
+    const ACTION_WAYBILL_RTS_PENDING = 'waybill_rts_pending';
+
     // ── Label map (Vietnamese) ──
     const ACTION_LABELS = [
         'purchase_create'   => 'Tạo phiếu nhập hàng',
@@ -140,6 +151,15 @@ class ActivityLog extends Model
         'po_finish'         => 'Kết thúc đặt hàng nhập',
         'po_copy'           => 'Sao chép đặt hàng nhập',
         'po_convert'        => 'Tạo phiếu nhập từ đặt hàng',
+        'waybill_create'    => 'Tạo vận đơn',
+        'waybill_status'    => 'Cập nhật trạng thái vận đơn',
+        'waybill_cancel'    => 'Hủy vận đơn',
+        'waybill_rebook'    => 'Tạo lại vận đơn',
+        'waybill_bulk'      => 'Cập nhật hàng loạt vận đơn',
+        'waybill_carrier_book'   => 'Đặt vận đơn qua đối tác',
+        'waybill_carrier_cancel' => 'Hủy vận đơn qua đối tác',
+        'waybill_rts'       => 'Chuyển hoàn tự động',
+        'waybill_rts_pending'=> 'Chuyển hoàn chờ xác nhận',
     ];
 
     // ── Icon map (emoji) ──
@@ -188,6 +208,15 @@ class ActivityLog extends Model
         'po_finish'         => '🏁',
         'po_copy'           => '📋',
         'po_convert'        => '➡️',
+        'waybill_create'    => '🚚',
+        'waybill_status'    => '📊',
+        'waybill_cancel'    => '❌',
+        'waybill_rebook'    => '🔄',
+        'waybill_bulk'      => '📋',
+        'waybill_carrier_book'   => '📡',
+        'waybill_carrier_cancel' => '📡',
+        'waybill_rts'       => '↩️',
+        'waybill_rts_pending'=> '⏳',
     ];
 
     // ── Relationships ──
