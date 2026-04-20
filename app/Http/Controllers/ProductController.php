@@ -84,7 +84,72 @@ class ProductController extends Controller
             });
         }
 
-        $products = $query->orderBy('id', 'desc')->paginate(50)->withQueryString();
+        // Lọc theo nhóm hàng (bao gồm cả nhóm con)
+        if ($request->filled('category_id')) {
+            $categoryId = $request->input('category_id');
+            $categoryIds = [$categoryId];
+            // Lấy tất cả nhóm con
+            $childIds = Category::where('parent_id', $categoryId)->pluck('id')->toArray();
+            $categoryIds = array_merge($categoryIds, $childIds);
+            // Lấy cả nhóm con cấp 3 nếu có
+            if (!empty($childIds)) {
+                $grandChildIds = Category::whereIn('parent_id', $childIds)->pluck('id')->toArray();
+                $categoryIds = array_merge($categoryIds, $grandChildIds);
+            }
+            $query->whereIn('category_id', $categoryIds);
+        }
+
+        // Lọc theo thương hiệu
+        if ($request->filled('brand_id')) {
+            $query->where('brand_id', $request->input('brand_id'));
+        }
+
+        // Lọc theo loại hàng
+        if ($request->filled('type')) {
+            $query->where('type', $request->input('type'));
+        }
+
+        // Lọc theo trạng thái
+        if ($request->filled('status')) {
+            if ($request->input('status') === 'inactive') {
+                $query->where('is_active', false);
+            } elseif ($request->input('status') === 'all') {
+                // Không lọc - hiển thị tất cả
+            }
+        } else {
+            // Mặc định: chỉ hiển thị đang kinh doanh
+            $query->where(function ($q) {
+                $q->where('is_active', true)->orWhereNull('is_active');
+            });
+        }
+
+        // Lọc theo tồn kho
+        if ($request->filled('stock_filter')) {
+            switch ($request->input('stock_filter')) {
+                case 'in_stock':
+                    $query->where('stock_quantity', '>', 0);
+                    break;
+                case 'out_of_stock':
+                    $query->where('stock_quantity', '<=', 0);
+                    break;
+                case 'below_min':
+                    $query->whereColumn('stock_quantity', '<', 'min_stock')
+                          ->where('min_stock', '>', 0);
+                    break;
+            }
+        }
+
+        // Sắp xếp
+        $sortBy = $request->input('sort_by', 'id');
+        $sortDirection = $request->input('sort_direction', 'desc');
+        $allowedSorts = ['id', 'sku', 'name', 'retail_price', 'cost_price', 'stock_quantity', 'created_at'];
+        if (in_array($sortBy, $allowedSorts)) {
+            $query->orderBy($sortBy, $sortDirection === 'asc' ? 'asc' : 'desc');
+        } else {
+            $query->orderBy('id', 'desc');
+        }
+
+        $products = $query->paginate(50)->withQueryString();
 
         // Append serial counts for serial products
         $products->getCollection()->transform(function ($product) {
@@ -115,7 +180,7 @@ class ProductController extends Controller
             'products' => $products,
             'categories' => Category::with('children')->whereNull('parent_id')->orderBy('name')->get(),
             'brands' => Brand::all(),
-            'filters' => $request->only('search'),
+            'filters' => $request->only('search', 'category_id', 'brand_id', 'type', 'status', 'stock_filter', 'sort_by', 'sort_direction'),
             'canViewCostPrice' => auth()->check() && auth()->user()->hasPermission('products.view_cost_price'),
         ]);
     }
