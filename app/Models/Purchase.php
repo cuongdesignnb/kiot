@@ -20,6 +20,7 @@ class Purchase extends Model
         'purchase_date',
         'payment_method',
         'bank_account_info',
+        'purchase_order_id',
     ];
 
     protected $casts = [
@@ -44,5 +45,10 @@ class Purchase extends Model
     public function employee()
     {
         return $this->belongsTo(Employee::class);
+    }
+
+    public function purchaseOrder()
+    {
+        return $this->belongsTo(PurchaseOrder::class);
     }
 }

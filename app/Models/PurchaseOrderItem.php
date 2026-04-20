@@ -14,6 +14,7 @@ class PurchaseOrderItem extends Model
         'purchase_order_id',
         'product_id',
         'qty',
+        'received_qty',
         'price',
         'discount',
         'total_value',
@@ -27,5 +28,13 @@ class PurchaseOrderItem extends Model
     public function purchaseOrder()
     {
         return $this->belongsTo(PurchaseOrder::class);
+    }
+
+    /**
+     * Outstanding quantity = ordered - received
+     */
+    public function getOutstandingQtyAttribute()
+    {
+        return max(0, $this->qty - $this->received_qty);
     }
 }

@@ -554,6 +554,11 @@ Route::middleware('permission:purchase_orders.create')->group(function () {
     Route::get('/purchase-orders/create', [PurchaseOrderController::class, 'create'])->name('purchase-orders.create');
     Route::post('/purchase-orders', [PurchaseOrderController::class, 'store'])->name('purchase-orders.store');
 });
+Route::put('/purchase-orders/{purchaseOrder}', [PurchaseOrderController::class, 'update'])->name('purchase-orders.update')->middleware('permission:purchase_orders.create');
+Route::post('/purchase-orders/{purchaseOrder}/cancel', [PurchaseOrderController::class, 'cancel'])->name('purchase-orders.cancel')->middleware('permission:purchase_orders.create');
+Route::post('/purchase-orders/{purchaseOrder}/finish', [PurchaseOrderController::class, 'finish'])->name('purchase-orders.finish')->middleware('permission:purchase_orders.create');
+Route::post('/purchase-orders/{purchaseOrder}/copy', [PurchaseOrderController::class, 'copy'])->name('purchase-orders.copy')->middleware('permission:purchase_orders.create');
+Route::post('/purchase-orders/{purchaseOrder}/convert', [PurchaseOrderController::class, 'convertToReceipt'])->name('purchase-orders.convert')->middleware('permission:purchase_orders.create');
 
 Route::get('/run-migrate', function () {
     try {

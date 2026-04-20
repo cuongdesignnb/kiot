@@ -86,6 +86,14 @@ class ActivityLog extends Model
     const ACTION_ORDER_CONVERT = 'order_convert';
     const ACTION_ORDER_MERGE = 'order_merge';
 
+    // Đặt hàng nhập
+    const ACTION_PO_CREATE = 'po_create';
+    const ACTION_PO_UPDATE = 'po_update';
+    const ACTION_PO_CANCEL = 'po_cancel';
+    const ACTION_PO_FINISH = 'po_finish';
+    const ACTION_PO_COPY = 'po_copy';
+    const ACTION_PO_CONVERT = 'po_convert';
+
     // ── Label map (Vietnamese) ──
     const ACTION_LABELS = [
         'purchase_create'   => 'Tạo phiếu nhập hàng',
@@ -126,6 +134,12 @@ class ActivityLog extends Model
         'order_end'         => 'Kết thúc đơn hàng',
         'order_convert'     => 'Chuyển đơn → hóa đơn',
         'order_merge'       => 'Gộp đơn hàng',
+        'po_create'         => 'Tạo đặt hàng nhập',
+        'po_update'         => 'Cập nhật đặt hàng nhập',
+        'po_cancel'         => 'Hủy đặt hàng nhập',
+        'po_finish'         => 'Kết thúc đặt hàng nhập',
+        'po_copy'           => 'Sao chép đặt hàng nhập',
+        'po_convert'        => 'Tạo phiếu nhập từ đặt hàng',
     ];
 
     // ── Icon map (emoji) ──
@@ -168,6 +182,12 @@ class ActivityLog extends Model
         'order_end'         => '🏁',
         'order_convert'     => '➡️',
         'order_merge'       => '🔀',
+        'po_create'         => '📦',
+        'po_update'         => '✏️',
+        'po_cancel'         => '❌',
+        'po_finish'         => '🏁',
+        'po_copy'           => '📋',
+        'po_convert'        => '➡️',
     ];
 
     // ── Relationships ──
