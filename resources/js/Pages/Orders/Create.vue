@@ -8,6 +8,7 @@ const props = defineProps({
     branches: Array,
     priceBooks: Array,
     invoice: Object,
+    action: { type: String, default: 'edit' },
 });
 
 const currentTime = computed(() => {
@@ -42,6 +43,7 @@ const createInitialTab = (index) => ({
     
     status: 'draft',
     invoice_id: null,
+    editing_invoice_id: null, // ID of invoice being edited
     discount: 0,
     otherFees: 0,
     amountPaid: 0,
@@ -219,7 +221,7 @@ const save = async () => {
     submitRef.value = true;
     try {
         const isReturn = activeTab.value.status === 'return';
-        const endpoint = isReturn ? '/returns' : '/orders';
+        const isEditing = !!activeTab.value.editing_invoice_id;
         const payload = {
             status: activeTab.value.status,
             customer_id: activeTab.value.selectedCustomer?.id || null,
@@ -253,7 +255,23 @@ const save = async () => {
             height: activeTab.value.sizeH,
             order_date: activeTab.value.orderDate || null,
         };
-        await router.post(endpoint, payload);
+
+        if (isEditing) {
+            // Remap items fields for backend validation (qty → quantity)
+            payload.items = payload.items.map(item => ({
+                product_id: item.product_id,
+                quantity: item.qty || item.quantity,
+                price: item.price,
+                discount: item.discount || 0,
+                serial_ids: item.serial_ids || [],
+            }));
+            payload.customer_paid = payload.amount_paid;
+            // Update existing invoice
+            await router.put(`/invoices/${activeTab.value.editing_invoice_id}`, payload);
+        } else {
+            const endpoint = isReturn ? '/returns' : '/orders';
+            await router.post(endpoint, payload);
+        }
         if (tabs.value.length > 1) {
             closeTab(activeTabIndex.value);
         } else {
@@ -305,6 +323,30 @@ const selectInvoiceForReturn = (invoice) => {
         subtotal: (item.quantity * item.price) - (item.discount || 0)
     }));
     showReturnModal.value = false;
+};
+
+const selectInvoiceForEdit = (invoice) => {
+    activeTab.value.selectedCustomer = invoice.customer;
+    activeTab.value.searchCustomer = invoice.customer?.name || '';
+    activeTab.value.name = `Sửa HĐ ${invoice.code}`;
+    activeTab.value.status = 'draft';
+    activeTab.value.editing_invoice_id = invoice.id;
+    activeTab.value.invoice_id = invoice.id;
+    activeTab.value.selectedPriceBookId = null;
+    activeTab.value.selectedPriceBookName = invoice.price_book_name || 'Bảng giá chung';
+    activeTab.value.discount = invoice.discount || 0;
+    activeTab.value.amountPaid = invoice.customer_paid || 0;
+    activeTab.value.note = invoice.note || '';
+    activeTab.value.items = (invoice.items || []).map(item => ({
+        product_id: item.product_id,
+        sku: item.product?.sku || '',
+        name: item.product?.name || 'Sản phẩm',
+        qty: item.quantity,
+        price: item.price,
+        discount: item.discount || 0,
+        stock_quantity: item.product?.stock_quantity || 0,
+        subtotal: (item.quantity * item.price) - (item.discount || 0)
+    }));
 };
 
 const saveAndPrint = async () => {
@@ -377,7 +419,11 @@ onMounted(() => {
         fetchReturnInvoices();
     }
     if (props.invoice) {
-        selectInvoiceForReturn(props.invoice);
+        if (props.action === 'edit') {
+            selectInvoiceForEdit(props.invoice);
+        } else {
+            selectInvoiceForReturn(props.invoice);
+        }
     }
 });
 
@@ -701,7 +747,7 @@ onUnmounted(() => {
                 <div class="p-3 bg-white border-t border-[#dce3ec] flex-shrink-0">
                     <button @click="save" :disabled="submitRef" class="w-full bg-[#0062c3] hover:bg-blue-700 text-white font-bold py-3 px-4 rounded transition-colors text-[16px] shadow-sm flex items-center justify-center gap-2">
                         <i v-if="submitRef" class="fas fa-circle-notch fa-spin"></i>
-                        {{ activeTab.status === 'return' ? 'TRẢ HÀNG' : 'ĐẶT HÀNG' }}
+                        {{ activeTab.editing_invoice_id ? 'CẬP NHẬT HÓA ĐƠN' : activeTab.status === 'return' ? 'TRẢ HÀNG' : 'ĐẶT HÀNG' }}
                     </button>
                     <div @click="saveAndPrint" class="text-center font-bold text-gray-500 mt-2 text-[12px] cursor-pointer hover:text-blue-600"><i class="fas fa-print"></i> (F9)</div>
                 </div>

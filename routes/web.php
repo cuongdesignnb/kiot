@@ -698,6 +698,7 @@ Route::middleware('permission:invoices.view')->group(function () {
     Route::get('/invoices/{invoice}/detail', [InvoiceController::class, 'detail']);
 });
 Route::post('/invoices', [InvoiceController::class, 'store'])->name('invoices.store')->middleware('permission:invoices.create');
+Route::put('/invoices/{invoice}', [InvoiceController::class, 'update'])->name('invoices.update')->middleware('permission:invoices.create');
 Route::delete('/invoices/{invoice}', [InvoiceController::class, 'destroy'])->name('invoices.destroy')->middleware('permission:invoices.delete');
 
 // ===== RETURNS =====
