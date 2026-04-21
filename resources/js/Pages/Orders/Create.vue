@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
-import { Head, Link, router } from '@inertiajs/vue3';
+import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import axios from 'axios';
 
 const props = defineProps({
@@ -266,8 +266,23 @@ const save = async () => {
                 serial_ids: item.serial_ids || [],
             }));
             payload.customer_paid = payload.amount_paid;
-            // Update existing invoice
-            await router.put(`/invoices/${activeTab.value.editing_invoice_id}`, payload);
+            payload.payment_method = activeTab.value.paymentMethod || 'Tiền mặt';
+            // Update existing invoice — use Inertia callbacks
+            router.put(`/invoices/${activeTab.value.editing_invoice_id}`, payload, {
+                onSuccess: () => {
+                    submitRef.value = false;
+                    // Inertia will redirect to invoices.index via backend
+                },
+                onError: (errors) => {
+                    submitRef.value = false;
+                    const firstError = Object.values(errors)[0];
+                    if (firstError) alert(firstError);
+                },
+                onFinish: () => {
+                    submitRef.value = false;
+                },
+            });
+            return; // Don't reset tab — Inertia handles the redirect
         } else {
             const endpoint = isReturn ? '/returns' : '/orders';
             await router.post(endpoint, payload);
@@ -337,6 +352,9 @@ const selectInvoiceForEdit = (invoice) => {
     activeTab.value.discount = invoice.discount || 0;
     activeTab.value.amountPaid = invoice.customer_paid || 0;
     activeTab.value.note = invoice.note || '';
+    activeTab.value.paymentMethod = invoice.payment_method || 'Tiền mặt';
+    activeTab.value.isDelivery = !!invoice.is_delivery;
+    activeTab.value.deliveryFee = invoice.delivery_fee || 0;
     activeTab.value.items = (invoice.items || []).map(item => ({
         product_id: item.product_id,
         sku: item.product?.sku || '',
@@ -439,6 +457,15 @@ onUnmounted(() => {
     </Head>
     <div class="h-screen w-screen flex flex-col bg-[#eef1f5] text-[13px] overflow-hidden font-sans fixed inset-0 z-50">
         
+        <!-- Flash Messages -->
+        <div v-if="usePage().props.flash?.error" class="bg-red-500 text-white px-4 py-2 text-sm flex items-center gap-2 flex-shrink-0 z-[60]">
+            <svg class="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/></svg>
+            {{ usePage().props.flash.error }}
+        </div>
+        <div v-if="usePage().props.flash?.success" class="bg-green-500 text-white px-4 py-2 text-sm flex items-center gap-2 flex-shrink-0 z-[60]">
+            <svg class="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
+            {{ usePage().props.flash.success }}
+        </div>
         <!-- Header POS (Blue) -->
         <header class="bg-[#0052a3] text-white px-2 h-[48px] flex items-center justify-between flex-shrink-0">
             <div class="flex items-center gap-2 h-full flex-1 w-0">
@@ -527,13 +554,13 @@ onUnmounted(() => {
                                 </td>
                                 <td class="p-3">
                                     <div class="flex items-center justify-center gap-1 border border-transparent hover:border-blue-400 rounded overflow-hidden w-fit mx-auto transition-colors">
-                                        <button class="px-2 py-1 text-gray-400 hover:text-gray-700 font-bold" @click="item.qty > 1 ? item.qty-- : null"><i class="fas fa-minus text-[10px]"></i></button>
-                                        <input type="text" v-model="item.qty" class="w-10 text-center outline-none text-[13px] border-b border-transparent focus:border-blue-500 py-0.5 text-blue-600 font-bold">
-                                        <button class="px-2 py-1 text-gray-400 hover:text-gray-700 font-bold" @click="item.qty++"><i class="fas fa-plus text-[10px]"></i></button>
+                                        <button class="px-2 py-1 text-gray-400 hover:text-gray-700 font-bold" @click="activeTab.items[index].qty > 1 ? activeTab.items[index].qty-- : null"><i class="fas fa-minus text-[10px]"></i></button>
+                                        <input type="text" v-model="activeTab.items[index].qty" class="w-10 text-center outline-none text-[13px] border-b border-transparent focus:border-blue-500 py-0.5 text-blue-600 font-bold">
+                                        <button class="px-2 py-1 text-gray-400 hover:text-gray-700 font-bold" @click="activeTab.items[index].qty++"><i class="fas fa-plus text-[10px]"></i></button>
                                     </div>
                                 </td>
                                 <td class="p-3 text-right font-medium text-gray-800">
-                                    <input type="text" :value="formatCurrency(item.price)" @change="e => item.price = e.target.value.replace(/\D/g,'')" class="w-24 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-right outline-none bg-transparent">
+                                    <input type="text" :value="formatCurrency(item.price)" @change="e => activeTab.items[index].price = e.target.value.replace(/\D/g,'')" class="w-24 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-right outline-none bg-transparent">
                                 </td>
                                 <td class="p-3 text-right font-bold text-gray-800 pr-4">{{ formatCurrency(item.subtotal) }}</td>
                             </tr>

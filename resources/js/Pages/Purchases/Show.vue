@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed } from 'vue';
-import { Head, Link, router } from '@inertiajs/vue3';
+import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 
 const props = defineProps({
@@ -79,8 +79,10 @@ const submitUpdate = () => {
             showUpdateModal.value = false;
             isSubmitting.value = false;
         },
-        onError: () => {
+        onError: (errors) => {
             isSubmitting.value = false;
+            const firstError = Object.values(errors)[0];
+            if (firstError) alert(firstError);
         },
     });
 };
@@ -94,6 +96,15 @@ const paymentMethodLabel = (method) => {
     <Head :title="`Chi tiết phiếu nhập ${purchase.code}`" />
     <AppLayout>
         <div class="bg-white h-full flex flex-col">
+            <!-- Flash Messages -->
+            <div v-if="usePage().props.flash?.error" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 text-sm flex items-center gap-2">
+                <svg class="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/></svg>
+                {{ usePage().props.flash.error }}
+            </div>
+            <div v-if="usePage().props.flash?.success" class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 text-sm flex items-center gap-2">
+                <svg class="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
+                {{ usePage().props.flash.success }}
+            </div>
             <!-- Header -->
             <div class="flex items-center gap-3 px-4 py-3 border-b border-gray-200 bg-gray-50/50">
                 <Link href="/purchases" class="text-gray-500 hover:text-gray-700">
