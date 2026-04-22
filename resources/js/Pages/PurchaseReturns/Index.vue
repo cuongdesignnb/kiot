@@ -117,6 +117,11 @@ const cancelReturn = (ret) => {
         return;
     router.delete(`/purchase-returns/${ret.id}`, { preserveState: false });
 };
+
+const showCreateMenu = ref(false);
+if (typeof window !== 'undefined') {
+    window.addEventListener('click', () => { showCreateMenu.value = false; });
+}
 </script>
 
 <template>
@@ -155,10 +160,24 @@ const cancelReturn = (ret) => {
 
                 <div class="flex gap-2 ml-auto">
                     <ExcelButtons export-url="/purchase-returns/export" />
-                    <Link href="/purchases" class="bg-white text-green-600 border border-green-600 px-3 py-1.5 text-sm font-medium rounded hover:bg-green-50 transition flex items-center gap-1">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-                        Trả hàng nhập
-                    </Link>
+                    <div class="relative" @click.stop>
+                        <button @click="showCreateMenu = !showCreateMenu"
+                            class="bg-green-600 text-white px-3 py-1.5 text-sm font-medium rounded hover:bg-green-700 transition flex items-center gap-1">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                            Trả hàng nhập
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                        </button>
+                        <div v-if="showCreateMenu" class="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded shadow-lg z-30 min-w-[220px]">
+                            <Link href="/purchases" class="block px-4 py-2.5 text-sm hover:bg-green-50 border-b border-gray-100">
+                                <div class="font-medium text-gray-800">Trả theo phiếu nhập</div>
+                                <div class="text-[11px] text-gray-500">Chọn từ danh sách phiếu nhập</div>
+                            </Link>
+                            <Link href="/purchase-returns/create-quick" class="block px-4 py-2.5 text-sm hover:bg-green-50">
+                                <div class="font-medium text-gray-800">Trả nhanh</div>
+                                <div class="text-[11px] text-gray-500">Không cần phiếu nhập gốc</div>
+                            </Link>
+                        </div>
+                    </div>
                 </div>
             </div>
 

@@ -105,6 +105,25 @@ class PurchaseReturnController extends Controller
         ]);
     }
 
+    /**
+     * Màn hình tạo phiếu trả nhanh (không cần phiếu nhập gốc).
+     */
+    public function createQuick()
+    {
+        return Inertia::render('PurchaseReturns/CreateQuick', [
+            'returnCode'   => 'PTN' . date('YmdHis'),
+            'suppliers'    => Customer::where('is_supplier', true)
+                ->orderBy('name')
+                ->get(['id', 'name', 'code', 'phone', 'supplier_debt_amount']),
+            'products'     => Product::select('id', 'name', 'sku', 'stock_quantity', 'cost_price', 'has_serial')
+                ->where('is_active', true)
+                ->orderBy('name')
+                ->get(),
+            'bankAccounts' => \App\Models\BankAccount::where('status', 'active')->get(),
+            'employees'    => \App\Models\Employee::where('is_active', true)->get(['id', 'name', 'code']),
+        ]);
+    }
+
     public function store(Request $request)
     {
         $request->validate([
