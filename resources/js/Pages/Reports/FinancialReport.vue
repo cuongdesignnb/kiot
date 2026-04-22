@@ -136,29 +136,45 @@ const printReport = () => {
                                 </tr>
                             </thead>
                             <tbody>
-                                <!-- REVENUE SECTION -->
+                                <!-- (1) Doanh thu bán hàng -->
                                 <tr class="bg-yellow-50 font-bold">
-                                    <td class="px-3 py-2 border border-gray-200 text-gray-900">Doanh thu (1)</td>
+                                    <td class="px-3 py-2 border border-gray-200 text-gray-900">Doanh thu bán hàng (1)</td>
                                     <td class="px-3 py-2 text-right border border-gray-200">{{ formatCurrency(r.totalSales) }}</td>
                                 </tr>
+
+                                <!-- (2) Giảm trừ doanh thu = (2.1) + (2.2) -->
                                 <tr class="bg-yellow-50 font-bold">
-                                    <td class="px-3 py-2 border border-gray-200 text-gray-900">Giá vốn hàng bán (2)</td>
-                                    <td class="px-3 py-2 text-right border border-gray-200">{{ formatCurrency(r.cogs) }}</td>
+                                    <td class="px-3 py-2 border border-gray-200 text-gray-900">Giảm trừ doanh thu (2 = 2.1 + 2.2)</td>
+                                    <td class="px-3 py-2 text-right border border-gray-200">{{ formatCurrency(r.revenueDeductions) }}</td>
                                 </tr>
                                 <tr>
-                                    <td class="px-3 py-1.5 border border-gray-200 pl-6 text-blue-600">Trả hàng bán</td>
-                                    <td class="px-3 py-1.5 text-right border border-gray-200">{{ formatCurrency(r.salesReturns) }}</td>
-                                </tr>
-                                <tr>
-                                    <td class="px-3 py-1.5 border border-gray-200 pl-6 text-blue-600">Giảm giá hóa đơn</td>
+                                    <td class="px-3 py-1.5 border border-gray-200 pl-6 text-blue-600">Chiết khấu hóa đơn (2.1)</td>
                                     <td class="px-3 py-1.5 text-right border border-gray-200">{{ formatCurrency(r.invoiceDiscounts) }}</td>
                                 </tr>
+                                <tr>
+                                    <td class="px-3 py-1.5 border border-gray-200 pl-6 text-blue-600">Giá trị hàng bán bị trả lại (2.2)</td>
+                                    <td class="px-3 py-1.5 text-right border border-gray-200">{{ formatCurrency(r.salesReturns) }}</td>
+                                </tr>
+
+                                <!-- (3) Doanh thu thuần = (1) - (2) -->
                                 <tr class="bg-yellow-50 font-bold">
-                                    <td class="px-3 py-2 border border-gray-200 text-gray-900">Lợi nhuận gộp (5=1-2-3-4)</td>
+                                    <td class="px-3 py-2 border border-gray-200 text-gray-900">Doanh thu thuần (3 = 1 - 2)</td>
+                                    <td class="px-3 py-2 text-right border border-gray-200">{{ formatCurrency(r.netRevenue) }}</td>
+                                </tr>
+
+                                <!-- (4) Giá vốn hàng bán -->
+                                <tr class="bg-yellow-50 font-bold">
+                                    <td class="px-3 py-2 border border-gray-200 text-gray-900">Giá vốn hàng bán (4)</td>
+                                    <td class="px-3 py-2 text-right border border-gray-200">{{ formatCurrency(r.cogs) }}</td>
+                                </tr>
+
+                                <!-- (5) Lợi nhuận gộp = (3) - (4) -->
+                                <tr class="bg-yellow-100 font-bold">
+                                    <td class="px-3 py-2 border border-gray-200 text-gray-900">Lợi nhuận gộp về bán hàng (5 = 3 - 4)</td>
                                     <td class="px-3 py-2 text-right border border-gray-200">{{ formatCurrency(r.grossProfit) }}</td>
                                 </tr>
 
-                                <!-- EXPENSES SECTION -->
+                                <!-- (6) Chi phí -->
                                 <tr class="bg-yellow-50 font-bold">
                                     <td class="px-3 py-2 border border-gray-200 text-gray-900">Chi phí (6)</td>
                                     <td class="px-3 py-2 text-right border border-gray-200">{{ formatCurrency(r.totalExpenses) }}</td>
@@ -168,13 +184,13 @@ const printReport = () => {
                                     <td class="px-3 py-1.5 text-right border border-gray-200">{{ formatCurrency(exp.amount) }}</td>
                                 </tr>
 
-                                <!-- OPERATING PROFIT -->
+                                <!-- (7) Lợi nhuận HĐKD = (5) - (6) -->
                                 <tr class="bg-yellow-100 font-bold">
-                                    <td class="px-3 py-2 border border-gray-200 text-gray-900">Lợi nhuận từ hoạt động kinh doanh (7=5-6)</td>
+                                    <td class="px-3 py-2 border border-gray-200 text-gray-900">Lợi nhuận từ hoạt động kinh doanh (7 = 5 - 6)</td>
                                     <td class="px-3 py-2 text-right border border-gray-200">{{ formatCurrency(r.operatingProfit) }}</td>
                                 </tr>
 
-                                <!-- OTHER INCOME -->
+                                <!-- (8) Thu nhập khác -->
                                 <tr class="bg-yellow-50 font-bold">
                                     <td class="px-3 py-2 border border-gray-200 text-gray-900">Thu nhập khác (8)</td>
                                     <td class="px-3 py-2 text-right border border-gray-200">{{ formatCurrency(r.totalOtherIncome) }}</td>
@@ -184,15 +200,19 @@ const printReport = () => {
                                     <td class="px-3 py-1.5 text-right border border-gray-200">{{ formatCurrency(inc.amount) }}</td>
                                 </tr>
 
-                                <!-- OTHER EXPENSES -->
+                                <!-- (9) Chi phí khác -->
                                 <tr class="bg-yellow-50 font-bold">
                                     <td class="px-3 py-2 border border-gray-200 text-gray-900">Chi phí khác (9)</td>
                                     <td class="px-3 py-2 text-right border border-gray-200">{{ formatCurrency(r.totalOtherExpenses) }}</td>
                                 </tr>
+                                <tr v-for="(exp, idx) in (r.otherExpensesItems || [])" :key="'oexp'+idx">
+                                    <td class="px-3 py-1.5 border border-gray-200 pl-6 text-blue-600">{{ exp.name }}</td>
+                                    <td class="px-3 py-1.5 text-right border border-gray-200">{{ formatCurrency(exp.amount) }}</td>
+                                </tr>
 
-                                <!-- NET PROFIT -->
+                                <!-- (10) Lợi nhuận thuần = (7 + 8) - (9) -->
                                 <tr class="bg-blue-50 font-bold text-lg">
-                                    <td class="px-3 py-3 border border-gray-200 text-gray-900">Lợi nhuận thuần (10=(7+8)-9)</td>
+                                    <td class="px-3 py-3 border border-gray-200 text-gray-900">Lợi nhuận thuần (10 = (7 + 8) - 9)</td>
                                     <td class="px-3 py-3 text-right border border-gray-200" :class="r.netProfit >= 0 ? 'text-green-700' : 'text-red-600'">{{ formatCurrency(r.netProfit) }}</td>
                                 </tr>
                             </tbody>

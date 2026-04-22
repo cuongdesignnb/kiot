@@ -40,24 +40,38 @@ class FinancialReportController extends Controller
         // ══════════════════════════════════════
         // REVENUE / COGS / GROSS PROFIT via MetricService
         // (see metric_dictionary_reports.md for formula invariants)
+        // Chuẩn KiotViet (theo file PDF BCKQHDKD):
+        //   (1) Doanh thu bán hàng          = gross_revenue
+        //   (2) Giảm trừ doanh thu          = (2.1) + (2.2)
+        //   (2.1) Chiết khấu hóa đơn        = invoice_discount
+        //   (2.2) Giá trị hàng bán trả lại  = return_value
+        //   (3) Doanh thu thuần             = (1) - (2)
+        //   (4) Giá vốn hàng bán            = cogs_net (đã trừ giá vốn trả hàng)
+        //   (5) Lợi nhuận gộp               = (3) - (4)
         // ══════════════════════════════════════
         $metrics          = \App\Support\Reports\MetricService::compute($startDate, $endDate, $branchId);
-        $totalSales       = $metrics['gross_revenue'];
-        $cogs             = $metrics['cogs_net'];
-        $salesReturns     = $metrics['return_value'];
-        $invoiceDiscounts = $metrics['invoice_discount'];
-        $grossProfit      = $metrics['gross_profit'];
+        $totalSales       = $metrics['gross_revenue'];        // (1)
+        $invoiceDiscounts = $metrics['invoice_discount'];     // (2.1)
+        $salesReturns     = $metrics['return_value'];         // (2.2)
+        $revenueDeductions = $invoiceDiscounts + $salesReturns; // (2)
+        $netRevenue       = $totalSales - $revenueDeductions; // (3)
+        $cogs             = $metrics['cogs_net'];             // (4)
+        $grossProfit      = $netRevenue - $cogs;              // (5)
 
         // ══════════════════════════════════════
-        // EXPENSES SECTION (from cash_flows)
+        // (6) CHI PHÍ — từ phiếu chi (cash_flows type=payment)
+        // Loại trừ: chi trả NCC (đã vào giá vốn), điều chỉnh công nợ
         // ══════════════════════════════════════
         $timeColumn = Schema::hasColumn('cash_flows', 'time') ? 'time' : 'created_at';
 
         $expenseQ = CashFlow::where('type', 'payment')
-            ->where(function ($q) use ($timeColumn, $startDate, $endDate) {
-                $q->whereBetween($timeColumn, [$startDate, $endDate]);
-            })
-            ->where('category', '!=', 'Chi tiền trả NCC'); // Exclude NCC payments (already in COGS)
+            ->whereBetween($timeColumn, [$startDate, $endDate])
+            ->whereNotIn('category', [
+                'Chi tiền trả NCC',
+                'Chi thanh toan NCC',
+                'Điều chỉnh công nợ',
+                'Chuyển/Rút',
+            ]);
 
         // Breakdown expenses by category
         $expensesByCategory = (clone $expenseQ)
@@ -73,17 +87,19 @@ class FinancialReportController extends Controller
 
         $totalExpenses = array_sum(array_column($expensesByCategory, 'amount'));
 
-        // (7) Operating Profit = (5) - (6)
-        $operatingProfit = $grossProfit - $totalExpenses;
-
         // ══════════════════════════════════════
-        // OTHER INCOME (from cash_flows receipts)
+        // (8) THU NHẬP KHÁC — từ phiếu thu (cash_flows type=receipt)
+        // Loại trừ: thu nợ KH (đã vào doanh thu), chuyển/rút, điều chỉnh công nợ
         // ══════════════════════════════════════
         $otherIncomeQ = CashFlow::where('type', 'receipt')
-            ->where(function ($q) use ($timeColumn, $startDate, $endDate) {
-                $q->whereBetween($timeColumn, [$startDate, $endDate]);
-            })
-            ->whereNotIn('category', ['Thu tiền khách trả', 'Thu nợ khách hàng', 'Điều chỉnh công nợ', 'Chuyển/Rút', '']);
+            ->whereBetween($timeColumn, [$startDate, $endDate])
+            ->whereNotIn('category', [
+                'Thu tiền khách trả',
+                'Thu nợ khách hàng',
+                'Điều chỉnh công nợ',
+                'Chuyển/Rút',
+                '',
+            ]);
 
         $otherIncomeByCategory = (clone $otherIncomeQ)
             ->select('category', DB::raw('SUM(amount) as total'))
@@ -96,27 +112,36 @@ class FinancialReportController extends Controller
             ])
             ->toArray();
 
-        // Also add return-related income items
-        $otherIncomeItems = [];
-
-        // Phí trả hàng (return fees collected)
-        $otherIncomeItems[] = ['name' => 'Phí trả hàng', 'amount' => 0];
-        // Chênh lệch làm tròn nhập hàng
-        $otherIncomeItems[] = ['name' => 'Chênh lệch làm tròn nhập hàng', 'amount' => 0];
-        // Chênh lệch làm tròn bán hàng
-        $otherIncomeItems[] = ['name' => 'Chênh lệch làm tròn bán hàng', 'amount' => 0];
-        // Chiết khấu thanh toán từ NCC
-        $otherIncomeItems[] = ['name' => 'Chiết khấu thanh toán từ NCC', 'amount' => 0];
-
-        $mergedOtherIncome = array_merge($otherIncomeByCategory, $otherIncomeItems);
-        $totalOtherIncome = array_sum(array_column($mergedOtherIncome, 'amount'));
+        $totalOtherIncome = array_sum(array_column($otherIncomeByCategory, 'amount'));
 
         // ══════════════════════════════════════
-        // OTHER EXPENSES
+        // (9) CHI PHÍ KHÁC — cash_flows category chứa "khác"
+        // Nếu chưa có, để 0 — user có thể phân nhóm lại sau
         // ══════════════════════════════════════
-        $totalOtherExpenses = 0;
+        $otherExpenseQ = CashFlow::where('type', 'payment')
+            ->whereBetween($timeColumn, [$startDate, $endDate])
+            ->where(function ($q) {
+                $q->where('category', 'LIKE', '%khác%')
+                  ->orWhere('category', 'LIKE', '%Khác%');
+            });
 
-        // (10) Net Profit = (7) + (8) - (9)
+        $otherExpensesByCategory = (clone $otherExpenseQ)
+            ->select('category', DB::raw('SUM(amount) as total'))
+            ->groupBy('category')
+            ->orderByDesc('total')
+            ->get()
+            ->map(fn($row) => [
+                'name' => $row->category ?: 'Chi phí khác',
+                'amount' => (float) $row->total,
+            ])
+            ->toArray();
+
+        $totalOtherExpenses = array_sum(array_column($otherExpensesByCategory, 'amount'));
+
+        // (7) Lợi nhuận từ hoạt động kinh doanh = (5) - (6)
+        $operatingProfit = $grossProfit - $totalExpenses;
+
+        // (10) Lợi nhuận thuần = (7) + (8) - (9)
         $netProfit = $operatingProfit + $totalOtherIncome - $totalOtherExpenses;
 
         // ══════════════════════════════════════
@@ -142,28 +167,35 @@ class FinancialReportController extends Controller
             'branchAddress'   => $branchAddress,
             'branches'        => $branches,
             'report' => [
-                // Revenue
-                'totalSales'       => $totalSales,
-                'cogs'             => $cogs,
-                'salesReturns'     => $salesReturns,
-                'invoiceDiscounts' => $invoiceDiscounts,
-                'grossProfit'      => $grossProfit,
+                // (1) Doanh thu bán hàng
+                'totalSales'        => $totalSales,
+                // (2) Giảm trừ doanh thu = (2.1) + (2.2)
+                'revenueDeductions' => $revenueDeductions,
+                'invoiceDiscounts'  => $invoiceDiscounts, // (2.1)
+                'salesReturns'      => $salesReturns,     // (2.2)
+                // (3) Doanh thu thuần = (1) - (2)
+                'netRevenue'        => $netRevenue,
+                // (4) Giá vốn hàng bán
+                'cogs'              => $cogs,
+                // (5) Lợi nhuận gộp = (3) - (4)
+                'grossProfit'       => $grossProfit,
 
-                // Expenses
+                // (6) Chi phí
                 'expensesByCategory' => $expensesByCategory,
                 'totalExpenses'      => $totalExpenses,
 
-                // Operating profit
+                // (7) Lợi nhuận HĐKD = (5) - (6)
                 'operatingProfit'    => $operatingProfit,
 
-                // Other income
-                'otherIncomeItems'   => $mergedOtherIncome,
+                // (8) Thu nhập khác
+                'otherIncomeItems'   => $otherIncomeByCategory,
                 'totalOtherIncome'   => $totalOtherIncome,
 
-                // Other expenses
+                // (9) Chi phí khác
+                'otherExpensesItems' => $otherExpensesByCategory,
                 'totalOtherExpenses' => $totalOtherExpenses,
 
-                // Net profit
+                // (10) Lợi nhuận thuần = (7) + (8) - (9)
                 'netProfit'          => $netProfit,
             ],
         ]);
