@@ -45,7 +45,7 @@ const applyFilter = () => {
         sales_channel: salesChannel.value || undefined,
     };
     if (period.value === "custom") { params.date_from = dateFrom.value; params.date_to = dateTo.value; }
-    router.get("/reports/employees-report", params, { preserveState: true });
+    router.get("/reports/employees", params, { preserveState: true });
 };
 watch([concern, period, branchId, employeeId, salesChannel], () => applyFilter());
 const switchView = (mode) => { viewMode.value = mode; applyFilter(); };
