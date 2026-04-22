@@ -1,40 +1,47 @@
 <script setup>
-import { ref, watch, computed } from "vue";
+import { ref, computed } from "vue";
 import { Head, Link, router } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
-
-const debounce = (fn, delay) => {
-    let timeoutID;
-    return (...args) => {
-        if (timeoutID) clearTimeout(timeoutID);
-        timeoutID = setTimeout(() => {
-            fn(...args);
-        }, delay);
-    };
-};
+import { useFilters } from "@/composables/useFilters.js";
 
 const props = defineProps({
     damages: Object,
     branches: Array,
     filters: Object,
+    filterOptions: Object,
 });
 
-const searchQuery = ref(props.filters.search || "");
+const { filters, setSort, reset } = useFilters({
+    initial: props.filters,
+    route: "/damages",
+    defaults: { date_filter: "all" },
+});
+
 const expandedRow = ref(null);
-const activeDateFilter = ref(props.filters.date_filter || "all");
-const creatorQuery = ref(props.filters.created_by_name || "");
-const destroyerQuery = ref(props.filters.destroyed_by_name || "");
-const branchId = ref(props.filters.branch_id || "");
-const sortBy = ref(props.filters.sort_by || "");
-const sortDirection = ref(props.filters.sort_direction || "");
 
-const activeStatusFilters = ref({
-    "Phiếu tạm": props.filters.status?.includes("draft") ?? true,
-    "Hoàn thành": props.filters.status?.includes("completed") ?? true,
-    "Đã hủy": props.filters.status?.includes("cancelled") ?? false,
+// Bridge: UI uses object map by label; canonical filter uses array of status codes
+const statusLabelMap = {
+    "Phiếu tạm": "draft",
+    "Hoàn thành": "completed",
+    "Đã hủy": "cancelled",
+};
+const activeStatusFilters = computed({
+    get() {
+        const arr = filters.status || [];
+        return Object.fromEntries(Object.entries(statusLabelMap).map(([k, v]) => [k, arr.includes(v)]));
+    },
+    set(val) {
+        const arr = Object.entries(val).filter(([, on]) => on).map(([k]) => statusLabelMap[k]);
+        filters.status = arr;
+    },
 });
+const toggleStatus = (label) => {
+    const current = { ...activeStatusFilters.value };
+    current[label] = !current[label];
+    activeStatusFilters.value = current;
+};
 
 const toggleRow = (id) => {
     expandedRow.value = expandedRow.value === id ? null : id;
@@ -67,63 +74,7 @@ const getStatusLabelText = (status) => {
     return "Chưa rõ";
 };
 
-const handleSort = (field, direction) => {
-    sortBy.value = field;
-    sortDirection.value = direction;
-    let activeStatuses = [];
-    if (activeStatusFilters.value["Phiếu tạm"]) activeStatuses.push("draft");
-    if (activeStatusFilters.value["Hoàn thành"]) activeStatuses.push("completed");
-    if (activeStatusFilters.value["Đã hủy"]) activeStatuses.push("cancelled");
-    router.get(
-        "/damages",
-        {
-            search: searchQuery.value,
-            status: activeStatuses,
-            branch_id: branchId.value,
-            created_by_name: creatorQuery.value,
-            destroyed_by_name: destroyerQuery.value,
-            date_filter: activeDateFilter.value,
-            sort_by: field,
-            sort_direction: direction,
-        },
-        { preserveState: true, replace: true },
-    );
-};
-
-const updateFilters = debounce(() => {
-    let activeStatuses = [];
-    if (activeStatusFilters.value["Phiếu tạm"]) activeStatuses.push("draft");
-    if (activeStatusFilters.value["Hoàn thành"]) activeStatuses.push("completed");
-    if (activeStatusFilters.value["Đã hủy"]) activeStatuses.push("cancelled");
-
-    router.get(
-        "/damages",
-        {
-            search: searchQuery.value,
-            status: activeStatuses,
-            branch_id: branchId.value,
-            created_by_name: creatorQuery.value,
-            destroyed_by_name: destroyerQuery.value,
-            date_filter: activeDateFilter.value,
-            sort_by: sortBy.value,
-            sort_direction: sortDirection.value,
-        },
-        { preserveState: true, replace: true },
-    );
-}, 300);
-
-watch(
-    [
-        searchQuery,
-        activeStatusFilters,
-        activeDateFilter,
-        creatorQuery,
-        destroyerQuery,
-        branchId,
-    ],
-    updateFilters,
-    { deep: true },
-);
+const handleSort = (field, direction) => setSort(field, direction);
 
 const printDamage = (damage) => {
     window.open(
@@ -156,7 +107,7 @@ const printDamage = (damage) => {
                             Chi nhánh
                         </div>
                         <select
-                            v-model="branchId"
+                            v-model="filters.branch_id"
                             class="w-full border border-gray-300 rounded px-2 py-1.5 text-[13px] outline-none hover:border-blue-400 transition-colors bg-white"
                         >
                             <option value="">Tất cả chi nhánh</option>
@@ -183,7 +134,7 @@ const printDamage = (damage) => {
                             >
                                 <input
                                     type="checkbox"
-                                    v-model="activeStatusFilters[key]"
+                                    :checked="val" @change="toggleStatus(key)"
                                     class="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
                                 />
                                 <span>{{ key }}</span>
@@ -211,7 +162,7 @@ const printDamage = (damage) => {
                             >
                                 <input
                                     type="radio"
-                                    v-model="activeDateFilter"
+                                    v-model="filters.date_filter"
                                     value="all"
                                     name="date"
                                     class="w-4 h-4 text-blue-600 focus:ring-blue-500 border-gray-300"
@@ -223,7 +174,7 @@ const printDamage = (damage) => {
                             >
                                 <input
                                     type="radio"
-                                    v-model="activeDateFilter"
+                                    v-model="filters.date_filter"
                                     value="today"
                                     name="date"
                                     class="w-4 h-4 text-blue-600 focus:ring-blue-500 border-gray-300"
@@ -235,7 +186,7 @@ const printDamage = (damage) => {
                             >
                                 <input
                                     type="radio"
-                                    v-model="activeDateFilter"
+                                    v-model="filters.date_filter"
                                     value="this_month"
                                     name="date"
                                     class="w-4 h-4 text-blue-600 focus:ring-blue-500 border-gray-300"
@@ -252,7 +203,7 @@ const printDamage = (damage) => {
                         </div>
                         <input
                             type="text"
-                            v-model="creatorQuery"
+                            v-model="filters.created_by_name"
                             placeholder="Chọn người tạo"
                             class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-shadow text-[13px] shadow-sm"
                         />
@@ -265,7 +216,7 @@ const printDamage = (damage) => {
                         </div>
                         <input
                             type="text"
-                            v-model="destroyerQuery"
+                            v-model="filters.destroyed_by_name"
                             placeholder="Chọn người xuất hủy"
                             class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-shadow text-[13px] shadow-sm"
                         />
@@ -299,7 +250,7 @@ const printDamage = (damage) => {
                             </svg>
                         </div>
                         <input
-                            v-model="searchQuery"
+                            v-model="filters.search"
                             type="text"
                             placeholder="Theo mã xuất hủy"
                             class="w-full bg-white pl-9 pr-8 border border-gray-300 focus:border-blue-500 hover:border-gray-400 py-1.5 rounded-sm outline-none transition-colors shadow-none text-[13px] block"
@@ -380,16 +331,16 @@ const printDamage = (damage) => {
                                         ></path>
                                     </svg>
                                 </th>
-                                <SortableHeader label="Mã xuất hủy" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
-                                <SortableHeader label="Tổng giá trị hủy" field="total_value" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right border-b border-[#dce3ec]" @sort="handleSort" />
-                                <SortableHeader label="Thời gian" field="created_at" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-b border-[#dce3ec] pl-10" @sort="handleSort" />
+                                <SortableHeader label="Mã xuất hủy" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
+                                <SortableHeader label="Tổng giá trị hủy" field="total_value" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="p-3 text-right border-b border-[#dce3ec]" @sort="handleSort" />
+                                <SortableHeader label="Thời gian" field="created_at" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="p-3 border-b border-[#dce3ec] pl-10" @sort="handleSort" />
                                 <th class="p-3 border-b border-[#dce3ec]">
                                     Chi nhánh
                                 </th>
                                 <th class="p-3 border-b border-[#dce3ec]">
                                     Ghi chú
                                 </th>
-                                <SortableHeader label="Trạng thái" field="status" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 w-28 text-right border-b border-[#dce3ec]" @sort="handleSort" />
+                                <SortableHeader label="Trạng thái" field="status" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="p-3 w-28 text-right border-b border-[#dce3ec]" @sort="handleSort" />
                             </tr>
                         </thead>
                         <tbody>

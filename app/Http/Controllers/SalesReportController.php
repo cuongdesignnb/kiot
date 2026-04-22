@@ -184,49 +184,28 @@ class SalesReportController extends Controller
     }
 
     // ═══════════════════════════════════════
-    // Concern: Lợi nhuận
+    // Concern: Lợi nhuận (via MetricService — single source of truth)
     // ═══════════════════════════════════════
     private function buildProfitSeries($invoiceQuery, $start, $end, $groupBy, $branchId)
     {
-        $format = $groupBy === 'month' ? '%m-%Y' : '%d-%m-%Y';
         $phpFormat = $groupBy === 'month' ? 'm-Y' : 'd-m-Y';
-
-        // Revenue per period
-        $revenue = (clone $invoiceQuery)
-            ->select(
-                DB::raw("DATE_FORMAT(created_at, '{$format}') as period"),
-                DB::raw('COALESCE(SUM(total), 0) as total')
-            )
-            ->groupBy('period')
-            ->pluck('total', 'period');
-
-        // Cost per period (from invoice_items * product cost_price)
-        $invoiceIds = (clone $invoiceQuery)->pluck('id');
-        $hasItemCostCol = Schema::hasColumn('invoice_items', 'cost_price');
-        $costCalc = $hasItemCostCol
-            ? 'invoice_items.quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0)'
-            : 'invoice_items.quantity * COALESCE(products.cost_price, 0)';
-        $costs = DB::table('invoice_items')
-            ->whereIn('invoice_items.invoice_id', $invoiceIds)
-            ->join('invoices', 'invoice_items.invoice_id', '=', 'invoices.id')
-            ->join('products', 'invoice_items.product_id', '=', 'products.id')
-            ->select(
-                DB::raw("DATE_FORMAT(invoices.created_at, '{$format}') as period"),
-                DB::raw("COALESCE(SUM({$costCalc}), 0) as total_cost")
-            )
-            ->groupBy('period')
-            ->pluck('total_cost', 'period');
-
         $labels = [];
         $profitData = [];
         $current = $start->copy();
         while ($current <= $end) {
-            $key = $current->format($phpFormat);
-            $labels[] = $groupBy === 'month' ? $current->format('m/Y') : $current->format('d/m');
-            $rev = (float) ($revenue[$key] ?? 0);
-            $cost = (float) ($costs[$key] ?? 0);
-            $profitData[] = $rev - $cost;
-            $groupBy === 'month' ? $current->addMonth() : $current->addDay();
+            if ($groupBy === 'month') {
+                $bucketStart = $current->copy()->startOfMonth();
+                $bucketEnd   = $current->copy()->endOfMonth();
+                $labels[] = $current->format('m/Y');
+                $current->addMonth();
+            } else {
+                $bucketStart = $current->copy()->startOfDay();
+                $bucketEnd   = $current->copy()->endOfDay();
+                $labels[] = $current->format('d/m');
+                $current->addDay();
+            }
+            $m = \App\Support\Reports\MetricService::compute($bucketStart, $bucketEnd, $branchId);
+            $profitData[] = $m['gross_profit'];
         }
 
         return [

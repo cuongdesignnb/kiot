@@ -9,12 +9,28 @@ use App\Models\StockTransfer;
 use App\Models\StockTransferItem;
 use App\Models\Branch;
 use App\Models\Product;
+use App\Enums\StockTransferStatus;
+use App\Support\Filters\FilterableIndex;
 use App\Services\LockPeriodService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
 class StockTransferController extends Controller
 {
+    use FilterableIndex;
+
+    protected function configureStockTransferFilters(): void
+    {
+        $this->searchable = ['code', 'note'];
+        $this->searchableRelations = [
+            'items.product' => ['name', 'code', 'barcode'],
+        ];
+        $this->sortable = ['code', 'created_at', 'sent_date', 'total_quantity', 'total_price', 'status'];
+        $this->dateColumn = 'created_at';
+        $this->creatorColumn = null;
+        $this->scalarFilters = ['from_branch_id', 'to_branch_id'];
+    }
+
     public function index(Request $request)
     {
         // Seed branches if empty
@@ -25,31 +41,10 @@ class StockTransferController extends Controller
             ]);
         }
 
-        $query = StockTransfer::with(['fromBranch', 'toBranch'])
-            ->when($request->filled('sort_by'), function ($q) use ($request) {
-                $allowed = ['code', 'created_at', 'sent_date', 'total_quantity', 'total_price', 'status'];
-                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'id';
-                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
-                $q->orderBy($sortBy, $dir);
-            }, function ($q) {
-                $q->orderBy('id', 'desc');
-            });
+        $this->configureStockTransferFilters();
 
-        if ($request->filled('search')) {
-            $query->where('code', 'like', "%{$request->search}%");
-        }
-
-        if ($request->filled('from_branch_id')) {
-            $query->where('from_branch_id', $request->from_branch_id);
-        }
-
-        if ($request->filled('to_branch_id')) {
-            $query->where('to_branch_id', $request->to_branch_id);
-        }
-
-        if ($request->filled('status')) {
-            $query->whereIn('status', (array) $request->status);
-        }
+        $query = StockTransfer::with(['fromBranch', 'toBranch']);
+        $this->applyFilters($query, $request);
 
         $transfers = $query->paginate(20)->withQueryString();
         $branches = Branch::all();
@@ -57,10 +52,11 @@ class StockTransferController extends Controller
         return Inertia::render('StockTransfers/Index', [
             'transfers' => $transfers,
             'branches' => $branches,
-            'filters' => array_merge($request->only(['search', 'from_branch_id', 'to_branch_id', 'status', 'time_filter', 'time_start', 'time_end']), [
-                'sort_by' => $request->sort_by,
-                'sort_direction' => $request->sort_direction,
-            ])
+            'filters' => $this->currentFilters($request),
+            'filterOptions' => [
+                'branches' => $branches->map(fn($b) => ['value' => $b->id, 'label' => $b->name]),
+                'statuses' => StockTransferStatus::options(),
+            ],
         ]);
     }
 
@@ -156,9 +152,10 @@ class StockTransferController extends Controller
 
     public function export(Request $request)
     {
-        $transfers = \App\Models\StockTransfer::with(['fromBranch', 'toBranch'])
-            ->when($request->search, fn($q, $s) => $q->where('code', 'LIKE', "%{$s}%"))
-            ->orderBy('id', 'desc')->get();
+        $this->configureStockTransferFilters();
+        $query = StockTransfer::with(['fromBranch', 'toBranch']);
+        $this->applyFilters($query, $request);
+        $transfers = $query->get();
 
         return \App\Services\CsvService::export(
             ['Mã chuyển hàng', 'Chi nhánh chuyển', 'Chi nhánh nhận', 'Ngày chuyển', 'Ngày nhận', 'Tổng SL', 'Tổng giá trị', 'Trạng thái', 'Ghi chú'],

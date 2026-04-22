@@ -9,6 +9,7 @@ use App\Models\OrderReturn;
 use App\Models\PurchaseReturn;
 use App\Models\CashFlow;
 use App\Models\SupplierDebtTransaction;
+use App\Support\Filters\FilterableIndex;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
@@ -16,36 +17,26 @@ use App\Services\DebtOffsetService;
 
 class SupplierController extends Controller
 {
+    use FilterableIndex;
+
+    protected function configureSupplierFilters(): void
+    {
+        $this->searchable = ['code', 'name', 'phone', 'phone2', 'email', 'tax_code'];
+        $this->sortable = ['code', 'name', 'phone', 'email', 'supplier_debt_amount', 'total_bought', 'created_at'];
+        $this->dateColumn = 'created_at';
+        $this->creatorColumn = null; // customers table không có created_by
+        $this->scalarFilters = ['customer_group', 'status', 'branch_id', 'city'];
+    }
+
     public function index(Request $request)
     {
-        $search = $request->input('search');
+        $this->configureSupplierFilters();
 
         $query = Customer::where('is_supplier', true);
 
-        if ($search) {
-            $query->where(function ($q) use ($search) {
-                $q->where('code', 'like', "%{$search}%")
-                    ->orWhere('name', 'like', "%{$search}%")
-                    ->orWhere('phone', 'like', "%{$search}%");
-            });
-        }
+        $this->applyFilters($query, $request);
 
-        if ($request->filled('customer_group')) {
-            $query->where('customer_group', $request->customer_group);
-        }
-
-        if ($request->filled('date_filter')) {
-            switch ($request->date_filter) {
-                case 'today':
-                    $query->whereDate('created_at', now()->today());
-                    break;
-                case 'this_month':
-                    $query->whereMonth('created_at', now()->month)
-                        ->whereYear('created_at', now()->year);
-                    break;
-            }
-        }
-
+        // partner_type is a pseudo-filter derived from is_customer flag
         if ($request->filled('partner_type')) {
             if ($request->partner_type === 'supplier_only') {
                 $query->where('is_customer', false);
@@ -54,14 +45,16 @@ class SupplierController extends Controller
             }
         }
 
-        $query->when($request->filled('sort_by'), function ($q) use ($request) {
-            $allowed = ['code', 'name', 'phone', 'email', 'supplier_debt_amount', 'total_bought', 'created_at'];
-            $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'created_at';
-            $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
-            $q->orderBy($sortBy, $dir);
-        }, function ($q) {
-            $q->latest();
-        });
+        // has_payable: bật nếu cần lọc NCC còn/không còn nợ phải trả
+        if ($request->filled('has_payable')) {
+            if ((string) $request->input('has_payable') === '1') {
+                $query->where('supplier_debt_amount', '>', 0);
+            } else {
+                $query->where(function ($q) {
+                    $q->whereNull('supplier_debt_amount')->orWhere('supplier_debt_amount', '<=', 0);
+                });
+            }
+        }
 
         $suppliers = $query->paginate(50)->withQueryString();
 
@@ -76,11 +69,30 @@ class SupplierController extends Controller
 
         $groups = Customer::where('is_supplier', true)->whereNotNull('customer_group')->distinct()->pluck('customer_group');
 
+        $filters = $this->currentFilters($request);
+        $filters['partner_type'] = $request->input('partner_type');
+        $filters['has_payable'] = $request->input('has_payable', '');
+
         return Inertia::render('Suppliers/Index', [
             'suppliers' => $suppliers,
             'groups' => $groups,
-            'filters' => $request->only(['search', 'customer_group', 'date_filter', 'partner_type', 'sort_by', 'sort_direction']),
+            'filters' => $filters,
             'summary' => $summary,
+            'filterOptions' => [
+                'groups' => $groups->map(fn($g) => ['value' => $g, 'label' => $g])->values(),
+                'partnerTypes' => [
+                    ['value' => 'supplier_only', 'label' => 'Chỉ nhà cung cấp'],
+                    ['value' => 'both', 'label' => 'Vừa là khách, vừa là NCC'],
+                ],
+                'payableOptions' => [
+                    ['value' => '1', 'label' => 'Còn nợ NCC'],
+                    ['value' => '0', 'label' => 'Đã trả đủ'],
+                ],
+                'statuses' => [
+                    ['value' => 'active', 'label' => 'Đang hoạt động', 'color' => 'green'],
+                    ['value' => 'inactive', 'label' => 'Ngừng hoạt động', 'color' => 'gray'],
+                ],
+            ],
         ]);
     }
 
@@ -130,9 +142,29 @@ class SupplierController extends Controller
 
     public function export(Request $request)
     {
-        $suppliers = Customer::where('is_supplier', true)
-            ->when($request->search, fn($q, $s) => $q->where('name', 'LIKE', "%{$s}%")->orWhere('code', 'LIKE', "%{$s}%")->orWhere('phone', 'LIKE', "%{$s}%"))
-            ->latest()->get();
+        $this->configureSupplierFilters();
+
+        $query = Customer::where('is_supplier', true);
+        $this->applyFilters($query, $request);
+
+        if ($request->filled('partner_type')) {
+            if ($request->partner_type === 'supplier_only') {
+                $query->where('is_customer', false);
+            } elseif ($request->partner_type === 'both') {
+                $query->where('is_customer', true);
+            }
+        }
+        if ($request->filled('has_payable')) {
+            if ((string) $request->input('has_payable') === '1') {
+                $query->where('supplier_debt_amount', '>', 0);
+            } else {
+                $query->where(function ($q) {
+                    $q->whereNull('supplier_debt_amount')->orWhere('supplier_debt_amount', '<=', 0);
+                });
+            }
+        }
+
+        $suppliers = $query->get();
 
         return \App\Services\CsvService::export(
             ['Mã NCC', 'Tên NCC', 'Điện thoại', 'Email', 'Địa chỉ', 'Phường/Xã', 'Quận/Huyện', 'Tỉnh/TP', 'Công nợ NCC', 'Ghi chú'],

@@ -1,20 +1,116 @@
 <script setup>
-import { ref, watch, reactive } from "vue";
+import { ref, reactive, computed } from "vue";
 import { Head, router, Link } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
+import SidebarFilter from "@/Components/Filters/SidebarFilter.vue";
+import { useFilters } from "@/composables/useFilters.js";
 import axios from "axios";
 
 const props = defineProps({
     invoices: Object,
-    branches: Array,
     filters: Object,
+    filterOptions: Object,
 });
 
-const search = ref(props.filters?.search || "");
-const sortBy = ref(props.filters?.sort_by || "");
-const sortDirection = ref(props.filters?.sort_direction || "");
+// Standardized sidebar filter state
+const { filters, setSort, reset } = useFilters({
+    initial: props.filters || {},
+    route: "/invoices",
+    defaults: { date_filter: "all" },
+});
+
+const sidebarConfig = computed(() => [
+    {
+        key: "date",
+        type: "dateRange",
+        label: "Thời gian",
+        fields: { filter: "date_filter", from: "date_from", to: "date_to" },
+        zone: "quick",
+    },
+    {
+        key: "branch_id",
+        type: "select",
+        label: "Chi nhánh",
+        options: (props.filterOptions?.branches || []).map((b) => ({
+            value: String(b.id),
+            label: b.name,
+        })),
+        placeholder: "-- Tất cả chi nhánh --",
+        zone: "quick",
+    },
+    {
+        key: "status",
+        type: "checkbox",
+        label: "Trạng thái hóa đơn",
+        options: props.filterOptions?.statuses || [],
+        zone: "main",
+    },
+    {
+        key: "is_delivery",
+        type: "select",
+        label: "Loại hóa đơn",
+        options: props.filterOptions?.deliveryOptions || [],
+        placeholder: "-- Tất cả --",
+        zone: "main",
+    },
+    {
+        key: "has_debt",
+        type: "select",
+        label: "Công nợ",
+        options: props.filterOptions?.debtOptions || [],
+        placeholder: "-- Tất cả --",
+        zone: "main",
+    },
+    {
+        key: "payment_method",
+        type: "select",
+        label: "Hình thức thanh toán",
+        options: props.filterOptions?.paymentMethods || [],
+        placeholder: "-- Tất cả --",
+        zone: "main",
+    },
+    {
+        key: "employee_id",
+        type: "select",
+        label: "Người bán",
+        options: (props.filterOptions?.employees || []).map((e) => ({
+            value: e.id,
+            label: e.name,
+        })),
+        placeholder: "-- Tất cả --",
+        zone: "main",
+    },
+    {
+        key: "created_by",
+        type: "select",
+        label: "Người tạo",
+        options: (props.filterOptions?.creators || []).map((u) => ({
+            value: u.id,
+            label: u.name,
+        })),
+        placeholder: "-- Tất cả --",
+        zone: "advanced",
+    },
+    {
+        key: "sales_channel",
+        type: "select",
+        label: "Kênh bán",
+        options: props.filterOptions?.salesChannels || [],
+        placeholder: "-- Tất cả --",
+        zone: "advanced",
+    },
+    {
+        key: "delivery_partner",
+        type: "select",
+        label: "Đối tác giao hàng",
+        options: [], // populated when partner list is available
+        placeholder: "-- Tất cả --",
+        zone: "advanced",
+    },
+]);
+
 const expandedRows = ref([]);
 const invoiceTabs = reactive({}); // { invoiceId: 'info' | 'payment' }
 const paymentHistoryData = reactive({});
@@ -39,29 +135,7 @@ const loadPaymentHistory = async (invoiceId) => {
     paymentLoading[invoiceId] = false;
 };
 
-const handleSort = (field, direction) => {
-    sortBy.value = field;
-    sortDirection.value = direction;
-    router.get(
-        "/invoices",
-        { search: search.value, sort_by: field, sort_direction: direction },
-        { preserveState: true, replace: true },
-    );
-};
-
-let searchTimeout;
-const updateFilters = () => {
-    clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(() => {
-        router.get(
-            "/invoices",
-            { search: search.value, sort_by: sortBy.value, sort_direction: sortDirection.value },
-            { preserveState: true, replace: true },
-        );
-    }, 500);
-};
-
-watch(search, updateFilters);
+const handleSort = (field, direction) => setSort(field, direction);
 
 const toggleExpand = (id) => {
     const index = expandedRows.value.indexOf(id);
@@ -94,194 +168,12 @@ const printInvoice = (invoice) => {
     <Head title="Hóa đơn - KiotViet Clone" />
     <AppLayout>
         <template #sidebar>
-            <!-- Lọc CHI NHÁNH -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-[13px] font-bold text-gray-800 mb-2"
-                    >Chi nhánh</label
-                >
-                <div class="flex items-center">
-                    <select
-                        class="w-full border border-gray-300 rounded p-1.5 text-[13px] outline-none text-gray-700 font-medium"
-                    >
-                        <option
-                            v-for="branch in branches"
-                            :key="branch.id"
-                            :value="branch.id"
-                        >
-                            {{ branch.name }}
-                        </option>
-                    </select>
-                </div>
-            </div>
-
-            <!-- Lọc THỜI GIAN -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <div class="flex items-center justify-between mb-2">
-                    <label class="block text-[13px] font-bold text-gray-800"
-                        >Thời gian</label
-                    >
-                    <svg
-                        class="w-3.5 h-3.5 text-blue-600 cursor-pointer"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                    >
-                        <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            stroke-width="2"
-                            d="M19 9l-7 7-7-7"
-                        ></path>
-                    </svg>
-                </div>
-                <div class="space-y-2 text-[13px] text-gray-700">
-                    <label
-                        class="flex items-center justify-between gap-2 cursor-pointer p-1.5 border border-gray-300 rounded hover:border-blue-500"
-                    >
-                        <div class="flex items-center gap-2">
-                            <input
-                                type="radio"
-                                value="last_year"
-                                name="time"
-                                checked
-                                class="text-blue-600 focus:ring-blue-500 w-4 h-4"
-                            />
-                            Năm trước (âm lịch)
-                        </div>
-                        <svg
-                            class="w-4 h-4 text-gray-400"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                        >
-                            <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                stroke-width="2"
-                                d="M9 5l7 7-7 7"
-                            ></path>
-                        </svg>
-                    </label>
-                    <label
-                        class="flex items-center justify-between gap-2 cursor-pointer p-1.5 border border-gray-300 rounded hover:border-blue-500 text-gray-500"
-                    >
-                        <div class="flex items-center gap-2">
-                            <input
-                                type="radio"
-                                value="custom"
-                                name="time"
-                                class="text-blue-600 focus:ring-blue-500 w-4 h-4"
-                            />
-                            Tùy chỉnh
-                        </div>
-                        <svg
-                            class="w-4 h-4 text-gray-400"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                        >
-                            <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                stroke-width="2"
-                                d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-                            ></path>
-                        </svg>
-                    </label>
-                </div>
-            </div>
-
-            <!-- LOẠI HÓA ĐƠN -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-[13px] font-bold text-gray-800 mb-2"
-                    >Loại hóa đơn</label
-                >
-                <div class="space-y-1.5">
-                    <label
-                        class="flex items-center gap-2 cursor-pointer text-[13px] text-gray-700"
-                    >
-                        <input
-                            type="checkbox"
-                            checked
-                            class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        Không giao hàng
-                    </label>
-                    <label
-                        class="flex items-center gap-2 cursor-pointer text-[13px] text-gray-700"
-                    >
-                        <input
-                            type="checkbox"
-                            checked
-                            class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        Giao hàng
-                    </label>
-                </div>
-            </div>
-
-            <!-- Lọc TRẠNG THÁI -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-[13px] font-bold text-gray-800 mb-2"
-                    >Trạng thái hóa đơn</label
-                >
-                <div class="space-y-1.5">
-                    <label
-                        class="flex items-center gap-2 cursor-pointer text-[13px] text-gray-700"
-                    >
-                        <input
-                            type="checkbox"
-                            checked
-                            class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        Đang xử lý
-                    </label>
-                    <label
-                        class="flex items-center gap-2 cursor-pointer text-[13px] text-gray-700"
-                    >
-                        <input
-                            type="checkbox"
-                            checked
-                            class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        Hoàn thành
-                    </label>
-                    <label
-                        class="flex items-center gap-2 cursor-pointer text-[13px] text-gray-700"
-                    >
-                        <input
-                            type="checkbox"
-                            class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        Không giao được
-                    </label>
-                    <label
-                        class="flex items-center gap-2 cursor-pointer text-[13px] text-gray-700"
-                    >
-                        <input
-                            type="checkbox"
-                            class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        Đã hủy
-                    </label>
-                </div>
-            </div>
-
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-[13px] font-bold text-gray-800 mb-2"
-                    >Trạng thái giao hàng</label
-                >
-                <select
-                    class="w-full border border-gray-300 rounded p-1.5 text-[13px] outline-none text-gray-500"
-                >
-                    <option value="">Chọn trạng thái</option>
-                </select>
-            </div>
-
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-[13px] font-bold text-gray-800 mb-2"
-                    >Đối tác giao hàng</label
-                >
+            <div class="p-3">
+                <SidebarFilter
+                    v-model="filters"
+                    :config="sidebarConfig"
+                    @reset="reset"
+                />
             </div>
         </template>
 
@@ -307,7 +199,7 @@ const printInvoice = (invoice) => {
                     </svg>
                     <input
                         type="text"
-                        v-model="search"
+                        v-model="filters.search"
                         placeholder="Theo mã hóa đơn, mã KH, tên KH, sđt..."
                         class="w-full pl-9 pr-8 py-1.5 focus:outline-none border border-gray-300 rounded text-sm placeholder-gray-400"
                     />
@@ -375,13 +267,13 @@ const printInvoice = (invoice) => {
                                     class="rounded border-gray-300"
                                 />
                             </th>
-                            <SortableHeader label="Mã hóa đơn" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
-                            <SortableHeader label="Thời gian" field="created_at" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
+                            <SortableHeader label="Mã hóa đơn" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-2 py-2" @sort="handleSort" />
+                            <SortableHeader label="Thời gian" field="created_at" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-2 py-2" @sort="handleSort" />
                             <th class="px-2 py-2">Khách hàng</th>
-                            <SortableHeader label="Tổng tiền hàng" field="subtotal" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
-                            <SortableHeader label="Giảm giá" field="discount" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
-                            <SortableHeader label="Tổng sau giảm giá" field="total" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
-                            <SortableHeader label="Khách đã trả" field="customer_paid" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader label="Tổng tiền hàng" field="subtotal" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader label="Giảm giá" field="discount" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader label="Tổng sau giảm giá" field="total" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader label="Khách đã trả" field="customer_paid" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100">

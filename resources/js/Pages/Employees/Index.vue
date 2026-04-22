@@ -4,6 +4,8 @@ import { Head, router, Link, useForm, usePage } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
+import SidebarFilter from "@/Components/Filters/SidebarFilter.vue";
+import { useFilters } from "@/composables/useFilters.js";
 import axios from "axios";
 
 const props = defineProps({
@@ -13,37 +15,55 @@ const props = defineProps({
     jobTitles: Array,
     salaryTemplates: { type: Array, default: () => [] },
     filters: Object,
+    filterOptions: Object,
 });
 
-const search = ref(props.filters?.search || "");
-const sortBy = ref(props.filters?.sort_by || "");
-const sortDirection = ref(props.filters?.sort_direction || "");
+const { filters, setSort, reset } = useFilters({
+    initial: props.filters,
+    route: "/employees",
+});
+
 const expandedRows = ref([]);
 
-let searchTimeout;
-watch(search, (value) => {
-    clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(() => {
-        router.get(
-            "/employees",
-            { search: value, sort_by: sortBy.value || undefined, sort_direction: sortDirection.value || undefined },
-            {
-                preserveState: true,
-                replace: true,
-            },
-        );
-    }, 500);
-});
+const handleSort = (field, direction) => setSort(field, direction);
 
-const handleSort = (field, direction) => {
-    sortBy.value = field;
-    sortDirection.value = direction;
-    router.get(
-        "/employees",
-        { search: search.value || undefined, sort_by: field || undefined, sort_direction: direction || undefined },
-        { preserveState: true, replace: true },
-    );
-};
+const sidebarConfig = computed(() => [
+    {
+        key: "is_active",
+        type: "select",
+        label: "Trạng thái nhân viên",
+        options: props.filterOptions?.statuses || [
+            { value: "1", label: "Đang làm việc" },
+            { value: "0", label: "Đã nghỉ việc" },
+        ],
+        placeholder: "Tất cả trạng thái",
+        zone: "quick",
+    },
+    {
+        key: "branch_id",
+        type: "select",
+        label: "Chi nhánh làm việc",
+        options: (props.filterOptions?.branches || props.branches || []).map(b => ({ value: b.id, label: b.name })),
+        placeholder: "Tất cả chi nhánh",
+        zone: "quick",
+    },
+    {
+        key: "department_id",
+        type: "select",
+        label: "Phòng ban",
+        options: (props.filterOptions?.departments || props.departments || []).map(d => ({ value: d.id, label: d.name })),
+        placeholder: "Tất cả phòng ban",
+        zone: "main",
+    },
+    {
+        key: "job_title_id",
+        type: "select",
+        label: "Chức danh",
+        options: (props.filterOptions?.jobTitles || props.jobTitles || []).map(j => ({ value: j.id, label: j.name })),
+        placeholder: "Tất cả chức danh",
+        zone: "main",
+    },
+]);
 
 const toggleExpand = (employeeId) => {
     const index = expandedRows.value.indexOf(employeeId);
@@ -391,116 +411,7 @@ const bonusCalcLabel = (calc) => {
     <AppLayout>
         <!-- Sidebar slot -->
         <template #sidebar>
-            <!-- Lọc TRẠNG THÁI NHÂN VIÊN -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2"
-                    >Trạng thái nhân viên</label
-                >
-                <div class="space-y-2 text-sm text-gray-700">
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input
-                            type="radio"
-                            name="is_active"
-                            checked
-                            class="text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        Đang làm việc
-                    </label>
-                    <label
-                        class="flex items-center gap-2 cursor-pointer text-gray-500"
-                    >
-                        <input
-                            type="radio"
-                            name="is_active"
-                            class="text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        Đã nghỉ
-                    </label>
-                </div>
-            </div>
-
-            <!-- Lọc CHI NHÁNH LÀM VIỆC -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2"
-                    >Chi nhánh làm việc</label
-                >
-                <select
-                    class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none text-gray-700"
-                >
-                    <option value="">Chọn chi nhánh</option>
-                    <option v-for="br in branches" :key="br.id" :value="br.id">
-                        {{ br.name }}
-                    </option>
-                </select>
-            </div>
-
-            <!-- Lọc PHÒNG BAN -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <div class="flex justify-between items-center mb-2">
-                    <label class="block text-sm font-bold text-gray-800"
-                        >Phòng ban</label
-                    >
-                    <button class="text-gray-400 hover:text-blue-600">
-                        <svg
-                            class="w-4 h-4"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                        >
-                            <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                stroke-width="2"
-                                d="M12 4v16m8-8H4"
-                            ></path>
-                        </svg>
-                    </button>
-                </div>
-                <select
-                    class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none text-gray-500"
-                >
-                    <option value="">Chọn phòng ban</option>
-                    <option
-                        v-for="dept in departments"
-                        :key="dept.id"
-                        :value="dept.id"
-                    >
-                        {{ dept.name }}
-                    </option>
-                </select>
-            </div>
-
-            <!-- Lọc CHỨC DANH -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <div class="flex justify-between items-center mb-2">
-                    <label class="block text-sm font-bold text-gray-800"
-                        >Chức danh</label
-                    >
-                    <button class="text-gray-400 hover:text-blue-600">
-                        <svg
-                            class="w-4 h-4"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                        >
-                            <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                stroke-width="2"
-                                d="M12 4v16m8-8H4"
-                            ></path>
-                        </svg>
-                    </button>
-                </div>
-                <select
-                    class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none text-gray-500"
-                >
-                    <option value="">Chọn chức danh</option>
-                    <option v-for="jt in jobTitles" :key="jt.id" :value="jt.id">
-                        {{ jt.name }}
-                    </option>
-                </select>
-            </div>
+            <SidebarFilter v-model="filters" :config="sidebarConfig" @reset="reset" />
         </template>
 
         <!-- Main content -->
@@ -533,7 +444,7 @@ const bonusCalcLabel = (calc) => {
                     </svg>
                     <input
                         type="text"
-                        v-model="search"
+                        v-model="filters.search"
                         placeholder="Theo mã, tên nhân viên"
                         class="w-full pl-7 pr-8 py-1.5 focus:outline-none text-sm placeholder-gray-400 bg-transparent"
                     />
@@ -605,11 +516,11 @@ const bonusCalcLabel = (calc) => {
                                 />
                             </th>
                             <th class="px-4 py-3 w-12">Ảnh</th>
-                            <SortableHeader label="Mã nhân viên" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
-                            <SortableHeader label="Mã chấm công" field="attendance_code" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
-                            <SortableHeader label="Tên nhân viên" field="name" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
-                            <SortableHeader label="Số điện thoại" field="phone" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
-                            <SortableHeader label="Số CMND/CCCD" field="cccd" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Mã nhân viên" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Mã chấm công" field="attendance_code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Tên nhân viên" field="name" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Số điện thoại" field="phone" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Số CMND/CCCD" field="cccd" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3" @sort="handleSort" />
                             <th class="px-4 py-3 text-right">Nợ và tạm ứng</th>
                             <th class="px-4 py-3">Ghi chú</th>
                         </tr>

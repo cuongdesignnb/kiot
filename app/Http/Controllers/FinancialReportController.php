@@ -38,45 +38,15 @@ class FinancialReportController extends Controller
         }
 
         // ══════════════════════════════════════
-        // REVENUE SECTION
+        // REVENUE / COGS / GROSS PROFIT via MetricService
+        // (see metric_dictionary_reports.md for formula invariants)
         // ══════════════════════════════════════
-
-        // (1) Total Sales Revenue
-        $invoiceQ = Invoice::whereBetween('created_at', [$startDate, $endDate])
-            ->where('status', '!=', 'Đã hủy');
-        if ($branchId) $invoiceQ->where('branch_id', $branchId);
-        $totalSales = (float) (clone $invoiceQ)->sum('total');
-
-        // (2) Cost of Goods Sold (COGS)
-        // Use invoice_items.cost_price snapshot if available, otherwise fallback to products.cost_price
-        $invoiceIds = (clone $invoiceQ)->pluck('id');
-        $hasItemCostCol = Schema::hasColumn('invoice_items', 'cost_price');
-        $costExpr = $hasItemCostCol
-            ? 'invoice_items.quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0)'
-            : 'invoice_items.quantity * COALESCE(products.cost_price, 0)';
-        $cogs = (float) DB::table('invoice_items')
-            ->join('products', 'invoice_items.product_id', '=', 'products.id')
-            ->whereIn('invoice_items.invoice_id', $invoiceIds)
-            ->sum(DB::raw($costExpr));
-
-        // Purchase other costs (shipping, handling, etc.) — part of COGS
-        $purchaseOtherCosts = (float) Purchase::whereBetween('purchase_date', [$startDate, $endDate])
-            ->where('status', 'completed')
-            ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
-            ->sum('other_costs_total');
-        $cogs += $purchaseOtherCosts;
-
-        // (3) Sales Returns
-        $returnsQ = OrderReturn::whereBetween('created_at', [$startDate, $endDate])
-            ->where('status', '!=', 'Đã hủy');
-        if ($branchId) $returnsQ->where('branch_id', $branchId);
-        $salesReturns = (float) (clone $returnsQ)->sum('total');
-
-        // (4) Invoice Discounts
-        $invoiceDiscounts = (float) (clone $invoiceQ)->sum('discount');
-
-        // (5) Gross Profit = (1) - (2) - (3) - (4)
-        $grossProfit = $totalSales - $cogs - $salesReturns - $invoiceDiscounts;
+        $metrics          = \App\Support\Reports\MetricService::compute($startDate, $endDate, $branchId);
+        $totalSales       = $metrics['gross_revenue'];
+        $cogs             = $metrics['cogs_net'];
+        $salesReturns     = $metrics['return_value'];
+        $invoiceDiscounts = $metrics['invoice_discount'];
+        $grossProfit      = $metrics['gross_profit'];
 
         // ══════════════════════════════════════
         // EXPENSES SECTION (from cash_flows)

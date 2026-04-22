@@ -13,58 +13,35 @@ use App\Models\Product;
 use App\Models\Branch;
 use App\Models\Customer;
 use App\Models\Setting;
+use App\Enums\PurchaseOrderStatus;
+use App\Support\Filters\FilterableIndex;
 use App\Services\LockPeriodService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
 class PurchaseOrderController extends Controller
 {
+    use FilterableIndex;
+
+    protected function configurePurchaseOrderFilters(): void
+    {
+        $this->searchable = ['code', 'note', 'created_by_name', 'ordered_by_name'];
+        $this->searchableRelations = [
+            'supplier' => ['name', 'code', 'phone'],
+            'items.product' => ['name', 'code', 'barcode'],
+        ];
+        $this->sortable = ['code', 'created_at', 'total_amount', 'total_payment', 'status'];
+        $this->dateColumn = 'created_at';
+        $this->creatorColumn = null;
+        $this->scalarFilters = ['branch_id', 'supplier_id'];
+    }
+
     public function index(Request $request)
     {
-        $query = PurchaseOrder::with(['items.product', 'branch', 'supplier'])
-            ->when($request->filled('sort_by'), function ($q) use ($request) {
-                $allowed = ['code', 'created_at', 'total_amount', 'total_payment', 'status'];
-                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'id';
-                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
-                $q->orderBy($sortBy, $dir);
-            }, function ($q) {
-                $q->orderBy('id', 'desc');
-            });
+        $this->configurePurchaseOrderFilters();
 
-        if ($request->filled('search')) {
-            $query->where('code', 'like', "%{$request->search}%");
-        }
-
-        if ($request->filled('status')) {
-            $query->whereIn('status', (array) $request->status);
-        }
-
-        if ($request->filled('branch_id')) {
-            $query->where('branch_id', $request->branch_id);
-        }
-
-        if ($request->filled('created_by_name')) {
-            $query->where('created_by_name', 'like', "%{$request->created_by_name}%");
-        }
-
-        if ($request->filled('ordered_by_name')) {
-            $query->where('ordered_by_name', 'like', "%{$request->ordered_by_name}%");
-        }
-
-        if ($request->filled('date_filter')) {
-            switch ($request->date_filter) {
-                case 'today':
-                    $query->whereDate('created_at', Carbon::today());
-                    break;
-                case 'this_month':
-                    $query->whereMonth('created_at', Carbon::now()->month)
-                        ->whereYear('created_at', Carbon::now()->year);
-                    break;
-                case 'last_year':
-                    $query->whereYear('created_at', Carbon::now()->subYear()->year);
-                    break;
-            }
-        }
+        $query = PurchaseOrder::with(['items.product', 'branch', 'supplier']);
+        $this->applyFilters($query, $request);
 
         $purchaseOrders = $query->paginate(20)->withQueryString();
         $branches = Branch::all();
@@ -72,17 +49,12 @@ class PurchaseOrderController extends Controller
         return Inertia::render('PurchaseOrders/Index', [
             'purchaseOrders' => $purchaseOrders,
             'branches' => $branches,
-            'filters' => array_merge($request->only([
-                'search',
-                'status',
-                'branch_id',
-                'created_by_name',
-                'ordered_by_name',
-                'date_filter'
-            ]), [
-                'sort_by' => $request->sort_by,
-                'sort_direction' => $request->sort_direction,
-            ])
+            'filters' => $this->currentFilters($request),
+            'filterOptions' => [
+                'branches' => $branches->map(fn($b) => ['value' => $b->id, 'label' => $b->name]),
+                'statuses' => PurchaseOrderStatus::options(),
+                'suppliers' => Customer::where('is_supplier', true)->orderBy('name')->get(['id', 'name'])->map(fn($s) => ['value' => $s->id, 'label' => $s->name]),
+            ],
         ]);
     }
 
@@ -421,9 +393,10 @@ class PurchaseOrderController extends Controller
 
     public function export(Request $request)
     {
-        $orders = PurchaseOrder::with(['supplier', 'branch'])
-            ->when($request->search, fn($q, $s) => $q->where('code', 'LIKE', "%{$s}%"))
-            ->orderBy('id', 'desc')->get();
+        $this->configurePurchaseOrderFilters();
+        $query = PurchaseOrder::with(['supplier', 'branch']);
+        $this->applyFilters($query, $request);
+        $orders = $query->get();
 
         return \App\Services\CsvService::export(
             ['Mã đặt hàng nhập', 'Thời gian', 'Nhà cung cấp', 'Chi nhánh', 'Tổng tiền', 'Giảm giá', 'Tổng thanh toán', 'Trạng thái', 'Ghi chú'],

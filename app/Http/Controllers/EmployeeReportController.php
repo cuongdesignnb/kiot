@@ -335,13 +335,18 @@ class EmployeeReportController extends Controller
     {
         $invoiceIds = (clone $query)->pluck('id');
 
+        $hasItemCost = \Illuminate\Support\Facades\Schema::hasColumn('invoice_items', 'cost_price');
+        $costExpr = $hasItemCost
+            ? 'SUM(invoice_items.quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0))'
+            : 'SUM(invoice_items.quantity * COALESCE(products.cost_price, 0))';
+
         $costs = DB::table('invoice_items')
             ->join('invoices', 'invoice_items.invoice_id', '=', 'invoices.id')
             ->join('products', 'invoice_items.product_id', '=', 'products.id')
             ->whereIn('invoice_items.invoice_id', $invoiceIds)
             ->select(
                 DB::raw('invoices.created_by as emp_id'),
-                DB::raw('SUM(invoice_items.quantity * products.cost_price) as total_cost')
+                DB::raw("$costExpr as total_cost")
             )
             ->whereNotNull('invoices.created_by')
             ->groupBy('emp_id')

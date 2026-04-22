@@ -4,6 +4,8 @@ import { Head, router, Link } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
+import SidebarFilter from "@/Components/Filters/SidebarFilter.vue";
+import { useFilters } from "@/composables/useFilters.js";
 
 const props = defineProps({
     purchases: Object,
@@ -11,56 +13,85 @@ const props = defineProps({
     summary: Object,
     suppliers: Array,
     employees: Array,
+    filterOptions: Object,
 });
 
 // ── Filters ──
-const search = ref(props.filters?.search || "");
-const statusFilters = ref(props.filters?.status || []);
-const dateFilter = ref(props.filters?.date_filter || "this_month");
-const dateFrom = ref(props.filters?.date_from || "");
-const dateTo = ref(props.filters?.date_to || "");
-const supplierId = ref(props.filters?.supplier_id || "");
-const createdBy = ref(props.filters?.created_by || "");
-const sortBy = ref(props.filters?.sort_by || "");
-const sortDirection = ref(props.filters?.sort_direction || "");
+const { filters, setSort, reset } = useFilters({
+    initial: props.filters,
+    route: "/purchases",
+    defaults: { date_filter: "this_month" },
+});
 
-const allStatuses = [
+const allStatuses = computed(() => props.filterOptions?.statuses || [
     { value: "draft", label: "Phiếu tạm" },
     { value: "completed", label: "Hoàn thành" },
     { value: "returned", label: "Đã trả hàng" },
     { value: "cancelled", label: "Đã hủy" },
-];
+]);
 
-let searchTimeout;
-const updateFilters = () => {
-    clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(() => {
-        const params = {
-            search: search.value || undefined,
-            status: statusFilters.value.length ? statusFilters.value : undefined,
-            date_filter: dateFilter.value || undefined,
-            date_from: dateFilter.value === 'custom' ? dateFrom.value || undefined : undefined,
-            date_to: dateFilter.value === 'custom' ? dateTo.value || undefined : undefined,
-            supplier_id: supplierId.value || undefined,
-            created_by: createdBy.value || undefined,
-            sort_by: sortBy.value || undefined,
-            sort_direction: sortDirection.value || undefined,
-        };
-        router.get("/purchases", params, { preserveState: true, replace: true });
-    }, 400);
-};
+const sidebarConfig = computed(() => [
+    {
+        key: "date",
+        type: "dateRange",
+        label: "Thời gian",
+        fields: { filter: "date_filter", from: "date_from", to: "date_to" },
+        zone: "quick",
+    },
+    {
+        key: "branch_id",
+        type: "select",
+        label: "Chi nhánh",
+        options: (props.filterOptions?.branches || []).map((b) => ({ value: String(b.id), label: b.name })),
+        placeholder: "-- Tất cả chi nhánh --",
+        zone: "quick",
+    },
+    {
+        key: "status",
+        type: "checkbox",
+        label: "Trạng thái",
+        options: allStatuses.value,
+        zone: "main",
+    },
+    {
+        key: "supplier_id",
+        type: "select",
+        label: "Nhà cung cấp",
+        options: (props.filterOptions?.suppliers || props.suppliers || []).map((s) => ({ value: s.value ?? s.id, label: s.label ?? s.name })),
+        placeholder: "-- Tất cả NCC --",
+        zone: "main",
+    },
+    {
+        key: "has_debt",
+        type: "select",
+        label: "Công nợ NCC",
+        options: props.filterOptions?.debtOptions || [],
+        placeholder: "-- Tất cả --",
+        zone: "main",
+    },
+    {
+        key: "created_by",
+        type: "select",
+        label: "Người tạo",
+        options: (props.filterOptions?.employees || props.employees || []).map((e) => ({ value: e.value ?? e.id, label: e.label ?? e.name })),
+        placeholder: "-- Tất cả --",
+        zone: "advanced",
+    },
+    {
+        key: "payment_method",
+        type: "select",
+        label: "Phương thức TT",
+        options: props.filterOptions?.paymentMethods || [],
+        placeholder: "-- Tất cả --",
+        zone: "advanced",
+    },
+]);
 
-watch([search, statusFilters, dateFilter, dateFrom, dateTo, supplierId, createdBy], updateFilters, { deep: true });
+const handleSort = (field, direction) => setSort(field, direction);
 
-const handleSort = (field, direction) => {
-    sortBy.value = field;
-    sortDirection.value = direction;
-    updateFilters();
-};
-
-const removeStatusFilter = (val) => {
-    const idx = statusFilters.value.indexOf(val);
-    if (idx > -1) statusFilters.value.splice(idx, 1);
+const formatStatus = (val) => {
+    const s = allStatuses.value.find((x) => x.value === val);
+    return s ? s.label : val;
 };
 
 // ── Expand ──
@@ -119,10 +150,6 @@ const totalVisibleCols = computed(() => visibleColumns.value.length + 2); // +2 
 
 // ── Helpers ──
 const formatCurrency = (val) => Number(val || 0).toLocaleString("vi-VN");
-const formatStatus = (val) => {
-    const s = allStatuses.find((x) => x.value === val);
-    return s ? s.label : val;
-};
 const formatDate = (d) => d ? new Date(d).toLocaleString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
 const formatDateShort = (d) => d ? new Date(d).toLocaleDateString("vi-VN") : "";
 
@@ -138,102 +165,18 @@ const cancelPurchase = (order) => {
     if (!confirm(`Bạn có chắc muốn hủy phiếu nhập hàng ${order.code}?`)) return;
     router.delete(`/purchases/${order.id}`, { preserveState: false });
 };
-
-// ── Supplier search ──
-const supplierSearch = ref('');
-const filteredSuppliers = computed(() => {
-    if (!supplierSearch.value) return props.suppliers || [];
-    const s = supplierSearch.value.toLowerCase();
-    return (props.suppliers || []).filter(sup => sup.name.toLowerCase().includes(s) || (sup.code || '').toLowerCase().includes(s));
-});
-const showSupplierDropdown = ref(false);
-const selectSupplier = (sup) => {
-    supplierId.value = sup.id;
-    supplierSearch.value = sup.name;
-    showSupplierDropdown.value = false;
-};
-const clearSupplier = () => {
-    supplierId.value = '';
-    supplierSearch.value = '';
-};
 </script>
 
 <template>
     <Head title="Nhập hàng - KiotViet Clone" />
     <AppLayout>
         <template #sidebar>
-            <!-- Chi nhánh -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2">Chi nhánh</label>
-                <select class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none bg-blue-600 text-white font-medium appearance-none h-[32px]">
-                    <option value="">Chi nhánh trung tâm</option>
-                </select>
-            </div>
-
-            <!-- Trạng thái -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2">Trạng thái</label>
-                <div class="flex flex-wrap gap-2 text-[12px]" v-if="statusFilters.length">
-                    <div v-for="status in statusFilters" :key="status" class="bg-green-600 text-white px-2 py-1 rounded flex items-center gap-1 cursor-pointer">
-                        {{ formatStatus(status) }}
-                        <span @click.stop="removeStatusFilter(status)" class="pl-1 border-l border-green-400 font-bold hover:text-gray-200 ml-1">&times;</span>
-                    </div>
-                </div>
-                <div class="mt-2 space-y-1">
-                    <label v-for="s in allStatuses" :key="s.value" class="flex items-center gap-2 cursor-pointer text-sm text-gray-700">
-                        <input type="checkbox" :value="s.value" v-model="statusFilters" class="rounded border-gray-300 text-green-600 focus:ring-green-500 w-4 h-4" />
-                        {{ s.label }}
-                    </label>
-                </div>
-            </div>
-
-            <!-- Thời gian -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2">Thời gian</label>
-                <div class="space-y-2 text-sm text-gray-700">
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input type="radio" v-model="dateFilter" value="this_month" class="text-green-600 focus:ring-green-500 w-4 h-4" />
-                        Tháng này
-                    </label>
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input type="radio" v-model="dateFilter" value="custom" class="text-green-600 focus:ring-green-500 w-4 h-4" />
-                        Tùy chỉnh
-                    </label>
-                    <div v-if="dateFilter === 'custom'" class="space-y-2 pl-6">
-                        <div>
-                            <label class="text-xs text-gray-500">Từ ngày</label>
-                            <input type="date" v-model="dateFrom" class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none" />
-                        </div>
-                        <div>
-                            <label class="text-xs text-gray-500">Đến ngày</label>
-                            <input type="date" v-model="dateTo" class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none" />
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Nhà cung cấp -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2">Nhà cung cấp</label>
-                <div class="relative">
-                    <input type="text" v-model="supplierSearch" @focus="showSupplierDropdown = true" @blur="setTimeout(() => showSupplierDropdown = false, 200)" placeholder="Chọn nhà cung cấp" class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none text-gray-700 bg-gray-50 pr-7" />
-                    <button v-if="supplierId" @click="clearSupplier" class="absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500 text-lg leading-none">&times;</button>
-                    <div v-if="showSupplierDropdown && filteredSuppliers.length" class="absolute z-20 top-full left-0 right-0 bg-white border border-gray-300 rounded-b shadow max-h-40 overflow-y-auto">
-                        <div v-for="sup in filteredSuppliers.slice(0, 20)" :key="sup.id" @mousedown.prevent="selectSupplier(sup)" class="px-3 py-2 hover:bg-blue-50 cursor-pointer text-sm flex justify-between">
-                            <span>{{ sup.name }}</span>
-                            <span class="text-gray-400 text-xs">{{ sup.code }}</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Người tạo -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2">Người tạo</label>
-                <select v-model="createdBy" class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none text-gray-700 bg-gray-50">
-                    <option value="">Tất cả</option>
-                    <option v-for="emp in employees" :key="emp.id" :value="emp.id">{{ emp.name }}</option>
-                </select>
+            <div class="p-3">
+                <SidebarFilter
+                    v-model="filters"
+                    :config="sidebarConfig"
+                    @reset="reset"
+                />
             </div>
         </template>
 
@@ -244,7 +187,7 @@ const clearSupplier = () => {
 
                 <div class="flex-1 max-w-[400px] ml-6 relative">
                     <svg class="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-                    <input type="text" v-model="search" placeholder="Theo mã phiếu nhập, mã đặt hàng, NCC" class="w-full pl-9 pr-8 py-1.5 focus:outline-none border border-gray-300 rounded text-sm placeholder-gray-400" />
+                    <input type="text" v-model="filters.search" placeholder="Theo mã phiếu nhập, mã đặt hàng, NCC" class="w-full pl-9 pr-8 py-1.5 focus:outline-none border border-gray-300 rounded text-sm placeholder-gray-400" />
                 </div>
 
                 <div class="flex gap-2 ml-auto items-center">
@@ -292,10 +235,10 @@ const clearSupplier = () => {
                             <th class="px-3 py-2 text-center w-10">
                                 <svg class="w-4 h-4 mx-auto text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path></svg>
                             </th>
-                            <SortableHeader v-if="isColVisible('code')" label="Mã nhập hàng" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
+                            <SortableHeader v-if="isColVisible('code')" label="Mã nhập hàng" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-2 py-2" @sort="handleSort" />
                             <th v-if="isColVisible('purchase_order_code')" class="px-2 py-2">Mã đặt hàng nhập</th>
                             <th v-if="isColVisible('return_code')" class="px-2 py-2">Mã trả hàng nhập</th>
-                            <SortableHeader v-if="isColVisible('time')" label="Thời gian" field="purchase_date" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
+                            <SortableHeader v-if="isColVisible('time')" label="Thời gian" field="purchase_date" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-2 py-2" @sort="handleSort" />
                             <th v-if="isColVisible('created_time')" class="px-2 py-2">Thời gian tạo</th>
                             <th v-if="isColVisible('updated_at')" class="px-2 py-2">Ngày cập nhật</th>
                             <th v-if="isColVisible('supplier_code')" class="px-2 py-2">Mã NCC</th>
@@ -305,15 +248,15 @@ const clearSupplier = () => {
                             <th v-if="isColVisible('creator')" class="px-2 py-2">Người tạo</th>
                             <th v-if="isColVisible('total_quantity')" class="px-4 py-2 text-right">Tổng số lượng</th>
                             <th v-if="isColVisible('item_count')" class="px-4 py-2 text-right">SL mặt hàng</th>
-                            <SortableHeader v-if="isColVisible('total_amount')" label="Tổng tiền hàng" field="total_amount" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
-                            <SortableHeader v-if="isColVisible('discount')" label="Giảm giá" field="discount" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader v-if="isColVisible('total_amount')" label="Tổng tiền hàng" field="total_amount" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader v-if="isColVisible('discount')" label="Giảm giá" field="discount" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
                             <th v-if="isColVisible('other_cost')" class="px-4 py-2 text-right">CP nhập trả NCC</th>
-                            <SortableHeader v-if="isColVisible('need_pay')" label="Cần trả NCC" field="need_pay" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader v-if="isColVisible('need_pay')" label="Cần trả NCC" field="need_pay" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
                             <th v-if="isColVisible('payment_discount')" class="px-4 py-2 text-right">CK thanh toán</th>
-                            <SortableHeader v-if="isColVisible('paid')" label="Tiền đã trả NCC" field="paid_amount" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader v-if="isColVisible('paid')" label="Tiền đã trả NCC" field="paid_amount" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
                             <th v-if="isColVisible('other_import_cost')" class="px-4 py-2 text-right">CP nhập khác</th>
                             <th v-if="isColVisible('note')" class="px-2 py-2">Ghi chú</th>
-                            <SortableHeader v-if="isColVisible('status')" label="Trạng thái" field="status" :current-sort="sortBy" :current-direction="sortDirection" align="center" class="px-4 py-2 text-center w-24" @sort="handleSort" />
+                            <SortableHeader v-if="isColVisible('status')" label="Trạng thái" field="status" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="center" class="px-4 py-2 text-center w-24" @sort="handleSort" />
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100 bg-white">

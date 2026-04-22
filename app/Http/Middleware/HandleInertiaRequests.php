@@ -42,6 +42,10 @@ class HandleInertiaRequests extends Middleware
                 'permissions' => $request->user()?->getPermissionsArray() ?? [],
                 'role_name' => $request->user()?->role?->display_name,
             ],
+            'branch_lock' => [
+                'locked' => (bool) $request->attributes->get('branch_locked', false),
+                'branch_id' => $request->attributes->get('locked_branch_id'),
+            ],
             'flash' => [
                 'success' => fn() => $request->session()->get('success'),
                 'error' => fn() => $request->session()->get('error'),

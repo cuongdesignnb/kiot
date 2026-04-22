@@ -7,9 +7,21 @@ use Inertia\Inertia;
 use App\Models\Warranty;
 use App\Models\Product;
 use Carbon\Carbon;
+use App\Support\Filters\FilterableIndex;
 
 class WarrantyController extends Controller
 {
+    use FilterableIndex;
+
+    protected function configureWarrantyFilters(): void
+    {
+        $this->searchable = ['serial_imei', 'customer_name', 'invoice_code'];
+        $this->searchableRelations = ['product' => ['name', 'sku']];
+        $this->sortable = ['invoice_code', 'customer_name', 'serial_imei', 'warranty_period', 'purchase_date', 'warranty_end_date', 'created_at'];
+        $this->dateColumn = 'purchase_date';
+        $this->scalarFilters = [];
+    }
+
     public function index(Request $request)
     {
         // Auto seed dummy data if empty for testing viewing
@@ -38,49 +50,28 @@ class WarrantyController extends Controller
             }
         }
 
-        $query = Warranty::with('product')
-            ->when($request->filled('sort_by'), function ($q) use ($request) {
-                $allowed = ['invoice_code', 'customer_name', 'serial_imei', 'warranty_period', 'purchase_date', 'warranty_end_date', 'created_at'];
-                $productSortFields = ['product_sku' => 'sku', 'product_name' => 'name'];
-                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+        $this->configureWarrantyFilters();
 
-                if (array_key_exists($request->sort_by, $productSortFields)) {
-                    $q->join('products', 'warranties.product_id', '=', 'products.id')
-                        ->orderBy('products.' . $productSortFields[$request->sort_by], $dir)
-                        ->select('warranties.*');
-                } elseif (in_array($request->sort_by, $allowed)) {
-                    $q->orderBy($request->sort_by, $dir);
-                } else {
-                    $q->orderBy('id', 'desc');
-                }
-            }, function ($q) {
-                $q->orderBy('id', 'desc');
-            });
+        $query = Warranty::with('product');
 
-        if ($request->filled('search')) {
-            $search = $request->input('search');
-            $query->whereHas('product', function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                    ->orWhere('sku', 'like', "%{$search}%");
-            })->orWhere('serial_imei', 'like', "%{$search}%")
-                ->orWhere('customer_name', 'like', "%{$search}%")
-                ->orWhere('invoice_code', 'like', "%{$search}%");
+        // Handle product-field sorting specially (join products)
+        $productSortFields = ['product_sku' => 'sku', 'product_name' => 'name'];
+        if ($request->filled('sort_by') && array_key_exists($request->sort_by, $productSortFields)) {
+            $dir = in_array($request->input('sort_direction', $request->input('sort_dir')), ['asc', 'desc']) ? $request->input('sort_direction', $request->input('sort_dir')) : 'desc';
+            $query->join('products', 'warranties.product_id', '=', 'products.id')
+                ->orderBy('products.' . $productSortFields[$request->sort_by], $dir)
+                ->select('warranties.*');
+            // Remove normal sort by clearing sortable temporarily
+            $savedSortable = $this->sortable;
+            $this->sortable = [];
+            $this->applySearch($query, $request);
+            $this->sortable = $savedSortable;
+        } else {
+            $this->applySearch($query, $request);
+            $this->applySort($query, $request);
         }
 
-        // Filters mapping
-        $time_filter = $request->input('time_filter', 'all');
-        if ($time_filter === 'this_month') {
-            $query->whereMonth('purchase_date', Carbon::now()->month)
-                ->whereYear('purchase_date', Carbon::now()->year);
-        } elseif ($time_filter === 'custom') {
-            if ($request->filled('time_start')) {
-                $query->whereDate('purchase_date', '>=', clone new Carbon($request->input('time_start')));
-            }
-            if ($request->filled('time_end')) {
-                $query->whereDate('purchase_date', '<=', clone new Carbon($request->input('time_end')));
-            }
-        }
-
+        // Pseudo status filter
         $status_filter = $request->input('status', 'all');
         if ($status_filter === 'valid') {
             $query->where('warranty_end_date', '>=', Carbon::now());
@@ -88,39 +79,51 @@ class WarrantyController extends Controller
             $query->where('warranty_end_date', '<', Carbon::now());
         }
 
-        $expiration_filter = $request->input('expiration_filter', 'all');
-        if ($expiration_filter === 'custom') {
-            if ($request->filled('expiration_start')) {
-                $query->whereDate('warranty_end_date', '>=', clone new Carbon($request->input('expiration_start')));
+        // Custom date range on purchase_date — piggy-back on canonical date_filter too
+        $this->applyDateRange($query, $request);
+
+        // Legacy/custom time_filter (purchase_date) for backward compat
+        $time_filter = $request->input('time_filter');
+        if ($time_filter === 'this_month') {
+            $query->whereMonth('purchase_date', Carbon::now()->month)
+                ->whereYear('purchase_date', Carbon::now()->year);
+        } elseif ($time_filter === 'custom') {
+            if ($request->filled('time_start')) {
+                $query->whereDate('purchase_date', '>=', $request->input('time_start'));
             }
-            if ($request->filled('expiration_end')) {
-                $query->whereDate('warranty_end_date', '<=', clone new Carbon($request->input('expiration_end')));
+            if ($request->filled('time_end')) {
+                $query->whereDate('purchase_date', '<=', $request->input('time_end'));
             }
         }
 
-        $maintenance_filter = $request->input('maintenance_filter', 'all');
-        // Simple logic for maintenance, as it requires another date field
+        // Expiration range (warranty_end_date)
+        $expiration_filter = $request->input('expiration_filter', 'all');
+        if ($expiration_filter === 'custom') {
+            if ($request->filled('expiration_start')) {
+                $query->whereDate('warranty_end_date', '>=', $request->input('expiration_start'));
+            }
+            if ($request->filled('expiration_end')) {
+                $query->whereDate('warranty_end_date', '<=', $request->input('expiration_end'));
+            }
+        }
 
         $warranties = $query->paginate(20)->withQueryString();
 
+        $filterOptions = [
+            'statuses' => [
+                ['value' => 'valid', 'label' => 'Còn bảo hành'],
+                ['value' => 'expired', 'label' => 'Hết bảo hành'],
+            ],
+        ];
+
         return Inertia::render('Warranties/Index', [
             'warranties' => $warranties,
-            'filters' => array_merge($request->only([
-                'search',
-                'time_filter',
-                'time_start',
-                'time_end',
-                'status',
-                'expiration_filter',
-                'expiration_start',
-                'expiration_end',
-                'maintenance_filter',
-                'maintenance_start',
-                'maintenance_end'
-            ]), [
-                'sort_by' => $request->sort_by,
-                'sort_direction' => $request->sort_direction,
-            ]),
+            'filters' => array_merge($this->currentFilters($request), $request->only([
+                'time_filter', 'time_start', 'time_end',
+                'status', 'expiration_filter', 'expiration_start', 'expiration_end',
+                'maintenance_filter', 'maintenance_start', 'maintenance_end',
+            ])),
+            'filterOptions' => $filterOptions,
         ]);
     }
 
@@ -141,9 +144,12 @@ class WarrantyController extends Controller
 
     public function export(Request $request)
     {
-        $warranties = \App\Models\Warranty::with('product')
-            ->when($request->search, fn($q, $s) => $q->whereHas('product', fn($pq) => $pq->where('name', 'LIKE', "%{$s}%")->orWhere('sku', 'LIKE', "%{$s}%")))
-            ->orderBy('id', 'desc')->get();
+        $this->configureWarrantyFilters();
+        $query = \App\Models\Warranty::with('product');
+        $this->applySearch($query, $request);
+        $this->applyDateRange($query, $request);
+        $this->applySort($query, $request);
+        $warranties = $query->get();
 
         return \App\Services\CsvService::export(
             ['Mã HĐ', 'Mã hàng', 'Tên hàng', 'Serial/IMEI', 'Khách hàng', 'Ngày mua', 'Thời hạn BH', 'Ngày hết BH', 'Ghi chú bảo trì'],

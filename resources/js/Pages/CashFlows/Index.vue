@@ -1,13 +1,16 @@
 <script setup>
-import { ref, watch } from "vue";
+import { ref, watch, computed } from "vue";
 import { Head, router, Link, useForm } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
+import SidebarFilter from "@/Components/Filters/SidebarFilter.vue";
+import { useFilters } from "@/composables/useFilters.js";
 
 const props = defineProps({
     cashFlows: Object,
     filters: Object,
+    filterOptions: Object,
     metrics: Object,
     subjects: Object,
     bankAccounts: Array,
@@ -15,39 +18,34 @@ const props = defineProps({
     savedPaymentCategories: Array,
 });
 
+const { filters, setSort, reset } = useFilters({
+    initial: props.filters,
+    route: "/cash-flows",
+});
+
+const handleSort = (field, direction) => setSort(field, direction);
+
+const sidebarConfig = computed(() => [
+    { key: "keyword", type: "search", label: "Tìm mã phiếu, nội dung", placeholder: "Tìm theo mã, nội dung...", zone: "quick" },
+    {
+        key: "date",
+        type: "dateRange",
+        label: "Thời gian",
+        fields: { filter: "date_filter", from: "date_from", to: "date_to" },
+        zone: "quick",
+    },
+    { key: "payment_method", type: "select", label: "Quỹ tiền", options: props.filterOptions?.paymentMethods || [], placeholder: "Tất cả (Tổng quỹ)", zone: "quick" },
+    { key: "type", type: "checkbox", label: "Loại chứng từ", options: props.filterOptions?.types || [], zone: "main" },
+    { key: "category", type: "select", label: "Loại thu chi", options: props.filterOptions?.categories || [], placeholder: "-- Tất cả --", zone: "main" },
+    { key: "status", type: "checkbox", label: "Trạng thái", options: props.filterOptions?.statuses || [], zone: "main" },
+    { key: "bank_account_id", type: "select", label: "Tài khoản NH", options: props.filterOptions?.bankAccounts || [], placeholder: "Tất cả", zone: "advanced" },
+    { key: "target_type", type: "select", label: "Đối tượng", options: props.filterOptions?.targetTypes || [], placeholder: "Tất cả", zone: "advanced" },
+]);
+
 const mergeUnique = (defaults, saved) => {
     const set = new Set(defaults);
     (saved || []).forEach(c => set.add(c));
     return [...set];
-};
-
-const search = ref(props.filters?.search || "");
-const sortBy = ref(props.filters?.sort_by || "");
-const sortDirection = ref(props.filters?.sort_direction || "");
-
-let searchTimeout;
-watch(search, (value) => {
-    clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(() => {
-        router.get(
-            "/cash-flows",
-            { search: value, sort_by: sortBy.value || undefined, sort_direction: sortDirection.value || undefined },
-            {
-                preserveState: true,
-                replace: true,
-            },
-        );
-    }, 500);
-});
-
-const handleSort = (field, direction) => {
-    sortBy.value = field;
-    sortDirection.value = direction;
-    router.get(
-        "/cash-flows",
-        { search: search.value || undefined, sort_by: field || undefined, sort_direction: direction || undefined },
-        { preserveState: true, replace: true },
-    );
 };
 
 const isModalOpen = ref(false);
@@ -277,24 +275,7 @@ const printFlow = (flow) => {
     <AppLayout>
         <!-- Sidebar slot -->
         <template #sidebar>
-            <div
-                class="px-4 py-3 font-semibold text-gray-800 border-b border-gray-200 uppercase text-xs tracking-wider"
-            >
-                Từ khóa tìm kiếm
-            </div>
-            <div class="p-4 space-y-4">
-                <div>
-                    <label class="block text-sm text-gray-600 mb-1 font-medium"
-                        >Tìm mã phiếu, nội dung</label
-                    >
-                    <input
-                        v-model="search"
-                        type="text"
-                        placeholder="Tìm theo mã, nội dung..."
-                        class="w-full text-sm py-1.5 px-2 border border-gray-300 rounded focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                    />
-                </div>
-            </div>
+            <SidebarFilter v-model="filters" :config="sidebarConfig" @reset="reset" />
 
             <!-- Dashboard Mini Sidebar -->
             <div
@@ -393,13 +374,13 @@ const printFlow = (flow) => {
                         class="text-xs text-gray-500 uppercase bg-gray-50 border-b border-gray-200 sticky top-0 z-10 shadow-sm"
                     >
                         <tr>
-                            <SortableHeader label="Mã Phiếu" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3 font-semibold" @sort="handleSort" />
-                            <SortableHeader label="Thời gian" field="time" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3 font-semibold" @sort="handleSort" />
-                            <SortableHeader label="Loại thu chi" field="category" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3 font-semibold" @sort="handleSort" />
+                            <SortableHeader label="Mã Phiếu" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3 font-semibold" @sort="handleSort" />
+                            <SortableHeader label="Thời gian" field="time" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3 font-semibold" @sort="handleSort" />
+                            <SortableHeader label="Loại thu chi" field="category" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3 font-semibold" @sort="handleSort" />
                             <th class="px-4 py-3 font-semibold">
                                 Người nộp/nhận
                             </th>
-                            <SortableHeader label="Giá trị" field="amount" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-3 font-semibold text-right" @sort="handleSort" />
+                            <SortableHeader label="Giá trị" field="amount" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-3 font-semibold text-right" @sort="handleSort" />
                             <th class="px-4 py-3 font-semibold">Ghi chú</th>
                         </tr>
                     </thead>

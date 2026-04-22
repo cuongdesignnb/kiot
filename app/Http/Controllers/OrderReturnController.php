@@ -2,45 +2,56 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\ReturnStatus;
 use App\Models\OrderReturn;
 use App\Models\Setting;
 use App\Models\CashFlow;
 use App\Models\SerialImei;
 use App\Services\DebtOffsetService;
+use App\Support\Filters\FilterableIndex;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
+use Carbon\Carbon;
 
 class OrderReturnController extends Controller
 {
+    use FilterableIndex;
+
+    protected function configureReturnFilters(): void
+    {
+        $this->searchable = ['code', 'note', 'created_by_name', 'seller_name'];
+        $this->searchableRelations = [
+            'customer'      => ['name', 'phone', 'code'],
+            'invoice'       => ['code'],
+            'items.product' => ['name', 'code', 'barcode'],
+        ];
+        $this->sortable = ['code', 'created_at', 'subtotal', 'total', 'paid_to_customer', 'status'];
+        $this->dateColumn = 'created_at';
+        $this->creatorColumn = 'created_by';
+        $this->scalarFilters = ['branch_id', 'customer_id', 'invoice_id', 'sales_channel'];
+    }
+
     public function index(Request $request)
     {
-        $search = $request->input('search');
+        $this->configureReturnFilters();
 
-        $returns = OrderReturn::with(['items.product', 'customer', 'invoice'])
-            ->when($search, function ($query, $search) {
-                return $query->where('code', 'LIKE', "%{$search}%")
-                    ->orWhereHas('customer', function ($q) use ($search) {
-                        $q->where('name', 'LIKE', "%{$search}%")
-                            ->orWhere('phone', 'LIKE', "%{$search}%")
-                            ->orWhere('code', 'LIKE', "%{$search}%");
-                    });
-            })
-            ->when($request->filled('sort_by'), function ($query) use ($request) {
-                $allowed = ['code', 'created_at', 'subtotal', 'total', 'paid_to_customer', 'status'];
-                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'created_at';
-                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
-                $query->orderBy($sortBy, $dir);
-            }, function ($query) {
-                $query->orderBy('created_at', 'desc');
-            })
-            ->paginate(15)
-            ->withQueryString();
+        $query = OrderReturn::with(['items.product', 'customer', 'invoice']);
+        $this->applyFilters($query, $request);
+
+        $returns = $query->paginate(15)->withQueryString();
 
         return Inertia::render('Returns/Index', [
             'returns' => $returns,
-            'branches' => \App\Models\Branch::all(),
-            'filters' => ['search' => $search, 'sort_by' => $request->sort_by, 'sort_direction' => $request->sort_direction]
+            'filters' => $this->currentFilters($request),
+            'filterOptions' => [
+                'branches' => \App\Models\Branch::select('id', 'name')->get(),
+                'statuses' => ReturnStatus::options(),
+                'salesChannels' => OrderReturn::query()
+                    ->whereNotNull('sales_channel')->where('sales_channel', '!=', '')
+                    ->distinct()->orderBy('sales_channel')->pluck('sales_channel')
+                    ->map(fn($c) => ['value' => $c, 'label' => $c])->values(),
+            ],
         ]);
     }
 
@@ -213,9 +224,11 @@ class OrderReturnController extends Controller
 
     public function export(Request $request)
     {
-        $returns = \App\Models\OrderReturn::with(['customer', 'invoice'])
-            ->when($request->search, fn($q, $s) => $q->where('code', 'LIKE', "%{$s}%"))
-            ->orderBy('id', 'desc')->get();
+        $this->configureReturnFilters();
+
+        $query = \App\Models\OrderReturn::with(['customer', 'invoice']);
+        $this->applyFilters($query, $request);
+        $returns = $query->get();
 
         return \App\Services\CsvService::export(
             ['Mã trả hàng', 'Thời gian', 'Mã hóa đơn', 'Khách hàng', 'Tổng tiền trả', 'Đã trả khách', 'Trạng thái', 'Ghi chú'],

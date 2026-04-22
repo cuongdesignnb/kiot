@@ -8,45 +8,36 @@ use App\Models\BankAccount;
 use App\Services\LockPeriodService;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
+use App\Support\Filters\FilterableIndex;
 
 class CashFlowController extends Controller
 {
+    use FilterableIndex;
+
+    protected function configureCashFlowFilters(): void
+    {
+        $this->searchable = ['code', 'description', 'reference_code', 'target_name', 'category'];
+        $this->sortable = ['code', 'time', 'type', 'amount', 'category', 'created_at'];
+        $this->dateColumn = 'time';
+        $this->scalarFilters = ['type', 'payment_method', 'status', 'bank_account_id', 'category', 'target_type'];
+    }
+
     public function index(Request $request)
     {
-        $search = $request->input('search');
+        $this->configureCashFlowFilters();
 
-        // Lấy danh sách phiếu thu/chi có phân trang
-        $cashFlows = CashFlow::when($search, function ($query, $search) {
-            return $query->where('code', 'LIKE', "%{$search}%")
-                ->orWhere('description', 'LIKE', "%{$search}%")
-                ->orWhere('reference_code', 'LIKE', "%{$search}%");
-        })
-            ->when($request->filled('type'), fn($q) => $q->where('type', $request->type))
-            ->when($request->filled('payment_method'), fn($q) => $q->where('payment_method', $request->payment_method))
-            ->when($request->filled('status'), fn($q) => $q->where('status', $request->status))
-            ->when($request->filled('time_start'), fn($q) => $q->where('time', '>=', $request->time_start))
-            ->when($request->filled('time_end'), fn($q) => $q->where('time', '<=', $request->time_end))
-            ->when($request->filled('sort_by'), function ($q) use ($request) {
-                $allowed = ['code', 'time', 'type', 'amount', 'category', 'created_at'];
-                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'time';
-                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
-                $q->orderBy($sortBy, $dir);
-            }, function ($q) {
-                $q->orderBy('time', 'desc')->orderBy('created_at', 'desc');
-            })
-            ->paginate(15)
-            ->withQueryString();
+        $query = CashFlow::query();
+        $this->applyFilters($query, $request);
+        $cashFlows = $query->paginate(15)->withQueryString();
 
-        // Tính tồn quỹ tổng quan (chỉ phiếu active)
+        // Summary metrics
         $totalReceipts = CashFlow::where('type', 'receipt')->where('status', '!=', 'cancelled')->sum('amount');
         $totalPayments = CashFlow::where('type', 'payment')->where('status', '!=', 'cancelled')->sum('amount');
         $fundBalance = $totalReceipts - $totalPayments;
 
-        // Fetch base subjects for UI auto-complete simulation
         $customers = \App\Models\Customer::where('is_supplier', false)->get(['id', 'name', 'phone']);
         $suppliers = \App\Models\Customer::where('is_supplier', true)->get(['id', 'name', 'phone']);
 
-        // Load user-created categories from existing records
         $savedReceiptCategories = CashFlow::where('type', 'receipt')
             ->whereNotNull('category')->where('category', '!=', '')
             ->distinct()->pluck('category')->toArray();
@@ -54,9 +45,34 @@ class CashFlowController extends Controller
             ->whereNotNull('category')->where('category', '!=', '')
             ->distinct()->pluck('category')->toArray();
 
+        $filterOptions = [
+            'types' => [
+                ['value' => 'receipt', 'label' => 'Phiếu thu'],
+                ['value' => 'payment', 'label' => 'Phiếu chi'],
+            ],
+            'paymentMethods' => [
+                ['value' => 'cash', 'label' => 'Tiền mặt'],
+                ['value' => 'bank', 'label' => 'Chuyển khoản'],
+                ['value' => 'ewallet', 'label' => 'Ví điện tử'],
+            ],
+            'statuses' => [
+                ['value' => 'active', 'label' => 'Đã ghi nhận'],
+                ['value' => 'cancelled', 'label' => 'Đã hủy'],
+            ],
+            'bankAccounts' => BankAccount::where('status', 'active')->orderBy('bank_name')->get(['id', 'bank_name as name'])->map(fn($b) => ['value' => $b->id, 'label' => $b->name]),
+            'categories' => collect(array_merge($savedReceiptCategories, $savedPaymentCategories))->unique()->values()->map(fn($c) => ['value' => $c, 'label' => $c]),
+            'targetTypes' => [
+                ['value' => 'customer', 'label' => 'Khách hàng'],
+                ['value' => 'supplier', 'label' => 'Nhà cung cấp'],
+                ['value' => 'employee', 'label' => 'Nhân viên'],
+                ['value' => 'other', 'label' => 'Khác'],
+            ],
+        ];
+
         return Inertia::render('CashFlows/Index', [
             'cashFlows' => $cashFlows,
-            'filters' => ['search' => $search, 'sort_by' => $request->sort_by, 'sort_direction' => $request->sort_direction],
+            'filters' => $this->currentFilters($request),
+            'filterOptions' => $filterOptions,
             'metrics' => [
                 'totalReceipts' => $totalReceipts,
                 'totalPayments' => $totalPayments,
@@ -183,9 +199,10 @@ class CashFlowController extends Controller
 
     public function export(Request $request)
     {
-        $flows = CashFlow::query()
-            ->when($request->search, fn($q, $s) => $q->where('code', 'LIKE', "%{$s}%")->orWhere('description', 'LIKE', "%{$s}%"))
-            ->orderBy('time', 'desc')->orderBy('id', 'desc')->get();
+        $this->configureCashFlowFilters();
+        $query = CashFlow::query();
+        $this->applyFilters($query, $request);
+        $flows = $query->get();
 
         return \App\Services\CsvService::export(
             ['Mã phiếu', 'Thời gian', 'Loại', 'Giá trị', 'Người nộp/nhận', 'Hạng mục', 'Phương thức', 'Ghi chú'],

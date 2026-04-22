@@ -10,56 +10,67 @@ use App\Models\Product;
 use App\Models\Customer;
 use App\Models\CashFlow;
 use App\Models\SerialImei;
+use App\Models\Employee;
+use App\Models\User;
+use App\Enums\PurchaseReturnStatus;
+use App\Support\Filters\FilterableIndex;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
 use App\Services\DebtOffsetService;
 
 class PurchaseReturnController extends Controller
 {
+    use FilterableIndex;
+
+    protected function configurePurchaseReturnFilters(): void
+    {
+        $this->searchable = ['code', 'note'];
+        $this->searchableRelations = [
+            'supplier' => ['name', 'code', 'phone'],
+            'purchase' => ['code'],
+            'items'    => ['product_name', 'product_code'],
+        ];
+        $this->sortable = ['code', 'created_at', 'return_date', 'total_amount', 'refund_amount', 'status'];
+        $this->dateColumn = 'return_date';
+        $this->creatorColumn = 'user_id';
+        $this->scalarFilters = ['supplier_id', 'employee_id', 'purchase_id', 'payment_method'];
+    }
+
     public function index(Request $request)
     {
-        $query = PurchaseReturn::with(['supplier', 'purchase', 'items.product:id,has_serial', 'user', 'employee', 'returnedSerials:id,product_id,serial_number,purchase_return_id']);
+        $this->configurePurchaseReturnFilters();
 
-        if ($request->search) {
-            $search = $request->search;
-            $query->where(function ($q) use ($search) {
-                $q->where('code', 'LIKE', "%{$search}%")
-                    ->orWhereHas('supplier', fn($sq) => $sq->where('name', 'LIKE', "%{$search}%"));
-            });
-        }
+        $query = PurchaseReturn::with([
+            'supplier', 'purchase', 'items.product:id,has_serial', 'user', 'employee',
+            'returnedSerials:id,product_id,serial_number,purchase_return_id',
+        ]);
 
-        if ($request->status && is_array($request->status)) {
-            $query->whereIn('status', $request->status);
-        }
+        $this->applyFilters($query, $request);
 
-        if ($request->date_filter === 'this_month') {
-            $query->whereMonth('return_date', now()->month)
-                  ->whereYear('return_date', now()->year);
-        }
-
-        // Summary
+        // Summary (cloned pre-pagination, post-filter)
         $summaryQuery = (clone $query);
         $summary = [
-            'total_amount' => $summaryQuery->sum('total_amount'),
-            'total_refund' => $summaryQuery->sum('refund_amount'),
+            'total_amount'   => $summaryQuery->sum('total_amount'),
+            'total_refund'   => $summaryQuery->sum('refund_amount'),
             'total_refunded' => (clone $summaryQuery)->where('status', 'completed')->sum('refund_amount'),
         ];
-
-        $query->when($request->filled('sort_by'), function ($q) use ($request) {
-            $allowed = ['code', 'created_at', 'return_date', 'total_amount', 'refund_amount', 'status'];
-            $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'created_at';
-            $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
-            $q->orderBy($sortBy, $dir);
-        }, function ($q) {
-            $q->latest();
-        });
 
         $returns = $query->paginate(20)->withQueryString();
 
         return Inertia::render('PurchaseReturns/Index', [
             'returns' => $returns,
-            'filters' => $request->only(['search', 'status', 'date_filter', 'sort_by', 'sort_direction']),
+            'filters' => $this->currentFilters($request),
             'summary' => $summary,
+            'filterOptions' => [
+                'statuses' => PurchaseReturnStatus::options(),
+                'creators' => User::select('id', 'name')->orderBy('name')->get(),
+                'employees' => Employee::select('id', 'name')->where('is_active', true)->orderBy('name')->get(),
+                'suppliers' => Customer::select('id', 'name')->where('is_supplier', true)->orderBy('name')->get(),
+                'paymentMethods' => [
+                    ['value' => 'cash', 'label' => 'Tiền mặt'],
+                    ['value' => 'transfer', 'label' => 'Chuyển khoản'],
+                ],
+            ],
         ]);
     }
 
@@ -412,13 +423,11 @@ class PurchaseReturnController extends Controller
 
     public function export(Request $request)
     {
-        $returns = PurchaseReturn::with(['supplier', 'purchase', 'user'])
-            ->when($request->search, function ($q, $s) {
-                $q->where('code', 'LIKE', "%{$s}%")
-                    ->orWhereHas('supplier', fn($sq) => $sq->where('name', 'LIKE', "%{$s}%"));
-            })
-            ->latest()
-            ->get();
+        $this->configurePurchaseReturnFilters();
+
+        $query = PurchaseReturn::with(['supplier', 'purchase', 'user']);
+        $this->applyFilters($query, $request);
+        $returns = $query->get();
 
         return \App\Services\CsvService::export(
             ['Mã phiếu trả', 'Mã phiếu nhập', 'Nhà cung cấp', 'Ngày trả', 'Tổng tiền hàng trả', 'Tiền hoàn lại', 'Trạng thái', 'Người tạo', 'Ghi chú'],

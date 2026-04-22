@@ -1,71 +1,35 @@
 <script setup>
-import { ref, watch } from "vue";
+import { ref, computed } from "vue";
 import { Head, router, Link } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
+import { useFilters } from "@/composables/useFilters.js";
 
 const props = defineProps({
     transfers: Object,
     branches: Array,
     filters: Object,
+    filterOptions: Object,
 });
 
-const search = ref(props.filters.search || "");
-const fromBranchId = ref(props.filters.from_branch_id || "");
-const toBranchId = ref(props.filters.to_branch_id || "");
-const statuses = ref(
-    props.filters.status || ["draft", "transferring", "received"],
-);
-const sortBy = ref(props.filters.sort_by || "");
-const sortDirection = ref(props.filters.sort_direction || "");
+const { filters, setSort, reset } = useFilters({
+    initial: props.filters,
+    route: "/stock-transfers",
+    defaults: { status: ["draft", "transferring", "received"] },
+});
+
+const statuses = computed(() => filters.status || []);
 
 const toggleStatus = (status) => {
-    if (statuses.value.includes(status)) {
-        statuses.value = statuses.value.filter((s) => s !== status);
-    } else {
-        statuses.value.push(status);
-    }
-    fetchFiltered();
+    const arr = [...(filters.status || [])];
+    const i = arr.indexOf(status);
+    if (i >= 0) arr.splice(i, 1);
+    else arr.push(status);
+    filters.status = arr;
 };
 
-const handleSort = (field, direction) => {
-    sortBy.value = field;
-    sortDirection.value = direction;
-    router.get(
-        "/stock-transfers",
-        {
-            search: search.value,
-            from_branch_id: fromBranchId.value,
-            to_branch_id: toBranchId.value,
-            status: statuses.value,
-            sort_by: field,
-            sort_direction: direction,
-        },
-        { preserveState: true, preserveScroll: true, replace: true },
-    );
-};
-
-let fetchTimeout = null;
-const fetchFiltered = () => {
-    if (fetchTimeout) clearTimeout(fetchTimeout);
-    fetchTimeout = setTimeout(() => {
-        router.get(
-            "/stock-transfers",
-            {
-                search: search.value,
-                from_branch_id: fromBranchId.value,
-                to_branch_id: toBranchId.value,
-                status: statuses.value,
-                sort_by: sortBy.value,
-                sort_direction: sortDirection.value,
-            },
-            { preserveState: true, preserveScroll: true, replace: true },
-        );
-    }, 500);
-};
-
-watch([search, fromBranchId, toBranchId], fetchFiltered);
+const handleSort = (field, direction) => setSort(field, direction);
 
 const formatCurrency = (value) => {
     if (!value) return "0";
@@ -124,7 +88,7 @@ const printTransfer = (item) => {
                             >Chuyển đi</label
                         >
                         <select
-                            v-model="fromBranchId"
+                            v-model="filters.from_branch_id"
                             class="w-full border border-gray-300 rounded p-1.5 text-[13px] focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-700 outline-none hover:border-blue-400"
                         >
                             <option value="">Chọn chi nhánh</option>
@@ -145,7 +109,7 @@ const printTransfer = (item) => {
                             >Nhận về</label
                         >
                         <select
-                            v-model="toBranchId"
+                            v-model="filters.to_branch_id"
                             class="w-full border border-gray-300 rounded p-1.5 text-[13px] focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-700 outline-none hover:border-blue-400"
                         >
                             <option value="">Chọn chi nhánh</option>
@@ -260,7 +224,7 @@ const printTransfer = (item) => {
                 >
                     <div class="relative w-[300px]">
                         <input
-                            v-model="search"
+                            v-model="filters.search"
                             type="text"
                             class="block w-full pl-9 pr-3 py-1.5 text-[13px] border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none hover:border-blue-400 placeholder:text-gray-400"
                             placeholder="Theo mã phiếu chuyển"
@@ -317,8 +281,8 @@ const printTransfer = (item) => {
                                 <th
                                     class="p-3 w- diez border-b border-[#dce3ec]"
                                 ></th>
-                                <SortableHeader label="Mã chuyển hàng" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
-                                <SortableHeader label="Ngày chuyển" field="sent_date" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
+                                <SortableHeader label="Mã chuyển hàng" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
+                                <SortableHeader label="Ngày chuyển" field="sent_date" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
                                 <th class="p-3 border-b border-[#dce3ec]">
                                     Ngày nhận
                                 </th>
@@ -328,8 +292,8 @@ const printTransfer = (item) => {
                                 <th class="p-3 border-b border-[#dce3ec]">
                                     Tới chi nhánh
                                 </th>
-                                <SortableHeader label="Giá trị chuyển" field="total_price" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right border-b border-[#dce3ec]" @sort="handleSort" />
-                                <SortableHeader label="Trạng thái" field="status" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
+                                <SortableHeader label="Giá trị chuyển" field="total_price" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="p-3 text-right border-b border-[#dce3ec]" @sort="handleSort" />
+                                <SortableHeader label="Trạng thái" field="status" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
                                 <th
                                     class="p-3 border-b border-[#dce3ec] text-center w-16"
                                 ></th>

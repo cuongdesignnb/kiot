@@ -20,9 +20,20 @@ use App\Models\WorkdaySetting;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
+use App\Support\Filters\FilterableIndex;
 
 class EmployeeController extends Controller
 {
+    use FilterableIndex;
+
+    protected function configureEmployeeFilters(): void
+    {
+        $this->searchable = ['code', 'attendance_code', 'name', 'phone', 'email', 'cccd'];
+        $this->sortable = ['code', 'attendance_code', 'name', 'phone', 'cccd', 'created_at'];
+        $this->dateColumn = 'created_at';
+        $this->scalarFilters = ['branch_id', 'department_id', 'job_title_id'];
+    }
+
     private function defaultWorkdays(): array
     {
         return [
@@ -302,41 +313,17 @@ class EmployeeController extends Controller
 
     public function index(Request $request)
     {
+        $this->configureEmployeeFilters();
+
         $query = Employee::with(['branch', 'department', 'jobTitle']);
 
-        if ($request->has('search')) {
-            $search = $request->search;
-            $query->where(function ($q) use ($search) {
-                $q->where('code', 'like', "%{$search}%")
-                    ->orWhere('name', 'like', "%{$search}%")
-                    ->orWhere('phone', 'like', "%{$search}%");
-            });
+        // is_active pseudo filter (supports true/false/1/0)
+        if ($request->filled('is_active')) {
+            $val = $request->is_active;
+            $query->where('is_active', $val === 'true' || $val === '1' || $val === 1 || $val === true);
         }
 
-        if ($request->has('is_active') && $request->is_active !== null) {
-            $query->where('is_active', $request->is_active === 'true' || $request->is_active == 1);
-        }
-
-        if ($request->has('branch_id') && $request->branch_id) {
-            $query->where('branch_id', $request->branch_id);
-        }
-
-        if ($request->has('department_id') && $request->department_id) {
-            $query->where('department_id', $request->department_id);
-        }
-
-        if ($request->has('job_title_id') && $request->job_title_id) {
-            $query->where('job_title_id', $request->job_title_id);
-        }
-
-        $query->when($request->filled('sort_by'), function ($q) use ($request) {
-            $allowed = ['code', 'attendance_code', 'name', 'phone', 'cccd', 'created_at'];
-            $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'created_at';
-            $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
-            $q->orderBy($sortBy, $dir);
-        }, function ($q) {
-            $q->latest();
-        });
+        $this->applyFilters($query, $request);
 
         $employees = $query->paginate(20)->withQueryString();
 
@@ -344,13 +331,24 @@ class EmployeeController extends Controller
         $departments = Department::select('id', 'name')->get();
         $jobTitles = JobTitle::select('id', 'name')->get();
 
+        $filterOptions = [
+            'branches' => $branches,
+            'departments' => $departments,
+            'jobTitles' => $jobTitles,
+            'statuses' => [
+                ['value' => '1', 'label' => 'Đang làm việc'],
+                ['value' => '0', 'label' => 'Đã nghỉ việc'],
+            ],
+        ];
+
         return Inertia::render('Employees/Index', [
             'employees' => $employees,
             'branches' => $branches,
             'departments' => $departments,
             'jobTitles' => $jobTitles,
             'salaryTemplates' => SalaryTemplate::select('id', 'name')->get(),
-            'filters' => $request->only('search', 'is_active', 'branch_id', 'department_id', 'job_title_id', 'sort_by', 'sort_direction')
+            'filters' => $this->currentFilters($request),
+            'filterOptions' => $filterOptions,
         ]);
     }
 
@@ -457,9 +455,14 @@ class EmployeeController extends Controller
 
     public function export(Request $request)
     {
-        $employees = \App\Models\Employee::with(['branch', 'department', 'jobTitle'])
-            ->when($request->search, fn($q, $s) => $q->where('name', 'LIKE', "%{$s}%")->orWhere('code', 'LIKE', "%{$s}%")->orWhere('phone', 'LIKE', "%{$s}%"))
-            ->orderBy('id', 'desc')->get();
+        $this->configureEmployeeFilters();
+        $query = \App\Models\Employee::with(['branch', 'department', 'jobTitle']);
+        if ($request->filled('is_active')) {
+            $val = $request->is_active;
+            $query->where('is_active', $val === 'true' || $val === '1' || $val === 1 || $val === true);
+        }
+        $this->applyFilters($query, $request);
+        $employees = $query->get();
 
         return \App\Services\CsvService::export(
             ['Mã NV', 'Mã chấm công', 'Tên nhân viên', 'Điện thoại', 'Email', 'CCCD', 'Chi nhánh', 'Phòng ban', 'Chức danh', 'Trạng thái', 'Ghi chú'],

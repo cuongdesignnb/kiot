@@ -24,9 +24,13 @@ class SupplierReportController extends Controller
 
         [$startDate, $endDate, $periodLabel] = $this->resolvePeriod($period, $dateFrom, $dateTo);
 
-        // ── Purchase data per supplier ──
+        // ── Purchase data per supplier (loại phiếu đã hủy) ──
         $purchaseQuery = Purchase::whereBetween('created_at', [$startDate, $endDate])
-            ->whereNotNull('supplier_id');
+            ->whereNotNull('supplier_id')
+            ->where('status', '!=', 'Đã hủy');
+        if ($branchId && \Illuminate\Support\Facades\Schema::hasColumn('purchases', 'branch_id')) {
+            $purchaseQuery->where('branch_id', $branchId);
+        }
 
         $purchaseData = (clone $purchaseQuery)
             ->select(
@@ -39,13 +43,25 @@ class SupplierReportController extends Controller
             ->keyBy('supplier_id');
 
         // ── Purchase returns per supplier ──
-        // Return data from purchase returns (negative value adjustments)
-        // For simplicity, we compute returns as a separate metric if available
-        // In this system returns reduce total_amount, so we track via discount or separate
         $returnData = collect();
+        if (\Illuminate\Support\Facades\Schema::hasTable('purchase_returns')) {
+            $retCol = \Illuminate\Support\Facades\Schema::hasColumn('purchase_returns', 'total_amount')
+                ? 'total_amount' : 'total';
+            $retQ = DB::table('purchase_returns')
+                ->whereBetween('created_at', [$startDate, $endDate])
+                ->where('status', '!=', 'Đã hủy')
+                ->whereNotNull('supplier_id');
+            if ($branchId && \Illuminate\Support\Facades\Schema::hasColumn('purchase_returns', 'branch_id')) {
+                $retQ->where('branch_id', $branchId);
+            }
+            $returnData = $retQ->select('supplier_id', DB::raw("COALESCE(SUM($retCol), 0) as total_return"))
+                ->groupBy('supplier_id')
+                ->get()
+                ->keyBy('supplier_id');
+        }
 
         // ── Build supplier rows ──
-        $supplierIds = $purchaseData->keys();
+        $supplierIds = $purchaseData->keys()->merge($returnData->keys())->unique();
         $suppliers = Customer::whereIn('id', $supplierIds)->get();
 
         $rows = [];

@@ -1,99 +1,24 @@
 <script setup>
-import { ref, watch } from "vue";
+import { ref, watch, computed } from "vue";
 import { Head, router, Link } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
+import { useFilters } from "@/composables/useFilters.js";
 import axios from "axios";
 
 const props = defineProps({
     warranties: Object,
     filters: Object,
+    filterOptions: Object,
 });
 
-const search = ref(props.filters.search || "");
-const timeFilter = ref(props.filters.time_filter || "all");
-const timeStart = ref(props.filters.time_start || "");
-const timeEnd = ref(props.filters.time_end || "");
+const { filters, setSort, reset } = useFilters({
+    initial: props.filters,
+    route: "/warranties",
+});
 
-const statusFilter = ref(props.filters.status || "all");
-
-const expirationFilter = ref(props.filters.expiration_filter || "all");
-const expirationStart = ref(props.filters.expiration_start || "");
-const expirationEnd = ref(props.filters.expiration_end || "");
-
-const maintenanceFilter = ref(props.filters.maintenance_filter || "all");
-const maintenanceStart = ref(props.filters.maintenance_start || "");
-const maintenanceEnd = ref(props.filters.maintenance_end || "");
-const sortBy = ref(props.filters.sort_by || "");
-const sortDirection = ref(props.filters.sort_direction || "");
-
-const handleSort = (field, direction) => {
-    sortBy.value = field;
-    sortDirection.value = direction;
-    router.get(
-        "/warranties",
-        {
-            search: search.value,
-            time_filter: timeFilter.value,
-            time_start: timeStart.value,
-            time_end: timeEnd.value,
-            status: statusFilter.value,
-            expiration_filter: expirationFilter.value,
-            expiration_start: expirationStart.value,
-            expiration_end: expirationEnd.value,
-            maintenance_filter: maintenanceFilter.value,
-            maintenance_start: maintenanceStart.value,
-            maintenance_end: maintenanceEnd.value,
-            sort_by: field,
-            sort_direction: direction,
-        },
-        { preserveState: true, preserveScroll: true, replace: true },
-    );
-};
-
-let fetchTimeout = null;
-const fetchFiltered = () => {
-    if (fetchTimeout) clearTimeout(fetchTimeout);
-    fetchTimeout = setTimeout(() => {
-        router.get(
-            "/warranties",
-            {
-                search: search.value,
-                time_filter: timeFilter.value,
-                time_start: timeStart.value,
-                time_end: timeEnd.value,
-                status: statusFilter.value,
-                expiration_filter: expirationFilter.value,
-                expiration_start: expirationStart.value,
-                expiration_end: expirationEnd.value,
-                maintenance_filter: maintenanceFilter.value,
-                maintenance_start: maintenanceStart.value,
-                maintenance_end: maintenanceEnd.value,
-                sort_by: sortBy.value,
-                sort_direction: sortDirection.value,
-            },
-            { preserveState: true, preserveScroll: true, replace: true },
-        );
-    }, 500);
-};
-
-watch(
-    [
-        search,
-        timeFilter,
-        timeStart,
-        timeEnd,
-        statusFilter,
-        expirationFilter,
-        expirationStart,
-        expirationEnd,
-        maintenanceFilter,
-        maintenanceStart,
-        maintenanceEnd,
-    ],
-    fetchFiltered,
-);
+const handleSort = (field, direction) => setSort(field, direction);
 
 const expandedRow = ref(null);
 const currentTab = ref("warranty"); // 'warranty' or 'maintenance'
@@ -201,13 +126,13 @@ const printWarranty = (item) => {
                                 class="flex items-center gap-2 cursor-pointer p-1.5 hover:bg-gray-50 rounded border border-transparent"
                                 :class="{
                                     'border-blue-200 bg-blue-50/30':
-                                        timeFilter === 'all',
+                                        filters.time_filter === 'all',
                                 }"
                             >
                                 <input
                                     type="radio"
                                     value="all"
-                                    v-model="timeFilter"
+                                    v-model="filters.time_filter"
                                     class="text-blue-600 focus:ring-blue-500"
                                 />
                                 <span>Toàn thời gian</span>
@@ -216,14 +141,14 @@ const printWarranty = (item) => {
                                 class="flex items-center gap-2 justify-between cursor-pointer p-1.5 hover:bg-gray-50 rounded border border-transparent"
                                 :class="{
                                     'border-blue-200 bg-blue-50/30':
-                                        timeFilter === 'this_month',
+                                        filters.time_filter === 'this_month',
                                 }"
                             >
                                 <div class="flex items-center gap-2">
                                     <input
                                         type="radio"
                                         value="this_month"
-                                        v-model="timeFilter"
+                                        v-model="filters.time_filter"
                                         class="text-blue-600 focus:ring-blue-500"
                                     />
                                     <span>Tháng này</span>
@@ -245,21 +170,21 @@ const printWarranty = (item) => {
                             <label
                                 class="flex items-center gap-2 justify-between cursor-pointer p-1.5 border border-gray-300 rounded hover:border-blue-400"
                                 :class="{
-                                    'border-blue-400': timeFilter === 'custom',
+                                    'border-blue-400': filters.time_filter === 'custom',
                                 }"
                             >
                                 <div class="flex items-center gap-2">
                                     <input
                                         type="radio"
                                         value="custom"
-                                        v-model="timeFilter"
+                                        v-model="filters.time_filter"
                                         class="text-blue-600 focus:ring-blue-500"
                                     />
                                     <span
                                         class="text-gray-500"
                                         :class="{
                                             'text-blue-600 font-medium':
-                                                timeFilter === 'custom',
+                                                filters.time_filter === 'custom',
                                         }"
                                         >Tùy chỉnh</span
                                     >
@@ -279,17 +204,17 @@ const printWarranty = (item) => {
                                 </svg>
                             </label>
                             <div
-                                v-if="timeFilter === 'custom'"
+                                v-if="filters.time_filter === 'custom'"
                                 class="flex gap-2"
                             >
                                 <input
                                     type="date"
-                                    v-model="timeStart"
+                                    v-model="filters.time_start"
                                     class="w-full border border-gray-300 rounded p-1 text-[12px] text-gray-600 outline-none focus:border-blue-500"
                                 />
                                 <input
                                     type="date"
-                                    v-model="timeEnd"
+                                    v-model="filters.time_end"
                                     class="w-full border border-gray-300 rounded p-1 text-[12px] text-gray-600 outline-none focus:border-blue-500"
                                 />
                             </div>
@@ -303,7 +228,7 @@ const printWarranty = (item) => {
                             >Trạng thái bảo hành</label
                         >
                         <select
-                            v-model="statusFilter"
+                            v-model="filters.status"
                             class="w-full border border-gray-300 rounded p-1.5 text-[13px] focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-700 outline-none hover:border-blue-400"
                         >
                             <option value="all">Tất cả</option>
@@ -323,14 +248,14 @@ const printWarranty = (item) => {
                                 class="flex items-center gap-2 justify-between cursor-pointer p-1.5 hover:bg-gray-50 rounded border border-transparent"
                                 :class="{
                                     'border-blue-200 bg-blue-50/30':
-                                        expirationFilter === 'all',
+                                        filters.expiration_filter === 'all',
                                 }"
                             >
                                 <div class="flex items-center gap-2">
                                     <input
                                         type="radio"
                                         value="all"
-                                        v-model="expirationFilter"
+                                        v-model="filters.expiration_filter"
                                         class="text-blue-600 focus:ring-blue-500"
                                     />
                                     <span class="font-bold text-blue-600"
@@ -355,21 +280,21 @@ const printWarranty = (item) => {
                                 class="flex items-center gap-2 justify-between cursor-pointer p-1.5 border border-gray-300 rounded hover:border-blue-400"
                                 :class="{
                                     'border-blue-400':
-                                        expirationFilter === 'custom',
+                                        filters.expiration_filter === 'custom',
                                 }"
                             >
                                 <div class="flex items-center gap-2">
                                     <input
                                         type="radio"
                                         value="custom"
-                                        v-model="expirationFilter"
+                                        v-model="filters.expiration_filter"
                                         class="text-blue-600 focus:ring-blue-500"
                                     />
                                     <span
                                         class="text-gray-500"
                                         :class="{
                                             'text-blue-600 font-medium':
-                                                expirationFilter === 'custom',
+                                                filters.expiration_filter === 'custom',
                                         }"
                                         >Tùy chỉnh</span
                                     >
@@ -389,17 +314,17 @@ const printWarranty = (item) => {
                                 </svg>
                             </label>
                             <div
-                                v-if="expirationFilter === 'custom'"
+                                v-if="filters.expiration_filter === 'custom'"
                                 class="flex gap-2"
                             >
                                 <input
                                     type="date"
-                                    v-model="expirationStart"
+                                    v-model="filters.expiration_start"
                                     class="w-full border border-gray-300 rounded p-1 text-[12px] text-gray-600 outline-none focus:border-blue-500"
                                 />
                                 <input
                                     type="date"
-                                    v-model="expirationEnd"
+                                    v-model="filters.expiration_end"
                                     class="w-full border border-gray-300 rounded p-1 text-[12px] text-gray-600 outline-none focus:border-blue-500"
                                 />
                             </div>
@@ -417,14 +342,14 @@ const printWarranty = (item) => {
                                 class="flex items-center gap-2 justify-between cursor-pointer p-1.5 hover:bg-gray-50 rounded border border-transparent"
                                 :class="{
                                     'border-blue-200 bg-blue-50/30':
-                                        maintenanceFilter === 'all',
+                                        filters.maintenance_filter === 'all',
                                 }"
                             >
                                 <div class="flex items-center gap-2">
                                     <input
                                         type="radio"
                                         value="all"
-                                        v-model="maintenanceFilter"
+                                        v-model="filters.maintenance_filter"
                                         class="text-blue-600 focus:ring-blue-500"
                                     />
                                     <span class="font-bold text-blue-600"
@@ -436,21 +361,21 @@ const printWarranty = (item) => {
                                 class="flex items-center gap-2 justify-between cursor-pointer p-1.5 border border-gray-300 rounded hover:border-blue-400"
                                 :class="{
                                     'border-blue-400':
-                                        maintenanceFilter === 'custom',
+                                        filters.maintenance_filter === 'custom',
                                 }"
                             >
                                 <div class="flex items-center gap-2">
                                     <input
                                         type="radio"
                                         value="custom"
-                                        v-model="maintenanceFilter"
+                                        v-model="filters.maintenance_filter"
                                         class="text-blue-600 focus:ring-blue-500"
                                     />
                                     <span
                                         class="text-gray-500"
                                         :class="{
                                             'text-blue-600 font-medium':
-                                                maintenanceFilter === 'custom',
+                                                filters.maintenance_filter === 'custom',
                                         }"
                                         >Tùy chỉnh</span
                                     >
@@ -470,17 +395,17 @@ const printWarranty = (item) => {
                                 </svg>
                             </label>
                             <div
-                                v-if="maintenanceFilter === 'custom'"
+                                v-if="filters.maintenance_filter === 'custom'"
                                 class="flex gap-2"
                             >
                                 <input
                                     type="date"
-                                    v-model="maintenanceStart"
+                                    v-model="filters.maintenance_start"
                                     class="w-full border border-gray-300 rounded p-1 text-[12px] text-gray-600 outline-none focus:border-blue-500"
                                 />
                                 <input
                                     type="date"
-                                    v-model="maintenanceEnd"
+                                    v-model="filters.maintenance_end"
                                     class="w-full border border-gray-300 rounded p-1 text-[12px] text-gray-600 outline-none focus:border-blue-500"
                                 />
                             </div>
@@ -516,7 +441,7 @@ const printWarranty = (item) => {
                             </svg>
                         </div>
                         <input
-                            v-model="search"
+                            v-model="filters.search"
                             type="text"
                             class="block w-full pl-9 pr-8 py-1.5 text-[13px] border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none hover:border-blue-400 placeholder:text-gray-400 transition-colors"
                             placeholder="Theo mã hàng"
@@ -611,8 +536,8 @@ const printWarranty = (item) => {
                             class="bg-[#f0f4f9] text-[#1a56bc] text-[13px] font-bold sticky top-0 z-10 shadow-[0_1px_0_rgba(200,200,200,0.5)]"
                         >
                             <tr>
-                                <SortableHeader label="Mã hàng" field="product_sku" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 whitespace-nowrap border-b border-[#dce3ec] font-semibold w-[150px]" @sort="handleSort" />
-                                <SortableHeader label="Tên hàng" field="product_name" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-b border-[#dce3ec] font-semibold" @sort="handleSort" />
+                                <SortableHeader label="Mã hàng" field="product_sku" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="p-3 whitespace-nowrap border-b border-[#dce3ec] font-semibold w-[150px]" @sort="handleSort" />
+                                <SortableHeader label="Tên hàng" field="product_name" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="p-3 border-b border-[#dce3ec] font-semibold" @sort="handleSort" />
                                 <th
                                     class="p-3 whitespace-nowrap border-b border-[#dce3ec] font-semibold w-[150px]"
                                 >
@@ -623,8 +548,8 @@ const printWarranty = (item) => {
                                 >
                                     Hóa đơn mua
                                 </th>
-                                <SortableHeader label="Khách hàng" field="customer_name" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 whitespace-nowrap border-b border-[#dce3ec] font-semibold w-[200px]" @sort="handleSort" />
-                                <SortableHeader label="Bảo hành tối đa" field="warranty_period" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 whitespace-nowrap border-b border-[#dce3ec] font-semibold w-[130px]" @sort="handleSort" />
+                                <SortableHeader label="Khách hàng" field="customer_name" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="p-3 whitespace-nowrap border-b border-[#dce3ec] font-semibold w-[200px]" @sort="handleSort" />
+                                <SortableHeader label="Bảo hành tối đa" field="warranty_period" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="p-3 whitespace-nowrap border-b border-[#dce3ec] font-semibold w-[130px]" @sort="handleSort" />
                                 <th
                                     class="p-3 whitespace-nowrap border-b border-[#dce3ec] font-semibold w-[130px]"
                                 >

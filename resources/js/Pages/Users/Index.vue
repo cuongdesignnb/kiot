@@ -3,6 +3,7 @@ import { ref, watch, computed } from "vue";
 import { Head, Link, router, useForm } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
+import { useFilters } from "@/composables/useFilters.js";
 
 const props = defineProps({
     users: Object,
@@ -10,38 +11,15 @@ const props = defineProps({
     branches: Array,
     employees: Array,
     filters: Object,
+    filterOptions: Object,
 });
 
-const search = ref(props.filters?.search || "");
-const filterStatus = ref(props.filters?.status || "");
-const filterRole = ref(props.filters?.role_id || "");
-const filterBranch = ref(props.filters?.branch_id || "");
-const sortBy = ref(props.filters?.sort_by || "");
-const sortDirection = ref(props.filters?.sort_direction || "");
-
-let searchTimeout;
-watch(search, (value) => {
-    clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(() => applyFilters(), 400);
+const { filters, setSort, reset } = useFilters({
+    initial: props.filters,
+    route: "/users",
 });
-watch([filterStatus, filterRole, filterBranch], () => applyFilters());
 
-const applyFilters = () => {
-    const params = {};
-    if (search.value) params.search = search.value;
-    if (filterStatus.value) params.status = filterStatus.value;
-    if (filterRole.value) params.role_id = filterRole.value;
-    if (filterBranch.value) params.branch_id = filterBranch.value;
-    if (sortBy.value) params.sort_by = sortBy.value;
-    if (sortDirection.value) params.sort_direction = sortDirection.value;
-    router.get("/users", params, { preserveState: true, replace: true });
-};
-
-const handleSort = (field, direction) => {
-    sortBy.value = field;
-    sortDirection.value = direction;
-    applyFilters();
-};
+const handleSort = (field, direction) => setSort(field, direction);
 
 // ── Selected user (detail view) ──
 const selectedUser = ref(null);
@@ -200,18 +178,18 @@ const statusBadge = (status) => {
             <div class="flex items-center gap-3 mb-4 flex-wrap">
                 <div class="relative flex-1 max-w-xs">
                     <svg class="absolute left-3 top-2.5 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-                    <input v-model="search" type="text" placeholder="Tìm tên, email, SĐT..." class="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:border-blue-500" />
+                    <input v-model="filters.search" type="text" placeholder="Tìm tên, email, SĐT..." class="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:border-blue-500" />
                 </div>
-                <select v-model="filterStatus" class="border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+                <select v-model="filters.status" class="border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
                     <option value="">Tất cả trạng thái</option>
                     <option value="active">Đang hoạt động</option>
                     <option value="inactive">Ngừng hoạt động</option>
                 </select>
-                <select v-model="filterRole" class="border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+                <select v-model="filters.role_id" class="border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
                     <option value="">Tất cả vai trò</option>
                     <option v-for="r in roles" :key="r.id" :value="r.id">{{ r.name }}</option>
                 </select>
-                <select v-model="filterBranch" class="border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+                <select v-model="filters.branch_id" class="border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
                     <option value="">Tất cả chi nhánh</option>
                     <option v-for="b in branches" :key="b.id" :value="b.id">{{ b.name }}</option>
                 </select>
@@ -223,11 +201,11 @@ const statusBadge = (status) => {
                     <table class="w-full text-sm">
                         <thead class="bg-gray-50 sticky top-0 z-10">
                             <tr class="text-left text-gray-600 font-semibold border-b">
-                                <SortableHeader label="Tên hiển thị" field="name" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
-                                <SortableHeader label="Tên đăng nhập" field="email" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
-                                <SortableHeader label="Điện thoại" field="phone" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
+                                <SortableHeader label="Tên hiển thị" field="name" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3" @sort="handleSort" />
+                                <SortableHeader label="Tên đăng nhập" field="email" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3" @sort="handleSort" />
+                                <SortableHeader label="Điện thoại" field="phone" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3" @sort="handleSort" />
                                 <th class="px-4 py-3">Vai trò</th>
-                                <SortableHeader label="Trạng thái" field="status" :current-sort="sortBy" :current-direction="sortDirection" align="center" class="px-4 py-3 text-center" @sort="handleSort" />
+                                <SortableHeader label="Trạng thái" field="status" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="center" class="px-4 py-3 text-center" @sort="handleSort" />
                             </tr>
                         </thead>
                         <tbody class="divide-y">

@@ -12,50 +12,75 @@ use App\Models\Customer;
 use App\Models\Employee;
 use App\Models\PriceBook;
 use App\Models\Setting;
+use App\Enums\OrderStatus;
+use App\Support\Filters\FilterableIndex;
 use App\Services\LockPeriodService;
 use Carbon\Carbon;
 
 class OrderController extends Controller
 {
+    use FilterableIndex;
+
+    protected function configureOrderFilters(): void
+    {
+        $this->searchable = ['code', 'note', 'tracking_code', 'receiver_name', 'receiver_phone', 'created_by_name', 'assigned_to_name'];
+        $this->searchableRelations = [
+            'customer'      => ['name', 'code', 'phone'],
+            'items.product' => ['name', 'code', 'barcode'],
+        ];
+        $this->sortable = ['code', 'created_at', 'total_payment', 'amount_paid', 'status'];
+        $this->dateColumn = 'created_at';
+        $this->creatorColumn = 'created_by';
+        $this->scalarFilters = [
+            'branch_id', 'customer_id',
+            'is_delivery', 'delivery_partner',
+            'sales_channel', 'price_table_id', 'promotion_id',
+        ];
+    }
+
     public function index(Request $request)
     {
+        $this->configureOrderFilters();
+
         $query = Order::with(['customer', 'branch', 'items.product'])
-            ->when($request->filled('sort_by'), function ($q) use ($request) {
-                $allowed = ['code', 'created_at', 'total_payment', 'amount_paid', 'status'];
-                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'created_at';
-                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
-                $q->orderBy($sortBy, $dir);
-            }, function ($q) {
-                $q->orderBy('created_at', 'desc');
+            ->when($request->filled('has_debt'), function ($q) use ($request) {
+                if ((string) $request->input('has_debt') === '1') {
+                    $q->whereColumn('total_payment', '>', 'amount_paid');
+                } else {
+                    $q->whereColumn('total_payment', '<=', 'amount_paid');
+                }
             });
 
-        if ($request->filled('search')) {
-            $query->where('code', 'like', '%' . $request->search . '%')
-                ->orWhereHas('customer', function ($q) use ($request) {
-                    $q->where('name', 'like', '%' . $request->search . '%')
-                        ->orWhere('phone', 'like', '%' . $request->search . '%');
-                });
-        }
-
-        if ($request->filled('branch_id')) {
-            $query->where('branch_id', $request->branch_id);
-        }
-
-        // Apply status filter. Usually passed as an array 'status[]' = 'draft' etc.
-        if ($request->has('status') && is_array($request->status)) {
-            $query->whereIn('status', $request->status);
-        }
+        $this->applyFilters($query, $request);
 
         $orders = $query->paginate(15)->withQueryString();
+
+        $filters = $this->currentFilters($request);
+        $filters['has_debt'] = $request->input('has_debt', '');
 
         return Inertia::render('Orders/Index', [
             'orders' => $orders,
             'branches' => Branch::all(),
             'employees' => Employee::where('is_active', true)->orderBy('name')->get(['id', 'name']),
-            'filters' => array_merge($request->only(['search', 'branch_id', 'status', 'date_filter']), [
-                'sort_by' => $request->sort_by,
-                'sort_direction' => $request->sort_direction,
-            ]),
+            'filters' => $filters,
+            'filterOptions' => [
+                'branches' => Branch::select('id', 'name')->get(),
+                'statuses' => OrderStatus::options(),
+                'employees' => Employee::select('id', 'name')->where('is_active', true)->orderBy('name')->get(),
+                'creators' => \App\Models\User::select('id', 'name')->orderBy('name')->get(),
+                'salesChannels' => Order::query()
+                    ->whereNotNull('sales_channel')->where('sales_channel', '!=', '')
+                    ->distinct()->orderBy('sales_channel')->pluck('sales_channel')
+                    ->map(fn($c) => ['value' => $c, 'label' => $c])->values(),
+                'deliveryOptions' => [
+                    ['value' => '0', 'label' => 'Không giao hàng'],
+                    ['value' => '1', 'label' => 'Giao hàng'],
+                ],
+                'debtOptions' => [
+                    ['value' => '1', 'label' => 'Còn nợ'],
+                    ['value' => '0', 'label' => 'Đã trả đủ'],
+                ],
+            ],
         ]);
     }
 
@@ -268,9 +293,11 @@ class OrderController extends Controller
 
     public function export(Request $request)
     {
-        $orders = \App\Models\Order::with(['customer', 'branch'])
-            ->when($request->search, fn($q, $s) => $q->where('code', 'LIKE', "%{$s}%"))
-            ->orderBy('id', 'desc')->get();
+        $this->configureOrderFilters();
+
+        $query = Order::with(['customer', 'branch']);
+        $this->applyFilters($query, $request);
+        $orders = $query->get();
 
         return \App\Services\CsvService::export(
             ['Mã đơn hàng', 'Thời gian', 'Khách hàng', 'Chi nhánh', 'Tổng cộng', 'Khách đã trả', 'Còn nợ', 'Trạng thái', 'Ghi chú'],

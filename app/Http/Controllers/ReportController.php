@@ -66,51 +66,25 @@ class ReportController extends Controller
         $duration = $f['duration'];
         $days = max($duration, 1);
 
-        // Current period
-        $invoiceQuery = Invoice::whereBetween('created_at', [$dateFrom, $dateTo]);
-        $this->scopeBranch($invoiceQuery, $branchId);
-        $invoiceCount = (clone $invoiceQuery)->count();
-        $revenue = (float) (clone $invoiceQuery)->sum('total');
-
-        $returnQuery = OrderReturn::whereBetween('created_at', [$dateFrom, $dateTo]);
-        if ($branchId) $returnQuery->where('branch_id', $branchId);
-        $returns = (float) $returnQuery->sum('total');
-
-        $netRevenue = $revenue - $returns;
-
-        // Cost of goods
-        $costQuery = InvoiceItem::whereHas('invoice', function ($q) use ($dateFrom, $dateTo, $branchId) {
-            $q->whereBetween('created_at', [$dateFrom, $dateTo]);
-            if ($branchId) $q->where('branch_id', $branchId);
-        })->with('product:id');
-        $totalCost = 0;
-        foreach ($costQuery->get() as $item) {
-            $totalCost += $item->quantity * ($item->cost_price ?? 0);
-        }
-        $grossProfit = $netRevenue - $totalCost;
+        // Current period (via MetricService — single source of truth)
+        $m = \App\Support\Reports\MetricService::compute($dateFrom, $dateTo, $branchId);
+        $invoiceCount = $m['invoice_count'];
+        $revenue      = $m['gross_revenue'];
+        $returns      = $m['return_value'];
+        $netRevenue   = $m['net_revenue'];
+        $totalCost    = $m['cogs_net'];
+        $grossProfit  = $m['gross_profit'];
 
         // Previous period
-        $prevInvoiceQuery = Invoice::whereBetween('created_at', [$prevFrom, $prevTo]);
-        $this->scopeBranch($prevInvoiceQuery, $branchId);
-        $prevInvoiceCount = (clone $prevInvoiceQuery)->count();
-        $prevRevenue = (float) (clone $prevInvoiceQuery)->sum('total');
+        $pm = \App\Support\Reports\MetricService::compute($prevFrom, $prevTo, $branchId);
+        $prevInvoiceCount = $pm['invoice_count'];
+        $prevRevenue      = $pm['gross_revenue'];
+        $prevReturns      = $pm['return_value'];
+        $prevNetRevenue   = $pm['net_revenue'];
+        $prevTotalCost    = $pm['cogs_net'];
+        $prevGrossProfit  = $pm['gross_profit'];
 
-        $prevReturnQuery = OrderReturn::whereBetween('created_at', [$prevFrom, $prevTo]);
-        if ($branchId) $prevReturnQuery->where('branch_id', $branchId);
-        $prevReturns = (float) $prevReturnQuery->sum('total');
-        $prevNetRevenue = $prevRevenue - $prevReturns;
-
-        $prevCostQuery = InvoiceItem::whereHas('invoice', function ($q) use ($prevFrom, $prevTo, $branchId) {
-            $q->whereBetween('created_at', [$prevFrom, $prevTo]);
-            if ($branchId) $q->where('branch_id', $branchId);
-        })->with('product:id');
-        $prevTotalCost = 0;
-        foreach ($prevCostQuery->get() as $item) {
-            $prevTotalCost += $item->quantity * ($item->cost_price ?? 0);
-        }
-        $prevGrossProfit = $prevNetRevenue - $prevTotalCost;
-
-        // Chart data — daily breakdown
+        // Chart data — daily breakdown (also via MetricService for consistency)
         $chartLabels = [];
         $chartRevenue = [];
         $chartReturns = [];
@@ -121,29 +95,13 @@ class ReportController extends Controller
         while ($current->lte($dateTo)) {
             $dayStart = $current->copy()->startOfDay();
             $dayEnd = $current->copy()->endOfDay();
+            $dm = \App\Support\Reports\MetricService::compute($dayStart, $dayEnd, $branchId);
 
-            $chartLabels[] = $current->format('d/m/Y');
-
-            $dayInvQ = Invoice::whereBetween('created_at', [$dayStart, $dayEnd]);
-            $this->scopeBranch($dayInvQ, $branchId);
-            $dayRev = (float) $dayInvQ->sum('total');
-            $chartRevenue[] = $dayRev;
-
-            $dayRetQ = OrderReturn::whereBetween('created_at', [$dayStart, $dayEnd]);
-            if ($branchId) $dayRetQ->where('branch_id', $branchId);
-            $dayRet = (float) $dayRetQ->sum('total');
-            $chartReturns[] = $dayRet;
-
-            $dayCostItems = InvoiceItem::whereHas('invoice', function ($q) use ($dayStart, $dayEnd, $branchId) {
-                $q->whereBetween('created_at', [$dayStart, $dayEnd]);
-                if ($branchId) $q->where('branch_id', $branchId);
-            })->get();
-            $dayCost = 0;
-            foreach ($dayCostItems as $item) {
-                $dayCost += $item->quantity * ($item->cost_price ?? 0);
-            }
-            $chartCost[] = $dayCost;
-            $chartProfit[] = ($dayRev - $dayRet) - $dayCost;
+            $chartLabels[]  = $current->format('d/m/Y');
+            $chartRevenue[] = $dm['gross_revenue'];
+            $chartReturns[] = $dm['return_value'];
+            $chartCost[]    = $dm['cogs_net'];
+            $chartProfit[]  = $dm['gross_profit'];
 
             $current->addDay();
         }
@@ -200,26 +158,13 @@ class ReportController extends Controller
         $prevTo = $f['prevTo'];
         $days = max($f['duration'], 1);
 
-        // Net revenue
-        $invQ = Invoice::whereBetween('created_at', [$dateFrom, $dateTo]);
-        $this->scopeBranch($invQ, $branchId);
-        $revenue = (float) $invQ->sum('total');
-
-        $retQ = OrderReturn::whereBetween('created_at', [$dateFrom, $dateTo]);
-        if ($branchId) $retQ->where('branch_id', $branchId);
-        $returns = (float) $retQ->sum('total');
-        $netRevenue = $revenue - $returns;
-
-        // Cost of goods
-        $costItems = InvoiceItem::whereHas('invoice', function ($q) use ($dateFrom, $dateTo, $branchId) {
-            $q->whereBetween('created_at', [$dateFrom, $dateTo]);
-            if ($branchId) $q->where('branch_id', $branchId);
-        })->get();
-        $cogs = 0;
-        foreach ($costItems as $item) {
-            $cogs += $item->quantity * ($item->cost_price ?? 0);
-        }
-        $grossProfit = $netRevenue - $cogs;
+        // Net revenue, COGS, gross profit via MetricService
+        $m = \App\Support\Reports\MetricService::compute($dateFrom, $dateTo, $branchId);
+        $revenue     = $m['gross_revenue'];
+        $returns     = $m['return_value'];
+        $netRevenue  = $m['net_revenue'];
+        $cogs        = $m['cogs_net'];
+        $grossProfit = $m['gross_profit'];
 
         // Operating expenses from CashFlow (type = 'payment'), excluding NCC payments (already in COGS)
         $expenseQuery = CashFlow::where('type', 'payment')
@@ -258,14 +203,9 @@ class ReportController extends Controller
         $expensePerDay = round($totalExpenses / $days);
         $costRevenueRatio = $netRevenue > 0 ? round(($totalExpenses / $netRevenue) * 100, 2) : 0;
 
-        // Previous period cost/revenue ratio
-        $prevInvQ = Invoice::whereBetween('created_at', [$prevFrom, $prevTo]);
-        $this->scopeBranch($prevInvQ, $branchId);
-        $prevRevenue = (float) $prevInvQ->sum('total');
-        $prevRetQ = OrderReturn::whereBetween('created_at', [$prevFrom, $prevTo]);
-        if ($branchId) $prevRetQ->where('branch_id', $branchId);
-        $prevReturns = (float) $prevRetQ->sum('total');
-        $prevNetRevenue = $prevRevenue - $prevReturns;
+        // Previous period net revenue (consistent via MetricService)
+        $pm = \App\Support\Reports\MetricService::compute($prevFrom, $prevTo, $branchId);
+        $prevNetRevenue = $pm['net_revenue'];
         $prevCostRatio = $prevNetRevenue > 0 ? round(($prevExpenses / $prevNetRevenue) * 100, 2) : 0;
 
         return Inertia::render('Reports/CostProfit', [

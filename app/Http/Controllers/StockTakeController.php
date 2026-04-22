@@ -8,6 +8,8 @@ use App\Models\ActivityLog;
 use App\Models\StockTake;
 use App\Models\StockTakeItem;
 use App\Models\Product;
+use App\Enums\StockTakeStatus;
+use App\Support\Filters\FilterableIndex;
 use App\Services\LockPeriodService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -15,41 +17,26 @@ use App\Models\Branch;
 
 class StockTakeController extends Controller
 {
+    use FilterableIndex;
+
+    protected function configureStockTakeFilters(): void
+    {
+        $this->searchable = ['code', 'note', 'user_name', 'balancer_name'];
+        $this->searchableRelations = [
+            'items.product' => ['name', 'code', 'barcode'],
+        ];
+        $this->sortable = ['code', 'created_at', 'total_actual_qty', 'total_diff_qty', 'status'];
+        $this->dateColumn = 'created_at';
+        $this->creatorColumn = null;
+        $this->scalarFilters = ['branch_id'];
+    }
+
     public function index(Request $request)
     {
-        $query = StockTake::with('items.product')
-            ->when($request->filled('sort_by'), function ($q) use ($request) {
-                $allowed = ['code', 'created_at', 'total_actual_qty', 'total_diff_qty', 'status'];
-                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'id';
-                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
-                $q->orderBy($sortBy, $dir);
-            }, function ($q) {
-                $q->orderBy('id', 'desc');
-            });
+        $this->configureStockTakeFilters();
 
-        if ($request->filled('search')) {
-            $query->where('code', 'like', "%{$request->search}%");
-        }
-
-        if ($request->filled('status')) {
-            $query->whereIn('status', (array) $request->status);
-        }
-
-        if ($request->filled('user_name')) {
-            $query->where('user_name', 'like', "%{$request->user_name}%");
-        }
-
-        if ($request->filled('date_filter')) {
-            switch ($request->date_filter) {
-                case 'today':
-                    $query->whereDate('created_at', Carbon::today());
-                    break;
-                case 'this_month':
-                    $query->whereMonth('created_at', Carbon::now()->month)
-                        ->whereYear('created_at', Carbon::now()->year);
-                    break;
-            }
-        }
+        $query = StockTake::with('items.product');
+        $this->applyFilters($query, $request);
 
         $stockTakes = $query->paginate(20)->withQueryString();
         $branches = Branch::all();
@@ -57,10 +44,11 @@ class StockTakeController extends Controller
         return Inertia::render('StockTakes/Index', [
             'stockTakes' => $stockTakes,
             'branches' => $branches,
-            'filters' => array_merge($request->only(['search', 'status', 'user_name', 'date_filter']), [
-                'sort_by' => $request->sort_by,
-                'sort_direction' => $request->sort_direction,
-            ])
+            'filters' => $this->currentFilters($request),
+            'filterOptions' => [
+                'branches' => $branches->map(fn($b) => ['value' => $b->id, 'label' => $b->name]),
+                'statuses' => StockTakeStatus::options(),
+            ],
         ]);
     }
 
@@ -147,9 +135,10 @@ class StockTakeController extends Controller
 
     public function export(Request $request)
     {
-        $stockTakes = \App\Models\StockTake::query()
-            ->when($request->search, fn($q, $s) => $q->where('code', 'LIKE', "%{$s}%"))
-            ->orderBy('id', 'desc')->get();
+        $this->configureStockTakeFilters();
+        $query = StockTake::query();
+        $this->applyFilters($query, $request);
+        $stockTakes = $query->get();
 
         return \App\Services\CsvService::export(
             ['Mã kiểm kho', 'Người kiểm', 'Người cân bằng', 'Ngày cân bằng', 'Tổng SL thực tế', 'Tổng lệch', 'Trạng thái', 'Ghi chú'],

@@ -12,6 +12,8 @@ use App\Models\Product;
 use App\Models\Customer;
 use App\Models\CashFlow;
 use App\Models\SerialImei;
+use App\Enums\PurchaseStatus;
+use App\Support\Filters\FilterableIndex;
 use App\Services\LockPeriodService;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
@@ -19,91 +21,67 @@ use App\Services\DebtOffsetService;
 
 class PurchaseController extends Controller
 {
+    use FilterableIndex;
+
+    protected function configurePurchaseFilters(): void
+    {
+        $this->searchable = ['code', 'note'];
+        $this->searchableRelations = [
+            'supplier' => ['name', 'code', 'phone'],
+            'items'    => ['product_name'],
+        ];
+        $this->sortable = ['code', 'created_at', 'total_amount', 'discount', 'paid_amount', 'debt_amount', 'status', 'purchase_date'];
+        $this->dateColumn = 'purchases.created_at';
+        $this->creatorColumn = 'employee_id';
+        $this->scalarFilters = ['branch_id', 'supplier_id', 'warehouse_id', 'payment_method'];
+    }
+
     public function index(Request $request)
     {
-        $search = $request->input('search');
-        $statuses = $request->input('status');
-        $dateFilter = $request->input('date_filter');
-        $dateFrom = $request->input('date_from');
-        $dateTo = $request->input('date_to');
-        $supplierId = $request->input('supplier_id');
-        $createdBy = $request->input('created_by');
+        $this->configurePurchaseFilters();
 
-        $query = Purchase::with(['supplier:id,code,name', 'items']);
-
-        if ($search) {
-            $query->where(function ($q) use ($search) {
-                $q->where('code', 'LIKE', "%{$search}%")
-                    ->orWhereHas('supplier', function ($sq) use ($search) {
-                        $sq->where('name', 'LIKE', "%{$search}%")
-                           ->orWhere('code', 'LIKE', "%{$search}%");
+        $query = Purchase::with(['supplier:id,code,name', 'items'])
+            ->when($request->filled('has_debt'), function ($q) use ($request) {
+                if ((string) $request->input('has_debt') === '1') {
+                    $q->where('debt_amount', '>', 0);
+                } else {
+                    $q->where(function ($qq) {
+                        $qq->whereNull('debt_amount')->orWhere('debt_amount', '<=', 0);
                     });
+                }
+            })
+            ->when($request->filled('sort_by') && in_array($request->sort_by, ['need_pay', 'purchase_date']), function ($q) use ($request) {
+                $dir = ($request->sort_dir ?? $request->sort_direction) === 'asc' ? 'asc' : 'desc';
+                if ($request->sort_by === 'need_pay') {
+                    $q->orderByRaw("(total_amount - COALESCE(discount, 0)) $dir");
+                } elseif ($request->sort_by === 'purchase_date') {
+                    $q->orderByRaw("COALESCE(purchase_date, created_at) $dir");
+                }
             });
-        }
 
-        if ($statuses && is_array($statuses) && count($statuses) > 0) {
-            $query->whereIn('status', $statuses);
+        // Only apply standard sort if not using computed sort
+        if (!in_array($request->sort_by, ['need_pay', 'purchase_date'])) {
+            $this->applyFilters($query, $request);
+        } else {
+            // Apply everything except sort
+            $originalSortable = $this->sortable;
+            $this->sortable = [];
+            $this->applyFilters($query, $request);
+            $this->sortable = $originalSortable;
         }
-
-        if ($supplierId) {
-            $query->where('supplier_id', $supplierId);
-        }
-
-        if ($createdBy) {
-            $query->where('employee_id', $createdBy);
-        }
-
-        if ($dateFilter === 'this_month') {
-            $query->whereMonth('created_at', now()->month)
-                ->whereYear('created_at', now()->year);
-        } elseif ($dateFilter === 'custom' && $dateFrom && $dateTo) {
-            $query->whereDate('created_at', '>=', $dateFrom)
-                ->whereDate('created_at', '<=', $dateTo);
-        }
-
-        $query->when($request->filled('sort_by'), function ($q) use ($request) {
-            $allowed = ['code', 'created_at', 'total_amount', 'discount', 'paid_amount', 'status'];
-            $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
-            if ($request->sort_by === 'need_pay') {
-                $q->orderByRaw("(total_amount - COALESCE(discount, 0)) $dir");
-            } elseif ($request->sort_by === 'purchase_date') {
-                $q->orderByRaw("COALESCE(purchase_date, created_at) $dir");
-            } elseif (in_array($request->sort_by, $allowed)) {
-                $q->orderBy($request->sort_by, $dir);
-            } else {
-                $q->orderBy('created_at', $dir);
-            }
-        }, function ($q) {
-            $q->latest();
-        });
 
         $purchases = $query->paginate(20)->withQueryString();
 
-        // Summary based on filtered query (clone before paginate)
+        // Summary using same filters
         $summaryQuery = Purchase::query();
-        if ($search) {
-            $summaryQuery->where(function ($q) use ($search) {
-                $q->where('code', 'LIKE', "%{$search}%")
-                    ->orWhereHas('supplier', fn($sq) => $sq->where('name', 'LIKE', "%{$search}%")->orWhere('code', 'LIKE', "%{$search}%"));
-            });
-        }
-        if ($statuses && is_array($statuses) && count($statuses) > 0) {
-            $summaryQuery->whereIn('status', $statuses);
-        }
-        if ($supplierId) $summaryQuery->where('supplier_id', $supplierId);
-        if ($createdBy) $summaryQuery->where('employee_id', $createdBy);
-        if ($dateFilter === 'this_month') {
-            $summaryQuery->whereMonth('purchases.created_at', now()->month)->whereYear('purchases.created_at', now()->year);
-        } elseif ($dateFilter === 'custom' && $dateFrom && $dateTo) {
-            $summaryQuery->whereDate('purchases.created_at', '>=', $dateFrom)->whereDate('purchases.created_at', '<=', $dateTo);
-        }
+        $this->applyFilters($summaryQuery, $request);
 
         $summary = [
-            'total_amount' => $summaryQuery->sum('total_amount'),
-            'total_discount' => $summaryQuery->sum('discount'),
-            'total_paid' => $summaryQuery->sum('paid_amount'),
-            'total_debt' => $summaryQuery->sum('debt_amount'),
-            'total_count' => $summaryQuery->count(),
+            'total_amount' => (clone $summaryQuery)->sum('total_amount'),
+            'total_discount' => (clone $summaryQuery)->sum('discount'),
+            'total_paid' => (clone $summaryQuery)->sum('paid_amount'),
+            'total_debt' => (clone $summaryQuery)->sum('debt_amount'),
+            'total_count' => (clone $summaryQuery)->count(),
             'total_items' => (clone $summaryQuery)->join('purchase_items', 'purchases.id', '=', 'purchase_items.purchase_id')->sum('purchase_items.quantity'),
         ];
 
@@ -112,10 +90,27 @@ class PurchaseController extends Controller
 
         return Inertia::render('Purchases/Index', [
             'purchases' => $purchases,
-            'filters' => $request->only(['search', 'status', 'date_filter', 'date_from', 'date_to', 'supplier_id', 'created_by', 'sort_by', 'sort_direction']),
+            'filters' => $this->currentFilters($request) + [
+                'has_debt' => $request->input('has_debt', ''),
+            ],
             'summary' => $summary,
             'suppliers' => $suppliers,
             'employees' => $employees,
+            'filterOptions' => [
+                'branches' => \App\Models\Branch::select('id', 'name')->get(),
+                'statuses' => PurchaseStatus::options(),
+                'suppliers' => $suppliers->map(fn($s) => ['value' => $s->id, 'label' => $s->name]),
+                'employees' => $employees->map(fn($e) => ['value' => $e->id, 'label' => $e->name]),
+                'paymentMethods' => [
+                    ['value' => 'cash', 'label' => 'Tiền mặt'],
+                    ['value' => 'transfer', 'label' => 'Chuyển khoản'],
+                    ['value' => 'card', 'label' => 'Thẻ'],
+                ],
+                'debtOptions' => [
+                    ['value' => '1', 'label' => 'Còn nợ NCC'],
+                    ['value' => '0', 'label' => 'Đã trả đủ'],
+                ],
+            ],
         ]);
     }
 
@@ -678,9 +673,10 @@ class PurchaseController extends Controller
 
     public function export(Request $request)
     {
-        $purchases = \App\Models\Purchase::with('supplier')
-            ->when($request->search, fn($q, $s) => $q->where('code', 'LIKE', "%{$s}%"))
-            ->orderBy('id', 'desc')->get();
+        $this->configurePurchaseFilters();
+        $query = Purchase::with('supplier');
+        $this->applyFilters($query, $request);
+        $purchases = $query->get();
 
         return \App\Services\CsvService::export(
             ['Mã nhập hàng', 'Thời gian', 'Nhà cung cấp', 'Tổng cộng', 'Giảm giá', 'Đã trả NCC', 'Còn nợ NCC', 'Trạng thái', 'Ghi chú'],

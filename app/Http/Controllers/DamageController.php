@@ -8,58 +8,33 @@ use App\Models\Damage;
 use App\Models\DamageItem;
 use App\Models\Product;
 use App\Models\Branch;
+use App\Enums\DamageStatus;
+use App\Support\Filters\FilterableIndex;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
 class DamageController extends Controller
 {
+    use FilterableIndex;
+
+    protected function configureDamageFilters(): void
+    {
+        $this->searchable = ['code', 'note', 'created_by_name', 'destroyed_by_name'];
+        $this->searchableRelations = [
+            'items.product' => ['name', 'code', 'barcode'],
+        ];
+        $this->sortable = ['code', 'created_at', 'total_qty', 'total_value', 'status'];
+        $this->dateColumn = 'created_at';
+        $this->creatorColumn = null;
+        $this->scalarFilters = ['branch_id'];
+    }
+
     public function index(Request $request)
     {
-        $query = Damage::with(['items.product', 'branch'])
-            ->when($request->filled('sort_by'), function ($q) use ($request) {
-                $allowed = ['code', 'created_at', 'total_qty', 'total_value', 'status'];
-                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'id';
-                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
-                $q->orderBy($sortBy, $dir);
-            }, function ($q) {
-                $q->orderBy('id', 'desc');
-            });
+        $this->configureDamageFilters();
 
-        if ($request->filled('search')) {
-            $query->where('code', 'like', "%{$request->search}%");
-        }
-
-        if ($request->filled('status')) {
-            $query->whereIn('status', (array) $request->status);
-        }
-
-        if ($request->filled('branch_id')) {
-            $query->where('branch_id', $request->branch_id);
-        }
-
-        if ($request->filled('created_by_name')) {
-            $query->where('created_by_name', 'like', "%{$request->created_by_name}%");
-        }
-
-        if ($request->filled('destroyed_by_name')) {
-            $query->where('destroyed_by_name', 'like', "%{$request->destroyed_by_name}%");
-        }
-
-        if ($request->filled('date_filter')) {
-            switch ($request->date_filter) {
-                case 'today':
-                    $query->whereDate('created_at', Carbon::today());
-                    break;
-                case 'this_month':
-                    $query->whereMonth('created_at', Carbon::now()->month)
-                        ->whereYear('created_at', Carbon::now()->year);
-                    break;
-                case 'last_year':
-                    // Just an example for the UI mock
-                    $query->whereYear('created_at', Carbon::now()->subYear()->year);
-                    break;
-            }
-        }
+        $query = Damage::with(['items.product', 'branch']);
+        $this->applyFilters($query, $request);
 
         $damages = $query->paginate(20)->withQueryString();
         $branches = Branch::all();
@@ -67,17 +42,11 @@ class DamageController extends Controller
         return Inertia::render('Damages/Index', [
             'damages' => $damages,
             'branches' => $branches,
-            'filters' => array_merge($request->only([
-                'search',
-                'status',
-                'branch_id',
-                'created_by_name',
-                'destroyed_by_name',
-                'date_filter'
-            ]), [
-                'sort_by' => $request->sort_by,
-                'sort_direction' => $request->sort_direction,
-            ])
+            'filters' => $this->currentFilters($request),
+            'filterOptions' => [
+                'branches' => $branches->map(fn($b) => ['value' => $b->id, 'label' => $b->name]),
+                'statuses' => DamageStatus::options(),
+            ],
         ]);
     }
 
@@ -164,9 +133,10 @@ class DamageController extends Controller
 
     public function export(Request $request)
     {
-        $damages = \App\Models\Damage::with('branch')
-            ->when($request->search, fn($q, $s) => $q->where('code', 'LIKE', "%{$s}%"))
-            ->orderBy('id', 'desc')->get();
+        $this->configureDamageFilters();
+        $query = Damage::with('branch');
+        $this->applyFilters($query, $request);
+        $damages = $query->get();
 
         return \App\Services\CsvService::export(
             ['Mã xuất hủy', 'Chi nhánh', 'Người tạo', 'Người hủy', 'Ngày hủy', 'Tổng SL', 'Tổng giá trị', 'Trạng thái', 'Ghi chú'],

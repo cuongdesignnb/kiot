@@ -2,12 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\InvoiceStatus;
 use App\Models\Invoice;
 use App\Models\PriceBook;
 use App\Models\Setting;
 use App\Models\CashFlow;
 use App\Models\SerialImei;
 use App\Services\DebtOffsetService;
+use App\Support\Filters\FilterableIndex;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
@@ -15,34 +17,80 @@ use Carbon\Carbon;
 
 class InvoiceController extends Controller
 {
+    use FilterableIndex;
+
+    /**
+     * Cấu hình chuẩn cho mọi endpoint list/export của hoá đơn.
+     * Giữ một chỗ duy nhất để index() và export() dùng chung.
+     */
+    protected function configureInvoiceFilters(): void
+    {
+        $this->searchable = ['code', 'note', 'tracking_code', 'seller_name', 'created_by_name'];
+        $this->searchableRelations = [
+            'customer'      => ['name', 'code', 'phone'],
+            'items.product' => ['name', 'code', 'barcode'],
+            'order'         => ['code'],
+        ];
+        $this->sortable = ['code', 'created_at', 'subtotal', 'discount', 'total', 'customer_paid', 'status'];
+        $this->dateColumn = 'created_at';
+        $this->creatorColumn = 'created_by';
+        $this->scalarFilters = [
+            'branch_id', 'customer_id', 'employee_id',
+            'is_delivery', 'delivery_partner',
+            'payment_method', 'sales_channel',
+            'order_id', 'promotion_id', 'price_table_id',
+        ];
+    }
+
     public function index(Request $request)
     {
-        $search = $request->input('search');
+        $this->configureInvoiceFilters();
 
-        $invoices = Invoice::with(['items.product', 'customer'])
-            ->when($search, function ($query, $search) {
-                return $query->where('code', 'LIKE', "%{$search}%")
-                    ->orWhereHas('customer', function ($q) use ($search) {
-                        $q->where('name', 'LIKE', "%{$search}%")
-                            ->orWhere('code', 'LIKE', "%{$search}%")
-                            ->orWhere('phone', 'LIKE', "%{$search}%");
-                    });
-            })
-            ->when($request->filled('sort_by'), function ($query) use ($request) {
-                $allowed = ['code', 'created_at', 'subtotal', 'discount', 'total', 'customer_paid'];
-                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'created_at';
-                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
-                $query->orderBy($sortBy, $dir);
-            }, function ($query) {
-                $query->orderBy('created_at', 'desc');
-            })
-            ->paginate(15)
-            ->withQueryString();
+        $query = Invoice::with(['items.product', 'customer'])
+            ->when($request->filled('has_debt'), function ($q) use ($request) {
+                // has_debt=1 → còn nợ (total > customer_paid)
+                // has_debt=0 → đã trả đủ
+                if ((string)$request->input('has_debt') === '1') {
+                    $q->whereColumn('total', '>', 'customer_paid');
+                } else {
+                    $q->whereColumn('total', '<=', 'customer_paid');
+                }
+            });
+
+        $this->applyFilters($query, $request);
+
+        $invoices = $query->paginate(15)->withQueryString();
+
+        $filters = $this->currentFilters($request);
+        $filters['has_debt'] = $request->input('has_debt', '');
 
         return Inertia::render('Invoices/Index', [
             'invoices' => $invoices,
-            'branches' => \App\Models\Branch::all(),
-            'filters' => ['search' => $search, 'sort_by' => $request->sort_by, 'sort_direction' => $request->sort_direction]
+            'filters' => $filters,
+            'filterOptions' => [
+                'branches' => \App\Models\Branch::select('id', 'name')->get(),
+                'statuses' => InvoiceStatus::options(),
+                'employees' => \App\Models\Employee::select('id', 'name')->where('is_active', true)->orderBy('name')->get(),
+                'creators' => \App\Models\User::select('id', 'name')->orderBy('name')->get(),
+                'paymentMethods' => [
+                    ['value' => 'cash', 'label' => 'Tiền mặt'],
+                    ['value' => 'card', 'label' => 'Thẻ'],
+                    ['value' => 'transfer', 'label' => 'Chuyển khoản'],
+                    ['value' => 'ewallet', 'label' => 'Ví điện tử'],
+                ],
+                'salesChannels' => Invoice::query()
+                    ->whereNotNull('sales_channel')->where('sales_channel', '!=', '')
+                    ->distinct()->orderBy('sales_channel')->pluck('sales_channel')
+                    ->map(fn($c) => ['value' => $c, 'label' => $c])->values(),
+                'deliveryOptions' => [
+                    ['value' => '0', 'label' => 'Không giao hàng'],
+                    ['value' => '1', 'label' => 'Giao hàng'],
+                ],
+                'debtOptions' => [
+                    ['value' => '1', 'label' => 'Còn nợ'],
+                    ['value' => '0', 'label' => 'Đã trả đủ'],
+                ],
+            ],
         ]);
     }
 
@@ -570,9 +618,10 @@ class InvoiceController extends Controller
 
     public function export(Request $request)
     {
-        $invoices = \App\Models\Invoice::with(['customer'])
-            ->when($request->search, fn($q, $s) => $q->where('code', 'LIKE', "%{$s}%"))
-            ->orderBy('id', 'desc')->get();
+        $this->configureInvoiceFilters();
+        $query = \App\Models\Invoice::with(['customer']);
+        $this->applyFilters($query, $request);
+        $invoices = $query->get();
 
         return \App\Services\CsvService::export(
             ['Mã hóa đơn', 'Thời gian', 'Khách hàng', 'Tổng tiền hàng', 'Giảm giá', 'Tổng cộng', 'Khách đã trả', 'Ghi chú'],

@@ -1,9 +1,11 @@
 <script setup>
-import { ref, watch, reactive } from "vue";
+import { ref, computed, reactive } from "vue";
 import { Head, router, Link, useForm } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
+import SidebarFilter from "@/Components/Filters/SidebarFilter.vue";
+import { useFilters } from "@/composables/useFilters.js";
 import axios from "axios";
 
 const formatDateTime = (val) => {
@@ -24,46 +26,48 @@ const props = defineProps({
     suppliers: Object,
     groups: Array,
     filters: Object,
+    filterOptions: Object,
     summary: Object,
 });
 
-const search = ref(props.filters?.search || "");
-const customerGroup = ref(props.filters?.customer_group || "");
-const dateFilter = ref(props.filters?.date_filter || "all");
-const partnerType = ref(props.filters?.partner_type || "all");
-const sortBy = ref(props.filters?.sort_by || "");
-const sortDirection = ref(props.filters?.sort_direction || "");
+const { filters, setSort, reset } = useFilters({
+    initial: props.filters,
+    route: "/suppliers",
+    defaults: { date_filter: "all" },
+});
+
+const sidebarConfig = computed(() => [
+    {
+        key: "search",
+        type: "search",
+        label: "Tìm kiếm",
+        placeholder: "Theo mã, tên, SĐT NCC",
+    },
+    {
+        key: "customer_group",
+        type: "select",
+        label: "Nhóm nhà cung cấp",
+        placeholder: "-- Tất cả các nhóm --",
+        options: props.filterOptions?.groups || [],
+    },
+    {
+        key: "partner_type",
+        type: "select",
+        label: "Loại đối tác",
+        placeholder: "-- Tất cả --",
+        options: props.filterOptions?.partnerTypes || [],
+    },
+    {
+        key: "date",
+        type: "dateRange",
+        label: "Ngày tạo",
+        fields: { filter: "date_filter", from: "date_from", to: "date_to" },
+    },
+]);
+
+const handleSort = (field, direction) => setSort(field, direction);
+
 const expandedRows = ref([]); // array of expanded supplier IDs
-
-let searchTimeout;
-const updateFilters = () => {
-    clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(() => {
-        router.get(
-            "/suppliers",
-            {
-                search: search.value,
-                customer_group: customerGroup.value,
-                date_filter: dateFilter.value,
-                partner_type: partnerType.value,
-                sort_by: sortBy.value || undefined,
-                sort_direction: sortDirection.value || undefined,
-            },
-            {
-                preserveState: true,
-                replace: true,
-            },
-        );
-    }, 500);
-};
-
-watch([search, customerGroup, dateFilter, partnerType], updateFilters);
-
-const handleSort = (field, direction) => {
-    sortBy.value = field;
-    sortDirection.value = direction;
-    updateFilters();
-};
 
 const toggleExpand = (supplierId) => {
     const index = expandedRows.value.indexOf(supplierId);
@@ -411,225 +415,13 @@ const showCbToast = () => {
 <template>
     <Head title="Nhà cung cấp - KiotViet Clone" />
     <AppLayout>
-        <!-- Sidebar slot -->
         <template #sidebar>
-            <!-- Lọc NHÓM NHÀ CUNG CẤP -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <div class="flex justify-between items-center mb-2">
-                    <label class="block text-sm font-bold text-gray-800"
-                        >Nhóm nhà cung cấp</label
-                    >
-                    <button class="text-blue-600 hover:underline text-xs">
-                        Tạo mới
-                    </button>
-                </div>
-                <select
-                    v-model="customerGroup"
-                    class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none focus:border-blue-500"
-                >
-                    <option value="">Tất cả các nhóm</option>
-                    <option v-for="group in groups" :key="group" :value="group">
-                        {{ group }}
-                    </option>
-                </select>
-            </div>
-
-            <!-- Lọc CHI NHÁNH TẠO -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2"
-                    >Chi nhánh tạo</label
-                >
-                <div class="flex flex-wrap gap-2">
-                    <div
-                        class="bg-blue-600 text-white px-2 py-1 rounded text-xs flex items-center gap-1 cursor-pointer"
-                    >
-                        Laptopplus.vn
-                        <span
-                            class="pl-1 border-l border-blue-400 font-bold hover:text-gray-200"
-                            >&times;</span
-                        >
-                    </div>
-                </div>
-            </div>
-
-            <!-- Lọc NGÀY TẠO -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2"
-                    >Ngày tạo</label
-                >
-                <div class="space-y-2 text-sm text-gray-700">
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input
-                            type="radio"
-                            v-model="dateFilter"
-                            value="all"
-                            name="create_date"
-                            class="text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        Toàn thời gian
-                    </label>
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input
-                            type="radio"
-                            v-model="dateFilter"
-                            value="today"
-                            name="create_date"
-                            class="text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        Hôm nay
-                    </label>
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input
-                            type="radio"
-                            v-model="dateFilter"
-                            value="this_month"
-                            name="create_date"
-                            class="text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        Tháng này
-                    </label>
-                </div>
-            </div>
-
-            <!-- Lọc NGƯỜI TẠO -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2"
-                    >Người tạo</label
-                >
-                <select
-                    class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none text-gray-500"
-                >
-                    <option>Chọn người tạo</option>
-                </select>
-            </div>
-
-            <!-- LOẠI ĐỐI TÁC -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2"
-                    >Loại đối tác</label
-                >
-                <div class="flex gap-2 text-sm flex-wrap">
-                    <button
-                        @click="partnerType = 'all'"
-                        :class="{
-                            'bg-blue-600 text-white border-blue-600':
-                                partnerType === 'all',
-                            'bg-white text-gray-600 border-gray-300':
-                                partnerType !== 'all',
-                        }"
-                        class="border rounded-full px-3 py-1"
-                    >
-                        Tất cả
-                    </button>
-                    <button
-                        @click="partnerType = 'supplier_only'"
-                        :class="{
-                            'bg-blue-600 text-white border-blue-600':
-                                partnerType === 'supplier_only',
-                            'bg-white text-gray-600 border-gray-300':
-                                partnerType !== 'supplier_only',
-                        }"
-                        class="border rounded-full px-3 py-1"
-                    >
-                        Chỉ là NCC
-                    </button>
-                    <button
-                        @click="partnerType = 'both'"
-                        :class="{
-                            'bg-blue-600 text-white border-blue-600':
-                                partnerType === 'both',
-                            'bg-white text-gray-600 border-gray-300':
-                                partnerType !== 'both',
-                        }"
-                        class="border rounded-full px-3 py-1"
-                    >
-                        Vừa là NCC, Khách hàng
-                    </button>
-                </div>
-            </div>
-
-            <!-- GIỚI TÍNH -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2"
-                    >Giới tính</label
-                >
-                <div class="flex gap-2 text-sm">
-                    <button
-                        class="bg-blue-600 text-white border border-blue-600 rounded-full px-3 py-1"
-                    >
-                        Tất cả
-                    </button>
-                    <button
-                        class="bg-white text-gray-600 border border-gray-300 rounded-full px-3 py-1 hover:border-gray-400"
-                    >
-                        Nam
-                    </button>
-                    <button
-                        class="bg-white text-gray-600 border border-gray-300 rounded-full px-3 py-1 hover:border-gray-400"
-                    >
-                        Nữ
-                    </button>
-                </div>
-            </div>
-
-            <!-- SINH NHẬT -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2"
-                    >Sinh nhật</label
-                >
-                <div class="space-y-2 text-sm text-gray-700">
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input
-                            type="radio"
-                            name="birthday"
-                            checked
-                            class="text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        Toàn thời gian
-                        <svg
-                            class="w-3 h-3 ml-auto text-gray-400"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                        >
-                            <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                stroke-width="2"
-                                d="M9 5l7 7-7 7"
-                            ></path>
-                        </svg>
-                    </label>
-                    <label
-                        class="flex items-center gap-2 cursor-pointer text-gray-500"
-                    >
-                        <input
-                            type="radio"
-                            name="birthday"
-                            class="text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        Tùy chỉnh
-                        <svg
-                            class="w-4 h-4 ml-auto"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                        >
-                            <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                stroke-width="2"
-                                d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-                            ></path>
-                        </svg>
-                    </label>
-                </div>
-            </div>
-
-            <div class="px-3 py-4">
-                <label class="block text-sm font-bold text-gray-800 mb-2"
-                    >Ngày giao dịch cuối</label
-                >
+            <div class="p-3">
+                <SidebarFilter
+                    v-model="filters"
+                    :config="sidebarConfig"
+                    @reset="reset"
+                />
             </div>
         </template>
 
@@ -663,7 +455,7 @@ const showCbToast = () => {
                     </svg>
                     <input
                         type="text"
-                        v-model="search"
+                        v-model="filters.search"
                         placeholder="Theo mã, tên, số điện thoại"
                         class="w-full pl-7 pr-8 py-1.5 focus:outline-none text-sm placeholder-gray-400 bg-transparent"
                     />
@@ -796,12 +588,12 @@ const showCbToast = () => {
                                     class="rounded border-gray-300"
                                 />
                             </th>
-                            <SortableHeader label="Mã nhà cung cấp" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
-                            <SortableHeader label="Tên nhà cung cấp" field="name" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
-                            <SortableHeader label="Điện thoại" field="phone" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
-                            <SortableHeader label="Email" field="email" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
-                            <SortableHeader label="Nợ cần trả hiện tại" field="supplier_debt_amount" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
-                            <SortableHeader label="Tổng mua" field="total_bought" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
+                            <SortableHeader label="Mã nhà cung cấp" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Tên nhà cung cấp" field="name" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Điện thoại" field="phone" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Email" field="email" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Nợ cần trả hiện tại" field="supplier_debt_amount" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
+                            <SortableHeader label="Tổng mua" field="total_bought" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-200 text-gray-800">

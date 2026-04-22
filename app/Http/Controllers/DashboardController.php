@@ -30,35 +30,32 @@ class DashboardController extends Controller
         // 1. KEY METRICS
         // ═══════════════════════════════════════
 
-        // Doanh thu hôm nay (từ hóa đơn)
-        $todayRevenue = Invoice::whereDate('created_at', $today)->sum('total');
-        $yesterdayRevenue = Invoice::whereDate('created_at', $today->copy()->subDay())->sum('total');
+        // Doanh thu hôm nay (từ hóa đơn) — loại hóa đơn đã hủy
+        $todayRevenue = Invoice::whereDate('created_at', $today)->where('status','!=','Đã hủy')->sum('total');
+        $yesterdayRevenue = Invoice::whereDate('created_at', $today->copy()->subDay())->where('status','!=','Đã hủy')->sum('total');
 
-        // Đơn hàng hôm nay
-        $todayOrders = Invoice::whereDate('created_at', $today)->count();
-        $yesterdayOrders = Invoice::whereDate('created_at', $today->copy()->subDay())->count();
-
-        // Doanh thu tháng này
-        $thisMonthRevenue = Invoice::whereBetween('created_at', [$startOfMonth, Carbon::now()])->sum('total');
-        $lastMonthRevenue = Invoice::whereBetween('created_at', [$startOfLastMonth, $endOfLastMonth])->sum('total');
+        // Đơn hàng hôm nay (không tính đơn đã hủy)
+        $todayOrders = Invoice::whereDate('created_at', $today)->where('status','!=','Đã hủy')->count();
+        $yesterdayOrders = Invoice::whereDate('created_at', $today->copy()->subDay())->where('status','!=','Đã hủy')->count();
 
         // Tổng tồn kho
         $totalProductsInStock = Product::sum('stock_quantity');
         $totalProductCount = Product::count();
 
-        // Lợi nhuận gộp tháng này = Doanh thu - Giá vốn - Tổng chi phí
-        // 1) Giá vốn hàng bán (COGS)
-        $invoiceIdsThisMonth = Invoice::where('created_at', '>=', $startOfMonth)->pluck('id');
-        $hasItemCostCol = Schema::hasColumn('invoice_items', 'cost_price');
-        $costExpr = $hasItemCostCol
-            ? 'invoice_items.quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0)'
-            : 'invoice_items.quantity * COALESCE(products.cost_price, 0)';
-        $thisMonthCost = (float) DB::table('invoice_items')
-            ->join('products', 'invoice_items.product_id', '=', 'products.id')
-            ->whereIn('invoice_items.invoice_id', $invoiceIdsThisMonth)
-            ->sum(DB::raw($costExpr));
+        // Metrics tháng này & tháng trước (MetricService — single source of truth)
+        $metricsMonth = \App\Support\Reports\MetricService::compute(
+            $startOfMonth,
+            Carbon::now()->endOfDay()
+        );
+        $metricsLastMonth = \App\Support\Reports\MetricService::compute(
+            $startOfLastMonth,
+            $endOfLastMonth
+        );
+        $thisMonthRevenue = $metricsMonth['gross_revenue'];
+        $lastMonthRevenue = $metricsLastMonth['gross_revenue'];
+        $thisMonthCost = $metricsMonth['cogs_net'];
 
-        // 2) Tổng chi phí (phiếu chi) tháng này - trừ các khoản trả NCC (đã tính vào giá vốn)
+        // Tổng chi phí (phiếu chi) tháng này - trừ các khoản trả NCC (đã tính vào giá vốn)
         $thisMonthExpenses = CashFlow::where('type', 'payment')
             ->where('created_at', '>=', $startOfMonth)
             ->where(function ($q) {
@@ -67,7 +64,8 @@ class DashboardController extends Controller
             })
             ->sum('amount') ?? 0;
 
-        $thisMonthProfit = $thisMonthRevenue - $thisMonthCost - $thisMonthExpenses;
+        // Lợi nhuận thuần = Doanh thu thuần - Giá vốn thuần - Chi phí
+        $thisMonthProfit = $metricsMonth['net_revenue'] - $metricsMonth['cogs_net'] - $thisMonthExpenses;
 
         // Nhập hàng tháng này
         $thisMonthPurchase = Purchase::where('created_at', '>=', $startOfMonth)->sum('total_amount');

@@ -14,58 +14,78 @@ use Illuminate\Http\Request;
 use Inertia\Inertia;
 use App\Services\DebtOffsetService;
 use App\Models\DebtOffset;
+use App\Support\Filters\FilterableIndex;
 
 class CustomerController extends Controller
 {
+    use FilterableIndex;
+
+    protected function configureCustomerFilters(): void
+    {
+        $this->searchable = ['code', 'name', 'phone', 'phone2', 'email', 'tax_code'];
+        $this->sortable = ['code', 'name', 'phone', 'debt_amount', 'total_spent', 'total_returns', 'created_at'];
+        $this->dateColumn = 'created_at';
+        $this->scalarFilters = ['type', 'gender', 'customer_group', 'branch_id', 'city', 'district'];
+    }
+
     public function index(Request $request)
     {
-        $search = $request->input('search');
-        $type = $request->input('type');
-        $gender = $request->input('gender');
+        $this->configureCustomerFilters();
 
-        $customers = Customer::with('branch')
-            ->when($search, function ($query, $search) {
-                return $query->where(function ($q) use ($search) {
-                    $q->where('code', 'LIKE', "%{$search}%")
-                      ->orWhere('name', 'LIKE', "%{$search}%")
-                      ->orWhere('phone', 'LIKE', "%{$search}%");
-                });
-            })
-            ->when($type, fn($q) => $q->where('type', $type))
-            ->when($gender, fn($q) => $q->where('gender', $gender))
-            ->when(Setting::get('customer_manage_by_branch', false), function ($q) {
-                if (auth()->user()?->branch_id) {
-                    $q->where('branch_id', auth()->user()->branch_id);
-                }
-            })
-            ->when($request->filled('sort_by'), function ($q) use ($request) {
-                $allowed = ['code', 'name', 'phone', 'debt_amount', 'total_spent', 'created_at'];
-                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'id';
-                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
-                $q->orderBy($sortBy, $dir);
-            }, function ($q) {
-                $q->orderBy('id', 'desc');
-            })
-            ->paginate(15)
-            ->withQueryString();
+        $query = Customer::with('branch');
 
-        // Collect customer-related settings for the frontend
+        // Branch auto-lock when setting enabled
+        if (Setting::get('customer_manage_by_branch', false) && auth()->user()?->branch_id) {
+            $query->where('branch_id', auth()->user()->branch_id);
+        }
+
+        // Pseudo filter: has_debt
+        if ($request->filled('has_debt')) {
+            if ($request->has_debt === 'yes') {
+                $query->where('debt_amount', '>', 0);
+            } elseif ($request->has_debt === 'no') {
+                $query->where('debt_amount', '<=', 0);
+            }
+        }
+
+        $this->applyFilters($query, $request);
+
+        $customers = $query->paginate(15)->withQueryString();
+
         $customerSettings = [
             'customer_debt_warning' => Setting::get('customer_debt_warning', true),
             'customer_is_vendor' => Setting::get('customer_is_vendor', false),
             'customer_manage_by_branch' => Setting::get('customer_manage_by_branch', false),
         ];
 
-        // Summary totals
         $summary = [
             'total_debt' => Customer::where('is_customer', true)->where('debt_amount', '>', 0)->sum('debt_amount'),
             'total_spent' => Customer::where('is_customer', true)->sum('total_spent'),
             'total_returns' => Customer::where('is_customer', true)->sum('total_returns'),
         ];
 
+        $filterOptions = [
+            'branches' => \App\Models\Branch::select('id', 'name')->orderBy('name')->get(),
+            'types' => [
+                ['value' => 'individual', 'label' => 'Cá nhân'],
+                ['value' => 'company', 'label' => 'Công ty'],
+            ],
+            'genders' => [
+                ['value' => 'male', 'label' => 'Nam'],
+                ['value' => 'female', 'label' => 'Nữ'],
+                ['value' => 'none', 'label' => 'Không xác định'],
+            ],
+            'debtOptions' => [
+                ['value' => 'yes', 'label' => 'Còn nợ'],
+                ['value' => 'no', 'label' => 'Không nợ'],
+            ],
+            'customerGroups' => Customer::whereNotNull('customer_group')->where('customer_group', '!=', '')->distinct()->pluck('customer_group')->map(fn($g) => ['value' => $g, 'label' => $g])->values(),
+        ];
+
         return Inertia::render('Customers/Index', [
             'customers' => $customers,
-            'filters' => ['search' => $search, 'type' => $type, 'gender' => $gender, 'sort_by' => $request->sort_by, 'sort_direction' => $request->sort_direction],
+            'filters' => $this->currentFilters($request),
+            'filterOptions' => $filterOptions,
             'customerSettings' => $customerSettings,
             'summary' => $summary,
         ]);

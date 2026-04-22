@@ -1,22 +1,24 @@
 <script setup>
-import { ref, watch, reactive } from "vue";
+import { ref, watch, reactive, computed } from "vue";
 import { Head, router, Link, useForm } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
+import { useFilters } from "@/composables/useFilters.js";
 import axios from "axios";
 
 const props = defineProps({
     customers: Object,
     filters: Object,
+    filterOptions: Object,
     summary: Object,
 });
 
-const search = ref(props.filters?.search || "");
-const filterType = ref(props.filters?.type || "");
-const filterGender = ref(props.filters?.gender || "");
-const sortBy = ref(props.filters?.sort_by || "");
-const sortDirection = ref(props.filters?.sort_direction || "");
+const { filters, setSort, reset } = useFilters({
+    initial: props.filters,
+    route: "/customers",
+});
+
 const expandedRows = ref([]); // array of expanded customer IDs
 
 // Tab state per customer
@@ -83,32 +85,8 @@ const showInvoiceDetail = async (invoiceId) => {
 };
 
 let searchTimeout;
-const applyFilters = () => {
-    clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(() => {
-        router.get(
-            "/customers",
-            {
-                search: search.value || undefined,
-                type: filterType.value || undefined,
-                gender: filterGender.value || undefined,
-                sort_by: sortBy.value || undefined,
-                sort_direction: sortDirection.value || undefined,
-            },
-            {
-                preserveState: true,
-                replace: true,
-            },
-        );
-    }, 300);
-};
-watch([search, filterType, filterGender], applyFilters);
-
-const handleSort = (field, direction) => {
-    sortBy.value = field;
-    sortDirection.value = direction;
-    applyFilters();
-};
+const applyFilters = () => {}; // no-op: useFilters handles syncing
+const handleSort = (field, direction) => setSort(field, direction);
 
 const toggleExpand = (customerId) => {
     const index = expandedRows.value.indexOf(customerId);
@@ -647,9 +625,9 @@ const submit = () => {
                 >
                 <div class="flex gap-2 text-sm">
                     <button
-                        @click="filterType = ''"
+                        @click="filters.type = ''"
                         :class="
-                            !filterType
+                            !filters.type
                                 ? 'bg-blue-600 text-white border-blue-600'
                                 : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'
                         "
@@ -658,9 +636,9 @@ const submit = () => {
                         Tất cả
                     </button>
                     <button
-                        @click="filterType = 'individual'"
+                        @click="filters.type = 'individual'"
                         :class="
-                            filterType === 'individual'
+                            filters.type === 'individual'
                                 ? 'bg-blue-600 text-white border-blue-600'
                                 : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'
                         "
@@ -669,9 +647,9 @@ const submit = () => {
                         Cá nhân
                     </button>
                     <button
-                        @click="filterType = 'company'"
+                        @click="filters.type = 'company'"
                         :class="
-                            filterType === 'company'
+                            filters.type === 'company'
                                 ? 'bg-blue-600 text-white border-blue-600'
                                 : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'
                         "
@@ -689,9 +667,9 @@ const submit = () => {
                 >
                 <div class="flex gap-2 text-sm">
                     <button
-                        @click="filterGender = ''"
+                        @click="filters.gender = ''"
                         :class="
-                            !filterGender
+                            !filters.gender
                                 ? 'bg-blue-600 text-white border-blue-600'
                                 : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'
                         "
@@ -700,9 +678,9 @@ const submit = () => {
                         Tất cả
                     </button>
                     <button
-                        @click="filterGender = 'male'"
+                        @click="filters.gender = 'male'"
                         :class="
-                            filterGender === 'male'
+                            filters.gender === 'male'
                                 ? 'bg-blue-600 text-white border-blue-600'
                                 : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'
                         "
@@ -711,9 +689,9 @@ const submit = () => {
                         Nam
                     </button>
                     <button
-                        @click="filterGender = 'female'"
+                        @click="filters.gender = 'female'"
                         :class="
-                            filterGender === 'female'
+                            filters.gender === 'female'
                                 ? 'bg-blue-600 text-white border-blue-600'
                                 : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'
                         "
@@ -815,7 +793,7 @@ const submit = () => {
                     </svg>
                     <input
                         type="text"
-                        v-model="search"
+                        v-model="filters.search"
                         placeholder="Theo mã, tên, số điện thoại"
                         class="w-full pl-7 pr-8 py-1.5 focus:outline-none text-sm placeholder-gray-400 bg-transparent"
                     />
@@ -944,12 +922,12 @@ const submit = () => {
                             <th class="px-4 py-3 w-10 text-center">
                                 <input type="checkbox" class="rounded border-gray-300" />
                             </th>
-                            <SortableHeader label="Mã khách hàng" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
-                            <SortableHeader label="Tên khách hàng" field="name" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
-                            <SortableHeader label="Điện thoại" field="phone" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
-                            <SortableHeader label="Nợ hiện tại" field="debt_amount" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
+                            <SortableHeader label="Mã khách hàng" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Tên khách hàng" field="name" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Điện thoại" field="phone" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3" @sort="handleSort" />
+                            <SortableHeader label="Nợ hiện tại" field="debt_amount" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
                             <th class="px-4 py-3 text-right">Số ngày nợ</th>
-                            <SortableHeader label="Tổng bán" field="total_spent" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
+                            <SortableHeader label="Tổng bán" field="total_spent" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
                             <th class="px-4 py-3 text-right">
                                 Tổng bán trừ trả hàng
                             </th>

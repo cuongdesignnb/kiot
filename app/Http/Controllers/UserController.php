@@ -9,54 +9,49 @@ use App\Models\Employee;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Inertia\Inertia;
+use App\Support\Filters\FilterableIndex;
 
 class UserController extends Controller
 {
+    use FilterableIndex;
+
+    protected function configureUserFilters(): void
+    {
+        $this->searchable = ['name', 'email', 'phone'];
+        $this->sortable = ['name', 'email', 'phone', 'status', 'created_at'];
+        $this->dateColumn = 'created_at';
+        $this->scalarFilters = ['status', 'role_id', 'branch_id'];
+    }
+
     /**
      * Danh sách người dùng.
      */
     public function index(Request $request)
     {
+        $this->configureUserFilters();
+
         $query = User::with(['role:id,name', 'branch:id,name', 'employee:id,user_id,name,code']);
 
-        if ($request->filled('search')) {
-            $s = $request->search;
-            $query->where(function ($q) use ($s) {
-                $q->where('name', 'like', "%{$s}%")
-                  ->orWhere('email', 'like', "%{$s}%")
-                  ->orWhere('phone', 'like', "%{$s}%");
-            });
-        }
-
-        if ($request->filled('status')) {
-            $query->where('status', $request->status);
-        }
-
-        if ($request->filled('role_id')) {
-            $query->where('role_id', $request->role_id);
-        }
-
-        if ($request->filled('branch_id')) {
-            $query->where('branch_id', $request->branch_id);
-        }
-
-        $query->when($request->filled('sort_by'), function ($q) use ($request) {
-            $allowed = ['name', 'email', 'phone', 'status', 'created_at'];
-            $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'created_at';
-            $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
-            $q->orderBy($sortBy, $dir);
-        }, function ($q) {
-            $q->latest();
-        });
+        $this->applyFilters($query, $request);
 
         $users = $query->paginate(20)->withQueryString();
 
-        return Inertia::render('Users/Index', [
-            'users' => $users,
+        $filterOptions = [
             'roles' => Role::select('id', 'name')->orderBy('name')->get(),
             'branches' => Branch::select('id', 'name')->orderBy('name')->get(),
+            'statuses' => [
+                ['value' => 'active', 'label' => 'Đang hoạt động'],
+                ['value' => 'inactive', 'label' => 'Ngừng hoạt động'],
+            ],
+        ];
+
+        return Inertia::render('Users/Index', [
+            'users' => $users,
+            'roles' => $filterOptions['roles'],
+            'branches' => $filterOptions['branches'],
             'employees' => Employee::whereNull('user_id')->select('id', 'name', 'code')->orderBy('name')->get(),
-            'filters' => $request->only('search', 'status', 'role_id', 'branch_id', 'sort_by', 'sort_direction'),
+            'filters' => $this->currentFilters($request),
+            'filterOptions' => $filterOptions,
         ]);
     }
 

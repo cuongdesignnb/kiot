@@ -1,59 +1,100 @@
 <script setup>
-import { ref, watch } from "vue";
+import { ref, computed } from "vue";
 import { Head, router, Link, usePage } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
+import SidebarFilter from "@/Components/Filters/SidebarFilter.vue";
+import { useFilters } from "@/composables/useFilters.js";
 
 const page = usePage();
 const props = defineProps({
     returns: Object,
     filters: Object,
+    filterOptions: Object,
     summary: Object,
 });
 
-const search = ref(props.filters?.search || "");
-const statusFilters = ref(props.filters?.status || []);
-const dateFilter = ref(props.filters?.date_filter || "this_month");
-const sortBy = ref(props.filters?.sort_by || "");
-const sortDirection = ref(props.filters?.sort_direction || "");
+const { filters, setSort, reset } = useFilters({
+    initial: props.filters,
+    route: "/purchase-returns",
+    defaults: { date_filter: "all" },
+});
 
-const allStatuses = [
-    { value: "draft", label: "Phiếu tạm" },
-    { value: "completed", label: "Đã trả hàng" },
-    { value: "cancelled", label: "Đã hủy" },
-];
+const sidebarConfig = computed(() => [
+    {
+        key: "search",
+        type: "search",
+        label: "Tìm kiếm",
+        placeholder: "Theo mã phiếu trả, NCC",
+        zone: "quick",
+    },
+    {
+        key: "date",
+        type: "dateRange",
+        label: "Thời gian",
+        fields: { filter: "date_filter", from: "date_from", to: "date_to" },
+        zone: "quick",
+    },
+    {
+        key: "status",
+        type: "checkbox",
+        label: "Trạng thái",
+        options: props.filterOptions?.statuses || [],
+        zone: "main",
+    },
+    {
+        key: "supplier_id",
+        type: "select",
+        label: "Nhà cung cấp",
+        placeholder: "-- Tất cả --",
+        options: (props.filterOptions?.suppliers || []).map((s) => ({
+            value: s.id,
+            label: s.name,
+        })),
+        zone: "main",
+    },
+    {
+        key: "creator_id",
+        type: "select",
+        label: "Người tạo",
+        placeholder: "-- Tất cả --",
+        options: (props.filterOptions?.creators || []).map((u) => ({
+            value: u.id,
+            label: u.name,
+        })),
+        zone: "advanced",
+    },
+    {
+        key: "employee_id",
+        type: "select",
+        label: "Người trả",
+        placeholder: "-- Tất cả --",
+        options: (props.filterOptions?.employees || []).map((e) => ({
+            value: e.id,
+            label: e.name,
+        })),
+        zone: "advanced",
+    },
+]);
 
-let searchTimeout;
-const updateFilters = () => {
-    clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(() => {
-        router.get(
-            "/purchase-returns",
-            {
-                search: search.value,
-                status: statusFilters.value,
-                date_filter: dateFilter.value,
-                sort_by: sortBy.value || undefined,
-                sort_direction: sortDirection.value || undefined,
-            },
-            { preserveState: true, replace: true },
-        );
-    }, 500);
-};
-
-watch([search, statusFilters, dateFilter], updateFilters, { deep: true });
-
-const handleSort = (field, direction) => {
-    sortBy.value = field;
-    sortDirection.value = direction;
-    updateFilters();
-};
+const handleSort = (field, direction) => setSort(field, direction);
 
 const removeStatusFilter = (val) => {
-    const idx = statusFilters.value.indexOf(val);
-    if (idx > -1) statusFilters.value.splice(idx, 1);
+    const idx = (filters.status || []).indexOf(val);
+    if (idx > -1) filters.status.splice(idx, 1);
 };
+
+const allStatuses = computed(() => props.filterOptions?.statuses || []);
+const formatStatus = (val) => {
+    const s = allStatuses.value.find((x) => x.value === val);
+    return s ? s.label : val;
+};
+const statusClass = (status) => ({
+    "bg-green-50 text-green-700 border-green-200": status === "completed",
+    "bg-gray-50 text-gray-500 border-gray-200": status === "draft",
+    "bg-red-50 text-red-600 border-red-200": status === "cancelled",
+});
 
 const expandedRows = ref([]);
 const toggleExpand = (id) => {
@@ -64,19 +105,16 @@ const toggleExpand = (id) => {
 const isExpanded = (id) => expandedRows.value.includes(id);
 
 const formatCurrency = (val) => Number(val || 0).toLocaleString("vi-VN");
-const getReturnedSerials = (ret, item) => (ret.returned_serials || []).filter(s => s.product_id === item.product_id);
-const formatStatus = (val) => {
-    const s = allStatuses.find((x) => x.value === val);
-    return s ? s.label : val;
-};
-const statusClass = (status) => ({
-    'bg-green-50 text-green-700 border-green-200': status === 'completed',
-    'bg-gray-50 text-gray-500 border-gray-200': status === 'draft',
-    'bg-red-50 text-red-600 border-red-200': status === 'cancelled',
-});
+const getReturnedSerials = (ret, item) =>
+    (ret.returned_serials || []).filter((s) => s.product_id === item.product_id);
 
 const cancelReturn = (ret) => {
-    if (!confirm(`Bạn có chắc muốn hủy phiếu trả hàng ${ret.code}? Tồn kho và công nợ sẽ được hoàn lại.`)) return;
+    if (
+        !confirm(
+            `Bạn có chắc muốn hủy phiếu trả hàng ${ret.code}? Tồn kho và công nợ sẽ được hoàn lại.`,
+        )
+    )
+        return;
     router.delete(`/purchase-returns/${ret.id}`, { preserveState: false });
 };
 </script>
@@ -85,57 +123,12 @@ const cancelReturn = (ret) => {
     <Head title="Trả hàng nhập - KiotViet Clone" />
     <AppLayout>
         <template #sidebar>
-            <!-- Chi nhánh -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2">Chi nhánh</label>
-                <select class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none bg-blue-600 text-white font-medium appearance-none h-[32px]">
-                    <option value="">Chi nhánh trung tâm</option>
-                </select>
-            </div>
-
-            <!-- Trạng thái -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2">Trạng thái</label>
-                <div class="flex flex-wrap gap-2 text-[12px]">
-                    <div v-for="status in statusFilters" :key="status"
-                        class="bg-green-600 text-white px-2 py-1 rounded flex items-center gap-1 cursor-pointer">
-                        {{ formatStatus(status) }}
-                        <span @click.stop="removeStatusFilter(status)" class="pl-1 border-l border-green-400 font-bold hover:text-gray-200 ml-1">&times;</span>
-                    </div>
-                </div>
-                <div class="mt-2 space-y-1">
-                    <label v-for="s in allStatuses" :key="s.value" class="flex items-center gap-2 cursor-pointer text-sm text-gray-700">
-                        <input type="checkbox" :value="s.value" v-model="statusFilters" class="rounded border-gray-300 text-green-600 focus:ring-green-500 w-4 h-4" />
-                        {{ s.label }}
-                    </label>
-                </div>
-            </div>
-
-            <!-- Thời gian -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2">Thời gian</label>
-                <div class="space-y-2 text-sm text-gray-700">
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input type="radio" v-model="dateFilter" value="this_month" class="text-green-600 focus:ring-green-500 w-4 h-4" />
-                        Tháng này
-                    </label>
-                    <label class="flex items-center gap-2 cursor-pointer text-gray-500">
-                        <input type="radio" v-model="dateFilter" value="custom" class="text-green-600 focus:ring-green-500 w-4 h-4" />
-                        Tùy chỉnh
-                    </label>
-                </div>
-            </div>
-
-            <!-- Người tạo -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2">Người tạo</label>
-                <input type="text" placeholder="Chọn người tạo" class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none text-gray-700 bg-gray-50" />
-            </div>
-
-            <!-- Người trả -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2">Người trả</label>
-                <input type="text" placeholder="Chọn người trả" class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none text-gray-700 bg-gray-50" />
+            <div class="p-3">
+                <SidebarFilter
+                    v-model="filters"
+                    :config="sidebarConfig"
+                    @reset="reset"
+                />
             </div>
         </template>
 
@@ -156,7 +149,7 @@ const cancelReturn = (ret) => {
                     <svg class="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
                     </svg>
-                    <input type="text" v-model="search" placeholder="Theo mã phiếu trả"
+                    <input type="text" v-model="filters.search" placeholder="Theo mã phiếu trả"
                         class="w-full pl-9 pr-3 py-1.5 focus:outline-none border border-gray-300 rounded text-sm placeholder-gray-400" />
                 </div>
 
@@ -182,13 +175,13 @@ const cancelReturn = (ret) => {
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path>
                                 </svg>
                             </th>
-                            <SortableHeader label="Mã trả hàng nhập" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
-                            <SortableHeader label="Thời gian" field="return_date" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
+                            <SortableHeader label="Mã trả hàng nhập" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-2 py-2" @sort="handleSort" />
+                            <SortableHeader label="Thời gian" field="return_date" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-2 py-2" @sort="handleSort" />
                             <th class="px-2 py-2">Nhà cung cấp</th>
-                            <SortableHeader label="Tổng tiền hàng" field="total_amount" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
-                            <SortableHeader label="NCC cần trả" field="refund_amount" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader label="Tổng tiền hàng" field="total_amount" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader label="NCC cần trả" field="refund_amount" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
                             <th class="px-4 py-2 text-right">NCC đã trả</th>
-                            <SortableHeader label="Trạng thái" field="status" :current-sort="sortBy" :current-direction="sortDirection" align="center" class="px-4 py-2 text-center w-28" @sort="handleSort" />
+                            <SortableHeader label="Trạng thái" field="status" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="center" class="px-4 py-2 text-center w-28" @sort="handleSort" />
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100 bg-white">

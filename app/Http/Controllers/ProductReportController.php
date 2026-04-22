@@ -210,14 +210,38 @@ class ProductReportController extends Controller
                 DB::raw("SUM({$costCalc}) as total_cost")
             )
             ->groupBy('invoice_items.product_id')
-            ->get();
+            ->get()
+            ->keyBy('product_id');
+
+        // Returned items — trừ khỏi revenue và cost
+        $returnedByProduct = collect();
+        if ($returnIds->count() > 0) {
+            $hasRetCostCol = \Illuminate\Support\Facades\Schema::hasColumn('return_items', 'import_price');
+            $retCostCol = $hasRetCostCol ? 'import_price' : 'cost_price';
+            $returnedByProduct = DB::table('return_items')
+                ->whereIn('return_id', $returnIds)
+                ->join('products', 'return_items.product_id', '=', 'products.id')
+                ->tap($productFilter)
+                ->select(
+                    'return_items.product_id',
+                    DB::raw('SUM(return_items.quantity * return_items.price) as return_revenue'),
+                    DB::raw("SUM(return_items.quantity * COALESCE(return_items.{$retCostCol}, products.cost_price, 0)) as return_cost")
+                )
+                ->groupBy('return_items.product_id')
+                ->get()
+                ->keyBy('product_id');
+        }
 
         $products = [];
-        foreach ($soldQuery as $item) {
-            $product = Product::find($item->product_id);
-            $profit = (float) $item->total_revenue - (float) $item->total_cost;
+        foreach ($soldQuery as $pid => $item) {
+            $product = Product::find($pid);
+            $retRev  = (float) ($returnedByProduct[$pid]->return_revenue ?? 0);
+            $retCost = (float) ($returnedByProduct[$pid]->return_cost ?? 0);
+            $netRev  = (float) $item->total_revenue - $retRev;
+            $netCost = (float) $item->total_cost - $retCost;
+            $profit  = $netRev - $netCost;
             if ($product) {
-                $products[] = ['name' => $product->name, 'profit' => $profit, 'revenue' => (float) $item->total_revenue];
+                $products[] = ['name' => $product->name, 'profit' => $profit, 'revenue' => $netRev];
             }
         }
 
