@@ -243,6 +243,7 @@ const submitDebtAction = async () => {
             await axios.post(`/api/suppliers/${id}/payment`, {
                 amount: debtAmount.value,
                 note: debtNote.value,
+                date: debtDate.value,
             });
         } else {
             await axios.post(`/api/suppliers/${id}/adjust-debt`, {
@@ -1467,6 +1468,10 @@ const showCbToast = () => {
                         <label class="block text-sm font-semibold text-gray-700 mb-1">
                             {{ debtActionType === 'discount' ? 'Ngày chiết khấu' : 'Ngày điều chỉnh' }}
                         </label>
+                        <input v-model="debtDate" type="datetime-local" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
+                    </div>
+                    <div v-else>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">Ngày thanh toán</label>
                         <input v-model="debtDate" type="datetime-local" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
                     </div>
                     <div>

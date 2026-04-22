@@ -409,18 +409,20 @@ class SupplierController extends Controller
             'allocations' => 'nullable|array',
             'allocations.*.purchase_id' => 'required_with:allocations|exists:purchases,id',
             'allocations.*.amount' => 'required_with:allocations|numeric|min:0',
+            'date' => 'nullable|date',
         ]);
 
         $supplier = Customer::findOrFail($id);
         $currentDebt = $this->calculateDebt($id);
         $totalPay = abs($data['amount']);
         $mode = $data['mode'] ?? 'auto';
+        $paidAt = !empty($data['date']) ? \Carbon\Carbon::parse($data['date']) : now();
 
-        DB::transaction(function () use ($id, $supplier, $currentDebt, $totalPay, $mode, $data) {
+        DB::transaction(function () use ($id, $supplier, $currentDebt, $totalPay, $mode, $data, $paidAt) {
             $code = 'PCPN' . date('ymd') . rand(100, 999);
 
             // Create SupplierDebtTransaction
-            SupplierDebtTransaction::create([
+            $tx = SupplierDebtTransaction::create([
                 'supplier_id' => $id,
                 'code' => $code,
                 'type' => 'payment',
@@ -429,13 +431,17 @@ class SupplierController extends Controller
                 'note' => $data['note'] ?? 'Thanh toan cong no',
                 'user_id' => auth()->id(),
             ]);
+            if (!empty($data['date'])) {
+                $tx->created_at = $paidAt;
+                $tx->save();
+            }
 
             // Create CashFlow phieu chi
-            CashFlow::create([
+            $cf = CashFlow::create([
                 'code' => $code,
                 'type' => 'payment',
                 'amount' => $totalPay,
-                'time' => now(),
+                'time' => $paidAt,
                 'category' => 'Chi thanh toan NCC',
                 'target_type' => 'Nha cung cap',
                 'target_id' => $id,
@@ -445,6 +451,10 @@ class SupplierController extends Controller
                 'payment_method' => 'cash',
                 'description' => "Chi thanh toan cong no NCC {$supplier->name}: " . number_format($totalPay) . "d",
             ]);
+            if (!empty($data['date'])) {
+                $cf->created_at = $paidAt;
+                $cf->save();
+            }
 
             // Allocate into purchases
             if ($mode === 'manual' && !empty($data['allocations'])) {

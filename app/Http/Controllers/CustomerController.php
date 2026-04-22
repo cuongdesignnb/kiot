@@ -420,7 +420,9 @@ class CustomerController extends Controller
                 'allocations.*.invoice_id' => 'required|integer|exists:invoices,id',
                 'allocations.*.amount' => 'required|numeric|min:1',
                 'note' => 'nullable|string|max:500',
+                'date' => 'nullable|date',
             ]);
+            $paidAt = !empty($validated['date']) ? \Carbon\Carbon::parse($validated['date']) : now();
 
             $totalAmount = 0;
             $allocationCodes = [];
@@ -450,7 +452,7 @@ class CustomerController extends Controller
                 'code' => 'PT' . date('ymdHis') . rand(10, 99),
                 'type' => 'receipt',
                 'amount' => $totalAmount,
-                'time' => now(),
+                'time' => $paidAt,
                 'category' => 'Thu nợ khách hàng',
                 'target_type' => 'Khách hàng',
                 'target_id' => $customer->id,
@@ -459,6 +461,10 @@ class CustomerController extends Controller
                 'reference_code' => implode('; ', $allocationCodes),
                 'description' => $validated['note'] ?? 'Thu nợ khách hàng ' . $customer->name,
             ]);
+            if (!empty($validated['date'])) {
+                $cf->created_at = $paidAt;
+                $cf->save();
+            }
 
             $customer->decrement('debt_amount', $totalAmount);
 
@@ -467,7 +473,9 @@ class CustomerController extends Controller
             $validated = $request->validate([
                 'amount' => 'required|numeric|min:1',
                 'note' => 'nullable|string|max:500',
+                'date' => 'nullable|date',
             ]);
+            $paidAt = !empty($validated['date']) ? \Carbon\Carbon::parse($validated['date']) : now();
 
             $remaining = $validated['amount'];
             $allocationCodes = [];
@@ -496,7 +504,7 @@ class CustomerController extends Controller
                 'code' => 'PT' . date('ymdHis') . rand(10, 99),
                 'type' => 'receipt',
                 'amount' => $actualPaid,
-                'time' => now(),
+                'time' => $paidAt,
                 'category' => 'Thu nợ khách hàng',
                 'target_type' => 'Khách hàng',
                 'target_id' => $customer->id,
@@ -505,6 +513,10 @@ class CustomerController extends Controller
                 'reference_code' => !empty($allocationCodes) ? implode('; ', $allocationCodes) : null,
                 'description' => $validated['note'] ?? 'Thu nợ khách hàng ' . $customer->name,
             ]);
+            if (!empty($validated['date'])) {
+                $cf->created_at = $paidAt;
+                $cf->save();
+            }
 
             $customer->decrement('debt_amount', $actualPaid);
         }

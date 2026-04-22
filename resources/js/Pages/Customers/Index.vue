@@ -228,6 +228,7 @@ const submitDebtModal = async () => {
                     mode: "manual",
                     allocations,
                     note: debtForm.note,
+                    date: debtForm.date,
                 });
                 debtModal.value.show = false;
                 await loadDebtHistory(customerId);
@@ -247,6 +248,7 @@ const submitDebtModal = async () => {
                 mode: "auto",
                 amount: debtForm.amount,
                 note: debtForm.note,
+                date: debtForm.date,
             });
             debtModal.value.show = false;
             await loadDebtHistory(customerId);
@@ -2836,14 +2838,6 @@ const submit = () => {
                             </span>
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Ngày điều chỉnh</label>
-                            <input
-                                v-model="debtForm.date"
-                                type="datetime-local"
-                                class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500"
-                            />
-                        </div>
-                        <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Nợ cuối mong muốn</label>
                             <input
                                 v-model.number="debtForm.amount"
@@ -2854,6 +2848,16 @@ const submit = () => {
                         </div>
                     </template>
 
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                            {{ debtModal.type === 'payment' ? 'Ngày thanh toán' : 'Ngày điều chỉnh' }}
+                        </label>
+                        <input
+                            v-model="debtForm.date"
+                            type="datetime-local"
+                            class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500"
+                        />
+                    </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Ghi chú</label>
                         <textarea
