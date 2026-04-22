@@ -89,11 +89,14 @@ class DashboardController extends Controller
         // 2. BIỂU ĐỒ DOANH THU 30 NGÀY
         // ═══════════════════════════════════════
         $revenueChart = ['labels' => [], 'revenue' => [], 'orders' => []];
+        $subtotalCol = Schema::hasColumn('invoices', 'subtotal') ? 'subtotal' : 'total';
         for ($i = 29; $i >= 0; $i--) {
             $date = Carbon::today()->subDays($i);
             $revenueChart['labels'][] = $date->format('d/m');
-            $revenueChart['revenue'][] = (float) Invoice::whereDate('created_at', $date)->sum('total');
-            $revenueChart['orders'][] = (int) Invoice::whereDate('created_at', $date)->count();
+            $revenueChart['revenue'][] = (float) Invoice::whereDate('created_at', $date)
+                ->where('status', '!=', 'Đã hủy')->sum($subtotalCol);
+            $revenueChart['orders'][] = (int) Invoice::whereDate('created_at', $date)
+                ->where('status', '!=', 'Đã hủy')->count();
         }
 
         // ═══════════════════════════════════════
@@ -119,7 +122,8 @@ class DashboardController extends Controller
         // ═══════════════════════════════════════
         $topProducts = InvoiceItem::select('product_id', DB::raw('SUM(quantity) as total_qty'), DB::raw('SUM(quantity * price) as total_revenue'))
             ->whereHas('invoice', function ($q) use ($startOfMonth) {
-                $q->where('created_at', '>=', $startOfMonth);
+                $q->where('created_at', '>=', $startOfMonth)
+                  ->where('status', '!=', 'Đã hủy');
             })
             ->groupBy('product_id')
             ->orderByDesc('total_qty')
@@ -176,7 +180,7 @@ class DashboardController extends Controller
                 DB::raw('SUM(quantity * price) as total_revenue'),
                 DB::raw('SUM(quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), 0)) as total_cost')
             )
-            ->whereHas('invoice', fn($q) => $q->where('created_at', '>=', $startOfMonth))
+            ->whereHas('invoice', fn($q) => $q->where('created_at', '>=', $startOfMonth)->where('status', '!=', 'Đã hủy'))
             ->groupBy('product_id')
             ->orderByDesc('total_revenue')
             ->limit(10)
@@ -207,7 +211,7 @@ class DashboardController extends Controller
                 DB::raw('SUM(quantity * price) as total_revenue'),
                 DB::raw('SUM(quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), 0)) as total_cost')
             )
-            ->whereHas('invoice', fn($q) => $q->where('created_at', '>=', $startOfMonth))
+            ->whereHas('invoice', fn($q) => $q->where('created_at', '>=', $startOfMonth)->where('status', '!=', 'Đã hủy'))
             ->groupBy('product_id')
             ->with('product:id,name,sku,cost_price')
             ->get()
@@ -234,6 +238,7 @@ class DashboardController extends Controller
         $topCustomersByRevenue = Invoice::select('customer_id', DB::raw('COUNT(*) as order_count'), DB::raw('SUM(total) as total_revenue'))
             ->whereNotNull('customer_id')
             ->where('created_at', '>=', $startOfMonth)
+            ->where('status', '!=', 'Đã hủy')
             ->groupBy('customer_id')
             ->orderByDesc('total_revenue')
             ->limit(10)
@@ -251,6 +256,7 @@ class DashboardController extends Controller
         $topCustomersByQty = Invoice::select('customer_id', DB::raw('COUNT(*) as order_count'), DB::raw('SUM(total) as total_revenue'))
             ->whereNotNull('customer_id')
             ->where('created_at', '>=', $startOfMonth)
+            ->where('status', '!=', 'Đã hủy')
             ->groupBy('customer_id')
             ->orderByDesc('order_count')
             ->limit(10)
@@ -270,6 +276,7 @@ class DashboardController extends Controller
         $topEmployees = Invoice::select('employee_id', DB::raw('COUNT(*) as invoice_count'), DB::raw('SUM(total) as total_revenue'))
             ->whereNotNull('employee_id')
             ->where('created_at', '>=', $startOfMonth)
+            ->where('status', '!=', 'Đã hủy')
             ->groupBy('employee_id')
             ->orderByDesc('total_revenue')
             ->limit(10)
