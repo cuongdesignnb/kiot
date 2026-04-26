@@ -8,7 +8,6 @@ return new class extends Migration
 {
     public function up(): void
     {
-        if (Schema::hasColumn('employee_salary_settings', 'saturday_ot_rate')) return;
         Schema::table('employee_salary_settings', function (Blueprint $table) {
             $table->decimal('saturday_ot_rate', 5, 0)->default(150)->after('overtime_rate');
             $table->decimal('sunday_ot_rate', 5, 0)->default(150)->after('saturday_ot_rate');

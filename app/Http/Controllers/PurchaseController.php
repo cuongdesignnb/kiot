@@ -15,6 +15,7 @@ use App\Models\SerialImei;
 use App\Enums\PurchaseStatus;
 use App\Support\Filters\FilterableIndex;
 use App\Services\LockPeriodService;
+use App\Services\StockMovementService;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
 use App\Services\DebtOffsetService;
@@ -246,6 +247,15 @@ class PurchaseController extends Controller
                     ? ($purchase->purchase_date ?? now())->copy()->addMonths($warrantyMonths)->toDateString()
                     : null;
 
+                // Phân bổ phí nhập (other_costs) theo tỉ lệ subtotal của dòng hiện tại
+                $itemSubtotal = $item['quantity'] * $item['price'] - ($item['discount'] ?? 0);
+                $allocatedFee = ($otherCostsTotal > 0 && $total_amount > 0)
+                    ? ($otherCostsTotal * $itemSubtotal / $total_amount)
+                    : 0.0;
+                $unitCostAllocated = $item['quantity'] > 0
+                    ? round(($itemSubtotal + $allocatedFee) / $item['quantity'], 2)
+                    : (float) $item['price'];
+
                 // Add item
                 $purchase->items()->create([
                     'product_id' => $product->id,
@@ -254,7 +264,8 @@ class PurchaseController extends Controller
                     'quantity' => $item['quantity'],
                     'price' => $item['price'],
                     'discount' => $item['discount'] ?? 0,
-                    'subtotal' => $item['quantity'] * $item['price'] - ($item['discount'] ?? 0),
+                    'subtotal' => $itemSubtotal,
+                    'unit_cost_allocated' => $unitCostAllocated,
                     'warranty_months' => $warrantyMonths,
                     'warranty_expires_at' => $warrantyExpiresAt,
                 ]);
@@ -269,8 +280,8 @@ class PurchaseController extends Controller
                     $costingMethod = \App\Models\Setting::get('inventory_costing_method', 'average');
                     if ($costingMethod === 'average') {
                         $totalCurrentValue = $product->stock_quantity * $product->cost_price;
-                        $totalNewValue = $item['quantity'] * $item['price'];
-                        $newCostPrice = $newStock > 0 ? ($totalCurrentValue + $totalNewValue) / $newStock : $item['price'];
+                        $totalNewValue = $item['quantity'] * $unitCostAllocated;
+                        $newCostPrice = $newStock > 0 ? ($totalCurrentValue + $totalNewValue) / $newStock : $unitCostAllocated;
                         $product->cost_price = $newCostPrice;
                     }
 
@@ -303,9 +314,31 @@ class PurchaseController extends Controller
                                 'serial_number' => trim($serialNumber),
                                 'status' => 'in_stock',
                                 'purchase_id' => $purchase->id,
+                                'cost_price' => $unitCostAllocated,
+                                'original_cost' => $unitCostAllocated,
                             ]);
                         }
                     }
+
+                    // Serial: giá vốn BQ chỉ tính trên serial còn tồn
+                    if ($product->has_serial) {
+                        $product->recomputeFromSerials();
+                    }
+
+                    // Phase 4 — Ghi sổ cái tồn kho
+                    StockMovementService::record(
+                        $product,
+                        StockMovementService::TYPE_IN_PURCHASE,
+                        (int) $item['quantity'],
+                        (float) $unitCostAllocated,
+                        $purchase,
+                        [
+                            'branch_id' => $purchase->branch_id ?? null,
+                            'ref_code' => $purchase->code,
+                            'moved_at' => $purchase->purchase_date ?? now(),
+                            'note' => 'Nhập hàng từ phiếu ' . $purchase->code,
+                        ]
+                    );
                 }
             }
 
@@ -496,18 +529,30 @@ class PurchaseController extends Controller
             // ── Draft → Completed: cộng tồn kho + ghi nợ ──
             if ($isDraftToComplete) {
                 $costingMethod = \App\Models\Setting::get('inventory_costing_method', 'average');
+                $goodsTotal = (float) $purchase->total_amount;
 
                 foreach ($purchase->items as $item) {
                     $product = Product::find($item->product_id);
                     if (!$product) continue;
+
+                    // Phân bổ phí nhập theo tỉ lệ subtotal
+                    $itemSubtotal = (float) $item->subtotal;
+                    $allocatedFee = ($otherCostsTotal > 0 && $goodsTotal > 0)
+                        ? ($otherCostsTotal * $itemSubtotal / $goodsTotal)
+                        : 0.0;
+                    $unitCostAllocated = $item->quantity > 0
+                        ? round(($itemSubtotal + $allocatedFee) / $item->quantity, 2)
+                        : (float) $item->price;
+                    $item->unit_cost_allocated = $unitCostAllocated;
+                    $item->save();
 
                     $newStock = $product->stock_quantity + $item->quantity;
                     $product->last_purchase_price = $item->price;
 
                     if ($costingMethod === 'average') {
                         $totalCurrentValue = $product->stock_quantity * $product->cost_price;
-                        $totalNewValue = $item->quantity * $item->price;
-                        $product->cost_price = $newStock > 0 ? ($totalCurrentValue + $totalNewValue) / $newStock : $item->price;
+                        $totalNewValue = $item->quantity * $unitCostAllocated;
+                        $product->cost_price = $newStock > 0 ? ($totalCurrentValue + $totalNewValue) / $newStock : $unitCostAllocated;
                     }
 
                     $product->stock_quantity = $newStock;
@@ -521,8 +566,14 @@ class PurchaseController extends Controller
                                 'serial_number' => trim(is_string($serialNumber) ? $serialNumber : $serialNumber['serial_number'] ?? ''),
                                 'status' => 'in_stock',
                                 'purchase_id' => $purchase->id,
+                                'cost_price' => $unitCostAllocated,
+                                'original_cost' => $unitCostAllocated,
                             ]);
                         }
+                    }
+
+                    if ($product->has_serial) {
+                        $product->recomputeFromSerials();
                     }
                 }
 
@@ -629,12 +680,14 @@ class PurchaseController extends Controller
                 $currentStock = $product->stock_quantity;
                 $newStock = max(0, $currentStock - $item->quantity);
 
-                // Reverse cost price (average costing)
-                if ($costingMethod === 'average' && $currentStock > 0) {
+                // Reverse cost price (average costing) — dùng unit_cost_allocated lúc nhập,
+                // KHÔNG dùng product.cost_price hiện tại.
+                if ($costingMethod === 'average' && $currentStock > 0 && !$product->has_serial) {
+                    $unitCostAtPurchase = (float) ($item->unit_cost_allocated ?: $item->price);
                     $totalCurrentValue = $currentStock * $product->cost_price;
-                    $removedValue = $item->quantity * $item->price;
+                    $removedValue = $item->quantity * $unitCostAtPurchase;
                     $product->cost_price = $newStock > 0
-                        ? ($totalCurrentValue - $removedValue) / $newStock
+                        ? max(0, ($totalCurrentValue - $removedValue) / $newStock)
                         : 0;
                 }
 
@@ -645,9 +698,26 @@ class PurchaseController extends Controller
                 SerialImei::where('purchase_id', $purchase->id)
                     ->where('product_id', $item->product_id)
                     ->delete();
-            }
 
-            // Reverse supplier debt & total bought
+                if ($product->has_serial) {
+                    $product->recomputeFromSerials();
+                }
+
+                // Phase 4 — Ghi sổ cái: hoàn nhập (out)
+                StockMovementService::record(
+                    $product,
+                    StockMovementService::TYPE_OUT_PURCHASE_RETURN,
+                    (int) $item->quantity,
+                    (float) ($item->unit_cost_allocated ?: $item->price),
+                    $purchase,
+                    [
+                        'branch_id' => $purchase->branch_id ?? null,
+                        'ref_code' => $purchase->code,
+                        'moved_at' => now(),
+                        'note' => 'Hủy phiếu nhập ' . $purchase->code,
+                    ]
+                );
+            }
             if ($purchase->supplier) {
                 $purchase->supplier->supplier_debt_amount -= $purchase->debt_amount;
                 $purchase->supplier->total_bought -= $purchase->total_amount;

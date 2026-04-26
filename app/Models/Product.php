@@ -107,4 +107,26 @@ class Product extends Model
 
         return $this->created_at;
     }
+
+    /**
+     * Đối với sản phẩm có serial/IMEI: giá vốn bình quân và tồn kho
+     * chỉ tính trên các serial còn TỒN (status = 'in_stock'), KHÔNG tính
+     * những serial đã bán/đã trả NCC. Gọi sau mỗi thao tác làm thay đổi
+     * trạng thái serial (nhập, bán, trả hàng bán, trả NCC, điều chuyển...).
+     */
+    public function recomputeFromSerials(): void
+    {
+        if (!$this->has_serial) {
+            return;
+        }
+
+        $q = SerialImei::where('product_id', $this->id)
+            ->where('status', 'in_stock');
+        $count = (int) $q->count();
+        $avg = $count > 0 ? (float) $q->avg('cost_price') : 0.0;
+
+        $this->stock_quantity = $count;
+        $this->cost_price = round($avg, 2);
+        $this->save();
+    }
 }

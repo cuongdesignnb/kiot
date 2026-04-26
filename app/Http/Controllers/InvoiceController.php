@@ -9,6 +9,7 @@ use App\Models\Setting;
 use App\Models\CashFlow;
 use App\Models\SerialImei;
 use App\Services\DebtOffsetService;
+use App\Services\StockMovementService;
 use App\Support\Filters\FilterableIndex;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -135,6 +136,8 @@ class InvoiceController extends Controller
             'items.*.price' => 'required|numeric',
             'items.*.discount' => 'nullable|numeric',
             'items.*.note' => 'nullable|string',
+            'items.*.serial_ids' => 'nullable|array',
+            'items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
         ]);
 
         $priceBookName = 'Bảng giá chung';
@@ -207,9 +210,10 @@ class InvoiceController extends Controller
                 $product = \App\Models\Product::lockForUpdate()->find($item['product_id']);
                 $serialIds = $item['serial_ids'] ?? [];
 
-                // Snapshot cost_price
+                // Snapshot cost_price (default = current product avg cost for hàng thường)
                 $snapshotCostPrice = (float) ($product->cost_price ?? 0);
                 $serialStr = null;
+                $soldSerials = collect();
 
                 if ($product && $product->has_serial && !empty($serialIds)) {
                     $serialIds = is_array($serialIds) ? $serialIds : [$serialIds];
@@ -217,23 +221,16 @@ class InvoiceController extends Controller
                         ->where('product_id', $product->id)
                         ->get();
                     if ($soldSerials->count() > 0) {
+                        // Đích danh: lấy tổng cost theo từng serial, snapshot trên invoice_item là tổng/qty
                         $totalCost = $soldSerials->sum(fn($s) => (float) ($s->cost_price ?: $product->cost_price ?? 0));
-                        $snapshotCostPrice = round($totalCost / $soldSerials->count(), 2);
+                        $qty = max(1, (int) $item['quantity']);
+                        $snapshotCostPrice = round($totalCost / $qty, 2);
                     }
-
-                    // Mark serials as sold
-                    SerialImei::whereIn('id', $serialIds)
-                        ->where('product_id', $product->id)
-                        ->update([
-                            'status' => 'sold',
-                            'sold_at' => now(),
-                            'invoice_id' => $invoice->id,
-                        ]);
 
                     $serialStr = $soldSerials->pluck('serial_number')->implode(', ');
                 }
 
-                $invoice->items()->create([
+                $invoiceItem = $invoice->items()->create([
                     'product_id' => $item['product_id'],
                     'quantity' => $item['quantity'],
                     'price' => $item['price'],
@@ -244,6 +241,24 @@ class InvoiceController extends Controller
                     'serial' => $serialStr,
                 ]);
 
+                // Lưu chi tiết từng serial: đích danh cost_price + sold_cost_price snapshot
+                foreach ($soldSerials as $serial) {
+                    $serialCost = (float) ($serial->cost_price ?: $product->cost_price ?? 0);
+
+                    \App\Models\InvoiceItemSerial::create([
+                        'invoice_item_id' => $invoiceItem->id,
+                        'serial_imei_id' => $serial->id,
+                        'serial_number' => $serial->serial_number,
+                        'cost_price' => $serialCost,
+                    ]);
+
+                    $serial->status = 'sold';
+                    $serial->sold_at = now();
+                    $serial->invoice_id = $invoice->id;
+                    $serial->sold_cost_price = $serialCost;
+                    $serial->save();
+                }
+
                 // Deduct stock (with lock to prevent race conditions)
                 if ($product) {
                     if (!$allowOversell && $product->stock_quantity < $item['quantity']) {
@@ -251,6 +266,26 @@ class InvoiceController extends Controller
                     }
                     $product->stock_quantity -= $item['quantity'];
                     $product->save();
+
+                    // Serial: recompute giá vốn BQ + tồn theo serial còn in_stock
+                    if ($product->has_serial) {
+                        $product->recomputeFromSerials();
+                    }
+
+                    // Phase 4 — Ghi sổ cái: xuất bán
+                    StockMovementService::record(
+                        $product,
+                        StockMovementService::TYPE_OUT_INVOICE,
+                        (int) $item['quantity'],
+                        (float) $snapshotCostPrice,
+                        $invoice,
+                        [
+                            'branch_id' => $invoice->branch_id ?? null,
+                            'ref_code' => $invoice->code,
+                            'moved_at' => $invoice->created_at ?? now(),
+                            'note' => 'Xuất bán hóa đơn ' . $invoice->code,
+                        ]
+                    );
                 }
             }
 
@@ -333,6 +368,8 @@ class InvoiceController extends Controller
             'items.*.price' => 'required|numeric',
             'items.*.discount' => 'nullable|numeric',
             'items.*.note' => 'nullable|string',
+            'items.*.serial_ids' => 'nullable|array',
+            'items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
         ]);
 
         try {
@@ -521,27 +558,64 @@ class InvoiceController extends Controller
 
             $invoice->load('items');
 
+            $costingMethod = Setting::get('inventory_costing_method', 'average');
+
             // Restore stock & serials for each item
             foreach ($invoice->items as $item) {
                 $product = \App\Models\Product::find($item->product_id);
-                if ($product) {
-                    $product->increment('stock_quantity', $item->quantity);
+                if (!$product) continue;
+
+                $qtyBack = (int) $item->quantity;
+                $costAtSale = (float) ($item->cost_price ?? $product->cost_price ?? 0);
+
+                // Đảo cost gộp theo cost_price snapshot lúc bán (chỉ cho hàng thường)
+                if ($costingMethod === 'average' && !$product->has_serial) {
+                    $oldQty = (float) $product->stock_quantity;
+                    $oldCost = (float) $product->cost_price;
+                    $newQty = $oldQty + $qtyBack;
+                    if ($newQty > 0) {
+                        $product->cost_price = round(($oldQty * $oldCost + $qtyBack * $costAtSale) / $newQty, 2);
+                    }
                 }
 
-                // Restore serials back to in_stock
-                if ($product && $product->has_serial) {
-                    SerialImei::where('invoice_id', $invoice->id)
+                $product->stock_quantity += $qtyBack;
+                $product->save();
+
+                // Restore serials back to in_stock với cost_price = sold_cost_price
+                if ($product->has_serial) {
+                    $serials = SerialImei::where('invoice_id', $invoice->id)
                         ->where('product_id', $product->id)
                         ->where('status', 'sold')
-                        ->update([
-                            'status' => 'in_stock',
-                            'sold_at' => null,
-                            'invoice_id' => null,
-                        ]);
+                        ->get();
+                    foreach ($serials as $serial) {
+                        if (!is_null($serial->sold_cost_price)) {
+                            $serial->cost_price = $serial->sold_cost_price;
+                        }
+                        $serial->status = 'in_stock';
+                        $serial->sold_at = null;
+                        $serial->invoice_id = null;
+                        $serial->sold_cost_price = null;
+                        $serial->save();
+                    }
+                    $product->refresh();
+                    $product->recomputeFromSerials();
                 }
-            }
 
-            // Reverse customer debt & total_spent
+                // Phase 4 — Ghi sổ cái: hoàn nhập do hủy hóa đơn
+                StockMovementService::record(
+                    $product,
+                    StockMovementService::TYPE_IN_INVOICE_RETURN,
+                    $qtyBack,
+                    $costAtSale,
+                    $invoice,
+                    [
+                        'branch_id' => $invoice->branch_id ?? null,
+                        'ref_code' => $invoice->code,
+                        'moved_at' => now(),
+                        'note' => 'Hủy hóa đơn ' . $invoice->code,
+                    ]
+                );
+            }
             if ($invoice->customer_id) {
                 $customer = \App\Models\Customer::find($invoice->customer_id);
                 if ($customer) {

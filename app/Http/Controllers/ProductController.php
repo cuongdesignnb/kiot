@@ -942,19 +942,55 @@ class ProductController extends Controller
         $data = $request->validate([
             'serial_number' => 'required|string|max:255|unique:serial_imeis,serial_number,' . $serial->id,
             'status' => 'nullable|string|in:in_stock,sold,returning,warranty,defective',
+            'cost_price' => 'nullable|numeric|min:0',
         ]);
+
+        // Chỉ cho sửa cost_price khi serial CÒN TỒN. Sold/returned/etc giữ snapshot lúc bán.
+        $costChanged = false;
+        $oldCost = (float) $serial->cost_price;
+        if (array_key_exists('cost_price', $data) && $data['cost_price'] !== null) {
+            if ($serial->status !== 'in_stock') {
+                return response()->json([
+                    'message' => 'Chỉ có thể sửa giá vốn khi serial đang CÒN TỒN (in_stock).',
+                ], 422);
+            }
+            $newCost = (float) $data['cost_price'];
+            if (abs($newCost - $oldCost) > 0.001) {
+                $costChanged = true;
+            }
+        } else {
+            // Không gửi field thì không update
+            unset($data['cost_price']);
+        }
 
         $oldStatus = $serial->status;
         $serial->update($data);
         $newStatus = $serial->status;
 
-        // Sync stock_quantity when serial status changes
+        // Sync stock_quantity when serial status changes (chỉ cho hàng thường - serial product
+        // sẽ được recompute bên dưới). Hàng has_serial vẫn cần fallback đề phòng stock lệch.
         if ($oldStatus !== $newStatus) {
             if ($oldStatus === 'in_stock' && $newStatus !== 'in_stock') {
                 $product->decrement('stock_quantity');
             } elseif ($oldStatus !== 'in_stock' && $newStatus === 'in_stock') {
                 $product->increment('stock_quantity');
             }
+        }
+
+        // Recompute product cost từ các serial in_stock
+        if ($product->has_serial) {
+            $product->refresh();
+            $product->recomputeFromSerials();
+        }
+
+        if ($costChanged) {
+            \App\Models\ActivityLog::log(
+                'serial_cost_update',
+                "Sửa giá vốn serial {$serial->serial_number} (SP: {$product->name}): "
+                    . number_format($oldCost, 0, ',', '.') . ' → ' . number_format((float)$serial->cost_price, 0, ',', '.'),
+                $serial,
+                ['old_cost' => $oldCost, 'new_cost' => (float) $serial->cost_price, 'product_id' => $product->id]
+            );
         }
 
         return response()->json($serial);

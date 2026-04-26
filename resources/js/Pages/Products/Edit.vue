@@ -26,6 +26,7 @@ const serialError = ref('');
 const editingSerialId = ref(null);
 const editSerialNumber = ref('');
 const editSerialStatus = ref('');
+const editSerialCost = ref(0);
 
 const statusLabels = {
     in_stock: 'Còn hàng',
@@ -87,6 +88,7 @@ const startEdit = (s) => {
     editingSerialId.value = s.id;
     editSerialNumber.value = s.serial_number;
     editSerialStatus.value = s.status;
+    editSerialCost.value = Number(s.cost_price || 0);
 };
 
 const cancelEdit = () => { editingSerialId.value = null; };
@@ -94,10 +96,15 @@ const cancelEdit = () => { editingSerialId.value = null; };
 const saveEdit = async (s) => {
     serialError.value = '';
     try {
-        await axios.put(`/products/${props.product.id}/serials/${s.id}`, {
+        const payload = {
             serial_number: editSerialNumber.value,
             status: editSerialStatus.value,
-        });
+        };
+        // Chỉ gửi cost_price khi serial đang in_stock (BE sẽ chặn nếu không hợp lệ)
+        if (s.status === 'in_stock' && editSerialStatus.value === 'in_stock') {
+            payload.cost_price = Number(editSerialCost.value) || 0;
+        }
+        await axios.put(`/products/${props.product.id}/serials/${s.id}`, payload);
         editingSerialId.value = null;
         loadSerials();
     } catch (e) {
@@ -680,7 +687,12 @@ const generateVariants = () => {
                                                 <option v-for="(label, key) in statusLabels" :key="key" :value="key">{{ label }}</option>
                                             </select>
                                         </td>
-                                        <td class="px-3 py-2 text-right text-gray-500">{{ Number(s.cost_price || 0).toLocaleString('vi-VN') }}</td>
+                                        <td class="px-3 py-2 text-right">
+                                            <input v-if="s.status === 'in_stock' && editSerialStatus === 'in_stock'"
+                                                v-model.number="editSerialCost" type="number" min="0"
+                                                class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right focus:ring-1 focus:ring-blue-500 outline-none" />
+                                            <span v-else class="text-gray-400 text-xs italic" :title="'Chỉ sửa được khi còn tồn'">{{ Number(s.cost_price || 0).toLocaleString('vi-VN') }}</span>
+                                        </td>
                                         <td class="px-3 py-2 text-center">
                                             <button @click="saveEdit(s)" class="text-blue-600 text-xs font-semibold mr-2 hover:underline">Lưu</button>
                                             <button @click="cancelEdit" class="text-gray-500 text-xs font-semibold hover:underline">Hủy</button>

@@ -59,26 +59,6 @@ Route::get('/fix-and-recalc', function () {
     $otAfterThreshold = (int) ($tkSetting?->ot_after_minutes ?? 1);
     $fixed = 0;
 
-    // Bước 0.5: Revert records bị fix sai work_units bởi lần chạy trước
-    // Records có work_units=1 nhưng KHÔNG có work schedule entry → revert về 0
-    $tkAllRecords = \App\Models\TimekeepingRecord::whereBetween('work_date', ['2026-03-01', '2026-03-31'])->get();
-    $workUnitsReverted = 0;
-    foreach ($tkAllRecords as $tkr) {
-        if ((float)$tkr->work_units == 1.0 && $tkr->check_in_at) {
-            // Kiểm tra có work schedule không
-            $hasSchedule = \App\Models\EmployeeWorkSchedule::where('employee_id', $tkr->employee_id)
-                ->where('work_date', $tkr->work_date)
-                ->exists();
-            if (!$hasSchedule) {
-                // Không có schedule → record này bị fix sai, revert
-                \Illuminate\Support\Facades\DB::table('timekeeping_records')
-                    ->where('id', $tkr->id)
-                    ->update(['work_units' => 0]);
-                $workUnitsReverted++;
-            }
-        }
-    }
-
     $tkRecords = \App\Models\TimekeepingRecord::whereBetween('work_date', ['2026-03-01', '2026-03-31'])
         ->get();
 
@@ -114,39 +94,14 @@ Route::get('/fix-and-recalc', function () {
         }
         $otMinutes = $otAfter + $otBefore;
 
-        $updateData = [
-            'scheduled_start_at' => $newStart,
-            'scheduled_end_at' => $newEnd,
-            'ot_minutes' => $otMinutes,
-        ];
-
         \Illuminate\Support\Facades\DB::table('timekeeping_records')
             ->where('id', $tk->id)
-            ->update($updateData);
+            ->update([
+                'scheduled_start_at' => $newStart,
+                'scheduled_end_at' => $newEnd,
+                'ot_minutes' => $otMinutes,
+            ]);
         if ($tk->ot_minutes != $otMinutes) $fixed++;
-    }
-
-    // Bước 1.5: Xóa duplicate records (cùng employee + work_date), giữ record is_holiday=true hoặc record cũ nhất
-    $duplicates = \Illuminate\Support\Facades\DB::table('timekeeping_records')
-        ->select('employee_id', 'work_date', \Illuminate\Support\Facades\DB::raw('COUNT(*) as cnt'))
-        ->whereBetween('work_date', ['2026-03-01', '2026-03-31'])
-        ->groupBy('employee_id', 'work_date')
-        ->havingRaw('COUNT(*) > 1')
-        ->get();
-    $duplicatesRemoved = 0;
-    foreach ($duplicates as $dup) {
-        $dupeRecords = \Illuminate\Support\Facades\DB::table('timekeeping_records')
-            ->where('employee_id', $dup->employee_id)
-            ->where('work_date', $dup->work_date)
-            ->orderByDesc('is_holiday')  // giữ record is_holiday=true
-            ->orderBy('id')              // fallback: giữ record cũ nhất
-            ->get();
-        // Giữ record đầu tiên, xóa còn lại
-        $keep = $dupeRecords->first();
-        foreach ($dupeRecords->skip(1) as $toDelete) {
-            \Illuminate\Support\Facades\DB::table('timekeeping_records')->where('id', $toDelete->id)->delete();
-            $duplicatesRemoved++;
-        }
     }
 
     // Bước 2: Tính lại lương — tìm paysheet THÁNG 3/2026
@@ -217,7 +172,7 @@ Route::get('/fix-and-recalc', function () {
                 'details' => $calc,
             ]);
 
-            // Debug: per-day OT + records thiếu shift_id + work_units breakdown
+            // Debug: per-day OT + records thiếu shift_id
             $allRecords = \App\Models\TimekeepingRecord::where('employee_id', $employee->id)
                 ->whereBetween('work_date', [$periodStart, $periodEnd])
                 ->orderBy('work_date')
@@ -225,9 +180,7 @@ Route::get('/fix-and-recalc', function () {
 
             $dayBreakdown = [];
             $noShiftRecords = [];
-            $workUnitsBreakdown = []; // DEBUG: chi tiết work_units mỗi ngày
             foreach ($allRecords as $rec) {
-                $dateLocal = \Carbon\Carbon::parse($rec->work_date)->addHours(7)->format('Y-m-d (D)');
                 $entry = [
                     'date' => $rec->work_date,
                     'shift_id' => $rec->shift_id,
@@ -243,13 +196,6 @@ Route::get('/fix-and-recalc', function () {
                 if ($rec->ot_minutes > 0) {
                     $dayBreakdown[] = $entry;
                 }
-                // Luôn ghi work_units để debug
-                $workUnitsBreakdown[] = [
-                    'date' => $dateLocal,
-                    'work_units' => (float) $rec->work_units,
-                    'attendance_type' => $rec->attendance_type,
-                    'is_holiday' => (bool) $rec->is_holiday,
-                ];
             }
 
             $salaryResults[] = [
@@ -268,7 +214,6 @@ Route::get('/fix-and-recalc', function () {
                 'ot_day_detail' => $dayBreakdown,
                 'no_shift_records' => $noShiftRecords,
                 'records_no_shift' => $allRecords->whereNull('shift_id')->count(),
-                'work_units_per_day' => $workUnitsBreakdown,
             ];
         }
 
@@ -280,8 +225,6 @@ Route::get('/fix-and-recalc', function () {
 
     return response()->json([
         'timekeeping_fixed' => $fixed,
-        'work_units_reverted' => $workUnitsReverted,
-        'duplicates_removed' => $duplicatesRemoved,
         'paysheet_selected' => $paysheetInfo,
         'salary_results' => $salaryResults,
     ]);
@@ -468,15 +411,6 @@ Route::get('/customers/{customer}/debt-offset-history', [CustomerController::cla
 Route::get('/suppliers', [SupplierController::class, 'index'])->name('suppliers.index')->middleware('permission:suppliers.view');
 Route::post('/suppliers', [SupplierController::class, 'store'])->name('suppliers.store')->middleware('permission:suppliers.create');
 
-// Supplier API (debt, history, payment)
-Route::get('/api/suppliers/{id}/debt-transactions', [SupplierController::class, 'debtTransactions']);
-Route::get('/api/suppliers/{id}/purchase-history', [SupplierController::class, 'purchaseHistory']);
-Route::post('/api/suppliers/{id}/payment', [SupplierController::class, 'recordPayment']);
-Route::post('/api/suppliers/{id}/adjust-debt', [SupplierController::class, 'adjustDebt']);
-Route::get('/api/suppliers/{id}/outstanding-purchases', [SupplierController::class, 'outstandingPurchases']);
-Route::get('/api/suppliers/{id}/export-debt-history', [SupplierController::class, 'exportDebtHistory']);
-Route::get('/api/suppliers/{id}/export-purchase-history', [SupplierController::class, 'exportPurchaseHistory']);
-
 // ===== PURCHASES =====
 Route::get('/purchases/create', [PurchaseController::class, 'create'])->name('purchases.create')->middleware('permission:purchases.create');
 Route::middleware('permission:purchases.view')->group(function () {
@@ -492,7 +426,6 @@ Route::middleware('permission:purchases.create')->group(function () {
 
 // ===== PURCHASE RETURNS =====
 Route::get('/purchase-returns/create', [PurchaseReturnController::class, 'create'])->name('purchase-returns.create')->middleware('permission:purchases.create');
-Route::get('/purchase-returns/create-quick', [PurchaseReturnController::class, 'createQuick'])->name('purchase-returns.create-quick')->middleware('permission:purchases.create');
 Route::middleware('permission:purchases.view')->group(function () {
     Route::get('/purchase-returns', [PurchaseReturnController::class, 'index'])->name('purchase-returns.index');
     Route::get('/purchase-returns/{purchaseReturn}', [PurchaseReturnController::class, 'show'])->name('purchase-returns.show');
@@ -501,7 +434,6 @@ Route::middleware('permission:purchases.create')->group(function () {
     Route::post('/purchase-returns', [PurchaseReturnController::class, 'store'])->name('purchase-returns.store');
     Route::delete('/purchase-returns/{purchaseReturn}', [PurchaseReturnController::class, 'destroy'])->name('purchase-returns.destroy');
 });
-Route::post('/purchase-returns/quick', [PurchaseReturnController::class, 'quickStore'])->name('purchase-returns.quick-store');
 
 // ===== PRICE SETTINGS =====
 Route::middleware('permission:price_settings.view')->group(function () {
@@ -528,9 +460,6 @@ Route::middleware('permission:stock_transfers.create')->group(function () {
     Route::get('/stock-transfers/create', [StockTransferController::class, 'create'])->name('stock-transfers.create');
     Route::post('/stock-transfers', [StockTransferController::class, 'store'])->name('stock-transfers.store');
 });
-Route::get('/stock-transfers/{stockTransfer}', [StockTransferController::class, 'show'])->name('stock-transfers.show');
-Route::post('/stock-transfers/{id}/receive', [StockTransferController::class, 'receive'])->name('stock-transfers.receive');
-Route::post('/stock-transfers/{id}/cancel', [StockTransferController::class, 'cancel'])->name('stock-transfers.cancel');
 
 // ===== STOCK TAKES =====
 Route::get('/stock-takes', [StockTakeController::class, 'index'])->name('stock-takes.index')->middleware('permission:stock_takes.view');
@@ -538,9 +467,6 @@ Route::middleware('permission:stock_takes.create')->group(function () {
     Route::get('/stock-takes/create', [StockTakeController::class, 'create'])->name('stock-takes.create');
     Route::post('/stock-takes', [StockTakeController::class, 'store'])->name('stock-takes.store');
 });
-Route::get('/stock-takes/{stockTake}', [StockTakeController::class, 'show'])->name('stock-takes.show');
-Route::put('/stock-takes/{id}', [StockTakeController::class, 'update'])->name('stock-takes.update');
-Route::post('/stock-takes/{id}/cancel', [StockTakeController::class, 'cancel'])->name('stock-takes.cancel');
 
 // ===== DAMAGES =====
 Route::get('/damages', [DamageController::class, 'index'])->name('damages.index')->middleware('permission:damages.view');
@@ -554,56 +480,6 @@ Route::get('/purchase-orders', [PurchaseOrderController::class, 'index'])->name(
 Route::middleware('permission:purchase_orders.create')->group(function () {
     Route::get('/purchase-orders/create', [PurchaseOrderController::class, 'create'])->name('purchase-orders.create');
     Route::post('/purchase-orders', [PurchaseOrderController::class, 'store'])->name('purchase-orders.store');
-});
-Route::put('/purchase-orders/{purchaseOrder}', [PurchaseOrderController::class, 'update'])->name('purchase-orders.update')->middleware('permission:purchase_orders.create');
-Route::post('/purchase-orders/{purchaseOrder}/cancel', [PurchaseOrderController::class, 'cancel'])->name('purchase-orders.cancel')->middleware('permission:purchase_orders.create');
-Route::post('/purchase-orders/{purchaseOrder}/finish', [PurchaseOrderController::class, 'finish'])->name('purchase-orders.finish')->middleware('permission:purchase_orders.create');
-Route::post('/purchase-orders/{purchaseOrder}/copy', [PurchaseOrderController::class, 'copy'])->name('purchase-orders.copy')->middleware('permission:purchase_orders.create');
-Route::post('/purchase-orders/{purchaseOrder}/convert', [PurchaseOrderController::class, 'convertToReceipt'])->name('purchase-orders.convert')->middleware('permission:purchase_orders.create');
-
-// ===== WAYBILLS / DELIVERY =====
-Route::get('/waybills', [\App\Http\Controllers\WaybillController::class, 'index'])->name('waybills.index')->middleware('permission:waybills.view');
-Route::get('/waybills/export', [\App\Http\Controllers\WaybillController::class, 'export'])->name('waybills.export')->middleware('permission:waybills.view');
-Route::get('/waybills/{waybill}', [\App\Http\Controllers\WaybillController::class, 'show'])->name('waybills.show')->middleware('permission:waybills.view');
-Route::get('/waybills/{waybill}/print', [\App\Http\Controllers\WaybillController::class, 'print'])->name('waybills.print')->middleware('permission:waybills.view');
-Route::middleware('permission:waybills.create')->group(function () {
-    Route::post('/waybills', [\App\Http\Controllers\WaybillController::class, 'store'])->name('waybills.store');
-    Route::post('/waybills/{waybill}/rebook', [\App\Http\Controllers\WaybillController::class, 'rebook'])->name('waybills.rebook');
-});
-Route::middleware('permission:waybills.edit')->group(function () {
-    Route::put('/waybills/{waybill}/status', [\App\Http\Controllers\WaybillController::class, 'updateStatus'])->name('waybills.updateStatus');
-    Route::post('/waybills/{waybill}/cancel', [\App\Http\Controllers\WaybillController::class, 'cancel'])->name('waybills.cancel');
-    Route::post('/waybills/bulk-update', [\App\Http\Controllers\WaybillController::class, 'bulkUpdate'])->name('waybills.bulkUpdate');
-});
-
-// ===== PROMOTIONS =====
-Route::get('/promotions', [\App\Http\Controllers\PromotionController::class, 'index'])->name('promotions.index')->middleware('permission:promotions.view');
-Route::get('/promotions/export', [\App\Http\Controllers\PromotionController::class, 'export'])->name('promotions.export')->middleware('permission:promotions.view');
-Route::get('/promotions/{promotion}', [\App\Http\Controllers\PromotionController::class, 'show'])->name('promotions.show')->middleware('permission:promotions.view');
-Route::post('/promotions/check-eligibility', [\App\Http\Controllers\PromotionController::class, 'checkEligibility'])->name('promotions.checkEligibility');
-Route::middleware('permission:promotions.create')->group(function () {
-    Route::post('/promotions', [\App\Http\Controllers\PromotionController::class, 'store'])->name('promotions.store');
-    Route::post('/promotions/{promotion}/copy', [\App\Http\Controllers\PromotionController::class, 'copy'])->name('promotions.copy');
-    Route::post('/promotions/{promotion}/apply', [\App\Http\Controllers\PromotionController::class, 'apply'])->name('promotions.apply');
-});
-Route::middleware('permission:promotions.edit')->group(function () {
-    Route::put('/promotions/{promotion}', [\App\Http\Controllers\PromotionController::class, 'update'])->name('promotions.update');
-    Route::delete('/promotions/{promotion}', [\App\Http\Controllers\PromotionController::class, 'destroy'])->name('promotions.destroy');
-});
-
-// ===== PRICE TABLES =====
-Route::get('/price-tables', [\App\Http\Controllers\PriceTableController::class, 'index'])->name('price-tables.index')->middleware('permission:price_tables.view');
-Route::get('/price-tables/{priceTable}', [\App\Http\Controllers\PriceTableController::class, 'show'])->name('price-tables.show')->middleware('permission:price_tables.view');
-Route::get('/price-tables/{priceTable}/export', [\App\Http\Controllers\PriceTableController::class, 'export'])->name('price-tables.export')->middleware('permission:price_tables.view');
-Route::post('/price-tables/resolve-price', [\App\Http\Controllers\PriceTableController::class, 'resolvePrice'])->name('price-tables.resolvePrice');
-Route::middleware('permission:price_tables.create')->group(function () {
-    Route::post('/price-tables', [\App\Http\Controllers\PriceTableController::class, 'store'])->name('price-tables.store');
-    Route::post('/price-tables/{priceTable}/add-items', [\App\Http\Controllers\PriceTableController::class, 'addItems'])->name('price-tables.addItems');
-    Route::post('/price-tables/{priceTable}/apply-formula', [\App\Http\Controllers\PriceTableController::class, 'applyFormula'])->name('price-tables.applyFormula');
-});
-Route::middleware('permission:price_tables.edit')->group(function () {
-    Route::put('/price-tables/{priceTable}', [\App\Http\Controllers\PriceTableController::class, 'update'])->name('price-tables.update');
-    Route::delete('/price-tables/{priceTable}', [\App\Http\Controllers\PriceTableController::class, 'destroy'])->name('price-tables.destroy');
 });
 
 Route::get('/run-migrate', function () {
@@ -699,13 +575,11 @@ Route::middleware('permission:invoices.view')->group(function () {
     Route::get('/invoices/{invoice}/detail', [InvoiceController::class, 'detail']);
 });
 Route::post('/invoices', [InvoiceController::class, 'store'])->name('invoices.store')->middleware('permission:invoices.create');
-Route::put('/invoices/{invoice}', [InvoiceController::class, 'update'])->name('invoices.update')->middleware('permission:invoices.create');
 Route::delete('/invoices/{invoice}', [InvoiceController::class, 'destroy'])->name('invoices.destroy')->middleware('permission:invoices.delete');
 
 // ===== RETURNS =====
 Route::get('/returns', [OrderReturnController::class, 'index'])->name('returns.index')->middleware('permission:returns.view');
 Route::post('/returns', [OrderReturnController::class, 'store'])->name('returns.store')->middleware('permission:returns.create');
-Route::post('/returns/{return}/cancel', [OrderReturnController::class, 'cancel'])->name('returns.cancel')->middleware('permission:returns.create');
 
 // ===== ORDERS =====
 Route::middleware('permission:orders.view')->group(function () {
@@ -716,10 +590,6 @@ Route::middleware('permission:orders.create')->group(function () {
     Route::post('/orders', [OrderController::class, 'store'])->name('orders.store');
 });
 Route::put('/orders/{order}', [OrderController::class, 'update'])->name('orders.update')->middleware('permission:orders.edit');
-Route::post('/orders/{order}/process', [OrderController::class, 'processOrder'])->name('orders.process')->middleware('permission:orders.edit');
-Route::post('/orders/{order}/cancel', [OrderController::class, 'cancel'])->name('orders.cancel')->middleware('permission:orders.edit');
-Route::post('/orders/{order}/end', [OrderController::class, 'endOrder'])->name('orders.end')->middleware('permission:orders.edit');
-Route::post('/orders/merge', [OrderController::class, 'merge'])->name('orders.merge')->middleware('permission:orders.edit');
 
 // ===== CASH FLOWS =====
 Route::get('/cash-flows', [App\Http\Controllers\CashFlowController::class, 'index'])->name('cash_flows.index')->middleware('permission:cash_flows.view');
@@ -728,14 +598,12 @@ Route::put('/cash-flows/{cash_flow}', [App\Http\Controllers\CashFlowController::
 Route::delete('/cash-flows/{cash_flow}', [App\Http\Controllers\CashFlowController::class, 'destroy'])->name('cash_flows.destroy')->middleware('permission:cash_flows.delete');
 Route::get('/cash-flows/{cash_flow}/print', [App\Http\Controllers\CashFlowController::class, 'print'])->name('cash_flows.print')->middleware('permission:cash_flows.print');
 Route::post('/cash-flows/subject', [App\Http\Controllers\CashFlowController::class, 'storeSubject'])->name('cash_flows.subject')->middleware('permission:cash_flows.create');
-Route::post('/cash-flows/transfer', [App\Http\Controllers\CashFlowController::class, 'transfer'])->name('cash_flows.transfer')->middleware('permission:cash_flows.create');
 
 // ===== POS =====
 Route::middleware('permission:pos.use')->group(function () {
     Route::get('/pos', [PosController::class, 'index'])->name('pos.index');
     Route::get('/api/pos/products', [PosController::class, 'searchProducts']);
     Route::post('/api/pos/checkout', [PosController::class, 'checkout']);
-    Route::post('/api/pos/quick-order', [PosController::class, 'quickOrder']);
     Route::get('/api/products/{product}/serials', [PosController::class, 'getProductSerials']);
     Route::get('/api/pos/customers', [PosController::class, 'searchCustomers']);
     Route::post('/api/pos/customers', [PosController::class, 'quickCreateCustomer']);
@@ -747,7 +615,6 @@ Route::get('/api/products/search', [ProductController::class, 'apiSearch'])->nam
 // Customer debt management
 Route::post('/customers/{customer}/debt-payment', [CustomerController::class, 'debtPayment'])->middleware('permission:customers.debt_payment');
 Route::post('/customers/{customer}/debt-adjust', [CustomerController::class, 'debtAdjust'])->middleware('permission:customers.debt_adjust');
-Route::get('/customers/{customer}/outstanding-invoices', [CustomerController::class, 'outstandingInvoices'])->middleware('permission:customers.view');
 
 // Print & show routes
 Route::get('/invoices/{invoice}/print', [InvoiceController::class, 'print'])->name('invoices.print')->middleware('permission:invoices.print');
@@ -852,16 +719,18 @@ Route::get('/employees/workday/settings/holidays', [App\Http\Controllers\Employe
 // ═══════════════════════════════════════
 // REPORT routes
 // ═══════════════════════════════════════
-Route::get('/reports/business', [ReportController::class, 'businessOverview'])->name('reports.business-overview');
-Route::get('/reports/cost-profit', [ReportController::class, 'costProfit'])->name('reports.cost-profit');
-Route::get('/reports/financial-report', [App\Http\Controllers\FinancialReportController::class, 'index'])->name('reports.financial-report');
-Route::get('/reports/sales', [App\Http\Controllers\SalesReportController::class, 'index'])->name('reports.sales');
-Route::get('/reports/products', [App\Http\Controllers\ProductReportController::class, 'index'])->name('reports.products');
-Route::get('/reports/customers', [App\Http\Controllers\CustomerReportController::class, 'index'])->name('reports.customers');
-Route::get('/reports/employees', [App\Http\Controllers\EmployeeReportController::class, 'index'])->name('reports.employees');
-Route::get('/reports/suppliers', [App\Http\Controllers\SupplierReportController::class, 'index'])->name('reports.suppliers');
 Route::get('/reports/debt-reconciliation', [ReportController::class, 'debtReconciliation'])->name('reports.debt-reconciliation');
 Route::get('/reports/debt-reconciliation/export', [ReportController::class, 'exportDebtReconciliation'])->name('reports.debt-reconciliation.export');
+
+// Phase 5 — Phân tích & lịch sử giá vốn
+Route::get('/reports/cost-analysis', [ReportController::class, 'costAnalysis'])
+    ->name('reports.cost-analysis')->middleware('permission:reports.view');
+Route::get('/reports/serial-cost-history', [ReportController::class, 'serialCostHistory'])
+    ->name('reports.serial-cost-history')->middleware('permission:reports.view');
+
+// Phase 4 — Thẻ kho
+Route::get('/reports/stock-card', [ReportController::class, 'stockCard'])
+    ->name('reports.stock-card')->middleware('permission:reports.view');
 
 Route::get('/employees/attendance', function () {
     return inertia('Employees/Attendance');
@@ -920,21 +789,5 @@ Route::get('/my-tasks', [TaskPageController::class, 'myTasks'])->name('my-tasks'
 Route::get('/repairs', fn () => redirect('/tasks?type=repair'));
 Route::get('/repairs/performance', fn () => redirect('/tasks/performance'));
 Route::get('/repairs/{id}', fn ($id) => redirect("/tasks/$id"));
-
-// 🔔 NOTIFICATIONS (session auth — called from frontend via axios)
-Route::prefix('api/notifications')->group(function () {
-    Route::get('/', [\App\Http\Controllers\Api\NotificationController::class, 'index']);
-    Route::get('/unread-count', [\App\Http\Controllers\Api\NotificationController::class, 'unreadCount']);
-    Route::post('/{id}/read', [\App\Http\Controllers\Api\NotificationController::class, 'markAsRead']);
-    Route::post('/read-all', [\App\Http\Controllers\Api\NotificationController::class, 'markAllAsRead']);
-});
-
-// 👤 MY TASKS (session auth — called from MyTasks.vue via axios)
-Route::prefix('api/my-tasks')->group(function () {
-    Route::get('/', [\App\Http\Controllers\Api\MyTasksController::class, 'index']);
-    Route::post('/accept-all', [\App\Http\Controllers\Api\MyTasksController::class, 'acceptAll']);
-    Route::post('/{assignment}/respond', [\App\Http\Controllers\Api\MyTasksController::class, 'respond']);
-    Route::post('/{task}/progress', [\App\Http\Controllers\Api\MyTasksController::class, 'updateProgress']);
-});
 
 }); // end auth middleware

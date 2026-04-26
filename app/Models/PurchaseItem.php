@@ -15,6 +15,7 @@ class PurchaseItem extends Model
         'price',
         'discount',
         'subtotal',
+        'unit_cost_allocated',
         'warranty_months',
         'warranty_expires_at',
     ];

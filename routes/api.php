@@ -23,51 +23,6 @@ Route::get('/user', function (Request $request) {
 // 🔓 DEBUG ROUTES (public, for testing)
 // =======================
 
-// DELETE a specific timekeeping record by ID (GET for browser access)
-Route::get('/debug/delete-timekeeping/{id}', function ($id) {
-    $record = \App\Models\TimekeepingRecord::find($id);
-    if (!$record) return response()->json(['error' => 'Not found'], 404);
-    $info = ['id' => $record->id, 'employee_id' => $record->employee_id, 'work_date' => $record->work_date];
-    $record->delete();
-    return response()->json(['success' => true, 'deleted' => $info]);
-});
-
-// Auto-dedup: find and remove duplicate timekeeping records (GET for browser)
-// Usage: /api/debug/dedup-timekeeping?employee_id=3&from=2026-02-28&to=2026-03-31
-Route::get('/debug/dedup-timekeeping', function (\Illuminate\Http\Request $request) {
-    $employeeId = $request->input('employee_id');
-    $from = $request->input('from', '2026-03-01');
-    $to = $request->input('to', '2026-03-31');
-
-    $records = \App\Models\TimekeepingRecord::where('employee_id', $employeeId)
-        ->whereBetween('work_date', [$from, $to])
-        ->orderBy('work_date')
-        ->orderBy('id')
-        ->get();
-
-    $seen = [];
-    $deleted = [];
-    foreach ($records as $rec) {
-        $dateKey = \Carbon\Carbon::parse($rec->work_date)->format('Y-m-d');
-        if (isset($seen[$dateKey])) {
-            // Duplicate! Delete the newer one
-            $deleted[] = ['id' => $rec->id, 'date' => $dateKey, 'wu' => (float)$rec->work_units];
-            $rec->delete();
-        } else {
-            $seen[$dateKey] = $rec->id;
-        }
-    }
-
-    return response()->json([
-        'success' => true,
-        'employee_id' => $employeeId,
-        'total_records' => $records->count(),
-        'duplicates_removed' => count($deleted),
-        'deleted' => $deleted,
-        'remaining_dates' => count($seen),
-    ]);
-});
-
 Route::get('/attendance-agent/recent-logs', function () {
     $logs = \App\Models\AttendanceLog::query()
         ->orderByDesc('created_at')
@@ -358,11 +313,20 @@ Route::prefix('tasks')->group(function () {
     Route::post('/{task}/comments', [\App\Http\Controllers\Api\TaskController::class, 'addComment']);
 });
 
-// 🔔 NOTIFICATIONS — moved to web.php for session auth
-// Route::prefix('notifications')->...
+// 🔔 NOTIFICATIONS
+Route::prefix('notifications')->middleware('auth:sanctum')->group(function () {
+    Route::get('/', [\App\Http\Controllers\Api\NotificationController::class, 'index']);
+    Route::get('/unread-count', [\App\Http\Controllers\Api\NotificationController::class, 'unreadCount']);
+    Route::post('/{id}/read', [\App\Http\Controllers\Api\NotificationController::class, 'markAsRead']);
+    Route::post('/read-all', [\App\Http\Controllers\Api\NotificationController::class, 'markAllAsRead']);
+});
 
-// 👤 MY TASKS — moved to web.php for session auth
-// Route::prefix('my-tasks')->...
+// 👤 MY TASKS (employee portal)
+Route::prefix('my-tasks')->middleware('auth:sanctum')->group(function () {
+    Route::get('/', [\App\Http\Controllers\Api\MyTasksController::class, 'index']);
+    Route::post('/{assignment}/respond', [\App\Http\Controllers\Api\MyTasksController::class, 'respond']);
+    Route::post('/{task}/progress', [\App\Http\Controllers\Api\MyTasksController::class, 'updateProgress']);
+});
 
 Route::prefix('repair-performance-tiers')->group(function () {
     Route::get('/', [\App\Http\Controllers\Api\RepairPerformanceTierController::class, 'index']);
@@ -403,28 +367,4 @@ Route::prefix('product-attributes')->group(function () {
     Route::post('/{attribute}/values', [\App\Http\Controllers\Api\ProductAttributeController::class, 'storeValue']);
     Route::delete('/{attribute}', [\App\Http\Controllers\Api\ProductAttributeController::class, 'destroy']);
     Route::delete('/values/{value}', [\App\Http\Controllers\Api\ProductAttributeController::class, 'destroyValue']);
-});
-
-// 📝 ACTIVITY LOGS
-Route::prefix('activity-logs')->group(function () {
-    Route::get('/', [\App\Http\Controllers\Api\ActivityLogController::class, 'index']);
-    Route::get('/action-types', [\App\Http\Controllers\Api\ActivityLogController::class, 'actionTypes']);
-});
-
-// 🔒 LOCK PERIOD
-Route::get('/lock-period', function () {
-    $svc = app(\App\Services\LockPeriodService::class);
-    return response()->json([
-        'lock_date' => $svc->getLockDate()?->format('Y-m-d'),
-        'enabled' => $svc->getLockDate() !== null,
-    ]);
-});
-Route::post('/lock-period', function (\Illuminate\Http\Request $request) {
-    $request->validate(['lock_date' => 'nullable|date']);
-    $svc = app(\App\Services\LockPeriodService::class);
-    $svc->setLockDate($request->lock_date);
-    return response()->json([
-        'success' => true,
-        'lock_date' => $svc->getLockDate()?->format('Y-m-d'),
-    ]);
 });

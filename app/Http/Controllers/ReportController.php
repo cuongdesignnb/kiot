@@ -6,10 +6,13 @@ use App\Models\CashFlow;
 use App\Models\Category;
 use App\Models\Customer;
 use App\Models\DebtOffset;
+use App\Models\ActivityLog;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\OrderReturn;
 use App\Models\Product;
+use App\Models\SerialImei;
+use App\Models\StockMovement;
 use App\Models\Branch;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -1027,6 +1030,230 @@ class ReportController extends Controller
         return response($csvHeader . $csvRows, 200, [
             'Content-Type' => 'text/csv; charset=UTF-8',
             'Content-Disposition' => 'attachment; filename="doi-soat-cong-no-' . now()->format('Y-m-d') . '.csv"',
+        ]);
+    }
+
+    /**
+     * Phase 5 — Phân tích giá vốn:
+     * So sánh product.cost_price (snapshot) vs avg(serial.cost_price WHERE in_stock).
+     * Cảnh báo khi lệch quá ngưỡng.
+     */
+    public function costAnalysis(Request $request)
+    {
+        $threshold = (float) $request->input('threshold_pct', 1); // 1% mặc định
+        $onlyMismatch = $request->boolean('only_mismatch', false);
+        $search = trim((string) $request->input('search', ''));
+
+        // Lấy products có serial → so sánh; products không serial → chỉ liệt kê snapshot
+        $q = Product::query()
+            ->select('id', 'sku', 'name', 'cost_price', 'stock_quantity', 'has_serial', 'is_active')
+            ->where('is_active', true);
+
+        if ($search !== '') {
+            $q->where(function ($w) use ($search) {
+                $w->where('sku', 'like', "%$search%")->orWhere('name', 'like', "%$search%");
+            });
+        }
+
+        $products = $q->orderBy('name')->limit(500)->get();
+
+        // Một query gộp avg/count cho tất cả product có serial
+        $serialAggs = SerialImei::query()
+            ->whereIn('product_id', $products->where('has_serial', true)->pluck('id'))
+            ->where('status', 'in_stock')
+            ->groupBy('product_id')
+            ->selectRaw('product_id, COUNT(*) as in_stock_count, AVG(cost_price) as avg_cost, MIN(cost_price) as min_cost, MAX(cost_price) as max_cost')
+            ->get()
+            ->keyBy('product_id');
+
+        $rows = $products->map(function ($p) use ($serialAggs, $threshold) {
+            $snapshot = (float) $p->cost_price;
+            $avgSerial = null;
+            $inStockCount = null;
+            $minCost = null;
+            $maxCost = null;
+            $diff = 0;
+            $diffPct = 0;
+            $status = 'ok';
+
+            if ($p->has_serial) {
+                $agg = $serialAggs->get($p->id);
+                if ($agg) {
+                    $avgSerial = round((float) $agg->avg_cost);
+                    $inStockCount = (int) $agg->in_stock_count;
+                    $minCost = (float) $agg->min_cost;
+                    $maxCost = (float) $agg->max_cost;
+                    $diff = $avgSerial - $snapshot;
+                    $diffPct = $snapshot > 0 ? abs($diff) / $snapshot * 100 : ($avgSerial > 0 ? 100 : 0);
+                    if ($diffPct > $threshold) {
+                        $status = 'mismatch';
+                    }
+                } else {
+                    // has_serial nhưng không còn serial in_stock
+                    $status = $p->stock_quantity > 0 ? 'no_in_stock_serial' : 'empty';
+                }
+            }
+
+            return [
+                'id' => $p->id,
+                'sku' => $p->sku,
+                'name' => $p->name,
+                'has_serial' => (bool) $p->has_serial,
+                'stock_quantity' => (int) $p->stock_quantity,
+                'snapshot_cost' => $snapshot,
+                'avg_serial_cost' => $avgSerial,
+                'in_stock_serial_count' => $inStockCount,
+                'min_serial_cost' => $minCost,
+                'max_serial_cost' => $maxCost,
+                'diff' => $diff,
+                'diff_pct' => round($diffPct, 2),
+                'status' => $status, // ok | mismatch | no_in_stock_serial | empty
+            ];
+        });
+
+        if ($onlyMismatch) {
+            $rows = $rows->filter(fn ($r) => $r['status'] === 'mismatch')->values();
+        }
+
+        $summary = [
+            'total' => $rows->count(),
+            'mismatch_count' => $rows->where('status', 'mismatch')->count(),
+            'no_in_stock_serial' => $rows->where('status', 'no_in_stock_serial')->count(),
+            'total_inventory_value_snapshot' => $rows->sum(fn ($r) => $r['snapshot_cost'] * $r['stock_quantity']),
+            'total_inventory_value_serial' => $rows->sum(fn ($r) => ($r['avg_serial_cost'] ?? $r['snapshot_cost']) * ($r['in_stock_serial_count'] ?? $r['stock_quantity'])),
+        ];
+
+        return Inertia::render('Reports/CostAnalysis', [
+            'rows' => $rows->values(),
+            'summary' => $summary,
+            'filters' => [
+                'threshold_pct' => $threshold,
+                'only_mismatch' => $onlyMismatch,
+                'search' => $search,
+            ],
+        ]);
+    }
+
+    /**
+     * Phase 5 — Lịch sử thay đổi giá vốn serial.
+     * Đọc ActivityLog action='serial_cost_update' (ghi từ ProductController::updateSerial — Phase 3).
+     */
+    public function serialCostHistory(Request $request)
+    {
+        $perPage = min(100, max(10, (int) $request->input('per_page', 25)));
+        $search = trim((string) $request->input('search', ''));
+        $dateFrom = $request->input('date_from');
+        $dateTo = $request->input('date_to');
+        $productId = $request->input('product_id');
+
+        $q = ActivityLog::query()
+            ->where('action', 'serial_cost_update')
+            ->with(['user:id,name', 'employee:id,name,code'])
+            ->orderByDesc('created_at');
+
+        if ($dateFrom) {
+            $q->where('created_at', '>=', Carbon::parse($dateFrom)->startOfDay());
+        }
+        if ($dateTo) {
+            $q->where('created_at', '<=', Carbon::parse($dateTo)->endOfDay());
+        }
+        if ($productId) {
+            $q->whereJsonContains('properties->product_id', (int) $productId);
+        }
+        if ($search !== '') {
+            $q->where('description', 'like', "%$search%");
+        }
+
+        $logs = $q->paginate($perPage)->withQueryString();
+
+        // Stats nhanh
+        $stats = [
+            'total' => ActivityLog::where('action', 'serial_cost_update')->count(),
+            'this_month' => ActivityLog::where('action', 'serial_cost_update')
+                ->where('created_at', '>=', Carbon::now()->startOfMonth())->count(),
+            'today' => ActivityLog::where('action', 'serial_cost_update')
+                ->where('created_at', '>=', Carbon::now()->startOfDay())->count(),
+        ];
+
+        return Inertia::render('Reports/SerialCostHistory', [
+            'logs' => $logs,
+            'stats' => $stats,
+            'filters' => [
+                'search' => $search,
+                'date_from' => $dateFrom,
+                'date_to' => $dateTo,
+                'product_id' => $productId,
+            ],
+        ]);
+    }
+
+    /**
+     * Phase 4 — Thẻ kho (sổ cái tồn kho theo SKU).
+     * Hiển thị từng dịch chuyển + balance sau mỗi lần.
+     */
+    public function stockCard(Request $request)
+    {
+        $productId = $request->input('product_id');
+        $dateFrom = $request->input('date_from');
+        $dateTo = $request->input('date_to');
+        $type = $request->input('type'); // optional filter
+        $perPage = min(200, max(20, (int) $request->input('per_page', 50)));
+
+        $product = $productId ? Product::find($productId) : null;
+
+        $query = StockMovement::query()
+            ->with(['serialImei:id,serial_number', 'employee:id,name,code', 'user:id,name'])
+            ->orderBy('moved_at', 'desc')
+            ->orderBy('id', 'desc');
+
+        if ($product) {
+            $query->where('product_id', $product->id);
+        }
+        if ($dateFrom) {
+            $query->where('moved_at', '>=', Carbon::parse($dateFrom)->startOfDay());
+        }
+        if ($dateTo) {
+            $query->where('moved_at', '<=', Carbon::parse($dateTo)->endOfDay());
+        }
+        if ($type) {
+            $query->where('type', $type);
+        }
+
+        // Aggregate trong khoảng (ignoring product filter chỉ khi product có)
+        $aggQuery = clone $query;
+        $aggQuery->getQuery()->orders = null;
+        $stats = [
+            'total_in_qty' => (int) (clone $aggQuery)->where('direction', 'in')->sum('qty'),
+            'total_out_qty' => (int) (clone $aggQuery)->where('direction', 'out')->sum('qty'),
+            'total_in_value' => (float) (clone $aggQuery)->where('direction', 'in')->sum('total_cost'),
+            'total_out_value' => (float) (clone $aggQuery)->where('direction', 'out')->sum('total_cost'),
+        ];
+
+        $movements = $query->paginate($perPage)->withQueryString();
+
+        // Danh sách product để filter
+        $products = Product::select('id', 'sku', 'name')
+            ->orderBy('name')
+            ->limit(500)
+            ->get();
+
+        return Inertia::render('Reports/StockCard', [
+            'movements' => $movements,
+            'stats' => $stats,
+            'product' => $product ? [
+                'id' => $product->id,
+                'sku' => $product->sku,
+                'name' => $product->name,
+                'stock_quantity' => $product->stock_quantity,
+                'cost_price' => $product->cost_price,
+            ] : null,
+            'products' => $products,
+            'filters' => [
+                'product_id' => $productId,
+                'date_from' => $dateFrom,
+                'date_to' => $dateTo,
+                'type' => $type,
+            ],
         ]);
     }
 }

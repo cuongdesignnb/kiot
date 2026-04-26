@@ -13,6 +13,7 @@ use App\Models\SerialImei;
 use App\Models\Employee;
 use App\Models\User;
 use App\Enums\PurchaseReturnStatus;
+use App\Services\StockMovementService;
 use App\Support\Filters\FilterableIndex;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
@@ -186,13 +187,21 @@ class PurchaseReturnController extends Controller
             foreach ($request->items as $item) {
                 $product = Product::find($item['product_id']);
 
+                // Tham chiếu purchase_item gốc để lấy unit_cost_allocated
+                $purchaseItem = $purchase->items->firstWhere('product_id', $item['product_id']);
+                $unitCostAtPurchase = $purchaseItem
+                    ? (float) ($purchaseItem->unit_cost_allocated ?: $purchaseItem->price)
+                    : (float) $item['price'];
+
                 $return->items()->create([
                     'product_id' => $product->id,
+                    'purchase_item_id' => $purchaseItem?->id,
                     'product_name' => $product->name,
                     'product_code' => $product->sku,
                     'quantity' => $item['quantity'],
                     'price' => $item['price'],
                     'subtotal' => $item['quantity'] * $item['price'],
+                    'cost_price' => $unitCostAtPurchase,
                 ]);
 
                 // Reduce stock
@@ -202,12 +211,12 @@ class PurchaseReturnController extends Controller
                 }
                 $newStock = $currentStock - $item['quantity'];
 
-                // Reverse cost price
-                if ($costingMethod === 'average' && $currentStock > 0) {
+                // Reverse cost price — dùng unit_cost_allocated lúc nhập (KHÔNG dùng giá trả).
+                if ($costingMethod === 'average' && $currentStock > 0 && !$product->has_serial) {
                     $totalCurrentValue = $currentStock * $product->cost_price;
-                    $removedValue = $item['quantity'] * $item['price'];
+                    $removedValue = $item['quantity'] * $unitCostAtPurchase;
                     $product->cost_price = $newStock > 0
-                        ? ($totalCurrentValue - $removedValue) / $newStock
+                        ? max(0, ($totalCurrentValue - $removedValue) / $newStock)
                         : 0;
                 }
 
@@ -220,7 +229,24 @@ class PurchaseReturnController extends Controller
                         ->where('product_id', $product->id)
                         ->where('status', 'in_stock')
                         ->update(['status' => 'returned', 'purchase_return_id' => $return->id]);
+
+                    $product->recomputeFromSerials();
                 }
+
+                // Phase 4 — Ghi sổ cái: trả hàng NCC = xuất kho
+                StockMovementService::record(
+                    $product,
+                    StockMovementService::TYPE_OUT_PURCHASE_RETURN,
+                    (int) $item['quantity'],
+                    (float) $unitCostAtPurchase,
+                    $return,
+                    [
+                        'branch_id' => $return->branch_id ?? null,
+                        'ref_code' => $return->code,
+                        'moved_at' => $return->return_date ?? now(),
+                        'note' => 'Trả hàng NCC phiếu ' . $return->code,
+                    ]
+                );
             }
 
             // Giảm công nợ NCC theo chuẩn KiotViet:
@@ -313,6 +339,9 @@ class PurchaseReturnController extends Controller
             foreach ($request->items as $item) {
                 $product = Product::find($item['product_id']);
 
+                // Trả nhanh: không có purchase_id → fallback dùng product.cost_price hiện tại làm cost out
+                $unitCostAtPurchase = (float) $product->cost_price;
+
                 $return->items()->create([
                     'product_id' => $product->id,
                     'product_name' => $product->name,
@@ -320,6 +349,7 @@ class PurchaseReturnController extends Controller
                     'quantity' => $item['quantity'],
                     'price' => $item['price'],
                     'subtotal' => $item['quantity'] * $item['price'],
+                    'cost_price' => $unitCostAtPurchase,
                 ]);
 
                 // Reduce stock
@@ -327,6 +357,25 @@ class PurchaseReturnController extends Controller
                     throw new \Exception("San pham '{$product->name}' khong du ton kho (Con: {$product->stock_quantity}, Can tra: {$item['quantity']}).");
                 }
                 $product->decrement('stock_quantity', $item['quantity']);
+
+                if ($product->has_serial) {
+                    $product->refresh();
+                    $product->recomputeFromSerials();
+                }
+
+                // Phase 4 — Ghi sổ cái: trả hàng NCC nhanh
+                StockMovementService::record(
+                    $product->fresh(),
+                    StockMovementService::TYPE_OUT_PURCHASE_RETURN,
+                    (int) $item['quantity'],
+                    (float) $unitCostAtPurchase,
+                    $return,
+                    [
+                        'ref_code' => $return->code,
+                        'moved_at' => now(),
+                        'note' => 'Trả hàng NCC nhanh ' . $return->code,
+                    ]
+                );
             }
 
             // Giảm công nợ NCC: ghi nợ phần chưa refund.
@@ -395,12 +444,15 @@ class PurchaseReturnController extends Controller
                 $currentStock = $product->stock_quantity;
                 $newStock = $currentStock + $item->quantity;
 
-                if ($costingMethod === 'average') {
+                // Khôi phục cost: dùng cost_price lúc xuất (= unit_cost_allocated lúc nhập)
+                $unitCost = (float) ($item->cost_price ?: $item->price);
+
+                if ($costingMethod === 'average' && !$product->has_serial) {
                     $totalCurrentValue = $currentStock * $product->cost_price;
-                    $addedValue = $item->quantity * $item->price;
+                    $addedValue = $item->quantity * $unitCost;
                     $product->cost_price = $newStock > 0
                         ? ($totalCurrentValue + $addedValue) / $newStock
-                        : $item->price;
+                        : $unitCost;
                 }
 
                 $product->stock_quantity = $newStock;
@@ -412,6 +464,8 @@ class PurchaseReturnController extends Controller
                         ->where('product_id', $product->id)
                         ->where('status', 'returned')
                         ->update(['status' => 'in_stock', 'purchase_return_id' => null]);
+
+                    $product->recomputeFromSerials();
                 }
             }
 

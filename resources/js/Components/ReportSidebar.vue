@@ -34,6 +34,21 @@ const sections = ref([
                 href: "/reports/product-categories",
                 key: "product-categories",
             },
+            {
+                label: "Phân tích giá vốn",
+                href: "/reports/cost-analysis",
+                key: "cost-analysis",
+            },
+            {
+                label: "Lịch sử giá vốn Serial",
+                href: "/reports/serial-cost-history",
+                key: "serial-cost-history",
+            },
+            {
+                label: "Thẻ kho",
+                href: "/reports/stock-card",
+                key: "stock-card",
+            },
         ],
     },
     {

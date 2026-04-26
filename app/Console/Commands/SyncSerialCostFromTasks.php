@@ -9,23 +9,52 @@ use Illuminate\Support\Facades\DB;
 
 class SyncSerialCostFromTasks extends Command
 {
-    protected $signature = 'serial:sync-cost-from-tasks';
+    protected $signature = 'serial:sync-cost-from-tasks
+        {--dry-run : Chỉ hiển thị thay đổi, không lưu DB}
+        {--product= : Chỉ chạy cho 1 product_id}
+        {--recompute-products : Sau khi sync, gọi recomputeFromSerials cho các product bị ảnh hưởng}';
     protected $description = 'Sync serial cost_price from repair tasks, backfill original_cost, and fix missing cost_price';
 
     public function handle()
     {
+        $dryRun = (bool) $this->option('dry-run');
+        $productFilter = $this->option('product');
+        $recompute = (bool) $this->option('recompute-products');
+
+        if ($dryRun) {
+            $this->warn('[DRY-RUN] Không có thay đổi nào được lưu vào DB.');
+        }
+        if ($productFilter) {
+            $this->info("Chỉ chạy cho product_id = {$productFilter}");
+        }
+
+        $affectedProductIds = [];
+
         // ── Step 1: Backfill original_cost từ purchase_items ──
         $this->info('=== Step 1: Backfill original_cost từ phiếu nhập ===');
 
         if (\Schema::hasColumn('serial_imeis', 'original_cost')) {
-            $backfilled = DB::update("
-                UPDATE serial_imeis s
-                LEFT JOIN purchase_items pi ON pi.purchase_id = s.purchase_id
-                    AND pi.product_id = s.product_id
-                SET s.original_cost = COALESCE(pi.price, s.cost_price)
-                WHERE s.original_cost = 0 OR s.original_cost IS NULL
-            ");
-            $this->info("Backfilled original_cost cho {$backfilled} serial(s).");
+            $bindings = [];
+            $where = "WHERE (s.original_cost = 0 OR s.original_cost IS NULL)";
+            if ($productFilter) {
+                $where .= " AND s.product_id = ?";
+                $bindings[] = $productFilter;
+            }
+            if ($dryRun) {
+                $count = DB::selectOne("SELECT COUNT(*) as c FROM serial_imeis s LEFT JOIN purchase_items pi ON pi.purchase_id = s.purchase_id AND pi.product_id = s.product_id $where", $bindings);
+                $this->info("[DRY-RUN] Sẽ backfill original_cost cho {$count->c} serial(s).");
+            } else {
+                $backfilled = DB::update("
+                    UPDATE serial_imeis
+                    SET original_cost = COALESCE(
+                        (SELECT pi.price FROM purchase_items pi
+                         WHERE pi.purchase_id = serial_imeis.purchase_id
+                           AND pi.product_id = serial_imeis.product_id LIMIT 1),
+                        cost_price
+                    )
+                    " . str_replace('s.', '', $where), $bindings);
+                $this->info("Backfilled original_cost cho {$backfilled} serial(s).");
+            }
         } else {
             $this->warn("Cột original_cost chưa tồn tại. Hãy chạy php artisan migrate trước.");
         }
@@ -34,10 +63,13 @@ class SyncSerialCostFromTasks extends Command
         // Nếu serial chưa qua sửa chữa → cost_price = original_cost (giá nhập gốc)
         $this->info('=== Step 2: Backfill cost_price cho serial chưa sửa chữa ===');
 
-        $serialsNoCost = SerialImei::where(function ($q) {
+        $q = SerialImei::where(function ($q) {
                 $q->where('cost_price', 0)->orWhereNull('cost_price');
-            })
-            ->get();
+            });
+        if ($productFilter) {
+            $q->where('product_id', $productFilter);
+        }
+        $serialsNoCost = $q->get();
 
         $fixedCount = 0;
         foreach ($serialsNoCost as $serial) {
@@ -47,7 +79,10 @@ class SyncSerialCostFromTasks extends Command
                 $purchasePrice = DB::table('purchase_items')
                     ->where('purchase_id', $serial->purchase_id)
                     ->where('product_id', $serial->product_id)
-                    ->value('price') ?? 0;
+                    ->value('unit_cost_allocated') ?? DB::table('purchase_items')
+                        ->where('purchase_id', $serial->purchase_id)
+                        ->where('product_id', $serial->product_id)
+                        ->value('price') ?? 0;
             }
 
             // Fallback: lấy từ original_cost hoặc product.cost_price
@@ -60,12 +95,15 @@ class SyncSerialCostFromTasks extends Command
             }
 
             if ($purchasePrice > 0) {
-                $serial->cost_price = $purchasePrice;
-                if (\Schema::hasColumn('serial_imeis', 'original_cost') && ($serial->original_cost == 0 || $serial->original_cost === null)) {
-                    $serial->original_cost = $purchasePrice;
+                $this->info(($dryRun ? '[DRY-RUN] ' : '') . "Serial {$serial->serial_number}: cost_price 0 → {$purchasePrice}");
+                if (!$dryRun) {
+                    $serial->cost_price = $purchasePrice;
+                    if (\Schema::hasColumn('serial_imeis', 'original_cost') && ($serial->original_cost == 0 || $serial->original_cost === null)) {
+                        $serial->original_cost = $purchasePrice;
+                    }
+                    $serial->save();
                 }
-                $serial->save();
-                $this->info("Serial {$serial->serial_number}: cost_price 0 → {$purchasePrice}");
+                $affectedProductIds[$serial->product_id] = true;
                 $fixedCount++;
             }
         }
@@ -74,11 +112,14 @@ class SyncSerialCostFromTasks extends Command
         // ── Step 3: Sync cost_price từ task.total_cost (cho serial ĐÃ sửa chữa) ──
         $this->info('=== Step 3: Sync serial.cost_price từ task.total_cost ===');
 
-        $tasks = Task::where('type', 'repair')
+        $tq = Task::where('type', 'repair')
             ->whereNotNull('serial_imei_id')
             ->whereIn('status', ['completed', 'in_progress', 'pending'])
-            ->with('serialImei')
-            ->get();
+            ->with('serialImei');
+        if ($productFilter) {
+            $tq->whereHas('serialImei', fn($q) => $q->where('product_id', $productFilter));
+        }
+        $tasks = $tq->get();
 
         $updated = 0;
 
@@ -86,21 +127,42 @@ class SyncSerialCostFromTasks extends Command
             $serial = $task->serialImei;
             if (!$serial) continue;
 
-            $task->recalculateCosts();
+            if (!$dryRun) {
+                $task->recalculateCosts();
+            }
 
             $oldCost = (float) $serial->cost_price;
             $newCost = max(0, (float) $task->total_cost);
 
             if (abs($oldCost - $newCost) > 0.01) {
-                $serial->cost_price = $newCost;
-                $serial->save();
-
-                $this->info("Serial {$serial->serial_number}: cost_price {$oldCost} → {$newCost} (Task {$task->code})");
+                $this->info(($dryRun ? '[DRY-RUN] ' : '') . "Serial {$serial->serial_number}: cost_price {$oldCost} → {$newCost} (Task {$task->code})");
+                if (!$dryRun) {
+                    $serial->cost_price = $newCost;
+                    $serial->save();
+                }
+                $affectedProductIds[$serial->product_id] = true;
                 $updated++;
             }
         }
 
         $this->info("Done! Updated {$updated} serial cost_price(s) từ repair tasks.");
+
+        // ── Step 4: Recompute product cost từ serial in_stock ──
+        if ($recompute && !empty($affectedProductIds)) {
+            $this->info('=== Step 4: Recompute product cost từ serial còn tồn ===');
+            foreach (array_keys($affectedProductIds) as $pid) {
+                $product = \App\Models\Product::find($pid);
+                if ($product && $product->has_serial) {
+                    if ($dryRun) {
+                        $this->info("[DRY-RUN] Sẽ recompute product {$product->id} ({$product->name})");
+                    } else {
+                        $product->recomputeFromSerials();
+                        $this->info("Recomputed product {$product->id} ({$product->name}): cost={$product->cost_price}, stock={$product->stock_quantity}");
+                    }
+                }
+            }
+        }
+
         $this->info("=== Hoàn tất! ===");
     }
 }
