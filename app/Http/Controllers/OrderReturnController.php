@@ -195,13 +195,9 @@ class OrderReturnController extends Controller
                     }
                 }
 
-                // Tính giá vốn hoàn lại (cost_price_at_sale)
+                // Tính giá vốn hoàn lại (snapshot lúc bán) — ƯU TIÊN invoice_item.cost_price
                 $restoredCostPerUnit = 0.0;
-                if ($product->has_serial && $restoredSerials->isNotEmpty()) {
-                    // Đích danh: tổng sold_cost_price các serial chia qty
-                    $totalCost = $restoredSerials->sum(fn($s) => (float) ($s->sold_cost_price ?: $s->cost_price ?: 0));
-                    $restoredCostPerUnit = $qty > 0 ? round($totalCost / $qty, 2) : 0;
-                } elseif ($invoiceItem) {
+                if ($invoiceItem) {
                     $restoredCostPerUnit = (float) $invoiceItem->cost_price;
                 } else {
                     // Không có thông tin gốc — fallback dùng cost hiện tại
@@ -218,34 +214,25 @@ class OrderReturnController extends Controller
                     'cost_price' => $restoredCostPerUnit,
                 ]);
 
-                // Cập nhật cost bình quân của product theo công thức gộp (dùng cost_price gốc lúc bán)
-                if ($costingMethod === 'average') {
-                    $oldQty = (int) $product->stock_quantity;
-                    $oldCost = (float) $product->cost_price;
-                    $newQty = $oldQty + $qty;
-                    if ($newQty > 0) {
-                        $newValue = ($oldQty * $oldCost) + ($qty * $restoredCostPerUnit);
-                        $product->cost_price = $newValue / $newQty;
-                    }
-                }
+                // BQ DI ĐỘNG: phục hồi tồn ở cost lúc bán
+                \App\Services\MovingAvgCostingService::applySaleReturn(
+                    $product,
+                    (int) $qty,
+                    (float) $restoredCostPerUnit
+                );
+                $product->refresh();
 
-                $product->stock_quantity = $product->stock_quantity + $qty;
-                $product->save();
-
-                // Khôi phục serial về in_stock với cost_price = sold_cost_price gốc
+                // Khôi phục serial về in_stock. Per-IMEI cost_price KHÔNG đổi
+                // (giữ giá nhập gốc). BQ đã cập nhật qua applySaleReturn.
                 foreach ($restoredSerials as $serial) {
-                    $restoreCost = (float) ($serial->sold_cost_price ?: $serial->cost_price ?: 0);
                     $serial->status = 'in_stock';
                     $serial->sold_at = null;
                     $serial->invoice_id = null;
-                    if ($restoreCost > 0) {
-                        $serial->cost_price = $restoreCost;
-                    }
                     $serial->sold_cost_price = null;
                     $serial->save();
                 }
 
-                // Serial: recompute giá vốn BQ + tồn theo serial còn in_stock
+                // Sync stock_quantity audit cho hàng serial
                 if ($product->has_serial) {
                     $product->recomputeFromSerials();
                 }
@@ -347,10 +334,17 @@ class OrderReturnController extends Controller
         DB::transaction(function () use ($return) {
             $return->load('items.product');
 
-            // 1. Rollback stock: trừ lại tồn kho đã cộng
+            // 1. Rollback stock: trừ lại tồn kho đã cộng (đảo ngược applySaleReturn)
             foreach ($return->items as $item) {
                 if ($item->product) {
-                    $item->product->decrement('stock_quantity', $item->quantity);
+                    $unitCost = (float) ($item->cost_price ?: $item->product->cost_price ?? 0);
+
+                    // BQ DI ĐỘNG: rút khỏi tồn ở chính cost lúc trả hàng (đảo ngược applySaleReturn)
+                    \App\Services\MovingAvgCostingService::applyPurchaseReturn(
+                        $item->product,
+                        (int) $item->quantity,
+                        $unitCost
+                    );
 
                     // Rollback serials: set back to sold if linked to invoice
                     if ($item->product->has_serial && $return->invoice_id) {
@@ -366,7 +360,6 @@ class OrderReturnController extends Controller
                     }
 
                     // Phase 4 — Ghi sổ cái: hủy phiếu trả hàng = xuất kho ngược lại
-                    $unitCost = (float) ($item->cost_price ?: $item->product->cost_price ?? 0);
                     StockMovementService::record(
                         $item->product->fresh(),
                         StockMovementService::TYPE_OUT_INVOICE,

@@ -104,6 +104,11 @@ class RepairService
             $serial->cost_price = (float) $serial->cost_price + $totalCost;
             $serial->save();
 
+            // BQ DI ĐỘNG: nếu serial còn in_stock, tăng inventory_total_cost theo ΔC
+            if ($serial->status === 'in_stock' && $serial->product) {
+                \App\Services\MovingAvgCostingService::applyRepairAdjustment($serial->product, (float) $totalCost);
+            }
+
             return $part;
         });
     }
@@ -121,8 +126,14 @@ class RepairService
 
             // Trừ giá vốn serial
             $serial = $repair->serialImei;
-            $serial->cost_price = max(0, (float) $serial->cost_price - (float) $part->total_cost);
+            $deltaCost = -(float) $part->total_cost;
+            $serial->cost_price = max(0, (float) $serial->cost_price + $deltaCost);
             $serial->save();
+
+            // BQ DI ĐỘNG: nếu serial còn in_stock, giảm inventory_total_cost
+            if ($serial->status === 'in_stock' && $serial->product) {
+                \App\Services\MovingAvgCostingService::applyRepairAdjustment($serial->product, $deltaCost);
+            }
 
             $part->delete();
 

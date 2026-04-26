@@ -888,6 +888,7 @@ class ProductController extends Controller
             'serial_number' => $data['serial_number'],
             'status' => 'in_stock',
             'cost_price' => $product->cost_price ?? 0,
+            'original_cost' => $product->cost_price ?? 0,
         ]);
 
         // Sync stock_quantity with serial count
@@ -919,6 +920,7 @@ class ProductController extends Controller
                 'serial_number' => $serial,
                 'status' => 'in_stock',
                 'cost_price' => $product->cost_price ?? 0,
+                'original_cost' => $product->cost_price ?? 0,
             ]);
             $created++;
         }

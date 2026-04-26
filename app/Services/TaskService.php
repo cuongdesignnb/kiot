@@ -291,16 +291,20 @@ class TaskService
 
             // Cộng giá vốn vào đúng nơi (repair only)
             if ($task->serial_imei_id) {
-                // Sản phẩm có serial → cộng vào giá vốn serial cụ thể đó, KHÔNG cộng vào product chung
+                // Sản phẩm có serial → cộng vào giá vốn serial cụ thể đó
                 $serial = $task->serialImei;
                 $serial->cost_price = (float) $serial->cost_price + $totalCost;
                 $serial->save();
+
+                // BQ DI ĐỘNG: nếu serial in_stock, tăng inventory_total_cost
+                if ($serial->status === 'in_stock' && $serial->product) {
+                    \App\Services\MovingAvgCostingService::applyRepairAdjustment($serial->product, (float) $totalCost);
+                }
             } elseif ($task->product_id) {
-                // Sản phẩm không theo dõi serial → cộng vào giá vốn product chung
+                // Hàng không serial → BQ DI ĐỘNG: cộng vào inventory_total_cost
                 $repairedProduct = Product::find($task->product_id);
                 if ($repairedProduct) {
-                    $repairedProduct->cost_price = (float) $repairedProduct->cost_price + $totalCost;
-                    $repairedProduct->save();
+                    \App\Services\MovingAvgCostingService::applyRepairAdjustment($repairedProduct, (float) $totalCost);
                 }
             }
 
@@ -318,17 +322,21 @@ class TaskService
 
             Product::where('id', $part->product_id)->increment('stock_quantity', $part->quantity);
 
+            $deltaCost = -(float) $part->total_cost;
+
             if ($task->serial_imei_id) {
                 // Sản phẩm có serial → trừ từ giá vốn serial cụ thể
                 $serial = $task->serialImei;
-                $serial->cost_price = max(0, (float) $serial->cost_price - (float) $part->total_cost);
+                $serial->cost_price = max(0, (float) $serial->cost_price + $deltaCost);
                 $serial->save();
+
+                if ($serial->status === 'in_stock' && $serial->product) {
+                    \App\Services\MovingAvgCostingService::applyRepairAdjustment($serial->product, $deltaCost);
+                }
             } elseif ($task->product_id) {
-                // Sản phẩm không theo dõi serial → trừ từ giá vốn product chung
                 $repairedProduct = Product::find($task->product_id);
                 if ($repairedProduct) {
-                    $repairedProduct->cost_price = max(0, (float) $repairedProduct->cost_price - (float) $part->total_cost);
-                    $repairedProduct->save();
+                    \App\Services\MovingAvgCostingService::applyRepairAdjustment($repairedProduct, $deltaCost);
                 }
             }
 
@@ -364,15 +372,20 @@ class TaskService
             $product->increment('stock_quantity', $quantity);
 
             // Trừ giá vốn máy
+            $deltaCost = -$totalCost;
+
             if ($task->serial_imei_id) {
                 $serial = $task->serialImei;
-                $serial->cost_price = max(0, (float) $serial->cost_price - $totalCost);
+                $serial->cost_price = max(0, (float) $serial->cost_price + $deltaCost);
                 $serial->save();
+
+                if ($serial->status === 'in_stock' && $serial->product) {
+                    \App\Services\MovingAvgCostingService::applyRepairAdjustment($serial->product, $deltaCost);
+                }
             } elseif ($task->product_id) {
                 $repairedProduct = Product::find($task->product_id);
                 if ($repairedProduct) {
-                    $repairedProduct->cost_price = max(0, (float) $repairedProduct->cost_price - $totalCost);
-                    $repairedProduct->save();
+                    \App\Services\MovingAvgCostingService::applyRepairAdjustment($repairedProduct, $deltaCost);
                 }
             }
 

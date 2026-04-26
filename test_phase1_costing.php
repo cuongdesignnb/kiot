@@ -298,7 +298,7 @@ check("$imeiA.cost_price = 10,000,000", $s1 && (int)$s1->cost_price === 10000000
 check("$imeiB.cost_price = 11,000,000", $s2 && (int)$s2->cost_price === 11000000, $pass, $fail, $errors, "actual=" . ($s2->cost_price ?? 'null'));
 check("$imeiC.cost_price = 12,000,000", $s3 && (int)$s3->cost_price === 12000000, $pass, $fail, $errors, "actual=" . ($s3->cost_price ?? 'null'));
 
-// Bán IMEI001 → COGS PHẢI = 10M (đích danh), KHÔNG phải avg 11M
+// Bán IMEI001 → COGS = BQ hiện tại = (10+11+12)/3 = 11M (moving average)
 $invReq2 = Request::create('/invoices', 'POST', [
     'customer_id' => null,
     'subtotal' => 13000000,
@@ -320,18 +320,18 @@ callStore($ic, $invReq2, 'invoice serial');
 $invoice2 = Invoice::orderByDesc('id')->first();
 $invItem2 = $invoice2->items()->where('product_id', $serialP->id)->first();
 
-check("invoice_item.cost_price = 10,000,000 (đích danh $imeiA)",
-    (int)$invItem2->cost_price === 10000000,
+check("invoice_item.cost_price = 11,000,000 (BQ moving avg tại lúc bán)",
+    (int)$invItem2->cost_price === 11000000,
     $pass, $fail, $errors, "actual={$invItem2->cost_price}");
 
 $linkRow = InvoiceItemSerial::where('invoice_item_id', $invItem2->id)->where('serial_imei_id', $s1->id)->first();
-check("invoice_item_serials có dòng cho $imeiA với cost = 10M",
-    $linkRow && (int)$linkRow->cost_price === 10000000,
+check("invoice_item_serials có dòng cho $imeiA với cost = 11M (BQ)",
+    $linkRow && (int)$linkRow->cost_price === 11000000,
     $pass, $fail, $errors, $linkRow ? "cost={$linkRow->cost_price}" : 'no row');
 
 $s1->refresh();
 check("$imeiA.status = sold", $s1->status === 'sold', $pass, $fail, $errors, "status={$s1->status}");
-check("$imeiA.sold_cost_price = 10,000,000", (int)$s1->sold_cost_price === 10000000, $pass, $fail, $errors, "actual=" . ($s1->sold_cost_price ?? 'null'));
+check("$imeiA.sold_cost_price = 11,000,000 (BQ)", (int)$s1->sold_cost_price === 11000000, $pass, $fail, $errors, "actual=" . ($s1->sold_cost_price ?? 'null'));
 
 // ── TEST 4: Trả IMEI001 → restore cost = 10M ──
 echo "\n── TEST 4: Trả serial → restore đúng giá vốn lúc bán ──\n";
@@ -356,13 +356,13 @@ callStore($orc, $retReq2, 'serial return');
 $lastRet2 = OrderReturn::orderByDesc('id')->first();
 $retItem2 = $lastRet2->items()->where('product_id', $serialP->id)->first();
 
-check("return_item.cost_price = 10,000,000 (đúng cost $imeiA lúc bán)",
-    (int)$retItem2->cost_price === 10000000,
+check("return_item.cost_price = 11,000,000 (= BQ lúc bán)",
+    (int)$retItem2->cost_price === 11000000,
     $pass, $fail, $errors, "actual={$retItem2->cost_price}");
 
 $s1->refresh();
 check("$imeiA.status restored = in_stock", $s1->status === 'in_stock', $pass, $fail, $errors, "status={$s1->status}");
-check("$imeiA.cost_price = 10,000,000 (giữ nguyên)", (int)$s1->cost_price === 10000000, $pass, $fail, $errors, "actual={$s1->cost_price}");
+check("$imeiA.cost_price = 10,000,000 (giữ nguyên giá nhập gốc)", (int)$s1->cost_price === 10000000, $pass, $fail, $errors, "actual={$s1->cost_price}");
 check("$imeiA.sold_cost_price = null (cleared)", $s1->sold_cost_price === null, $pass, $fail, $errors, "actual=" . var_export($s1->sold_cost_price, true));
 check("$imeiA.invoice_id = null", $s1->invoice_id === null, $pass, $fail, $errors, "actual=" . var_export($s1->invoice_id, true));
 

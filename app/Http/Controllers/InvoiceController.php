@@ -210,7 +210,8 @@ class InvoiceController extends Controller
                 $product = \App\Models\Product::lockForUpdate()->find($item['product_id']);
                 $serialIds = $item['serial_ids'] ?? [];
 
-                // Snapshot cost_price (default = current product avg cost for hàng thường)
+                // BQ DI ĐỘNG: COGS = product.cost_price hiện tại (BQ moving avg)
+                // Bất kể là hàng thường hay serial-tracked đều dùng BQ.
                 $snapshotCostPrice = (float) ($product->cost_price ?? 0);
                 $serialStr = null;
                 $soldSerials = collect();
@@ -220,13 +221,6 @@ class InvoiceController extends Controller
                     $soldSerials = SerialImei::whereIn('id', $serialIds)
                         ->where('product_id', $product->id)
                         ->get();
-                    if ($soldSerials->count() > 0) {
-                        // Đích danh: lấy tổng cost theo từng serial, snapshot trên invoice_item là tổng/qty
-                        $totalCost = $soldSerials->sum(fn($s) => (float) ($s->cost_price ?: $product->cost_price ?? 0));
-                        $qty = max(1, (int) $item['quantity']);
-                        $snapshotCostPrice = round($totalCost / $qty, 2);
-                    }
-
                     $serialStr = $soldSerials->pluck('serial_number')->implode(', ');
                 }
 
@@ -241,33 +235,36 @@ class InvoiceController extends Controller
                     'serial' => $serialStr,
                 ]);
 
-                // Lưu chi tiết từng serial: đích danh cost_price + sold_cost_price snapshot
+                // Đánh dấu serial đã bán + snapshot sold_cost_price = BQ tại lúc bán
+                // (per-IMEI cost_price giữ nguyên cho hiển thị "giá vốn cuối")
                 foreach ($soldSerials as $serial) {
-                    $serialCost = (float) ($serial->cost_price ?: $product->cost_price ?? 0);
-
                     \App\Models\InvoiceItemSerial::create([
                         'invoice_item_id' => $invoiceItem->id,
                         'serial_imei_id' => $serial->id,
                         'serial_number' => $serial->serial_number,
-                        'cost_price' => $serialCost,
+                        'cost_price' => $snapshotCostPrice,
                     ]);
 
                     $serial->status = 'sold';
                     $serial->sold_at = now();
                     $serial->invoice_id = $invoice->id;
-                    $serial->sold_cost_price = $serialCost;
+                    $serial->sold_cost_price = $snapshotCostPrice;
                     $serial->save();
                 }
 
-                // Deduct stock (with lock to prevent race conditions)
+                // Deduct stock theo BQ DI ĐỘNG
                 if ($product) {
                     if (!$allowOversell && $product->stock_quantity < $item['quantity']) {
                         throw new \Exception("Sản phẩm [{$product->sku}] {$product->name} không đủ tồn kho (Còn: {$product->stock_quantity}). Không cho phép tồn kho âm.");
                     }
-                    $product->stock_quantity -= $item['quantity'];
-                    $product->save();
 
-                    // Serial: recompute giá vốn BQ + tồn theo serial còn in_stock
+                    \App\Services\MovingAvgCostingService::applySale(
+                        $product,
+                        (int) $item['quantity']
+                    );
+                    $product->refresh();
+
+                    // Sync stock_quantity audit cho hàng serial (đảm bảo khớp serial in_stock count)
                     if ($product->has_serial) {
                         $product->recomputeFromSerials();
                     }
@@ -558,8 +555,6 @@ class InvoiceController extends Controller
 
             $invoice->load('items');
 
-            $costingMethod = Setting::get('inventory_costing_method', 'average');
-
             // Restore stock & serials for each item
             foreach ($invoice->items as $item) {
                 $product = \App\Models\Product::find($item->product_id);
@@ -568,29 +563,22 @@ class InvoiceController extends Controller
                 $qtyBack = (int) $item->quantity;
                 $costAtSale = (float) ($item->cost_price ?? $product->cost_price ?? 0);
 
-                // Đảo cost gộp theo cost_price snapshot lúc bán (chỉ cho hàng thường)
-                if ($costingMethod === 'average' && !$product->has_serial) {
-                    $oldQty = (float) $product->stock_quantity;
-                    $oldCost = (float) $product->cost_price;
-                    $newQty = $oldQty + $qtyBack;
-                    if ($newQty > 0) {
-                        $product->cost_price = round(($oldQty * $oldCost + $qtyBack * $costAtSale) / $newQty, 2);
-                    }
-                }
+                // BQ DI ĐỘNG: phục hồi tồn ở cost lúc bán
+                \App\Services\MovingAvgCostingService::applySaleReturn(
+                    $product,
+                    $qtyBack,
+                    $costAtSale
+                );
+                $product->refresh();
 
-                $product->stock_quantity += $qtyBack;
-                $product->save();
-
-                // Restore serials back to in_stock với cost_price = sold_cost_price
+                // Restore serials back to in_stock. Per-IMEI cost_price KHÔNG đổi
+                // (giá nhập gốc của IMEI). BQ đã được service applySaleReturn xử lý.
                 if ($product->has_serial) {
                     $serials = SerialImei::where('invoice_id', $invoice->id)
                         ->where('product_id', $product->id)
                         ->where('status', 'sold')
                         ->get();
                     foreach ($serials as $serial) {
-                        if (!is_null($serial->sold_cost_price)) {
-                            $serial->cost_price = $serial->sold_cost_price;
-                        }
                         $serial->status = 'in_stock';
                         $serial->sold_at = null;
                         $serial->invoice_id = null;

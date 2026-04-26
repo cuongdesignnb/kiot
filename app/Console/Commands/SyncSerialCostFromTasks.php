@@ -139,6 +139,16 @@ class SyncSerialCostFromTasks extends Command
                 if (!$dryRun) {
                     $serial->cost_price = $newCost;
                     $serial->save();
+
+                    // BQ DI ĐỘNG: nếu serial còn in_stock, propagate ΔC vào product.inventory_total_cost
+                    // Sold serials không ảnh hưởng tồn kho hiện tại.
+                    if ($serial->status === 'in_stock') {
+                        $delta = $newCost - $oldCost;
+                        $product = \App\Models\Product::find($serial->product_id);
+                        if ($product) {
+                            \App\Services\MovingAvgCostingService::applyRepairAdjustment($product, $delta);
+                        }
+                    }
                 }
                 $affectedProductIds[$serial->product_id] = true;
                 $updated++;
@@ -147,17 +157,18 @@ class SyncSerialCostFromTasks extends Command
 
         $this->info("Done! Updated {$updated} serial cost_price(s) từ repair tasks.");
 
-        // ── Step 4: Recompute product cost từ serial in_stock ──
+        // ── Step 4: Sync stock_quantity audit từ serial in_stock count ──
+        // (Cost đã được cập nhật từng bước qua MovingAvgCostingService trong Step 3.)
         if ($recompute && !empty($affectedProductIds)) {
-            $this->info('=== Step 4: Recompute product cost từ serial còn tồn ===');
+            $this->info('=== Step 4: Sync stock_quantity audit (cost đã cập nhật ở Step 3) ===');
             foreach (array_keys($affectedProductIds) as $pid) {
                 $product = \App\Models\Product::find($pid);
                 if ($product && $product->has_serial) {
                     if ($dryRun) {
-                        $this->info("[DRY-RUN] Sẽ recompute product {$product->id} ({$product->name})");
+                        $this->info("[DRY-RUN] Sẽ sync stock_quantity product {$product->id} ({$product->name})");
                     } else {
                         $product->recomputeFromSerials();
-                        $this->info("Recomputed product {$product->id} ({$product->name}): cost={$product->cost_price}, stock={$product->stock_quantity}");
+                        $this->info("Synced product {$product->id} ({$product->name}): cost={$product->cost_price}, stock={$product->stock_quantity}, total={$product->inventory_total_cost}");
                     }
                 }
             }

@@ -88,8 +88,10 @@ $s1->refresh();
 check('Serial cost_price = 11M', approxEqual((float)$s1->cost_price, 11000000), $pass, $fail, $errors, "actual={$s1->cost_price}");
 
 $product->refresh();
-// avg in_stock = (11M + 12M) / 2 = 11.5M (s3 sold không tính)
-check('Product cost_price recompute = 11.5M', approxEqual((float)$product->cost_price, 11500000), $pass, $fail, $errors, "actual={$product->cost_price}");
+// Theo kiến trúc BQ moving-avg: per-IMEI cost_price là giá nhập gốc (display).
+// product.cost_price (BQ) chỉ thay đổi qua MovingAvgCostingService (purchase/sale/repair).
+// Sửa cost_price 1 serial thủ công KHÔNG còn auto-recompute BQ sản phẩm.
+check('Product cost_price KHÔNG đổi do edit thủ công serial', approxEqual((float)$product->cost_price, 0), $pass, $fail, $errors, "actual={$product->cost_price}");
 check('Product stock_quantity = 2 (chỉ tính in_stock)', $product->stock_quantity == 2, $pass, $fail, $errors, "actual={$product->stock_quantity}");
 
 echo "\n── TC3.2: Chặn sửa cost_price khi status=sold ──\n";

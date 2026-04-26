@@ -271,28 +271,19 @@ class PurchaseController extends Controller
                 ]);
 
                 if ($purchase->status === 'completed') {
-                    $newStock = $product->stock_quantity + $item['quantity'];
-
-                    // Update last purchase price
-                    $product->last_purchase_price = $item['price'];
-
-                    // Only update cost price if method is 'average'
-                    $costingMethod = \App\Models\Setting::get('inventory_costing_method', 'average');
-                    if ($costingMethod === 'average') {
-                        $totalCurrentValue = $product->stock_quantity * $product->cost_price;
-                        $totalNewValue = $item['quantity'] * $unitCostAllocated;
-                        $newCostPrice = $newStock > 0 ? ($totalCurrentValue + $totalNewValue) / $newStock : $unitCostAllocated;
-                        $product->cost_price = $newCostPrice;
-                    }
-
-                    $product->stock_quantity = $newStock;
+                    // BQ DI ĐỘNG: gọi service áp dụng nhập hàng (cập nhật stock + cost_price + inventory_total_cost)
+                    \App\Services\MovingAvgCostingService::applyPurchase(
+                        $product,
+                        (int) $item['quantity'],
+                        (float) $unitCostAllocated
+                    );
+                    $product->refresh();
 
                     // Update retail_price if provided
                     if (isset($item['retail_price']) && $item['retail_price'] > 0) {
                         $product->retail_price = $item['retail_price'];
+                        $product->save();
                     }
-
-                    $product->save();
 
                     // Update technician_price in active price books if provided
                     if (isset($item['technician_price']) && $item['technician_price'] > 0) {
@@ -320,7 +311,7 @@ class PurchaseController extends Controller
                         }
                     }
 
-                    // Serial: giá vốn BQ chỉ tính trên serial còn tồn
+                    // Sync stock_quantity với serial in_stock count (audit, không đụng cost)
                     if ($product->has_serial) {
                         $product->recomputeFromSerials();
                     }
@@ -546,17 +537,13 @@ class PurchaseController extends Controller
                     $item->unit_cost_allocated = $unitCostAllocated;
                     $item->save();
 
-                    $newStock = $product->stock_quantity + $item->quantity;
-                    $product->last_purchase_price = $item->price;
-
-                    if ($costingMethod === 'average') {
-                        $totalCurrentValue = $product->stock_quantity * $product->cost_price;
-                        $totalNewValue = $item->quantity * $unitCostAllocated;
-                        $product->cost_price = $newStock > 0 ? ($totalCurrentValue + $totalNewValue) / $newStock : $unitCostAllocated;
-                    }
-
-                    $product->stock_quantity = $newStock;
-                    $product->save();
+                    // BQ DI ĐỘNG: áp dụng nhập hàng
+                    \App\Services\MovingAvgCostingService::applyPurchase(
+                        $product,
+                        (int) $item->quantity,
+                        (float) $unitCostAllocated
+                    );
+                    $product->refresh();
 
                     // Create Serial/IMEI records if applicable
                     if ($product->has_serial && !empty($item->serials)) {
@@ -680,19 +667,14 @@ class PurchaseController extends Controller
                 $currentStock = $product->stock_quantity;
                 $newStock = max(0, $currentStock - $item->quantity);
 
-                // Reverse cost price (average costing) — dùng unit_cost_allocated lúc nhập,
-                // KHÔNG dùng product.cost_price hiện tại.
-                if ($costingMethod === 'average' && $currentStock > 0 && !$product->has_serial) {
-                    $unitCostAtPurchase = (float) ($item->unit_cost_allocated ?: $item->price);
-                    $totalCurrentValue = $currentStock * $product->cost_price;
-                    $removedValue = $item->quantity * $unitCostAtPurchase;
-                    $product->cost_price = $newStock > 0
-                        ? max(0, ($totalCurrentValue - $removedValue) / $newStock)
-                        : 0;
-                }
-
-                $product->stock_quantity = $newStock;
-                $product->save();
+                // BQ DI ĐỘNG: rút khỏi tồn theo cost lúc nhập (snapshot unit_cost_allocated)
+                $unitCostAtPurchase = (float) ($item->unit_cost_allocated ?: $item->price);
+                \App\Services\MovingAvgCostingService::applyPurchaseReturn(
+                    $product,
+                    (int) $item->quantity,
+                    $unitCostAtPurchase
+                );
+                $product->refresh();
 
                 // Delete serials
                 SerialImei::where('purchase_id', $purchase->id)
@@ -708,7 +690,7 @@ class PurchaseController extends Controller
                     $product,
                     StockMovementService::TYPE_OUT_PURCHASE_RETURN,
                     (int) $item->quantity,
-                    (float) ($item->unit_cost_allocated ?: $item->price),
+                    $unitCostAtPurchase,
                     $purchase,
                     [
                         'branch_id' => $purchase->branch_id ?? null,

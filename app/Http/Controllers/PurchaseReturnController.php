@@ -204,24 +204,19 @@ class PurchaseReturnController extends Controller
                     'cost_price' => $unitCostAtPurchase,
                 ]);
 
-                // Reduce stock
+                // Check stock available
                 $currentStock = $product->stock_quantity;
                 if ($currentStock < $item['quantity']) {
                     throw new \Exception("Sản phẩm '{$product->name}' không đủ tồn kho để trả hàng nhập (Còn: {$currentStock}, Cần trả: {$item['quantity']}).");
                 }
-                $newStock = $currentStock - $item['quantity'];
 
-                // Reverse cost price — dùng unit_cost_allocated lúc nhập (KHÔNG dùng giá trả).
-                if ($costingMethod === 'average' && $currentStock > 0 && !$product->has_serial) {
-                    $totalCurrentValue = $currentStock * $product->cost_price;
-                    $removedValue = $item['quantity'] * $unitCostAtPurchase;
-                    $product->cost_price = $newStock > 0
-                        ? max(0, ($totalCurrentValue - $removedValue) / $newStock)
-                        : 0;
-                }
-
-                $product->stock_quantity = $newStock;
-                $product->save();
+                // BQ DI ĐỘNG: rút khỏi tồn theo cost lúc nhập
+                \App\Services\MovingAvgCostingService::applyPurchaseReturn(
+                    $product,
+                    (int) $item['quantity'],
+                    (float) $unitCostAtPurchase
+                );
+                $product->refresh();
 
                 // Update serial/IMEI status
                 if ($product->has_serial && !empty($item['serial_ids'])) {
@@ -356,10 +351,16 @@ class PurchaseReturnController extends Controller
                 if ($product->stock_quantity < $item['quantity']) {
                     throw new \Exception("San pham '{$product->name}' khong du ton kho (Con: {$product->stock_quantity}, Can tra: {$item['quantity']}).");
                 }
-                $product->decrement('stock_quantity', $item['quantity']);
+
+                // BQ DI ĐỘNG: rút khỏi tồn ở giá trả nhanh
+                \App\Services\MovingAvgCostingService::applyPurchaseReturn(
+                    $product,
+                    (int) $item['quantity'],
+                    (float) $unitCostAtPurchase
+                );
+                $product->refresh();
 
                 if ($product->has_serial) {
-                    $product->refresh();
                     $product->recomputeFromSerials();
                 }
 
@@ -434,29 +435,21 @@ class PurchaseReturnController extends Controller
         try {
             DB::beginTransaction();
 
-            $costingMethod = \App\Models\Setting::get('inventory_costing_method', 'average');
-
             // Reverse: add stock back
             foreach ($purchaseReturn->items as $item) {
                 $product = Product::find($item->product_id);
                 if (!$product) continue;
 
-                $currentStock = $product->stock_quantity;
-                $newStock = $currentStock + $item->quantity;
-
                 // Khôi phục cost: dùng cost_price lúc xuất (= unit_cost_allocated lúc nhập)
                 $unitCost = (float) ($item->cost_price ?: $item->price);
 
-                if ($costingMethod === 'average' && !$product->has_serial) {
-                    $totalCurrentValue = $currentStock * $product->cost_price;
-                    $addedValue = $item->quantity * $unitCost;
-                    $product->cost_price = $newStock > 0
-                        ? ($totalCurrentValue + $addedValue) / $newStock
-                        : $unitCost;
-                }
-
-                $product->stock_quantity = $newStock;
-                $product->save();
+                // BQ DI ĐỘNG: phục hồi tồn ở cost lúc trả (đảo ngược applyPurchaseReturn)
+                \App\Services\MovingAvgCostingService::applySaleReturn(
+                    $product,
+                    (int) $item->quantity,
+                    $unitCost
+                );
+                $product->refresh();
 
                 // Restore serial status
                 if ($product->has_serial) {
