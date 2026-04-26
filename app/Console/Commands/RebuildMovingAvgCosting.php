@@ -109,6 +109,10 @@ class RebuildMovingAvgCosting extends Command
             $total = 0.0;
             // map[invoice_id] = ['cogs_per_unit' => float, 'qty' => int] để hoàn lại đúng số khi return
             $invoiceCogsMap = [];
+            // Set serial_id đã sold trong timeline — dùng để bỏ qua repair trên serial đã bán
+            $soldSerials = [];
+            $skippedRepairs = 0;
+            $skippedRepairTotal = 0.0;
 
             foreach ($events as $e) {
                 switch ($e['kind']) {
@@ -119,11 +123,22 @@ class RebuildMovingAvgCosting extends Command
                         break;
 
                     case 'repair_in':
+                        // Bỏ qua nếu task gắn với serial đã bán
+                        if (!empty($e['serial_imei_id']) && isset($soldSerials[$e['serial_imei_id']])) {
+                            $skippedRepairs++;
+                            $skippedRepairTotal += $e['delta'];
+                            break;
+                        }
                         $total += $e['delta'];
                         // qty unchanged
                         break;
 
                     case 'repair_out':
+                        if (!empty($e['serial_imei_id']) && isset($soldSerials[$e['serial_imei_id']])) {
+                            $skippedRepairs++;
+                            $skippedRepairTotal += $e['delta'];
+                            break;
+                        }
                         $total -= $e['delta'];
                         if ($total < 0) $total = 0;
                         break;
@@ -137,6 +152,7 @@ class RebuildMovingAvgCosting extends Command
                         $this->writeInvoiceItemCost($e['invoice_item_id'], $bq, $dry, $stats);
                         if (!empty($e['serial_imei_ids'])) {
                             foreach ($e['serial_imei_ids'] as $sid) {
+                                $soldSerials[$sid] = true;
                                 $this->writeSerialSoldCost($sid, $bq, $dry, $stats);
                                 $this->writeInvoiceItemSerialCost($e['invoice_item_id'], $sid, $bq, $dry, $stats);
                             }
@@ -148,6 +164,11 @@ class RebuildMovingAvgCosting extends Command
                         $cogs = $invoiceCogsMap[$e['invoice_id']]['cogs_per_unit'] ?? ($e['unit_cost'] ?: 0);
                         $total += $e['qty'] * $cogs;
                         $qty += $e['qty'];
+                        if (!empty($e['serial_imei_ids'])) {
+                            foreach ($e['serial_imei_ids'] as $sid) {
+                                unset($soldSerials[$sid]); // trả về in_stock
+                            }
+                        }
                         $this->writeMovement($e['movement_id'], $cogs, $qty, $total, $dry, $stats);
                         break;
 
@@ -173,6 +194,13 @@ class RebuildMovingAvgCosting extends Command
                 number_format((float) $product->cost_price, 2),
                 number_format((float) $product->inventory_total_cost, 2)
             ));
+            if ($skippedRepairs > 0) {
+                $this->warn(sprintf(
+                    '    ⓘ Bỏ qua %d repair part trên serial đã bán (tổng %s) — không cộng vào BQ.',
+                    $skippedRepairs,
+                    number_format($skippedRepairTotal, 0)
+                ));
+            }
 
             if (!$dry) {
                 $product->stock_quantity = $qty;
@@ -263,15 +291,19 @@ class RebuildMovingAvgCosting extends Command
             });
         $taskIds = $taskQuery->pluck('id')->toArray();
         if (!empty($taskIds)) {
+            $tasksById = Task::whereIn('id', $taskIds)->get(['id', 'serial_imei_id'])->keyBy('id');
             $parts = TaskPart::whereIn('task_id', $taskIds)->orderBy('created_at')->orderBy('id')->get();
             foreach ($parts as $p) {
                 $ts = $p->created_at;
                 $kind = ($p->direction ?? 'in') === 'out' ? 'repair_out' : 'repair_in';
+                $task = $tasksById->get($p->task_id);
                 $events[] = [
                     'kind' => $kind,
                     'ts' => $ts,
                     'sort_key' => $ts ? strtotime($ts) : 0,
                     'delta' => (float) $p->total_cost,
+                    'serial_imei_id' => $task?->serial_imei_id,
+                    'task_id' => $p->task_id,
                 ];
             }
         }
