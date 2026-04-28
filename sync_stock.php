@@ -29,11 +29,14 @@ $total = $products->count();
 foreach ($products as $product) {
     $stock = 0;
 
-    // 1. Nhập mua (completed)
+    // 1. Nhập mua (loại trừ huỷ/draft)
     $stock += (int) DB::table('purchase_items')
         ->join('purchases', 'purchases.id', '=', 'purchase_items.purchase_id')
         ->where('purchase_items.product_id', $product->id)
-        ->where('purchases.status', 'completed')
+        ->where(function ($q) {
+            $q->whereNull('purchases.status')
+              ->orWhereNotIn('purchases.status', ['cancelled', 'draft']);
+        })
         ->sum('purchase_items.quantity');
 
     // 2. Bán hàng (không cancelled)
@@ -67,24 +70,22 @@ foreach ($products as $product) {
             ->sum('purchase_return_items.quantity');
     }
 
-    // 5. Kiểm kho (balanced)
+    // 5. Kiểm kho
     if (DB::getSchemaBuilder()->hasTable('stock_take_items')) {
         $rows = DB::table('stock_take_items')
             ->join('stock_takes', 'stock_takes.id', '=', 'stock_take_items.stock_take_id')
             ->where('stock_take_items.product_id', $product->id)
-            ->where('stock_takes.status', 'balanced')
             ->get(['stock_take_items.actual_stock', 'stock_take_items.system_stock']);
         foreach ($rows as $r) {
             $stock += ((int)$r->actual_stock - (int)$r->system_stock);
         }
     }
 
-    // 6. Xuất hủy (completed)
+    // 6. Xuất hủy
     if (DB::getSchemaBuilder()->hasTable('damage_items')) {
         $stock -= (int) DB::table('damage_items')
             ->join('damages', 'damages.id', '=', 'damage_items.damage_id')
             ->where('damage_items.product_id', $product->id)
-            ->where('damages.status', 'completed')
             ->sum('damage_items.qty');
     }
 
