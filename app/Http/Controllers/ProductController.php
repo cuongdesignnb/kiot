@@ -841,6 +841,141 @@ class ProductController extends Controller
                     'customer_paid' => 0,
                 ]);
 
+            // ─── PHIẾU SỬA CHỮA / BÓC MÁY ───
+            case 'repair_part':
+            case 'disassemble_part':
+                $task = \App\Models\Task::with(['parts.product', 'product', 'serialImei', 'assignedEmployee'])->find($id);
+                if (!$task) return response()->json(['error' => 'Not found'], 404);
+                $machineName = $task->product->name ?? $task->title ?? 'Sửa chữa';
+                $serialNumber = $task->serialImei->serial_number ?? null;
+                return response()->json([
+                    'type' => $type,
+                    'title' => $type === 'repair_part' ? 'Phiếu xuất sửa chữa' : 'Phiếu nhập bóc máy',
+                    'code' => $task->code,
+                    'status' => $task->status_label ?? $task->status,
+                    'partner_name' => $machineName . ($serialNumber ? " ({$serialNumber})" : ''),
+                    'created_by' => $task->creator?->name ?? '',
+                    'seller' => $task->assignedEmployee?->name ?? '',
+                    'sales_channel' => $task->type === 'repair' ? 'Sửa chữa' : 'Công việc',
+                    'price_book' => '',
+                    'date' => $task->created_at?->format('d/m/Y H:i'),
+                    'note' => $task->notes ?? $task->issue_description ?? '',
+                    'items' => $task->parts->map(fn($p) => [
+                        'product_code' => $p->product->sku ?? '',
+                        'product_name' => $p->product->name ?? '',
+                        'has_serial' => $p->product->has_serial ?? false,
+                        'quantity' => $p->quantity ?? 1,
+                        'price' => (float) ($p->unit_cost ?? 0),
+                        'discount' => 0,
+                        'sell_price' => (float) ($p->unit_cost ?? 0),
+                        'subtotal' => (float) ($p->total_cost ?? 0),
+                        'direction' => $p->direction ?? 'export',
+                        'direction_label' => ($p->direction ?? 'export') === 'import' ? '↩ Nhập (bóc máy)' : '↗ Xuất (sửa chữa)',
+                    ]),
+                    'subtotal' => (float) $task->parts_cost,
+                    'discount' => 0,
+                    'total' => (float) $task->total_cost,
+                    'customer_paid' => 0,
+                ]);
+
+            // ─── PHIẾU TRẢ HÀNG NCC ───
+            case 'purchase_return':
+                $doc = \App\Models\PurchaseReturn::with(['items.product', 'supplier'])->find($id);
+                if (!$doc) return response()->json(['error' => 'Not found'], 404);
+                return response()->json([
+                    'type' => 'purchase_return',
+                    'title' => 'Phiếu trả hàng NCC',
+                    'code' => $doc->code,
+                    'status' => $doc->status ?? 'completed',
+                    'partner_name' => $doc->supplier->name ?? 'NCC',
+                    'created_by' => $doc->created_by_name ?? '',
+                    'seller' => '',
+                    'sales_channel' => '',
+                    'price_book' => '',
+                    'date' => ($doc->return_date ?? $doc->created_at)?->format('d/m/Y H:i'),
+                    'note' => $doc->note ?? '',
+                    'items' => $doc->items->map(fn($i) => [
+                        'product_code' => $i->product->sku ?? '',
+                        'product_name' => $i->product->name ?? '',
+                        'has_serial' => $i->product->has_serial ?? false,
+                        'quantity' => $i->quantity,
+                        'price' => (float) ($i->price ?? 0),
+                        'discount' => 0,
+                        'sell_price' => (float) ($i->price ?? 0),
+                        'subtotal' => (float) ($i->quantity * ($i->price ?? 0)),
+                    ]),
+                    'subtotal' => (float) ($doc->total_amount ?? 0),
+                    'discount' => 0,
+                    'total' => (float) ($doc->total_amount ?? 0),
+                    'customer_paid' => 0,
+                ]);
+
+            // ─── PHIẾU KIỂM KHO ───
+            case 'stock_take':
+                $doc = \App\Models\StockTake::with(['items.product'])->find($id);
+                if (!$doc) return response()->json(['error' => 'Not found'], 404);
+                return response()->json([
+                    'type' => 'stock_take',
+                    'title' => 'Phiếu kiểm kho',
+                    'code' => $doc->code,
+                    'status' => $doc->status ?? 'draft',
+                    'partner_name' => $doc->user_name ?? 'Hệ thống',
+                    'created_by' => $doc->user_name ?? '',
+                    'seller' => $doc->balancer_name ?? '',
+                    'sales_channel' => '',
+                    'price_book' => '',
+                    'date' => ($doc->balanced_date ?? $doc->created_at)?->format('d/m/Y H:i'),
+                    'note' => $doc->note ?? '',
+                    'items' => $doc->items->map(fn($i) => [
+                        'product_code' => $i->product->sku ?? '',
+                        'product_name' => $i->product->name ?? '',
+                        'has_serial' => false,
+                        'quantity' => $i->diff_qty,
+                        'price' => 0,
+                        'discount' => 0,
+                        'sell_price' => 0,
+                        'subtotal' => (float) ($i->diff_value ?? 0),
+                        'system_stock' => $i->system_stock,
+                        'actual_stock' => $i->actual_stock,
+                    ]),
+                    'subtotal' => (float) ($doc->total_diff_value ?? 0),
+                    'discount' => 0,
+                    'total' => (float) ($doc->total_diff_value ?? 0),
+                    'customer_paid' => 0,
+                ]);
+
+            // ─── PHIẾU XUẤT HỦY ───
+            case 'damage':
+                $doc = \App\Models\Damage::with(['items.product'])->find($id);
+                if (!$doc) return response()->json(['error' => 'Not found'], 404);
+                return response()->json([
+                    'type' => 'damage',
+                    'title' => 'Phiếu xuất hủy',
+                    'code' => $doc->code,
+                    'status' => $doc->status ?? 'completed',
+                    'partner_name' => $doc->destroyed_by_name ?? 'Hệ thống',
+                    'created_by' => $doc->created_by_name ?? '',
+                    'seller' => '',
+                    'sales_channel' => '',
+                    'price_book' => '',
+                    'date' => ($doc->destroyed_date ?? $doc->created_at)?->format('d/m/Y H:i'),
+                    'note' => $doc->note ?? '',
+                    'items' => $doc->items->map(fn($i) => [
+                        'product_code' => $i->product->sku ?? '',
+                        'product_name' => $i->product->name ?? '',
+                        'has_serial' => false,
+                        'quantity' => $i->qty,
+                        'price' => (float) ($i->cost_price ?? 0),
+                        'discount' => 0,
+                        'sell_price' => (float) ($i->cost_price ?? 0),
+                        'subtotal' => (float) ($i->total_value ?? 0),
+                    ]),
+                    'subtotal' => (float) ($doc->total_value ?? 0),
+                    'discount' => 0,
+                    'total' => (float) ($doc->total_value ?? 0),
+                    'customer_paid' => 0,
+                ]);
+
             default:
                 return response()->json(['error' => 'Unknown document type'], 400);
         }
