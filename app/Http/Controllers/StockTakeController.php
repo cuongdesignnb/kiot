@@ -113,11 +113,16 @@ class StockTakeController extends Controller
                     'diff_value' => $item['diff_value']
                 ]);
 
-                // Update product stock if balanced
+                // Update product stock if balanced — cộng/trừ chênh lệch (không set cứng)
                 if ($request->status === 'balanced') {
-                    Product::where('id', $item['product_id'])->update([
-                        'stock_quantity' => $item['actual_stock']
-                    ]);
+                    $diff = (int) $item['actual_stock'] - (int) $item['system_stock'];
+                    if ($diff !== 0) {
+                        if ($diff > 0) {
+                            Product::where('id', $item['product_id'])->increment('stock_quantity', $diff);
+                        } else {
+                            Product::where('id', $item['product_id'])->decrement('stock_quantity', abs($diff));
+                        }
+                    }
                 }
             }
 
@@ -233,6 +238,69 @@ class StockTakeController extends Controller
     }
 
     /**
+     * Cân bằng kho — chuyển phiếu draft → balanced.
+     */
+    public function balance($id)
+    {
+        $stockTake = StockTake::with('items')->findOrFail($id);
+
+        if ($stockTake->status !== 'draft') {
+            return response()->json(['success' => false, 'message' => 'Chỉ có thể cân bằng phiếu tạm (draft).'], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            // Cập nhật system_stock = tồn kho hiện tại (có thể đã thay đổi kể từ khi tạo draft)
+            foreach ($stockTake->items as $item) {
+                $product = Product::find($item->product_id);
+                if (!$product) continue;
+
+                $currentStock = (int) $product->stock_quantity;
+                $actualStock = (int) $item->actual_stock;
+                $diff = $actualStock - $currentStock;
+
+                // Cập nhật system_stock & diff trong item
+                $item->update([
+                    'system_stock' => $currentStock,
+                    'diff_qty' => $diff,
+                    'diff_value' => $diff * (float) ($product->cost_price ?? 0),
+                ]);
+
+                // Cộng/trừ chênh lệch vào stock
+                if ($diff !== 0) {
+                    if ($diff > 0) {
+                        $product->increment('stock_quantity', $diff);
+                    } else {
+                        $product->decrement('stock_quantity', abs($diff));
+                    }
+                }
+            }
+
+            // Reload items sau update
+            $stockTake->load('items');
+
+            $stockTake->update([
+                'status' => 'balanced',
+                'balancer_name' => auth()->user()?->name ?? 'Hệ thống',
+                'balanced_date' => Carbon::now(),
+                'total_actual_qty' => $stockTake->items->sum('actual_stock'),
+                'total_diff_qty' => $stockTake->items->sum('diff_qty'),
+                'total_diff_increase' => $stockTake->items->where('diff_qty', '>', 0)->sum('diff_qty'),
+                'total_diff_decrease' => $stockTake->items->where('diff_qty', '<', 0)->sum('diff_qty'),
+                'total_diff_value' => $stockTake->items->sum('diff_value'),
+            ]);
+
+            DB::commit();
+            ActivityLog::log('stocktake_complete', "Cân bằng kho phiếu {$stockTake->code}", $stockTake);
+            return response()->json(['success' => true, 'message' => 'Đã cân bằng kho thành công.']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
      * Huy phieu kiem kho — rollback stock ve system_stock.
      */
     public function cancel($id)
@@ -255,8 +323,15 @@ class StockTakeController extends Controller
             foreach ($stockTake->items as $item) {
                 $product = Product::find($item->product_id);
                 if ($product) {
-                    // Restore to system_stock (what it was before stocktake)
-                    $product->update(['stock_quantity' => $item->system_stock]);
+                    // Đảo chênh lệch: nếu kiểm kho đã +3 thì giờ -3 (và ngược lại)
+                    $diff = (int) $item->actual_stock - (int) $item->system_stock;
+                    if ($diff !== 0) {
+                        if ($diff > 0) {
+                            $product->decrement('stock_quantity', $diff);
+                        } else {
+                            $product->increment('stock_quantity', abs($diff));
+                        }
+                    }
                 }
             }
 

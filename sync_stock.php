@@ -70,11 +70,12 @@ foreach ($products as $product) {
             ->sum('purchase_return_items.quantity');
     }
 
-    // 5. Kiểm kho
+    // 5. Kiểm kho (chỉ phiếu đã cân bằng)
     if (DB::getSchemaBuilder()->hasTable('stock_take_items')) {
         $rows = DB::table('stock_take_items')
             ->join('stock_takes', 'stock_takes.id', '=', 'stock_take_items.stock_take_id')
             ->where('stock_take_items.product_id', $product->id)
+            ->where('stock_takes.status', 'balanced')
             ->get(['stock_take_items.actual_stock', 'stock_take_items.system_stock']);
         foreach ($rows as $r) {
             $stock += ((int)$r->actual_stock - (int)$r->system_stock);

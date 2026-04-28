@@ -466,7 +466,11 @@ Route::get('/stock-takes', [StockTakeController::class, 'index'])->name('stock-t
 Route::middleware('permission:stock_takes.create')->group(function () {
     Route::get('/stock-takes/create', [StockTakeController::class, 'create'])->name('stock-takes.create');
     Route::post('/stock-takes', [StockTakeController::class, 'store'])->name('stock-takes.store');
+    Route::put('/stock-takes/{id}', [StockTakeController::class, 'update'])->name('stock-takes.update');
+    Route::post('/stock-takes/{id}/balance', [StockTakeController::class, 'balance'])->name('stock-takes.balance');
+    Route::post('/stock-takes/{id}/cancel', [StockTakeController::class, 'cancel'])->name('stock-takes.cancel');
 });
+Route::get('/stock-takes/{stockTake}', [StockTakeController::class, 'show'])->name('stock-takes.show')->middleware('permission:stock_takes.view');
 
 // ===== DAMAGES =====
 Route::get('/damages', [DamageController::class, 'index'])->name('damages.index')->middleware('permission:damages.view');

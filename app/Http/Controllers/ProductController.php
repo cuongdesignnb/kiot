@@ -584,15 +584,16 @@ class ProductController extends Controller
             });
         $transactions = $transactions->concat($returns);
 
-        // 4. Kiểm kho (Stock Takes)
+        // 4. Kiểm kho (Stock Takes) — chỉ phiếu đã cân bằng
         $defaultCostPrice = (float) ($product->cost_price ?? 0);
         $stockTakes = \App\Models\StockTakeItem::with('stockTake')
             ->where('product_id', $product->id)
+            ->whereHas('stockTake', fn($q) => $q->where('status', 'balanced'))
             ->get()
             ->map(function ($item) use ($defaultCostPrice) {
-                $diff = $item->actual_quantity - $item->current_quantity;
+                $diff = (int) $item->actual_stock - (int) $item->system_stock;
                 return [
-                    'date' => $item->stockTake->created_at,
+                    'date' => $item->stockTake->balanced_date ?? $item->stockTake->created_at,
                     'code' => $item->stockTake->code,
                     'doc_type' => 'stock_take',
                     'doc_id' => $item->stockTake->id,
