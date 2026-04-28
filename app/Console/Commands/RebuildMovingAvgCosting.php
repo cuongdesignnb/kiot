@@ -129,8 +129,10 @@ class RebuildMovingAvgCosting extends Command
                             $skippedRepairTotal += $e['delta'];
                             break;
                         }
+                        // Nhập bóc máy → tăng tồn kho + giá trị
+                        $repairQty = (int) ($e['qty'] ?? 1);
+                        $qty += $repairQty;
                         $total += $e['delta'];
-                        // qty unchanged
                         break;
 
                     case 'repair_out':
@@ -139,6 +141,9 @@ class RebuildMovingAvgCosting extends Command
                             $skippedRepairTotal += $e['delta'];
                             break;
                         }
+                        // Xuất sửa chữa → giảm tồn kho + giá trị
+                        $repairQty = (int) ($e['qty'] ?? 1);
+                        $qty = max(0, $qty - $repairQty);
                         $total -= $e['delta'];
                         if ($total < 0) $total = 0;
                         break;
@@ -270,12 +275,13 @@ class RebuildMovingAvgCosting extends Command
             $parts = TaskPart::whereIn('task_id', $taskIds)->orderBy('created_at')->orderBy('id')->get();
             foreach ($parts as $p) {
                 $ts = $p->created_at;
-                $kind = ($p->direction ?? 'in') === 'out' ? 'repair_out' : 'repair_in';
+                $kind = ($p->direction ?? 'export') === 'import' ? 'repair_in' : 'repair_out';
                 $task = $tasksById->get($p->task_id);
                 $events[] = [
                     'kind' => $kind,
                     'ts' => $ts,
                     'sort_key' => $ts ? strtotime($ts) : 0,
+                    'qty' => (int) ($p->quantity ?? 1),
                     'delta' => (float) $p->total_cost,
                     'serial_imei_id' => $task?->serial_imei_id,
                     'task_id' => $p->task_id,
