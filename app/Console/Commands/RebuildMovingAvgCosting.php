@@ -277,6 +277,12 @@ class RebuildMovingAvgCosting extends Command
                 case 'out_purchase_return':
                     $events[] = $base + ['kind' => 'purchase_return'];
                     break;
+                case 'initial_balance':
+                    // Tồn đầu kỳ từ reconcile → treat like purchase
+                    $hasInPurchaseMov = true;
+                    if ($m->serial_imei_id) $coveredPurchaseSerials[$m->serial_imei_id] = true;
+                    $events[] = $base + ['kind' => 'purchase'];
+                    break;
                 // adjust/transfer/repair_* hiện không được record bởi service hiện tại; bỏ qua an toàn
             }
         }

@@ -680,6 +680,27 @@ class ProductController extends Controller
             });
         $transactions = $transactions->concat($purchaseReturns);
 
+        // 9. Tồn đầu kỳ (Initial Balance from reconcile)
+        $initialBalances = \App\Models\StockMovement::where('product_id', $product->id)
+            ->where('type', 'initial_balance')
+            ->whereNull('serial_imei_id') // chỉ lấy bản ghi tổng, không lấy per-serial
+            ->get()
+            ->map(function ($m) {
+                return [
+                    'date' => $m->moved_at ?? $m->created_at,
+                    'code' => $m->ref_code ?? 'TDK',
+                    'doc_type' => 'initial_balance',
+                    'doc_id' => $m->id,
+                    'type' => 'Tồn đầu kỳ',
+                    'partner' => 'Hệ thống',
+                    'sell_price' => 0,
+                    'cost_price' => (float) ($m->unit_cost ?? 0),
+                    'change' => $m->direction === 'in' ? (int) $m->qty : -(int) $m->qty,
+                    'method' => $m->direction === 'in' ? 'Cộng kho' : 'Trừ kho',
+                ];
+            });
+        $transactions = $transactions->concat($initialBalances);
+
         // Sort by date ASC and compute running balance
         $sorted = $transactions->sortBy('date')->values();
         $balance = 0;
