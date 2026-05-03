@@ -5,8 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use App\Models\Product;
-use App\Services\MovingAvgCostingService;
-use App\Services\StockMovementService;
+use App\Services\InvoiceSaleService;
 
 class PosController extends Controller
 {
@@ -92,170 +91,63 @@ class PosController extends Controller
         ]);
 
         try {
-            \Illuminate\Support\Facades\DB::beginTransaction();
-
-            $customer = $validated['customer_id'] ? \App\Models\Customer::find($validated['customer_id']) : null;
             $employee = !empty($validated['employee_id']) ? \App\Models\Employee::find($validated['employee_id']) : null;
-            $saleTime = $validated['sale_time'] ?? now();
-            $debtAmount = $validated['total'] - $validated['customer_paid'];
+            $paymentMethod = $validated['payment_method'] ?? 'cash';
+            $isTransfer = $paymentMethod === 'transfer';
+            $bankInfo = $validated['bank_account_info'] ?? null;
 
-            // Create Invoice (HD) — Bán thường: trừ kho + tính nợ
-            $invoice = \App\Models\Invoice::create([
-                'code' => 'HD' . time() . rand(10, 99),
-                'subtotal' => $validated['subtotal'],
-                'discount' => $validated['discount'],
-                'total' => $validated['total'],
-                'customer_paid' => $validated['customer_paid'],
-                'customer_id' => $customer?->id,
-                'created_by' => $employee?->id,
-                'seller_name' => $employee?->name,
-                'sale_time' => $saleTime,
-                'payment_method' => $validated['payment_method'] ?? 'cash',
-                'sales_channel' => 'Bán trực tiếp',
-                'note' => ($validated['payment_method'] ?? 'cash') === 'transfer' && !empty($validated['bank_account_info']) ? 'Chuyển khoản: ' . $validated['bank_account_info'] : null,
-            ]);
+            // RR-02: build normalized payload + context, gọi InvoiceSaleService
+            $payload = [
+                'customer_id'    => $validated['customer_id'] ?? null,
+                'branch_id'      => null, // POS legacy: không set branch
+                'subtotal'       => $validated['subtotal'],
+                'discount'       => $validated['discount'],
+                'total'          => $validated['total'],
+                'customer_paid'  => $validated['customer_paid'],
+                'payment_method' => $paymentMethod,
+                'note'           => $isTransfer && !empty($bankInfo) ? 'Chuyển khoản: ' . $bankInfo : null,
+                'items'          => array_map(function ($it) {
+                    return [
+                        'product_id' => $it['product_id'],
+                        'quantity'   => $it['quantity'],
+                        'price'      => $it['price'],
+                        'discount'   => $it['discount'] ?? 0,
+                        'serial_ids' => $it['serial_ids'] ?? [],
+                    ];
+                }, $validated['items']),
+            ];
 
-            if (!empty($validated['sale_time'])) {
-                $invoice->update(['created_at' => \Carbon\Carbon::parse($saleTime)]);
-            }
+            $context = [
+                'source'                         => 'pos',
+                'code_prefix'                    => 'HD' . time(),
+                'default_status'                 => 'Hoàn thành',
+                'sales_channel'                  => 'Bán trực tiếp',
+                'seller_id'                      => $employee?->id,
+                'seller_name'                    => $employee?->name,
+                'created_by_name'                => auth()->user()?->name ?? 'POS',
+                'transaction_date'               => $validated['sale_time'] ?? null,
+                'validate_before_purchase_date'  => false,
+                'validate_stock_setting'         => false,
+                'allow_oversell'                 => \App\Models\Setting::get('inventory_allow_oversell', true),
+                'cashflow_payment_method'        => $paymentMethod,
+                'cashflow_description_extra'     => $isTransfer && !empty($bankInfo)
+                    ? ' - CK: ' . $bankInfo
+                    : '',
+                'stock_movement_branch_id'       => null,
+            ];
 
-            foreach ($validated['items'] as $item) {
-                $serialIds = $item['serial_ids'] ?? [];
+            $invoice = app(InvoiceSaleService::class)->createSale($payload, $context);
 
-                $product = Product::lockForUpdate()->find($item['product_id']);
-                if (!$product) continue;
-
-                $allowOversell = \App\Models\Setting::get('inventory_allow_oversell', true);
-
-                // Sản phẩm serial: kiểm tra serial in_stock
-                if ($product->has_serial && !empty($serialIds)) {
-                    $availableSerials = \App\Models\SerialImei::whereIn('id', $serialIds)
-                        ->where('product_id', $product->id)
-                        ->where('status', 'in_stock')
-                        ->count();
-                    if ($availableSerials < count($serialIds)) {
-                        throw new \Exception("Sản phẩm [{$product->sku}] {$product->name} - một số Serial/IMEI đã bán hoặc không tồn tại.");
-                    }
-                } elseif (!$allowOversell && $product->stock_quantity < $item['quantity']) {
-                    throw new \Exception("Sản phẩm [{$product->sku}] {$product->name} không đủ tồn kho (Còn: {$product->stock_quantity})");
-                }
-
-                // BQ DI ĐỘNG: COGS = product.cost_price hiện tại (BQ moving avg)
-                $snapshotCostPrice = (float) ($product->cost_price ?? 0);
-                $serialStr = null;
-                $soldSerials = collect();
-
-                if ($product->has_serial && !empty($serialIds)) {
-                    $soldSerials = \App\Models\SerialImei::whereIn('id', $serialIds)
-                        ->where('product_id', $product->id)
-                        ->get();
-                    $serialStr = $soldSerials->pluck('serial_number')->implode(', ');
-
-                    // Đánh dấu serial đã bán + snapshot sold_cost_price = BQ tại lúc bán
-                    foreach ($soldSerials as $serial) {
-                        \App\Models\InvoiceItemSerial::create([
-                            'invoice_item_id' => 0, // sẽ update sau
-                            'serial_imei_id' => $serial->id,
-                            'serial_number' => $serial->serial_number,
-                            'cost_price' => $snapshotCostPrice,
-                        ]);
-
-                        $serial->status = 'sold';
-                        $serial->sold_at = now();
-                        $serial->invoice_id = $invoice->id;
-                        $serial->sold_cost_price = $snapshotCostPrice;
-                        $serial->save();
-                    }
-                }
-
-                $itemDiscount = $item['discount'] ?? 0;
-                $invoiceItem = $invoice->items()->create([
-                    'product_id' => $item['product_id'],
-                    'quantity'   => $item['quantity'],
-                    'price'      => $item['price'],
-                    'cost_price' => $snapshotCostPrice,
-                    'discount'   => $itemDiscount,
-                    'subtotal'   => ($item['price'] * $item['quantity']) - $itemDiscount,
-                    'serial'     => $serialStr,
-                ]);
-
-                // Update invoice_item_id cho các serial đã tạo ở trên
-                if ($soldSerials->isNotEmpty()) {
-                    \App\Models\InvoiceItemSerial::where('invoice_item_id', 0)
-                        ->whereIn('serial_imei_id', $soldSerials->pluck('id'))
-                        ->update(['invoice_item_id' => $invoiceItem->id]);
-                }
-
-                // BQ DI ĐỘNG: trừ tồn kho qua service (cập nhật stock_quantity + inventory_total_cost + cost_price)
-                MovingAvgCostingService::applySale($product, (int) $item['quantity']);
-                $product->refresh();
-
-                // Sync stock_quantity audit cho hàng serial
-                if ($product->has_serial) {
-                    $product->recomputeFromSerials();
-                }
-
-                // Phase 4 — Ghi sổ cái: xuất bán POS
-                StockMovementService::record(
-                    $product,
-                    StockMovementService::TYPE_OUT_INVOICE,
-                    (int) $item['quantity'],
-                    (float) $snapshotCostPrice,
-                    $invoice,
-                    [
-                        'branch_id' => null,
-                        'ref_code' => $invoice->code,
-                        'moved_at' => $invoice->created_at ?? now(),
-                        'note' => 'Xuất bán POS hóa đơn ' . $invoice->code,
-                    ]
-                );
-            }
-
-            // Customer debt tracking
-            $customerName = $customer ? $customer->name : 'Khách lẻ';
-
-            if ($customer) {
-                if ($customer->is_supplier && !$customer->is_customer) {
-                    $customer->is_customer = true;
-                    $customer->save();
-                }
-                if ($debtAmount != 0) {
-                    $customer->increment('debt_amount', $debtAmount);
-                }
-                $customer->increment('total_spent', $validated['total']);
-            }
-
-            if ($validated['customer_paid'] > 0) {
-                \App\Models\CashFlow::create([
-                    'code' => 'PT' . time() . rand(10, 99),
-                    'type' => 'receipt',
-                    'amount' => $validated['customer_paid'],
-                    'time' => now(),
-                    'category' => 'Thu tiền khách trả',
-                    'target_type' => 'Khách hàng',
-                    'target_id' => $customer?->id,
-                    'target_name' => $customerName,
-                    'reference_type' => 'Invoice',
-                    'reference_code' => $invoice->code,
-                    'payment_method' => $validated['payment_method'] ?? 'cash',
-                    'description' => 'Thu tiền hóa đơn ' . $invoice->code . ($customer ? " - {$customer->name}" : '') . (($validated['payment_method'] ?? 'cash') === 'transfer' && !empty($validated['bank_account_info']) ? ' - CK: ' . $validated['bank_account_info'] : ''),
-                ]);
-            }
-
-            // Note: Không gọi DebtOffsetService - unified ledger view tự xử lý bù trừ
-
-            \Illuminate\Support\Facades\DB::commit();
             return response()->json([
-                'success' => true,
+                'success'      => true,
                 'invoice_code' => $invoice->code,
-                'message' => 'Thanh toán thành công!',
+                'message'      => 'Thanh toán thành công!',
             ]);
         } catch (\Exception $e) {
-            \Illuminate\Support\Facades\DB::rollBack();
             \Illuminate\Support\Facades\Log::error('POS Checkout Error', [
                 'message' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
+                'file'    => $e->getFile(),
+                'line'    => $e->getLine(),
             ]);
             return response()->json(['success' => false, 'message' => 'Có lỗi xảy ra: ' . $e->getMessage()], 500);
         }

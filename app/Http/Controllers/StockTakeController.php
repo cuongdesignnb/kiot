@@ -11,6 +11,8 @@ use App\Models\Product;
 use App\Enums\StockTakeStatus;
 use App\Support\Filters\FilterableIndex;
 use App\Services\LockPeriodService;
+use App\Services\MovingAvgCostingService;
+use App\Services\StockMovementService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use App\Models\Branch;
@@ -113,14 +115,22 @@ class StockTakeController extends Controller
                     'diff_value' => $item['diff_value']
                 ]);
 
-                // Update product stock if balanced — cộng/trừ chênh lệch (không set cứng)
+                // Update product stock if balanced — dùng CostingService + StockMovement
                 if ($request->status === 'balanced') {
                     $diff = (int) $item['actual_stock'] - (int) $item['system_stock'];
                     if ($diff !== 0) {
-                        if ($diff > 0) {
-                            Product::where('id', $item['product_id'])->increment('stock_quantity', $diff);
-                        } else {
-                            Product::where('id', $item['product_id'])->decrement('stock_quantity', abs($diff));
+                        $product = Product::find($item['product_id']);
+                        if ($product) {
+                            $costPerUnit = (float) $product->cost_price;
+                            MovingAvgCostingService::applyAdjustment($product, $diff);
+                            $product->refresh();
+                            StockMovementService::record(
+                                $product,
+                                $diff > 0 ? StockMovementService::TYPE_ADJUST_IN : StockMovementService::TYPE_ADJUST_OUT,
+                                abs($diff),
+                                $costPerUnit,
+                                $stockTake
+                            );
                         }
                     }
                 }
@@ -267,13 +277,18 @@ class StockTakeController extends Controller
                     'diff_value' => $diff * (float) ($product->cost_price ?? 0),
                 ]);
 
-                // Cộng/trừ chênh lệch vào stock
+                // Cộng/trừ chênh lệch vào stock — dùng CostingService + StockMovement
                 if ($diff !== 0) {
-                    if ($diff > 0) {
-                        $product->increment('stock_quantity', $diff);
-                    } else {
-                        $product->decrement('stock_quantity', abs($diff));
-                    }
+                    $costPerUnit = (float) $product->cost_price;
+                    MovingAvgCostingService::applyAdjustment($product, $diff);
+                    $product->refresh();
+                    StockMovementService::record(
+                        $product,
+                        $diff > 0 ? StockMovementService::TYPE_ADJUST_IN : StockMovementService::TYPE_ADJUST_OUT,
+                        abs($diff),
+                        $costPerUnit,
+                        $stockTake
+                    );
                 }
             }
 
@@ -326,11 +341,18 @@ class StockTakeController extends Controller
                     // Đảo chênh lệch: nếu kiểm kho đã +3 thì giờ -3 (và ngược lại)
                     $diff = (int) $item->actual_stock - (int) $item->system_stock;
                     if ($diff !== 0) {
-                        if ($diff > 0) {
-                            $product->decrement('stock_quantity', $diff);
-                        } else {
-                            $product->increment('stock_quantity', abs($diff));
-                        }
+                        $reverseDiff = -$diff;
+                        $costPerUnit = (float) $product->cost_price;
+                        MovingAvgCostingService::applyAdjustment($product, $reverseDiff);
+                        $product->refresh();
+                        StockMovementService::record(
+                            $product,
+                            $reverseDiff > 0 ? StockMovementService::TYPE_ADJUST_IN : StockMovementService::TYPE_ADJUST_OUT,
+                            abs($reverseDiff),
+                            $costPerUnit,
+                            $stockTake,
+                            ['note' => 'Hủy kiểm kho — đảo chênh lệch']
+                        );
                     }
                 }
             }

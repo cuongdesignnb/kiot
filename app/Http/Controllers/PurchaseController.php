@@ -706,7 +706,10 @@ class PurchaseController extends Controller
                 $purchase->supplier->save();
             }
 
-            // Delete related cash flows (payments to supplier)
+            // Cancel related cash flows (payments to supplier)
+            CashFlow::where('reference_type', 'Purchase')
+                ->where('reference_code', $purchase->code)
+                ->update(['status' => 'cancelled']);
             CashFlow::where('reference_type', 'Purchase')
                 ->where('reference_code', $purchase->code)
                 ->delete();

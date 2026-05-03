@@ -12,6 +12,7 @@ use App\Models\Setting;
 use App\Models\SupplierDebtTransaction;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
+use App\Services\CustomerDebtService;
 use App\Services\DebtOffsetService;
 use App\Models\DebtOffset;
 use App\Support\Filters\FilterableIndex;
@@ -203,13 +204,23 @@ class CustomerController extends Controller
                 'target_name' => collect([$existing->name])->implode(''),
             ]);
 
-            // Merge financial figures
-            $existing->debt_amount += $customer->debt_amount;
+            // RR-06: ghi ledger trước khi merge debt từ source sang target.
+            $sourceDebt = (float) $customer->debt_amount;
+            if (abs($sourceDebt) >= 0.01) {
+                app(CustomerDebtService::class)->recordAdjustment(
+                    $existing->id,
+                    $sourceDebt, // signed: cộng vào target theo dấu của source
+                    "Gộp công nợ từ khách hàng {$customer->name} (id {$customer->id})",
+                    ['ref_code' => 'MERGE-IMPORT-' . $customer->id]
+                );
+            }
+
+            // Merge financial figures (debt_amount đã được service xử lý ở trên)
             $existing->total_spent += $customer->total_spent;
             $existing->total_returns += $customer->total_returns;
             $existing->supplier_debt_amount += $customer->supplier_debt_amount;
             $existing->total_bought += $customer->total_bought;
-            
+
             $existing->is_customer = true;
             $existing->is_supplier = true;
             $existing->name = $validated['name'];
@@ -220,7 +231,7 @@ class CustomerController extends Controller
                 $existing->address = $validated['address'];
             }
             $existing->save();
-            
+
             $customer->delete();
             return back()->with('success', 'Cập nhật và gộp vào nhà cung cấp thành công.');
         } else {
@@ -466,7 +477,14 @@ class CustomerController extends Controller
                 $cf->save();
             }
 
-            $customer->decrement('debt_amount', $totalAmount);
+            // RR-06: ghi ledger payment qua service.
+            app(CustomerDebtService::class)->recordPayment(
+                $customer->id,
+                (float) $totalAmount,
+                null,
+                $validated['note'] ?? "Thu nợ khách hàng {$customer->name}",
+                ['ref_code' => $cf->code]
+            );
 
         } else {
             // AUTO mode — allocate to oldest invoices first
@@ -518,7 +536,14 @@ class CustomerController extends Controller
                 $cf->save();
             }
 
-            $customer->decrement('debt_amount', $actualPaid);
+            // RR-06: ghi ledger payment qua service.
+            app(CustomerDebtService::class)->recordPayment(
+                $customer->id,
+                (float) $actualPaid,
+                null,
+                $validated['note'] ?? "Thu nợ khách hàng {$customer->name}",
+                ['ref_code' => $cf->code]
+            );
         }
 
         if ($request->wantsJson()) {
@@ -588,7 +613,19 @@ class CustomerController extends Controller
             $cashFlow->save();
         }
 
-        $customer->update(['debt_amount' => $targetDebt]);
+        // RR-06: ghi ledger adjustment qua service.
+        // delta theo signed amount cho debt_amount: targetDebt - currentDebt.
+        // Lưu ý: $diff trong code này = currentDebt - targetDebt (đảo dấu).
+        $debtDelta = $targetDebt - $currentDebt;
+        if (abs($debtDelta) >= 0.01) {
+            app(CustomerDebtService::class)->recordAdjustment(
+                $customer->id,
+                $debtDelta,
+                ($validated['note'] ?? 'Điều chỉnh công nợ')
+                    . ' | ' . number_format($currentDebt) . ' → ' . number_format($targetDebt),
+                ['ref_code' => $cashFlow->code]
+            );
+        }
 
         return back()->with('success', 'Đã điều chỉnh công nợ: ' . number_format($currentDebt) . ' → ' . number_format($targetDebt) . '₫');
     }
@@ -638,8 +675,18 @@ class CustomerController extends Controller
             'target_name' => $target->name,
         ]);
 
-        // Merge financial figures
-        $target->debt_amount += $customer->debt_amount;
+        // RR-06: ghi ledger trước khi merge debt từ source sang target.
+        $sourceDebt = (float) $customer->debt_amount;
+        if (abs($sourceDebt) >= 0.01) {
+            app(CustomerDebtService::class)->recordAdjustment(
+                $target->id,
+                $sourceDebt, // signed: cộng vào target theo dấu của source
+                "Gộp công nợ từ khách hàng {$customer->name} (id {$customer->id})",
+                ['ref_code' => 'MERGE-CUSTOMER-' . $customer->id]
+            );
+        }
+
+        // Merge financial figures (debt_amount đã được service xử lý ở trên)
         $target->total_spent += $customer->total_spent;
         $target->total_returns += $customer->total_returns;
         $target->supplier_debt_amount += $customer->supplier_debt_amount;

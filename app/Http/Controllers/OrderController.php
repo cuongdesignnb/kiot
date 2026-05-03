@@ -13,8 +13,13 @@ use App\Models\Employee;
 use App\Models\PriceBook;
 use App\Models\Setting;
 use App\Enums\OrderStatus;
+use App\Models\InvoiceItemSerial;
+use App\Models\SerialImei;
 use App\Support\Filters\FilterableIndex;
+use App\Services\CustomerDebtService;
 use App\Services\LockPeriodService;
+use App\Services\MovingAvgCostingService;
+use App\Services\StockMovementService;
 use Carbon\Carbon;
 
 class OrderController extends Controller
@@ -354,42 +359,117 @@ class OrderController extends Controller
                 'status' => 'Hoàn thành',
             ]);
 
-            // 2) Create Invoice Items + Deduct stock
+            // 2) Create Invoice Items + Deduct stock — RR-13: qua MovingAvgCostingService + StockMovement
             foreach ($order->items as $orderItem) {
-                $product = $orderItem->product;
-
-                if ($product) {
-                    $product = Product::lockForUpdate()->find($product->id);
-                    $allowOversell = Setting::get('inventory_allow_oversell', true);
-
-                    // Serial products: check serial availability
-                    if ($product->has_serial) {
-                        $inStockSerials = \App\Models\SerialImei::where('product_id', $product->id)
-                            ->where('status', 'in_stock')
-                            ->count();
-                        if (!$allowOversell && $inStockSerials < $orderItem->qty) {
-                            throw new \Exception("Sản phẩm [{$product->sku}] {$product->name} không đủ Serial tồn kho (Còn: {$inStockSerials})");
-                        }
-                    } elseif (!$allowOversell && $product->stock_quantity < $orderItem->qty) {
-                        throw new \Exception("Sản phẩm [{$product->sku}] {$product->name} không đủ tồn kho (Còn: {$product->stock_quantity})");
-                    }
-                    $product->stock_quantity -= $orderItem->qty;
-                    $product->save();
+                $product = $orderItem->product
+                    ? Product::lockForUpdate()->find($orderItem->product->id)
+                    : null;
+                if (!$product) {
+                    continue;
                 }
 
-                $invoice->items()->create([
+                $qty = (int) $orderItem->qty;
+                $allowOversell = Setting::get('inventory_allow_oversell', true);
+
+                // RR-13: Serial product — phải có serial_ids rõ ràng. Không chọn đại.
+                $serialIds = [];
+                if ($product->has_serial) {
+                    if (isset($orderItem->serial_ids) && is_array($orderItem->serial_ids)) {
+                        $serialIds = $orderItem->serial_ids;
+                    }
+                    if (empty($serialIds)) {
+                        throw new \Exception(
+                            "Sản phẩm '{$product->name}' là hàng Serial/IMEI nhưng đơn hàng "
+                            . 'chưa lưu serial_ids. Vui lòng chọn Serial/IMEI trước khi chuyển hóa đơn.'
+                        );
+                    }
+                    if (count($serialIds) !== $qty) {
+                        throw new \Exception(
+                            "Sản phẩm '{$product->name}': số lượng serial ({$serialIds[0]}) không khớp số lượng đặt ({$qty})."
+                        );
+                    }
+                    $availableCount = SerialImei::whereIn('id', $serialIds)
+                        ->where('product_id', $product->id)
+                        ->where('status', 'in_stock')
+                        ->count();
+                    if ($availableCount < count($serialIds)) {
+                        throw new \Exception(
+                            "Sản phẩm '{$product->name}' - một số Serial/IMEI đã bán hoặc không tồn tại."
+                        );
+                    }
+                } elseif (!$allowOversell && $product->stock_quantity < $qty) {
+                    throw new \Exception(
+                        "Sản phẩm [{$product->sku}] {$product->name} không đủ tồn kho "
+                        . "(Còn: {$product->stock_quantity})"
+                    );
+                }
+
+                // RR-13: Snapshot cost TRƯỚC khi applySale (cost_price stable nhưng vẫn snapshot rõ ràng)
+                $costSnapshot = (float) ($product->cost_price ?? 0);
+
+                // RR-13: Tạo InvoiceItem TRƯỚC (pattern đúng — giống RR-02 InvoiceSaleService)
+                $invoiceItem = $invoice->items()->create([
                     'product_id' => $orderItem->product_id,
-                    'quantity' => $orderItem->qty,
-                    'price' => $orderItem->price,
-                    'cost_price' => $product->cost_price ?? 0,
+                    'quantity'   => $qty,
+                    'price'      => $orderItem->price,
+                    'cost_price' => $costSnapshot,
                 ]);
+
+                // RR-13: Với hàng serial, tạo InvoiceItemSerial + đánh dấu serial sold
+                if ($product->has_serial && !empty($serialIds)) {
+                    $soldSerials = SerialImei::whereIn('id', $serialIds)
+                        ->where('product_id', $product->id)
+                        ->get();
+                    foreach ($soldSerials as $serial) {
+                        InvoiceItemSerial::create([
+                            'invoice_item_id' => $invoiceItem->id,
+                            'serial_imei_id'  => $serial->id,
+                            'serial_number'   => $serial->serial_number,
+                            'cost_price'      => $costSnapshot,
+                        ]);
+                        $serial->status          = 'sold';
+                        $serial->sold_at         = now();
+                        $serial->invoice_id      = $invoice->id;
+                        $serial->sold_cost_price = $costSnapshot;
+                        $serial->save();
+                    }
+                }
+
+                // RR-13: Trừ tồn + cập nhật BQ qua service (thay raw $product->stock_quantity -= $qty)
+                MovingAvgCostingService::applySale($product, $qty);
+                $product->refresh();
+                if ($product->has_serial) {
+                    $product->recomputeFromSerials();
+                }
+
+                // RR-13: Ghi StockMovement out_invoice
+                StockMovementService::record(
+                    $product->fresh(),
+                    StockMovementService::TYPE_OUT_INVOICE,
+                    $qty,
+                    $costSnapshot,
+                    $invoice,
+                    [
+                        'branch_id' => $invoice->branch_id ?? null,
+                        'ref_code'  => $invoice->code,
+                        'moved_at'  => $invoice->created_at ?? now(),
+                        'note'      => "Xuất bán từ đơn hàng {$order->code} sang hóa đơn {$invoice->code}",
+                    ]
+                );
             }
 
             // 3) Customer debt tracking — debt = total - totalPaid
+            // RR-06: ghi ledger qua CustomerDebtService thay vì increment trực tiếp.
             $debtAmount = $order->total_payment - $totalPaid;
             if ($customer) {
                 if ($debtAmount != 0) {
-                    $customer->increment('debt_amount', $debtAmount);
+                    app(CustomerDebtService::class)->recordSale(
+                        $customer->id,
+                        (float) $debtAmount,
+                        $invoice,
+                        "Ghi nợ khi chuyển đơn hàng {$order->code} thành hóa đơn {$invoice->code}",
+                        ['order_id' => $order->id]
+                    );
                 }
                 $customer->increment('total_spent', $order->total_payment);
             }

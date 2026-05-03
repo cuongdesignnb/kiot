@@ -470,7 +470,10 @@ class PurchaseReturnController extends Controller
                 $purchaseReturn->supplier->save();
             }
 
-            // Delete cash flows
+            // Cancel cash flows
+            CashFlow::where('reference_type', 'PurchaseReturn')
+                ->where('reference_code', $purchaseReturn->code)
+                ->update(['status' => 'cancelled']);
             CashFlow::where('reference_type', 'PurchaseReturn')
                 ->where('reference_code', $purchaseReturn->code)
                 ->delete();

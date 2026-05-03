@@ -6,7 +6,9 @@ use App\Enums\ReturnStatus;
 use App\Models\OrderReturn;
 use App\Models\Setting;
 use App\Models\CashFlow;
+use App\Models\ReturnItem;
 use App\Models\SerialImei;
+use App\Services\CustomerDebtService;
 use App\Services\DebtOffsetService;
 use App\Services\StockMovementService;
 use App\Support\Filters\FilterableIndex;
@@ -116,6 +118,53 @@ class OrderReturnController extends Controller
             'items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
         ]);
 
+        // ── RR-11: Validate qty trả vs qty đã bán ──────────────────────
+        if (!empty($validated['invoice_id'])) {
+            $invoice = \App\Models\Invoice::find($validated['invoice_id']);
+
+            // Không cho trả hàng trên invoice đã hủy
+            if ($invoice && $invoice->status === 'Đã hủy') {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'invoice_id' => 'Không thể trả hàng cho hóa đơn đã bị hủy.',
+                ]);
+            }
+
+            if ($invoice) {
+                // Gom qty request theo product_id (phòng nhiều dòng cùng product)
+                $requestedByProduct = [];
+                foreach ($validated['items'] as $item) {
+                    $pid = $item['product_id'];
+                    $requestedByProduct[$pid] = ($requestedByProduct[$pid] ?? 0) + (int) $item['qty'];
+                }
+
+                foreach ($requestedByProduct as $productId => $requestedQty) {
+                    // Qty đã bán trên invoice
+                    $soldQty = \App\Models\InvoiceItem::where('invoice_id', $invoice->id)
+                        ->where('product_id', $productId)
+                        ->sum('quantity');
+
+                    // Qty đã trả trước đó (chỉ tính phiếu chưa hủy)
+                    $alreadyReturned = ReturnItem::where('product_id', $productId)
+                        ->whereHas('orderReturn', function ($q) use ($invoice) {
+                            $q->where('invoice_id', $invoice->id)
+                              ->where('status', '!=', 'Đã hủy');
+                        })
+                        ->sum('quantity');
+
+                    $remainingQty = $soldQty - $alreadyReturned;
+
+                    if ($requestedQty > $remainingQty) {
+                        $product = \App\Models\Product::find($productId);
+                        $productName = $product ? $product->name : "ID {$productId}";
+                        throw \Illuminate\Validation\ValidationException::withMessages([
+                            'items' => "Sản phẩm '{$productName}' chỉ còn được trả {$remainingQty} (đã bán {$soldQty}, đã trả {$alreadyReturned}), yêu cầu trả {$requestedQty}.",
+                        ]);
+                    }
+                }
+            }
+        }
+        // ── End RR-11 validation ────────────────────────────────────────
+
         \Illuminate\Support\Facades\DB::transaction(function () use ($validated) {
             // Check return time limit
             if (Setting::get('return_time_limit_enabled', false) && !empty($validated['invoice_id'])) {
@@ -204,6 +253,11 @@ class OrderReturnController extends Controller
                     $restoredCostPerUnit = (float) $product->cost_price;
                 }
 
+                // RR-08: lưu serial_ids đã trả để cancel rollback đúng
+                $serialIdsForItem = $product->has_serial
+                    ? $restoredSerials->pluck('id')->map(fn ($id) => (int) $id)->all()
+                    : null;
+
                 $return->items()->create([
                     'product_id' => $item['product_id'],
                     'invoice_item_id' => $invoiceItem?->id,
@@ -212,6 +266,7 @@ class OrderReturnController extends Controller
                     'discount' => $item['discount'] ?? 0,
                     'import_price' => $item['price'],
                     'cost_price' => $restoredCostPerUnit,
+                    'serial_ids' => !empty($serialIdsForItem) ? $serialIdsForItem : null,
                 ]);
 
                 // BQ DI ĐỘNG: phục hồi tồn ở cost lúc bán
@@ -255,8 +310,13 @@ class OrderReturnController extends Controller
             if (!empty($validated['customer_id'])) {
                 $customer = \App\Models\Customer::find($validated['customer_id']);
                 if ($customer) {
-                    // Trả hàng luôn giảm nợ KH. debt có thể âm = ta nợ KH (KiotViet style)
-                    $customer->decrement('debt_amount', $validated['total']);
+                    // RR-06: ghi ledger qua service. Trả hàng luôn giảm nợ KH; debt có thể âm = ta nợ KH.
+                    app(CustomerDebtService::class)->recordReturn(
+                        $customer->id,
+                        (float) $validated['total'],
+                        $return,
+                        "Giảm công nợ do trả hàng phiếu {$return->code}"
+                    );
                     $customer->decrement('total_spent', $validated['total']);
                 }
             }
@@ -346,17 +406,23 @@ class OrderReturnController extends Controller
                         $unitCost
                     );
 
-                    // Rollback serials: set back to sold if linked to invoice
+                    // RR-08: Rollback serials theo đúng serial_ids đã lưu trên ReturnItem.
+                    // Không dùng query mơ hồ whereNull(invoice_id)->limit($qty) vì có thể
+                    // chọn nhầm serial khác đang in_stock (chưa từng thuộc invoice).
                     if ($item->product->has_serial && $return->invoice_id) {
-                        SerialImei::where('product_id', $item->product_id)
-                            ->where('status', 'in_stock')
-                            ->whereNull('invoice_id')
-                            ->limit($item->quantity)
-                            ->update([
-                                'status' => 'sold',
-                                'sold_at' => now(),
-                                'invoice_id' => $return->invoice_id,
-                            ]);
+                        $serialIds = is_array($item->serial_ids) ? $item->serial_ids : [];
+                        if (!empty($serialIds)) {
+                            SerialImei::whereIn('id', $serialIds)
+                                ->where('product_id', $item->product_id)
+                                ->update([
+                                    'status'          => 'sold',
+                                    'sold_at'         => now(),
+                                    'invoice_id'      => $return->invoice_id,
+                                    'sold_cost_price' => (float) ($item->cost_price ?: 0) ?: null,
+                                ]);
+                        }
+                        // Nếu serial_ids rỗng (legacy data trước RR-08), không fallback
+                        // chọn đại — để tránh gán nhầm serial. Cần backfill nếu có data cũ.
                     }
 
                     // Phase 4 — Ghi sổ cái: hủy phiếu trả hàng = xuất kho ngược lại
@@ -377,15 +443,24 @@ class OrderReturnController extends Controller
             }
 
             // 2. Rollback customer debt & total_spent
+            // RR-06: ghi ledger adjustment khôi phục công nợ khi hủy phiếu trả hàng.
             if ($return->customer_id) {
                 $customer = \App\Models\Customer::find($return->customer_id);
                 if ($customer) {
-                    $customer->increment('debt_amount', $return->total);
+                    app(CustomerDebtService::class)->recordAdjustment(
+                        $customer->id,
+                        (float) $return->total, // dương = khôi phục nợ
+                        "Khôi phục công nợ do hủy phiếu trả hàng {$return->code}",
+                        ['order_return_id' => $return->id, 'ref_code' => $return->code]
+                    );
                     $customer->increment('total_spent', $return->total);
                 }
             }
 
             // 3. Cancel related CashFlow
+            CashFlow::where('reference_type', 'OrderReturn')
+                ->where('reference_code', $return->code)
+                ->update(['status' => 'cancelled']);
             CashFlow::where('reference_type', 'OrderReturn')
                 ->where('reference_code', $return->code)
                 ->delete();

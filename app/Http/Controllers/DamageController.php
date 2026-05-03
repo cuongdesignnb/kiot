@@ -8,7 +8,10 @@ use App\Models\Damage;
 use App\Models\DamageItem;
 use App\Models\Product;
 use App\Models\Branch;
+use App\Models\SerialImei;
 use App\Enums\DamageStatus;
+use App\Services\MovingAvgCostingService;
+use App\Services\StockMovementService;
 use App\Support\Filters\FilterableIndex;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -70,6 +73,8 @@ class DamageController extends Controller
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|exists:products,id',
             'items.*.qty' => 'required|numeric|min:1',
+            'items.*.serial_ids' => 'nullable|array',
+            'items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
             'status' => 'required|in:draft,completed',
             'branch_id' => 'required|exists:branches,id',
             'note' => 'nullable|string'
@@ -97,27 +102,60 @@ class DamageController extends Controller
             }
 
             foreach ($request->items as $item) {
-                // Lấy sản phẩm để trừ kho nếu không phải là draft (tạm thời)
-                // Theo KiotViet, khi lưu phiếu tạm thì kho có thể chưa trừ (hoặc chỉ pending),
-                // Nhưng khi "Hoàn thành" thì chắc chắn trừ kho.
+                $product = Product::find($item['product_id']);
+
+                // RR-09: với hàng có serial, normalize serial_ids cho item này
+                $serialIds = [];
+                if ($product && $product->has_serial && !empty($item['serial_ids'])) {
+                    $serialIds = SerialImei::whereIn('id', $item['serial_ids'])
+                        ->where('product_id', $product->id)
+                        ->where('status', 'in_stock')
+                        ->pluck('id')
+                        ->all();
+                }
 
                 DamageItem::create([
-                    'damage_id' => $damage->id,
-                    'product_id' => $item['product_id'],
-                    'qty' => $item['qty'],
-                    'cost_price' => $item['cost_price'],
+                    'damage_id'   => $damage->id,
+                    'product_id'  => $item['product_id'],
+                    'qty'         => $item['qty'],
+                    'cost_price'  => $item['cost_price'],
                     'total_value' => $item['total_value'],
-                    'note' => $item['note'] ?? null
+                    'note'        => $item['note'] ?? null,
+                    'serial_ids'  => !empty($serialIds) ? $serialIds : null,
                 ]);
 
                 if ($request->status === 'completed') {
-                    $product = Product::find($item['product_id']);
                     if ($product) {
                         if ($product->stock_quantity < $item['qty']) {
                             throw new \Exception("Sản phẩm '{$product->name}' không đủ tồn kho để xuất hủy (Còn: {$product->stock_quantity}, Cần: {$item['qty']}).");
                         }
-                        $product->stock_quantity -= $item['qty'];
-                        $product->save();
+
+                        // RR-09: cập nhật BQ + ghi StockMovement (giống pattern RR-04 StockTake).
+                        $unitCostBefore = (float) $product->cost_price;
+                        MovingAvgCostingService::applyAdjustment($product, -(int) $item['qty']);
+
+                        // RR-09: với hàng serial, đổi đúng các serial đã chọn sang 'defective' (enum hiện có)
+                        if ($product->has_serial && !empty($serialIds)) {
+                            SerialImei::whereIn('id', $serialIds)
+                                ->where('product_id', $product->id)
+                                ->update(['status' => 'defective']);
+                            $product->refresh();
+                            $product->recomputeFromSerials();
+                        }
+
+                        StockMovementService::record(
+                            $product->fresh(),
+                            StockMovementService::TYPE_ADJUST_OUT,
+                            (int) $item['qty'],
+                            $unitCostBefore,
+                            $damage,
+                            [
+                                'branch_id' => $damage->branch_id,
+                                'ref_code'  => $damage->code,
+                                'moved_at'  => $damage->destroyed_date ?? now(),
+                                'note'      => 'Xuất hủy phiếu ' . $damage->code,
+                            ]
+                        );
                     }
                 }
             }
@@ -129,6 +167,71 @@ class DamageController extends Controller
             DB::rollBack();
             return back()->withErrors(['error' => 'Lỗi: ' . $e->getMessage()]);
         }
+    }
+
+    /**
+     * RR-09: Hủy phiếu xuất hủy — đảo nghiệp vụ (cộng tồn lại, ghi adjust_in,
+     * khôi phục serial về in_stock). Idempotent.
+     */
+    public function cancel(Damage $damage)
+    {
+        if ($damage->status === DamageStatus::CANCELLED) {
+            return back()->with('error', 'Phiếu xuất hủy đã bị hủy trước đó.');
+        }
+
+        DB::transaction(function () use ($damage) {
+            $damage->load('items');
+
+            // Phiếu draft chưa đụng kho → chỉ đổi status
+            if ($damage->status === DamageStatus::DRAFT) {
+                $damage->update(['status' => DamageStatus::CANCELLED]);
+                return;
+            }
+
+            // Phiếu completed: đảo từng item
+            foreach ($damage->items as $item) {
+                $product = Product::find($item->product_id);
+                if (!$product) {
+                    continue;
+                }
+
+                $qty = (int) $item->qty;
+
+                // Cộng tồn lại + cập nhật BQ ngược chiều
+                MovingAvgCostingService::applyAdjustment($product, $qty);
+
+                // Khôi phục serial đã hủy về in_stock
+                if ($product->has_serial && is_array($item->serial_ids) && !empty($item->serial_ids)) {
+                    SerialImei::whereIn('id', $item->serial_ids)
+                        ->where('product_id', $product->id)
+                        ->update(['status' => 'in_stock']);
+                    $product->refresh();
+                    $product->recomputeFromSerials();
+                }
+
+                StockMovementService::record(
+                    $product->fresh(),
+                    StockMovementService::TYPE_ADJUST_IN,
+                    $qty,
+                    (float) ($item->cost_price ?: ($product->cost_price ?? 0)),
+                    $damage,
+                    [
+                        'branch_id' => $damage->branch_id,
+                        'ref_code'  => $damage->code,
+                        'moved_at'  => now(),
+                        'note'      => 'Hủy phiếu xuất hủy ' . $damage->code,
+                    ]
+                );
+            }
+
+            $damage->update(['status' => DamageStatus::CANCELLED]);
+        });
+
+        if (request()->wantsJson()) {
+            return response()->json(['success' => true, 'message' => 'Đã hủy phiếu xuất hủy.']);
+        }
+
+        return back()->with('success', 'Đã hủy phiếu xuất hủy ' . $damage->code);
     }
 
     public function export(Request $request)

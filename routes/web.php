@@ -459,6 +459,8 @@ Route::get('/stock-transfers', [StockTransferController::class, 'index'])->name(
 Route::middleware('permission:stock_transfers.create')->group(function () {
     Route::get('/stock-transfers/create', [StockTransferController::class, 'create'])->name('stock-transfers.create');
     Route::post('/stock-transfers', [StockTransferController::class, 'store'])->name('stock-transfers.store');
+    Route::post('/stock-transfers/{id}/receive', [StockTransferController::class, 'receive'])->name('stock-transfers.receive');
+    Route::post('/stock-transfers/{id}/cancel', [StockTransferController::class, 'cancel'])->name('stock-transfers.cancel');
 });
 
 // ===== STOCK TAKES =====
@@ -477,6 +479,8 @@ Route::get('/damages', [DamageController::class, 'index'])->name('damages.index'
 Route::middleware('permission:damages.create')->group(function () {
     Route::get('/damages/create', [DamageController::class, 'create'])->name('damages.create');
     Route::post('/damages', [DamageController::class, 'store'])->name('damages.store');
+    // RR-09: hủy phiếu xuất hủy (đảo tồn/cost/serial, idempotent)
+    Route::post('/damages/{damage}/cancel', [DamageController::class, 'cancel'])->name('damages.cancel');
 });
 
 // ===== PURCHASE ORDERS =====
@@ -584,6 +588,8 @@ Route::delete('/invoices/{invoice}', [InvoiceController::class, 'destroy'])->nam
 // ===== RETURNS =====
 Route::get('/returns', [OrderReturnController::class, 'index'])->name('returns.index')->middleware('permission:returns.view');
 Route::post('/returns', [OrderReturnController::class, 'store'])->name('returns.store')->middleware('permission:returns.create');
+// RR-08: route hủy phiếu trả hàng (rollback serial chính xác qua serial_ids đã lưu)
+Route::post('/returns/{return}/cancel', [OrderReturnController::class, 'cancel'])->name('returns.cancel')->middleware('permission:returns.create');
 
 // ===== ORDERS =====
 Route::middleware('permission:orders.view')->group(function () {
@@ -594,6 +600,8 @@ Route::middleware('permission:orders.create')->group(function () {
     Route::post('/orders', [OrderController::class, 'store'])->name('orders.store');
 });
 Route::put('/orders/{order}', [OrderController::class, 'update'])->name('orders.update')->middleware('permission:orders.edit');
+// RR-13: chuyển Order → Invoice (process). Trước đây method tồn tại nhưng route chưa đăng ký.
+Route::post('/orders/{order}/process', [OrderController::class, 'processOrder'])->name('orders.process')->middleware('permission:orders.edit');
 
 // ===== CASH FLOWS =====
 Route::get('/cash-flows', [App\Http\Controllers\CashFlowController::class, 'index'])->name('cash_flows.index')->middleware('permission:cash_flows.view');

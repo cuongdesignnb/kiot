@@ -8,7 +8,9 @@ use App\Models\PriceBook;
 use App\Models\Setting;
 use App\Models\CashFlow;
 use App\Models\SerialImei;
+use App\Services\CustomerDebtService;
 use App\Services\DebtOffsetService;
+use App\Services\InvoiceSaleService;
 use App\Services\StockMovementService;
 use App\Support\Filters\FilterableIndex;
 use Illuminate\Http\Request;
@@ -150,186 +152,51 @@ class InvoiceController extends Controller
             $priceBookName = $validated['price_book_name'];
         }
 
-        // Xác định ngày giao dịch (cho phép chỉnh sửa thời gian)
-        $transactionDate = $request->filled('order_date')
-            ? Carbon::parse($request->order_date)
-            : now();
-
-        // Validate: không được bán sản phẩm trước ngày nhập hàng đầu tiên
-        foreach ($validated['items'] as $item) {
-            $product = \App\Models\Product::find($item['product_id']);
-            if ($product) {
-                $earliestImport = $product->getEarliestImportDate();
-                if ($earliestImport && $transactionDate->lt($earliestImport)) {
-                    return back()->withErrors([
-                        'items' => "Không thể bán sản phẩm '{$product->name}' trước ngày nhập hàng đầu tiên (" . $earliestImport->format('d/m/Y H:i') . ")."
-                    ])->withInput();
-                }
-            }
-        }
-
-        // Check stock if setting disallows out-of-stock transactions
-        if (!Setting::get('allow_transaction_when_out_of_stock', false)) {
-            foreach ($validated['items'] as $item) {
-                $product = \App\Models\Product::find($item['product_id']);
-                if ($product && $product->stock_quantity < $item['quantity']) {
-                    return back()->withErrors(['items' => "Sản phẩm '{$product->name}' không đủ tồn kho (còn {$product->stock_quantity})."])->withInput();
-                }
-            }
-        }
-
         try {
-            DB::beginTransaction();
-
-            $invoice = Invoice::create([
-                'code' => 'HD' . date('YmdHis') . rand(10, 99),
-                'customer_id' => $validated['customer_id'] ?? null,
-                'branch_id' => $validated['branch_id'] ?? null,
-                'status' => 'Hoàn thành',
-                'subtotal' => $validated['subtotal'],
-                'discount' => $validated['discount'] ?? 0,
-                'total' => $validated['total'],
-                'customer_paid' => $validated['customer_paid'] ?? 0,
-                'note' => $validated['note'] ?? null,
-                'created_by_name' => auth()->user()?->name ?? 'Admin',
-                'is_delivery' => $validated['is_delivery'] ?? false,
-                'delivery_partner' => $validated['delivery_partner'] ?? null,
-                'delivery_fee' => $validated['delivery_fee'] ?? 0,
+            // RR-02: build normalized payload + context, gọi InvoiceSaleService
+            $payload = [
+                'customer_id'    => $validated['customer_id'] ?? null,
+                'branch_id'      => $validated['branch_id'] ?? null,
+                'subtotal'       => $validated['subtotal'],
+                'discount'       => $validated['discount'] ?? 0,
+                'total'          => $validated['total'],
+                'customer_paid'  => $validated['customer_paid'] ?? 0,
                 'payment_method' => $validated['payment_method'] ?? 'Tiền mặt',
-                'price_book_name' => $priceBookName,
-            ]);
+                'note'           => $validated['note'] ?? null,
+                'items'          => array_map(function ($it) {
+                    return [
+                        'product_id' => $it['product_id'],
+                        'quantity'   => $it['quantity'],
+                        'price'      => $it['price'],
+                        'discount'   => $it['discount'] ?? 0,
+                        'note'       => $it['note'] ?? null,
+                        'serial_ids' => $it['serial_ids'] ?? [],
+                    ];
+                }, $validated['items']),
+            ];
 
-            // Cho phép chọn ngày giao dịch (kế toán nhập sau)
-            if ($request->filled('order_date')) {
-                $invoice->update(['created_at' => $transactionDate]);
-            }
+            $context = [
+                'source'                        => 'invoice',
+                'code_prefix'                   => 'HD' . date('YmdHis'),
+                'default_status'                => 'Hoàn thành',
+                'price_book_name'               => $priceBookName,
+                'created_by_name'               => auth()->user()?->name ?? 'Admin',
+                'is_delivery'                   => $validated['is_delivery'] ?? false,
+                'delivery_partner'              => $validated['delivery_partner'] ?? null,
+                'delivery_fee'                  => $validated['delivery_fee'] ?? 0,
+                'transaction_date'              => $request->filled('order_date') ? $request->input('order_date') : null,
+                'validate_before_purchase_date' => true,
+                'validate_stock_setting'        => true,
+                'allow_oversell'                => Setting::get('inventory_allow_oversell', false),
+                'cashflow_payment_method'       => $validated['payment_method'] ?? 'cash',
+                'cashflow_description_extra'    => '',
+                // stock_movement_branch_id để service mặc định lấy invoice.branch_id
+            ];
 
-            $allowOversell = Setting::get('inventory_allow_oversell', false);
+            app(InvoiceSaleService::class)->createSale($payload, $context);
 
-            foreach ($validated['items'] as $item) {
-                $product = \App\Models\Product::lockForUpdate()->find($item['product_id']);
-                $serialIds = $item['serial_ids'] ?? [];
-
-                // BQ DI ĐỘNG: COGS = product.cost_price hiện tại (BQ moving avg)
-                // Bất kể là hàng thường hay serial-tracked đều dùng BQ.
-                $snapshotCostPrice = (float) ($product->cost_price ?? 0);
-                $serialStr = null;
-                $soldSerials = collect();
-
-                if ($product && $product->has_serial && !empty($serialIds)) {
-                    $serialIds = is_array($serialIds) ? $serialIds : [$serialIds];
-                    $soldSerials = SerialImei::whereIn('id', $serialIds)
-                        ->where('product_id', $product->id)
-                        ->get();
-                    $serialStr = $soldSerials->pluck('serial_number')->implode(', ');
-                }
-
-                $invoiceItem = $invoice->items()->create([
-                    'product_id' => $item['product_id'],
-                    'quantity' => $item['quantity'],
-                    'price' => $item['price'],
-                    'cost_price' => $snapshotCostPrice,
-                    'discount' => $item['discount'] ?? 0,
-                    'subtotal' => ($item['price'] * $item['quantity']) - ($item['discount'] ?? 0),
-                    'note' => $item['note'] ?? null,
-                    'serial' => $serialStr,
-                ]);
-
-                // Đánh dấu serial đã bán + snapshot sold_cost_price = BQ tại lúc bán
-                // (per-IMEI cost_price giữ nguyên cho hiển thị "giá vốn cuối")
-                foreach ($soldSerials as $serial) {
-                    \App\Models\InvoiceItemSerial::create([
-                        'invoice_item_id' => $invoiceItem->id,
-                        'serial_imei_id' => $serial->id,
-                        'serial_number' => $serial->serial_number,
-                        'cost_price' => $snapshotCostPrice,
-                    ]);
-
-                    $serial->status = 'sold';
-                    $serial->sold_at = now();
-                    $serial->invoice_id = $invoice->id;
-                    $serial->sold_cost_price = $snapshotCostPrice;
-                    $serial->save();
-                }
-
-                // Deduct stock theo BQ DI ĐỘNG
-                if ($product) {
-                    if (!$allowOversell && $product->stock_quantity < $item['quantity']) {
-                        throw new \Exception("Sản phẩm [{$product->sku}] {$product->name} không đủ tồn kho (Còn: {$product->stock_quantity}). Không cho phép tồn kho âm.");
-                    }
-
-                    \App\Services\MovingAvgCostingService::applySale(
-                        $product,
-                        (int) $item['quantity']
-                    );
-                    $product->refresh();
-
-                    // Sync stock_quantity audit cho hàng serial (đảm bảo khớp serial in_stock count)
-                    if ($product->has_serial) {
-                        $product->recomputeFromSerials();
-                    }
-
-                    // Phase 4 — Ghi sổ cái: xuất bán
-                    StockMovementService::record(
-                        $product,
-                        StockMovementService::TYPE_OUT_INVOICE,
-                        (int) $item['quantity'],
-                        (float) $snapshotCostPrice,
-                        $invoice,
-                        [
-                            'branch_id' => $invoice->branch_id ?? null,
-                            'ref_code' => $invoice->code,
-                            'moved_at' => $invoice->created_at ?? now(),
-                            'note' => 'Xuất bán hóa đơn ' . $invoice->code,
-                        ]
-                    );
-                }
-            }
-
-            // Customer debt & total_spent tracking
-            $customer = $validated['customer_id'] ? \App\Models\Customer::find($validated['customer_id']) : null;
-            $customerName = $customer ? $customer->name : 'Khách lẻ';
-            // debtAmount > 0: KH nợ ta. debtAmount < 0: KH trả dư (ta nợ KH). Giống KiotViet.
-            $debtAmount = $validated['total'] - ($validated['customer_paid'] ?? 0);
-
-            if ($customer) {
-                // Auto-enable dual-role: selling to a supplier makes them also a customer
-                if ($customer->is_supplier && !$customer->is_customer) {
-                    $customer->is_customer = true;
-                    $customer->save();
-                }
-
-                if ($debtAmount != 0) {
-                    $customer->increment('debt_amount', $debtAmount);
-                }
-                $customer->increment('total_spent', $validated['total']);
-            }
-
-            // CashFlow receipt if customer paid something
-            $customerPaid = $validated['customer_paid'] ?? 0;
-            if ($customerPaid > 0) {
-                CashFlow::create([
-                    'code' => 'PT' . date('YmdHis') . rand(10, 99),
-                    'type' => 'receipt',
-                    'amount' => $customerPaid,
-                    'time' => now(),
-                    'category' => 'Thu tiền khách trả',
-                    'target_type' => 'Khách hàng',
-                    'target_id' => $customer?->id,
-                    'target_name' => $customerName,
-                    'reference_type' => 'Invoice',
-                    'reference_code' => $invoice->code,
-                    'payment_method' => $validated['payment_method'] ?? 'cash',
-                    'description' => 'Thu tiền hóa đơn ' . $invoice->code . ($customer ? " - {$customer->name}" : ''),
-                ]);
-            }
-
-            // Note: Không gọi DebtOffsetService - unified ledger view tự xử lý bù trừ
-
-            DB::commit();
             return redirect()->route('invoices.index')->with('success', 'Hóa đơn đã được tạo thành công.');
         } catch (\Exception $e) {
-            DB::rollBack();
             return back()->with('error', 'Có lỗi xảy ra: ' . $e->getMessage())->withInput();
         }
     }
@@ -491,12 +358,19 @@ class InvoiceController extends Controller
             $newCustomerId = $validated['customer_id'] ?? $oldCustomerId;
 
             // If customer changed, reverse old customer and apply to new
+            // RR-06: ghi ledger qua CustomerDebtService thay vì increment/decrement trực tiếp.
             if ($oldCustomerId && $oldCustomerId != $newCustomerId) {
                 $oldCustomer = \App\Models\Customer::find($oldCustomerId);
+                if ($oldCustomer && abs((float) $oldDebt) >= 0.01) {
+                    app(CustomerDebtService::class)->recordAdjustment(
+                        $oldCustomer->id,
+                        -(float) $oldDebt, // âm = giảm nợ cũ
+                        "Đảo công nợ do chuyển hóa đơn {$invoice->code} sang khách khác",
+                        ['ref_code' => $invoice->code]
+                    );
+                }
                 if ($oldCustomer) {
-                    $oldCustomer->decrement('debt_amount', $oldDebt);
                     $oldCustomer->decrement('total_spent', $oldTotal);
-
                 }
             }
 
@@ -507,16 +381,27 @@ class InvoiceController extends Controller
                         // Same customer — apply diff
                         $debtDiff = $newDebt - $oldDebt;
                         $totalDiff = $newTotal - $oldTotal;
-                        $newCustomer->increment('debt_amount', $debtDiff);
+                        if (abs((float) $debtDiff) >= 0.01) {
+                            app(CustomerDebtService::class)->recordAdjustment(
+                                $newCustomer->id,
+                                (float) $debtDiff,
+                                "Điều chỉnh công nợ do cập nhật hóa đơn {$invoice->code}",
+                                ['ref_code' => $invoice->code]
+                            );
+                        }
                         $newCustomer->increment('total_spent', $totalDiff);
                     } else {
                         // New customer — apply full new values
                         if ($newDebt > 0) {
-                            $newCustomer->increment('debt_amount', $newDebt);
+                            app(CustomerDebtService::class)->recordSale(
+                                $newCustomer->id,
+                                (float) $newDebt,
+                                $invoice,
+                                "Ghi nợ do nhận hóa đơn {$invoice->code} từ khách khác"
+                            );
                         }
                         $newCustomer->increment('total_spent', $newTotal);
                     }
-
                 }
             }
 
@@ -553,6 +438,11 @@ class InvoiceController extends Controller
 
     public function destroy(Invoice $invoice)
     {
+        // RR-01 Guard: Không cho hủy lặp — idempotent check
+        if ($invoice->status === 'Đã hủy') {
+            return back()->with('error', 'Hóa đơn này đã được hủy trước đó.');
+        }
+
         // Block cancel if e-invoice issued
         if (Setting::get('block_edit_cancel_einvoice', false) && !empty($invoice->einvoice_code)) {
             return back()->with('error', 'Không thể hủy hóa đơn đã xuất hóa đơn điện tử.');
@@ -626,22 +516,28 @@ class InvoiceController extends Controller
                 $customer = \App\Models\Customer::find($invoice->customer_id);
                 if ($customer) {
                     // Hủy hóa đơn: hoàn lại debt (bao gồm cả overpayment negative)
+                    // RR-06: ghi ledger qua service thay vì decrement trực tiếp.
                     $debtAmount = $invoice->total - ($invoice->customer_paid ?? 0);
                     if ($debtAmount != 0) {
-                        $customer->decrement('debt_amount', $debtAmount);
+                        app(CustomerDebtService::class)->recordSaleReversal(
+                            $customer->id,
+                            (float) $debtAmount,
+                            $invoice,
+                            "Đảo công nợ do hủy hóa đơn {$invoice->code}"
+                        );
                     }
                     $customer->decrement('total_spent', $invoice->total);
-
-
                 }
             }
 
-            // Delete related CashFlow entries
+            // RR-01: Đổi status CashFlow sang cancelled (không xóa) — đồng bộ với CashFlowController@cancel
             CashFlow::where('reference_type', 'Invoice')
                 ->where('reference_code', $invoice->code)
-                ->delete();
+                ->update(['status' => 'cancelled']);
 
-            $invoice->delete();
+            // RR-01: Đổi trạng thái hóa đơn — KHÔNG xóa vật lý (giữ items cho audit trail)
+            $invoice->status = 'Đã hủy';
+            $invoice->save();
 
             DB::commit();
             return redirect()->route('invoices.index')->with('success', 'Hóa đơn đã được hủy thành công. Tồn kho và công nợ đã hoàn lại.');

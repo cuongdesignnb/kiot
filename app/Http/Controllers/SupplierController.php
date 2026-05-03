@@ -328,7 +328,7 @@ class SupplierController extends Controller
 
         // ═══ 4) Cross-role: Invoices from customer side (dual-role only) ═══
         if ($isDualRole) {
-            $invoices = Invoice::where('customer_id', $id)
+            $invoices = Invoice::active()->where('customer_id', $id)
                 ->orderBy('created_at', 'desc')
                 ->get(['id', 'code', 'total', 'customer_paid', 'created_at']);
 
