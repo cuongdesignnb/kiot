@@ -171,7 +171,7 @@ const handlePriceBookChange = async () => {
 const selectProduct = (product) => {
     const existing = activeTab.value.items.find(i => i.product_id === product.id);
     if (!existing) {
-        activeTab.value.items.unshift({ 
+        const newItem = {
             product_id: product.id,
             sku: product.sku,
             name: product.name,
@@ -179,12 +179,54 @@ const selectProduct = (product) => {
             price: product.selling_price || product.retail_price || product.cost_price || 0,
             discount: 0,
             stock_quantity: product.stock_quantity || 0,
-        });
+            // Step 22.1C: serial selector
+            has_serial: !!product.has_serial,
+            serial_ids: [],
+            available_serials: [],
+            serialLoading: false,
+            serialError: '',
+        };
+        activeTab.value.items.unshift(newItem);
+        if (newItem.has_serial) {
+            loadAvailableSerials(newItem);
+        }
     } else {
         existing.qty++;
     }
     activeTab.value.searchQuery = '';
     activeTab.value.showSuggestions = false;
+};
+
+// Step 22.1C: lấy danh sách Serial/IMEI in_stock cho sản phẩm has_serial.
+const loadAvailableSerials = async (item) => {
+    item.serialLoading = true;
+    item.serialError = '';
+    try {
+        const { data } = await axios.get(`/api/products/${item.product_id}/serials`);
+        item.available_serials = Array.isArray(data) ? data : [];
+    } catch (e) {
+        item.available_serials = [];
+        item.serialError = 'Không tải được danh sách Serial/IMEI';
+    } finally {
+        item.serialLoading = false;
+    }
+};
+
+// Step 22.1C: toggle 1 serial trong selection của item.
+const toggleSerial = (item, serialId) => {
+    const ids = Array.isArray(item.serial_ids) ? [...item.serial_ids] : [];
+    const idx = ids.indexOf(serialId);
+    const qty = parseInt(item.qty) || 0;
+    if (idx >= 0) {
+        ids.splice(idx, 1);
+    } else {
+        if (ids.length >= qty) {
+            alert(`Đã chọn đủ ${qty} Serial/IMEI cho sản phẩm này. Vui lòng tăng số lượng trước khi chọn thêm.`);
+            return;
+        }
+        ids.push(serialId);
+    }
+    item.serial_ids = ids;
 };
 
 const hideSuggestions = () => {
@@ -205,6 +247,10 @@ const itemsComputed = computed(() => {
         const qty = parseInt(item.qty) || 0;
         const price = parseFloat(item.price) || 0;
         const itemDiscount = parseFloat(item.discount) || 0;
+        // Step 22.1C: nếu serial_ids vượt qty (do user giảm qty) thì cắt bớt.
+        if (item.has_serial && Array.isArray(item.serial_ids) && item.serial_ids.length > qty) {
+            item.serial_ids = item.serial_ids.slice(0, qty);
+        }
         return { ...item, subtotal: (qty * price) - itemDiscount };
     });
 });
@@ -550,6 +596,39 @@ onUnmounted(() => {
                                         Tồn: {{ item.stock_quantity }}
                                         <span v-if="item.stock_quantity <= 0"> — Hết hàng!</span>
                                         <span v-else-if="item.stock_quantity < item.qty"> — Không đủ!</span>
+                                    </div>
+                                    <!-- Step 22.1C: Serial/IMEI selector cho sản phẩm has_serial -->
+                                    <div v-if="item.has_serial" class="mt-2 w-[260px] lg:w-[350px] xl:w-[450px]">
+                                        <div class="flex items-center justify-between mb-1">
+                                            <span class="text-[11px] font-semibold text-gray-700">
+                                                Serial/IMEI
+                                            </span>
+                                            <span
+                                                class="text-[11px] font-semibold"
+                                                :class="(item.serial_ids?.length || 0) === parseInt(item.qty || 0) ? 'text-green-600' : 'text-orange-600'"
+                                            >Đã chọn {{ item.serial_ids?.length || 0 }}/{{ item.qty }}</span>
+                                        </div>
+                                        <div v-if="item.serialLoading" class="text-[11px] text-gray-400">Đang tải Serial/IMEI…</div>
+                                        <div v-else-if="item.serialError" class="text-[11px] text-red-500">{{ item.serialError }}</div>
+                                        <div v-else-if="!item.available_serials || item.available_serials.length === 0" class="text-[11px] text-red-500">
+                                            Không có Serial/IMEI in_stock cho sản phẩm này.
+                                        </div>
+                                        <div v-else class="flex flex-wrap gap-1 max-h-24 overflow-auto border border-gray-200 rounded p-1 bg-gray-50">
+                                            <label
+                                                v-for="s in item.available_serials"
+                                                :key="s.id"
+                                                class="flex items-center gap-1 text-[11px] bg-white border rounded px-1.5 py-0.5 cursor-pointer hover:border-blue-400"
+                                                :class="(item.serial_ids || []).includes(s.id) ? 'border-blue-500 bg-blue-50 text-blue-700 font-semibold' : 'border-gray-200 text-gray-700'"
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    class="hidden"
+                                                    :checked="(item.serial_ids || []).includes(s.id)"
+                                                    @change="toggleSerial(activeTab.items[index], s.id)"
+                                                />
+                                                {{ s.serial_number || s.imei || ('#' + s.id) }}
+                                            </label>
+                                        </div>
                                     </div>
                                 </td>
                                 <td class="p-3">

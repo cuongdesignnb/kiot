@@ -717,6 +717,17 @@ const cancelReturn = (ret) => {
                                                                         item.serial
                                                                     }}
                                                                 </div>
+                                                                <div
+                                                                    v-if="item.returned_serials && item.returned_serials.length"
+                                                                    class="mt-1 flex flex-wrap gap-1"
+                                                                >
+                                                                    <span class="text-gray-500 text-xs mr-1">Serial/IMEI đã trả:</span>
+                                                                    <span
+                                                                        v-for="s in item.returned_serials"
+                                                                        :key="s.id"
+                                                                        class="text-[11px] bg-blue-50 text-blue-700 border border-blue-100 px-1.5 py-0.5 rounded"
+                                                                    >{{ s.serial_number || ('#' + s.id) }}</span>
+                                                                </div>
                                                             </td>
                                                             <td
                                                                 class="px-4 py-3 text-right text-gray-800"

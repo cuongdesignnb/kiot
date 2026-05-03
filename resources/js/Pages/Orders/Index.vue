@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
-import { Head, router, Link } from "@inertiajs/vue3";
+import { Head, router, Link, usePage } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
@@ -213,23 +213,36 @@ const openProcessModal = (order) => {
     processingOrder.value = order;
     processAmountPaid.value = order.total_payment;
     processPaymentMethod.value = 'cash';
+    processError.value = '';
     showProcessModal.value = true;
 };
 
+const processError = ref('');
+const processPage = usePage();
 const submitProcessOrder = () => {
     if (!processingOrder.value) return;
     isProcessing.value = true;
+    processError.value = '';
     router.post(`/orders/${processingOrder.value.id}/process`, {
         amount_paid: processAmountPaid.value,
         payment_method: processPaymentMethod.value,
     }, {
         preserveScroll: true,
         onSuccess: () => {
+            const flashErr = processPage.props?.flash?.error;
+            if (flashErr) {
+                // Backend rolled back via back()->with('error', ...) — Inertia treats this as success.
+                processError.value = flashErr;
+                isProcessing.value = false;
+                return;
+            }
             showProcessModal.value = false;
             processingOrder.value = null;
             isProcessing.value = false;
         },
-        onError: () => {
+        onError: (errors) => {
+            const firstErr = errors && typeof errors === 'object' ? Object.values(errors)[0] : null;
+            processError.value = firstErr || 'Có lỗi khi xử lý đơn hàng.';
             isProcessing.value = false;
         },
     });
@@ -1162,6 +1175,17 @@ const submitProcessOrder = () => {
                                                                         ?.name ||
                                                                     "—"
                                                                 }}
+                                                                <div
+                                                                    v-if="item.selected_serials && item.selected_serials.length"
+                                                                    class="mt-1 flex flex-wrap gap-1"
+                                                                >
+                                                                    <span class="text-gray-500 text-xs mr-1">Serial/IMEI đã chọn:</span>
+                                                                    <span
+                                                                        v-for="s in item.selected_serials"
+                                                                        :key="s.id"
+                                                                        class="text-[11px] bg-blue-50 text-blue-700 border border-blue-100 px-1.5 py-0.5 rounded"
+                                                                    >{{ s.serial_number || ('#' + s.id) }}</span>
+                                                                </div>
                                                             </td>
                                                             <td
                                                                 class="px-3 py-2 text-right"
@@ -1753,6 +1777,13 @@ const submitProcessOrder = () => {
                     </div>
                     <div class="text-sm text-gray-600 bg-blue-50 p-3 rounded">
                         <p>Còn nợ: <strong class="text-red-600">{{ formatCurrency((processingOrder?.total_payment || 0) - processAmountPaid) }}₫</strong></p>
+                    </div>
+                    <div v-if="processError" class="text-sm bg-red-50 border border-red-200 text-red-700 p-3 rounded space-y-1">
+                        <p class="font-semibold">Không thể xử lý đơn:</p>
+                        <p>{{ processError }}</p>
+                        <p v-if="processError.toLowerCase().includes('serial')" class="text-xs text-red-600">
+                            Đơn hàng có sản phẩm Serial/IMEI nhưng chưa chọn Serial/IMEI. Vui lòng bổ sung Serial/IMEI cho đơn trước khi xử lý.
+                        </p>
                     </div>
                 </div>
                 <div class="px-5 py-3 bg-gray-50 border-t border-gray-200 flex justify-end gap-2">

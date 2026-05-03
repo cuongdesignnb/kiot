@@ -628,6 +628,17 @@ const cancelDamage = (damage) => {
                                                                             ?.name ||
                                                                         "Tên sản phẩm"
                                                                     }}
+                                                                    <div
+                                                                        v-if="item.destroyed_serials && item.destroyed_serials.length"
+                                                                        class="mt-1 flex flex-wrap gap-1"
+                                                                    >
+                                                                        <span class="text-gray-500 text-xs mr-1">Serial/IMEI xuất hủy:</span>
+                                                                        <span
+                                                                            v-for="s in item.destroyed_serials"
+                                                                            :key="s.id"
+                                                                            class="text-[11px] bg-red-50 text-red-700 border border-red-100 px-1.5 py-0.5 rounded"
+                                                                        >{{ s.serial_number || ('#' + s.id) }}</span>
+                                                                    </div>
                                                                 </td>
                                                                 <td
                                                                     class="p-3 text-right"

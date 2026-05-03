@@ -101,7 +101,17 @@ const cancelReturn = () => {
                     <tbody class="divide-y">
                         <tr v-for="(item, idx) in returnOrder.items" :key="idx" class="hover:bg-gray-50">
                             <td class="px-4 py-3 text-blue-600 font-semibold">{{ item.product_code }}</td>
-                            <td class="px-4 py-3">{{ item.product_name }}</td>
+                            <td class="px-4 py-3">
+                                <div>{{ item.product_name }}</div>
+                                <div v-if="item.returned_serials && item.returned_serials.length" class="mt-1 flex flex-wrap gap-1">
+                                    <span class="text-gray-500 text-xs mr-1">Serial/IMEI đã trả:</span>
+                                    <span
+                                        v-for="s in item.returned_serials"
+                                        :key="s.id"
+                                        class="text-[11px] bg-blue-50 text-blue-700 border border-blue-100 px-1.5 py-0.5 rounded"
+                                    >{{ s.serial_number || ('#' + s.id) }}</span>
+                                </div>
+                            </td>
                             <td class="px-4 py-3 text-right">{{ item.quantity }}</td>
                             <td class="px-4 py-3 text-right">{{ fmt(item.price) }}</td>
                             <td class="px-4 py-3 text-right text-red-500">{{ item.discount ? fmt(item.discount) : '---' }}</td>

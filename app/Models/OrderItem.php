@@ -11,6 +11,10 @@ class OrderItem extends Model
 
     protected $guarded = ['id'];
 
+    protected $casts = [
+        'serial_ids' => 'array',
+    ];
+
     public function order()
     {
         return $this->belongsTo(Order::class);

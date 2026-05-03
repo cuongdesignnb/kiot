@@ -42,6 +42,37 @@ class DamageController extends Controller
         $damages = $query->paginate(20)->withQueryString();
         $branches = Branch::all();
 
+        // Step 22.1B (read-only): enrich items[].destroyed_serials cho UI hiển thị.
+        $allSerialIds = [];
+        foreach ($damages->items() as $d) {
+            foreach ($d->items as $it) {
+                if (is_array($it->serial_ids)) {
+                    foreach ($it->serial_ids as $sid) $allSerialIds[] = $sid;
+                }
+            }
+        }
+        $serialMap = [];
+        if (!empty($allSerialIds)) {
+            $serialMap = SerialImei::whereIn('id', array_unique($allSerialIds))
+                ->get(['id', 'serial_number'])
+                ->keyBy('id');
+        }
+        foreach ($damages->items() as $d) {
+            foreach ($d->items as $it) {
+                $list = [];
+                if (is_array($it->serial_ids)) {
+                    foreach ($it->serial_ids as $sid) {
+                        $s = $serialMap[$sid] ?? null;
+                        $list[] = [
+                            'id'            => (int) $sid,
+                            'serial_number' => $s?->serial_number,
+                        ];
+                    }
+                }
+                $it->setAttribute('destroyed_serials', $list);
+            }
+        }
+
         return Inertia::render('Damages/Index', [
             'damages' => $damages,
             'branches' => $branches,

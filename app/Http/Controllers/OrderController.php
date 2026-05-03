@@ -60,6 +60,37 @@ class OrderController extends Controller
 
         $orders = $query->paginate(15)->withQueryString();
 
+        // Step 22.1C (read-only): enrich items[].selected_serials cho UI hiển thị.
+        $allSerialIds = [];
+        foreach ($orders->items() as $o) {
+            foreach ($o->items as $it) {
+                if (is_array($it->serial_ids)) {
+                    foreach ($it->serial_ids as $sid) $allSerialIds[] = $sid;
+                }
+            }
+        }
+        $serialMap = [];
+        if (!empty($allSerialIds)) {
+            $serialMap = SerialImei::whereIn('id', array_unique($allSerialIds))
+                ->get(['id', 'serial_number'])
+                ->keyBy('id');
+        }
+        foreach ($orders->items() as $o) {
+            foreach ($o->items as $it) {
+                $list = [];
+                if (is_array($it->serial_ids)) {
+                    foreach ($it->serial_ids as $sid) {
+                        $s = $serialMap[$sid] ?? null;
+                        $list[] = [
+                            'id'            => (int) $sid,
+                            'serial_number' => $s?->serial_number,
+                        ];
+                    }
+                }
+                $it->setAttribute('selected_serials', $list);
+            }
+        }
+
         $filters = $this->currentFilters($request);
         $filters['has_debt'] = $request->input('has_debt', '');
 
@@ -144,6 +175,8 @@ class OrderController extends Controller
             'items.*.qty' => 'required|numeric|min:1',
             'items.*.price' => 'required|numeric',
             'items.*.discount' => 'numeric',
+            'items.*.serial_ids' => 'nullable|array',
+            'items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
 
             // Delivery
             'is_delivery' => 'boolean',
@@ -223,12 +256,41 @@ class OrderController extends Controller
 
         foreach ($validated['items'] as $item) {
             $subtotal = ($item['qty'] * $item['price']) - ($item['discount'] ?? 0);
+
+            // Step 22.1C: normalize + validate serial_ids cho hàng has_serial.
+            // Không lock/trừ serial ở bước create — chỉ lưu lựa chọn của user.
+            // ProcessOrder sẽ validate lại status in_stock và mark sold.
+            $serialIds = array_values(array_filter($item['serial_ids'] ?? [], fn($v) => $v !== null && $v !== ''));
+            if (!empty($serialIds)) {
+                $product = Product::find($item['product_id']);
+                if ($product && $product->has_serial) {
+                    if (count($serialIds) !== (int) $item['qty']) {
+                        return back()->withErrors([
+                            'items' => "Sản phẩm '{$product->name}': số Serial/IMEI đã chọn (" . count($serialIds) . ") không khớp số lượng đặt ({$item['qty']})."
+                        ])->withInput();
+                    }
+                    $valid = SerialImei::whereIn('id', $serialIds)
+                        ->where('product_id', $product->id)
+                        ->where('status', 'in_stock')
+                        ->count();
+                    if ($valid !== count($serialIds)) {
+                        return back()->withErrors([
+                            'items' => "Sản phẩm '{$product->name}': một số Serial/IMEI không hợp lệ hoặc đã bán."
+                        ])->withInput();
+                    }
+                } else {
+                    // product không có has_serial → bỏ serial_ids để không nhiễu DB.
+                    $serialIds = [];
+                }
+            }
+
             $order->items()->create([
                 'product_id' => $item['product_id'],
                 'qty' => $item['qty'],
                 'price' => $item['price'],
                 'discount' => $item['discount'] ?? 0,
                 'subtotal' => $subtotal,
+                'serial_ids' => !empty($serialIds) ? $serialIds : null,
             ]);
         }
 
@@ -260,6 +322,8 @@ class OrderController extends Controller
             'items.*.qty' => 'required_with:items|numeric|min:1',
             'items.*.price' => 'required_with:items|numeric',
             'items.*.discount' => 'numeric',
+            'items.*.serial_ids' => 'nullable|array',
+            'items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
             'total_price' => 'nullable|numeric',
             'discount' => 'nullable|numeric',
             'other_fees' => 'nullable|numeric',
@@ -273,12 +337,38 @@ class OrderController extends Controller
             $order->items()->delete();
             foreach ($validated['items'] as $item) {
                 $subtotal = ($item['qty'] * $item['price']) - ($item['discount'] ?? 0);
+
+                // Step 22.1C: validate serial_ids khi update — giống store.
+                $serialIds = array_values(array_filter($item['serial_ids'] ?? [], fn($v) => $v !== null && $v !== ''));
+                if (!empty($serialIds)) {
+                    $product = Product::find($item['product_id']);
+                    if ($product && $product->has_serial) {
+                        if (count($serialIds) !== (int) $item['qty']) {
+                            return back()->withErrors([
+                                'items' => "Sản phẩm '{$product->name}': số Serial/IMEI đã chọn (" . count($serialIds) . ") không khớp số lượng đặt ({$item['qty']})."
+                            ])->withInput();
+                        }
+                        $valid = SerialImei::whereIn('id', $serialIds)
+                            ->where('product_id', $product->id)
+                            ->where('status', 'in_stock')
+                            ->count();
+                        if ($valid !== count($serialIds)) {
+                            return back()->withErrors([
+                                'items' => "Sản phẩm '{$product->name}': một số Serial/IMEI không hợp lệ hoặc đã bán."
+                            ])->withInput();
+                        }
+                    } else {
+                        $serialIds = [];
+                    }
+                }
+
                 $order->items()->create([
                     'product_id' => $item['product_id'],
                     'qty' => $item['qty'],
                     'price' => $item['price'],
                     'discount' => $item['discount'] ?? 0,
                     'subtotal' => $subtotal,
+                    'serial_ids' => !empty($serialIds) ? $serialIds : null,
                 ]);
             }
         }
@@ -385,7 +475,7 @@ class OrderController extends Controller
                     }
                     if (count($serialIds) !== $qty) {
                         throw new \Exception(
-                            "Sản phẩm '{$product->name}': số lượng serial ({$serialIds[0]}) không khớp số lượng đặt ({$qty})."
+                            "Sản phẩm '{$product->name}': số lượng serial (" . count($serialIds) . ") không khớp số lượng đặt ({$qty})."
                         );
                     }
                     $availableCount = SerialImei::whereIn('id', $serialIds)

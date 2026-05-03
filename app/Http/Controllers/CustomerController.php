@@ -273,144 +273,59 @@ class CustomerController extends Controller
         ]);
     }
 
+    /**
+     * RR-06 (Step 22.1B): đọc lịch sử công nợ thẳng từ ledger customer_debts.
+     *
+     * Trước RR-06, endpoint này ráp tay từ invoices/cashflows/purchases để
+     * dựng running balance. Sau RR-06, mọi luồng nghiệp vụ (sale/return/
+     * payment/adjustment/cancel) đã ghi customer_debts qua CustomerDebtService
+     * với debt_total snapshot. Đọc ledger trực tiếp tránh lệch số liệu.
+     */
     public function debtHistory(Customer $customer)
     {
-        $entries = collect();
-        $isDualRole = $customer->is_customer && $customer->is_supplier;
+        $isDualRole = (bool) ($customer->is_customer && $customer->is_supplier);
 
-        // ═══ 1) Invoices = "Bán hàng" → customer += total (KH nợ DN tăng) ═══
-        $invoices = Invoice::where('customer_id', $customer->id)
-            ->orderBy('created_at', 'desc')
-            ->get(['id', 'code', 'total', 'customer_paid', 'created_at']);
-
-        foreach ($invoices as $inv) {
-            // Bán hàng: +total (phát sinh phải thu)
-            $entries->push([
-                'id' => 'inv-' . $inv->id,
-                'code' => $inv->code,
-                'type' => 'Bán hàng',
-                'amount' => $inv->total, // Giá trị chứng từ (dương)
-                'customer_effect' => $inv->total, // KH: +
-                'created_at' => $inv->created_at,
-            ]);
-
-            // Thanh toán từ KH: -customer_paid (giảm phải thu)
-            if ($inv->customer_paid > 0) {
-                $entries->push([
-                    'id' => 'pay-' . $inv->id,
-                    'code' => 'TTHD' . preg_replace('/^HD/', '', $inv->code),
-                    'type' => 'Thanh toán',
-                    'amount' => $inv->customer_paid, // Giá trị chứng từ (dương)
-                    'customer_effect' => -$inv->customer_paid, // KH: -
-                    'created_at' => $inv->created_at,
-                ]);
-            }
-        }
-
-        // ═══ 2) Explicit cash_flow receipts (standalone payments, not linked to invoice) ═══
-        $invoiceCodes = $invoices->pluck('code')->toArray();
-        $cashFlows = CashFlow::where('target_type', 'Khách hàng')
-            ->where('target_id', $customer->id)
-            ->where('type', 'receipt')
-            ->whereNotIn('reference_type', ['DebtOffset', 'DebtOffsetCancel'])
-            ->orderBy('created_at', 'desc')
+        $debts = \App\Models\CustomerDebt::where('customer_id', $customer->id)
+            ->orderByDesc('recorded_at')
+            ->orderByDesc('id')
+            ->limit(100)
             ->get();
 
-        foreach ($cashFlows as $cf) {
-            if ($cf->reference_type === 'Invoice' && in_array($cf->reference_code, $invoiceCodes)) {
-                continue; // Already handled as implicit payment above
-            }
-            $entries->push([
-                'id' => 'cf-' . $cf->id,
-                'code' => $cf->code,
-                'type' => $cf->reference_type === 'OrderReturn' ? 'Trả hàng' : 'Thanh toán',
-                'amount' => $cf->amount,
-                'customer_effect' => -$cf->amount, // KH: - (giảm phải thu)
-                'created_at' => $cf->created_at,
-            ]);
-        }
+        $typeLabels = [
+            'sale'           => 'Bán hàng',
+            'sale_reversal'  => 'Hủy hóa đơn',
+            'return'         => 'Trả hàng',
+            'payment'        => 'Thanh toán',
+            'adjustment'     => 'Điều chỉnh',
+        ];
 
-        // ═══ 3) Cross-role: Purchases from this partner (dual-role only) ═══
-        if ($isDualRole) {
-            $purchases = Purchase::where('supplier_id', $customer->id)
-                ->where('status', 'completed')
-                ->orderBy('created_at', 'desc')
-                ->get(['id', 'code', 'total_amount', 'paid_amount', 'created_at']);
-
-            foreach ($purchases as $p) {
-                // Nhập hàng: customer -= total (DN nợ họ tăng = phải thu giảm)
-                $entries->push([
-                    'id' => 'pur-' . $p->id,
-                    'code' => $p->code,
-                    'type' => 'Nhập hàng',
-                    'amount' => $p->total_amount,
-                    'customer_effect' => -$p->total_amount, // KH: -
-                    'created_at' => $p->created_at,
-                ]);
-                // TT cho NCC: customer += paid (DN trả NCC = giảm nợ NCC = phải thu tăng tương đối)
-                if ($p->paid_amount > 0) {
-                    $entries->push([
-                        'id' => 'purpay-' . $p->id,
-                        'code' => 'TTNH' . preg_replace('/^PN/', '', $p->code),
-                        'type' => 'TT nhập hàng',
-                        'amount' => $p->paid_amount,
-                        'customer_effect' => $p->paid_amount, // KH: + (giảm nợ NCC)
-                        'created_at' => $p->created_at,
-                    ]);
-                }
-            }
-
-            // Trả hàng nhập: customer += amount (giảm phải trả NCC)
-            $purchaseReturns = PurchaseReturn::where('supplier_id', $customer->id)
-                ->where('status', 'completed')
-                ->orderBy('created_at', 'desc')
-                ->get(['id', 'code', 'total_amount', 'created_at']);
-
-            foreach ($purchaseReturns as $pr) {
-                $entries->push([
-                    'id' => 'pret-' . $pr->id,
-                    'code' => $pr->code,
-                    'type' => 'Trả hàng nhập',
-                    'amount' => $pr->total_amount,
-                    'customer_effect' => $pr->total_amount, // KH: + (giảm phải trả)
-                    'created_at' => $pr->created_at,
-                ]);
-            }
-
-            // Supplier debt transactions (payment/adjustment/discount only, NOT purchase/return/offset)
-            $supplierTxs = SupplierDebtTransaction::where('supplier_id', $customer->id)
-                ->whereNotIn('type', ['purchase', 'return', 'offset'])
-                ->orderBy('created_at', 'desc')
-                ->get();
-
-            foreach ($supplierTxs as $stx) {
-                // NCC payment (amount<0): DN trả NCC → customer += |amount| (giảm nợ NCC)
-                // NCC adjustment: mirror sign for customer perspective
-                $entries->push([
-                    'id' => 'stx-' . $stx->id,
-                    'code' => $stx->code,
-                    'type' => $stx->type === 'payment' ? 'TT công nợ NCC' : ($stx->type === 'adjustment' ? 'Điều chỉnh' : ($stx->type === 'discount' ? 'Chiết khấu TT' : $stx->type)),
-                    'amount' => abs($stx->amount),
-                    'customer_effect' => -$stx->amount, // Mirror: NCC payment(-) → KH(+)
-                    'created_at' => $stx->created_at,
-                ]);
-            }
-        }
-
-        // ═══ Sort by date asc → compute running balance (NET customer position) ═══
-        $sorted = $entries->sortBy('created_at')->values();
-        $balance = 0;
-        $ledger = $sorted->map(function ($entry) use (&$balance) {
-            $balance += $entry['customer_effect'];
-            $entry['balance'] = $balance;
-            return $entry;
-        });
+        $entries = $debts->map(function ($d) use ($typeLabels) {
+            $amount = (float) $d->amount;
+            $balance = (float) $d->debt_total;
+            $recordedAt = $d->recorded_at ?? $d->created_at;
+            return [
+                'id'              => $d->id,
+                'code'            => $d->ref_code,
+                'type'            => $typeLabels[$d->type] ?? $d->type,
+                'type_raw'        => $d->type,
+                'amount'          => $amount,
+                'customer_effect' => $amount,
+                'debt_total'      => $balance,
+                'balance'         => $balance,
+                'note'            => $d->note,
+                'created_by'      => $d->created_by,
+                'recorded_at'     => $recordedAt,
+                'created_at'      => $recordedAt,
+            ];
+        })->values();
 
         return response()->json([
-            'entries' => $ledger->reverse()->values(),
+            'entries' => $entries,
             'summary' => [
-                'net' => $balance, // Final running balance = NET customer position
+                'net'          => (float) $customer->debt_amount,
                 'is_dual_role' => $isDualRole,
+                'source'       => 'customer_debts',
+                'count'        => $entries->count(),
             ],
         ]);
     }

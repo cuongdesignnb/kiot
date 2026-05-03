@@ -235,4 +235,76 @@ class RR13OrderConvertStockTest extends TestCase
         $this->assertSame(0, InvoiceItemSerial::where('serial_imei_id', $serialA->id)->count(),
             'Không tạo InvoiceItemSerial khi convert fail');
     }
+
+    /* ═══════════════════════════════════════════════════════════════════════
+     *  TC-RR13-05 (Step 22.1C): Convert hàng serial VỚI serial_ids đã chọn
+     *  phải mark đúng serial sang sold, tạo InvoiceItemSerial, ghi
+     *  StockMovement out_invoice và set order=completed.
+     *
+     *  Đây là happy path mới sau khi thêm cột order_items.serial_ids và UI
+     *  Selector. Test xác nhận processOrder không tự chọn đại — chỉ dùng đúng
+     *  serial_ids người dùng đã lưu trên OrderItem.
+     * ═══════════════════════════════════════════════════════════════════════ */
+    public function test_order_convert_serial_with_serial_ids_should_mark_selected_serial_as_sold(): void
+    {
+        $product = $this->makeProduct(true, 0, 5000000);
+        $serialA = SerialImei::create([
+            'product_id'    => $product->id,
+            'serial_number' => 'SN-A-' . uniqid(),
+            'status'        => 'in_stock',
+            'cost_price'    => 5000000,
+            'original_cost' => 5000000,
+        ]);
+        $serialB = SerialImei::create([
+            'product_id'    => $product->id,
+            'serial_number' => 'SN-B-' . uniqid(),
+            'status'        => 'in_stock',
+            'cost_price'    => 5000000,
+            'original_cost' => 5000000,
+        ]);
+        $product->update(['stock_quantity' => 2, 'inventory_total_cost' => 10000000]);
+
+        $movementsBefore = StockMovement::where('product_id', $product->id)->count();
+        $order = $this->makeOrder($product, 1, 8000000);
+
+        // Step 22.1C: lưu serial_ids vào OrderItem (mô phỏng UI selector).
+        $order->items()->first()->update(['serial_ids' => [$serialA->id]]);
+
+        $this->callProcessOrder($order, 8000000, 'cash');
+
+        $serialA->refresh();
+        $serialB->refresh();
+        $product->refresh();
+        $order->refresh();
+
+        $invoice = Invoice::where('order_id', $order->id)->first();
+        $this->assertNotNull($invoice, 'Invoice phải được tạo từ order');
+
+        $this->assertSame('sold', $serialA->status,
+            'Serial A (đã chọn) phải mark sold');
+        $this->assertSame((int) $invoice->id, (int) $serialA->invoice_id,
+            'Serial A.invoice_id phải gán = invoice mới');
+        $this->assertNotNull($serialA->sold_cost_price);
+        $this->assertSame('in_stock', $serialB->status,
+            'Serial B (KHÔNG chọn) phải giữ nguyên in_stock — không được chọn đại');
+        $this->assertNull($serialB->invoice_id);
+
+        $invoiceItem = $invoice->items()->first();
+        $this->assertNotNull($invoiceItem);
+        $iis = InvoiceItemSerial::where('serial_imei_id', $serialA->id)->first();
+        $this->assertNotNull($iis, 'Phải tạo InvoiceItemSerial cho serial A');
+        $this->assertSame((int) $invoiceItem->id, (int) $iis->invoice_item_id,
+            'InvoiceItemSerial.invoice_item_id phải trỏ đúng invoice item');
+
+        $this->assertSame('completed', $order->status, 'Order phải completed');
+        $this->assertSame(1, (int) $product->stock_quantity, 'Stock giảm 1 còn 1');
+
+        $movement = StockMovement::where('product_id', $product->id)
+            ->where('type', 'out_invoice')
+            ->latest('id')
+            ->first();
+        $this->assertNotNull($movement, 'Phải ghi StockMovement out_invoice');
+        $this->assertGreaterThan($movementsBefore,
+            StockMovement::where('product_id', $product->id)->count());
+    }
 }

@@ -44,6 +44,38 @@ class OrderReturnController extends Controller
 
         $returns = $query->paginate(15)->withQueryString();
 
+        // Step 22.1B (read-only): enrich items[].returned_serials cho UI hiển thị.
+        // Không sửa serial_ids, không thay đổi nghiệp vụ.
+        $allSerialIds = [];
+        foreach ($returns->items() as $ret) {
+            foreach ($ret->items as $it) {
+                if (is_array($it->serial_ids)) {
+                    foreach ($it->serial_ids as $sid) $allSerialIds[] = $sid;
+                }
+            }
+        }
+        $serialMap = [];
+        if (!empty($allSerialIds)) {
+            $serialMap = SerialImei::whereIn('id', array_unique($allSerialIds))
+                ->get(['id', 'serial_number'])
+                ->keyBy('id');
+        }
+        foreach ($returns->items() as $ret) {
+            foreach ($ret->items as $it) {
+                $list = [];
+                if (is_array($it->serial_ids)) {
+                    foreach ($it->serial_ids as $sid) {
+                        $s = $serialMap[$sid] ?? null;
+                        $list[] = [
+                            'id'            => (int) $sid,
+                            'serial_number' => $s?->serial_number,
+                        ];
+                    }
+                }
+                $it->setAttribute('returned_serials', $list);
+            }
+        }
+
         return Inertia::render('Returns/Index', [
             'returns' => $returns,
             'filters' => $this->currentFilters($request),
@@ -61,6 +93,20 @@ class OrderReturnController extends Controller
     public function show(OrderReturn $return)
     {
         $return->load(['customer', 'items.product', 'invoice']);
+
+        // Step 22.1B (read-only): map serial_ids → display names.
+        $allSerialIds = [];
+        foreach ($return->items as $it) {
+            if (is_array($it->serial_ids)) {
+                foreach ($it->serial_ids as $sid) $allSerialIds[] = $sid;
+            }
+        }
+        $serialMap = [];
+        if (!empty($allSerialIds)) {
+            $serialMap = SerialImei::whereIn('id', array_unique($allSerialIds))
+                ->get(['id', 'serial_number'])
+                ->keyBy('id');
+        }
 
         return Inertia::render('Returns/Show', [
             'returnOrder' => [
@@ -83,14 +129,27 @@ class OrderReturnController extends Controller
                 'fee' => $return->fee ?? 0,
                 'total' => $return->total,
                 'paid_to_customer' => $return->paid_to_customer,
-                'items' => $return->items->map(fn($item) => [
-                    'product_code' => $item->product->code ?? '',
-                    'product_name' => $item->product->name ?? '',
-                    'quantity' => $item->quantity,
-                    'price' => $item->price,
-                    'discount' => $item->discount ?? 0,
-                    'subtotal' => $item->subtotal ?? ($item->quantity * $item->price - ($item->discount ?? 0)),
-                ]),
+                'items' => $return->items->map(function ($item) use ($serialMap) {
+                    $serials = [];
+                    if (is_array($item->serial_ids)) {
+                        foreach ($item->serial_ids as $sid) {
+                            $s = $serialMap[$sid] ?? null;
+                            $serials[] = [
+                                'id'            => (int) $sid,
+                                'serial_number' => $s?->serial_number,
+                            ];
+                        }
+                    }
+                    return [
+                        'product_code' => $item->product->code ?? '',
+                        'product_name' => $item->product->name ?? '',
+                        'quantity' => $item->quantity,
+                        'price' => $item->price,
+                        'discount' => $item->discount ?? 0,
+                        'subtotal' => $item->subtotal ?? ($item->quantity * $item->price - ($item->discount ?? 0)),
+                        'returned_serials' => $serials,
+                    ];
+                }),
             ],
         ]);
     }
