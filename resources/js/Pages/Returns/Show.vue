@@ -1,5 +1,5 @@
 <script setup>
-import { Head, Link } from '@inertiajs/vue3';
+import { Head, Link, router } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 
 const props = defineProps({ returnOrder: Object });
@@ -14,6 +14,13 @@ const statusColors = {
     completed: 'bg-green-100 text-green-700',
     cancelled: 'bg-red-100 text-red-700',
     pending: 'bg-yellow-100 text-yellow-700',
+};
+
+const cancelReturn = () => {
+    if (!confirm('Bạn chắc chắn muốn hủy phiếu trả hàng này? Hệ thống sẽ rollback tồn kho, công nợ và serial đã trả.')) return;
+    router.post(`/returns/${props.returnOrder.id}/cancel`, {}, {
+        preserveScroll: true,
+    });
 };
 </script>
 
@@ -31,6 +38,13 @@ const statusColors = {
                     <span :class="statusColors[returnOrder.status] || 'bg-gray-100 text-gray-700'" class="px-3 py-1 rounded-full text-sm font-semibold">
                         {{ statusLabels[returnOrder.status] || returnOrder.status }}
                     </span>
+                    <button
+                        v-if="returnOrder.status !== 'Đã hủy' && returnOrder.status !== 'cancelled'"
+                        @click="cancelReturn"
+                        class="bg-white border border-red-300 text-red-600 rounded px-3 py-1.5 text-sm font-semibold hover:bg-red-50"
+                    >
+                        Hủy phiếu trả hàng
+                    </button>
                     <a :href="`/returns/${returnOrder.id}/print`" target="_blank" class="bg-white border border-gray-300 rounded px-3 py-1.5 text-sm font-semibold hover:bg-gray-50">
                         🖨 In
                     </a>

@@ -83,6 +83,13 @@ const printDamage = (damage) => {
         "width=400,height=600",
     );
 };
+
+const cancelDamage = (damage) => {
+    if (!confirm("Bạn chắc chắn muốn hủy phiếu xuất hủy này? Hệ thống sẽ rollback tồn kho và serial đã xuất hủy.")) return;
+    router.post(`/damages/${damage.id}/cancel`, {}, {
+        preserveScroll: true,
+    });
+};
 </script>
 
 <template>
@@ -743,7 +750,9 @@ const printDamage = (damage) => {
                                             >
                                                 <div class="flex gap-2">
                                                     <button
-                                                        class="bg-white border border-gray-300 px-4 py-1.5 rounded text-gray-700 font-medium hover:bg-gray-50 flex items-center gap-2 shadow-sm"
+                                                        v-if="damage.status !== 'cancelled'"
+                                                        @click.stop="cancelDamage(damage)"
+                                                        class="bg-white border border-red-300 px-4 py-1.5 rounded text-red-600 font-medium hover:bg-red-50 flex items-center gap-2 shadow-sm"
                                                     >
                                                         <svg
                                                             class="w-4 h-4"
@@ -758,7 +767,7 @@ const printDamage = (damage) => {
                                                                 d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
                                                             ></path>
                                                         </svg>
-                                                        Hủy
+                                                        Hủy phiếu
                                                     </button>
                                                     <button
                                                         class="bg-white border border-gray-300 px-4 py-1.5 rounded text-gray-700 font-medium hover:bg-gray-50 flex items-center gap-2 shadow-sm"
