@@ -202,11 +202,31 @@ const loadAvailableSerials = async (item) => {
     item.serialLoading = true;
     item.serialError = '';
     try {
-        const { data } = await axios.get(`/api/products/${item.product_id}/serials`);
-        item.available_serials = Array.isArray(data) ? data : [];
+        const { data } = await axios.get(`/api/products/${item.product_id}/serials`, {
+            timeout: 10000,
+            headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        });
+        // Step 22.1E: backend có thể trả mảng trực tiếp hoặc {data: [...]}.
+        // Nếu trả HTML (login redirect / 403 page) thì data sẽ không phải mảng.
+        const list = Array.isArray(data) ? data : (Array.isArray(data?.data) ? data.data : null);
+        if (list === null) {
+            item.available_serials = [];
+            item.serialError = 'Phản hồi không hợp lệ từ server (không phải JSON).';
+        } else {
+            item.available_serials = list;
+        }
     } catch (e) {
         item.available_serials = [];
-        item.serialError = 'Không tải được danh sách Serial/IMEI';
+        const status = e?.response?.status;
+        if (status === 401 || status === 403) {
+            item.serialError = `Không có quyền truy cập danh sách Serial/IMEI (HTTP ${status}). Liên hệ admin.`;
+        } else if (status === 404) {
+            item.serialError = 'Endpoint Serial/IMEI không tồn tại (HTTP 404).';
+        } else if (e?.code === 'ECONNABORTED') {
+            item.serialError = 'Timeout khi tải Serial/IMEI.';
+        } else {
+            item.serialError = `Không tải được danh sách Serial/IMEI${status ? ` (HTTP ${status})` : ''}.`;
+        }
     } finally {
         item.serialLoading = false;
     }

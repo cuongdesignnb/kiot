@@ -616,10 +616,14 @@ Route::middleware('permission:pos.use')->group(function () {
     Route::get('/pos', [PosController::class, 'index'])->name('pos.index');
     Route::get('/api/pos/products', [PosController::class, 'searchProducts']);
     Route::post('/api/pos/checkout', [PosController::class, 'checkout']);
-    Route::get('/api/products/{product}/serials', [PosController::class, 'getProductSerials']);
     Route::get('/api/pos/customers', [PosController::class, 'searchCustomers']);
     Route::post('/api/pos/customers', [PosController::class, 'quickCreateCustomer']);
 });
+
+// Step 22.1E: serial lookup phải dùng được cả ở Orders/Create (không có pos.use).
+// Endpoint read-only, chỉ cần đã đăng nhập.
+Route::get('/api/products/{product}/serials', [PosController::class, 'getProductSerials'])
+    ->name('api.products.serials');
 
 // Product search API (shared by Orders, POS, etc.)
 Route::get('/api/products/search', [ProductController::class, 'apiSearch'])->name('api.products.search');

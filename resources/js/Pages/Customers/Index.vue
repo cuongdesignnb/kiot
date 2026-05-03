@@ -1799,7 +1799,17 @@ const submit = () => {
                                                             <td
                                                                 class="px-3 py-2"
                                                             >
-                                                                {{ entry.type }}
+                                                                <span>{{ entry.type }}</span>
+                                                                <span
+                                                                    v-if="entry.source === 'ledger'"
+                                                                    class="ml-1 inline-block text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200 px-1.5 py-0.5 rounded"
+                                                                    title="Ghi nhận qua ledger customer_debts"
+                                                                >Ledger</span>
+                                                                <span
+                                                                    v-else-if="entry.source === 'legacy'"
+                                                                    class="ml-1 inline-block text-[10px] font-semibold bg-gray-100 text-gray-600 border border-gray-200 px-1.5 py-0.5 rounded"
+                                                                    title="Dựng từ chứng từ cũ (trước ledger)"
+                                                                >Chứng từ cũ</span>
                                                             </td>
                                                             <td
                                                                 class="px-3 py-2 text-right font-medium"

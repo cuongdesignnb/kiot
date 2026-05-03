@@ -274,22 +274,22 @@ class CustomerController extends Controller
     }
 
     /**
-     * RR-06 (Step 22.1B): đọc lịch sử công nợ thẳng từ ledger customer_debts.
+     * Step 22.1E (hybrid): trả cả ledger mới (customer_debts) lẫn legacy
+     * (invoices/cashflows/purchases/...). Production có dữ liệu cũ trước RR-06
+     * chưa được backfill vào customer_debts ⇒ chỉ đọc ledger sẽ làm mất lịch sử.
      *
-     * Trước RR-06, endpoint này ráp tay từ invoices/cashflows/purchases để
-     * dựng running balance. Sau RR-06, mọi luồng nghiệp vụ (sale/return/
-     * payment/adjustment/cancel) đã ghi customer_debts qua CustomerDebtService
-     * với debt_total snapshot. Đọc ledger trực tiếp tránh lệch số liệu.
+     * Hợp đồng dữ liệu:
+     *  - entries: combined view (ledger + legacy không trùng), mỗi item có 'source'
+     *  - ledger_entries / legacy_entries: tách rời để UI có thể filter
+     *  - summary.net = customers.debt_amount hiện tại (KHÔNG tính lại từ entries)
+     *  - summary.source = 'hybrid'
+     *
+     * Dedup: nếu legacy.code trùng ledger.ref_code thì ưu tiên ledger.
+     * Không backfill, không cập nhật customers.debt_amount, không sửa CustomerDebtService.
      */
     public function debtHistory(Customer $customer)
     {
         $isDualRole = (bool) ($customer->is_customer && $customer->is_supplier);
-
-        $debts = \App\Models\CustomerDebt::where('customer_id', $customer->id)
-            ->orderByDesc('recorded_at')
-            ->orderByDesc('id')
-            ->limit(100)
-            ->get();
 
         $typeLabels = [
             'sale'           => 'Bán hàng',
@@ -299,12 +299,19 @@ class CustomerController extends Controller
             'adjustment'     => 'Điều chỉnh',
         ];
 
-        $entries = $debts->map(function ($d) use ($typeLabels) {
+        // ─── 1) LEDGER entries (customer_debts) ─────────────────────────
+        $debts = \App\Models\CustomerDebt::where('customer_id', $customer->id)
+            ->orderByDesc('recorded_at')
+            ->orderByDesc('id')
+            ->limit(200)
+            ->get();
+
+        $ledgerEntries = $debts->map(function ($d) use ($typeLabels) {
             $amount = (float) $d->amount;
             $balance = (float) $d->debt_total;
             $recordedAt = $d->recorded_at ?? $d->created_at;
             return [
-                'id'              => $d->id,
+                'id'              => 'ldg-' . $d->id,
                 'code'            => $d->ref_code,
                 'type'            => $typeLabels[$d->type] ?? $d->type,
                 'type_raw'        => $d->type,
@@ -316,16 +323,159 @@ class CustomerController extends Controller
                 'created_by'      => $d->created_by,
                 'recorded_at'     => $recordedAt,
                 'created_at'      => $recordedAt,
+                'source'          => 'ledger',
             ];
         })->values();
 
+        // ─── 2) LEGACY entries (logic cũ pre-RR06) ──────────────────────
+        $legacyEntries = collect();
+
+        $invoices = Invoice::where('customer_id', $customer->id)
+            ->orderBy('created_at', 'desc')
+            ->get(['id', 'code', 'total', 'customer_paid', 'created_at']);
+
+        foreach ($invoices as $inv) {
+            $legacyEntries->push([
+                'id' => 'inv-' . $inv->id,
+                'code' => $inv->code,
+                'type' => 'Bán hàng',
+                'amount' => (float) $inv->total,
+                'customer_effect' => (float) $inv->total,
+                'created_at' => $inv->created_at,
+                'source' => 'legacy',
+            ]);
+            if ($inv->customer_paid > 0) {
+                $legacyEntries->push([
+                    'id' => 'pay-' . $inv->id,
+                    'code' => 'TTHD' . preg_replace('/^HD/', '', $inv->code),
+                    'type' => 'Thanh toán',
+                    'amount' => (float) $inv->customer_paid,
+                    'customer_effect' => -(float) $inv->customer_paid,
+                    'created_at' => $inv->created_at,
+                    'source' => 'legacy',
+                ]);
+            }
+        }
+
+        $invoiceCodes = $invoices->pluck('code')->toArray();
+        $cashFlows = CashFlow::where('target_type', 'Khách hàng')
+            ->where('target_id', $customer->id)
+            ->where('type', 'receipt')
+            ->whereNotIn('reference_type', ['DebtOffset', 'DebtOffsetCancel'])
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        foreach ($cashFlows as $cf) {
+            if ($cf->reference_type === 'Invoice' && in_array($cf->reference_code, $invoiceCodes)) {
+                continue;
+            }
+            $legacyEntries->push([
+                'id' => 'cf-' . $cf->id,
+                'code' => $cf->code,
+                'type' => $cf->reference_type === 'OrderReturn' ? 'Trả hàng' : 'Thanh toán',
+                'amount' => (float) $cf->amount,
+                'customer_effect' => -(float) $cf->amount,
+                'created_at' => $cf->created_at,
+                'source' => 'legacy',
+            ]);
+        }
+
+        if ($isDualRole) {
+            $purchases = Purchase::where('supplier_id', $customer->id)
+                ->where('status', 'completed')
+                ->orderBy('created_at', 'desc')
+                ->get(['id', 'code', 'total_amount', 'paid_amount', 'created_at']);
+
+            foreach ($purchases as $p) {
+                $legacyEntries->push([
+                    'id' => 'pur-' . $p->id,
+                    'code' => $p->code,
+                    'type' => 'Nhập hàng',
+                    'amount' => (float) $p->total_amount,
+                    'customer_effect' => -(float) $p->total_amount,
+                    'created_at' => $p->created_at,
+                    'source' => 'legacy',
+                ]);
+                if ($p->paid_amount > 0) {
+                    $legacyEntries->push([
+                        'id' => 'purpay-' . $p->id,
+                        'code' => 'TTNH' . preg_replace('/^PN/', '', $p->code),
+                        'type' => 'TT nhập hàng',
+                        'amount' => (float) $p->paid_amount,
+                        'customer_effect' => (float) $p->paid_amount,
+                        'created_at' => $p->created_at,
+                        'source' => 'legacy',
+                    ]);
+                }
+            }
+
+            $purchaseReturns = PurchaseReturn::where('supplier_id', $customer->id)
+                ->where('status', 'completed')
+                ->orderBy('created_at', 'desc')
+                ->get(['id', 'code', 'total_amount', 'created_at']);
+
+            foreach ($purchaseReturns as $pr) {
+                $legacyEntries->push([
+                    'id' => 'pret-' . $pr->id,
+                    'code' => $pr->code,
+                    'type' => 'Trả hàng nhập',
+                    'amount' => (float) $pr->total_amount,
+                    'customer_effect' => (float) $pr->total_amount,
+                    'created_at' => $pr->created_at,
+                    'source' => 'legacy',
+                ]);
+            }
+
+            $supplierTxs = SupplierDebtTransaction::where('supplier_id', $customer->id)
+                ->whereNotIn('type', ['purchase', 'return', 'offset'])
+                ->orderBy('created_at', 'desc')
+                ->get();
+
+            foreach ($supplierTxs as $stx) {
+                $legacyEntries->push([
+                    'id' => 'stx-' . $stx->id,
+                    'code' => $stx->code,
+                    'type' => $stx->type === 'payment' ? 'TT công nợ NCC' : ($stx->type === 'adjustment' ? 'Điều chỉnh' : ($stx->type === 'discount' ? 'Chiết khấu TT' : $stx->type)),
+                    'amount' => abs((float) $stx->amount),
+                    'customer_effect' => -(float) $stx->amount,
+                    'created_at' => $stx->created_at,
+                    'source' => 'legacy',
+                ]);
+            }
+        }
+
+        // Tính running balance riêng cho legacy theo thời gian (giữ semantic cũ)
+        $legacySorted = $legacyEntries->sortBy('created_at')->values();
+        $bal = 0.0;
+        $legacySorted = $legacySorted->map(function ($e) use (&$bal) {
+            $bal += (float) ($e['customer_effect'] ?? 0);
+            $e['balance'] = $bal;
+            return $e;
+        });
+        $legacyEntries = $legacySorted->reverse()->values();
+
+        // ─── 3) Dedup + combined ────────────────────────────────────────
+        $ledgerCodes = $ledgerEntries->pluck('code')->filter()->map(fn($c) => (string) $c)->all();
+        $legacyFiltered = $legacyEntries->filter(function ($e) use ($ledgerCodes) {
+            return !in_array((string) ($e['code'] ?? ''), $ledgerCodes, true);
+        })->values();
+
+        $combined = $ledgerEntries->concat($legacyFiltered)
+            ->sortByDesc(fn($e) => $e['recorded_at'] ?? $e['created_at'])
+            ->values();
+
         return response()->json([
-            'entries' => $entries,
+            'entries'         => $combined,
+            'ledger_entries'  => $ledgerEntries,
+            'legacy_entries'  => $legacyEntries,
             'summary' => [
-                'net'          => (float) $customer->debt_amount,
-                'is_dual_role' => $isDualRole,
-                'source'       => 'customer_debts',
-                'count'        => $entries->count(),
+                'net'             => (float) $customer->debt_amount,
+                'is_dual_role'    => $isDualRole,
+                'source'          => 'hybrid',
+                'count'           => $combined->count(),
+                'ledger_count'    => $ledgerEntries->count(),
+                'legacy_count'    => $legacyEntries->count(),
+                'dedup_skipped'   => $legacyEntries->count() - $legacyFiltered->count(),
             ],
         ]);
     }
