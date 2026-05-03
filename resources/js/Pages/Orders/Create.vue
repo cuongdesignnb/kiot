@@ -406,11 +406,44 @@ const totalAmount = computed(() => itemsComputed.value.reduce((sum, item) => sum
 const totalPayment = computed(() => Math.max(0, totalAmount.value - Number(activeTab.value.discount) + Number(activeTab.value.otherFees)));
 const balance = computed(() => activeTab.value.amountPaid - (activeTab.value.isCod ? 0 : totalPayment.value));
 
+// Step 22.2G: BẮT BUỘC chọn đủ Serial/IMEI cho hàng has_serial trước khi lưu.
+// Trước đây tạo Order hàng serial mà bỏ qua tick serial vẫn luồn qua, để dồn lỗi
+// xuống processOrder — sai contract. Frontend chặn + backend chặn + processOrder fail-safe.
+const orderItemsSerialStatus = computed(() => {
+    return (activeTab.value?.items || []).map((item) => {
+        const qty = parseInt(item.qty) || 0;
+        const selected = Array.isArray(item.serial_ids) ? item.serial_ids.length : 0;
+        return {
+            product_id: item.product_id,
+            name: item.name,
+            qty,
+            selected,
+            has_serial: !!item.has_serial,
+            ok: !item.has_serial || selected === qty,
+        };
+    });
+});
+
+const orderHasSerialMissing = computed(() =>
+    orderItemsSerialStatus.value.some((s) => s.has_serial && !s.ok)
+);
+
+function validateOrderSerialSelection() {
+    const invalid = orderItemsSerialStatus.value.filter((s) => s.has_serial && !s.ok);
+    if (invalid.length === 0) return true;
+    const message = invalid
+        .map((i) => `• ${i.name}: đã chọn ${i.selected}/${i.qty} Serial/IMEI`)
+        .join('\n');
+    alert('Vui lòng chọn đủ Serial/IMEI cho các sản phẩm sau trước khi lưu đơn:\n' + message);
+    return false;
+}
+
 const save = async () => {
     if (activeTab.value.items.length === 0) {
         alert("Vui lòng chọn ít nhất 1 hàng hóa.");
         return;
     }
+    if (!validateOrderSerialSelection()) return;
     submitRef.value = true;
     try {
         const isReturn = activeTab.value.status === 'return';
@@ -565,6 +598,7 @@ const saveAndPrint = async () => {
         alert("Vui lòng chọn ít nhất 1 hàng hóa.");
         return;
     }
+    if (!validateOrderSerialSelection()) return;
     submitRef.value = true;
     try {
         const endpoint = activeTab.value.status === 'return' ? '/returns' : '/orders';
@@ -755,6 +789,13 @@ onUnmounted(() => {
                                                 class="text-[11px] font-semibold"
                                                 :class="(activeTab.items[index]?.serial_ids?.length || 0) === parseInt(item.qty || 0) ? 'text-green-600' : 'text-orange-600'"
                                             >Đã chọn {{ activeTab.items[index]?.serial_ids?.length || 0 }}/{{ item.qty }}</span>
+                                        </div>
+                                        <!-- Step 22.2G: cảnh báo nếu thiếu Serial/IMEI -->
+                                        <div
+                                            v-if="(activeTab.items[index]?.serial_ids?.length || 0) !== parseInt(item.qty || 0)"
+                                            class="mb-1 text-[11px] text-orange-700 bg-orange-50 border border-orange-200 rounded px-1.5 py-0.5"
+                                        >
+                                            <i class="fas fa-exclamation-triangle mr-1"></i>Cần chọn đủ Serial/IMEI trước khi lưu đơn.
                                         </div>
                                         <div v-if="activeTab.items[index]?.serialLoading" class="text-[11px] text-gray-400">Đang tải Serial/IMEI…</div>
                                         <div v-else-if="activeTab.items[index]?.serialError" class="flex items-center gap-2">

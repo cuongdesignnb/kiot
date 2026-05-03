@@ -198,6 +198,13 @@ class OrderController extends Controller
         $txDate = $request->order_date ? Carbon::parse($request->order_date) : now();
         app(LockPeriodService::class)->assertNotLocked($txDate, 'order_create');
 
+        // Step 22.2G: pre-flight serial validation TRƯỚC khi tạo Order row.
+        // Tránh tình trạng Order đã được create nhưng items fail validate giữa chừng,
+        // để lại order rỗng/không nhất quán trong DB.
+        if ($preFlight = $this->validateItemsSerials($validated['items'] ?? [])) {
+            return $preFlight;
+        }
+
         $priceBookName = 'Bảng giá chung';
         if (!empty($validated['price_book_id'])) {
             $priceBook = PriceBook::find($validated['price_book_id']);
@@ -259,30 +266,28 @@ class OrderController extends Controller
         foreach ($validated['items'] as $item) {
             $subtotal = ($item['qty'] * $item['price']) - ($item['discount'] ?? 0);
 
-            // Step 22.1C: normalize + validate serial_ids cho hàng has_serial.
-            // Không lock/trừ serial ở bước create — chỉ lưu lựa chọn của user.
-            // ProcessOrder sẽ validate lại status in_stock và mark sold.
+            // Step 22.2G: BẮT BUỘC chọn đủ Serial/IMEI cho hàng has_serial ngay khi
+            // tạo Order. Trước đây chỉ validate khi serialIds non-empty → user bỏ qua
+            // dễ dàng. Backend giờ là bức tường cuối, frontend chặn trước.
             $serialIds = array_values(array_filter($item['serial_ids'] ?? [], fn($v) => $v !== null && $v !== ''));
-            if (!empty($serialIds)) {
-                $product = Product::find($item['product_id']);
-                if ($product && $product->has_serial) {
-                    if (count($serialIds) !== (int) $item['qty']) {
-                        return back()->withErrors([
-                            'items' => "Sản phẩm '{$product->name}': số Serial/IMEI đã chọn (" . count($serialIds) . ") không khớp số lượng đặt ({$item['qty']})."
-                        ])->withInput();
-                    }
-                    // Step 22.2A: validate qua SerialAvailabilityService (schema/legacy tolerant).
-                    $availability = app(SerialAvailabilityService::class);
-                    $blocked = $availability->findBlockedIds($serialIds, $product->id);
-                    if (!empty($blocked)) {
-                        return back()->withErrors([
-                            'items' => "Sản phẩm '{$product->name}': Serial/IMEI không khả dụng (id: " . implode(', ', $blocked) . ")."
-                        ])->withInput();
-                    }
-                } else {
-                    // product không có has_serial → bỏ serial_ids để không nhiễu DB.
-                    $serialIds = [];
+            $product = Product::find($item['product_id']);
+            if ($product && $product->has_serial) {
+                if (count($serialIds) !== (int) $item['qty']) {
+                    return back()->withErrors([
+                        'items' => "Sản phẩm '{$product->name}' là hàng Serial/IMEI. Vui lòng chọn đủ {$item['qty']} Serial/IMEI trước khi lưu đơn (đã chọn " . count($serialIds) . ")."
+                    ])->withInput();
                 }
+                // Step 22.2A: validate qua SerialAvailabilityService (schema/legacy tolerant).
+                $availability = app(SerialAvailabilityService::class);
+                $blocked = $availability->findBlockedIds($serialIds, $product->id);
+                if (!empty($blocked)) {
+                    return back()->withErrors([
+                        'items' => "Sản phẩm '{$product->name}': Serial/IMEI không khả dụng (id: " . implode(', ', $blocked) . ")."
+                    ])->withInput();
+                }
+            } else {
+                // Product không has_serial → bỏ serial_ids để không nhiễu DB.
+                $serialIds = [];
             }
 
             $order->items()->create([
@@ -335,31 +340,33 @@ class OrderController extends Controller
 
         // Update items if provided
         if ($request->has('items')) {
+            // Step 22.2G: pre-flight serial validation TRƯỚC khi xoá items cũ.
+            // Tránh trường hợp validate fail giữa chừng → order mất hết items cũ.
+            if ($preFlight = $this->validateItemsSerials($validated['items'] ?? [])) {
+                return $preFlight;
+            }
             $order->items()->delete();
             foreach ($validated['items'] as $item) {
                 $subtotal = ($item['qty'] * $item['price']) - ($item['discount'] ?? 0);
 
-                // Step 22.1C: validate serial_ids khi update — giống store.
+                // Step 22.2G: enforce Serial/IMEI required cho hàng has_serial khi update.
                 $serialIds = array_values(array_filter($item['serial_ids'] ?? [], fn($v) => $v !== null && $v !== ''));
-                if (!empty($serialIds)) {
-                    $product = Product::find($item['product_id']);
-                    if ($product && $product->has_serial) {
-                        if (count($serialIds) !== (int) $item['qty']) {
-                            return back()->withErrors([
-                                'items' => "Sản phẩm '{$product->name}': số Serial/IMEI đã chọn (" . count($serialIds) . ") không khớp số lượng đặt ({$item['qty']})."
-                            ])->withInput();
-                        }
-                        // Step 22.2A: validate qua SerialAvailabilityService.
-                        $availability = app(SerialAvailabilityService::class);
-                        $blocked = $availability->findBlockedIds($serialIds, $product->id);
-                        if (!empty($blocked)) {
-                            return back()->withErrors([
-                                'items' => "Sản phẩm '{$product->name}': Serial/IMEI không khả dụng (id: " . implode(', ', $blocked) . ")."
-                            ])->withInput();
-                        }
-                    } else {
-                        $serialIds = [];
+                $product = Product::find($item['product_id']);
+                if ($product && $product->has_serial) {
+                    if (count($serialIds) !== (int) $item['qty']) {
+                        return back()->withErrors([
+                            'items' => "Sản phẩm '{$product->name}' là hàng Serial/IMEI. Vui lòng chọn đủ {$item['qty']} Serial/IMEI trước khi lưu đơn (đã chọn " . count($serialIds) . ")."
+                        ])->withInput();
                     }
+                    $availability = app(SerialAvailabilityService::class);
+                    $blocked = $availability->findBlockedIds($serialIds, $product->id);
+                    if (!empty($blocked)) {
+                        return back()->withErrors([
+                            'items' => "Sản phẩm '{$product->name}': Serial/IMEI không khả dụng (id: " . implode(', ', $blocked) . ")."
+                        ])->withInput();
+                    }
+                } else {
+                    $serialIds = [];
                 }
 
                 $order->items()->create([
@@ -378,6 +385,35 @@ class OrderController extends Controller
         ActivityLog::log('order_update', "Cập nhật đơn hàng {$order->code}", $order);
 
         return back()->with('success', 'Cập nhật đơn hàng thành công');
+    }
+
+    /**
+     * Step 22.2G: pre-flight kiểm tra serial_ids cho tất cả items has_serial.
+     * Trả về RedirectResponse khi fail (để caller `return $preFlight`), null khi ok.
+     * Phải chạy TRƯỚC mọi DB write để giữ DB nhất quán.
+     */
+    private function validateItemsSerials(array $items)
+    {
+        $availability = app(SerialAvailabilityService::class);
+        foreach ($items as $item) {
+            $serialIds = array_values(array_filter($item['serial_ids'] ?? [], fn($v) => $v !== null && $v !== ''));
+            $product = Product::find($item['product_id'] ?? null);
+            if (!$product || !$product->has_serial) continue;
+
+            $qty = (int) ($item['qty'] ?? 0);
+            if (count($serialIds) !== $qty) {
+                return back()->withErrors([
+                    'items' => "Sản phẩm '{$product->name}' là hàng Serial/IMEI. Vui lòng chọn đủ {$qty} Serial/IMEI trước khi lưu đơn (đã chọn " . count($serialIds) . ")."
+                ])->withInput();
+            }
+            $blocked = $availability->findBlockedIds($serialIds, $product->id);
+            if (!empty($blocked)) {
+                return back()->withErrors([
+                    'items' => "Sản phẩm '{$product->name}': Serial/IMEI không khả dụng (id: " . implode(', ', $blocked) . ")."
+                ])->withInput();
+            }
+        }
+        return null;
     }
 
     public function print(Order $order)
