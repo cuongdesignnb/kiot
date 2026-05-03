@@ -16,6 +16,7 @@ use App\Services\CustomerDebtService;
 use App\Services\DebtOffsetService;
 use App\Models\DebtOffset;
 use App\Support\Filters\FilterableIndex;
+use Illuminate\Support\Facades\Schema;
 
 class CustomerController extends Controller
 {
@@ -714,6 +715,63 @@ class CustomerController extends Controller
             ->get(['id', 'code', 'name', 'phone', 'debt_amount', 'supplier_debt_amount', 'is_customer', 'is_supplier']);
 
         return response()->json($results);
+    }
+
+    /**
+     * Step 22.2E: typeahead search cho Orders/Create (và các màn hình khác cần KH).
+     * Schema-tolerant: chỉ áp is_customer / status nếu cột tồn tại.
+     * Limit 20, không paginate.
+     */
+    public function apiSearch(Request $request)
+    {
+        $search = trim((string) $request->query('search', ''));
+        if ($search === '') {
+            return response()->json([]);
+        }
+
+        $query = Customer::query();
+
+        if (Schema::hasColumn('customers', 'is_customer')) {
+            $query->where('is_customer', true);
+        }
+
+        if (Schema::hasColumn('customers', 'status')) {
+            $query->where(function ($q) {
+                $q->whereNull('status')->orWhere('status', '!=', 'inactive');
+            });
+        }
+
+        $query->where(function ($q) use ($search) {
+            $q->where('name', 'LIKE', "%{$search}%")
+              ->orWhere('code', 'LIKE', "%{$search}%")
+              ->orWhere('phone', 'LIKE', "%{$search}%")
+              ->orWhere('phone2', 'LIKE', "%{$search}%")
+              ->orWhere('email', 'LIKE', "%{$search}%")
+              ->orWhere('tax_code', 'LIKE', "%{$search}%");
+        });
+
+        $columns = ['id', 'code', 'name', 'phone', 'phone2', 'email', 'address',
+                    'debt_amount', 'total_spent'];
+        $columns = array_values(array_filter($columns, fn($c) => Schema::hasColumn('customers', $c)));
+
+        $rows = $query->orderBy('name')->limit(20)->get($columns);
+
+        return response()->json(
+            $rows->map(function (Customer $c) {
+                return [
+                    'id'            => (int) $c->id,
+                    'code'          => $c->code,
+                    'name'          => $c->name,
+                    'phone'         => $c->phone,
+                    'phone2'        => $c->phone2 ?? null,
+                    'email'         => $c->email ?? null,
+                    'address'       => $c->address ?? null,
+                    'debt_amount'   => isset($c->debt_amount) ? (float) $c->debt_amount : 0,
+                    'total_spent'   => isset($c->total_spent) ? (float) $c->total_spent : 0,
+                    'display_label' => trim(($c->name ?? '') . ($c->phone ? ' — ' . $c->phone : '')) ?: ('#' . $c->id),
+                ];
+            })->values()
+        );
     }
 
     public function merge(Request $request, Customer $customer)

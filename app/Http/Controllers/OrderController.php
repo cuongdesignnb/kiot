@@ -134,7 +134,8 @@ class OrderController extends Controller
 
         return Inertia::render('Orders/Create', [
             'branches' => Branch::all(),
-            'customers' => Customer::all(),
+            // Step 22.2E: không load toàn bộ KH — frontend dùng AJAX `api.customers.search`.
+            'customers' => [],
             'priceBooks' => PriceBook::query()
                 ->where(function ($q) {
                     $q->where('is_active', true)

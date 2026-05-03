@@ -135,6 +135,87 @@ watch(() => [activeTab.value?.searchQuery, activeTab.value?.selectedPriceBookId]
     }, 300);
 });
 
+// Step 22.2E: AJAX customer typeahead. Trước đây Orders/Create render tất cả props.customers
+// (Customer::all) làm dropdown đứng yên, không filter. Giờ gọi /api/customers/search,
+// debounce 250ms, hiển thị 4 trạng thái (loading / lỗi+retry / rỗng / list).
+const customerResults = ref([]);
+const customerLoading = ref(false);
+const customerError = ref('');
+let customerSearchTimer = null;
+
+const customerDisplay = (c) => {
+    if (!c) return '';
+    return c.display_label || c.name || c.phone || c.code || '';
+};
+
+const selectCustomer = (c) => {
+    if (!activeTab.value) return;
+    activeTab.value.selectedCustomer = c;
+    activeTab.value.searchCustomer = customerDisplay(c);
+    if (!activeTab.value.receiverName) activeTab.value.receiverName = c.name || '';
+    if (!activeTab.value.receiverPhone) activeTab.value.receiverPhone = c.phone || '';
+    activeTab.value.showCustomerDropdown = false;
+    customerResults.value = [];
+    customerError.value = '';
+};
+
+const fetchCustomers = async (query) => {
+    customerLoading.value = true;
+    customerError.value = '';
+    try {
+        const { data, headers } = await axios.get('/api/customers/search', {
+            params: { search: query },
+            timeout: 8000,
+            headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        });
+        const ct = (headers && (headers['content-type'] || headers['Content-Type'])) || '';
+        if (typeof data === 'string' || ct.includes('text/html')) {
+            customerResults.value = [];
+            customerError.value = 'Phiên đăng nhập có thể đã hết hạn. Vui lòng tải lại trang.';
+        } else {
+            customerResults.value = Array.isArray(data) ? data : [];
+        }
+    } catch (e) {
+        customerResults.value = [];
+        const status = e?.response?.status;
+        if (e?.code === 'ECONNABORTED') customerError.value = 'Tìm kiếm bị quá thời gian. Thử lại.';
+        else if (status === 401 || status === 419) customerError.value = 'Phiên đăng nhập đã hết hạn. Tải lại trang.';
+        else if (status === 403) customerError.value = 'Bạn không có quyền tìm khách hàng.';
+        else if (status === 404) customerError.value = 'Không tìm thấy API tìm khách hàng.';
+        else customerError.value = 'Lỗi tìm khách hàng. Thử lại.';
+    } finally {
+        customerLoading.value = false;
+    }
+};
+
+const retryCustomerSearch = () => {
+    const q = (activeTab.value?.searchCustomer || '').trim();
+    if (q) fetchCustomers(q);
+};
+
+watch(() => activeTab.value?.searchCustomer, (query) => {
+    clearTimeout(customerSearchTimer);
+    const q = (query || '').trim();
+    // Nếu user đã chọn KH và text vẫn trùng nhãn hiển thị → không làm gì.
+    const selected = activeTab.value?.selectedCustomer;
+    if (selected && q === customerDisplay(selected)) {
+        customerResults.value = [];
+        customerError.value = '';
+        return;
+    }
+    // Text khác KH đang chọn → coi như user đang chỉnh, bỏ KH cũ.
+    if (selected && q !== customerDisplay(selected)) {
+        activeTab.value.selectedCustomer = null;
+    }
+    if (q.length < 1) {
+        customerResults.value = [];
+        customerError.value = '';
+        customerLoading.value = false;
+        return;
+    }
+    customerSearchTimer = setTimeout(() => fetchCustomers(q), 250);
+});
+
 const handlePriceBookChange = async () => {
     if (!activeTab.value) return;
 
@@ -786,7 +867,7 @@ onUnmounted(() => {
             <div class="w-[320px] bg-white flex flex-col flex-shrink-0 border-r border-[#dce3ec] z-20">
                 <!-- Top area Customer info -->
                 <div class="p-3 border-b border-[#dce3ec] relative shadow-[0_2px_4px_-2px_rgba(0,0,0,0.05)]">
-                    <div v-if="activeTab.selectedCustomer" class="flex justify-between items-center mb-2 cursor-pointer hover:bg-gray-50 -mx-1 px-1 rounded" @click="activeTab.selectedCustomer = null">
+                    <div v-if="activeTab.selectedCustomer" class="flex justify-between items-center mb-2 cursor-pointer hover:bg-gray-50 -mx-1 px-1 rounded" @click="activeTab.selectedCustomer = null; activeTab.searchCustomer = ''">
                        <div class="font-bold text-gray-800 text-[14px] flex items-center gap-1.5">
                            {{ activeTab.selectedCustomer.name }} 
                            <i class="fas fa-walking text-gray-400"></i> 
@@ -805,11 +886,26 @@ onUnmounted(() => {
                            <input v-model="activeTab.searchCustomer" @focus="activeTab.showCustomerDropdown = true" @blur="hideCustomerDropdown" placeholder="Tìm khách hàng (F4)" class="w-full border-b border-gray-300 outline-none focus:border-blue-500 py-1 pl-7 pr-6 text-[13px]" />
                           <button class="absolute right-0 top-0.5 text-gray-400 hover:text-blue-600 font-bold px-1"><i class="fas fa-plus"></i></button>
                           
-                          <!-- Dropdown Results -->
-                          <div v-if="activeTab.showCustomerDropdown" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded z-50 max-h-[200px] overflow-auto">
-                              <div v-for="c in customers" :key="c.id" @mousedown.prevent="activeTab.selectedCustomer = c; activeTab.receiverName = c.name; activeTab.receiverPhone = c.phone;" class="p-2 border-b border-gray-100 hover:bg-blue-50 cursor-pointer">
-                                  <div class="font-bold text-gray-800">{{ c.name }}</div>
-                                  <div class="text-[12px] text-gray-500">{{ c.phone }}</div>
+                          <!-- Dropdown Results (Step 22.2E: AJAX) -->
+                          <div v-if="activeTab.showCustomerDropdown && (activeTab.searchCustomer || '').trim().length > 0" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded z-50 max-h-[260px] overflow-auto">
+                              <div v-if="customerLoading" class="p-2 text-[12px] text-gray-500 flex items-center gap-2">
+                                  <i class="fas fa-spinner fa-spin"></i> Đang tìm khách hàng…
+                              </div>
+                              <div v-else-if="customerError" class="p-2 text-[12px] text-red-600 flex items-center justify-between gap-2">
+                                  <span>{{ customerError }}</span>
+                                  <button type="button" @mousedown.prevent="retryCustomerSearch" class="text-blue-600 hover:underline">Thử lại</button>
+                              </div>
+                              <div v-else-if="customerResults.length === 0" class="p-2 text-[12px] text-gray-500">
+                                  Không tìm thấy khách hàng phù hợp.
+                              </div>
+                              <div v-else>
+                                  <div v-for="c in customerResults" :key="c.id" @mousedown.prevent="selectCustomer(c)" class="p-2 border-b border-gray-100 hover:bg-blue-50 cursor-pointer">
+                                      <div class="font-bold text-gray-800 text-[13px]">{{ c.name }}<span v-if="c.code" class="text-gray-400 font-normal text-[11px]"> · {{ c.code }}</span></div>
+                                      <div class="text-[12px] text-gray-500 flex justify-between gap-2">
+                                          <span>{{ c.phone || c.email || '—' }}</span>
+                                          <span v-if="c.debt_amount > 0" class="text-red-600">Nợ: {{ Number(c.debt_amount).toLocaleString('vi-VN') }}</span>
+                                      </div>
+                                  </div>
                               </div>
                           </div>
                        </div>

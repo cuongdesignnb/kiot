@@ -628,6 +628,11 @@ Route::get('/api/products/{product}/serials', [PosController::class, 'getProduct
 // Product search API (shared by Orders, POS, etc.)
 Route::get('/api/products/search', [ProductController::class, 'apiSearch'])->name('api.products.search');
 
+// Step 22.2E: Customer typeahead search cho Orders/Create (không đụng pos.use,
+// chỉ cần auth). Reuse được bởi bất kỳ màn form nào cần KH.
+Route::get('/api/customers/search', [CustomerController::class, 'apiSearch'])
+    ->name('api.customers.search');
+
 // Customer debt management
 Route::post('/customers/{customer}/debt-payment', [CustomerController::class, 'debtPayment'])->middleware('permission:customers.debt_payment');
 Route::post('/customers/{customer}/debt-adjust', [CustomerController::class, 'debtAdjust'])->middleware('permission:customers.debt_adjust');
