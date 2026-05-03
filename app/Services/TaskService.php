@@ -12,6 +12,8 @@ use App\Models\User;
 use App\Notifications\TaskAssignedNotification;
 use App\Notifications\TaskStatusChangedNotification;
 use App\Notifications\TaskCommentNotification;
+use App\Services\MovingAvgCostingService;
+use App\Services\StockMovementService;
 use Illuminate\Support\Facades\DB;
 
 class TaskService
@@ -286,7 +288,19 @@ class TaskService
                 'direction'  => 'export',
             ]);
 
-            $product->decrement('stock_quantity', $quantity);
+            // Trừ tồn kho linh kiện qua CostingService (cập nhật inventory_total_cost)
+            MovingAvgCostingService::applySale($product, $quantity);
+            $product->refresh();
+
+            // Ghi StockMovement cho linh kiện xuất
+            StockMovementService::record(
+                $product,
+                StockMovementService::TYPE_REPAIR_OUT,
+                $quantity,
+                $unitCost,
+                $task
+            );
+
             $task->recalculateCosts();
 
             // Cộng giá vốn vào đúng nơi (repair only)
@@ -298,13 +312,13 @@ class TaskService
 
                 // BQ DI ĐỘNG: nếu serial in_stock, tăng inventory_total_cost
                 if ($serial->status === 'in_stock' && $serial->product) {
-                    \App\Services\MovingAvgCostingService::applyRepairAdjustment($serial->product, (float) $totalCost);
+                    MovingAvgCostingService::applyRepairAdjustment($serial->product, (float) $totalCost);
                 }
             } elseif ($task->product_id) {
                 // Hàng không serial → BQ DI ĐỘNG: cộng vào inventory_total_cost
                 $repairedProduct = Product::find($task->product_id);
                 if ($repairedProduct) {
-                    \App\Services\MovingAvgCostingService::applyRepairAdjustment($repairedProduct, (float) $totalCost);
+                    MovingAvgCostingService::applyRepairAdjustment($repairedProduct, (float) $totalCost);
                 }
             }
 
@@ -319,8 +333,24 @@ class TaskService
     {
         DB::transaction(function () use ($part) {
             $task = $part->task;
+            $product = Product::find($part->product_id);
 
-            Product::where('id', $part->product_id)->increment('stock_quantity', $part->quantity);
+            if ($product) {
+                // Hoàn tồn kho linh kiện qua CostingService
+                $restoreCost = (float) ($part->unit_cost ?? $product->cost_price ?? 0);
+                MovingAvgCostingService::applyPurchase($product, (int) $part->quantity, $restoreCost);
+                $product->refresh();
+
+                // Ghi StockMovement cho linh kiện hoàn
+                StockMovementService::record(
+                    $product,
+                    StockMovementService::TYPE_REPAIR_IN,
+                    (int) $part->quantity,
+                    $restoreCost,
+                    $task,
+                    ['note' => 'Hoàn linh kiện — gỡ khỏi phiếu sửa chữa']
+                );
+            }
 
             $deltaCost = -(float) $part->total_cost;
 
@@ -331,12 +361,12 @@ class TaskService
                 $serial->save();
 
                 if ($serial->status === 'in_stock' && $serial->product) {
-                    \App\Services\MovingAvgCostingService::applyRepairAdjustment($serial->product, $deltaCost);
+                    MovingAvgCostingService::applyRepairAdjustment($serial->product, $deltaCost);
                 }
             } elseif ($task->product_id) {
                 $repairedProduct = Product::find($task->product_id);
                 if ($repairedProduct) {
-                    \App\Services\MovingAvgCostingService::applyRepairAdjustment($repairedProduct, $deltaCost);
+                    MovingAvgCostingService::applyRepairAdjustment($repairedProduct, $deltaCost);
                 }
             }
 
@@ -368,8 +398,19 @@ class TaskService
                 'direction'  => 'import',
             ]);
 
-            // Cộng tồn kho linh kiện
-            $product->increment('stock_quantity', $quantity);
+            // Cộng tồn kho linh kiện qua CostingService
+            MovingAvgCostingService::applyPurchase($product, $quantity, $cost);
+            $product->refresh();
+
+            // Ghi StockMovement cho linh kiện thu hồi
+            StockMovementService::record(
+                $product,
+                StockMovementService::TYPE_REPAIR_IN,
+                $quantity,
+                $cost,
+                $task,
+                ['note' => 'Bóc linh kiện từ máy — nhập kho']
+            );
 
             // Trừ giá vốn máy
             $deltaCost = -$totalCost;
@@ -380,12 +421,12 @@ class TaskService
                 $serial->save();
 
                 if ($serial->status === 'in_stock' && $serial->product) {
-                    \App\Services\MovingAvgCostingService::applyRepairAdjustment($serial->product, $deltaCost);
+                    MovingAvgCostingService::applyRepairAdjustment($serial->product, $deltaCost);
                 }
             } elseif ($task->product_id) {
                 $repairedProduct = Product::find($task->product_id);
                 if ($repairedProduct) {
-                    \App\Services\MovingAvgCostingService::applyRepairAdjustment($repairedProduct, $deltaCost);
+                    MovingAvgCostingService::applyRepairAdjustment($repairedProduct, $deltaCost);
                 }
             }
 

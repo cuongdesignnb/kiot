@@ -8,6 +8,17 @@ class Invoice extends Model
 {
     protected $guarded = ['id'];
 
+    /**
+     * Scope: chỉ lấy hóa đơn hợp lệ (loại trừ status = 'Đã hủy').
+     *
+     * Dùng trong báo cáo, dashboard, metric để không tính HĐ đã hủy.
+     * KHÔNG dùng global scope vì InvoiceController@show/index cần xem cả HĐ hủy.
+     */
+    public function scopeActive($query)
+    {
+        return $query->where('status', '!=', 'Đã hủy');
+    }
+
     public function items()
     {
         return $this->hasMany(InvoiceItem::class);

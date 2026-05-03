@@ -16,7 +16,12 @@ class DamageItem extends Model
         'qty',
         'cost_price',
         'total_value',
-        'note'
+        'note',
+        'serial_ids',
+    ];
+
+    protected $casts = [
+        'serial_ids' => 'array',
     ];
 
     public function product()

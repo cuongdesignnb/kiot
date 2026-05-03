@@ -132,7 +132,8 @@ class MovingAvgCostingService
 
             $newQty = max(0, $oldQty - $qty);
             $newTotal = max(0.0, $oldTotal - ($qty * $costAtPurchase));
-            $newAvg = $newQty > 0 ? round($newTotal / $newQty, 2) : 0.0;
+            // RR-05: nhất quán với applySale — khi tồn về 0, giữ BQ cuối làm last-known average
+            $newAvg = $newQty > 0 ? round($newTotal / $newQty, 2) : (float) $product->cost_price;
 
             $product->stock_quantity = $newQty;
             $product->inventory_total_cost = round($newTotal, 2);
