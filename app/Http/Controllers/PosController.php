@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use Inertia\Inertia;
 use App\Models\Product;
 use App\Services\InvoiceSaleService;
+use App\Services\SerialAvailabilityService;
 
 class PosController extends Controller
 {
@@ -54,20 +55,18 @@ class PosController extends Controller
     }
 
     /**
-     * Lấy danh sách serial/IMEI khả dụng cho 1 sản phẩm
+     * Lấy danh sách serial/IMEI khả dụng cho 1 sản phẩm.
+     * Step 22.2A: dùng SerialAvailabilityService — schema-tolerant + legacy-tolerant.
      */
-    public function getProductSerials(Product $product)
+    public function getProductSerials(Product $product, SerialAvailabilityService $availability)
     {
-        $serials = \App\Models\SerialImei::where('product_id', $product->id)
-            ->where('status', 'in_stock')
-            ->where(function ($q) {
-                $q->whereNull('repair_status')
-                  ->orWhereNotIn('repair_status', ['not_started', 'repairing']);
-            })
+        $serials = $availability->querySellableForProduct($product->id)
             ->orderBy('serial_number')
-            ->get(['id', 'serial_number', 'status', 'cost_price']);
+            ->get();
 
-        return response()->json($serials);
+        return response()->json(
+            $serials->map(fn($s) => $availability->normalizeForResponse($s))->values()
+        );
     }
 
     public function checkout(Request $request)

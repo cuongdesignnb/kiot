@@ -19,6 +19,7 @@ use App\Support\Filters\FilterableIndex;
 use App\Services\CustomerDebtService;
 use App\Services\LockPeriodService;
 use App\Services\MovingAvgCostingService;
+use App\Services\SerialAvailabilityService;
 use App\Services\StockMovementService;
 use Carbon\Carbon;
 
@@ -269,13 +270,12 @@ class OrderController extends Controller
                             'items' => "Sản phẩm '{$product->name}': số Serial/IMEI đã chọn (" . count($serialIds) . ") không khớp số lượng đặt ({$item['qty']})."
                         ])->withInput();
                     }
-                    $valid = SerialImei::whereIn('id', $serialIds)
-                        ->where('product_id', $product->id)
-                        ->where('status', 'in_stock')
-                        ->count();
-                    if ($valid !== count($serialIds)) {
+                    // Step 22.2A: validate qua SerialAvailabilityService (schema/legacy tolerant).
+                    $availability = app(SerialAvailabilityService::class);
+                    $blocked = $availability->findBlockedIds($serialIds, $product->id);
+                    if (!empty($blocked)) {
                         return back()->withErrors([
-                            'items' => "Sản phẩm '{$product->name}': một số Serial/IMEI không hợp lệ hoặc đã bán."
+                            'items' => "Sản phẩm '{$product->name}': Serial/IMEI không khả dụng (id: " . implode(', ', $blocked) . ")."
                         ])->withInput();
                     }
                 } else {
@@ -348,13 +348,12 @@ class OrderController extends Controller
                                 'items' => "Sản phẩm '{$product->name}': số Serial/IMEI đã chọn (" . count($serialIds) . ") không khớp số lượng đặt ({$item['qty']})."
                             ])->withInput();
                         }
-                        $valid = SerialImei::whereIn('id', $serialIds)
-                            ->where('product_id', $product->id)
-                            ->where('status', 'in_stock')
-                            ->count();
-                        if ($valid !== count($serialIds)) {
+                        // Step 22.2A: validate qua SerialAvailabilityService.
+                        $availability = app(SerialAvailabilityService::class);
+                        $blocked = $availability->findBlockedIds($serialIds, $product->id);
+                        if (!empty($blocked)) {
                             return back()->withErrors([
-                                'items' => "Sản phẩm '{$product->name}': một số Serial/IMEI không hợp lệ hoặc đã bán."
+                                'items' => "Sản phẩm '{$product->name}': Serial/IMEI không khả dụng (id: " . implode(', ', $blocked) . ")."
                             ])->withInput();
                         }
                     } else {
@@ -478,13 +477,12 @@ class OrderController extends Controller
                             "Sản phẩm '{$product->name}': số lượng serial (" . count($serialIds) . ") không khớp số lượng đặt ({$qty})."
                         );
                     }
-                    $availableCount = SerialImei::whereIn('id', $serialIds)
-                        ->where('product_id', $product->id)
-                        ->where('status', 'in_stock')
-                        ->count();
-                    if ($availableCount < count($serialIds)) {
+                    // Step 22.2A: validate qua SerialAvailabilityService — schema-tolerant.
+                    $availability = app(SerialAvailabilityService::class);
+                    $blocked = $availability->findBlockedIds($serialIds, $product->id);
+                    if (!empty($blocked)) {
                         throw new \Exception(
-                            "Sản phẩm '{$product->name}' - một số Serial/IMEI đã bán hoặc không tồn tại."
+                            "Sản phẩm '{$product->name}': Serial/IMEI không khả dụng (id: " . implode(', ', $blocked) . ")."
                         );
                     }
                 } elseif (!$allowOversell && $product->stock_quantity < $qty) {

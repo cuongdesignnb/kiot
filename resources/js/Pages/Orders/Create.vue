@@ -187,8 +187,11 @@ const selectProduct = (product) => {
             serialError: '',
         };
         activeTab.value.items.unshift(newItem);
-        if (newItem.has_serial) {
-            loadAvailableSerials(newItem);
+        // Step 22.2B: load serial bằng REACTIVE proxy reference (activeTab.value.items[0]),
+        // KHÔNG dùng `newItem` plain object — mutation trên plain object không trigger Vue reactivity
+        // nên serialLoading=false sau request không update được UI ⇒ bị treo "Đang tải…".
+        if (product.has_serial) {
+            loadAvailableSerials(activeTab.value.items[0]);
         }
     } else {
         existing.qty++;
@@ -197,39 +200,68 @@ const selectProduct = (product) => {
     activeTab.value.showSuggestions = false;
 };
 
-// Step 22.1C: lấy danh sách Serial/IMEI in_stock cho sản phẩm has_serial.
+// Step 22.1C / 22.2B: lấy danh sách Serial/IMEI khả dụng cho sản phẩm has_serial.
+// 22.2B: hardened — timeout, HTML detection, finally luôn tắt loading,
+// item PHẢI là reactive proxy (activeTab.value.items[index]) để UI re-render.
 const loadAvailableSerials = async (item) => {
+    if (!item || !item.product_id) return;
+
     item.serialLoading = true;
     item.serialError = '';
+    item.available_serials = [];
+
     try {
-        const { data } = await axios.get(`/api/products/${item.product_id}/serials`, {
-            timeout: 10000,
+        const { data, headers } = await axios.get(`/api/products/${item.product_id}/serials`, {
+            timeout: 8000,
             headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         });
-        // Step 22.1E: backend có thể trả mảng trực tiếp hoặc {data: [...]}.
-        // Nếu trả HTML (login redirect / 403 page) thì data sẽ không phải mảng.
-        const list = Array.isArray(data) ? data : (Array.isArray(data?.data) ? data.data : null);
-        if (list === null) {
-            item.available_serials = [];
-            item.serialError = 'Phản hồi không hợp lệ từ server (không phải JSON).';
-        } else {
-            item.available_serials = list;
+
+        const ct = (headers && headers['content-type']) || '';
+        if (typeof data === 'string' || ct.includes('text/html')) {
+            item.serialError = 'Server trả HTML thay vì JSON (có thể bị redirect login). Vui lòng đăng nhập lại.';
+            return;
         }
+
+        const list = Array.isArray(data)
+            ? data
+            : (Array.isArray(data?.data) ? data.data : null);
+
+        if (list === null) {
+            item.serialError = 'Phản hồi không hợp lệ từ server.';
+            return;
+        }
+
+        item.available_serials = list;
+        // Empty không phải error — để template hiển thị empty state riêng.
     } catch (e) {
-        item.available_serials = [];
         const status = e?.response?.status;
-        if (status === 401 || status === 403) {
-            item.serialError = `Không có quyền truy cập danh sách Serial/IMEI (HTTP ${status}). Liên hệ admin.`;
+        const ct = e?.response?.headers?.['content-type'] || '';
+        const msg = e?.response?.data?.message;
+
+        if (e?.code === 'ECONNABORTED') {
+            item.serialError = 'Tải Serial/IMEI quá lâu, vui lòng thử lại.';
+        } else if (status === 401 || status === 419) {
+            item.serialError = 'Phiên đăng nhập hết hạn, vui lòng đăng nhập lại.';
+        } else if (status === 403) {
+            item.serialError = 'Không có quyền xem Serial/IMEI.';
         } else if (status === 404) {
             item.serialError = 'Endpoint Serial/IMEI không tồn tại (HTTP 404).';
-        } else if (e?.code === 'ECONNABORTED') {
-            item.serialError = 'Timeout khi tải Serial/IMEI.';
+        } else if (ct.includes('text/html')) {
+            item.serialError = 'Server trả HTML thay vì JSON. Kiểm tra route/login.';
         } else {
-            item.serialError = `Không tải được danh sách Serial/IMEI${status ? ` (HTTP ${status})` : ''}.`;
+            item.serialError = msg || `Không tải được Serial/IMEI${status ? ` (HTTP ${status})` : ''}.`;
         }
+        // eslint-disable-next-line no-console
+        console.debug('[OrderSerials] load failed', { product_id: item.product_id, status, error: e?.message });
     } finally {
         item.serialLoading = false;
     }
+};
+
+// Step 22.2B: retry handler binding cho UI.
+const retryLoadSerials = (index) => {
+    const raw = activeTab.value?.items?.[index];
+    if (raw) loadAvailableSerials(raw);
 };
 
 // Step 22.1C: toggle 1 serial trong selection của item.
@@ -267,13 +299,27 @@ const itemsComputed = computed(() => {
         const qty = parseInt(item.qty) || 0;
         const price = parseFloat(item.price) || 0;
         const itemDiscount = parseFloat(item.discount) || 0;
-        // Step 22.1C: nếu serial_ids vượt qty (do user giảm qty) thì cắt bớt.
-        if (item.has_serial && Array.isArray(item.serial_ids) && item.serial_ids.length > qty) {
-            item.serial_ids = item.serial_ids.slice(0, qty);
-        }
         return { ...item, subtotal: (qty * price) - itemDiscount };
     });
 });
+
+// Step 22.2B: cắt bớt serial_ids khi qty giảm — chuyển từ computed (side-effect bẩn)
+// sang watch sạch sẽ. Computed không được mutate state.
+watch(
+    () => activeTab.value?.items?.map(i => ({ id: i.product_id, qty: parseInt(i.qty) || 0, has_serial: !!i.has_serial })),
+    () => {
+        const items = activeTab.value?.items || [];
+        items.forEach(item => {
+            if (item.has_serial && Array.isArray(item.serial_ids)) {
+                const qty = parseInt(item.qty) || 0;
+                if (item.serial_ids.length > qty) {
+                    item.serial_ids = item.serial_ids.slice(0, qty);
+                }
+            }
+        });
+    },
+    { deep: true }
+);
 
 const totalAmount = computed(() => itemsComputed.value.reduce((sum, item) => sum + item.subtotal, 0));
 const totalPayment = computed(() => Math.max(0, totalAmount.value - Number(activeTab.value.discount) + Number(activeTab.value.otherFees)));
@@ -617,7 +663,8 @@ onUnmounted(() => {
                                         <span v-if="item.stock_quantity <= 0"> — Hết hàng!</span>
                                         <span v-else-if="item.stock_quantity < item.qty"> — Không đủ!</span>
                                     </div>
-                                    <!-- Step 22.1C: Serial/IMEI selector cho sản phẩm has_serial -->
+                                    <!-- Step 22.1C/22.2B: Serial/IMEI selector — BIND trực tiếp vào reactive proxy
+                                         activeTab.items[index] thay vì computed copy `item` để UI nhận mutation. -->
                                     <div v-if="item.has_serial" class="mt-2 w-[260px] lg:w-[350px] xl:w-[450px]">
                                         <div class="flex items-center justify-between mb-1">
                                             <span class="text-[11px] font-semibold text-gray-700">
@@ -625,28 +672,42 @@ onUnmounted(() => {
                                             </span>
                                             <span
                                                 class="text-[11px] font-semibold"
-                                                :class="(item.serial_ids?.length || 0) === parseInt(item.qty || 0) ? 'text-green-600' : 'text-orange-600'"
-                                            >Đã chọn {{ item.serial_ids?.length || 0 }}/{{ item.qty }}</span>
+                                                :class="(activeTab.items[index]?.serial_ids?.length || 0) === parseInt(item.qty || 0) ? 'text-green-600' : 'text-orange-600'"
+                                            >Đã chọn {{ activeTab.items[index]?.serial_ids?.length || 0 }}/{{ item.qty }}</span>
                                         </div>
-                                        <div v-if="item.serialLoading" class="text-[11px] text-gray-400">Đang tải Serial/IMEI…</div>
-                                        <div v-else-if="item.serialError" class="text-[11px] text-red-500">{{ item.serialError }}</div>
-                                        <div v-else-if="!item.available_serials || item.available_serials.length === 0" class="text-[11px] text-red-500">
-                                            Không có Serial/IMEI in_stock cho sản phẩm này.
+                                        <div v-if="activeTab.items[index]?.serialLoading" class="text-[11px] text-gray-400">Đang tải Serial/IMEI…</div>
+                                        <div v-else-if="activeTab.items[index]?.serialError" class="flex items-center gap-2">
+                                            <span class="text-[11px] text-red-500">{{ activeTab.items[index].serialError }}</span>
+                                            <button
+                                                type="button"
+                                                class="text-[10px] px-1.5 py-0.5 border border-blue-300 text-blue-600 rounded hover:bg-blue-50"
+                                                @click="retryLoadSerials(index)"
+                                            >Tải lại</button>
+                                        </div>
+                                        <div v-else-if="!activeTab.items[index]?.available_serials || activeTab.items[index].available_serials.length === 0" class="flex items-center gap-2">
+                                            <span class="text-[11px] text-red-500">Không có Serial/IMEI khả dụng cho sản phẩm này.</span>
+                                            <button
+                                                type="button"
+                                                class="text-[10px] px-1.5 py-0.5 border border-blue-300 text-blue-600 rounded hover:bg-blue-50"
+                                                @click="retryLoadSerials(index)"
+                                            >Tải lại</button>
                                         </div>
                                         <div v-else class="flex flex-wrap gap-1 max-h-24 overflow-auto border border-gray-200 rounded p-1 bg-gray-50">
                                             <label
-                                                v-for="s in item.available_serials"
+                                                v-for="s in activeTab.items[index].available_serials"
                                                 :key="s.id"
                                                 class="flex items-center gap-1 text-[11px] bg-white border rounded px-1.5 py-0.5 cursor-pointer hover:border-blue-400"
-                                                :class="(item.serial_ids || []).includes(s.id) ? 'border-blue-500 bg-blue-50 text-blue-700 font-semibold' : 'border-gray-200 text-gray-700'"
+                                                :class="(activeTab.items[index].serial_ids || []).includes(s.id) ? 'border-blue-500 bg-blue-50 text-blue-700 font-semibold' : 'border-gray-200 text-gray-700'"
+                                                :title="s.is_legacy_status ? 'Dữ liệu cũ — status legacy/null' : ''"
                                             >
                                                 <input
                                                     type="checkbox"
                                                     class="hidden"
-                                                    :checked="(item.serial_ids || []).includes(s.id)"
+                                                    :checked="(activeTab.items[index].serial_ids || []).includes(s.id)"
                                                     @change="toggleSerial(activeTab.items[index], s.id)"
                                                 />
-                                                {{ s.serial_number || s.imei || ('#' + s.id) }}
+                                                {{ s.label || s.serial_number || s.imei || ('#' + s.id) }}
+                                                <span v-if="s.is_legacy_status" class="text-[9px] text-amber-600 ml-0.5">(cũ)</span>
                                             </label>
                                         </div>
                                     </div>
