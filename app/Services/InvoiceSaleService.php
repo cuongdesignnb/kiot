@@ -40,6 +40,10 @@ class InvoiceSaleService
     {
         return DB::transaction(function () use ($payload, $context) {
             // ─── 1. Pre-flight validations ───
+            // Step 23.1: enforce serial selection cho has_serial item (count===qty + in_stock)
+            // chạy TRƯỚC khi tạo bất kỳ record nào để tránh orphan Invoice/InvoiceItem.
+            $this->assertSerialSelectionComplete($payload['items']);
+
             if (!empty($context['validate_before_purchase_date'])) {
                 $this->assertNotBeforePurchaseDate(
                     $payload['items'],
@@ -314,6 +318,43 @@ class InvoiceSaleService
             if ($product && $product->stock_quantity < $item['quantity']) {
                 throw new \Exception(
                     "Sản phẩm '{$product->name}' không đủ tồn kho (còn {$product->stock_quantity})."
+                );
+            }
+        }
+    }
+
+    /**
+     * Step 23.1: với mọi item có Product.has_serial=true:
+     *  - Bắt buộc serial_ids != [] và count(serial_ids) === quantity.
+     *  - Mọi serial_id phải thuộc product và đang sellable (in_stock + repair OK).
+     * Throw \Exception (DB::transaction rollback) nếu vi phạm → KHÔNG tạo Invoice rỗng.
+     * Item có has_serial=false: bỏ qua, không bắt buộc serial_ids.
+     */
+    private function assertSerialSelectionComplete(array $items): void
+    {
+        foreach ($items as $item) {
+            $productId = (int) ($item['product_id'] ?? 0);
+            $qty       = (int) ($item['quantity'] ?? 0);
+            if ($productId <= 0 || $qty <= 0) {
+                continue;
+            }
+            $product = Product::find($productId);
+            if (!$product || !$product->has_serial) {
+                continue;
+            }
+            $serialIds = array_values(array_filter(array_map('intval', (array) ($item['serial_ids'] ?? []))));
+            if (count($serialIds) !== $qty) {
+                throw new \Exception(
+                    "Sản phẩm '{$product->name}' (Serial/IMEI) cần chọn đủ "
+                    . "{$qty} mã, hiện đã chọn " . count($serialIds) . '.'
+                );
+            }
+            $blocked = app(SerialAvailabilityService::class)
+                ->findBlockedIds($serialIds, $product->id);
+            if (!empty($blocked)) {
+                throw new \Exception(
+                    "Sản phẩm '{$product->name}': có serial không hợp lệ hoặc đã bán/đang sửa "
+                    . '(' . implode(',', $blocked) . ').'
                 );
             }
         }
