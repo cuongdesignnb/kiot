@@ -78,13 +78,62 @@ class StockTransferController extends Controller
     {
         $request->validate([
             'from_branch_id' => 'required|exists:branches,id',
-            'to_branch_id' => 'required|exists:branches,id',
+            'to_branch_id' => 'required|exists:branches,id|different:from_branch_id',
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|exists:products,id',
             'items.*.quantity' => 'required|integer|min:1',
             'status' => 'required|in:draft,transferring,received',
             'note' => 'nullable|string'
+        ], [
+            'to_branch_id.different' => 'Chi nhánh nhận phải khác chi nhánh chuyển.',
         ]);
+
+        // ===== Step 23.5 pre-flight =====
+        // 1) Chặn duplicate product_id trong cùng phiếu.
+        // 2) Chặn hàng has_serial ở trạng thái transferring/received
+        //    vì chưa có serial detail/snapshot — không được chuyển mù.
+        // 3) Backend tự tính total_quantity/total_price từ cost_price hiện tại,
+        //    KHÔNG tin client price.
+        $seenProductIds = [];
+        $serverItems = [];
+        $serverTotalQty = 0;
+        $serverTotalPrice = 0.0;
+        foreach ($request->items as $idx => $line) {
+            $pid = (int) $line['product_id'];
+            if (isset($seenProductIds[$pid])) {
+                return back()->withErrors([
+                    "items.{$idx}.product_id" => 'Sản phẩm bị trùng trong cùng phiếu chuyển kho.',
+                ])->withInput();
+            }
+            $seenProductIds[$pid] = true;
+
+            $product = Product::find($pid);
+            if (!$product) {
+                return back()->withErrors([
+                    "items.{$idx}.product_id" => 'Sản phẩm không tồn tại.',
+                ])->withInput();
+            }
+
+            $qty = (int) $line['quantity'];
+            $costAtTransfer = (float) $product->cost_price;
+
+            // BUG-3: chặn hhàng has_serial cho transferring/received (chưa có serial detail).
+            if ($request->status !== 'draft' && $product->has_serial) {
+                return back()->withErrors([
+                    "items.{$idx}.product_id" => 'Sản phẩm “' . $product->name . '” có serial/IMEI: chưa hỗ trợ chuyển kho khi chưa khai báo serial cụ thể.',
+                ])->withInput();
+            }
+
+            $serverItems[] = [
+                'product_id'       => $pid,
+                'quantity'         => $qty,
+                'cost_at_transfer' => $costAtTransfer,
+                'price'            => $qty * $costAtTransfer,
+                'product'          => $product,
+            ];
+            $serverTotalQty += $qty;
+            $serverTotalPrice += $qty * $costAtTransfer;
+        }
 
         try {
             DB::beginTransaction();
@@ -101,8 +150,8 @@ class StockTransferController extends Controller
                 'note' => $request->note,
                 'sent_date' => $request->status !== 'draft' ? Carbon::now() : null,
                 'receive_date' => $request->status === 'received' ? Carbon::now() : null,
-                'total_quantity' => array_sum(array_column($request->items, 'quantity')),
-                'total_price' => array_sum(array_column($request->items, 'price'))
+                'total_quantity' => $serverTotalQty,
+                'total_price' => $serverTotalPrice,
             ]);
 
             if ($request->filled('action_date')) {
@@ -116,36 +165,33 @@ class StockTransferController extends Controller
                 $transfer->save();
             }
 
-            foreach ($request->items as $item) {
-                $product = Product::find($item['product_id']);
+            foreach ($serverItems as $row) {
+                /** @var \App\Models\Product $product */
+                $product = $row['product'];
+                $qty = $row['quantity'];
+                $costAtTransfer = $row['cost_at_transfer'];
 
                 // Validate stock before transfer
-                if ($request->status !== 'draft') {
-                    if ($product && $product->stock_quantity < $item['quantity']) {
-                        throw new \Exception("Sản phẩm '{$product->name}' không đủ tồn kho để chuyển hàng (Còn: {$product->stock_quantity}, Cần: {$item['quantity']}).");
-                    }
+                if ($request->status !== 'draft' && $product->stock_quantity < $qty) {
+                    throw new \Exception("Sản phẩm '{$product->name}' không đủ tồn kho để chuyển hàng (Còn: {$product->stock_quantity}, Cần: {$qty}).");
                 }
-
-                // RR-12: snapshot BQ TRƯỚC khi applySale để cancel/receive
-                // dùng đúng cost lúc xuất chuyển (không phụ thuộc current BQ).
-                $costAtTransfer = $product ? (float) $product->cost_price : 0.0;
 
                 $transferItem = StockTransferItem::create([
                     'stock_transfer_id' => $transfer->id,
-                    'product_id'        => $item['product_id'],
-                    'quantity'          => $item['quantity'],
-                    'price'             => $item['price'] ?? 0,
+                    'product_id'        => $product->id,
+                    'quantity'          => $qty,
+                    'price'             => $row['price'],
                     'cost_at_transfer'  => $costAtTransfer,
                 ]);
 
                 // Transfer out: deduct stock + update costing + record movement
-                if ($request->status !== 'draft' && $product) {
-                    $cogs = MovingAvgCostingService::applySale($product, $item['quantity']);
+                if ($request->status !== 'draft') {
+                    $cogs = MovingAvgCostingService::applySale($product, $qty);
                     $product->refresh();
                     StockMovementService::record(
                         $product,
                         StockMovementService::TYPE_TRANSFER_OUT,
-                        $item['quantity'],
+                        $qty,
                         $cogs['cogs_per_unit'],
                         $transfer,
                         ['branch_id' => $request->from_branch_id]
@@ -153,21 +199,21 @@ class StockTransferController extends Controller
                 }
 
                 // Transfer in (received immediately): add stock + update costing + record movement
-                if ($request->status === 'received' && $product) {
+                if ($request->status === 'received') {
                     // RR-12: dùng cost_at_transfer (snapshot lúc xuất) thay vì current cost
                     // để hàng giữ đúng giá vốn nguồn khi nhập kho đích.
                     $costPerUnit = $costAtTransfer;
-                    MovingAvgCostingService::applyPurchase($product, $item['quantity'], $costPerUnit);
+                    MovingAvgCostingService::applyPurchase($product, $qty, $costPerUnit);
                     $product->refresh();
                     StockMovementService::record(
                         $product,
                         StockMovementService::TYPE_TRANSFER_IN,
-                        $item['quantity'],
+                        $qty,
                         $costPerUnit,
                         $transfer,
                         ['branch_id' => $request->to_branch_id]
                     );
-                    $transferItem->update(['received_quantity' => $item['quantity']]);
+                    $transferItem->update(['received_quantity' => $qty]);
                 }
             }
 
@@ -234,31 +280,44 @@ class StockTransferController extends Controller
         // Build received quantities
         $receivedItems = collect($request->items ?? []);
         $isPartial = false;
+        $resolvedQty = [];
 
+        // Step 23.5: KHÔNG clamp âm thầm. Validate strict.
         foreach ($transfer->items as $item) {
             $recv = $receivedItems->firstWhere('product_id', $item->product_id);
-            $recvQty = $recv ? (int)$recv['received_quantity'] : $item->quantity;
+            $recvQty = $recv !== null && array_key_exists('received_quantity', $recv)
+                ? (int) $recv['received_quantity']
+                : (int) $item->quantity;
 
-            if ($recvQty < 0) $recvQty = 0;
-            if ($recvQty > $item->quantity) $recvQty = $item->quantity;
+            if ($recvQty < 0) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Số lượng nhận không được âm.',
+                ], 422);
+            }
+            if ($recvQty > (int) $item->quantity) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Số lượng nhận không được vượt số lượng đã chuyển.',
+                ], 422);
+            }
 
-            if ($recvQty < $item->quantity) $isPartial = true;
+            if ($recvQty < (int) $item->quantity) {
+                $isPartial = true;
+            }
+            $resolvedQty[$item->id] = $recvQty;
         }
 
         // If partial, require note
         if ($isPartial && empty($request->receive_note)) {
-            return response()->json(['success' => false, 'message' => 'Nhan hang thieu can ghi chu ly do.'], 422);
+            return response()->json(['success' => false, 'message' => 'Nhận hàng thiếu cần ghi chú lý do.'], 422);
         }
 
         try {
             DB::beginTransaction();
 
             foreach ($transfer->items as $item) {
-                $recv = $receivedItems->firstWhere('product_id', $item->product_id);
-                $recvQty = $recv ? (int)$recv['received_quantity'] : $item->quantity;
-
-                if ($recvQty < 0) $recvQty = 0;
-                if ($recvQty > $item->quantity) $recvQty = $item->quantity;
+                $recvQty = $resolvedQty[$item->id];
 
                 $item->update(['received_quantity' => $recvQty]);
 
