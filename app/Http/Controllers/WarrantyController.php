@@ -24,31 +24,7 @@ class WarrantyController extends Controller
 
     public function index(Request $request)
     {
-        // Auto seed dummy data if empty for testing viewing
-        if (Warranty::count() === 0) {
-            $product1 = Product::where('sku', 'SP007765')->first() ?? Product::first();
-            $product2 = Product::where('sku', 'SP008042')->first() ?? Product::skip(1)->first();
-            if ($product1 && $product2) {
-                Warranty::create([
-                    'invoice_code' => 'HD008229.01',
-                    'product_id' => $product1->id,
-                    'customer_name' => 'Anh Khải',
-                    'serial_imei' => null,
-                    'warranty_period' => 3,
-                    'purchase_date' => Carbon::now()->subMonths(1),
-                    'warranty_end_date' => Carbon::now()->addMonths(2),
-                ]);
-                Warranty::create([
-                    'invoice_code' => 'HD008229.01',
-                    'product_id' => $product2->id,
-                    'customer_name' => 'Anh Khải',
-                    'serial_imei' => '3VGMK73',
-                    'warranty_period' => 3,
-                    'purchase_date' => Carbon::now()->subMonths(1),
-                    'warranty_end_date' => Carbon::now()->addMonths(2),
-                ]);
-            }
-        }
+        // Step 23.7: removed auto-seed. Index is read-only — không tạo dữ liệu demo.
 
         $this->configureWarrantyFilters();
 
@@ -129,15 +105,16 @@ class WarrantyController extends Controller
 
     public function update(Request $request, Warranty $warranty)
     {
-        $request->validate([
-            'maintenance_note' => 'nullable|string',
-            'has_reminder_off' => 'nullable|boolean',
-            'warranty_period' => 'nullable|integer',
+        // Step 23.7: chỉ cho update các field bảo trì. Không cho sửa invoice_code/product_id/customer_name/purchase_date qua route này.
+        $data = $request->validate([
+            'maintenance_note'  => 'nullable|string',
+            'has_reminder_off'  => 'nullable|boolean',
+            'warranty_period'   => 'nullable|integer|min:0',
             'warranty_end_date' => 'nullable|date',
-            'serial_imei' => 'nullable|string',
+            'serial_imei'       => 'nullable|string|max:100',
         ]);
 
-        $warranty->update($request->only('maintenance_note', 'has_reminder_off', 'warranty_period', 'warranty_end_date', 'serial_imei'));
+        $warranty->update($data);
 
         return redirect()->back()->with('success', 'Đã cập nhật thông tin bảo hành!');
     }
