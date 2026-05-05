@@ -161,6 +161,38 @@ class PurchaseReturnController extends Controller
             }
         }
 
+        // ── Step 23.3: Validate serial cho hàng has_serial khi trả NCC ──
+        // BUG-3: serial phải thuộc đúng purchase_id (không cho cross-purchase).
+        // BUG-4: count(serial_ids) === quantity bắt buộc cho hàng has_serial.
+        // BUG-5: chống trùng serial_id trong cùng request.
+        // BUG-6: serial phải đang status=in_stock và chưa thuộc return khác.
+        $seenSerialIds = [];
+        foreach ($request->items as $i => $item) {
+            $product = Product::find($item['product_id']);
+            if (!$product || !$product->has_serial) continue;
+
+            $qty = (int) $item['quantity'];
+            $serialIds = array_values(array_filter(array_map('intval', (array) ($item['serial_ids'] ?? []))));
+
+            if (count($serialIds) !== $qty) {
+                return back()->withErrors(["items.{$i}.serial_ids" => "Sản phẩm \"{$product->name}\" cần chọn đủ {$qty} serial (đang chọn " . count($serialIds) . ")."]);
+            }
+            foreach ($serialIds as $sid) {
+                if (isset($seenSerialIds[$sid])) {
+                    return back()->withErrors(["items.{$i}.serial_ids" => "Serial ID {$sid} bị chọn trùng nhiều dòng."]);
+                }
+                $seenSerialIds[$sid] = true;
+            }
+            $validCount = SerialImei::whereIn('id', $serialIds)
+                ->where('product_id', $product->id)
+                ->where('purchase_id', $purchase->id)
+                ->where('status', 'in_stock')
+                ->count();
+            if ($validCount !== count($serialIds)) {
+                return back()->withErrors(["items.{$i}.serial_ids" => "Sản phẩm \"{$product->name}\" có serial không hợp lệ: phải thuộc phiếu nhập này, đang còn trong kho và chưa bán/chưa trả."]);
+            }
+        }
+
         try {
             DB::beginTransaction();
 
@@ -222,6 +254,7 @@ class PurchaseReturnController extends Controller
                 if ($product->has_serial && !empty($item['serial_ids'])) {
                     SerialImei::whereIn('id', $item['serial_ids'])
                         ->where('product_id', $product->id)
+                        ->where('purchase_id', $purchase->id)
                         ->where('status', 'in_stock')
                         ->update(['status' => 'returned', 'purchase_return_id' => $return->id]);
 

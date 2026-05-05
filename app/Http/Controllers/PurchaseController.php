@@ -184,19 +184,42 @@ class PurchaseController extends Controller
             'bank_account_info' => 'nullable|string',
         ]);
 
-        // Validate serial products have quantity matching serials count
+        // ── Step 23.3: Validate serial cho hàng has_serial khi nhập ──
+        // BUG-1: count(serials) phải === quantity (không cho phiếu nhập 5 mà chỉ liệt 2 serial).
+        // BUG-2: chống trùng serial trong cùng request (chống user dán nhầm 2 lần).
+        // EXISTING: chống serial đã tồn tại trong DB (giữ nguyên).
+        $globalSeenSerials = [];
         foreach ($request->items as $i => $item) {
             $product = Product::find($item['product_id']);
-            if ($product && $product->has_serial) {
-                $serials = $item['serials'] ?? [];
-                if (count($serials) === 0) {
-                    return back()->withErrors(["items.{$i}.serials" => "S\u1ea3n ph\u1ea9m \"{$product->name}\" y\u00eau c\u1ea7u nh\u1eadp s\u1ed1 Serial/IMEI."]);
+            if (!$product || !$product->has_serial) continue;
+
+            $serials = array_values(array_filter(array_map(
+                fn($s) => is_string($s) ? trim($s) : '',
+                (array) ($item['serials'] ?? [])
+            ), fn($s) => $s !== ''));
+            $qty = (int) ($item['quantity'] ?? 0);
+
+            if (count($serials) === 0) {
+                return back()->withErrors(["items.{$i}.serials" => "S\u1ea3n ph\u1ea9m \"{$product->name}\" y\u00eau c\u1ea7u nh\u1eadp s\u1ed1 Serial/IMEI."]);
+            }
+            if (count($serials) !== $qty) {
+                return back()->withErrors(["items.{$i}.serials" => "S\u1ea3n ph\u1ea9m \"{$product->name}\" c\u1ea7n nh\u1eadp \u0111\u1ee7 {$qty} serial (\u0111ang nh\u1eadp " . count($serials) . ")."]);
+            }
+            // Duplicate trong cùng item
+            if (count($serials) !== count(array_unique($serials))) {
+                return back()->withErrors(["items.{$i}.serials" => "S\u1ea3n ph\u1ea9m \"{$product->name}\" c\u00f3 serial b\u1ecb tr\u00f9ng trong c\u00f9ng phi\u1ebfu nh\u1eadp."]);
+            }
+            // Duplicate cross-item
+            foreach ($serials as $sn) {
+                if (isset($globalSeenSerials[$sn])) {
+                    return back()->withErrors(["items.{$i}.serials" => "Serial \"{$sn}\" b\u1ecb nh\u1eadp tr\u00f9ng \u1edf nhi\u1ec1u d\u00f2ng s\u1ea3n ph\u1ea9m."]);
                 }
-                // Check for duplicates in DB
-                $existing = SerialImei::whereIn('serial_number', $serials)->first();
-                if ($existing) {
-                    return back()->withErrors(["items.{$i}.serials" => "Serial/IMEI \"{$existing->serial_number}\" \u0111\u00e3 t\u1ed3n t\u1ea1i trong h\u1ec7 th\u1ed1ng."]);
-                }
+                $globalSeenSerials[$sn] = true;
+            }
+            // Đã tồn tại trong DB
+            $existing = SerialImei::whereIn('serial_number', $serials)->first();
+            if ($existing) {
+                return back()->withErrors(["items.{$i}.serials" => "Serial/IMEI \"{$existing->serial_number}\" \u0111\u00e3 t\u1ed3n t\u1ea1i trong h\u1ec7 th\u1ed1ng."]);
             }
         }
 
