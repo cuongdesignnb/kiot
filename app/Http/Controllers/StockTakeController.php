@@ -76,6 +76,41 @@ class StockTakeController extends Controller
             'note' => 'nullable|string'
         ]);
 
+        // ── Step 23.4: Pre-flight server-side validation ──
+        // BUG-1: KHÔNG tin client system_stock/diff_qty/diff_value — recompute từ DB.
+        // BUG-2: chặn duplicate product_id trong cùng phiếu.
+        // BUG-3: chặn cân bằng hàng has_serial khi diff != 0 (chưa có UI chọn serial detail).
+        $seenProductIds = [];
+        $serverItems = [];
+        foreach ($request->items as $i => $item) {
+            $pid = (int) $item['product_id'];
+            if (isset($seenProductIds[$pid])) {
+                return back()->withErrors(["items.{$i}.product_id" => "Sản phẩm bị trùng trong cùng phiếu kiểm kho."]);
+            }
+            $seenProductIds[$pid] = true;
+
+            $product = Product::find($pid);
+            if (!$product) continue;
+            $systemStock = (int) $product->stock_quantity;
+            $actualStock = (int) $item['actual_stock'];
+            $diffQty = $actualStock - $systemStock;
+            $costPrice = (float) ($product->cost_price ?? 0);
+            $diffValue = $diffQty * $costPrice;
+
+            if ($request->status === 'balanced' && $product->has_serial && $diffQty !== 0) {
+                return back()->withErrors(["items.{$i}.actual_stock" => "Sản phẩm \"{$product->name}\" có quản lý Serial/IMEI — chưa hỗ trợ cân bằng chênh lệch nếu không khai báo serial cụ thể. Vui lòng dùng phiếu nhập/trả NCC để điều chỉnh."]);
+            }
+
+            $serverItems[] = [
+                'product_id'   => $pid,
+                'system_stock' => $systemStock,
+                'actual_stock' => $actualStock,
+                'diff_qty'     => $diffQty,
+                'diff_value'   => $diffValue,
+                'cost_price'   => $costPrice,
+            ];
+        }
+
         try {
             DB::beginTransaction();
 
@@ -90,11 +125,11 @@ class StockTakeController extends Controller
                 'balancer_name' => $request->status === 'balanced' ? 'Trần Văn Tiến' : null,
                 'balanced_date' => $request->status === 'balanced' ? Carbon::now() : null,
                 'note' => $request->note,
-                'total_actual_qty' => array_sum(array_column($request->items, 'actual_stock')),
-                'total_diff_qty' => array_sum(array_column($request->items, 'diff_qty')),
-                'total_diff_increase' => collect($request->items)->filter(fn($i) => $i['diff_qty'] > 0)->sum('diff_qty'),
-                'total_diff_decrease' => collect($request->items)->filter(fn($i) => $i['diff_qty'] < 0)->sum('diff_qty'),
-                'total_diff_value' => array_sum(array_column($request->items, 'diff_value'))
+                'total_actual_qty' => array_sum(array_column($serverItems, 'actual_stock')),
+                'total_diff_qty' => array_sum(array_column($serverItems, 'diff_qty')),
+                'total_diff_increase' => collect($serverItems)->filter(fn($i) => $i['diff_qty'] > 0)->sum('diff_qty'),
+                'total_diff_decrease' => collect($serverItems)->filter(fn($i) => $i['diff_qty'] < 0)->sum('diff_qty'),
+                'total_diff_value' => array_sum(array_column($serverItems, 'diff_value'))
             ]);
 
             if ($request->filled('action_date')) {
@@ -105,23 +140,23 @@ class StockTakeController extends Controller
                 $stockTake->save();
             }
 
-            foreach ($request->items as $item) {
+            foreach ($serverItems as $item) {
                 StockTakeItem::create([
                     'stock_take_id' => $stockTake->id,
-                    'product_id' => $item['product_id'],
-                    'system_stock' => $item['system_stock'],
-                    'actual_stock' => $item['actual_stock'],
-                    'diff_qty' => $item['diff_qty'],
-                    'diff_value' => $item['diff_value']
+                    'product_id'    => $item['product_id'],
+                    'system_stock'  => $item['system_stock'],
+                    'actual_stock'  => $item['actual_stock'],
+                    'diff_qty'      => $item['diff_qty'],
+                    'diff_value'    => $item['diff_value'],
                 ]);
 
                 // Update product stock if balanced — dùng CostingService + StockMovement
                 if ($request->status === 'balanced') {
-                    $diff = (int) $item['actual_stock'] - (int) $item['system_stock'];
+                    $diff = (int) $item['diff_qty'];
                     if ($diff !== 0) {
                         $product = Product::find($item['product_id']);
                         if ($product) {
-                            $costPerUnit = (float) $product->cost_price;
+                            $costPerUnit = (float) $item['cost_price'];
                             MovingAvgCostingService::applyAdjustment($product, $diff);
                             $product->refresh();
                             StockMovementService::record(
@@ -270,6 +305,15 @@ class StockTakeController extends Controller
                 $actualStock = (int) $item->actual_stock;
                 $diff = $actualStock - $currentStock;
 
+                // ── Step 23.4 BUG-3: chặn cân bằng hàng has_serial khi diff != 0 ──
+                if ($product->has_serial && $diff !== 0) {
+                    DB::rollBack();
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Sản phẩm \"{$product->name}\" có quản lý Serial/IMEI — chưa hỗ trợ cân bằng chênh lệch nếu không khai báo serial cụ thể.",
+                    ], 422);
+                }
+
                 // Cập nhật system_stock & diff trong item
                 $item->update([
                     'system_stock' => $currentStock,
@@ -338,6 +382,13 @@ class StockTakeController extends Controller
             foreach ($stockTake->items as $item) {
                 $product = Product::find($item->product_id);
                 if ($product) {
+                    // ── Step 23.4: hàng has_serial không thể rollback an toàn nếu không có serial snapshot.
+                    //    Hiện tại Step 23.4 chặn balance hàng has_serial diff != 0 nên trường hợp này không xảy ra.
+                    //    Nếu legacy data có thì skip rollback và log để admin xử lý thủ công.
+                    if ($product->has_serial) {
+                        \Log::warning("StockTake cancel skipped serial product {$product->id} (legacy data)", ['stock_take_id' => $stockTake->id]);
+                        continue;
+                    }
                     // Đảo chênh lệch: nếu kiểm kho đã +3 thì giờ -3 (và ngược lại)
                     $diff = (int) $item->actual_stock - (int) $item->system_stock;
                     if ($diff !== 0) {
