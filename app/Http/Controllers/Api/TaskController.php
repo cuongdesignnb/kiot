@@ -109,8 +109,33 @@ class TaskController extends Controller
     public function store(Request $request)
     {
         $type = $request->input('type', Task::TYPE_GENERAL);
+        $isExternal = $request->boolean('external', false);
 
-        if ($type === Task::TYPE_REPAIR) {
+        if ($type === Task::TYPE_REPAIR && $isExternal) {
+            // External repair — no serial required
+            $data = $request->validate([
+                'customer_id'       => 'nullable|exists:customers,id',
+                'customer_name'     => 'nullable|string|max:255',
+                'customer_phone'    => 'nullable|string|max:30',
+                'product_id'        => 'nullable|exists:products,id',
+                'issue_description' => 'required|string|max:2000',
+                'title'             => 'nullable|string|max:255',
+                'category_id'       => 'nullable|exists:task_categories,id',
+                'priority'          => 'nullable|in:low,normal,high,urgent',
+                'branch_id'         => 'nullable|exists:branches,id',
+                'notes'             => 'nullable|string|max:2000',
+                'deadline'          => 'nullable|date',
+                'received_at'       => 'nullable|date',
+            ]);
+
+            // Must have customer_id or customer_name
+            if (empty($data['customer_id']) && empty($data['customer_name'])) {
+                return response()->json([
+                    'message' => 'Phải có thông tin khách hàng (customer_id hoặc customer_name).',
+                    'errors'  => ['customer_name' => ['Vui lòng nhập tên khách hàng.']],
+                ], 422);
+            }
+        } elseif ($type === Task::TYPE_REPAIR) {
             $data = $request->validate([
                 'serial_imei_id'    => 'required|exists:serial_imeis,id',
                 'issue_description' => 'nullable|string|max:2000',
@@ -134,6 +159,7 @@ class TaskController extends Controller
         }
 
         $data['type'] = $type;
+        $data['external'] = $isExternal;
         $data['created_by'] = $request->user()?->id;
 
         try {
@@ -141,7 +167,7 @@ class TaskController extends Controller
         } catch (\InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }
-        $task->load(['product:id,name,sku', 'serialImei:id,serial_number', 'category:id,name,color']);
+        $task->load(['product:id,name,sku', 'serialImei:id,serial_number', 'category:id,name,color', 'customer:id,name,phone']);
 
         return response()->json($task, 201);
     }

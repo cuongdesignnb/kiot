@@ -30,6 +30,21 @@ class Task extends Model
         'notes',
         'deadline',
         'created_by',
+        // External repair fields
+        'external',
+        'sub_status',
+        'customer_id',
+        'customer_name',
+        'customer_phone',
+        'warranty_id',
+        'invoice_id',
+        'received_at',
+        'returned_at',
+        'labor_fee',
+        'parts_total',
+        'total_amount',
+        'paid_amount',
+        'debt_amount',
     ];
 
     protected $casts = [
@@ -41,6 +56,15 @@ class Task extends Model
         'cancelled_at'  => 'datetime',
         'deadline'      => 'date',
         'progress'      => 'integer',
+        // External repair casts
+        'external'      => 'boolean',
+        'received_at'   => 'datetime',
+        'returned_at'   => 'datetime',
+        'labor_fee'     => 'decimal:0',
+        'parts_total'   => 'decimal:0',
+        'total_amount'  => 'decimal:0',
+        'paid_amount'   => 'decimal:0',
+        'debt_amount'   => 'decimal:0',
     ];
 
     // ── Type constants ──
@@ -137,6 +161,21 @@ class Task extends Model
     public function category()
     {
         return $this->belongsTo(TaskCategory::class, 'category_id');
+    }
+
+    public function customer()
+    {
+        return $this->belongsTo(Customer::class);
+    }
+
+    public function warranty()
+    {
+        return $this->belongsTo(Warranty::class);
+    }
+
+    public function invoice()
+    {
+        return $this->belongsTo(Invoice::class);
     }
 
     public function assignments()

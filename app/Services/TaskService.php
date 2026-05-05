@@ -26,7 +26,12 @@ class TaskService
         return DB::transaction(function () use ($data) {
             $type = $data['type'] ?? Task::TYPE_GENERAL;
 
-            // Repair flow — cần serial
+            // External repair — no serial/stock required
+            if ($type === Task::TYPE_REPAIR && !empty($data['external'])) {
+                return $this->createExternalRepair($data);
+            }
+
+            // Internal repair flow — needs serial in_stock
             if ($type === Task::TYPE_REPAIR) {
                 return $this->createRepairTask($data);
             }
@@ -48,6 +53,58 @@ class TaskService
 
             return $task;
         });
+    }
+
+    /**
+     * Tạo phiếu sửa chữa khách ngoài — không yêu cầu serial nội bộ.
+     */
+    protected function createExternalRepair(array $data): Task
+    {
+        $task = Task::create([
+            'code'              => Task::generateCode(Task::TYPE_REPAIR),
+            'type'              => Task::TYPE_REPAIR,
+            'external'          => true,
+            'title'             => $data['title'] ?? null,
+            'category_id'       => $data['category_id'] ?? null,
+            'product_id'        => $data['product_id'] ?? null,
+            'issue_description' => $data['issue_description'] ?? $data['description'] ?? null,
+            'priority'          => $data['priority'] ?? Task::PRIORITY_NORMAL,
+            'status'            => Task::STATUS_PENDING,
+            'sub_status'        => 'received',
+            'customer_id'       => $data['customer_id'] ?? null,
+            'customer_name'     => $data['customer_name'] ?? null,
+            'customer_phone'    => $data['customer_phone'] ?? null,
+            'received_at'       => $data['received_at'] ?? now(),
+            'branch_id'         => $data['branch_id'] ?? null,
+            'notes'             => $data['notes'] ?? null,
+            'deadline'          => $data['deadline'] ?? null,
+            'created_by'        => $data['created_by'] ?? null,
+            'original_cost'     => 0,
+            'parts_cost'        => 0,
+            'total_cost'        => 0,
+            'labor_fee'         => 0,
+            'parts_total'       => 0,
+            'total_amount'      => 0,
+            'paid_amount'       => 0,
+            'debt_amount'       => 0,
+        ]);
+
+        if (!$task->title) {
+            $task->update(['title' => $task->code]);
+        }
+
+        // Snapshot customer name/phone if customer_id provided
+        if (!empty($data['customer_id']) && empty($data['customer_name'])) {
+            $customer = \App\Models\Customer::find($data['customer_id']);
+            if ($customer) {
+                $task->update([
+                    'customer_name'  => $customer->name,
+                    'customer_phone' => $customer->phone,
+                ]);
+            }
+        }
+
+        return $task;
     }
 
     /**
