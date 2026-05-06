@@ -310,6 +310,11 @@ class DashboardController extends Controller
             ->selectRaw('COALESCE(SUM(stock_quantity * cost_price), 0) as val')
             ->value('val');
 
+        // ═══════════════════════════════════════
+        // STEP 24.1 — Operational dashboard metrics
+        // ═══════════════════════════════════════
+        $opDash = app(\App\Support\Reports\OperationalDashboardService::class);
+
         return Inertia::render('Dashboard/Index', [
             // Key metrics
             'todayRevenue' => (float) $todayRevenue,
@@ -349,6 +354,16 @@ class DashboardController extends Controller
             'ordersByStatus' => $ordersByStatus,
 
             'branches' => \App\Models\Branch::all(),
+
+            // Step 24.1 — Operational control metrics
+            'serialControl'        => $opDash->getSerialControl(),
+            'stockTransferControl' => $opDash->getStockTransferControl(),
+            'repairControl'        => $opDash->getRepairControl(),
+            'warrantyControl'      => $opDash->getWarrantyControl(),
+            'inventoryRisk'        => $opDash->getInventoryRisk(),
+            'financeControl'       => $opDash->getFinanceControl(),
+            'highRiskActivities'   => $opDash->getHighRiskActivities(auth()->user()),
+            'canViewAuditLog'      => auth()->user() ? auth()->user()->hasPermission('system.audit.view') : false,
         ]);
     }
 }
