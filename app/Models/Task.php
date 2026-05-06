@@ -37,6 +37,9 @@ class Task extends Model
         'customer_name',
         'customer_phone',
         'warranty_id',
+        'warranty_policy',
+        'warranty_covered_amount',
+        'customer_payable_amount',
         'invoice_id',
         'received_at',
         'returned_at',
@@ -65,6 +68,21 @@ class Task extends Model
         'total_amount'  => 'decimal:0',
         'paid_amount'   => 'decimal:0',
         'debt_amount'   => 'decimal:0',
+        'warranty_covered_amount' => 'decimal:0',
+        'customer_payable_amount' => 'decimal:0',
+    ];
+
+    // ── Warranty policy constants (Step 23.8D) ──
+    const WARRANTY_POLICY_NONE      = 'none';
+    const WARRANTY_POLICY_FREE_LABOR = 'free_labor';
+    const WARRANTY_POLICY_FREE_PARTS = 'free_parts';
+    const WARRANTY_POLICY_FULL_FREE  = 'full_free';
+
+    const WARRANTY_POLICIES = [
+        self::WARRANTY_POLICY_NONE,
+        self::WARRANTY_POLICY_FREE_LABOR,
+        self::WARRANTY_POLICY_FREE_PARTS,
+        self::WARRANTY_POLICY_FULL_FREE,
     ];
 
     // ── Type constants ──

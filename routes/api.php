@@ -299,6 +299,8 @@ Route::prefix('tasks')->group(function () {
     Route::get('/search-serials', [\App\Http\Controllers\Api\TaskController::class, 'searchSerials']);
     Route::get('/search-products', [\App\Http\Controllers\Api\TaskController::class, 'searchProducts']);
     Route::get('/product-serials', [\App\Http\Controllers\Api\TaskController::class, 'productSerials']);
+    // Step 23.8D — warranty lookup (theo serial_imei hoặc invoice_code)
+    Route::get('/lookup-warranty', [\App\Http\Controllers\Api\TaskController::class, 'lookupWarranty']);
     Route::post('/batch-repair', [\App\Http\Controllers\Api\TaskController::class, 'batchCreateRepair']);
     Route::post('/', [\App\Http\Controllers\Api\TaskController::class, 'store']);
     Route::get('/{task}', [\App\Http\Controllers\Api\TaskController::class, 'show']);
@@ -311,6 +313,8 @@ Route::prefix('tasks')->group(function () {
     Route::post('/{task}/complete', [\App\Http\Controllers\Api\TaskController::class, 'complete']);
     Route::post('/{task}/progress', [\App\Http\Controllers\Api\TaskController::class, 'updateProgress']);
     Route::post('/{task}/comments', [\App\Http\Controllers\Api\TaskController::class, 'addComment']);
+    // Step 23.8D — attach warranty vào task
+    Route::post('/{task}/attach-warranty', [\App\Http\Controllers\Api\TaskController::class, 'attachWarranty']);
 });
 
 // 🔔 NOTIFICATIONS

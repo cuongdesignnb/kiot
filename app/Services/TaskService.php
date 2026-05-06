@@ -9,6 +9,7 @@ use App\Models\TaskPart;
 use App\Models\Product;
 use App\Models\SerialImei;
 use App\Models\User;
+use App\Models\Warranty;
 use App\Notifications\TaskAssignedNotification;
 use App\Notifications\TaskStatusChangedNotification;
 use App\Notifications\TaskCommentNotification;
@@ -627,6 +628,9 @@ class TaskService
      * KHÔNG trừ tồn kho (đã trừ ở addPart).
      * KHÔNG đổi serial status (đã mark ở addPart).
      * Idempotent: reject nếu task.invoice_id đã có.
+     *
+     * Step 23.8D: chấp nhận `warranty_policy` để miễn công/linh kiện/toàn bộ
+     * nếu task đã được attach warranty còn hạn.
      */
     public function completeExternalRepair(Task $task, array $data): Task
     {
@@ -647,8 +651,23 @@ class TaskService
 
             $laborFee    = (float) ($data['labor_fee'] ?? 0);
             $partPrices  = $data['part_prices'] ?? [];
+            $policy      = $data['warranty_policy'] ?? Task::WARRANTY_POLICY_NONE;
 
-            // ── Snapshot giá bán linh kiện + tính parts_total ──
+            if (!in_array($policy, Task::WARRANTY_POLICIES, true)) {
+                throw new \RuntimeException("Chính sách bảo hành không hợp lệ: {$policy}.");
+            }
+
+            // ── Validate policy vs warranty validity ──
+            $warranty = $task->warranty_id ? Warranty::find($task->warranty_id) : null;
+            $warrantyValid = $warranty && $this->isWarrantyValid($warranty);
+
+            if ($policy !== Task::WARRANTY_POLICY_NONE && !$warrantyValid) {
+                throw new \RuntimeException(
+                    'Không thể áp chính sách bảo hành: phiếu chưa gắn bảo hành hoặc bảo hành đã hết hạn.'
+                );
+            }
+
+            // ── Snapshot giá bán linh kiện + tính parts_total (gross, trước khi áp policy) ──
             $partsTotal = 0;
             $exportParts = $task->parts()->where('direction', 'export')->get();
             foreach ($exportParts as $part) {
@@ -660,7 +679,27 @@ class TaskService
                 $partsTotal += $salePrice * (int) $part->quantity;
             }
 
-            $totalAmount = $laborFee + $partsTotal;
+            $grossLabor = $laborFee;
+            $grossParts = $partsTotal;
+            $grossTotal = $grossLabor + $grossParts;
+
+            // ── Áp warranty policy (chỉ ảnh hưởng doanh thu/khách phải trả, không đụng kho) ──
+            $coveredLabor = 0.0;
+            $coveredParts = 0.0;
+            if ($policy === Task::WARRANTY_POLICY_FREE_LABOR) {
+                $coveredLabor = $grossLabor;
+            } elseif ($policy === Task::WARRANTY_POLICY_FREE_PARTS) {
+                $coveredParts = $grossParts;
+            } elseif ($policy === Task::WARRANTY_POLICY_FULL_FREE) {
+                $coveredLabor = $grossLabor;
+                $coveredParts = $grossParts;
+            }
+            $coveredAmount = $coveredLabor + $coveredParts;
+
+            $payableLabor = $grossLabor - $coveredLabor;
+            $payableParts = $grossParts - $coveredParts;
+            $totalAmount  = $payableLabor + $payableParts;
+
             $paidAmount  = min((float) ($data['paid_amount'] ?? 0), $totalAmount);
             $debtAmount  = $totalAmount - $paidAmount;
 
@@ -685,24 +724,33 @@ class TaskService
                 'payment_method'  => $data['payment_method'] ?? 'cash',
             ]);
 
-            // ── Invoice items: labor fee ──
-            if ($laborFee > 0) {
+            // ── Invoice items: labor fee (sau policy) ──
+            if ($grossLabor > 0) {
+                $laborNote = "Task {$task->code}";
+                if ($coveredLabor > 0) {
+                    $laborNote .= ' — Miễn công theo bảo hành';
+                }
                 $invoice->items()->create([
                     'product_id'  => null,
                     'quantity'    => 1,
-                    'price'       => $laborFee,
+                    'price'       => $payableLabor,
                     'cost_price'  => 0,
                     'discount'    => 0,
-                    'subtotal'    => $laborFee,
+                    'subtotal'    => $payableLabor,
                     'description' => 'Tiền công sửa chữa',
-                    'note'        => "Task {$task->code}",
+                    'note'        => $laborNote,
                 ]);
             }
 
-            // ── Invoice items: parts (NO stock deduction) ──
+            // ── Invoice items: parts (NO stock deduction; price=0 nếu free_parts) ──
+            $partsCovered = ($policy === Task::WARRANTY_POLICY_FREE_PARTS || $policy === Task::WARRANTY_POLICY_FULL_FREE);
             foreach ($exportParts as $part) {
-                $salePrice = (float) $part->sale_price;
+                $salePrice = $partsCovered ? 0.0 : (float) $part->sale_price;
                 $qty       = (int) $part->quantity;
+                $partNote  = "Task {$task->code}";
+                if ($partsCovered) {
+                    $partNote .= ' — Miễn linh kiện theo bảo hành';
+                }
                 $invoice->items()->create([
                     'product_id'  => $part->product_id,
                     'quantity'    => $qty,
@@ -711,7 +759,7 @@ class TaskService
                     'discount'    => 0,
                     'subtotal'    => $salePrice * $qty,
                     'description' => 'Linh kiện sửa chữa',
-                    'note'        => "Task {$task->code}",
+                    'note'        => $partNote,
                 ]);
             }
 
@@ -749,19 +797,80 @@ class TaskService
 
             // ── Update task ──
             $task->update([
-                'status'       => Task::STATUS_COMPLETED,
-                'sub_status'   => 'completed',
-                'completed_at' => now(),
-                'invoice_id'   => $invoice->id,
-                'labor_fee'    => $laborFee,
-                'parts_total'  => $partsTotal,
-                'total_amount' => $totalAmount,
-                'paid_amount'  => $paidAmount,
-                'debt_amount'  => $debtAmount,
-                'progress'     => 100,
+                'status'                  => Task::STATUS_COMPLETED,
+                'sub_status'              => 'completed',
+                'completed_at'            => now(),
+                'invoice_id'              => $invoice->id,
+                'labor_fee'               => $grossLabor,
+                'parts_total'             => $grossParts,
+                'total_amount'            => $totalAmount,
+                'paid_amount'             => $paidAmount,
+                'debt_amount'             => $debtAmount,
+                'warranty_policy'         => $policy,
+                'warranty_covered_amount' => $coveredAmount,
+                'customer_payable_amount' => $totalAmount,
+                'progress'                => 100,
             ]);
 
             return $task->fresh();
         });
+    }
+
+    /**
+     * Step 23.8D: Gắn bảo hành vào phiếu sửa chữa khách ngoài.
+     *
+     * Rules:
+     *   - task.external = true.
+     *   - task.type = repair.
+     *   - task.status không phải completed/cancelled.
+     *   - Nếu warranty.serial_imei có và task có serial reference → phải khớp.
+     *   - KHÔNG tự đổi trạng thái warranty record gốc.
+     *   - Cho phép attach cả warranty hết hạn (để lưu lịch sử) — chỉ chặn việc áp policy
+     *     ở completeExternalRepair.
+     */
+    public function attachWarranty(Task $task, Warranty $warranty): Task
+    {
+        return DB::transaction(function () use ($task, $warranty) {
+            if (!$task->external) {
+                throw new \RuntimeException('Chỉ phiếu sửa chữa khách ngoài mới gắn được bảo hành.');
+            }
+            if ($task->type !== Task::TYPE_REPAIR) {
+                throw new \RuntimeException('Task không phải phiếu sửa chữa.');
+            }
+            if (in_array($task->status, [Task::STATUS_COMPLETED, Task::STATUS_CANCELLED], true)) {
+                throw new \RuntimeException('Phiếu đã hoàn thành/hủy, không thể gắn bảo hành.');
+            }
+
+            // Serial mismatch guard — task có thể giữ serial khách dưới dạng issue_description/notes
+            // nên ta dùng serialImei->serial_number nếu có; còn không dùng task.notes/issue
+            // làm hint mềm. Ưu tiên data structured nhất.
+            if ($warranty->serial_imei) {
+                $taskSerial = null;
+                if ($task->serialImei) {
+                    $taskSerial = $task->serialImei->serial_number;
+                }
+                if ($taskSerial && $taskSerial !== $warranty->serial_imei) {
+                    throw new \RuntimeException(
+                        "Serial bảo hành ({$warranty->serial_imei}) không khớp serial trên phiếu ({$taskSerial})."
+                    );
+                }
+            }
+
+            $task->update(['warranty_id' => $warranty->id]);
+
+            return $task->fresh();
+        });
+    }
+
+    /**
+     * Step 23.8D: Warranty còn hạn nếu warranty_end_date >= today.
+     * warranty_end_date null → coi như không xác định, không tự miễn phí.
+     */
+    public function isWarrantyValid(Warranty $warranty): bool
+    {
+        if (!$warranty->warranty_end_date) {
+            return false;
+        }
+        return $warranty->warranty_end_date->endOfDay()->gte(now());
     }
 }

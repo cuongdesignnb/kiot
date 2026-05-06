@@ -8,6 +8,7 @@ use App\Models\TaskCategory;
 use App\Models\Employee;
 use App\Models\SerialImei;
 use App\Models\Product;
+use App\Models\Warranty;
 use App\Services\TaskService;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
@@ -518,12 +519,13 @@ class TaskController extends Controller
         // External repair — full completion flow
         if ($task->external && $task->type === Task::TYPE_REPAIR) {
             $data = $request->validate([
-                'labor_fee'      => 'required|numeric|min:0',
-                'paid_amount'    => 'required|numeric|min:0',
-                'payment_method' => 'nullable|string',
-                'note'           => 'nullable|string|max:1000',
-                'part_prices'    => 'nullable|array',
-                'part_prices.*'  => 'numeric|min:0',
+                'labor_fee'       => 'required|numeric|min:0',
+                'paid_amount'     => 'required|numeric|min:0',
+                'payment_method'  => 'nullable|string',
+                'note'            => 'nullable|string|max:1000',
+                'part_prices'     => 'nullable|array',
+                'part_prices.*'   => 'numeric|min:0',
+                'warranty_policy' => 'nullable|in:none,free_labor,free_parts,full_free',
             ]);
 
             try {
@@ -548,5 +550,79 @@ class TaskController extends Controller
         } catch (\RuntimeException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }
+    }
+
+    /**
+     * Step 23.8D: Tra cứu warranty theo serial_imei hoặc invoice_code.
+     */
+    public function lookupWarranty(Request $request)
+    {
+        $data = $request->validate([
+            'serial_imei'  => 'nullable|string|max:100',
+            'invoice_code' => 'nullable|string|max:100',
+        ]);
+
+        if (empty($data['serial_imei']) && empty($data['invoice_code'])) {
+            return response()->json([
+                'message' => 'Cần serial_imei hoặc invoice_code.',
+            ], 422);
+        }
+
+        $query = Warranty::with('product:id,name,sku');
+        if (!empty($data['serial_imei'])) {
+            $query->where('serial_imei', $data['serial_imei']);
+        }
+        if (!empty($data['invoice_code'])) {
+            $query->where('invoice_code', $data['invoice_code']);
+        }
+
+        $warranties = $query->latest('id')->limit(20)->get()->map(function (Warranty $w) {
+            $valid = $w->warranty_end_date ? $w->warranty_end_date->endOfDay()->gte(now()) : false;
+            return [
+                'id'                => $w->id,
+                'invoice_code'      => $w->invoice_code,
+                'product_id'        => $w->product_id,
+                'product_name'      => $w->product?->name,
+                'product_sku'       => $w->product?->sku,
+                'serial_imei'       => $w->serial_imei,
+                'customer_name'     => $w->customer_name,
+                'warranty_period'   => $w->warranty_period,
+                'purchase_date'     => $w->purchase_date,
+                'warranty_end_date' => $w->warranty_end_date,
+                'valid'             => $valid,
+                'status_label'      => $valid ? 'Còn hạn' : 'Hết hạn',
+            ];
+        });
+
+        return response()->json($warranties);
+    }
+
+    /**
+     * Step 23.8D: Gắn warranty vào task sửa chữa khách ngoài.
+     */
+    public function attachWarranty(Request $request, Task $task)
+    {
+        $data = $request->validate([
+            'warranty_id' => 'required|exists:warranties,id',
+        ]);
+
+        $warranty = Warranty::find($data['warranty_id']);
+
+        try {
+            $task = $this->service->attachWarranty($task, $warranty);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        $task->load('warranty');
+        $valid = $task->warranty?->warranty_end_date
+            ? $task->warranty->warranty_end_date->endOfDay()->gte(now())
+            : false;
+
+        return response()->json([
+            'message'        => 'Đã gắn bảo hành vào phiếu sửa chữa.',
+            'task'           => $task,
+            'warranty_valid' => $valid,
+        ]);
     }
 }
