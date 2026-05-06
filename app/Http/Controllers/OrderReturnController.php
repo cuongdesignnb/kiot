@@ -272,7 +272,8 @@ class OrderReturnController extends Controller
         }
         // ── End Step 23.2 serial validation ─────────────────────────────
 
-        \Illuminate\Support\Facades\DB::transaction(function () use ($validated) {
+        $createdReturn = null;
+        \Illuminate\Support\Facades\DB::transaction(function () use ($validated, &$createdReturn) {
             // Check return time limit
             if (Setting::get('return_time_limit_enabled', false) && !empty($validated['invoice_id'])) {
                 $invoice = \App\Models\Invoice::find($validated['invoice_id']);
@@ -287,7 +288,7 @@ class OrderReturnController extends Controller
                 }
             }
 
-            $return = OrderReturn::create([
+            $return = $createdReturn = OrderReturn::create([
                 'code' => 'TH' . date('YmdHis') . rand(10, 99),
                 'invoice_id' => $validated['invoice_id'] ?? null,
                 'customer_id' => $validated['customer_id'] ?? null,
@@ -465,6 +466,16 @@ class OrderReturnController extends Controller
             }
         });
 
+        // Step 24.0: audit log return create
+        if ($createdReturn) {
+            \App\Models\ActivityLog::log(
+                \App\Models\ActivityLog::ACTION_RETURN_CREATE,
+                "Tạo phiếu trả hàng {$createdReturn->code}",
+                $createdReturn,
+                ['total' => (float) $createdReturn->total]
+            );
+        }
+
         return redirect()->route('returns.index')->with('success', 'Phiếu trả hàng đã được tạo thành công.');
     }
 
@@ -575,6 +586,14 @@ class OrderReturnController extends Controller
             // 4. Mark return as cancelled
             $return->update(['status' => 'Đã hủy']);
         });
+
+        // Step 24.0: audit log return cancel
+        \App\Models\ActivityLog::log(
+            'return_cancel',
+            "Hủy phiếu trả hàng {$return->code}",
+            $return,
+            ['total' => (float) $return->total]
+        );
 
         if (request()->wantsJson()) {
             return response()->json(['success' => true, 'message' => 'Đã hủy phiếu trả hàng.']);

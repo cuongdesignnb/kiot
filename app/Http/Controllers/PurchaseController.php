@@ -391,6 +391,14 @@ class PurchaseController extends Controller
 
             DB::commit();
 
+            // Step 24.0: audit log purchase create
+            \App\Models\ActivityLog::log(
+                \App\Models\ActivityLog::ACTION_PURCHASE_CREATE,
+                "Tạo phiếu nhập hàng {$purchase->code}",
+                $purchase,
+                ['total' => (float) ($purchase->total ?? 0)]
+            );
+
             return redirect()->route('purchases.index')->with('success', 'Tạo đơn nhập hàng thành công!');
         } catch (\Exception $e) {
             DB::rollBack();
@@ -742,6 +750,15 @@ class PurchaseController extends Controller
             $purchase->save();
 
             DB::commit();
+
+            // Step 24.0: audit log purchase cancel
+            \App\Models\ActivityLog::log(
+                \App\Models\ActivityLog::ACTION_PURCHASE_DELETE,
+                "Hủy phiếu nhập hàng {$purchase->code}",
+                $purchase,
+                ['total' => (float) ($purchase->total ?? 0)]
+            );
+
             return redirect()->route('purchases.index')->with('success', 'Đã hủy phiếu nhập hàng. Tồn kho, giá vốn và công nợ đã được hoàn lại.');
         } catch (\Exception $e) {
             DB::rollBack();

@@ -320,6 +320,14 @@ class PurchaseReturnController extends Controller
 
             DB::commit();
 
+            // Step 24.0: audit log purchase return create
+            \App\Models\ActivityLog::log(
+                'purchase_return_create',
+                "Tạo phiếu trả hàng nhập {$return->code}",
+                $return,
+                ['total' => (float) ($return->total ?? 0)]
+            );
+
             return redirect()->route('purchase-returns.index')
                 ->with('success', 'Tạo phiếu trả hàng nhập thành công! Tồn kho và công nợ đã được cập nhật.');
         } catch (\Exception $e) {
@@ -529,6 +537,15 @@ class PurchaseReturnController extends Controller
             }
 
             DB::commit();
+
+            // Step 24.0: audit log purchase return cancel
+            \App\Models\ActivityLog::log(
+                'purchase_return_cancel',
+                "Hủy phiếu trả hàng nhập {$purchaseReturn->code}",
+                $purchaseReturn,
+                ['total' => (float) ($purchaseReturn->total ?? 0)]
+            );
+
             return redirect()->route('purchase-returns.index')
                 ->with('success', 'Đã hủy phiếu trả hàng. Tồn kho và công nợ đã được hoàn lại.');
         } catch (\Exception $e) {

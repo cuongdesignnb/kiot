@@ -193,7 +193,15 @@ class InvoiceController extends Controller
                 // stock_movement_branch_id để service mặc định lấy invoice.branch_id
             ];
 
-            app(InvoiceSaleService::class)->createSale($payload, $context);
+            $invoice = app(InvoiceSaleService::class)->createSale($payload, $context);
+
+            // Step 24.0: audit log invoice create
+            \App\Models\ActivityLog::log(
+                \App\Models\ActivityLog::ACTION_INVOICE_CREATE,
+                "Tạo hóa đơn {$invoice->code}",
+                $invoice,
+                ['total' => (float) $invoice->total]
+            );
 
             return redirect()->route('invoices.index')->with('success', 'Hóa đơn đã được tạo thành công.');
         } catch (\Exception $e) {
@@ -540,6 +548,15 @@ class InvoiceController extends Controller
             $invoice->save();
 
             DB::commit();
+
+            // Step 24.0: audit log invoice cancel
+            \App\Models\ActivityLog::log(
+                \App\Models\ActivityLog::ACTION_INVOICE_CANCEL,
+                "Hủy hóa đơn {$invoice->code}",
+                $invoice,
+                ['total' => (float) $invoice->total]
+            );
+
             return redirect()->route('invoices.index')->with('success', 'Hóa đơn đã được hủy thành công. Tồn kho và công nợ đã hoàn lại.');
         } catch (\Exception $e) {
             DB::rollBack();

@@ -10,6 +10,7 @@ use App\Models\Product;
 use App\Models\SerialImei;
 use App\Models\User;
 use App\Models\Warranty;
+use App\Models\ActivityLog;
 use App\Notifications\TaskAssignedNotification;
 use App\Notifications\TaskStatusChangedNotification;
 use App\Notifications\TaskCommentNotification;
@@ -402,6 +403,21 @@ class TaskService
                 }
             }
 
+            // Step 24.0: audit log part install
+            ActivityLog::log(
+                ActivityLog::ACTION_PART_INSTALL,
+                "Lắp linh kiện {$product->name} (x{$quantity}) vào phiếu {$task->code}",
+                $task,
+                [
+                    'task_part_id' => $part->id,
+                    'product_id'   => $product->id,
+                    'quantity'     => $quantity,
+                    'unit_cost'    => (float) $unitCost,
+                    'total_cost'   => (float) $totalCost,
+                    'serial_ids'   => $product->has_serial ? $serialIds : null,
+                ]
+            );
+
             return $part;
         });
     }
@@ -501,8 +517,24 @@ class TaskService
                 }
             }
 
+            $partSnapshot = [
+                'task_part_id' => $part->id,
+                'product_id'   => $part->product_id,
+                'quantity'     => (int) $part->quantity,
+                'unit_cost'    => (float) $part->unit_cost,
+                'total_cost'   => (float) $part->total_cost,
+                'serial_ids'   => $part->serial_ids,
+            ];
             $part->delete();
             $task->recalculateCosts();
+
+            // Step 24.0: audit log part remove (export direction only — import bị block ở guard trên)
+            ActivityLog::log(
+                ActivityLog::ACTION_PART_REMOVE,
+                "Gỡ linh kiện khỏi phiếu {$task->code}",
+                $task,
+                $partSnapshot
+            );
         });
     }
 
@@ -652,6 +684,22 @@ class TaskService
             }
 
             $task->recalculateCosts();
+
+            // Step 24.0: audit log disassembly
+            ActivityLog::log(
+                ActivityLog::ACTION_PART_DISASSEMBLE,
+                "Bóc linh kiện {$product->name} (x{$quantity}) từ phiếu {$task->code}",
+                $task,
+                [
+                    'task_part_id'      => $part->id,
+                    'output_product_id' => $product->id,
+                    'quantity'          => $quantity,
+                    'unit_cost'         => (float) $cost,
+                    'total_cost'        => (float) $totalCost,
+                    'output_serial_ids' => $createdSerialIds,
+                    'input_serial_id'   => $task->serial_imei_id,
+                ]
+            );
 
             return $part;
         });
@@ -911,6 +959,21 @@ class TaskService
                 'progress'                => 100,
             ]);
 
+            // Step 24.0: audit log repair complete
+            ActivityLog::log(
+                ActivityLog::ACTION_TASK_COMPLETE,
+                "Hoàn thành sửa chữa {$task->code}",
+                $task,
+                [
+                    'invoice_id'      => $invoice->id,
+                    'total_amount'    => (float) $totalAmount,
+                    'paid_amount'    => (float) $paidAmount,
+                    'debt_amount'    => (float) $debtAmount,
+                    'warranty_policy' => $policy,
+                    'covered_amount'  => (float) $coveredAmount,
+                ]
+            );
+
             return $task->fresh();
         });
     }
@@ -956,6 +1019,18 @@ class TaskService
             }
 
             $task->update(['warranty_id' => $warranty->id]);
+
+            // Step 24.0: audit log warranty attach
+            ActivityLog::log(
+                'task_warranty_attach',
+                "Gắn bảo hành {$warranty->invoice_code} vào phiếu sửa chữa {$task->code}",
+                $task,
+                [
+                    'warranty_id'    => $warranty->id,
+                    'invoice_code'   => $warranty->invoice_code,
+                    'serial_imei'    => $warranty->serial_imei,
+                ]
+            );
 
             return $task->fresh();
         });

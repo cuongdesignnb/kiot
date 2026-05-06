@@ -269,6 +269,14 @@ class DamageController extends Controller
 
             DB::commit();
 
+            // Step 24.0: audit log damage create
+            \App\Models\ActivityLog::log(
+                'damage_create',
+                "Tạo phiếu xuất hủy {$damage->code}",
+                $damage,
+                ['total_quantity' => (int) ($damage->total_quantity ?? 0)]
+            );
+
             return redirect()->route('damages.index')->with('success', 'Tạo phiếu xuất hủy thành công.');
         } catch (\Exception $e) {
             DB::rollBack();
@@ -353,6 +361,13 @@ class DamageController extends Controller
 
             $damage->update(['status' => DamageStatus::CANCELLED]);
         });
+
+        // Step 24.0: audit log damage cancel
+        \App\Models\ActivityLog::log(
+            'damage_cancel',
+            "Hủy phiếu xuất hủy {$damage->code}",
+            $damage
+        );
 
         if (request()->wantsJson()) {
             return response()->json(['success' => true, 'message' => 'Đã hủy phiếu xuất hủy.']);
