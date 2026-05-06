@@ -85,23 +85,43 @@ class TaskController extends Controller
 
     /**
      * Chi tiết công việc.
+     *
+     * Step 23.8F: include customer/warranty/invoice cho external repair UI.
      */
     public function show(Task $task)
     {
         $task->load([
-            'product:id,name,sku,image',
-            'serialImei:id,serial_number,repair_status,cost_price',
+            'product:id,name,sku,image,has_serial',
+            'serialImei:id,serial_number,status,repair_status,cost_price,product_id',
             'assignedEmployee:id,name',
             'branch:id,name',
             'category:id,name,color,type',
-            'parts.product:id,name,sku',
+            'parts.product:id,name,sku,has_serial',
             'creator:id,name',
             'assignments.employee:id,name',
             'assignments.assigner:id,name',
             'comments.user:id,name',
+            'customer:id,name,phone,code',
+            'warranty:id,invoice_code,product_id,serial_imei,purchase_date,warranty_end_date,warranty_period',
+            'warranty.product:id,name,sku',
+            'invoice:id,code,total,customer_paid,status',
         ]);
 
-        return response()->json($task);
+        // Step 23.8F: tính warranty_valid + available_for_disassembly cho UI hiển thị
+        $extras = [
+            'warranty_valid' => $task->warranty?->warranty_end_date
+                ? \Carbon\Carbon::parse($task->warranty->warranty_end_date)->endOfDay()->gte(now())
+                : false,
+            'available_for_disassembly' => $task->is_repair && $task->serial_imei_id
+                ? max(0,
+                    (float) $task->original_cost
+                    + (float) $task->parts()->where('direction', 'export')->sum('total_cost')
+                    - (float) $task->parts()->where('direction', 'import')->sum('total_cost')
+                )
+                : null,
+        ];
+
+        return response()->json(array_merge($task->toArray(), $extras));
     }
 
     /**

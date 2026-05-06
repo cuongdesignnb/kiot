@@ -24,11 +24,37 @@ const selectedProduct = ref(null);
 
 // Disassemble modal (bóc máy)
 const showDisassembleModal = ref(false);
-const disForm = ref({ product_id: null, quantity: 1, unit_cost: 0, notes: "" });
+const disForm = ref({ product_id: null, quantity: 1, unit_cost: 0, notes: "", serial_numbers: [] });
 const disError = ref("");
 const disProductSearch = ref("");
 const disProductResults = ref([]);
 const disSelectedProduct = ref(null);
+
+// Step 23.8F — Serial selector for addPart (has_serial product)
+const partProductSerials = ref([]);
+const partSelectedSerialIds = ref([]);
+const partLoadingSerials = ref(false);
+
+// Step 23.8F — Complete external repair modal
+const showCompleteModal = ref(false);
+const completeForm = ref({
+    labor_fee: 0,
+    paid_amount: 0,
+    payment_method: "cash",
+    note: "",
+    warranty_policy: "none",
+    part_prices: {},
+});
+const completeError = ref("");
+const completeLoading = ref(false);
+
+// Step 23.8F — Warranty lookup/attach
+const showWarrantyLookup = ref(false);
+const warrantyLookupSerial = ref("");
+const warrantyLookupInvoice = ref("");
+const warrantyResults = ref([]);
+const warrantyLookupError = ref("");
+const warrantyLookupLoading = ref(false);
 
 // Quick create product (from Bóc LK only)
 const showQuickCreate = ref(false);
@@ -107,11 +133,31 @@ watch(productSearch, (val) => {
     }, 300);
 });
 
-const selectProduct = (p) => {
+const selectProduct = async (p) => {
     selectedProduct.value = p;
     partForm.value.product_id = p.id;
     productSearch.value = p.name;
     productResults.value = [];
+    partSelectedSerialIds.value = [];
+    partProductSerials.value = [];
+    // Step 23.8F: nếu has_serial → load serials in_stock để user chọn
+    if (p.has_serial) {
+        partLoadingSerials.value = true;
+        try {
+            const res = await axios.get("/api/tasks/product-serials", { params: { product_id: p.id } });
+            partProductSerials.value = res.data || [];
+        } catch (e) {
+            partProductSerials.value = [];
+        } finally {
+            partLoadingSerials.value = false;
+        }
+    }
+};
+
+const togglePartSerial = (id) => {
+    const idx = partSelectedSerialIds.value.indexOf(id);
+    if (idx >= 0) partSelectedSerialIds.value.splice(idx, 1);
+    else partSelectedSerialIds.value.push(id);
 };
 
 // Product search for disassemble (bóc máy)
@@ -133,16 +179,36 @@ const selectDisProduct = (p) => {
     disForm.value.unit_cost = p.cost_price || 0;
     disProductSearch.value = p.name;
     disProductResults.value = [];
+    // Step 23.8F: nếu output has_serial → init serial_numbers theo qty
+    if (p.has_serial) {
+        const target = Math.max(1, parseInt(disForm.value.quantity) || 1);
+        disForm.value.serial_numbers = Array(target).fill("");
+    } else {
+        disForm.value.serial_numbers = [];
+    }
 };
 
 const submitAddPart = async () => {
     partError.value = "";
+    // Step 23.8F: nếu product has_serial, bắt buộc chọn đủ serial_ids ở frontend
+    if (selectedProduct.value?.has_serial) {
+        if (partSelectedSerialIds.value.length !== partForm.value.quantity) {
+            partError.value = `Sản phẩm có Serial/IMEI — cần chọn đủ ${partForm.value.quantity} serial (đã chọn ${partSelectedSerialIds.value.length}).`;
+            return;
+        }
+    }
     try {
-        await axios.post(`/api/tasks/${props.taskId}/parts`, partForm.value);
+        const payload = { ...partForm.value };
+        if (selectedProduct.value?.has_serial) {
+            payload.serial_ids = partSelectedSerialIds.value;
+        }
+        await axios.post(`/api/tasks/${props.taskId}/parts`, payload);
         showPartModal.value = false;
         partForm.value = { product_id: null, quantity: 1, notes: "" };
         selectedProduct.value = null;
         productSearch.value = "";
+        partProductSerials.value = [];
+        partSelectedSerialIds.value = [];
         loadTask();
     } catch (e) {
         partError.value = e.response?.data?.message || "Lỗi khi thêm linh kiện.";
@@ -159,13 +225,50 @@ const removePart = async (partId) => {
     }
 };
 
+// Step 23.8F — sync serial_numbers length với quantity khi user đổi qty cho output has_serial
+watch(() => disForm.value.quantity, (qty) => {
+    if (!disSelectedProduct.value?.has_serial) {
+        disForm.value.serial_numbers = [];
+        return;
+    }
+    const target = Math.max(1, parseInt(qty) || 1);
+    const cur = disForm.value.serial_numbers || [];
+    if (cur.length === target) return;
+    if (cur.length < target) {
+        disForm.value.serial_numbers = [...cur, ...Array(target - cur.length).fill("")];
+    } else {
+        disForm.value.serial_numbers = cur.slice(0, target);
+    }
+});
+
 // Disassemble submit
 const submitDisassemble = async () => {
     disError.value = "";
+    // Step 23.8F: validate serial_numbers nếu output has_serial
+    if (disSelectedProduct.value?.has_serial) {
+        const sns = (disForm.value.serial_numbers || []).map(s => (s || "").trim()).filter(Boolean);
+        if (sns.length !== disForm.value.quantity) {
+            disError.value = `Linh kiện có Serial/IMEI — cần nhập đủ ${disForm.value.quantity} serial (đã nhập ${sns.length}).`;
+            return;
+        }
+        if (new Set(sns).size !== sns.length) {
+            disError.value = "Serial output không được trùng nhau.";
+            return;
+        }
+    }
     try {
-        await axios.post(`/api/tasks/${props.taskId}/disassemble-part`, disForm.value);
+        const payload = {
+            product_id: disForm.value.product_id,
+            quantity: disForm.value.quantity,
+            unit_cost: disForm.value.unit_cost,
+            notes: disForm.value.notes,
+        };
+        if (disSelectedProduct.value?.has_serial) {
+            payload.serial_numbers = (disForm.value.serial_numbers || []).map(s => s.trim());
+        }
+        await axios.post(`/api/tasks/${props.taskId}/disassemble-part`, payload);
         showDisassembleModal.value = false;
-        disForm.value = { product_id: null, quantity: 1, unit_cost: 0, notes: "" };
+        disForm.value = { product_id: null, quantity: 1, unit_cost: 0, notes: "", serial_numbers: [] };
         disSelectedProduct.value = null;
         disProductSearch.value = "";
         loadTask();
@@ -178,7 +281,7 @@ const openDisassembleModal = () => {
     disError.value = '';
     disSelectedProduct.value = null;
     disProductSearch.value = '';
-    disForm.value = { product_id: null, quantity: 1, unit_cost: 0, notes: '' };
+    disForm.value = { product_id: null, quantity: 1, unit_cost: 0, notes: '', serial_numbers: [] };
     showDisassembleModal.value = true;
 };
 
@@ -247,12 +350,143 @@ const submitAssign = async () => {
 };
 
 const markComplete = async () => {
+    // Step 23.8F: external repair → mở modal complete với labor/parts/policy
+    if (task.value?.external && task.value?.type === 'repair') {
+        openCompleteModal();
+        return;
+    }
     if (!confirm("Xác nhận hoàn thành công việc?")) return;
     try {
         await axios.post(`/api/tasks/${props.taskId}/complete`);
         loadTask();
     } catch (e) {
         alert(e.response?.data?.message || "Lỗi.");
+    }
+};
+
+// Step 23.8F — Complete external repair modal
+const openCompleteModal = () => {
+    completeError.value = "";
+    completeLoading.value = false;
+    const partPrices = {};
+    const exportParts = (task.value?.parts || []).filter(p => (p.direction || 'export') === 'export');
+    for (const p of exportParts) {
+        partPrices[p.id] = Number(p.sale_price) || Number(p.product?.retail_price) || 0;
+    }
+    completeForm.value = {
+        labor_fee: Number(task.value?.labor_fee) || 0,
+        paid_amount: 0,
+        payment_method: "cash",
+        note: "",
+        warranty_policy: "none",
+        part_prices: partPrices,
+    };
+    showCompleteModal.value = true;
+};
+
+const exportPartsList = computed(() =>
+    (task.value?.parts || []).filter(p => (p.direction || 'export') === 'export')
+);
+
+const completePartsTotal = computed(() => {
+    let sum = 0;
+    for (const p of exportPartsList.value) {
+        const price = Number(completeForm.value.part_prices[p.id]) || 0;
+        sum += price * Number(p.quantity || 0);
+    }
+    return sum;
+});
+const completeGrossTotal = computed(() => Number(completeForm.value.labor_fee || 0) + completePartsTotal.value);
+const completeCovered = computed(() => {
+    const policy = completeForm.value.warranty_policy;
+    if (policy === 'free_labor') return Number(completeForm.value.labor_fee || 0);
+    if (policy === 'free_parts') return completePartsTotal.value;
+    if (policy === 'full_free') return completeGrossTotal.value;
+    return 0;
+});
+const completePayable = computed(() => Math.max(0, completeGrossTotal.value - completeCovered.value));
+const completeDebt = computed(() => Math.max(0, completePayable.value - Number(completeForm.value.paid_amount || 0)));
+const warrantyValid = computed(() => task.value?.warranty_valid === true);
+const allowedPolicies = computed(() => {
+    if (!task.value?.warranty_id || !warrantyValid.value) return ['none'];
+    return ['none', 'free_labor', 'free_parts', 'full_free'];
+});
+
+const submitComplete = async () => {
+    completeError.value = "";
+    // Frontend guards
+    if (Number(completeForm.value.paid_amount) > completePayable.value) {
+        completeError.value = "Số tiền đã trả không được lớn hơn khách phải trả.";
+        return;
+    }
+    if (completeDebt.value > 0.01 && !task.value?.customer_id) {
+        completeError.value = "Phiếu còn công nợ — phải chọn khách hàng (customer_id).";
+        return;
+    }
+    if (completeForm.value.warranty_policy !== 'none' && !allowedPolicies.value.includes(completeForm.value.warranty_policy)) {
+        completeError.value = "Chính sách bảo hành không khả dụng (chưa attach hoặc bảo hành đã hết hạn).";
+        return;
+    }
+    completeLoading.value = true;
+    try {
+        const payload = {
+            labor_fee: Number(completeForm.value.labor_fee || 0),
+            paid_amount: Number(completeForm.value.paid_amount || 0),
+            payment_method: completeForm.value.payment_method || 'cash',
+            note: completeForm.value.note || "",
+            part_prices: completeForm.value.part_prices,
+            warranty_policy: completeForm.value.warranty_policy,
+        };
+        await axios.post(`/api/tasks/${props.taskId}/complete`, payload);
+        showCompleteModal.value = false;
+        loadTask();
+    } catch (e) {
+        completeError.value = e.response?.data?.message || "Lỗi khi hoàn thành phiếu.";
+    } finally {
+        completeLoading.value = false;
+    }
+};
+
+// Step 23.8F — Warranty lookup/attach
+const openWarrantyLookup = () => {
+    warrantyLookupError.value = "";
+    warrantyResults.value = [];
+    warrantyLookupSerial.value = "";
+    warrantyLookupInvoice.value = "";
+    showWarrantyLookup.value = true;
+};
+
+const lookupWarranty = async () => {
+    warrantyLookupError.value = "";
+    warrantyResults.value = [];
+    if (!warrantyLookupSerial.value && !warrantyLookupInvoice.value) {
+        warrantyLookupError.value = "Cần serial_imei hoặc invoice_code.";
+        return;
+    }
+    warrantyLookupLoading.value = true;
+    try {
+        const params = {};
+        if (warrantyLookupSerial.value) params.serial_imei = warrantyLookupSerial.value;
+        if (warrantyLookupInvoice.value) params.invoice_code = warrantyLookupInvoice.value;
+        const res = await axios.get("/api/tasks/lookup-warranty", { params });
+        warrantyResults.value = res.data || [];
+        if (!warrantyResults.value.length) {
+            warrantyLookupError.value = "Không tìm thấy bảo hành phù hợp.";
+        }
+    } catch (e) {
+        warrantyLookupError.value = e.response?.data?.message || "Lỗi tra cứu.";
+    } finally {
+        warrantyLookupLoading.value = false;
+    }
+};
+
+const attachWarranty = async (warrantyId) => {
+    try {
+        await axios.post(`/api/tasks/${props.taskId}/attach-warranty`, { warranty_id: warrantyId });
+        showWarrantyLookup.value = false;
+        loadTask();
+    } catch (e) {
+        warrantyLookupError.value = e.response?.data?.message || "Lỗi gắn bảo hành.";
     }
 };
 
@@ -351,6 +585,66 @@ loadTask();
                     <button @click="activeTab = 'comments'" :class="activeTab === 'comments' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'" class="px-4 py-2 text-sm font-semibold">
                         Bình luận <span class="text-xs text-gray-400">({{ task.comments?.length || 0 }})</span>
                     </button>
+                </div>
+
+                <!-- Step 23.8F — External repair extra blocks -->
+                <div v-if="task.external && task.type === 'repair'" class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                    <!-- Customer block -->
+                    <div class="bg-white border rounded-lg p-4">
+                        <h3 class="text-sm font-semibold text-gray-500 uppercase mb-3">Khách hàng</h3>
+                        <div class="space-y-2 text-sm">
+                            <div class="flex justify-between"><span class="text-gray-500">Tên:</span><span class="font-semibold">{{ task.customer?.name || task.customer_name || '-' }}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">SĐT:</span><span>{{ task.customer?.phone || task.customer_phone || '-' }}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">Mã KH:</span><span>{{ task.customer?.code || '-' }}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">Tiếp nhận:</span><span>{{ task.received_at ? new Date(task.received_at).toLocaleString('vi-VN') : '-' }}</span></div>
+                            <div v-if="task.sub_status" class="flex justify-between"><span class="text-gray-500">Trạng thái phụ:</span><span>{{ task.sub_status }}</span></div>
+                        </div>
+                    </div>
+                    <!-- Financial block -->
+                    <div class="bg-white border rounded-lg p-4">
+                        <h3 class="text-sm font-semibold text-gray-500 uppercase mb-3">Tài chính sửa chữa</h3>
+                        <div class="space-y-1 text-sm">
+                            <div class="flex justify-between"><span class="text-gray-500">Tiền công:</span><span>{{ formatCurrency(task.labor_fee) }}đ</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">Tổng linh kiện (gross):</span><span>{{ formatCurrency(task.parts_total) }}đ</span></div>
+                            <div v-if="task.warranty_policy && task.warranty_policy !== 'none'" class="flex justify-between text-green-600">
+                                <span>Miễn theo BH ({{ task.warranty_policy }}):</span><span>-{{ formatCurrency(task.warranty_covered_amount) }}đ</span>
+                            </div>
+                            <div class="flex justify-between border-t pt-1 mt-1 font-semibold">
+                                <span>Khách phải trả:</span><span class="text-blue-700">{{ formatCurrency(task.total_amount) }}đ</span>
+                            </div>
+                            <div class="flex justify-between"><span class="text-gray-500">Đã trả:</span><span class="text-green-700">{{ formatCurrency(task.paid_amount) }}đ</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">Còn nợ:</span><span :class="Number(task.debt_amount) > 0 ? 'text-red-600 font-semibold' : ''">{{ formatCurrency(task.debt_amount) }}đ</span></div>
+                            <div v-if="task.invoice_id" class="flex justify-between border-t pt-1 mt-1">
+                                <span class="text-gray-500">Hóa đơn SC:</span>
+                                <a :href="`/invoices/${task.invoice_id}/show`" class="text-blue-600 hover:underline">{{ task.invoice?.code || `#${task.invoice_id}` }}</a>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Warranty block -->
+                    <div class="bg-white border rounded-lg p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-sm font-semibold text-gray-500 uppercase">Bảo hành</h3>
+                            <button
+                                v-if="isActive && !task.invoice_id"
+                                @click="openWarrantyLookup"
+                                class="text-xs text-purple-600 font-semibold hover:underline"
+                            >Tra cứu / Gắn</button>
+                        </div>
+                        <div v-if="!task.warranty_id" class="text-sm text-gray-400">Chưa gắn bảo hành.</div>
+                        <div v-else class="space-y-1 text-sm">
+                            <div class="flex justify-between"><span class="text-gray-500">Mã HĐ gốc:</span><span class="font-mono">{{ task.warranty?.invoice_code || '-' }}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">Sản phẩm:</span><span>{{ task.warranty?.product?.name || '-' }}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">Serial:</span><span class="font-mono">{{ task.warranty?.serial_imei || '-' }}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">Mua:</span><span>{{ task.warranty?.purchase_date ? new Date(task.warranty.purchase_date).toLocaleDateString('vi-VN') : '-' }}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">Hết hạn:</span><span>{{ task.warranty?.warranty_end_date ? new Date(task.warranty.warranty_end_date).toLocaleDateString('vi-VN') : '-' }}</span></div>
+                            <div class="flex justify-between font-semibold">
+                                <span>Trạng thái:</span>
+                                <span :class="task.warranty_valid ? 'text-green-600' : 'text-red-500'">
+                                    {{ task.warranty_valid ? 'Còn hạn' : 'Hết hạn' }}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- TAB: Info -->
@@ -488,9 +782,22 @@ loadTask();
                                 <td class="px-4 py-3 text-right font-semibold" :class="(part.direction || 'export') === 'import' ? 'text-orange-600' : ''">
                                     {{ (part.direction || 'export') === 'import' ? '-' : '' }}{{ formatCurrency(part.total_cost) }}
                                 </td>
-                                <td class="px-4 py-3 text-gray-500">{{ part.notes || '' }}</td>
+                                <td class="px-4 py-3 text-gray-500">
+                                    <div v-if="part.serial_ids?.length" class="text-[11px] text-blue-600 mb-0.5">
+                                        Serial: {{ part.serial_ids.length }} cái
+                                    </div>
+                                    <div v-if="part.sale_price" class="text-[11px] text-green-600 mb-0.5">
+                                        Giá bán: {{ formatCurrency(part.sale_price) }}đ
+                                    </div>
+                                    <div>{{ part.notes || '' }}</div>
+                                </td>
                                 <td class="px-4 py-3 text-center" v-if="isActive">
-                                    <button @click="removePart(part.id)" class="text-red-500 hover:text-red-700 text-xs font-semibold">Gỡ</button>
+                                    <button @click="removePart(part.id)"
+                                        :disabled="(part.direction || 'export') === 'import'"
+                                        :title="(part.direction || 'export') === 'import' ? 'Không thể gỡ linh kiện đã bóc tách' : ''"
+                                        class="text-red-500 hover:text-red-700 text-xs font-semibold disabled:opacity-30 disabled:cursor-not-allowed">
+                                        Gỡ
+                                    </button>
                                 </td>
                             </tr>
                         </tbody>
@@ -556,6 +863,21 @@ loadTask();
                         <label class="block font-semibold text-sm mb-1">Số lượng *</label>
                         <input v-model.number="partForm.quantity" type="number" min="1" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
                     </div>
+                    <!-- Step 23.8F: Serial selector for has_serial parts -->
+                    <div v-if="selectedProduct?.has_serial">
+                        <label class="block font-semibold text-sm mb-1">Chọn Serial/IMEI ({{ partSelectedSerialIds.length }}/{{ partForm.quantity }})</label>
+                        <div v-if="partLoadingSerials" class="text-sm text-gray-400">Đang tải...</div>
+                        <div v-else-if="!partProductSerials.length" class="text-sm text-orange-600 bg-orange-50 border border-orange-200 px-3 py-2 rounded">
+                            Không có serial in_stock cho linh kiện này — không thể xuất.
+                        </div>
+                        <div v-else class="border border-gray-200 rounded-lg max-h-44 overflow-y-auto">
+                            <label v-for="s in partProductSerials" :key="s.id" class="flex items-center gap-3 px-3 py-2 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-0">
+                                <input type="checkbox" :checked="partSelectedSerialIds.includes(s.id)" @change="togglePartSerial(s.id)" class="accent-blue-600" />
+                                <span class="text-sm font-mono text-blue-700">{{ s.serial_number }}</span>
+                                <span class="text-xs text-gray-400 ml-auto">GV: {{ formatCurrency(s.cost_price) }}đ</span>
+                            </label>
+                        </div>
+                    </div>
                     <div>
                         <label class="block font-semibold text-sm mb-1">Ghi chú</label>
                         <input v-model="partForm.notes" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
@@ -563,7 +885,11 @@ loadTask();
                 </div>
                 <div class="flex justify-end gap-3 px-6 py-4 border-t">
                     <button @click="showPartModal = false" class="px-5 py-2 border rounded-lg text-sm font-semibold">Hủy</button>
-                    <button @click="submitAddPart" :disabled="!partForm.product_id || !partForm.quantity" class="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">Xuất linh kiện</button>
+                    <button @click="submitAddPart"
+                        :disabled="!partForm.product_id || !partForm.quantity || (selectedProduct?.has_serial && partSelectedSerialIds.length !== partForm.quantity)"
+                        class="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">
+                        Xuất linh kiện
+                    </button>
                 </div>
             </div>
         </div>
@@ -580,6 +906,11 @@ loadTask();
                 <div class="px-6 py-5 space-y-4">
                     <div v-if="disError" class="text-red-500 text-sm bg-red-50 px-3 py-2 rounded">{{ disError }}</div>
                     <p class="text-xs text-gray-500 bg-gray-50 px-3 py-2 rounded">Linh kiện bóc ra sẽ được <strong>nhập vào tồn kho</strong>. Giá vốn máy sẽ giảm tương ứng.</p>
+                    <!-- Step 23.8F: hiển thị giá vốn còn khả dụng -->
+                    <p v-if="task?.available_for_disassembly !== null && task?.available_for_disassembly !== undefined" class="text-xs px-3 py-2 rounded"
+                       :class="task.available_for_disassembly > 0 ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-red-50 text-red-700 border border-red-200'">
+                        Giá vốn còn khả dụng để bóc: <strong>{{ formatCurrency(task.available_for_disassembly) }}đ</strong>
+                    </p>
                     <div>
                         <label class="block font-semibold text-sm mb-1">Sản phẩm (linh kiện bóc ra) *</label>
                         <div class="relative">
@@ -611,6 +942,21 @@ loadTask();
                     <div v-if="disForm.product_id && disForm.quantity && disForm.unit_cost" class="text-sm bg-orange-50 px-3 py-2 rounded border border-orange-200">
                         Tổng giá trị bóc ra: <strong class="text-orange-700">{{ formatCurrency(disForm.unit_cost * disForm.quantity) }}đ</strong>
                         — Giá vốn máy sẽ giảm tương ứng
+                    </div>
+                    <!-- Step 23.8F: serial_numbers input cho output has_serial -->
+                    <div v-if="disSelectedProduct?.has_serial">
+                        <label class="block font-semibold text-sm mb-1">Serial/IMEI cho output ({{ disForm.quantity }} cái) *</label>
+                        <div class="space-y-2">
+                            <input
+                                v-for="(_, idx) in disForm.serial_numbers"
+                                :key="idx"
+                                v-model="disForm.serial_numbers[idx]"
+                                type="text"
+                                :placeholder="`Serial ${idx + 1}`"
+                                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:border-orange-500 outline-none"
+                            />
+                        </div>
+                        <p class="text-[11px] text-gray-400 mt-1">Mỗi serial phải duy nhất, chưa tồn tại trong hệ thống. Backend sẽ validate.</p>
                     </div>
                     <div>
                         <label class="block font-semibold text-sm mb-1">Ghi chú</label>
@@ -712,6 +1058,167 @@ loadTask();
                         <svg v-if="quickCreateLoading" class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
                         {{ quickCreateLoading ? 'Đang tạo...' : 'Lưu & Chọn trong bóc LK' }}
                     </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 23.8F — Complete external repair modal -->
+        <div v-if="showCompleteModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[92vh] overflow-y-auto">
+                <div class="flex items-center justify-between px-6 py-4 border-b bg-green-50 sticky top-0 z-10">
+                    <h2 class="text-lg font-bold text-green-700">Hoàn thành phiếu sửa chữa</h2>
+                    <button @click="showCompleteModal = false" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+                </div>
+                <div class="px-6 py-5 space-y-4">
+                    <div v-if="completeError" class="text-red-500 text-sm bg-red-50 px-3 py-2 rounded">{{ completeError }}</div>
+
+                    <!-- Labor fee -->
+                    <div>
+                        <label class="block font-semibold text-sm mb-1">Tiền công (labor_fee)</label>
+                        <input v-model.number="completeForm.labor_fee" type="number" min="0" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-right font-semibold" />
+                    </div>
+
+                    <!-- Part prices table -->
+                    <div v-if="exportPartsList.length">
+                        <label class="block font-semibold text-sm mb-2">Giá bán linh kiện đã xuất</label>
+                        <table class="w-full text-sm border rounded">
+                            <thead class="bg-gray-50 text-xs">
+                                <tr>
+                                    <th class="px-2 py-2 text-left">Linh kiện</th>
+                                    <th class="px-2 py-2 text-center">SL</th>
+                                    <th class="px-2 py-2 text-right">Đơn giá vốn</th>
+                                    <th class="px-2 py-2 text-right">Đơn giá bán</th>
+                                    <th class="px-2 py-2 text-right">Thành tiền</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="p in exportPartsList" :key="p.id" class="border-t">
+                                    <td class="px-2 py-2">{{ p.product?.name || '-' }}</td>
+                                    <td class="px-2 py-2 text-center">{{ p.quantity }}</td>
+                                    <td class="px-2 py-2 text-right text-gray-500">{{ formatCurrency(p.unit_cost) }}</td>
+                                    <td class="px-2 py-2 text-right">
+                                        <input v-model.number="completeForm.part_prices[p.id]" type="number" min="0"
+                                            class="w-28 border border-gray-300 rounded px-2 py-1 text-sm text-right" />
+                                    </td>
+                                    <td class="px-2 py-2 text-right font-semibold">
+                                        {{ formatCurrency((Number(completeForm.part_prices[p.id]) || 0) * Number(p.quantity)) }}
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Warranty policy -->
+                    <div>
+                        <label class="block font-semibold text-sm mb-1">Chính sách bảo hành</label>
+                        <select v-model="completeForm.warranty_policy" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                            <option value="none">Không áp dụng</option>
+                            <option value="free_labor" :disabled="!allowedPolicies.includes('free_labor')">Miễn công (free_labor)</option>
+                            <option value="free_parts" :disabled="!allowedPolicies.includes('free_parts')">Miễn linh kiện (free_parts)</option>
+                            <option value="full_free" :disabled="!allowedPolicies.includes('full_free')">Miễn toàn bộ (full_free)</option>
+                        </select>
+                        <p v-if="!task.warranty_id" class="text-[11px] text-orange-600 mt-1">Chưa gắn bảo hành → chỉ cho phép "Không áp dụng".</p>
+                        <p v-else-if="!warrantyValid" class="text-[11px] text-orange-600 mt-1">Bảo hành đã hết hạn → chỉ cho phép "Không áp dụng".</p>
+                    </div>
+
+                    <!-- Summary -->
+                    <div class="bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm space-y-1">
+                        <div class="flex justify-between"><span class="text-gray-500">Tổng linh kiện:</span><span>{{ formatCurrency(completePartsTotal) }}đ</span></div>
+                        <div class="flex justify-between"><span class="text-gray-500">Tiền công:</span><span>{{ formatCurrency(completeForm.labor_fee) }}đ</span></div>
+                        <div class="flex justify-between font-semibold"><span>Gross total:</span><span>{{ formatCurrency(completeGrossTotal) }}đ</span></div>
+                        <div v-if="completeCovered > 0" class="flex justify-between text-green-600 font-semibold">
+                            <span>Miễn theo BH:</span><span>-{{ formatCurrency(completeCovered) }}đ</span>
+                        </div>
+                        <div class="flex justify-between border-t pt-1 mt-1 font-bold text-blue-700">
+                            <span>Khách phải trả:</span><span>{{ formatCurrency(completePayable) }}đ</span>
+                        </div>
+                    </div>
+
+                    <!-- Paid + payment method -->
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block font-semibold text-sm mb-1">Số tiền đã thu</label>
+                            <input v-model.number="completeForm.paid_amount" type="number" min="0" :max="completePayable"
+                                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-right font-semibold" />
+                        </div>
+                        <div>
+                            <label class="block font-semibold text-sm mb-1">Phương thức</label>
+                            <select v-model="completeForm.payment_method" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                                <option value="cash">Tiền mặt</option>
+                                <option value="bank_transfer">Chuyển khoản</option>
+                                <option value="card">Thẻ</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="flex justify-between text-sm">
+                        <span class="text-gray-500">Còn nợ:</span>
+                        <span :class="completeDebt > 0 ? 'text-red-600 font-semibold' : 'text-green-600 font-semibold'">
+                            {{ formatCurrency(completeDebt) }}đ
+                        </span>
+                    </div>
+                    <p v-if="completeDebt > 0 && !task.customer_id" class="text-xs text-red-600">
+                        Còn công nợ → cần chọn khách hàng (customer_id) cho phiếu.
+                    </p>
+
+                    <!-- Note -->
+                    <div>
+                        <label class="block font-semibold text-sm mb-1">Ghi chú</label>
+                        <input v-model="completeForm.note" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                    </div>
+                </div>
+                <div class="flex justify-end gap-3 px-6 py-4 border-t sticky bottom-0 bg-white">
+                    <button @click="showCompleteModal = false" class="px-5 py-2 border rounded-lg text-sm font-semibold">Hủy</button>
+                    <button @click="submitComplete" :disabled="completeLoading"
+                        class="px-5 py-2 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700 disabled:opacity-50">
+                        {{ completeLoading ? 'Đang xử lý...' : 'Hoàn thành & Tạo hóa đơn' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 23.8F — Warranty lookup/attach modal -->
+        <div v-if="showWarrantyLookup" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+                <div class="flex items-center justify-between px-6 py-4 border-b bg-purple-50 sticky top-0 z-10">
+                    <h2 class="text-lg font-bold text-purple-700">Tra cứu / Gắn bảo hành</h2>
+                    <button @click="showWarrantyLookup = false" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+                </div>
+                <div class="px-6 py-5 space-y-4">
+                    <div v-if="warrantyLookupError" class="text-red-500 text-sm bg-red-50 px-3 py-2 rounded">{{ warrantyLookupError }}</div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block font-semibold text-sm mb-1">Serial/IMEI</label>
+                            <input v-model="warrantyLookupSerial" type="text" placeholder="VD: SN-ABC123" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" />
+                        </div>
+                        <div>
+                            <label class="block font-semibold text-sm mb-1">Mã hóa đơn gốc</label>
+                            <input v-model="warrantyLookupInvoice" type="text" placeholder="VD: HD-12345" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" />
+                        </div>
+                    </div>
+                    <button @click="lookupWarranty" :disabled="warrantyLookupLoading"
+                        class="w-full px-5 py-2 bg-purple-600 text-white rounded-lg text-sm font-semibold hover:bg-purple-700 disabled:opacity-50">
+                        {{ warrantyLookupLoading ? 'Đang tìm...' : 'Tra cứu' }}
+                    </button>
+                    <div v-if="warrantyResults.length" class="border rounded-lg divide-y">
+                        <div v-for="w in warrantyResults" :key="w.id" class="p-3 hover:bg-purple-50">
+                            <div class="flex justify-between items-start gap-2">
+                                <div class="flex-1 text-sm space-y-0.5">
+                                    <div><span class="text-gray-500">HĐ:</span> <span class="font-mono">{{ w.invoice_code }}</span></div>
+                                    <div><span class="text-gray-500">SP:</span> {{ w.product_name }}</div>
+                                    <div><span class="text-gray-500">Serial:</span> <span class="font-mono">{{ w.serial_imei || '-' }}</span></div>
+                                    <div><span class="text-gray-500">Mua:</span> {{ w.purchase_date ? new Date(w.purchase_date).toLocaleDateString('vi-VN') : '-' }} — <span class="text-gray-500">Hết hạn:</span> {{ w.warranty_end_date ? new Date(w.warranty_end_date).toLocaleDateString('vi-VN') : '-' }}</div>
+                                    <div><span :class="w.valid ? 'text-green-600' : 'text-red-500'" class="font-semibold">{{ w.status_label }}</span></div>
+                                </div>
+                                <button @click="attachWarranty(w.id)"
+                                    class="px-3 py-1.5 bg-purple-600 text-white rounded text-xs font-semibold hover:bg-purple-700">
+                                    Gắn
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-3 px-6 py-4 border-t">
+                    <button @click="showWarrantyLookup = false" class="px-5 py-2 border rounded-lg text-sm font-semibold">Đóng</button>
                 </div>
             </div>
         </div>
