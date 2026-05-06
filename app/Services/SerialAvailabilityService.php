@@ -36,6 +36,8 @@ class SerialAvailabilityService
         'warranty',
         'defective',
         'returned',
+        'used_for_repair',
+        'dismantled',
         // Future:
         'damaged',
         'cancelled',

@@ -441,10 +441,19 @@ class TaskService
     }
 
     /**
-     * Gỡ linh kiện.
+     * Gỡ linh kiện. Step 23.8E: chặn remove cho direction='import' (output từ
+     * disassembly) — cần policy rollback riêng (xóa serial output, decrement
+     * stock, revert cost). Hiện chưa hỗ trợ → block để tránh inconsistency.
      */
     public function removePart(TaskPart $part): void
     {
+        if ($part->direction === 'import') {
+            throw new \RuntimeException(
+                'Không thể gỡ linh kiện đã bóc tách (direction=import). '
+                . 'Cần thao tác rollback riêng để xóa serial output đã tạo.'
+            );
+        }
+
         DB::transaction(function () use ($part) {
             $task = $part->task;
             $product = Product::find($part->product_id);
@@ -498,33 +507,123 @@ class TaskService
     }
 
     /**
-     * Bóc linh kiện từ máy — nhập vào tồn kho.
+     * Bóc linh kiện từ máy — nhập vào tồn kho. (Step 23.8E hardening)
+     *
+     * Rules:
+     *   - Chỉ áp dụng cho internal repair (task.external = false, có serial_imei_id).
+     *   - Task không completed/cancelled.
+     *   - Cost cap: tổng output cost ≤ task.original_cost + sum(export parts) - sum(prior import parts).
+     *   - Output có serial: bắt buộc serial_numbers (count khớp qty, không trùng, chưa tồn tại DB).
+     *   - Output không serial: không nhận serial_numbers.
+     *   - Sau bóc tách thành công, set serial máy gốc status='dismantled' (idempotent).
+     *
+     * @param array<string>|null $serialNumbers Bắt buộc nếu output product has_serial=true.
      */
-    public function disassemblePart(Task $task, int $productId, int $quantity = 1, ?float $unitCost = null, ?string $notes = null, ?int $exportedBy = null): TaskPart
-    {
-        return DB::transaction(function () use ($task, $productId, $quantity, $unitCost, $notes, $exportedBy) {
-            $product = Product::findOrFail($productId);
+    public function disassemblePart(
+        Task $task,
+        int $productId,
+        int $quantity = 1,
+        ?float $unitCost = null,
+        ?string $notes = null,
+        ?int $exportedBy = null,
+        ?array $serialNumbers = null
+    ): TaskPart {
+        return DB::transaction(function () use ($task, $productId, $quantity, $unitCost, $notes, $exportedBy, $serialNumbers) {
+            // ── Guards ──
+            if ($task->external) {
+                throw new \RuntimeException('Chỉ hỗ trợ bóc tách với phiếu sửa chữa nội bộ.');
+            }
+            if ($task->type !== Task::TYPE_REPAIR) {
+                throw new \RuntimeException('Task không phải phiếu sửa chữa.');
+            }
+            if (!$task->serial_imei_id || !$task->serialImei) {
+                throw new \RuntimeException('Phiếu sửa chữa nội bộ phải có serial máy gốc.');
+            }
+            if (in_array($task->status, [Task::STATUS_COMPLETED, Task::STATUS_CANCELLED], true)) {
+                throw new \RuntimeException('Phiếu đã hoàn thành/hủy, không thể bóc tách.');
+            }
+            if ($quantity < 1) {
+                throw new \RuntimeException('Số lượng bóc tách phải >= 1.');
+            }
+            if ($unitCost !== null && $unitCost < 0) {
+                throw new \RuntimeException('Đơn giá bóc tách không được âm.');
+            }
 
-            // Giá mặc định = giá vốn bình quân hiện tại, có thể sửa
-            $cost = $unitCost ?? ($product->cost_price ?? 0);
+            $product = Product::findOrFail($productId);
+            $cost = $unitCost ?? (float) ($product->cost_price ?? 0);
             $totalCost = $cost * $quantity;
 
+            // ── Cost cap ──
+            $originalCost = (float) $task->original_cost;
+            $exportTotal  = (float) $task->parts()->where('direction', 'export')->sum('total_cost');
+            $importTotal  = (float) $task->parts()->where('direction', 'import')->sum('total_cost');
+            $available    = $originalCost + $exportTotal - $importTotal;
+
+            if ($totalCost > $available + 0.01) {
+                throw new \RuntimeException(sprintf(
+                    'Tổng giá vốn linh kiện bóc tách (%s) vượt giá vốn khả dụng của máy (%s).',
+                    number_format($totalCost),
+                    number_format(max(0, $available))
+                ));
+            }
+
+            // ── Validate serial output ──
+            if ($product->has_serial) {
+                if (empty($serialNumbers)) {
+                    throw new \RuntimeException("Linh kiện \"{$product->name}\" có Serial/IMEI cần nhập đủ {$quantity} serial.");
+                }
+                if (count($serialNumbers) !== $quantity) {
+                    throw new \RuntimeException(
+                        'Số serial bóc tách (' . count($serialNumbers) . ") không khớp số lượng ({$quantity})."
+                    );
+                }
+                if (count($serialNumbers) !== count(array_unique($serialNumbers))) {
+                    throw new \RuntimeException('Serial output bị trùng trong danh sách.');
+                }
+                $existing = SerialImei::whereIn('serial_number', $serialNumbers)->pluck('serial_number')->all();
+                if (!empty($existing)) {
+                    throw new \RuntimeException('Serial output đã tồn tại: ' . implode(', ', $existing));
+                }
+            } elseif (!empty($serialNumbers)) {
+                throw new \RuntimeException("Linh kiện \"{$product->name}\" không phải hàng Serial/IMEI — không được gửi serial_numbers.");
+            }
+
+            // ── Create task_part (import) ──
+            $createdSerialIds = [];
+            if ($product->has_serial) {
+                foreach ($serialNumbers as $sn) {
+                    $newSerial = SerialImei::create([
+                        'product_id'    => $product->id,
+                        'serial_number' => $sn,
+                        'status'        => 'in_stock',
+                        'cost_price'    => $cost,
+                    ]);
+                    $createdSerialIds[] = $newSerial->id;
+                }
+            }
+
             $part = TaskPart::create([
-                'task_id'    => $task->id,
-                'product_id' => $productId,
-                'quantity'   => $quantity,
-                'unit_cost'  => $cost,
-                'total_cost' => $totalCost,
+                'task_id'     => $task->id,
+                'product_id'  => $productId,
+                'quantity'    => $quantity,
+                'unit_cost'   => $cost,
+                'total_cost'  => $totalCost,
                 'exported_by' => $exportedBy,
-                'notes'      => $notes,
-                'direction'  => 'import',
+                'notes'       => $notes,
+                'direction'   => 'import',
+                'serial_ids'  => $product->has_serial ? $createdSerialIds : null,
             ]);
 
-            // Cộng tồn kho linh kiện qua CostingService
+            // ── Tăng tồn linh kiện output ──
             MovingAvgCostingService::applyPurchase($product, $quantity, $cost);
             $product->refresh();
 
-            // Ghi StockMovement cho linh kiện thu hồi
+            // Recompute từ serials nếu has_serial
+            if ($product->has_serial) {
+                $product->recomputeFromSerials();
+            }
+
+            // Stock movement
             StockMovementService::record(
                 $product,
                 StockMovementService::TYPE_REPAIR_IN,
@@ -534,22 +633,22 @@ class TaskService
                 ['note' => 'Bóc linh kiện từ máy — nhập kho']
             );
 
-            // Trừ giá vốn máy
+            // ── Trừ giá vốn máy + đánh dấu serial gốc dismantled ──
             $deltaCost = -$totalCost;
+            $serial = $task->serialImei;
+            $serial->cost_price = max(0, (float) $serial->cost_price + $deltaCost);
 
-            if ($task->serial_imei_id) {
-                $serial = $task->serialImei;
-                $serial->cost_price = max(0, (float) $serial->cost_price + $deltaCost);
-                $serial->save();
+            // Idempotent: chỉ set dismantled lần đầu để tránh double event
+            if ($serial->status !== 'dismantled') {
+                $serial->status = 'dismantled';
+            }
+            $serial->save();
 
-                if ($serial->status === 'in_stock' && $serial->product) {
-                    MovingAvgCostingService::applyRepairAdjustment($serial->product, $deltaCost);
-                }
-            } elseif ($task->product_id) {
-                $repairedProduct = Product::find($task->product_id);
-                if ($repairedProduct) {
-                    MovingAvgCostingService::applyRepairAdjustment($repairedProduct, $deltaCost);
-                }
+            if ($serial->product) {
+                MovingAvgCostingService::applyRepairAdjustment($serial->product, $deltaCost);
+                // Sau khi serial input chuyển dismantled (không còn in_stock), recompute để
+                // sync stock_quantity cho product gốc theo serial thực tế.
+                $serial->product->recomputeFromSerials();
             }
 
             $task->recalculateCosts();

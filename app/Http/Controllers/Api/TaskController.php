@@ -281,7 +281,7 @@ class TaskController extends Controller
 
 
     /**
-     * Bóc linh kiện từ máy — nhập vào tồn kho.
+     * Bóc linh kiện từ máy — nhập vào tồn kho. (Step 23.8E hardening)
      */
     public function disassemblePart(Request $request, Task $task)
     {
@@ -290,10 +290,12 @@ class TaskController extends Controller
         }
 
         $data = $request->validate([
-            'product_id' => 'required|exists:products,id',
-            'quantity'   => 'required|integer|min:1',
-            'unit_cost'  => 'nullable|numeric|min:0',
-            'notes'      => 'nullable|string|max:500',
+            'product_id'      => 'required|exists:products,id',
+            'quantity'        => 'required|integer|min:1',
+            'unit_cost'       => 'nullable|numeric|min:0',
+            'notes'           => 'nullable|string|max:500',
+            'serial_numbers'  => 'nullable|array',
+            'serial_numbers.*'=> 'string|max:100',
         ]);
 
         try {
@@ -303,7 +305,8 @@ class TaskController extends Controller
                 $data['quantity'],
                 isset($data['unit_cost']) ? (float) $data['unit_cost'] : null,
                 $data['notes'] ?? null,
-                $request->user()?->id
+                $request->user()?->id,
+                $data['serial_numbers'] ?? null
             );
             $part->load('product:id,name,sku');
             $task->refresh();
