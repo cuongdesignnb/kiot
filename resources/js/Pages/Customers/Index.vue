@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, watch, reactive, computed } from "vue";
 import { Head, router, Link, useForm } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
@@ -101,7 +102,7 @@ const isExpanded = (customerId) => {
     return expandedRows.value.includes(customerId);
 };
 
-const formatCurrency = (val) => Number(val || 0).toLocaleString("vi-VN");
+
 const formatDate = (val) =>
     val ? new Date(val).toLocaleDateString("vi-VN") : "Chưa có";
 const formatDateTime = (val) => {
@@ -372,7 +373,7 @@ const submitOffset = async () => {
         return;
     }
     if (offsetForm.amount > offsetModal.maxOffset) {
-        alert('Số tiền cấn bằng không được vượt quá ' + formatCurrency(offsetModal.maxOffset) + '₫');
+        alert('Số tiền cấn bằng không được vượt quá ' + formatCurrency(offsetModal.maxOffset));
         return;
     }
     offsetModal.submitting = true;
@@ -915,9 +916,9 @@ const submit = () => {
 
             <!-- Summary Bar -->
             <div class="flex items-center gap-6 px-4 py-2 bg-blue-50 border-b border-blue-200 text-sm">
-                <div>Tổng nợ phải thu: <span class="font-bold text-red-600">{{ formatCurrency(summary?.total_debt || 0) }}₫</span></div>
-                <div>Tổng bán: <span class="font-bold text-gray-800">{{ formatCurrency(summary?.total_spent || 0) }}₫</span></div>
-                <div>Tổng bán trừ trả: <span class="font-bold text-gray-800">{{ formatCurrency((summary?.total_spent || 0) - (summary?.total_returns || 0)) }}₫</span></div>
+                <div>Tổng nợ phải thu: <span class="font-bold text-red-600">{{ formatCurrency(summary?.total_debt || 0) }}</span></div>
+                <div>Tổng bán: <span class="font-bold text-gray-800">{{ formatCurrency(summary?.total_spent || 0) }}</span></div>
+                <div>Tổng bán trừ trả: <span class="font-bold text-gray-800">{{ formatCurrency((summary?.total_spent || 0) - (summary?.total_returns || 0)) }}</span></div>
             </div>
 
             <!-- Table -->
@@ -946,10 +947,10 @@ const submit = () => {
                             <td></td>
                             <td></td>
                             <td></td>
-                            <td class="px-4 py-3 text-right text-red-600">{{ Number(summary?.total_debt || 0).toLocaleString() }}</td>
+                            <td class="px-4 py-3 text-right text-red-600">{{ formatCurrency(summary?.total_debt || 0) }}</td>
                             <td></td>
-                            <td class="px-4 py-3 text-right text-gray-700">{{ Number(summary?.total_spent || 0).toLocaleString() }}</td>
-                            <td class="px-4 py-3 text-right text-gray-700">{{ Number((summary?.total_spent || 0) - (summary?.total_returns || 0)).toLocaleString() }}</td>
+                            <td class="px-4 py-3 text-right text-gray-700">{{ formatCurrency(summary?.total_spent || 0) }}</td>
+                            <td class="px-4 py-3 text-right text-gray-700">{{ formatCurrency((summary?.total_spent || 0) - (summary?.total_returns || 0)) }}</td>
                         </tr>
                         <tr v-if="customers.data.length === 0">
                             <td
@@ -990,7 +991,7 @@ const submit = () => {
                                 <td class="px-4 py-3">{{ customer.phone }}</td>
                                 <td class="px-4 py-3 text-right">
                                     <div :class="customerNetDebt(customer) != 0 ? (customerNetDebt(customer) < 0 ? 'text-red-600 font-semibold' : '') : ''">
-                                        {{ customerNetDebt(customer).toLocaleString() }}
+                                        {{ formatCurrency(customerNetDebt(customer)) }}
                                     </div>
                                 </td>
                                 <td class="px-4 py-3 text-right text-gray-400">
@@ -998,17 +999,17 @@ const submit = () => {
                                 </td>
                                 <td class="px-4 py-3 text-right">
                                     {{
-                                        Number(
+                                        formatCurrency(
                                             customer.total_spent,
-                                        ).toLocaleString()
+                                        )
                                     }}
                                 </td>
                                 <td class="px-4 py-3 text-right">
                                     {{
-                                        Number(
+                                        formatCurrency(
                                             customer.total_spent -
                                                 customer.total_returns,
-                                        ).toLocaleString()
+                                        )
                                     }}
                                 </td>
                             </tr>
@@ -2850,7 +2851,7 @@ const submit = () => {
                         <div class="mb-3 p-3 bg-gray-50 rounded text-sm">
                             <span class="text-gray-500">Nợ hiện tại:</span>
                             <span class="font-semibold ml-1" :class="debtModal.currentDebt < 0 ? 'text-red-500' : ''">
-                                {{ Number(debtModal.currentDebt).toLocaleString() }}
+                                {{ formatCurrency(debtModal.currentDebt) }}
                             </span>
                         </div>
                         <div>
@@ -3197,7 +3198,7 @@ const submit = () => {
                     </div>
                     <div class="flex items-center">
                         <label class="w-40 text-sm text-gray-600">Giá trị nợ điều chỉnh</label>
-                        <div class="font-medium">{{ Number(cbDetailModal.offset.amount).toLocaleString() }}</div>
+                        <div class="font-medium">{{ formatCurrency(cbDetailModal.offset.amount) }}</div>
                     </div>
                     <div class="flex items-center">
                         <label class="w-40 text-sm text-gray-600">Ngày điều chỉnh</label>

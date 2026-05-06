@@ -1,4 +1,5 @@
-<script setup>
+﻿<script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { Head, router, Link, usePage } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
@@ -187,7 +188,7 @@ const toggleExpand = (id) => {
 };
 const isExpanded = (id) => expandedRows.value.includes(id);
 
-const formatCurrency = (val) => Number(val || 0).toLocaleString("vi-VN");
+
 const formatStatus = (val) => {
     const s = allStatuses.value.find((x) => x.value === val);
     return s ? s.label : val;
@@ -1757,7 +1758,7 @@ const submitProcessOrder = () => {
             <div class="bg-white rounded-lg shadow-xl w-[420px] max-w-full">
                 <div class="px-5 py-4 border-b border-gray-200">
                     <h3 class="text-lg font-bold text-gray-800">Xử lý đơn hàng → Hóa đơn</h3>
-                    <p class="text-sm text-gray-500 mt-1">Đơn {{ processingOrder?.code }} — {{ formatCurrency(processingOrder?.total_payment) }}₫</p>
+                    <p class="text-sm text-gray-500 mt-1">Đơn {{ processingOrder?.code }} — {{ formatCurrency(processingOrder?.total_payment) }}</p>
                 </div>
                 <div class="p-5 space-y-4">
                     <div>
@@ -1776,7 +1777,7 @@ const submitProcessOrder = () => {
                         </div>
                     </div>
                     <div class="text-sm text-gray-600 bg-blue-50 p-3 rounded">
-                        <p>Còn nợ: <strong class="text-red-600">{{ formatCurrency((processingOrder?.total_payment || 0) - processAmountPaid) }}₫</strong></p>
+                        <p>Còn nợ: <strong class="text-red-600">{{ formatCurrency((processingOrder?.total_payment || 0) - processAmountPaid) }}</strong></p>
                     </div>
                     <div v-if="processError" class="text-sm bg-red-50 border border-red-200 text-red-700 p-3 rounded space-y-1">
                         <p class="font-semibold">Không thể xử lý đơn:</p>

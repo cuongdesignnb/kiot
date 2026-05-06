@@ -89,7 +89,8 @@ POST      returns/{return}/cancel          returns.cancel
 
 - **Before commit:** `f3f7d1e983f5941b4da132406def85cf00a3716d`
 - **Backup tag:** `before-ui-p3-final-20260504-060112` → trỏ về `f3f7d1e`
-- **New commit:** `00aafd47e231ae6a8a9e860f738f5b4faecbb9f8` (short `00aafd4`)
+- **New commit (final, sau amend bổ sung TC-06 + cập nhật bảng test 43→44):** `0a8aa5c732258ab826bde92084df9e388ee5e3b3` (short `0a8aa5c`)
+- **Commit gốc trước amend (đã thay thế, không còn trên main):** `00aafd47e231ae6a8a9e860f738f5b4faecbb9f8` (short `00aafd4`)
 - **Commit message:** `feat(ui): complete post-audit P3 order workflows`
 
 ## 4. Final tag
@@ -183,7 +184,7 @@ git push origin main --force-with-lease
 
 ## 9. Conclusion
 
-- **Main pushed:** ✅ `00aafd4`
+- **Main pushed:** ✅ `0a8aa5c` (amend của `00aafd4` để bổ sung TC-22.2G-06 + bảng test 43→44; đã verify ở Step 22.2I)
 - **Backup tag pushed:** ✅ `before-ui-p3-final-20260504-060112`
 - **Final tag pushed:** ✅ `ui-p3-order-workflows-clean-20260504`
 - **Ready for production pull:** ✅

@@ -1,4 +1,5 @@
-<script setup>
+﻿<script setup>
+import { formatVND as fmt } from '@/utils/money';
 import { Head, Link, router } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { ref, computed, onMounted, onUnmounted } from 'vue';
@@ -69,7 +70,6 @@ const productRankTab = ref('revenue'); // 'revenue' | 'profit' | 'qty'
 const customerRankTab = ref('revenue'); // 'revenue' | 'qty'
 const inventoryFilter = ref('all'); // 'all' | 'low' | 'out'
 
-const fmt = (v) => Number(v || 0).toLocaleString('vi-VN');
 const fmtShort = (v) => {
     const n = Number(v || 0);
     const abs = Math.abs(n);
@@ -274,7 +274,7 @@ const orderStatusOptions = {
             <div class="px-4 py-4 space-y-3">
                <div>
                    <div class="text-xs text-gray-500 mb-0.5">Doanh thu hôm nay</div>
-                   <div class="font-bold text-lg text-indigo-600 font-mono">{{ fmt(todayRevenue) }} ₫</div>
+                   <div class="font-bold text-lg text-indigo-600 font-mono">{{ fmt(todayRevenue) }}</div>
                    <div class="flex items-center gap-1 mt-0.5">
                        <span :class="revenuePct >= 0 ? 'text-green-600' : 'text-red-500'" class="text-xs font-semibold flex items-center">
                            <svg v-if="revenuePct >= 0" class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5.293 9.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 7.414V15a1 1 0 11-2 0V7.414L6.707 9.707a1 1 0 01-1.414 0z" clip-rule="evenodd"></path></svg>
@@ -291,16 +291,16 @@ const orderStatusOptions = {
                <div class="border-t border-gray-100 pt-2">
                    <div class="text-xs text-gray-500 mb-0.5">Tồn kho</div>
                    <div class="font-bold text-gray-800">{{ fmt(totalProductsInStock) }} <span class="text-xs text-gray-400 font-normal">SP</span></div>
-                   <div class="text-xs text-gray-500 mt-0.5">Giá trị: <span class="font-semibold text-gray-700">{{ fmt(totalStockValue) }} ₫</span></div>
+                   <div class="text-xs text-gray-500 mt-0.5">Giá trị: <span class="font-semibold text-gray-700">{{ fmt(totalStockValue) }}</span></div>
                    <div v-if="outOfStockCount > 0" class="text-xs text-red-500 mt-0.5">⚠ {{ outOfStockCount }} hết hàng</div>
                </div>
                <div class="border-t border-gray-100 pt-2">
                    <div class="text-xs text-gray-500 mb-0.5">Nợ phải thu</div>
-                   <div class="font-bold text-orange-600 font-mono">{{ fmt(totalCustomerDebt) }} ₫</div>
+                   <div class="font-bold text-orange-600 font-mono">{{ fmt(totalCustomerDebt) }}</div>
                </div>
                <div class="border-t border-gray-100 pt-2">
                    <div class="text-xs text-gray-500 mb-0.5">Nợ phải trả NCC</div>
-                   <div class="font-bold text-red-500 font-mono">{{ fmt(totalSupplierDebt) }} ₫</div>
+                   <div class="font-bold text-red-500 font-mono">{{ fmt(totalSupplierDebt) }}</div>
                </div>
             </div>
 
@@ -485,7 +485,7 @@ const orderStatusOptions = {
                                 <p class="text-sm font-semibold text-gray-800">{{ inv.code }}</p>
                                 <p class="text-[10px] text-gray-400">{{ timeAgo(inv.created_at) }} <span v-if="inv.employee">• {{ inv.employee.name }}</span></p>
                             </div>
-                            <span class="text-sm font-bold text-indigo-600 font-mono">+{{ fmt(inv.total) }}đ</span>
+                            <span class="text-sm font-bold text-indigo-600 font-mono">+{{ fmt(inv.total) }}</span>
                         </div>
                         <div v-if="!recentInvoices || recentInvoices.length === 0" class="px-5 py-8 text-center text-gray-400 text-sm">Chưa có hóa đơn</div>
                     </div>
@@ -504,7 +504,7 @@ const orderStatusOptions = {
                                 <p class="text-[10px] text-gray-400">{{ timeAgo(p.created_at) }} <span v-if="p.supplier">• {{ p.supplier.name }}</span></p>
                             </div>
                             <div class="text-right">
-                                <span class="text-sm font-bold text-red-500 font-mono">-{{ fmt(p.total_amount) }}đ</span>
+                                <span class="text-sm font-bold text-red-500 font-mono">-{{ fmt(p.total_amount) }}</span>
                                 <span v-if="p.status === 'completed'" class="block text-[10px] text-green-600">Hoàn thành</span>
                                 <span v-else class="block text-[10px] text-yellow-600">{{ p.status }}</span>
                             </div>
@@ -574,8 +574,8 @@ const orderStatusOptions = {
                                 <td class="px-3 py-2.5 font-medium text-gray-800">{{ p.name }}</td>
                                 <td class="px-3 py-2.5 text-gray-500 text-xs">{{ p.sku }}</td>
                                 <td class="px-3 py-2.5 text-right font-semibold">{{ p.qty }}</td>
-                                <td class="px-3 py-2.5 text-right font-mono text-indigo-600 font-semibold">{{ fmt(p.revenue) }}đ</td>
-                                <td v-if="productRankTab !== 'qty'" class="px-5 py-2.5 text-right font-mono font-semibold" :class="p.profit >= 0 ? 'text-green-600' : 'text-red-500'">{{ fmt(p.profit) }}đ</td>
+                                <td class="px-3 py-2.5 text-right font-mono text-indigo-600 font-semibold">{{ fmt(p.revenue) }}</td>
+                                <td v-if="productRankTab !== 'qty'" class="px-5 py-2.5 text-right font-mono font-semibold" :class="p.profit >= 0 ? 'text-green-600' : 'text-red-500'">{{ fmt(p.profit) }}</td>
                             </tr>
                             <tr v-if="!(productRankTab === 'profit' ? topProductsByProfit : topProductsByRevenue)?.length"><td colspan="6" class="px-5 py-6 text-center text-gray-400">Chưa có dữ liệu</td></tr>
                         </tbody>
@@ -604,7 +604,7 @@ const orderStatusOptions = {
                                 </div>
                             </div>
                             <div class="text-right flex-shrink-0 ml-2">
-                                <p class="text-sm font-bold text-indigo-600 font-mono">{{ fmt(c.revenue) }}đ</p>
+                                <p class="text-sm font-bold text-indigo-600 font-mono">{{ fmt(c.revenue) }}</p>
                                 <p class="text-[10px] text-gray-400">{{ c.orders }} đơn</p>
                             </div>
                         </div>
@@ -627,7 +627,7 @@ const orderStatusOptions = {
                                 </div>
                             </div>
                             <div class="text-right">
-                                <p class="text-sm font-bold text-emerald-600 font-mono">{{ fmt(e.revenue) }}đ</p>
+                                <p class="text-sm font-bold text-emerald-600 font-mono">{{ fmt(e.revenue) }}</p>
                                 <!-- Revenue bar -->
                                 <div class="w-24 h-1.5 bg-gray-100 rounded-full mt-1">
                                     <div class="h-full rounded-full bg-gradient-to-r from-emerald-400 to-emerald-600" :style="{width: Math.min(100, (e.revenue / ((topEmployees || [])[0]?.revenue || 1)) * 100) + '%'}"></div>
@@ -644,7 +644,7 @@ const orderStatusOptions = {
                 <div class="px-5 py-4 border-b border-gray-100 flex justify-between items-center">
                     <div>
                         <h2 class="font-bold text-gray-800 text-[15px]">📦 Tồn kho sản phẩm</h2>
-                        <p class="text-xs text-gray-400">Giá trị tồn kho: <span class="font-semibold text-gray-600">{{ fmt(totalStockValue) }}đ</span></p>
+                        <p class="text-xs text-gray-400">Giá trị tồn kho: <span class="font-semibold text-gray-600">{{ fmt(totalStockValue) }}</span></p>
                     </div>
                     <div class="flex gap-1 bg-gray-100 rounded-lg p-0.5">
                         <button @click="inventoryFilter = 'all'" :class="inventoryFilter === 'all' ? 'bg-white shadow text-indigo-700' : 'text-gray-500'" class="px-3 py-1 text-xs font-semibold rounded-md transition">
@@ -757,7 +757,7 @@ const orderStatusOptions = {
                     </Link>
                     <div class="block border border-orange-300 bg-orange-50 rounded-lg p-3">
                         <div class="text-[11px] uppercase font-semibold text-gray-500">Công nợ sửa chữa</div>
-                        <div class="text-xl font-bold mt-1 text-orange-700">{{ fmt(repairControl.repair_debt_total || 0) }}₫</div>
+                        <div class="text-xl font-bold mt-1 text-orange-700">{{ fmt(repairControl.repair_debt_total || 0) }}</div>
                         <div class="text-[11px] text-gray-400 mt-0.5">External tasks chưa thanh toán đủ</div>
                     </div>
                     <Link href="/warranties" class="block border rounded-lg p-3 hover:shadow-md transition"

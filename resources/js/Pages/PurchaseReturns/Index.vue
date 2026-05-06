@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed } from "vue";
 import { Head, router, Link, usePage } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
@@ -104,7 +105,7 @@ const toggleExpand = (id) => {
 };
 const isExpanded = (id) => expandedRows.value.includes(id);
 
-const formatCurrency = (val) => Number(val || 0).toLocaleString("vi-VN");
+
 const getReturnedSerials = (ret, item) =>
     (ret.returned_serials || []).filter((s) => s.product_id === item.product_id);
 

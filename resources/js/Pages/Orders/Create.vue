@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import axios from 'axios';
@@ -524,8 +525,6 @@ const save = async () => {
         submitRef.value = false;
     }
 };
-
-const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
 
 const showReturnModal = ref(false);
 const returnSearch = ref('');

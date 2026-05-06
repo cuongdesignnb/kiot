@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed } from "vue";
 import { Head, router, Link } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
@@ -73,7 +74,7 @@ const toggleExpand = (id) => {
 };
 const isExpanded = (id) => expandedRows.value.includes(id);
 
-const formatCurrency = (val) => Number(val).toLocaleString("vi-VN");
+
 const formatStatus = (val) => {
     const s = allStatuses.value.find((x) => x.value === val);
     return s ? s.label : val;

@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed } from "vue";
 import { Head, Link, router } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
@@ -47,7 +48,7 @@ const toggleRow = (id) => {
     expandedRow.value = expandedRow.value === id ? null : id;
 };
 
-const formatCurrency = (val) => Number(val).toLocaleString("vi-VN");
+
 const formatDate = (dateStr) => {
     if (!dateStr) return "";
     const date = new Date(dateStr);

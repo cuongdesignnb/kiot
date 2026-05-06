@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as fmt } from '@/utils/money';
 import { ref } from "vue";
 import { router, Link } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
@@ -32,7 +33,6 @@ const onSearchInput = () => {
     timer = setTimeout(apply, 400);
 };
 
-const fmt = (n) => new Intl.NumberFormat("vi-VN").format(Math.round(n || 0));
 
 const fmtDate = (s) => {
     if (!s) return "";

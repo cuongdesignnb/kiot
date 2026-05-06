@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, watch, computed } from "vue";
 import { Head, router, Link, useForm } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
@@ -287,13 +288,13 @@ const printFlow = (flow) => {
                 <div class="flex justify-between items-center text-sm">
                     <span class="text-gray-500">Tổng thu:</span>
                     <span class="font-semibold text-blue-600 font-mono">{{
-                        Number(metrics.totalReceipts).toLocaleString()
+                        formatCurrency(metrics.totalReceipts)
                     }}</span>
                 </div>
                 <div class="flex justify-between items-center text-sm">
                     <span class="text-gray-500">Tổng chi:</span>
                     <span class="font-semibold text-red-600 font-mono">{{
-                        Number(metrics.totalPayments).toLocaleString()
+                        formatCurrency(metrics.totalPayments)
                     }}</span>
                 </div>
                 <div
@@ -303,7 +304,7 @@ const printFlow = (flow) => {
                     <span
                         class="font-bold text-lg text-gray-900 tracking-tight font-mono"
                         >{{
-                            Number(metrics.fundBalance).toLocaleString()
+                            formatCurrency(metrics.fundBalance)
                         }}</span
                     >
                 </div>
@@ -461,7 +462,7 @@ const printFlow = (flow) => {
                                 >
                                     <span v-if="flow.type === 'receipt'"></span>
                                     <span v-else>-</span
-                                    >{{ Number(flow.amount).toLocaleString() }}
+                                    >{{ formatCurrency(flow.amount) }}
                                 </td>
                                 <td class="px-4 py-3 text-gray-600 italic">
                                     {{ flow.description || "Không có" }}
@@ -573,11 +574,10 @@ const printFlow = (flow) => {
                                                     class="font-semibold text-gray-800"
                                                 >
                                                     {{
-                                                        Number(
+                                                        formatCurrency(
                                                             flow.amount,
-                                                        ).toLocaleString()
+                                                        )
                                                     }}
-                                                    ₫
                                                 </div>
                                             </div>
                                             <div>

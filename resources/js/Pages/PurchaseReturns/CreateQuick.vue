@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed } from 'vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 
@@ -96,7 +97,6 @@ const onQtyOrPriceChange = () => {
     refundAmount.value = totalAmount.value;
 };
 
-const formatCurrency = (val) => Number(val || 0).toLocaleString('vi-VN');
 
 const save = () => {
     if (!supplierId.value) {

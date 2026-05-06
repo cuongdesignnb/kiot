@@ -89,7 +89,7 @@
                         @endif
                     </td>
                     <td class="r">{{ $item->quantity }}</td>
-                    <td class="r">{{ number_format($item->price * $item->quantity, 0, ',', '.') }}</td>
+                    <td class="r">{{ format_vnd($item->price * $item->quantity) }}</td>
                 </tr>
                 @endforeach
             </tbody>
@@ -104,7 +104,7 @@
             </div>
             <div class="sum-row sum-total">
                 <span>Tổng giá trị:</span>
-                <span>{{ number_format($stockTransfer->total_price, 0, ',', '.') }}</span>
+                <span>{{ format_vnd($stockTransfer->total_price) }}</span>
             </div>
         </div>
 

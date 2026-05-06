@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, watch, onMounted, computed } from 'vue';
 import { Head, router, Link } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
@@ -223,10 +224,7 @@ const updateOptionalBookPrice = async (product, index, field) => {
     }
 };
 
-const formatCurrency = (value) => {
-    if (!value && value !== 0) return '';
-    return Number(value).toLocaleString('vi-VN');
-};
+
 
 // Export / Import
 const exportFile = () => {

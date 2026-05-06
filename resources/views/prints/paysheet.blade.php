@@ -87,9 +87,9 @@
                 @foreach($paysheet->payslips as $slip)
                 <tr>
                     <td>{{ $slip->employee ? $slip->employee->name : $slip->code }}</td>
-                    <td class="text-right">{{ number_format($slip->total_salary) }}</td>
-                    <td class="text-right">{{ number_format($slip->paid_amount) }}</td>
-                    <td class="text-right">{{ number_format($slip->remaining) }}</td>
+                    <td class="text-right">{{ format_vnd($slip->total_salary) }}</td>
+                    <td class="text-right">{{ format_vnd($slip->paid_amount) }}</td>
+                    <td class="text-right">{{ format_vnd($slip->remaining) }}</td>
                 </tr>
                 @endforeach
             </tbody>
@@ -98,9 +98,9 @@
 
         <hr class="sep">
 
-        <div class="total-row"><span>Tổng lương:</span><span>{{ number_format($paysheet->total_salary) }}</span></div>
-        <div class="total-row"><span>Đã trả:</span><span>{{ number_format($paysheet->total_paid) }}</span></div>
-        <div class="total-row bold"><span>Còn lại:</span><span>{{ number_format($paysheet->total_remaining) }}</span></div>
+        <div class="total-row"><span>Tổng lương:</span><span>{{ format_vnd($paysheet->total_salary) }}</span></div>
+        <div class="total-row"><span>Đã trả:</span><span>{{ format_vnd($paysheet->total_paid) }}</span></div>
+        <div class="total-row bold"><span>Còn lại:</span><span>{{ format_vnd($paysheet->total_remaining) }}</span></div>
 
         @if($paysheet->notes)
         <hr class="sep">

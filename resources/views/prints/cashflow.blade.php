@@ -78,7 +78,7 @@
         <div class="amount-box">
             <div class="amount-label">Số tiền {{ $isReceipt ? 'thu' : 'chi' }}</div>
             <div class="amount-value {{ $isReceipt ? 'receipt-type' : 'payment-type' }}">
-                {{ number_format($cashFlow->amount, 0, ',', '.') }} đ
+                {{ format_vnd($cashFlow->amount) }} đ
             </div>
         </div>
 

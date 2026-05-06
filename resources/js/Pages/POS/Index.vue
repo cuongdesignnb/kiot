@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { Head, Link } from '@inertiajs/vue3';
 import axios from 'axios';
@@ -600,7 +601,7 @@ const submitCreateProduct = async () => {
                                     <span v-if="product.has_serial && product.sellable_quantity !== undefined" class="text-green-600 font-semibold ml-1">| Sẵn: {{ product.sellable_quantity }}</span>
                                 </div>
                             </div>
-                            <div class="text-blue-600 font-bold text-[12px]">{{ Number(product.retail_price || 0).toLocaleString() }} ₫</div>
+                            <div class="text-blue-600 font-bold text-[12px]">{{ formatCurrency(product.retail_price || 0) }}</div>
                         </div>
                     </div>
                 </div>
@@ -742,7 +743,7 @@ const submitCreateProduct = async () => {
                             <input type="number" v-model="item.price" class="w-full text-right outline-none bg-transparent border-b border-dashed border-gray-300 focus:border-blue-500 py-1 font-semibold text-gray-700">
                         </div>
                         <div class="col-span-2 text-right">
-                            <div class="font-bold text-gray-900 text-[15px]">{{ (Number(item.price * item.quantity - (item.discount || 0)) || 0).toLocaleString() }}</div>
+                            <div class="font-bold text-gray-900 text-[15px]">{{ formatCurrency(Number(item.price * item.quantity - (item.discount || 0)) || 0) }}</div>
                             <div class="flex items-center justify-end gap-1 mt-0.5">
                                 <span class="text-[10px] text-gray-400">CK:</span>
                                 <input type="number" v-model="item.discount" min="0" class="w-16 text-right text-[11px] outline-none bg-transparent border-b border-dashed border-gray-300 focus:border-blue-500 py-0 text-gray-500" placeholder="0">
@@ -777,7 +778,7 @@ const submitCreateProduct = async () => {
                         >
                             <div class="flex-1 text-sm font-semibold text-gray-800 line-clamp-3 leading-snug group-hover:text-blue-700">{{ product.name }}</div>
                             <div v-if="product.repairing_count > 0" class="text-[10px] text-yellow-600 font-bold mt-1">{{ product.repairing_count }} đang sửa</div>
-                            <div class="text-blue-600 font-bold mt-2 font-mono text-sm tracking-tighter">{{ Number(product.retail_price || 0).toLocaleString() }} ₫</div>
+                            <div class="text-blue-600 font-bold mt-2 font-mono text-sm tracking-tighter">{{ formatCurrency(product.retail_price || 0) }}</div>
                         </div>
                     </div>
                 </div>
@@ -795,7 +796,7 @@ const submitCreateProduct = async () => {
                                 <div class="font-bold text-sm text-blue-800 truncate">{{ selectedCustomer.name }}</div>
                                 <div class="text-xs text-blue-600">
                                     {{ selectedCustomer.phone || 'Chưa có SĐT' }}
-                                    <span v-if="selectedCustomer.debt_amount > 0" class="text-red-500 ml-1">| Nợ: {{ Number(selectedCustomer.debt_amount || 0).toLocaleString() }}</span>
+                                    <span v-if="selectedCustomer.debt_amount > 0" class="text-red-500 ml-1">| Nợ: {{ formatCurrency(selectedCustomer.debt_amount || 0) }}</span>
                                 </div>
                             </div>
                         </div>
@@ -831,7 +832,7 @@ const submitCreateProduct = async () => {
                                         <div class="font-semibold text-sm text-gray-800">{{ c.name }}</div>
                                         <div class="text-xs text-gray-500">{{ c.code }} | {{ c.phone || '—' }}</div>
                                     </div>
-                                    <div v-if="c.debt_amount > 0" class="text-xs text-red-500 font-semibold">Nợ: {{ Number(c.debt_amount || 0).toLocaleString() }}</div>
+                                    <div v-if="c.debt_amount > 0" class="text-xs text-red-500 font-semibold">Nợ: {{ formatCurrency(c.debt_amount || 0) }}</div>
                                 </div>
                             </div>
                         </div>
@@ -841,12 +842,11 @@ const submitCreateProduct = async () => {
                     </div>
                 </div>
 
-
                 <!-- Invoice Details Calculation -->
                 <div class="p-4 space-y-4 text-[15px] flex-1">
                     <div class="flex justify-between items-center text-gray-700 font-medium">
                         <span>Tổng tiền hàng</span>
-                        <span class="font-bold">{{ (subtotal || 0).toLocaleString() }}</span>
+                        <span class="font-bold">{{ formatCurrency(subtotal || 0) }}</span>
                     </div>
                     
                     <div class="flex justify-between items-center text-gray-700 font-medium">
@@ -858,7 +858,7 @@ const submitCreateProduct = async () => {
                     
                     <div class="flex justify-between border-t border-gray-200 pt-3 text-gray-900 font-bold text-lg mt-1">
                         <span>Khách cần trả</span>
-                        <span class="text-blue-700 tracking-tight text-xl">{{ (totalAmount || 0).toLocaleString() }}</span>
+                        <span class="text-blue-700 tracking-tight text-xl">{{ formatCurrency(totalAmount || 0) }}</span>
                     </div>
 
                     <div class="flex justify-between items-center pt-2 text-gray-700 font-medium">
@@ -868,7 +868,7 @@ const submitCreateProduct = async () => {
 
                     <div class="flex justify-between items-center pb-2 text-gray-500 text-sm font-medium">
                         <span>Tiền thừa trả khách</span>
-                        <span>{{ (changeDue || 0).toLocaleString() }}</span>
+                        <span>{{ formatCurrency(changeDue || 0) }}</span>
                     </div>
 
                     <!-- Payment Method -->
@@ -967,8 +967,6 @@ const submitCreateProduct = async () => {
             </div>
         </main>
     </div>
-
-
 
     <!-- ═══ Quick Create Customer Modal ═══ -->
     <QuickCreateCustomerModal

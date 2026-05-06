@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 
@@ -117,7 +118,6 @@ const save = async (status) => {
     }
 };
 
-const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
 
 </script>
 

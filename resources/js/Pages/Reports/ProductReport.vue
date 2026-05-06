@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, watch } from "vue";
 import { router } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
@@ -64,7 +65,6 @@ const formatNumber = (n) => {
     if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(1).replace(/\.?0+$/, "") + " k";
     return new Intl.NumberFormat("vi-VN").format(Math.round(n));
 };
-const formatCurrency = (n) => new Intl.NumberFormat("vi-VN").format(Math.round(n || 0));
 
 const barColors = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#8b5cf6"];
 

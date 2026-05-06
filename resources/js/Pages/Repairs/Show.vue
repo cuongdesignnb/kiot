@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, watch } from "vue";
 import { Head, usePage } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
@@ -34,8 +35,6 @@ const loadRepair = async () => {
         loading.value = false;
     }
 };
-
-const formatCurrency = (v) => v ? Number(v).toLocaleString("vi-VN") : "0";
 
 const statusBadge = (status) => {
     const map = {
@@ -219,19 +218,19 @@ loadRepair();
                         <div class="space-y-2 text-sm">
                             <div class="flex justify-between">
                                 <span class="text-gray-500">Giá gốc:</span>
-                                <span>{{ formatCurrency(repair.original_cost) }}đ</span>
+                                <span>{{ formatCurrency(repair.original_cost) }}</span>
                             </div>
                             <div class="flex justify-between">
                                 <span class="text-gray-500">Linh kiện:</span>
-                                <span>{{ formatCurrency(repair.parts_cost) }}đ</span>
+                                <span>{{ formatCurrency(repair.parts_cost) }}</span>
                             </div>
                             <div class="flex justify-between text-base font-bold border-t pt-2 mt-2">
                                 <span>Tổng giá vốn:</span>
-                                <span class="text-blue-600">{{ formatCurrency(repair.total_cost) }}đ</span>
+                                <span class="text-blue-600">{{ formatCurrency(repair.total_cost) }}</span>
                             </div>
                             <div class="flex justify-between text-xs text-gray-400 mt-1">
                                 <span>Serial cost_price hiện tại:</span>
-                                <span>{{ formatCurrency(repair.serial_imei?.cost_price) }}đ</span>
+                                <span>{{ formatCurrency(repair.serial_imei?.cost_price) }}</span>
                             </div>
                         </div>
                     </div>
@@ -342,12 +341,12 @@ loadRepair();
                                     class="px-3 py-2 hover:bg-blue-50 cursor-pointer text-sm flex justify-between"
                                 >
                                     <span>{{ p.name }}</span>
-                                    <span class="text-gray-400">{{ formatCurrency(p.cost_price) }}đ</span>
+                                    <span class="text-gray-400">{{ formatCurrency(p.cost_price) }}</span>
                                 </div>
                             </div>
                         </div>
                         <div v-if="selectedProduct" class="mt-2 text-sm text-gray-600 bg-gray-50 px-3 py-2 rounded">
-                            <strong>{{ selectedProduct.name }}</strong> — Giá vốn: {{ formatCurrency(selectedProduct.cost_price) }}đ — Tồn: {{ selectedProduct.stock_quantity ?? '?' }}
+                            <strong>{{ selectedProduct.name }}</strong> — Giá vốn: {{ formatCurrency(selectedProduct.cost_price) }} — Tồn: {{ selectedProduct.stock_quantity ?? '?' }}
                         </div>
                     </div>
 

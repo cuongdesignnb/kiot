@@ -87,8 +87,8 @@
                         @endif
                     </td>
                     <td class="r">{{ $item->qty }}</td>
-                    <td class="r">{{ number_format($item->price, 0, ',', '.') }}</td>
-                    <td class="r">{{ number_format($item->total_value ?? $item->price * $item->qty, 0, ',', '.') }}</td>
+                    <td class="r">{{ format_vnd($item->price) }}</td>
+                    <td class="r">{{ format_vnd($item->total_value ?? $item->price * $item->qty) }}</td>
                 </tr>
                 @endforeach
             </tbody>
@@ -99,17 +99,17 @@
         <div>
             <div class="sum-row">
                 <span>Tổng tiền hàng:</span>
-                <span>{{ number_format($purchaseOrder->total_amount, 0, ',', '.') }}</span>
+                <span>{{ format_vnd($purchaseOrder->total_amount) }}</span>
             </div>
             @if(($purchaseOrder->discount ?? 0) > 0)
             <div class="sum-row">
                 <span>Chiết khấu:</span>
-                <span>-{{ number_format($purchaseOrder->discount, 0, ',', '.') }}</span>
+                <span>-{{ format_vnd($purchaseOrder->discount) }}</span>
             </div>
             @endif
             <div class="sum-row sum-total">
                 <span>Tổng cộng:</span>
-                <span>{{ number_format($purchaseOrder->total_payment ?? $purchaseOrder->total_amount, 0, ',', '.') }}</span>
+                <span>{{ format_vnd($purchaseOrder->total_payment ?? $purchaseOrder->total_amount) }}</span>
             </div>
         </div>
 

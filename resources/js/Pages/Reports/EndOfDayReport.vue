@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, watch } from "vue";
 import { router, usePage } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
@@ -39,11 +40,6 @@ const applyFilter = () => {
         sales_channel: salesChannel.value || undefined,
     };
     router.get("/reports/end-of-day", params, { preserveState: true });
-};
-
-const formatCurrency = (n) => {
-    if (n === null || n === undefined || isNaN(n)) return "0";
-    return new Intl.NumberFormat("vi-VN").format(Math.round(n));
 };
 
 const formatDate = (d) => {

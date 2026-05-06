@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, reactive } from "vue";
 import { Head, router, Link, useForm } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
@@ -182,7 +183,6 @@ const setSupplierTab = async (id, tab) => {
     }
 };
 
-const formatCurrency = (val) => Number(val || 0).toLocaleString('vi-VN');
 
 // ====== PURCHASE DETAIL MODAL ======
 const purchaseDetail = reactive({ show: false, loading: false, data: null });
@@ -365,7 +365,7 @@ const submitOffset = async () => {
         return;
     }
     if (offsetForm.amount > offsetModal.maxOffset) {
-        alert('Số tiền cấn bằng không được vượt quá ' + formatCurrency(offsetModal.maxOffset) + '₫');
+        alert('Số tiền cấn bằng không được vượt quá ' + formatCurrency(offsetModal.maxOffset));
         return;
     }
     offsetModal.submitting = true;
@@ -578,8 +578,8 @@ const showCbToast = () => {
 
             <!-- Summary Bar -->
             <div class="flex items-center gap-6 px-4 py-2 bg-green-50 border-b border-green-200 text-sm">
-                <div>Tổng nợ phải trả NCC: <span class="font-bold text-red-600">{{ formatCurrency(summary?.total_debt || 0) }}₫</span></div>
-                <div>Tổng mua: <span class="font-bold text-gray-800">{{ formatCurrency(summary?.total_bought || 0) }}₫</span></div>
+                <div>Tổng nợ phải trả NCC: <span class="font-bold text-red-600">{{ formatCurrency(summary?.total_debt || 0) }}</span></div>
+                <div>Tổng mua: <span class="font-bold text-gray-800">{{ formatCurrency(summary?.total_bought || 0) }}</span></div>
             </div>
 
             <!-- Table -->
@@ -611,8 +611,8 @@ const showCbToast = () => {
                             <td></td>
                             <td></td>
                             <td></td>
-                            <td class="px-4 py-3 text-right text-red-600">{{ Number(summary?.total_debt || 0).toLocaleString() }}</td>
-                            <td class="px-4 py-3 text-right text-gray-700">{{ Number(summary?.total_bought || 0).toLocaleString() }}</td>
+                            <td class="px-4 py-3 text-right text-red-600">{{ formatCurrency(summary?.total_debt || 0) }}</td>
+                            <td class="px-4 py-3 text-right text-gray-700">{{ formatCurrency(summary?.total_bought || 0) }}</td>
                         </tr>
                         <tr v-if="suppliers.data.length === 0">
                             <td
@@ -664,14 +664,14 @@ const showCbToast = () => {
                                 <td class="px-4 py-3">{{ supplier.email }}</td>
                                 <td class="px-4 py-3 text-right">
                                     <div :class="supplierNetDebt(supplier) < 0 ? 'text-green-600 font-semibold' : 'text-red-600'">
-                                        {{ supplierNetDebt(supplier).toLocaleString() }}
+                                        {{ formatCurrency(supplierNetDebt(supplier)) }}
                                     </div>
                                 </td>
                                 <td class="px-4 py-3 text-right">
                                     {{
-                                        Number(
+                                        formatCurrency(
                                             supplier.total_bought,
-                                        ).toLocaleString()
+                                        )
                                     }}
                                 </td>
                             </tr>
@@ -785,7 +785,7 @@ const showCbToast = () => {
                                                             <td class="px-3 py-2">{{ h.date }}</td>
                                                             <td class="px-3 py-2">{{ h.user_name }}</td>
                                                             <td class="px-3 py-2">{{ h.branch }}</td>
-                                                            <td class="px-3 py-2 text-right font-semibold">{{ Number(h.total).toLocaleString() }}</td>
+                                                            <td class="px-3 py-2 text-right font-semibold">{{ formatCurrency(h.total) }}</td>
                                                             <td class="px-3 py-2">
                                                                 <span :class="h.status === 'completed' ? 'text-green-600' : 'text-orange-600'" class="font-semibold text-xs">{{ h.status_label }}</span>
                                                             </td>
@@ -834,8 +834,8 @@ const showCbToast = () => {
                                                             >{{ d.code }}</td>
                                                             <td class="px-3 py-2">{{ formatDateTime(d.created_at) }}</td>
                                                             <td class="px-3 py-2">{{ d.type_label }}</td>
-                                                            <td class="px-3 py-2 text-right font-semibold" :class="d.amount < 0 ? 'text-green-600' : ''">{{ Number(d.amount).toLocaleString() }}</td>
-                                                            <td class="px-3 py-2 text-right font-semibold">{{ Number(d.debt_remain).toLocaleString() }}</td>
+                                                            <td class="px-3 py-2 text-right font-semibold" :class="d.amount < 0 ? 'text-green-600' : ''">{{ formatCurrency(d.amount) }}</td>
+                                                            <td class="px-3 py-2 text-right font-semibold">{{ formatCurrency(d.debt_remain) }}</td>
                                                         </tr>
                                                     </tbody>
                                                 </table>
@@ -1450,7 +1450,7 @@ const showCbToast = () => {
                         </div>
                         <div class="flex justify-between mt-1">
                             <span>Nợ hiện tại:</span>
-                            <span class="font-bold text-red-600">{{ Number(debtActionSupplier?.supplier_debt_amount || 0).toLocaleString() }}₫</span>
+                            <span class="font-bold text-red-600">{{ formatCurrency(debtActionSupplier?.supplier_debt_amount || 0) }}</span>
                         </div>
                     </div>
                     <div>

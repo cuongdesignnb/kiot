@@ -1,9 +1,9 @@
-<script setup>
+﻿<script setup>
+import { formatVND as fmt } from '@/utils/money';
 import { Head, Link, router } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 
 const props = defineProps({ returnOrder: Object });
-const fmt = (v) => Number(v || 0).toLocaleString('vi-VN');
 
 const statusLabels = {
     completed: 'Hoàn thành',
@@ -127,7 +127,7 @@ const cancelReturn = () => {
                     <div class="flex justify-between"><span class="text-gray-500">Tổng tiền hàng</span><span class="font-semibold">{{ fmt(returnOrder.subtotal) }}</span></div>
                     <div v-if="returnOrder.discount" class="flex justify-between"><span class="text-gray-500">Giảm giá</span><span class="font-semibold text-red-500">-{{ fmt(returnOrder.discount) }}</span></div>
                     <div v-if="returnOrder.fee" class="flex justify-between"><span class="text-gray-500">Phí trả hàng</span><span class="font-semibold">{{ fmt(returnOrder.fee) }}</span></div>
-                    <div class="flex justify-between border-t pt-2 text-base"><span class="font-bold">Cần trả khách</span><span class="font-bold text-orange-600">{{ fmt(returnOrder.total) }}₫</span></div>
+                    <div class="flex justify-between border-t pt-2 text-base"><span class="font-bold">Cần trả khách</span><span class="font-bold text-orange-600">{{ fmt(returnOrder.total) }}</span></div>
                     <div class="flex justify-between"><span class="text-gray-500">Đã trả khách</span><span class="font-semibold text-green-600">{{ fmt(returnOrder.paid_to_customer) }}</span></div>
                 </div>
             </div>

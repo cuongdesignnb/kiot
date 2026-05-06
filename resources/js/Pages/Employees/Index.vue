@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, watch, reactive, computed } from "vue";
 import { Head, router, Link, useForm, usePage } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
@@ -363,10 +364,7 @@ const saveSalarySetting = async (employeeId) => {
     }
 };
 
-const formatCurrency = (val) => {
-    if (!val && val !== 0) return '0';
-    return Number(val).toLocaleString('vi-VN');
-};
+
 
 const bonusTypeLabel = (type) => {
     const map = {
@@ -668,11 +666,7 @@ const bonusCalcLabel = (calc) => {
                                 <td class="px-4 py-3">{{ employee.phone }}</td>
                                 <td class="px-4 py-3">{{ employee.cccd }}</td>
                                 <td class="px-4 py-3 text-right">
-                                    {{
-                                        Number(
-                                            employee.balance,
-                                        ).toLocaleString()
-                                    }}
+                                    {{ formatCurrency(employee.balance) }}
                                 </td>
                                 <td class="px-4 py-3 text-gray-500">
                                     {{ employee.notes || "" }}
@@ -1279,7 +1273,7 @@ const bonusCalcLabel = (calc) => {
                                                             <input v-model.number="d.amount" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" />
                                                         </div>
                                                         <div v-if="d.calculation_type === 'per_minute' && d.per_minutes" class="text-[10px] text-gray-400 mt-0.5">
-                                                            Trừ {{ Number(d.amount || 0).toLocaleString() }}đ / {{ d.per_minutes }} phút
+                                                            Trừ {{ formatCurrency(d.amount || 0) }}đ / {{ d.per_minutes }} phút
                                                         </div>
                                                     </td>
                                                     <td class="px-1 py-1"><button type="button" @click="salaryForm.custom_deductions.splice(i, 1)" class="text-red-400 hover:text-red-600">&times;</button></td>

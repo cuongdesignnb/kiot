@@ -92,8 +92,8 @@
                         @endif
                     </td>
                     <td class="r">{{ $item->qty }}</td>
-                    <td class="r">{{ number_format($item->price, 0, ',', '.') }}</td>
-                    <td class="r">{{ number_format($item->subtotal ?? $item->price * $item->qty, 0, ',', '.') }}</td>
+                    <td class="r">{{ format_vnd($item->price) }}</td>
+                    <td class="r">{{ format_vnd($item->subtotal ?? $item->price * $item->qty) }}</td>
                 </tr>
                 @endforeach
             </tbody>
@@ -104,39 +104,39 @@
         <div>
             <div class="sum-row">
                 <span>Tổng tiền hàng ({{ $order->items->sum('qty') }} sản phẩm):</span>
-                <span>{{ number_format($order->total_price, 0, ',', '.') }}</span>
+                <span>{{ format_vnd($order->total_price) }}</span>
             </div>
             @if($order->discount > 0)
             <div class="sum-row">
                 <span>Giảm giá:</span>
-                <span>-{{ number_format($order->discount, 0, ',', '.') }}</span>
+                <span>-{{ format_vnd($order->discount) }}</span>
             </div>
             @endif
             @if($order->other_fees > 0)
             <div class="sum-row">
                 <span>Thu khác:</span>
-                <span>{{ number_format($order->other_fees, 0, ',', '.') }}</span>
+                <span>{{ format_vnd($order->other_fees) }}</span>
             </div>
             @endif
             @if($order->delivery_fee > 0)
             <div class="sum-row">
                 <span>Phí giao hàng:</span>
-                <span>{{ number_format($order->delivery_fee, 0, ',', '.') }}</span>
+                <span>{{ format_vnd($order->delivery_fee) }}</span>
             </div>
             @endif
             <div class="sum-row sum-total">
                 <span>Tổng cộng:</span>
-                <span>{{ number_format($order->total_payment, 0, ',', '.') }}</span>
+                <span>{{ format_vnd($order->total_payment) }}</span>
             </div>
             <div class="sum-row">
                 <span>Đã thanh toán:</span>
-                <span>{{ number_format($order->amount_paid ?? 0, 0, ',', '.') }}</span>
+                <span>{{ format_vnd($order->amount_paid ?? 0) }}</span>
             </div>
             @php $debt = $order->total_payment - ($order->amount_paid ?? 0); @endphp
             @if($debt > 0)
             <div class="sum-row" style="color: #d00; font-weight: 500;">
                 <span>Còn cần thu:</span>
-                <span>{{ number_format($debt, 0, ',', '.') }}</span>
+                <span>{{ format_vnd($debt) }}</span>
             </div>
             @endif
         </div>
@@ -158,7 +158,7 @@
             <div class="line"><strong>ĐVVC:</strong> {{ $order->delivery_partner }}</div>
             @endif
             @if($order->cod_amount > 0)
-            <div class="line"><strong>Thu hộ (COD):</strong> {{ number_format($order->cod_amount, 0, ',', '.') }}</div>
+            <div class="line"><strong>Thu hộ (COD):</strong> {{ format_vnd($order->cod_amount) }}</div>
             @endif
         </div>
         @endif

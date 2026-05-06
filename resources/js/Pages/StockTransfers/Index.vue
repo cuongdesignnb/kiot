@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed } from "vue";
 import { Head, router, Link } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
@@ -31,10 +32,7 @@ const toggleStatus = (status) => {
 
 const handleSort = (field, direction) => setSort(field, direction);
 
-const formatCurrency = (value) => {
-    if (!value) return "0";
-    return Number(value).toLocaleString("vi-VN");
-};
+
 const formatDate = (date) => {
     if (!date) return "";
     return new Date(date).toLocaleString("vi-VN");

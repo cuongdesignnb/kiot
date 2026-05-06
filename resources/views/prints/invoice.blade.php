@@ -73,8 +73,8 @@
                         @endif
                     </td>
                     <td class="r">{{ $item->quantity }}</td>
-                    <td class="r">{{ number_format($item->price, 0, ',', '.') }}</td>
-                    <td class="r">{{ number_format($item->subtotal ?? $item->price * $item->quantity, 0, ',', '.') }}</td>
+                    <td class="r">{{ format_vnd($item->price) }}</td>
+                    <td class="r">{{ format_vnd($item->subtotal ?? $item->price * $item->quantity) }}</td>
                 </tr>
                 @endforeach
             </tbody>
@@ -85,35 +85,35 @@
         <div>
             <div class="sum-row">
                 <span>Tổng tiền hàng ({{ $invoice->items->sum('quantity') }} sản phẩm):</span>
-                <span>{{ number_format($invoice->subtotal ?? $invoice->items->sum(fn($i) => $i->subtotal ?? $i->price * $i->quantity), 0, ',', '.') }}</span>
+                <span>{{ format_vnd($invoice->subtotal ?? $invoice->items->sum(fn($i) => $i->subtotal ?? $i->price * $i->quantity)) }}</span>
             </div>
             <div class="sum-row">
                 <span>Chiết khấu hóa đơn:</span>
-                <span>{{ number_format($invoice->discount ?? 0, 0, ',', '.') }}</span>
+                <span>{{ format_vnd($invoice->discount ?? 0) }}</span>
             </div>
             @if($invoice->other_fees > 0)
             <div class="sum-row">
                 <span>Thu khác:</span>
-                <span>{{ number_format($invoice->other_fees, 0, ',', '.') }}</span>
+                <span>{{ format_vnd($invoice->other_fees) }}</span>
             </div>
             @endif
             @if($invoice->is_delivery && $invoice->delivery_fee > 0)
             <div class="sum-row">
                 <span>Phí giao hàng:</span>
-                <span>{{ number_format($invoice->delivery_fee, 0, ',', '.') }}</span>
+                <span>{{ format_vnd($invoice->delivery_fee) }}</span>
             </div>
             @endif
             <div class="sum-row">
                 <span>Công nợ cũ:</span>
-                <span>{{ number_format($previousDebt ?? 0, 0, ',', '.') }}</span>
+                <span>{{ format_vnd($previousDebt ?? 0) }}</span>
             </div>
             <div class="sum-row sum-total">
                 <span>Tổng cộng:</span>
-                <span>{{ number_format($invoice->total, 0, ',', '.') }}</span>
+                <span>{{ format_vnd($invoice->total) }}</span>
             </div>
             <div class="sum-row">
                 <span>Khách hàng thanh toán:</span>
-                <span>{{ number_format($invoice->customer_paid ?? 0, 0, ',', '.') }}</span>
+                <span>{{ format_vnd($invoice->customer_paid ?? 0) }}</span>
             </div>
             @php
                 $change = ($invoice->customer_paid ?? 0) - $invoice->total;
@@ -121,12 +121,12 @@
             @endphp
             <div class="sum-row">
                 <span>Công nợ còn lại:</span>
-                <span>{{ number_format($newDebt, 0, ',', '.') }}</span>
+                <span>{{ format_vnd($newDebt) }}</span>
             </div>
             @if($change > 0)
             <div class="sum-row">
                 <span>Tiền thừa trả khách:</span>
-                <span>{{ number_format($change, 0, ',', '.') }}</span>
+                <span>{{ format_vnd($change) }}</span>
             </div>
             @endif
             @if($invoice->payment_method)

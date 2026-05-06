@@ -87,7 +87,7 @@
                     <td class="r">{{ $item->system_stock }}</td>
                     <td class="r">{{ $item->actual_stock }}</td>
                     <td class="r {{ $item->diff_qty > 0 ? 'diff-plus' : ($item->diff_qty < 0 ? 'diff-minus' : '') }}">{{ $item->diff_qty > 0 ? '+' : '' }}{{ $item->diff_qty }}</td>
-                    <td class="r">{{ number_format(abs($item->diff_value ?? 0), 0, ',', '.') }}</td>
+                    <td class="r">{{ format_vnd(abs($item->diff_value ?? 0)) }}</td>
                 </tr>
                 @endforeach
             </tbody>
@@ -107,18 +107,18 @@
             @if(($stockTake->total_diff_increase ?? 0) > 0)
             <div class="sum-row">
                 <span>Tổng tăng:</span>
-                <span class="diff-plus">+{{ number_format($stockTake->total_diff_increase, 0, ',', '.') }}</span>
+                <span class="diff-plus">+{{ format_vnd($stockTake->total_diff_increase) }}</span>
             </div>
             @endif
             @if(($stockTake->total_diff_decrease ?? 0) > 0)
             <div class="sum-row">
                 <span>Tổng giảm:</span>
-                <span class="diff-minus">-{{ number_format($stockTake->total_diff_decrease, 0, ',', '.') }}</span>
+                <span class="diff-minus">-{{ format_vnd($stockTake->total_diff_decrease) }}</span>
             </div>
             @endif
             <div class="sum-row sum-total">
                 <span>Giá trị lệch:</span>
-                <span>{{ number_format(abs($stockTake->total_diff_value ?? 0), 0, ',', '.') }}</span>
+                <span>{{ format_vnd(abs($stockTake->total_diff_value ?? 0)) }}</span>
             </div>
         </div>
 

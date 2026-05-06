@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed } from "vue";
 import { router } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
@@ -64,7 +65,6 @@ const sortIcon = (field) => {
     return sortDir.value === "asc" ? "↑" : "↓";
 };
 
-const formatCurrency = (n) => new Intl.NumberFormat("vi-VN").format(Math.round(n || 0));
 
 const statusLabel = (status) => {
     const map = {

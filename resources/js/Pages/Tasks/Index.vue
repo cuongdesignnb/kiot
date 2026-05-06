@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, watch, computed } from "vue";
 import { Head, Link, router } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
@@ -311,7 +312,6 @@ const toggleAssignEmployee = (empId) => {
 
 // ── Helpers ──
 const goPage = (page) => { filters.value.page = page; loadTasks(); };
-const formatCurrency = (v) => v ? Number(v).toLocaleString("vi-VN") : "0";
 const formatDate = (d) => {
     if (!d) return "-";
     const dt = new Date(d);
@@ -709,7 +709,7 @@ loadTasks();
                                 </div>
                             </div>
                             <div v-if="selectedSerial" class="mt-2 text-sm text-gray-600 bg-gray-50 px-3 py-2 rounded">
-                                <strong>{{ selectedSerial.serial_number }}</strong> — {{ selectedSerial.product?.name }} — Giá vốn: {{ formatCurrency(selectedSerial.cost_price || selectedSerial.product?.cost_price) }}đ
+                                <strong>{{ selectedSerial.serial_number }}</strong> — {{ selectedSerial.product?.name }} — Giá vốn: {{ formatCurrency(selectedSerial.cost_price || selectedSerial.product?.cost_price) }}
                             </div>
                         </div>
 
@@ -752,7 +752,7 @@ loadTasks();
                                             class="accent-blue-600"
                                         />
                                         <span class="text-sm font-medium text-blue-700">{{ s.serial_number }}</span>
-                                        <span class="text-xs text-gray-400 ml-auto">GV: {{ Number(s.cost_price || 0).toLocaleString() }}đ</span>
+                                        <span class="text-xs text-gray-400 ml-auto">GV: {{ formatCurrency(s.cost_price || 0) }}đ</span>
                                     </label>
                                 </div>
                                 <p v-if="selectedSerialIds.length" class="text-xs text-blue-600 mt-1">Đã chọn {{ selectedSerialIds.length }} serial</p>

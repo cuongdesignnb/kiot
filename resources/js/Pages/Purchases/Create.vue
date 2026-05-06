@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, onMounted, watch } from 'vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import axios from 'axios';
@@ -260,7 +261,6 @@ const save = () => {
     });
 };
 
-const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
 
 // Format input hiển thị giá Việt Nam (8.000.000) nhưng lưu số thật
 const parseCurrencyInput = (str) => {
@@ -640,7 +640,7 @@ const quickCreateBrand = async () => {
                                         <div class="font-semibold text-gray-800">{{ s.name }}</div>
                                         <div class="text-[11px] text-gray-500">{{ s.code }} | {{ s.phone || '—' }}</div>
                                     </div>
-                                    <div v-if="s.supplier_debt_amount > 0" class="text-[11px] text-red-500 font-semibold">Nợ: {{ Number(s.supplier_debt_amount).toLocaleString() }}</div>
+                                    <div v-if="s.supplier_debt_amount > 0" class="text-[11px] text-red-500 font-semibold">Nợ: {{ formatCurrency(s.supplier_debt_amount) }}</div>
                                 </div>
                             </div>
                         </div>

@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, watch } from "vue";
 import { router } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
@@ -36,8 +37,6 @@ watch([branchId, year], () => applyFilter());
 
 const selectMonth = (m) => { month.value = m; timeMode.value = 'month'; applyFilter(); };
 const applyCustom = () => { timeMode.value = 'custom'; applyFilter(); };
-
-const formatCurrency = (n) => new Intl.NumberFormat("vi-VN").format(Math.round(n || 0));
 
 // PDF viewer
 const zoom = ref(100);

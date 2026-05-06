@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, watch, computed } from "vue";
 import { Head, Link, usePage } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
@@ -115,8 +116,6 @@ const goPage = (page) => {
     filters.value.page = page;
     loadRepairs();
 };
-
-const formatCurrency = (v) => v ? Number(v).toLocaleString("vi-VN") : "0";
 
 const statusBadge = (status) => {
     const map = {
@@ -285,7 +284,7 @@ loadRepairs();
                             </div>
                         </div>
                         <div v-if="selectedSerial" class="mt-2 text-sm text-gray-600 bg-gray-50 px-3 py-2 rounded">
-                            <strong>{{ selectedSerial.serial_number }}</strong> — {{ selectedSerial.product?.name }} — Giá vốn: {{ formatCurrency(selectedSerial.cost_price || selectedSerial.product?.cost_price) }}đ
+                            <strong>{{ selectedSerial.serial_number }}</strong> — {{ selectedSerial.product?.name }} — Giá vốn: {{ formatCurrency(selectedSerial.cost_price || selectedSerial.product?.cost_price) }}
                         </div>
                     </div>
 

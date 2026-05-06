@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, watch } from "vue";
 import { Head, router } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
@@ -88,8 +89,6 @@ const loadTask = async () => {
         loading.value = false;
     }
 };
-
-const formatCurrency = (v) => v ? Number(v).toLocaleString("vi-VN") : "0";
 
 const statusBadge = (status) => {
     const map = {
@@ -604,16 +603,16 @@ loadTask();
                     <div class="bg-white border rounded-lg p-4">
                         <h3 class="text-sm font-semibold text-gray-500 uppercase mb-3">Tài chính sửa chữa</h3>
                         <div class="space-y-1 text-sm">
-                            <div class="flex justify-between"><span class="text-gray-500">Tiền công:</span><span>{{ formatCurrency(task.labor_fee) }}đ</span></div>
-                            <div class="flex justify-between"><span class="text-gray-500">Tổng linh kiện (gross):</span><span>{{ formatCurrency(task.parts_total) }}đ</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">Tiền công:</span><span>{{ formatCurrency(task.labor_fee) }}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">Tổng linh kiện (gross):</span><span>{{ formatCurrency(task.parts_total) }}</span></div>
                             <div v-if="task.warranty_policy && task.warranty_policy !== 'none'" class="flex justify-between text-green-600">
-                                <span>Miễn theo BH ({{ task.warranty_policy }}):</span><span>-{{ formatCurrency(task.warranty_covered_amount) }}đ</span>
+                                <span>Miễn theo BH ({{ task.warranty_policy }}):</span><span>-{{ formatCurrency(task.warranty_covered_amount) }}</span>
                             </div>
                             <div class="flex justify-between border-t pt-1 mt-1 font-semibold">
-                                <span>Khách phải trả:</span><span class="text-blue-700">{{ formatCurrency(task.total_amount) }}đ</span>
+                                <span>Khách phải trả:</span><span class="text-blue-700">{{ formatCurrency(task.total_amount) }}</span>
                             </div>
-                            <div class="flex justify-between"><span class="text-gray-500">Đã trả:</span><span class="text-green-700">{{ formatCurrency(task.paid_amount) }}đ</span></div>
-                            <div class="flex justify-between"><span class="text-gray-500">Còn nợ:</span><span :class="Number(task.debt_amount) > 0 ? 'text-red-600 font-semibold' : ''">{{ formatCurrency(task.debt_amount) }}đ</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">Đã trả:</span><span class="text-green-700">{{ formatCurrency(task.paid_amount) }}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">Còn nợ:</span><span :class="Number(task.debt_amount) > 0 ? 'text-red-600 font-semibold' : ''">{{ formatCurrency(task.debt_amount) }}</span></div>
                             <div v-if="task.invoice_id" class="flex justify-between border-t pt-1 mt-1">
                                 <span class="text-gray-500">Hóa đơn SC:</span>
                                 <a :href="`/invoices/${task.invoice_id}/show`" class="text-blue-600 hover:underline">{{ task.invoice?.code || `#${task.invoice_id}` }}</a>
@@ -700,10 +699,10 @@ loadTask();
                     <div class="bg-white border rounded-lg p-4">
                         <h3 class="text-sm font-semibold text-gray-500 uppercase mb-3">{{ task.type === 'repair' ? 'Chi phí' : 'Tiến độ' }}</h3>
                         <div v-if="task.type === 'repair'" class="space-y-2 text-sm">
-                            <div class="flex justify-between"><span class="text-gray-500">Giá gốc:</span><span>{{ formatCurrency(task.original_cost) }}đ</span></div>
-                            <div class="flex justify-between"><span class="text-gray-500">Linh kiện:</span><span>{{ formatCurrency(task.parts_cost) }}đ</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">Giá gốc:</span><span>{{ formatCurrency(task.original_cost) }}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">Linh kiện:</span><span>{{ formatCurrency(task.parts_cost) }}</span></div>
                             <div class="flex justify-between text-base font-bold border-t pt-2 mt-2">
-                                <span>Tổng giá vốn:</span><span class="text-blue-600">{{ formatCurrency(task.total_cost) }}đ</span>
+                                <span>Tổng giá vốn:</span><span class="text-blue-600">{{ formatCurrency(task.total_cost) }}</span>
                             </div>
                         </div>
                         <!-- Progress -->
@@ -787,7 +786,7 @@ loadTask();
                                         Serial: {{ part.serial_ids.length }} cái
                                     </div>
                                     <div v-if="part.sale_price" class="text-[11px] text-green-600 mb-0.5">
-                                        Giá bán: {{ formatCurrency(part.sale_price) }}đ
+                                        Giá bán: {{ formatCurrency(part.sale_price) }}
                                     </div>
                                     <div>{{ part.notes || '' }}</div>
                                 </td>
@@ -851,12 +850,12 @@ loadTask();
                             <input v-model="productSearch" type="text" placeholder="Nhập tên sản phẩm..." class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
                             <div v-if="productResults.length" class="absolute z-10 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-48 overflow-auto">
                                 <div v-for="p in productResults" :key="p.id" @click="selectProduct(p)" class="px-3 py-2 hover:bg-blue-50 cursor-pointer text-sm flex justify-between">
-                                    <span>{{ p.name }}</span><span class="text-gray-400">{{ formatCurrency(p.cost_price) }}đ</span>
+                                    <span>{{ p.name }}</span><span class="text-gray-400">{{ formatCurrency(p.cost_price) }}</span>
                                 </div>
                             </div>
                         </div>
                         <div v-if="selectedProduct" class="mt-2 text-sm text-gray-600 bg-gray-50 px-3 py-2 rounded">
-                            <strong>{{ selectedProduct.name }}</strong> — Giá vốn: {{ formatCurrency(selectedProduct.cost_price) }}đ — Tồn: {{ selectedProduct.stock_quantity ?? '?' }}
+                            <strong>{{ selectedProduct.name }}</strong> — Giá vốn: {{ formatCurrency(selectedProduct.cost_price) }} — Tồn: {{ selectedProduct.stock_quantity ?? '?' }}
                         </div>
                     </div>
                     <div>
@@ -874,7 +873,7 @@ loadTask();
                             <label v-for="s in partProductSerials" :key="s.id" class="flex items-center gap-3 px-3 py-2 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-0">
                                 <input type="checkbox" :checked="partSelectedSerialIds.includes(s.id)" @change="togglePartSerial(s.id)" class="accent-blue-600" />
                                 <span class="text-sm font-mono text-blue-700">{{ s.serial_number }}</span>
-                                <span class="text-xs text-gray-400 ml-auto">GV: {{ formatCurrency(s.cost_price) }}đ</span>
+                                <span class="text-xs text-gray-400 ml-auto">GV: {{ formatCurrency(s.cost_price) }}</span>
                             </label>
                         </div>
                     </div>
@@ -909,7 +908,7 @@ loadTask();
                     <!-- Step 23.8F: hiển thị giá vốn còn khả dụng -->
                     <p v-if="task?.available_for_disassembly !== null && task?.available_for_disassembly !== undefined" class="text-xs px-3 py-2 rounded"
                        :class="task.available_for_disassembly > 0 ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-red-50 text-red-700 border border-red-200'">
-                        Giá vốn còn khả dụng để bóc: <strong>{{ formatCurrency(task.available_for_disassembly) }}đ</strong>
+                        Giá vốn còn khả dụng để bóc: <strong>{{ formatCurrency(task.available_for_disassembly) }}</strong>
                     </p>
                     <div>
                         <label class="block font-semibold text-sm mb-1">Sản phẩm (linh kiện bóc ra) *</label>
@@ -917,7 +916,7 @@ loadTask();
                             <input v-model="disProductSearch" type="text" placeholder="Nhập tên linh kiện..." class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-orange-500 outline-none" />
                             <div v-if="disProductResults.length" class="absolute z-10 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-48 overflow-auto">
                                 <div v-for="p in disProductResults" :key="p.id" @click="selectDisProduct(p)" class="px-3 py-2 hover:bg-orange-50 cursor-pointer text-sm flex justify-between">
-                                    <span>{{ p.name }}</span><span class="text-gray-400">GV: {{ formatCurrency(p.cost_price) }}đ</span>
+                                    <span>{{ p.name }}</span><span class="text-gray-400">GV: {{ formatCurrency(p.cost_price) }}</span>
                                 </div>
                             </div>
                             <div v-if="disProductSearch.length >= 2 && !disProductResults.length && !disSelectedProduct" class="absolute z-10 w-full bg-white border rounded-lg shadow-lg mt-1 px-3 py-2 text-sm text-gray-500">
@@ -925,7 +924,7 @@ loadTask();
                             </div>
                         </div>
                         <div v-if="disSelectedProduct" class="mt-2 text-sm text-gray-600 bg-orange-50 px-3 py-2 rounded border border-orange-200">
-                            <strong>{{ disSelectedProduct.name }}</strong> — Giá vốn BQ: {{ formatCurrency(disSelectedProduct.cost_price) }}đ — Tồn hiện tại: {{ disSelectedProduct.stock_quantity ?? '?' }}
+                            <strong>{{ disSelectedProduct.name }}</strong> — Giá vốn BQ: {{ formatCurrency(disSelectedProduct.cost_price) }} — Tồn hiện tại: {{ disSelectedProduct.stock_quantity ?? '?' }}
                         </div>
                     </div>
                     <div class="grid grid-cols-2 gap-4">
@@ -940,7 +939,7 @@ loadTask();
                         </div>
                     </div>
                     <div v-if="disForm.product_id && disForm.quantity && disForm.unit_cost" class="text-sm bg-orange-50 px-3 py-2 rounded border border-orange-200">
-                        Tổng giá trị bóc ra: <strong class="text-orange-700">{{ formatCurrency(disForm.unit_cost * disForm.quantity) }}đ</strong>
+                        Tổng giá trị bóc ra: <strong class="text-orange-700">{{ formatCurrency(disForm.unit_cost * disForm.quantity) }}</strong>
                         — Giá vốn máy sẽ giảm tương ứng
                     </div>
                     <!-- Step 23.8F: serial_numbers input cho output has_serial -->
@@ -1123,14 +1122,14 @@ loadTask();
 
                     <!-- Summary -->
                     <div class="bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm space-y-1">
-                        <div class="flex justify-between"><span class="text-gray-500">Tổng linh kiện:</span><span>{{ formatCurrency(completePartsTotal) }}đ</span></div>
-                        <div class="flex justify-between"><span class="text-gray-500">Tiền công:</span><span>{{ formatCurrency(completeForm.labor_fee) }}đ</span></div>
-                        <div class="flex justify-between font-semibold"><span>Gross total:</span><span>{{ formatCurrency(completeGrossTotal) }}đ</span></div>
+                        <div class="flex justify-between"><span class="text-gray-500">Tổng linh kiện:</span><span>{{ formatCurrency(completePartsTotal) }}</span></div>
+                        <div class="flex justify-between"><span class="text-gray-500">Tiền công:</span><span>{{ formatCurrency(completeForm.labor_fee) }}</span></div>
+                        <div class="flex justify-between font-semibold"><span>Gross total:</span><span>{{ formatCurrency(completeGrossTotal) }}</span></div>
                         <div v-if="completeCovered > 0" class="flex justify-between text-green-600 font-semibold">
-                            <span>Miễn theo BH:</span><span>-{{ formatCurrency(completeCovered) }}đ</span>
+                            <span>Miễn theo BH:</span><span>-{{ formatCurrency(completeCovered) }}</span>
                         </div>
                         <div class="flex justify-between border-t pt-1 mt-1 font-bold text-blue-700">
-                            <span>Khách phải trả:</span><span>{{ formatCurrency(completePayable) }}đ</span>
+                            <span>Khách phải trả:</span><span>{{ formatCurrency(completePayable) }}</span>
                         </div>
                     </div>
 
@@ -1153,7 +1152,7 @@ loadTask();
                     <div class="flex justify-between text-sm">
                         <span class="text-gray-500">Còn nợ:</span>
                         <span :class="completeDebt > 0 ? 'text-red-600 font-semibold' : 'text-green-600 font-semibold'">
-                            {{ formatCurrency(completeDebt) }}đ
+                            {{ formatCurrency(completeDebt) }}
                         </span>
                     </div>
                     <p v-if="completeDebt > 0 && !task.customer_id" class="text-xs text-red-600">

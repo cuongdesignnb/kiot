@@ -85,8 +85,8 @@
                         @endif
                     </td>
                     <td class="r">{{ $item->qty }}</td>
-                    <td class="r">{{ number_format($item->cost_price, 0, ',', '.') }}</td>
-                    <td class="r">{{ number_format($item->total_value ?? $item->cost_price * $item->qty, 0, ',', '.') }}</td>
+                    <td class="r">{{ format_vnd($item->cost_price) }}</td>
+                    <td class="r">{{ format_vnd($item->total_value ?? $item->cost_price * $item->qty) }}</td>
                 </tr>
                 @endforeach
             </tbody>
@@ -101,7 +101,7 @@
             </div>
             <div class="sum-row sum-total">
                 <span>Tổng giá trị:</span>
-                <span>{{ number_format($damage->total_value, 0, ',', '.') }}</span>
+                <span>{{ format_vnd($damage->total_value) }}</span>
             </div>
         </div>
 

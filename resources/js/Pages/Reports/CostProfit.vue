@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed } from "vue";
 import { router } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
@@ -53,10 +54,6 @@ const formatNumber = (n) => {
     if (Math.abs(n) >= 1e3)
         return (n / 1e3).toFixed(2).replace(/\.?0+$/, "") + " nghìn";
     return new Intl.NumberFormat("vi-VN").format(n);
-};
-
-const formatCurrency = (n) => {
-    return new Intl.NumberFormat("vi-VN").format(n || 0);
 };
 
 const pieColors = [

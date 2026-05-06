@@ -1,9 +1,9 @@
-<script setup>
+﻿<script setup>
+import { formatVND as fmt } from '@/utils/money';
 import { Head, Link } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 
 const props = defineProps({ invoice: Object });
-const fmt = (v) => Number(v || 0).toLocaleString('vi-VN');
 
 const statusLabels = {
     completed: 'Hoàn thành',
@@ -111,7 +111,7 @@ const statusColors = {
                     <div class="flex justify-between"><span class="text-gray-500">Tổng tiền hàng</span><span class="font-semibold">{{ fmt(invoice.subtotal) }}</span></div>
                     <div v-if="invoice.discount" class="flex justify-between"><span class="text-gray-500">Giảm giá</span><span class="font-semibold text-red-500">-{{ fmt(invoice.discount) }}</span></div>
                     <div v-if="invoice.delivery_fee" class="flex justify-between"><span class="text-gray-500">Phí giao hàng</span><span class="font-semibold">{{ fmt(invoice.delivery_fee) }}</span></div>
-                    <div class="flex justify-between border-t pt-2 text-base"><span class="font-bold">Tổng cộng</span><span class="font-bold text-blue-600">{{ fmt(invoice.total) }}₫</span></div>
+                    <div class="flex justify-between border-t pt-2 text-base"><span class="font-bold">Tổng cộng</span><span class="font-bold text-blue-600">{{ fmt(invoice.total) }}</span></div>
                     <div class="flex justify-between"><span class="text-gray-500">Khách đã trả</span><span class="font-semibold text-green-600">{{ fmt(invoice.customer_paid) }}</span></div>
                     <div v-if="invoice.debt_amount > 0" class="flex justify-between"><span class="text-gray-500">Còn nợ</span><span class="font-semibold text-red-600">{{ fmt(invoice.debt_amount) }}</span></div>
                 </div>

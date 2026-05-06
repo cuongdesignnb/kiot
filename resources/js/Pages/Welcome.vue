@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, watch, computed } from "vue";
 import { Head, Link, router } from "@inertiajs/vue3";
 import AppLayout from "../Layouts/AppLayout.vue";
@@ -306,7 +307,7 @@ const serialStatusLabel = (status) => {
     return map[status] || status;
 };
 
-const formatCurrency = (val) => Number(val || 0).toLocaleString();
+
 const formatDate = (val) => {
     if (!val) return "";
     return new Date(val).toLocaleString("vi-VN");
@@ -631,22 +632,14 @@ const formatDate = (val) => {
                                     {{ product.category?.name || '---' }}
                                 </td>
                                 <td class="p-3 text-right">
-                                    {{
-                                        Number(
-                                            product.retail_price || 0,
-                                        ).toLocaleString()
-                                    }}
+                                    {{ formatCurrency(product.retail_price || 0) }}
                                 </td>
                                 <td v-if="canViewCostPrice" class="p-3 text-right text-gray-500">
-                                    {{
-                                        Number(
-                                            product.cost_price || 0,
-                                        ).toLocaleString()
-                                    }}
+                                    {{ formatCurrency(product.cost_price || 0) }}
                                 </td>
                                 <td v-if="canViewCostPrice" class="p-3 text-right">
                                     <template v-if="product.has_serial && product.avg_final_cost">
-                                        <span class="font-semibold text-indigo-600">{{ Number(product.avg_final_cost || 0).toLocaleString() }}</span>
+                                        <span class="font-semibold text-indigo-600">{{ formatCurrency(product.avg_final_cost || 0) }}</span>
                                     </template>
                                     <template v-else>
                                         <span class="text-gray-400">---</span>

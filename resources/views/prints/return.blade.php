@@ -72,8 +72,8 @@
                         @endif
                     </td>
                     <td class="r">{{ $item->qty }}</td>
-                    <td class="r">{{ number_format($item->price, 0, ',', '.') }}</td>
-                    <td class="r">{{ number_format(($item->subtotal ?? $item->price * $item->qty), 0, ',', '.') }}</td>
+                    <td class="r">{{ format_vnd($item->price) }}</td>
+                    <td class="r">{{ format_vnd(($item->subtotal ?? $item->price * $item->qty)) }}</td>
                 </tr>
                 @endforeach
             </tbody>
@@ -84,22 +84,22 @@
         <div>
             <div class="sum-row">
                 <span>Tổng tiền hàng trả:</span>
-                <span>{{ number_format($return->subtotal ?? $return->total, 0, ',', '.') }}</span>
+                <span>{{ format_vnd($return->subtotal ?? $return->total) }}</span>
             </div>
             @if(($return->discount ?? 0) > 0)
             <div class="sum-row">
                 <span>Giảm trừ:</span>
-                <span>-{{ number_format($return->discount, 0, ',', '.') }}</span>
+                <span>-{{ format_vnd($return->discount) }}</span>
             </div>
             @endif
             <div class="sum-row sum-total">
                 <span>Cần trả khách:</span>
-                <span>{{ number_format($return->total, 0, ',', '.') }}</span>
+                <span>{{ format_vnd($return->total) }}</span>
             </div>
             @if(($return->paid_to_customer ?? 0) > 0)
             <div class="sum-row">
                 <span>Đã trả khách:</span>
-                <span>{{ number_format($return->paid_to_customer, 0, ',', '.') }}</span>
+                <span>{{ format_vnd($return->paid_to_customer) }}</span>
             </div>
             @endif
         </div>

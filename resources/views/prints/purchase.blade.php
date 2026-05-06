@@ -69,8 +69,8 @@
                         @endif
                     </td>
                     <td class="r">{{ $item->quantity }}</td>
-                    <td class="r">{{ number_format($item->price, 0, ',', '.') }}</td>
-                    <td class="r">{{ number_format($item->subtotal ?? $item->price * $item->quantity, 0, ',', '.') }}</td>
+                    <td class="r">{{ format_vnd($item->price) }}</td>
+                    <td class="r">{{ format_vnd($item->subtotal ?? $item->price * $item->quantity) }}</td>
                 </tr>
                 @endforeach
             </tbody>
@@ -81,28 +81,28 @@
         <div>
             <div class="sum-row">
                 <span>Tổng tiền hàng:</span>
-                <span>{{ number_format($purchase->total_amount, 0, ',', '.') }}</span>
+                <span>{{ format_vnd($purchase->total_amount) }}</span>
             </div>
             @if(($purchase->discount ?? 0) > 0)
             <div class="sum-row">
                 <span>Chiết khấu:</span>
-                <span>-{{ number_format($purchase->discount, 0, ',', '.') }}</span>
+                <span>-{{ format_vnd($purchase->discount) }}</span>
             </div>
             @endif
             <div class="sum-row sum-total">
                 <span>Cần thanh toán:</span>
-                <span>{{ number_format($purchase->total_amount - ($purchase->discount ?? 0), 0, ',', '.') }}</span>
+                <span>{{ format_vnd($purchase->total_amount - ($purchase->discount ?? 0)) }}</span>
             </div>
             @if(($purchase->paid_amount ?? 0) > 0)
             <div class="sum-row">
                 <span>Đã thanh toán:</span>
-                <span>{{ number_format($purchase->paid_amount, 0, ',', '.') }}</span>
+                <span>{{ format_vnd($purchase->paid_amount) }}</span>
             </div>
             @endif
             @if(($purchase->debt_amount ?? 0) > 0)
             <div class="sum-row">
                 <span>Công nợ:</span>
-                <span style="color:#d00">{{ number_format($purchase->debt_amount, 0, ',', '.') }}</span>
+                <span style="color:#d00">{{ format_vnd($purchase->debt_amount) }}</span>
             </div>
             @endif
         </div>
