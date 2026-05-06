@@ -3,6 +3,8 @@ import { Head, useForm, Link } from '@inertiajs/vue3';
 import { ref, computed, onMounted } from 'vue';
 import axios from 'axios';
 import AppLayout from '../../Layouts/AppLayout.vue';
+import MoneyInput from '../../Components/MoneyInput.vue';
+import { formatVND as formatCurrency } from '@/utils/money';
 
 const props = defineProps({
     product: Object,
@@ -490,37 +492,33 @@ const generateVariants = () => {
                                     <!-- Giá vốn & Giá bán -->
                                     <div>
                                         <label class="block text-sm font-semibold text-gray-700 mb-1">Giá vốn</label>
-                                        <div class="relative">
-                                            <input type="number" v-model="form.cost_price" class="w-full border border-gray-300 rounded p-2 pr-10 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-right text-base font-semibold text-gray-800">
-                                            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-medium">₫</span>
-                                        </div>
+                                        <MoneyInput v-model="form.cost_price" suffix
+                                                   input-class="w-full border border-gray-300 rounded p-2 pr-7 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-right text-base font-semibold text-gray-800"
+                                        />
                                         <span v-if="form.errors.cost_price" class="text-red-500 text-xs mt-1 block">{{ form.errors.cost_price }}</span>
                                     </div>
                                     <div>
                                         <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán <span class="text-red-500">*</span></label>
-                                        <div class="relative">
-                                            <input type="number" v-model="form.retail_price" class="w-full border border-gray-300 rounded p-2 pr-10 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-right text-base text-blue-700 font-bold">
-                                            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-medium">₫</span>
-                                        </div>
+                                        <MoneyInput v-model="form.retail_price" suffix
+                                                   input-class="w-full border border-gray-300 rounded p-2 pr-7 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-right text-base text-blue-700 font-bold"
+                                        />
                                         <span v-if="form.errors.retail_price" class="text-red-500 text-xs mt-1 block">{{ form.errors.retail_price }}</span>
                                     </div>
 
                                     <!-- Giá bán lẻ (conditional) -->
                                     <div v-if="showRetailPrice">
                                         <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán lẻ</label>
-                                        <div class="relative">
-                                            <input type="number" v-model="form.retail_price" class="w-full border border-gray-300 rounded p-2 pr-10 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-right text-base font-semibold">
-                                            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-medium">₫</span>
-                                        </div>
+                                        <MoneyInput v-model="form.retail_price" suffix
+                                                   input-class="w-full border border-gray-300 rounded p-2 pr-7 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-right text-base font-semibold"
+                                        />
                                     </div>
 
                                     <!-- Giá thợ (conditional) -->
                                     <div v-if="showTechnicianPrice">
                                         <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán thợ</label>
-                                        <div class="relative">
-                                            <input type="number" v-model="form.technician_price" class="w-full border border-gray-300 rounded p-2 pr-10 focus:ring-1 focus:ring-purple-500 focus:border-purple-500 outline-none transition-shadow text-right text-base font-semibold text-purple-700">
-                                            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-medium">₫</span>
-                                        </div>
+                                        <MoneyInput v-model="form.technician_price" suffix
+                                                   input-class="w-full border border-gray-300 rounded p-2 pr-7 focus:ring-1 focus:ring-purple-500 focus:border-purple-500 outline-none transition-shadow text-right text-base font-semibold text-purple-700"
+                                        />
                                         <span v-if="form.errors.technician_price" class="text-red-500 text-xs mt-1 block">{{ form.errors.technician_price }}</span>
                                     </div>
 
@@ -595,8 +593,8 @@ const generateVariants = () => {
                                                             <tr v-for="(v, vi) in form.variants" :key="vi" class="border-t border-gray-100">
                                                                 <td class="px-2 py-1"><input type="text" v-model="v.name" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm"></td>
                                                                 <td class="px-2 py-1"><input type="text" v-model="v.sku" placeholder="Tự động" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm"></td>
-                                                                <td class="px-2 py-1"><input type="number" v-model="v.cost_price" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right"></td>
-                                                                <td class="px-2 py-1"><input type="number" v-model="v.retail_price" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right"></td>
+                                                                <td class="px-2 py-1"><MoneyInput v-model="v.cost_price" input-class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right" /></td>
+                                                                <td class="px-2 py-1"><MoneyInput v-model="v.retail_price" input-class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right" /></td>
                                                                 <td class="px-2 py-1"><input type="number" v-model="v.stock_quantity" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right"></td>
                                                             </tr>
                                                         </tbody>
@@ -691,7 +689,7 @@ const generateVariants = () => {
                                             <input v-if="s.status === 'in_stock' && editSerialStatus === 'in_stock'"
                                                 v-model.number="editSerialCost" type="number" min="0"
                                                 class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right focus:ring-1 focus:ring-blue-500 outline-none" />
-                                            <span v-else class="text-gray-400 text-xs italic" :title="'Chỉ sửa được khi còn tồn'">{{ Number(s.cost_price || 0).toLocaleString('vi-VN') }}</span>
+                                            <span v-else class="text-gray-400 text-xs italic" :title="'Chỉ sửa được khi còn tồn'">{{ formatCurrency(s.cost_price) }}</span>
                                         </td>
                                         <td class="px-3 py-2 text-center">
                                             <button @click="saveEdit(s)" class="text-blue-600 text-xs font-semibold mr-2 hover:underline">Lưu</button>
@@ -703,7 +701,7 @@ const generateVariants = () => {
                                         <td class="px-3 py-2 text-center">
                                             <span :class="statusColors[s.status]" class="px-2 py-0.5 rounded-full text-xs font-semibold">{{ statusLabels[s.status] || s.status }}</span>
                                         </td>
-                                        <td class="px-3 py-2 text-right text-gray-500">{{ Number(s.cost_price || 0).toLocaleString('vi-VN') }}</td>
+                                        <td class="px-3 py-2 text-right text-gray-500">{{ formatCurrency(s.cost_price) }}</td>
                                         <td class="px-3 py-2 text-center">
                                             <button @click="startEdit(s)" class="text-blue-600 text-xs font-semibold mr-2 hover:underline">Sửa</button>
                                             <button v-if="s.status !== 'sold'" @click="deleteSerial(s)" class="text-red-500 text-xs font-semibold hover:underline">Xóa</button>

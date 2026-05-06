@@ -1,5 +1,5 @@
 <script setup>
-import { formatVND as formatCurrency } from '@/utils/money';
+import { formatVND as formatCurrency, formatMoneyInput as formatCurrencyInput } from '@/utils/money';
 import { ref, computed, watch } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
@@ -287,10 +287,7 @@ const parseCurrencyInput = (str) => {
     if (!str && str !== 0) return 0;
     return Number(String(str).replace(/\./g, '').replace(/,/g, '')) || 0;
 };
-const formatCurrencyInput = (val) => {
-    const num = Number(val) || 0;
-    return num.toLocaleString('vi-VN');
-};
+
 const onCurrencyFocus = (event) => {
     const val = parseCurrencyInput(event.target.value);
     if (val === 0) event.target.value = '';

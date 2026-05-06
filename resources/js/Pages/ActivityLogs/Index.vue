@@ -4,6 +4,7 @@ import { Head, Link } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import axios from 'axios';
 import { usePermission } from '@/composables/usePermission';
+import { formatVND } from '@/utils/money';
 
 const { can, isAdmin } = usePermission();
 
@@ -244,7 +245,7 @@ const getPropLabel = (key) => propLabels[key] || key;</script>
                                     <span v-if="val != null && val !== ''"
                                         class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-xs text-gray-600">
                                         <span class="font-medium text-gray-500">{{ getPropLabel(key) }}:</span>
-                                        <span>{{ typeof val === 'number' ? Number(val).toLocaleString('vi-VN') : val }}</span>
+                                        <span>{{ typeof val === 'number' ? formatVND(val) : val }}</span>
                                     </span>
                                 </template>
                             </div>

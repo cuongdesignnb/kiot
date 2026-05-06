@@ -469,6 +469,7 @@ import { Head, router } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import { ref, computed, reactive, onMounted } from "vue";
 import axios from "axios";
+import { formatVND as fmt } from '@/utils/money';
 
 const props = defineProps({
     paysheet: { type: Object, required: true },
@@ -782,10 +783,6 @@ function goBack() {
 }
 
 // ===== Formatters =====
-function fmt(v) {
-    if (!v && v !== 0) return '0';
-    return Number(v).toLocaleString('vi-VN');
-}
 
 function formatDate(d) {
     if (!d) return '';

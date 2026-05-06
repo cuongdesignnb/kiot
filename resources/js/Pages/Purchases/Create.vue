@@ -1,5 +1,5 @@
 <script setup>
-import { formatVND as formatCurrency } from '@/utils/money';
+import { formatVND as formatCurrency, formatMoneyInput as formatCurrencyInput } from '@/utils/money';
 import { ref, computed, onMounted, watch } from 'vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import axios from 'axios';
@@ -262,15 +262,13 @@ const save = () => {
 };
 
 
+
 // Format input hiển thị giá Việt Nam (8.000.000) nhưng lưu số thật
 const parseCurrencyInput = (str) => {
     if (!str && str !== 0) return 0;
     return Number(String(str).replace(/\./g, '').replace(/,/g, '')) || 0;
 };
-const formatCurrencyInput = (val) => {
-    const num = Number(val) || 0;
-    return num.toLocaleString('vi-VN');
-};
+
 const onCurrencyInput = (obj, field, event) => {
     const raw = event.target.value;
     obj[field] = parseCurrencyInput(raw);

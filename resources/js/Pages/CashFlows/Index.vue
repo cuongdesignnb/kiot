@@ -1387,9 +1387,9 @@ const printFlow = (flow) => {
                                         class="px-4 py-3 text-[13px] text-gray-800 text-right"
                                     >
                                         {{
-                                            Number(
+                                            formatCurrency(
                                                 getSelectedFlow()?.amount || 0,
-                                            ).toLocaleString()
+                                            )
                                         }}
                                     </td>
                                     <td
@@ -1401,9 +1401,9 @@ const printFlow = (flow) => {
                                         class="px-4 py-3 text-[13px] font-medium text-gray-800 text-right"
                                     >
                                         {{
-                                            Number(
+                                            formatCurrency(
                                                 getSelectedFlow()?.amount || 0,
-                                            ).toLocaleString()
+                                            )
                                         }}
                                     </td>
                                     <td
@@ -1428,9 +1428,9 @@ const printFlow = (flow) => {
                                         class="px-4 py-4 text-[14px] font-bold text-gray-900 text-right"
                                     >
                                         {{
-                                            Number(
+                                            formatCurrency(
                                                 getSelectedFlow()?.amount || 0,
-                                            ).toLocaleString()
+                                            )
                                         }}
                                     </td>
                                     <td></td>

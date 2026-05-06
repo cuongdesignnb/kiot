@@ -943,7 +943,7 @@ onUnmounted(() => {
                                       <div class="font-bold text-gray-800 text-[13px]">{{ c.name }}<span v-if="c.code" class="text-gray-400 font-normal text-[11px]"> · {{ c.code }}</span></div>
                                       <div class="text-[12px] text-gray-500 flex justify-between gap-2">
                                           <span>{{ c.phone || c.email || '—' }}</span>
-                                          <span v-if="c.debt_amount > 0" class="text-red-600">Nợ: {{ Number(c.debt_amount).toLocaleString('vi-VN') }}</span>
+                                          <span v-if="c.debt_amount > 0" class="text-red-600">Nợ: {{ formatCurrency(c.debt_amount) }}</span>
                                       </div>
                                   </div>
                               </div>

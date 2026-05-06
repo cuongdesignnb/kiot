@@ -4,6 +4,7 @@ import { Head, Link } from '@inertiajs/vue3';
 import axios from 'axios';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import SetupSidebar from '@/Pages/Employees/Partials/SetupSidebar.vue';
+import { formatVND as formatMoney } from '@/utils/money';
 
 const props = defineProps({
     payrollSetting: {
@@ -361,7 +362,6 @@ const setToast = (message, type = 'success') => {
     setToast.timeoutId = window.setTimeout(() => { toast.show = false; }, 2500);
 };
 
-const formatMoney = (value) => Number(value || 0).toLocaleString('vi-VN');
 
 // ========== Payroll Settings Sidebar Rows ==========
 const cycleSummary = computed(() => {

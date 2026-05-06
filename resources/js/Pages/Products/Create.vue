@@ -4,6 +4,7 @@ import { ref, computed, watch } from 'vue';
 import axios from 'axios';
 import AppLayout from '../../Layouts/AppLayout.vue';
 import MediaLibrary from '../../Components/MediaLibrary.vue';
+import MoneyInput from '../../Components/MoneyInput.vue';
 
 const props = defineProps({
     type: {
@@ -402,7 +403,7 @@ const generateVariants = () => {
                                                 </div>
                                                 <div class="col-span-2">
                                                     <label class="block text-[11px] text-gray-500 uppercase font-bold mb-1">Giá bán đơn vị</label>
-                                                    <input type="number" v-model="unit.retail_price" class="w-full border border-gray-300 rounded p-1.5 text-sm text-right">
+                                                    <MoneyInput v-model="unit.retail_price" input-class="w-full border border-gray-300 rounded p-1.5 text-sm text-right" />
                                                 </div>
                                                 <div class="col-span-1 flex justify-center pb-1.5">
                                                     <button type="button" @click="removeUnit(index)" class="text-red-500 hover:text-red-700">
@@ -418,41 +419,35 @@ const generateVariants = () => {
                                     <!-- Giá vốn & Giá bán -->
                                     <div>
                                         <label class="block text-sm font-semibold text-gray-700 mb-1">Giá vốn</label>
-                                        <div class="relative">
-                                            <input type="number" v-model="form.cost_price" 
+                                        <MoneyInput v-model="form.cost_price" suffix
                                                    :disabled="($page.props.app_settings?.inventory_costing_method === 'average')"
-                                                   :class="{'bg-gray-50 text-gray-400 cursor-not-allowed': ($page.props.app_settings?.inventory_costing_method === 'average')}"
-                                                   class="w-full border border-gray-300 rounded p-2 pr-10 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-right text-base font-semibold">
-                                            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-medium">₫</span>
-                                        </div>
+                                                   :input-class="'w-full border border-gray-300 rounded p-2 pr-7 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-right text-base font-semibold' + (($page.props.app_settings?.inventory_costing_method === 'average') ? ' bg-gray-50 text-gray-400 cursor-not-allowed' : '')"
+                                        />
                                         <p v-if="$page.props.app_settings?.inventory_costing_method === 'average'" class="text-[11px] text-gray-400 mt-1 italic">Tự động tính theo Giá vốn trung bình</p>
                                         <span v-if="form.errors.cost_price" class="text-red-500 text-xs mt-1 block">{{ form.errors.cost_price }}</span>
                                     </div>
                                     <div>
                                         <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán <span class="text-red-500">*</span></label>
-                                        <div class="relative">
-                                            <input type="number" v-model="form.retail_price" class="w-full border border-gray-300 rounded p-2 pr-10 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-right text-base text-blue-700 font-bold">
-                                            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-medium">₫</span>
-                                        </div>
+                                        <MoneyInput v-model="form.retail_price" suffix
+                                                   input-class="w-full border border-gray-300 rounded p-2 pr-7 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-right text-base text-blue-700 font-bold"
+                                        />
                                         <span v-if="form.errors.retail_price" class="text-red-500 text-xs mt-1 block">{{ form.errors.retail_price }}</span>
                                     </div>
 
                                     <!-- Giá bán lẻ (conditional) -->
                                     <div v-if="showRetailPrice">
                                         <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán lẻ</label>
-                                        <div class="relative">
-                                            <input type="number" v-model="form.retail_price" class="w-full border border-gray-300 rounded p-2 pr-10 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-right text-base font-semibold">
-                                            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-medium">₫</span>
-                                        </div>
+                                        <MoneyInput v-model="form.retail_price" suffix
+                                                   input-class="w-full border border-gray-300 rounded p-2 pr-7 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-right text-base font-semibold"
+                                        />
                                     </div>
 
                                     <!-- Giá thợ (conditional) -->
                                     <div v-if="showTechnicianPrice">
                                         <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán thợ</label>
-                                        <div class="relative">
-                                            <input type="number" v-model="form.technician_price" class="w-full border border-gray-300 rounded p-2 pr-10 focus:ring-1 focus:ring-purple-500 focus:border-purple-500 outline-none transition-shadow text-right text-base font-semibold text-purple-700">
-                                            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-medium">₫</span>
-                                        </div>
+                                        <MoneyInput v-model="form.technician_price" suffix
+                                                   input-class="w-full border border-gray-300 rounded p-2 pr-7 focus:ring-1 focus:ring-purple-500 focus:border-purple-500 outline-none transition-shadow text-right text-base font-semibold text-purple-700"
+                                        />
                                         <span v-if="form.errors.technician_price" class="text-red-500 text-xs mt-1 block">{{ form.errors.technician_price }}</span>
                                     </div>
 
@@ -528,8 +523,8 @@ const generateVariants = () => {
                                                             <tr v-for="(v, vi) in form.variants" :key="vi" class="border-t border-gray-100">
                                                                 <td class="px-2 py-1"><input type="text" v-model="v.name" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm"></td>
                                                                 <td class="px-2 py-1"><input type="text" v-model="v.sku" placeholder="Tự động" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm"></td>
-                                                                <td class="px-2 py-1"><input type="number" v-model="v.cost_price" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right"></td>
-                                                                <td class="px-2 py-1"><input type="number" v-model="v.retail_price" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right"></td>
+                                                                <td class="px-2 py-1"><MoneyInput v-model="v.cost_price" input-class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right" /></td>
+                                                                <td class="px-2 py-1"><MoneyInput v-model="v.retail_price" input-class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right" /></td>
                                                                 <td class="px-2 py-1"><input type="number" v-model="v.stock_quantity" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right"></td>
                                                             </tr>
                                                         </tbody>

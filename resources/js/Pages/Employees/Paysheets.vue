@@ -1573,6 +1573,7 @@ import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import { ref, computed, reactive, onMounted, watch } from "vue";
 import axios from "axios";
+import { formatVND as formatMoney } from '@/utils/money';
 
 const props = defineProps({
     branches: { type: Array, default: () => [] },
@@ -2039,10 +2040,6 @@ const paySelected = async (ps) => {
 };
 
 // ===== Helpers =====
-const formatMoney = (v) => {
-    if (!v && v !== 0) return "0";
-    return Number(v).toLocaleString("vi-VN");
-};
 
 const formatDate = (d) => {
     if (!d) return "";
