@@ -38,6 +38,7 @@ class SerialAvailabilityService
         'returned',
         'used_for_repair',
         'dismantled',
+        'in_transit',
         // Future:
         'damaged',
         'cancelled',

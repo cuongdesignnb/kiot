@@ -9,6 +9,7 @@ use App\Models\StockTransfer;
 use App\Models\StockTransferItem;
 use App\Models\Branch;
 use App\Models\Product;
+use App\Models\SerialImei;
 use App\Enums\StockTransferStatus;
 use App\Support\Filters\FilterableIndex;
 use App\Services\LockPeriodService;
@@ -82,6 +83,8 @@ class StockTransferController extends Controller
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|exists:products,id',
             'items.*.quantity' => 'required|integer|min:1',
+            'items.*.serial_ids' => 'nullable|array',
+            'items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
             'status' => 'required|in:draft,transferring,received',
             'note' => 'nullable|string'
         ], [
@@ -116,11 +119,48 @@ class StockTransferController extends Controller
 
             $qty = (int) $line['quantity'];
             $costAtTransfer = (float) $product->cost_price;
+            $serialIds = isset($line['serial_ids']) && is_array($line['serial_ids'])
+                ? array_values(array_unique(array_map('intval', $line['serial_ids'])))
+                : [];
 
-            // BUG-3: chặn hhàng has_serial cho transferring/received (chưa có serial detail).
+            // Step 23.9: Hàng has_serial — yêu cầu serial_ids khi không phải draft.
             if ($request->status !== 'draft' && $product->has_serial) {
+                if (empty($serialIds)) {
+                    return back()->withErrors([
+                        "items.{$idx}.product_id" => 'Sản phẩm "' . $product->name . '" có Serial/IMEI — cần chọn đủ ' . $qty . ' serial.',
+                    ])->withInput();
+                }
+                if (count($line['serial_ids'] ?? []) !== count($serialIds)) {
+                    return back()->withErrors([
+                        "items.{$idx}.serial_ids" => 'Serial bị trùng trong danh sách.',
+                    ])->withInput();
+                }
+                if (count($serialIds) !== $qty) {
+                    return back()->withErrors([
+                        "items.{$idx}.serial_ids" => 'Số serial (' . count($serialIds) . ") không khớp số lượng ({$qty}).",
+                    ])->withInput();
+                }
+                $serials = SerialImei::whereIn('id', $serialIds)->get();
+                if ($serials->count() !== count($serialIds)) {
+                    return back()->withErrors([
+                        "items.{$idx}.serial_ids" => 'Một hoặc nhiều Serial/IMEI không tồn tại.',
+                    ])->withInput();
+                }
+                foreach ($serials as $s) {
+                    if ((int) $s->product_id !== (int) $product->id) {
+                        return back()->withErrors([
+                            "items.{$idx}.serial_ids" => "Serial {$s->serial_number} không thuộc sản phẩm \"{$product->name}\".",
+                        ])->withInput();
+                    }
+                    if ($s->status !== 'in_stock') {
+                        return back()->withErrors([
+                            "items.{$idx}.serial_ids" => "Serial {$s->serial_number} không trong kho (status: {$s->status}).",
+                        ])->withInput();
+                    }
+                }
+            } elseif (!$product->has_serial && !empty($serialIds)) {
                 return back()->withErrors([
-                    "items.{$idx}.product_id" => 'Sản phẩm “' . $product->name . '” có serial/IMEI: chưa hỗ trợ chuyển kho khi chưa khai báo serial cụ thể.',
+                    "items.{$idx}.serial_ids" => 'Sản phẩm "' . $product->name . '" không phải hàng Serial/IMEI — không nhận serial_ids.',
                 ])->withInput();
             }
 
@@ -130,6 +170,7 @@ class StockTransferController extends Controller
                 'cost_at_transfer' => $costAtTransfer,
                 'price'            => $qty * $costAtTransfer,
                 'product'          => $product,
+                'serial_ids'       => $product->has_serial ? $serialIds : null,
             ];
             $serverTotalQty += $qty;
             $serverTotalPrice += $qty * $costAtTransfer;
@@ -182,7 +223,10 @@ class StockTransferController extends Controller
                     'quantity'          => $qty,
                     'price'             => $row['price'],
                     'cost_at_transfer'  => $costAtTransfer,
+                    'serial_ids'        => $row['serial_ids'],
                 ]);
+
+                $serialIds = $row['serial_ids'] ?? [];
 
                 // Transfer out: deduct stock + update costing + record movement
                 if ($request->status !== 'draft') {
@@ -196,6 +240,15 @@ class StockTransferController extends Controller
                         $transfer,
                         ['branch_id' => $request->from_branch_id]
                     );
+
+                    // Step 23.9: Mark serials in_transit (transferring) hoặc giữ in_stock cho 'received'
+                    // (vì received nghĩa là transfer + receive ngay → serial vẫn ở kho đích).
+                    if ($product->has_serial && !empty($serialIds)) {
+                        if ($request->status === 'transferring') {
+                            SerialImei::whereIn('id', $serialIds)->update(['status' => 'in_transit']);
+                        }
+                        // 'received' → serial giữ in_stock (đã ở kho đích). Stock movement vẫn ghi đầy đủ in/out.
+                    }
                 }
 
                 // Transfer in (received immediately): add stock + update costing + record movement
@@ -214,6 +267,14 @@ class StockTransferController extends Controller
                         ['branch_id' => $request->to_branch_id]
                     );
                     $transferItem->update(['received_quantity' => $qty]);
+
+                    // Step 23.9: Sync stock_quantity cho hàng has_serial theo serial in_stock thực tế
+                    if ($product->has_serial) {
+                        $product->recomputeFromSerials();
+                    }
+                } elseif ($request->status === 'transferring' && $product->has_serial) {
+                    // Sync stock_quantity sau khi serial → in_transit (giảm count in_stock)
+                    $product->recomputeFromSerials();
                 }
             }
 
@@ -302,6 +363,16 @@ class StockTransferController extends Controller
                 ], 422);
             }
 
+            // Step 23.9: hàng has_serial không hỗ trợ partial receive ở step này.
+            $product = $item->product ?? Product::find($item->product_id);
+            $hasSerial = $product?->has_serial && !empty($item->serial_ids);
+            if ($hasSerial && $recvQty !== (int) $item->quantity) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Hàng Serial/IMEI hiện chưa hỗ trợ nhận một phần — phải nhận đủ ' . $item->quantity . ' cái.',
+                ], 422);
+            }
+
             if ($recvQty < (int) $item->quantity) {
                 $isPartial = true;
             }
@@ -337,6 +408,22 @@ class StockTransferController extends Controller
                             $transfer,
                             ['branch_id' => $transfer->to_branch_id]
                         );
+
+                        // Step 23.9: Hàng has_serial — chuyển in_transit → in_stock
+                        if ($product->has_serial && !empty($item->serial_ids)) {
+                            $serials = SerialImei::whereIn('id', $item->serial_ids)
+                                ->where('product_id', $product->id)
+                                ->get();
+                            foreach ($serials as $s) {
+                                if ($s->status !== 'in_transit') {
+                                    throw new \RuntimeException(
+                                        "Serial {$s->serial_number} không ở trạng thái in_transit (đang: {$s->status}). Không thể nhận."
+                                    );
+                                }
+                            }
+                            SerialImei::whereIn('id', $item->serial_ids)->update(['status' => 'in_stock']);
+                            $product->recomputeFromSerials();
+                        }
                     }
                 }
             }
@@ -374,6 +461,25 @@ class StockTransferController extends Controller
             return response()->json(['success' => true, 'message' => 'Da huy phieu nhap.']);
         }
 
+        // Step 23.9: pre-flight check serial cho hàng has_serial trước khi rollback bất cứ thứ gì.
+        $originalStatus = $transfer->status;
+        if ($originalStatus === 'received') {
+            foreach ($transfer->items as $item) {
+                if (empty($item->serial_ids)) continue;
+                $product = Product::find($item->product_id);
+                if (!$product || !$product->has_serial) continue;
+                $serials = SerialImei::whereIn('id', $item->serial_ids)->get();
+                foreach ($serials as $s) {
+                    if ($s->status !== 'in_stock') {
+                        return response()->json([
+                            'success' => false,
+                            'message' => "Không thể hủy: serial {$s->serial_number} đã không còn in_stock (đang: {$s->status}). Có thể đã bán/dùng sau khi nhận.",
+                        ], 422);
+                    }
+                }
+            }
+        }
+
         try {
             DB::beginTransaction();
 
@@ -389,7 +495,7 @@ class StockTransferController extends Controller
                 // If received, reverse destination stock first (transfer_in reversal).
                 // RR-12: applyPurchaseReturn rút tồn ở cost snapshot, không như applySale
                 // dùng current BQ — đảm bảo total_cost đảo đúng theo snapshot.
-                if ($transfer->status === 'received' && $item->received_quantity > 0) {
+                if ($originalStatus === 'received' && $item->received_quantity > 0) {
                     MovingAvgCostingService::applyPurchaseReturn(
                         $product,
                         (int) $item->received_quantity,
@@ -417,6 +523,19 @@ class StockTransferController extends Controller
                     $transfer,
                     ['branch_id' => $transfer->from_branch_id, 'note' => 'Hủy chuyển kho — hoàn kho nguồn']
                 );
+
+                // Step 23.9: Rollback serial cho hàng has_serial.
+                // - transferring → serial in_transit → in_stock (chưa từng tới đích).
+                // - received    → serial vẫn in_stock (đã pre-check), không đổi status.
+                if ($product->has_serial && !empty($item->serial_ids)) {
+                    if ($originalStatus === 'transferring') {
+                        SerialImei::whereIn('id', $item->serial_ids)
+                            ->where('product_id', $product->id)
+                            ->where('status', 'in_transit')
+                            ->update(['status' => 'in_stock']);
+                    }
+                    $product->recomputeFromSerials();
+                }
             }
 
             $transfer->update(['status' => 'cancelled']);

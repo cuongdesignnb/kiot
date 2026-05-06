@@ -17,10 +17,12 @@ class StockTransferItem extends Model
         'received_quantity',
         'price',
         'cost_at_transfer',
+        'serial_ids',
     ];
 
     protected $casts = [
         'cost_at_transfer' => 'decimal:2',
+        'serial_ids'       => 'array',
     ];
 
     public function product()

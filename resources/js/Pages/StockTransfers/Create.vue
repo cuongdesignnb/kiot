@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { Head, router, Link } from '@inertiajs/vue3';
 import axios from 'axios';
 
@@ -52,15 +52,43 @@ watch(searchQuery, (val) => {
     }, 300);
 });
 
-const selectProduct = (product) => {
+const selectProduct = async (product) => {
     const existing = items.value.find(i => i.id === product.id);
     if (existing) {
         existing.quantity++;
     } else {
-        items.value.unshift({ ...product, quantity: 1, transfer_price: product.cost_price || 0 });
+        const newItem = {
+            ...product,
+            quantity: 1,
+            transfer_price: product.cost_price || 0,
+            available_serials: [],
+            selected_serial_ids: [],
+            loading_serials: false,
+        };
+        items.value.unshift(newItem);
+        // Step 23.9: nếu has_serial → load serial in_stock của product này
+        if (product.has_serial) {
+            newItem.loading_serials = true;
+            try {
+                const res = await axios.get('/api/tasks/product-serials', {
+                    params: { product_id: product.id },
+                });
+                newItem.available_serials = res.data || [];
+            } catch (e) {
+                newItem.available_serials = [];
+            } finally {
+                newItem.loading_serials = false;
+            }
+        }
     }
     searchQuery.value = '';
     showSuggestions.value = false;
+};
+
+const toggleItemSerial = (item, serialId) => {
+    const idx = item.selected_serial_ids.indexOf(serialId);
+    if (idx >= 0) item.selected_serial_ids.splice(idx, 1);
+    else item.selected_serial_ids.push(serialId);
 };
 
 const hideSuggestions = () => {
@@ -86,6 +114,17 @@ const save = async (actionStatus) => {
         alert("Vui lòng chọn ít nhất 1 hàng hóa để chuyển.");
         return;
     }
+    // Step 23.9: validate serial_ids cho hàng has_serial khi không phải draft
+    if (actionStatus !== 'draft') {
+        for (const item of items.value) {
+            if (item.has_serial) {
+                if ((item.selected_serial_ids?.length || 0) !== Number(item.quantity)) {
+                    alert(`Sản phẩm "${item.name}" có Serial/IMEI — cần chọn đủ ${item.quantity} serial (đã chọn ${item.selected_serial_ids?.length || 0}).`);
+                    return;
+                }
+            }
+        }
+    }
     status.value = actionStatus;
     submitRef.value = true;
     try {
@@ -96,15 +135,24 @@ const save = async (actionStatus) => {
             status: status.value,
             action_date: transactionDate.value,
             note: note.value,
-            items: items.value.map(i => ({
-                product_id: i.id,
-                quantity: i.quantity,
-                price: i.transfer_price || 0
-            }))
+            items: items.value.map(i => {
+                const payload = {
+                    product_id: i.id,
+                    quantity: i.quantity,
+                    price: i.transfer_price || 0,
+                };
+                if (i.has_serial && i.selected_serial_ids?.length) {
+                    payload.serial_ids = i.selected_serial_ids;
+                }
+                return payload;
+            }),
         });
         router.visit('/stock-transfers');
     } catch (e) {
-        alert("Có lỗi xảy ra, vui lòng kiểm tra lại dữ liệu.");
+        const msg = e?.response?.data?.errors
+            ? Object.values(e.response.data.errors).flat().join('\n')
+            : (e?.response?.data?.message || "Có lỗi xảy ra, vui lòng kiểm tra lại dữ liệu.");
+        alert(msg);
         submitRef.value = false;
     }
 };
@@ -186,30 +234,62 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                             </tr>
                         </thead>
                         <tbody v-if="items.length > 0">
-                            <tr v-for="(item, index) in items" :key="item.id" class="border-b border-gray-100 hover:bg-[#f0f9ff]/40 transition-colors">
-                                <td class="p-3 text-center text-gray-500 group relative w-12">
-                                    <span class="group-hover:hidden">{{ index + 1 }}</span>
-                                    <button @click="removeItem(index)" class="hidden group-hover:flex items-center justify-center w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full mx-auto" title="Xóa">
-                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                                    </button>
-                                </td>
-                                <td class="p-3 text-blue-600 w-[120px] break-all">{{ item.sku }}</td>
-                                <td class="p-3 font-medium text-gray-800">{{ item.name }}</td>
-                                <td class="p-3 text-center w-16">Cái</td>
-                                <td class="p-3 text-right w-20" :class="(item.stock_quantity || 0) <= 0 ? 'text-red-500 font-bold' : (item.stock_quantity || 0) < (item.quantity || 0) ? 'text-orange-500 font-semibold' : ''">
-                                    {{ item.stock_quantity || 0 }}
-                                    <div v-if="(item.stock_quantity || 0) <= 0" class="text-[10px]">Hết hàng!</div>
-                                    <div v-else-if="(item.stock_quantity || 0) < (item.quantity || 0)" class="text-[10px]">Không đủ!</div>
-                                </td>
-                                <td class="p-3 text-right w-24">0</td>
-                                <td class="p-3 text-center w-28">
-                                    <input type="number" v-model="item.quantity" min="1" class="w-16 border border-gray-300 rounded p-1 text-center outline-none focus:border-blue-500 text-[13px] transition-colors mx-auto block">
-                                </td>
-                                <td class="p-3 text-right w-[120px]">
-                                    <input type="number" v-model="item.transfer_price" min="0" class="w-full border border-gray-300 rounded p-1 inline-block text-right outline-none focus:border-blue-500 text-[13px] transition-colors">
-                                </td>
-                                <td class="p-3 font-bold text-gray-800 text-right w-[120px]">{{ formatCurrency((item.quantity || 0) * (item.transfer_price || 0)) }}</td>
-                            </tr>
+                            <template v-for="(item, index) in items" :key="item.id">
+                                <tr class="border-b border-gray-100 hover:bg-[#f0f9ff]/40 transition-colors">
+                                    <td class="p-3 text-center text-gray-500 group relative w-12">
+                                        <span class="group-hover:hidden">{{ index + 1 }}</span>
+                                        <button @click="removeItem(index)" class="hidden group-hover:flex items-center justify-center w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full mx-auto" title="Xóa">
+                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                        </button>
+                                    </td>
+                                    <td class="p-3 text-blue-600 w-[120px] break-all">{{ item.sku }}</td>
+                                    <td class="p-3 font-medium text-gray-800">
+                                        {{ item.name }}
+                                        <span v-if="item.has_serial" class="ml-2 inline-block px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 text-[11px] font-semibold">Serial/IMEI</span>
+                                    </td>
+                                    <td class="p-3 text-center w-16">Cái</td>
+                                    <td class="p-3 text-right w-20" :class="(item.stock_quantity || 0) <= 0 ? 'text-red-500 font-bold' : (item.stock_quantity || 0) < (item.quantity || 0) ? 'text-orange-500 font-semibold' : ''">
+                                        {{ item.stock_quantity || 0 }}
+                                        <div v-if="(item.stock_quantity || 0) <= 0" class="text-[10px]">Hết hàng!</div>
+                                        <div v-else-if="(item.stock_quantity || 0) < (item.quantity || 0)" class="text-[10px]">Không đủ!</div>
+                                    </td>
+                                    <td class="p-3 text-right w-24">0</td>
+                                    <td class="p-3 text-center w-28">
+                                        <input type="number" v-model="item.quantity" min="1" class="w-16 border border-gray-300 rounded p-1 text-center outline-none focus:border-blue-500 text-[13px] transition-colors mx-auto block">
+                                    </td>
+                                    <td class="p-3 text-right w-[120px]">
+                                        <input type="number" v-model="item.transfer_price" min="0" class="w-full border border-gray-300 rounded p-1 inline-block text-right outline-none focus:border-blue-500 text-[13px] transition-colors">
+                                    </td>
+                                    <td class="p-3 font-bold text-gray-800 text-right w-[120px]">{{ formatCurrency((item.quantity || 0) * (item.transfer_price || 0)) }}</td>
+                                </tr>
+                                <!-- Step 23.9: serial selector cho item has_serial -->
+                                <tr v-if="item.has_serial" class="border-b border-gray-100 bg-blue-50/30">
+                                    <td colspan="9" class="px-6 py-3">
+                                        <div class="flex items-start gap-3">
+                                            <div class="font-semibold text-[12px] text-blue-700 whitespace-nowrap pt-1">
+                                                Chọn Serial/IMEI ({{ item.selected_serial_ids?.length || 0 }}/{{ item.quantity }})
+                                            </div>
+                                            <div class="flex-1">
+                                                <div v-if="item.loading_serials" class="text-[12px] text-gray-400">Đang tải serial in_stock...</div>
+                                                <div v-else-if="!item.available_serials?.length" class="text-[12px] text-orange-600">
+                                                    Không có serial in_stock cho sản phẩm này — chỉ lưu được dạng phiếu tạm.
+                                                </div>
+                                                <div v-else class="flex flex-wrap gap-2">
+                                                    <label v-for="s in item.available_serials" :key="s.id"
+                                                        class="flex items-center gap-1.5 px-2.5 py-1 border border-gray-300 rounded text-[12px] cursor-pointer hover:bg-blue-50"
+                                                        :class="item.selected_serial_ids?.includes(s.id) ? 'bg-blue-100 border-blue-400 text-blue-700' : 'bg-white'">
+                                                        <input type="checkbox"
+                                                            :checked="item.selected_serial_ids?.includes(s.id)"
+                                                            @change="toggleItemSerial(item, s.id)"
+                                                            class="accent-blue-600" />
+                                                        <span class="font-mono">{{ s.serial_number }}</span>
+                                                    </label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </template>
                         </tbody>
                     </table>
                     
