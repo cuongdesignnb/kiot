@@ -278,14 +278,6 @@ class TaskController extends Controller
         ]);
     }
 
-    /**
-     * Hoàn thành công việc.
-     */
-    public function complete(Request $request, Task $task)
-    {
-        $result = $this->service->markCompleted($task, $request->user()?->id);
-        return response()->json($result);
-    }
 
     /**
      * Bóc linh kiện từ máy — nhập vào tồn kho.
@@ -513,5 +505,48 @@ class TaskController extends Controller
             'task_ids' => $createdTasks,
             'errors' => $errors,
         ], 201);
+    }
+
+    /**
+     * Hoàn thành sửa chữa.
+     *
+     * External: tạo invoice + cashflow + debt.
+     * Internal: markCompleted (không tạo invoice).
+     */
+    public function complete(Request $request, Task $task)
+    {
+        // External repair — full completion flow
+        if ($task->external && $task->type === Task::TYPE_REPAIR) {
+            $data = $request->validate([
+                'labor_fee'      => 'required|numeric|min:0',
+                'paid_amount'    => 'required|numeric|min:0',
+                'payment_method' => 'nullable|string',
+                'note'           => 'nullable|string|max:1000',
+                'part_prices'    => 'nullable|array',
+                'part_prices.*'  => 'numeric|min:0',
+            ]);
+
+            try {
+                $task = $this->service->completeExternalRepair($task, $data);
+                return response()->json([
+                    'message'    => 'Đã hoàn thành sửa chữa.',
+                    'task'       => $task,
+                    'invoice_id' => $task->invoice_id,
+                ]);
+            } catch (\RuntimeException $e) {
+                return response()->json(['message' => $e->getMessage()], 422);
+            }
+        }
+
+        // Internal repair or general task — simple completion
+        try {
+            $task = $this->service->markCompleted($task, $request->user()?->id);
+            return response()->json([
+                'message' => 'Đã hoàn thành công việc.',
+                'task'    => $task,
+            ]);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
     }
 }

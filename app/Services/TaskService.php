@@ -620,4 +620,148 @@ class TaskService
             'salary_percent'  => $tier?->salary_percent ?? 100,
         ];
     }
+
+    /**
+     * Hoàn thành sửa chữa khách ngoài — tạo invoice stock-neutral + cashflow + công nợ.
+     *
+     * KHÔNG trừ tồn kho (đã trừ ở addPart).
+     * KHÔNG đổi serial status (đã mark ở addPart).
+     * Idempotent: reject nếu task.invoice_id đã có.
+     */
+    public function completeExternalRepair(Task $task, array $data): Task
+    {
+        return DB::transaction(function () use ($task, $data) {
+            // ── Guards ──
+            if (!$task->external) {
+                throw new \RuntimeException('Chỉ phiếu sửa chữa khách ngoài mới dùng chức năng này.');
+            }
+            if ($task->type !== Task::TYPE_REPAIR) {
+                throw new \RuntimeException('Task không phải phiếu sửa chữa.');
+            }
+            if ($task->status === Task::STATUS_CANCELLED) {
+                throw new \RuntimeException('Phiếu sửa chữa đã hủy, không thể hoàn thành.');
+            }
+            if ($task->invoice_id) {
+                throw new \RuntimeException('Phiếu sửa chữa đã hoàn thành và có hóa đơn.');
+            }
+
+            $laborFee    = (float) ($data['labor_fee'] ?? 0);
+            $partPrices  = $data['part_prices'] ?? [];
+
+            // ── Snapshot giá bán linh kiện + tính parts_total ──
+            $partsTotal = 0;
+            $exportParts = $task->parts()->where('direction', 'export')->get();
+            foreach ($exportParts as $part) {
+                $salePrice = isset($partPrices[$part->id])
+                    ? (float) $partPrices[$part->id]
+                    : (float) ($part->product?->retail_price ?? 0);
+                $part->sale_price = $salePrice;
+                $part->save();
+                $partsTotal += $salePrice * (int) $part->quantity;
+            }
+
+            $totalAmount = $laborFee + $partsTotal;
+            $paidAmount  = min((float) ($data['paid_amount'] ?? 0), $totalAmount);
+            $debtAmount  = $totalAmount - $paidAmount;
+
+            // ── Validate debt requires customer ──
+            if ($debtAmount > 0.01 && !$task->customer_id) {
+                throw new \RuntimeException('Phiếu sửa chữa còn nợ phải có khách hàng (customer_id).');
+            }
+
+            // ── Create stock-neutral invoice ──
+            $invoice = \App\Models\Invoice::create([
+                'code'            => 'SC-HD' . date('YmdHis') . rand(10, 99),
+                'customer_id'     => $task->customer_id,
+                'branch_id'       => $task->branch_id,
+                'status'          => 'Hoàn thành',
+                'source_type'     => 'repair',
+                'subtotal'        => $totalAmount,
+                'discount'        => 0,
+                'total'           => $totalAmount,
+                'customer_paid'   => $paidAmount,
+                'note'            => "Hóa đơn sửa chữa {$task->code}" . ($data['note'] ?? ''),
+                'created_by_name' => auth()->user()?->name ?? 'Hệ thống',
+                'payment_method'  => $data['payment_method'] ?? 'cash',
+            ]);
+
+            // ── Invoice items: labor fee ──
+            if ($laborFee > 0) {
+                $invoice->items()->create([
+                    'product_id'  => null,
+                    'quantity'    => 1,
+                    'price'       => $laborFee,
+                    'cost_price'  => 0,
+                    'discount'    => 0,
+                    'subtotal'    => $laborFee,
+                    'description' => 'Tiền công sửa chữa',
+                    'note'        => "Task {$task->code}",
+                ]);
+            }
+
+            // ── Invoice items: parts (NO stock deduction) ──
+            foreach ($exportParts as $part) {
+                $salePrice = (float) $part->sale_price;
+                $qty       = (int) $part->quantity;
+                $invoice->items()->create([
+                    'product_id'  => $part->product_id,
+                    'quantity'    => $qty,
+                    'price'       => $salePrice,
+                    'cost_price'  => (float) $part->unit_cost,
+                    'discount'    => 0,
+                    'subtotal'    => $salePrice * $qty,
+                    'description' => 'Linh kiện sửa chữa',
+                    'note'        => "Task {$task->code}",
+                ]);
+            }
+
+            // ── CashFlow receipt ──
+            if ($paidAmount > 0.01) {
+                $customerName = $task->customer_name
+                    ?? ($task->customer_id ? \App\Models\Customer::find($task->customer_id)?->name : null)
+                    ?? 'Khách sửa chữa';
+
+                \App\Models\CashFlow::create([
+                    'code'           => 'PT' . date('YmdHis') . rand(10, 99),
+                    'type'           => 'receipt',
+                    'amount'         => $paidAmount,
+                    'time'           => now(),
+                    'category'       => 'Thu tiền sửa chữa',
+                    'target_type'    => 'Khách hàng',
+                    'target_id'      => $task->customer_id,
+                    'target_name'    => $customerName,
+                    'reference_type' => 'Invoice',
+                    'reference_code' => $invoice->code,
+                    'payment_method' => $data['payment_method'] ?? 'cash',
+                    'description'    => "Thu tiền sửa chữa {$task->code} - {$customerName}",
+                ]);
+            }
+
+            // ── Customer debt ──
+            if ($debtAmount > 0.01 && $task->customer_id) {
+                app(CustomerDebtService::class)->recordSale(
+                    $task->customer_id,
+                    $debtAmount,
+                    $invoice,
+                    "Nợ sửa chữa {$task->code}"
+                );
+            }
+
+            // ── Update task ──
+            $task->update([
+                'status'       => Task::STATUS_COMPLETED,
+                'sub_status'   => 'completed',
+                'completed_at' => now(),
+                'invoice_id'   => $invoice->id,
+                'labor_fee'    => $laborFee,
+                'parts_total'  => $partsTotal,
+                'total_amount' => $totalAmount,
+                'paid_amount'  => $paidAmount,
+                'debt_amount'  => $debtAmount,
+                'progress'     => 100,
+            ]);
+
+            return $task->fresh();
+        });
+    }
 }

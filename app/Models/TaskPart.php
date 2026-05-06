@@ -13,6 +13,7 @@ class TaskPart extends Model
         'product_id',
         'quantity',
         'unit_cost',
+        'sale_price',
         'total_cost',
         'exported_by',
         'notes',
@@ -22,6 +23,7 @@ class TaskPart extends Model
 
     protected $casts = [
         'unit_cost'   => 'decimal:0',
+        'sale_price'  => 'decimal:0',
         'total_cost'  => 'decimal:0',
         'serial_ids'  => 'array',
     ];
