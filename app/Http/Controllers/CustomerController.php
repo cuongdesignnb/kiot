@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\CashFlow;
 use App\Models\Customer;
+use App\Models\CustomerGroup;
 use App\Models\Invoice;
 use App\Models\OrderReturn;
 use App\Models\Purchase;
@@ -17,6 +18,7 @@ use App\Services\DebtOffsetService;
 use App\Models\DebtOffset;
 use App\Support\Filters\FilterableIndex;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 
 class CustomerController extends Controller
 {
@@ -27,7 +29,138 @@ class CustomerController extends Controller
         $this->searchable = ['code', 'name', 'phone', 'phone2', 'email', 'tax_code'];
         $this->sortable = ['code', 'name', 'phone', 'debt_amount', 'total_spent', 'total_returns', 'created_at'];
         $this->dateColumn = 'created_at';
+        $this->creatorColumn = 'created_by';
         $this->scalarFilters = ['type', 'gender', 'customer_group', 'branch_id', 'city', 'district'];
+    }
+
+    /**
+     * Build capabilities — tells the frontend which advanced filters are available.
+     */
+    private function buildCapabilities(): array
+    {
+        return [
+            'supportsBirthdayFilter'        => true, // customers.birthday exists
+            'supportsLastTransactionFilter'  => true, // computed via invoices subquery
+            'supportsTotalSalesTimeFilter'   => true, // computed via invoices subquery
+            'supportsDebtDaysFilter'         => false, // no due_date in customer_debts — backlog
+            'supportsPointsFilter'           => false, // no loyalty/points schema — backlog
+            'supportsDeliveryAreaFilter'     => true, // customers.city/district/ward
+            'supportsCreatedByFilter'        => Schema::hasColumn('customers', 'created_by'),
+        ];
+    }
+
+    /**
+     * Apply all advanced KiotViet-style customer filters.
+     * Called by both index() and export() for consistency.
+     */
+    private function applyAdvancedCustomerFilters($query, Request $request): void
+    {
+        // Branch auto-lock when setting enabled
+        if (Setting::get('customer_manage_by_branch', false) && auth()->user()?->branch_id) {
+            $query->where('branch_id', auth()->user()->branch_id);
+        }
+
+        // Partner type: customer | customer_supplier
+        if ($request->filled('partner_type')) {
+            if ($request->partner_type === 'customer') {
+                $query->where('is_customer', true)->where(function ($q) {
+                    $q->where('is_supplier', false)->orWhereNull('is_supplier');
+                });
+            } elseif ($request->partner_type === 'customer_supplier') {
+                $query->where('is_customer', true)->where('is_supplier', true);
+            }
+        }
+
+        // Net debt range: debt_amount - supplier_debt_amount
+        if ($request->filled('net_debt_from') || $request->filled('net_debt_to')) {
+            $netDebtExpr = DB::raw('(COALESCE(debt_amount, 0) - COALESCE(supplier_debt_amount, 0))');
+            if ($request->filled('net_debt_from')) {
+                $query->where($netDebtExpr, '>=', (float) $request->net_debt_from);
+            }
+            if ($request->filled('net_debt_to')) {
+                $query->where($netDebtExpr, '<=', (float) $request->net_debt_to);
+            }
+        }
+
+        // Legacy has_debt shortcut (uses net debt)
+        if ($request->filled('has_debt')) {
+            $netDebtExpr = DB::raw('(COALESCE(debt_amount, 0) - COALESCE(supplier_debt_amount, 0))');
+            if ($request->has_debt === 'yes') {
+                $query->where($netDebtExpr, '>', 0);
+            } elseif ($request->has_debt === 'no') {
+                $query->where($netDebtExpr, '<=', 0);
+            }
+        }
+
+        // Birthday range
+        if ($request->filled('birthday_from')) {
+            $query->whereDate('birthday', '>=', $request->birthday_from);
+        }
+        if ($request->filled('birthday_to')) {
+            $query->whereDate('birthday', '<=', $request->birthday_to);
+        }
+
+        // Last transaction date (max invoice transaction_date for this customer)
+        if ($request->filled('last_transaction_from') || $request->filled('last_transaction_to')) {
+            $subquery = Invoice::selectRaw('MAX(COALESCE(transaction_date, created_at))')
+                ->whereColumn('invoices.customer_id', 'customers.id');
+
+            if ($request->filled('last_transaction_from')) {
+                $query->where(function ($q) use ($subquery, $request) {
+                    $q->whereRaw('(' . $subquery->toSql() . ') >= ?', array_merge($subquery->getBindings(), [$request->last_transaction_from]));
+                });
+            }
+            if ($request->filled('last_transaction_to')) {
+                $query->where(function ($q) use ($subquery, $request) {
+                    $q->whereRaw('(' . $subquery->toSql() . ') <= ?', array_merge($subquery->getBindings(), [$request->last_transaction_to . ' 23:59:59']));
+                });
+            }
+        }
+
+        // Total sales range (lifetime or time-scoped)
+        $hasTotalSalesFilter = $request->filled('total_sales_from') || $request->filled('total_sales_to');
+        $hasTotalSalesTime = $request->filled('total_sales_date_from') || $request->filled('total_sales_date_to');
+
+        if ($hasTotalSalesFilter) {
+            if ($hasTotalSalesTime) {
+                // Time-scoped: must compute from invoices
+                $sumSubquery = Invoice::selectRaw('COALESCE(SUM(total), 0)')
+                    ->whereColumn('invoices.customer_id', 'customers.id');
+
+                if ($request->filled('total_sales_date_from')) {
+                    $sumSubquery->where(DB::raw('COALESCE(transaction_date, created_at)'), '>=', $request->total_sales_date_from);
+                }
+                if ($request->filled('total_sales_date_to')) {
+                    $sumSubquery->where(DB::raw('COALESCE(transaction_date, created_at)'), '<=', $request->total_sales_date_to . ' 23:59:59');
+                }
+
+                if ($request->filled('total_sales_from')) {
+                    $query->whereRaw('(' . $sumSubquery->toSql() . ') >= ?', array_merge($sumSubquery->getBindings(), [(float) $request->total_sales_from]));
+                }
+                if ($request->filled('total_sales_to')) {
+                    $query->whereRaw('(' . $sumSubquery->toSql() . ') <= ?', array_merge($sumSubquery->getBindings(), [(float) $request->total_sales_to]));
+                }
+            } else {
+                // Lifetime: use materialized customers.total_spent
+                if ($request->filled('total_sales_from')) {
+                    $query->where('total_spent', '>=', (float) $request->total_sales_from);
+                }
+                if ($request->filled('total_sales_to')) {
+                    $query->where('total_spent', '<=', (float) $request->total_sales_to);
+                }
+            }
+        }
+
+        // Delivery area (customers.city/district/ward)
+        if ($request->filled('delivery_city')) {
+            $query->where('city', $request->delivery_city);
+        }
+        if ($request->filled('delivery_district')) {
+            $query->where('district', $request->delivery_district);
+        }
+
+        // Standard filters via FilterableIndex
+        $this->applyFilters($query, $request);
     }
 
     public function index(Request $request)
@@ -35,22 +168,10 @@ class CustomerController extends Controller
         $this->configureCustomerFilters();
 
         $query = Customer::with('branch');
+        $this->applyAdvancedCustomerFilters($query, $request);
 
-        // Branch auto-lock when setting enabled
-        if (Setting::get('customer_manage_by_branch', false) && auth()->user()?->branch_id) {
-            $query->where('branch_id', auth()->user()->branch_id);
-        }
-
-        // Pseudo filter: has_debt
-        if ($request->filled('has_debt')) {
-            if ($request->has_debt === 'yes') {
-                $query->where('debt_amount', '>', 0);
-            } elseif ($request->has_debt === 'no') {
-                $query->where('debt_amount', '<=', 0);
-            }
-        }
-
-        $this->applyFilters($query, $request);
+        // Clone query BEFORE paginate for filtered summary
+        $summaryQuery = clone $query;
 
         $customers = $query->paginate(15)->withQueryString();
 
@@ -60,36 +181,100 @@ class CustomerController extends Controller
             'customer_manage_by_branch' => Setting::get('customer_manage_by_branch', false),
         ];
 
+        // Summary from filtered query (not global)
         $summary = [
-            'total_debt' => Customer::where('is_customer', true)->where('debt_amount', '>', 0)->sum('debt_amount'),
-            'total_spent' => Customer::where('is_customer', true)->sum('total_spent'),
-            'total_returns' => Customer::where('is_customer', true)->sum('total_returns'),
+            'total_debt' => (float) $summaryQuery->clone()->where('debt_amount', '>', 0)->sum('debt_amount'),
+            'total_spent' => (float) $summaryQuery->clone()->sum('total_spent'),
+            'total_returns' => (float) $summaryQuery->clone()->sum('total_returns'),
         ];
+
+        $capabilities = $this->buildCapabilities();
+
+        // Build branches (respect branch lock)
+        $branchLocked = Setting::get('customer_manage_by_branch', false) && auth()->user()?->branch_id;
+        $branches = $branchLocked
+            ? \App\Models\Branch::select('id', 'name')->where('id', auth()->user()->branch_id)->get()
+            : \App\Models\Branch::select('id', 'name')->orderBy('name')->get();
+
+        // CustomerGroup options: master groups + legacy distinct values not yet in master
+        $masterGroups = CustomerGroup::where('is_active', true)
+            ->orderBy('sort_order')->orderBy('name')
+            ->get(['id', 'name'])
+            ->map(fn($g) => ['value' => $g->name, 'label' => $g->name]);
+
+        $legacyGroups = Customer::whereNotNull('customer_group')
+            ->where('customer_group', '!=', '')
+            ->distinct()->pluck('customer_group')
+            ->diff($masterGroups->pluck('value'))
+            ->map(fn($g) => ['value' => $g, 'label' => $g])
+            ->values();
+
+        $customerGroups = $masterGroups->concat($legacyGroups)->unique('value')->values();
+
+        // Creators: users who have created customers
+        $creators = $capabilities['supportsCreatedByFilter']
+            ? \App\Models\User::select('id', 'name')
+                ->whereIn('id', Customer::whereNotNull('created_by')->distinct()->pluck('created_by'))
+                ->orderBy('name')->get()
+            : collect();
+
+        // Delivery areas (distinct cities from customers)
+        $deliveryCities = Customer::whereNotNull('city')->where('city', '!=', '')
+            ->distinct()->orderBy('city')->pluck('city')
+            ->map(fn($c) => ['value' => $c, 'label' => $c])->values();
 
         $filterOptions = [
-            'branches' => \App\Models\Branch::select('id', 'name')->orderBy('name')->get(),
+            'branches'       => $branches,
+            'customerGroups' => $customerGroups,
             'types' => [
                 ['value' => 'individual', 'label' => 'Cá nhân'],
-                ['value' => 'company', 'label' => 'Công ty'],
+                ['value' => 'company',    'label' => 'Công ty'],
             ],
             'genders' => [
-                ['value' => 'male', 'label' => 'Nam'],
+                ['value' => 'male',   'label' => 'Nam'],
                 ['value' => 'female', 'label' => 'Nữ'],
-                ['value' => 'none', 'label' => 'Không xác định'],
+                ['value' => 'none',   'label' => 'Không xác định'],
             ],
+            'statuses' => [
+                ['value' => 'active',   'label' => 'Đang hoạt động'],
+                ['value' => 'inactive', 'label' => 'Ngừng hoạt động'],
+            ],
+            'partnerTypes' => [
+                ['value' => 'customer',          'label' => 'Khách hàng'],
+                ['value' => 'customer_supplier', 'label' => 'Khách hàng - Nhà cung cấp'],
+            ],
+            'creators'       => $creators,
+            'deliveryCities' => $deliveryCities,
             'debtOptions' => [
                 ['value' => 'yes', 'label' => 'Còn nợ'],
-                ['value' => 'no', 'label' => 'Không nợ'],
+                ['value' => 'no',  'label' => 'Không nợ'],
             ],
-            'customerGroups' => Customer::whereNotNull('customer_group')->where('customer_group', '!=', '')->distinct()->pluck('customer_group')->map(fn($g) => ['value' => $g, 'label' => $g])->values(),
+            'capabilities' => $capabilities,
         ];
 
+        // Echo back all filter values (standard + advanced)
+        $filters = $this->currentFilters($request);
+        $filters['has_debt']              = $request->input('has_debt', '');
+        $filters['partner_type']          = $request->input('partner_type', '');
+        $filters['net_debt_from']         = $request->input('net_debt_from', '');
+        $filters['net_debt_to']           = $request->input('net_debt_to', '');
+        $filters['birthday_from']         = $request->input('birthday_from', '');
+        $filters['birthday_to']           = $request->input('birthday_to', '');
+        $filters['last_transaction_from'] = $request->input('last_transaction_from', '');
+        $filters['last_transaction_to']   = $request->input('last_transaction_to', '');
+        $filters['total_sales_from']      = $request->input('total_sales_from', '');
+        $filters['total_sales_to']        = $request->input('total_sales_to', '');
+        $filters['total_sales_date_from'] = $request->input('total_sales_date_from', '');
+        $filters['total_sales_date_to']   = $request->input('total_sales_date_to', '');
+        $filters['delivery_city']         = $request->input('delivery_city', '');
+        $filters['delivery_district']     = $request->input('delivery_district', '');
+
         return Inertia::render('Customers/Index', [
-            'customers' => $customers,
-            'filters' => $this->currentFilters($request),
-            'filterOptions' => $filterOptions,
+            'customers'        => $customers,
+            'filters'          => $filters,
+            'filterOptions'    => $filterOptions,
             'customerSettings' => $customerSettings,
-            'summary' => $summary,
+            'summary'          => $summary,
         ]);
     }
 
@@ -134,6 +319,7 @@ class CustomerController extends Controller
 
         $validated['is_supplier'] = $request->input('is_supplier', false);
         $validated['is_customer'] = true;
+        $validated['created_by'] = auth()->id();
 
         $linkId = $request->input('linked_supplier_id') ?: $request->input('link_existing_id');
         $linkMode = $request->input('supplier_linking_mode');
@@ -834,22 +1020,7 @@ class CustomerController extends Controller
         $this->configureCustomerFilters();
 
         $query = Customer::with('branch');
-
-        // Branch auto-lock (same as index)
-        if (Setting::get('customer_manage_by_branch', false) && auth()->user()?->branch_id) {
-            $query->where('branch_id', auth()->user()->branch_id);
-        }
-
-        // Pseudo filter: has_debt (same as index)
-        if ($request->filled('has_debt')) {
-            if ($request->has_debt === 'yes') {
-                $query->where('debt_amount', '>', 0);
-            } elseif ($request->has_debt === 'no') {
-                $query->where('debt_amount', '<=', 0);
-            }
-        }
-
-        $this->applyFilters($query, $request);
+        $this->applyAdvancedCustomerFilters($query, $request);
         $customers = $query->get();
 
         return \App\Services\CsvService::export(

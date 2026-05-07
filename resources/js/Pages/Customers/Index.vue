@@ -519,254 +519,252 @@ const submit = () => {
 };
 </script>
 
+
+// ====== CUSTOMER GROUP MODAL (KiotViet-style) ======
+const showGroupModal = ref(false);
+const groupForm = reactive({
+    name: '',
+    code: '',
+    discount_type: '',
+    discount_value: 0,
+    note: '',
+    description: '',
+    conditions: [],
+    update_mode: 'none',
+    auto_update: false,
+});
+const groupModalTab = ref('info');
+const groupSubmitting = ref(false);
+
+const openGroupModal = () => {
+    groupForm.name = '';
+    groupForm.code = '';
+    groupForm.discount_type = '';
+    groupForm.discount_value = 0;
+    groupForm.note = '';
+    groupForm.description = '';
+    groupForm.conditions = [];
+    groupForm.update_mode = 'none';
+    groupForm.auto_update = false;
+    groupModalTab.value = 'info';
+    showGroupModal.value = true;
+};
+
+const submitGroupModal = async () => {
+    if (!groupForm.name) {
+        alert('Vui lòng nhập tên nhóm khách hàng');
+        return;
+    }
+    groupSubmitting.value = true;
+    try {
+        await axios.post('/customer-groups', groupForm);
+        showGroupModal.value = false;
+        router.reload({ only: ['filterOptions'], preserveScroll: true });
+    } catch (e) {
+        alert(e.response?.data?.message || 'Có lỗi xảy ra');
+    } finally {
+        groupSubmitting.value = false;
+    }
+};
+
+// Capabilities from backend
+const capabilities = computed(() => props.filterOptions?.capabilities || {});
+
+// Birthday filter mode
+const birthdayMode = computed({
+    get: () => (filters.birthday_from || filters.birthday_to) ? 'custom' : 'all',
+    set: (v) => {
+        if (v === 'all') { filters.birthday_from = ''; filters.birthday_to = ''; }
+    }
+});
+
+// Last transaction filter mode
+const lastTxMode = computed({
+    get: () => (filters.last_transaction_from || filters.last_transaction_to) ? 'custom' : 'all',
+    set: (v) => {
+        if (v === 'all') { filters.last_transaction_from = ''; filters.last_transaction_to = ''; }
+    }
+});
+
+// Total sales time mode
+const totalSalesTimeMode = computed({
+    get: () => (filters.total_sales_date_from || filters.total_sales_date_to) ? 'custom' : 'all',
+    set: (v) => {
+        if (v === 'all') { filters.total_sales_date_from = ''; filters.total_sales_date_to = ''; }
+    }
+});
 <template>
     <Head title="Khách hàng - KiotViet Clone" />
     <AppLayout>
         <!-- Sidebar slot -->
         <template #sidebar>
-            <!-- Lọc NHÓM KHÁCH HÀNG -->
+            <!-- 1. NHÓM KHÁCH HÀNG -->
             <div class="px-3 py-4 border-b border-gray-200">
                 <div class="flex justify-between items-center mb-2">
-                    <label class="block text-sm font-bold text-gray-800"
-                        >Nhóm khách hàng</label
-                    >
-                    <button class="text-blue-600 hover:underline text-xs">
-                        Tạo mới
-                    </button>
+                    <label class="block text-sm font-bold text-gray-800">Nhóm khách hàng</label>
+                    <button @click="openGroupModal" class="text-blue-600 hover:underline text-xs">Tạo mới</button>
                 </div>
-                <select
-                    class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none focus:border-blue-500"
-                >
-                    <option>Tất cả các nhóm</option>
+                <select v-model="filters.customer_group" class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none focus:border-blue-500">
+                    <option value="">Tất cả các nhóm</option>
+                    <option v-for="g in filterOptions.customerGroups" :key="g.value" :value="g.value">{{ g.label }}</option>
                 </select>
             </div>
 
-            <!-- Lọc CHI NHÁNH TẠO -->
+            <!-- 2. LOẠI KHÁCH HÀNG -->
             <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2"
-                    >Chi nhánh tạo</label
-                >
-                <div class="flex flex-wrap gap-2">
-                    <div
-                        class="bg-blue-600 text-white px-2 py-1 rounded text-xs flex items-center gap-1 cursor-pointer"
-                    >
-                        Laptopplus.vn
-                        <span
-                            class="pl-1 border-l border-blue-400 font-bold hover:text-gray-200"
-                            >&times;</span
-                        >
+                <label class="block text-sm font-bold text-gray-800 mb-2">Loại khách hàng</label>
+                <div class="flex gap-2 text-sm">
+                    <button @click="filters.type = ''" :class="!filters.type ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">Tất cả</button>
+                    <button v-for="t in filterOptions.types" :key="t.value" @click="filters.type = t.value" :class="filters.type === t.value ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">{{ t.label }}</button>
+                </div>
+            </div>
+
+            <!-- 3. GIỚI TÍNH -->
+            <div class="px-3 py-4 border-b border-gray-200">
+                <label class="block text-sm font-bold text-gray-800 mb-2">Giới tính</label>
+                <div class="flex gap-2 text-sm">
+                    <button @click="filters.gender = ''" :class="!filters.gender ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">Tất cả</button>
+                    <button v-for="g in filterOptions.genders" :key="g.value" @click="filters.gender = g.value" :class="filters.gender === g.value ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">{{ g.label }}</button>
+                </div>
+            </div>
+
+            <!-- 4. SINH NHẬT -->
+            <div v-if="capabilities.supportsBirthdayFilter" class="px-3 py-4 border-b border-gray-200">
+                <label class="block text-sm font-bold text-gray-800 mb-2">Sinh nhật</label>
+                <div class="space-y-2 text-sm text-gray-700">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="birthday_mode" value="all" v-model="birthdayMode" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
+                        Toàn thời gian
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="birthday_mode" value="custom" v-model="birthdayMode" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
+                        Tùy chỉnh
+                    </label>
+                    <div v-if="birthdayMode === 'custom'" class="flex gap-2 mt-1">
+                        <input type="date" v-model="filters.birthday_from" class="w-1/2 border rounded p-1 text-xs" placeholder="Từ" />
+                        <input type="date" v-model="filters.birthday_to" class="w-1/2 border rounded p-1 text-xs" placeholder="Đến" />
                     </div>
                 </div>
             </div>
 
-            <!-- Lọc NGÀY TẠO -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2"
-                    >Ngày tạo</label
-                >
+            <!-- 5. NGÀY GIAO DỊCH CUỐI -->
+            <div v-if="capabilities.supportsLastTransactionFilter" class="px-3 py-4 border-b border-gray-200">
+                <label class="block text-sm font-bold text-gray-800 mb-2">Ngày giao dịch cuối</label>
                 <div class="space-y-2 text-sm text-gray-700">
                     <label class="flex items-center gap-2 cursor-pointer">
-                        <input
-                            type="radio"
-                            name="create_date"
-                            checked
-                            class="text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
+                        <input type="radio" name="last_tx_mode" value="all" v-model="lastTxMode" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
                         Toàn thời gian
-                        <svg
-                            class="w-3 h-3 ml-auto text-gray-400"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                        >
-                            <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                stroke-width="2"
-                                d="M9 5l7 7-7 7"
-                            ></path>
-                        </svg>
                     </label>
-                    <label
-                        class="flex items-center gap-2 cursor-pointer text-gray-500"
-                    >
-                        <input
-                            type="radio"
-                            name="create_date"
-                            class="text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="last_tx_mode" value="custom" v-model="lastTxMode" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
                         Tùy chỉnh
-                        <svg
-                            class="w-4 h-4 ml-auto"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                        >
-                            <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                stroke-width="2"
-                                d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-                            ></path>
-                        </svg>
                     </label>
+                    <div v-if="lastTxMode === 'custom'" class="flex gap-2 mt-1">
+                        <input type="date" v-model="filters.last_transaction_from" class="w-1/2 border rounded p-1 text-xs" />
+                        <input type="date" v-model="filters.last_transaction_to" class="w-1/2 border rounded p-1 text-xs" />
+                    </div>
                 </div>
             </div>
 
-            <!-- Lọc NGƯỜI TẠO -->
+            <!-- 6. TỔNG BÁN -->
             <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2"
-                    >Người tạo</label
-                >
-                <select
-                    class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none text-gray-500"
-                >
-                    <option>Chọn người tạo</option>
+                <label class="block text-sm font-bold text-gray-800 mb-2">Tổng bán</label>
+                <div class="flex gap-2 mb-2">
+                    <input type="number" v-model="filters.total_sales_from" class="w-1/2 border rounded p-1.5 text-sm" placeholder="Giá trị từ" min="0" />
+                    <input type="number" v-model="filters.total_sales_to" class="w-1/2 border rounded p-1.5 text-sm" placeholder="Giá trị tới" min="0" />
+                </div>
+                <div v-if="capabilities.supportsTotalSalesTimeFilter" class="space-y-2 text-sm text-gray-700">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="total_sales_time" value="all" v-model="totalSalesTimeMode" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
+                        Toàn thời gian
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="total_sales_time" value="custom" v-model="totalSalesTimeMode" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
+                        Thời gian tổng bán
+                    </label>
+                    <div v-if="totalSalesTimeMode === 'custom'" class="flex gap-2 mt-1">
+                        <input type="date" v-model="filters.total_sales_date_from" class="w-1/2 border rounded p-1 text-xs" />
+                        <input type="date" v-model="filters.total_sales_date_to" class="w-1/2 border rounded p-1 text-xs" />
+                    </div>
+                </div>
+            </div>
+
+            <!-- 7. NỢ HIỆN TẠI -->
+            <div class="px-3 py-4 border-b border-gray-200">
+                <label class="block text-sm font-bold text-gray-800 mb-2">Nợ hiện tại</label>
+                <div class="flex gap-2">
+                    <input type="number" v-model="filters.net_debt_from" class="w-1/2 border rounded p-1.5 text-sm" placeholder="Từ" />
+                    <input type="number" v-model="filters.net_debt_to" class="w-1/2 border rounded p-1.5 text-sm" placeholder="Tới" />
+                </div>
+            </div>
+
+            <!-- 8. KHU VỰC GIAO HÀNG -->
+            <div v-if="capabilities.supportsDeliveryAreaFilter" class="px-3 py-4 border-b border-gray-200">
+                <label class="block text-sm font-bold text-gray-800 mb-2">Khu vực giao hàng</label>
+                <select v-model="filters.delivery_city" class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none focus:border-blue-500">
+                    <option value="">Tất cả tỉnh/TP</option>
+                    <option v-for="c in filterOptions.deliveryCities" :key="c.value" :value="c.value">{{ c.label }}</option>
                 </select>
             </div>
 
-            <!-- LOẠI KHÁCH HÀNG -->
+            <!-- 9. TRẠNG THÁI -->
             <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2"
-                    >Loại khách hàng</label
-                >
+                <label class="block text-sm font-bold text-gray-800 mb-2">Trạng thái</label>
                 <div class="flex gap-2 text-sm">
-                    <button
-                        @click="filters.type = ''"
-                        :class="
-                            !filters.type
-                                ? 'bg-blue-600 text-white border-blue-600'
-                                : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'
-                        "
-                        class="border rounded-full px-3 py-1"
-                    >
-                        Tất cả
-                    </button>
-                    <button
-                        @click="filters.type = 'individual'"
-                        :class="
-                            filters.type === 'individual'
-                                ? 'bg-blue-600 text-white border-blue-600'
-                                : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'
-                        "
-                        class="border rounded-full px-3 py-1"
-                    >
-                        Cá nhân
-                    </button>
-                    <button
-                        @click="filters.type = 'company'"
-                        :class="
-                            filters.type === 'company'
-                                ? 'bg-blue-600 text-white border-blue-600'
-                                : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'
-                        "
-                        class="border rounded-full px-3 py-1"
-                    >
-                        Công ty
-                    </button>
+                    <button @click="filters.status = []" :class="!filters.status?.length ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">Tất cả</button>
+                    <button v-for="s in filterOptions.statuses" :key="s.value" @click="filters.status = [s.value]" :class="filters.status?.includes?.(s.value) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">{{ s.label }}</button>
                 </div>
             </div>
 
-            <!-- GIỚI TÍNH -->
+            <!-- 10. LOẠI ĐỐI TÁC -->
             <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2"
-                    >Giới tính</label
-                >
-                <div class="flex gap-2 text-sm">
-                    <button
-                        @click="filters.gender = ''"
-                        :class="
-                            !filters.gender
-                                ? 'bg-blue-600 text-white border-blue-600'
-                                : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'
-                        "
-                        class="border rounded-full px-3 py-1"
-                    >
-                        Tất cả
-                    </button>
-                    <button
-                        @click="filters.gender = 'male'"
-                        :class="
-                            filters.gender === 'male'
-                                ? 'bg-blue-600 text-white border-blue-600'
-                                : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'
-                        "
-                        class="border rounded-full px-3 py-1"
-                    >
-                        Nam
-                    </button>
-                    <button
-                        @click="filters.gender = 'female'"
-                        :class="
-                            filters.gender === 'female'
-                                ? 'bg-blue-600 text-white border-blue-600'
-                                : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'
-                        "
-                        class="border rounded-full px-3 py-1"
-                    >
-                        Nữ
-                    </button>
+                <label class="block text-sm font-bold text-gray-800 mb-2">Loại đối tác</label>
+                <div class="flex flex-wrap gap-2 text-sm">
+                    <button @click="filters.partner_type = ''" :class="!filters.partner_type ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">Tất cả</button>
+                    <button v-for="p in filterOptions.partnerTypes" :key="p.value" @click="filters.partner_type = p.value" :class="filters.partner_type === p.value ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">{{ p.label }}</button>
                 </div>
             </div>
 
-            <!-- SINH NHẬT -->
+            <!-- 11. NGƯỜI TẠO -->
+            <div v-if="capabilities.supportsCreatedByFilter" class="px-3 py-4 border-b border-gray-200">
+                <label class="block text-sm font-bold text-gray-800 mb-2">Người tạo</label>
+                <select v-model="filters.created_by" class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none focus:border-blue-500">
+                    <option value="">Chọn người tạo</option>
+                    <option v-for="u in filterOptions.creators" :key="u.id" :value="u.id">{{ u.name }}</option>
+                </select>
+            </div>
+
+            <!-- 12. CHI NHÁNH TẠO -->
             <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2"
-                    >Sinh nhật</label
-                >
+                <label class="block text-sm font-bold text-gray-800 mb-2">Chi nhánh tạo</label>
+                <select v-model="filters.branch_id" class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none focus:border-blue-500">
+                    <option value="">Tất cả chi nhánh</option>
+                    <option v-for="b in filterOptions.branches" :key="b.id" :value="b.id">{{ b.name }}</option>
+                </select>
+            </div>
+
+            <!-- 13. NGÀY TẠO -->
+            <div class="px-3 py-4 border-b border-gray-200">
+                <label class="block text-sm font-bold text-gray-800 mb-2">Ngày tạo</label>
                 <div class="space-y-2 text-sm text-gray-700">
                     <label class="flex items-center gap-2 cursor-pointer">
-                        <input
-                            type="radio"
-                            name="birthday"
-                            checked
-                            class="text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
+                        <input type="radio" name="date_filter" value="all" v-model="filters.date_filter" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
                         Toàn thời gian
-                        <svg
-                            class="w-3 h-3 ml-auto text-gray-400"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                        >
-                            <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                stroke-width="2"
-                                d="M9 5l7 7-7 7"
-                            ></path>
-                        </svg>
                     </label>
-                    <label
-                        class="flex items-center gap-2 cursor-pointer text-gray-500"
-                    >
-                        <input
-                            type="radio"
-                            name="birthday"
-                            class="text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="date_filter" value="custom" v-model="filters.date_filter" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
                         Tùy chỉnh
-                        <svg
-                            class="w-4 h-4 ml-auto"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                        >
-                            <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                stroke-width="2"
-                                d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-                            ></path>
-                        </svg>
                     </label>
+                    <div v-if="filters.date_filter === 'custom'" class="flex gap-2 mt-1">
+                        <input type="date" v-model="filters.date_from" class="w-1/2 border rounded p-1 text-xs" />
+                        <input type="date" v-model="filters.date_to" class="w-1/2 border rounded p-1 text-xs" />
+                    </div>
                 </div>
             </div>
 
+            <!-- CLEAR FILTER -->
             <div class="px-3 py-4">
-                <label class="block text-sm font-bold text-gray-800 mb-2"
-                    >Ngày giao dịch cuối</label
-                >
+                <button @click="reset" class="w-full text-center text-sm text-blue-600 hover:underline">Xóa bộ lọc</button>
             </div>
         </template>
 
@@ -3230,6 +3228,78 @@ const submit = () => {
             </div>
         </div>
 
+
+        <!-- ====== CUSTOMER GROUP CREATE MODAL (KiotViet-style 2 tabs) ====== -->
+        <div v-if="showGroupModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-lg">
+                <div class="flex items-center justify-between px-6 py-4 border-b">
+                    <h3 class="text-lg font-bold text-gray-800">Tạo nhóm khách hàng</h3>
+                    <button @click="showGroupModal = false" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+                </div>
+                <!-- Tabs -->
+                <div class="flex border-b">
+                    <button @click="groupModalTab = 'info'" :class="groupModalTab === 'info' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'" class="px-4 py-2 text-sm font-medium">Thông tin</button>
+                    <button @click="groupModalTab = 'advanced'" :class="groupModalTab === 'advanced' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'" class="px-4 py-2 text-sm font-medium">Thiết lập nâng cao</button>
+                </div>
+                <div class="px-6 py-4 max-h-96 overflow-y-auto">
+                    <!-- Tab: Thông tin -->
+                    <div v-if="groupModalTab === 'info'" class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Tên nhóm <span class="text-red-500">*</span></label>
+                            <input v-model="groupForm.name" type="text" class="w-full border rounded p-2 text-sm" placeholder="VD: Khách VIP" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Mã nhóm</label>
+                            <input v-model="groupForm.code" type="text" class="w-full border rounded p-2 text-sm" placeholder="Tự sinh nếu để trống" />
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Loại giảm giá</label>
+                                <select v-model="groupForm.discount_type" class="w-full border rounded p-2 text-sm">
+                                    <option value="">Không giảm</option>
+                                    <option value="percent">Phần trăm (%)</option>
+                                    <option value="amount">Số tiền (VNĐ)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Giá trị giảm</label>
+                                <input v-model.number="groupForm.discount_value" type="number" min="0" class="w-full border rounded p-2 text-sm" />
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Ghi chú</label>
+                            <textarea v-model="groupForm.note" rows="2" class="w-full border rounded p-2 text-sm" placeholder="Ghi chú nhóm"></textarea>
+                        </div>
+                    </div>
+                    <!-- Tab: Thiết lập nâng cao -->
+                    <div v-if="groupModalTab === 'advanced'" class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Mô tả</label>
+                            <textarea v-model="groupForm.description" rows="2" class="w-full border rounded p-2 text-sm"></textarea>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Chế độ cập nhật</label>
+                            <select v-model="groupForm.update_mode" class="w-full border rounded p-2 text-sm">
+                                <option value="none">Không tự động</option>
+                                <option value="add_matching">Thêm khách phù hợp</option>
+                                <option value="refresh_matching">Làm mới theo điều kiện</option>
+                            </select>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <input type="checkbox" v-model="groupForm.auto_update" id="group_auto_update" class="w-4 h-4 text-blue-600" />
+                            <label for="group_auto_update" class="text-sm text-gray-700">Tự động cập nhật định kỳ</label>
+                        </div>
+                        <p class="text-xs text-gray-400">Lưu ý: Engine tự động gán khách sẽ được xử lý trong Step 24.4B. Hiện tại chỉ lưu cấu hình.</p>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-2 px-6 py-3 border-t bg-gray-50 rounded-b-lg">
+                    <button @click="showGroupModal = false" class="px-4 py-2 border rounded text-sm font-medium hover:bg-gray-100">Bỏ qua</button>
+                    <button @click="submitGroupModal" :disabled="groupSubmitting" class="px-4 py-2 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+                        {{ groupSubmitting ? 'Đang lưu...' : 'Lưu' }}
+                    </button>
+                </div>
+            </div>
+        </div>
     </AppLayout>
 </template>
 

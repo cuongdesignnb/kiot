@@ -44,6 +44,7 @@ class Customer extends Model
         'total_bought',
         'status',
         'branch_id',
+        'created_by',
     ];
 
     protected $casts = [
@@ -78,5 +79,10 @@ class Customer extends Model
     public function deliveryAddresses()
     {
         return $this->hasMany(CustomerDeliveryAddress::class);
+    }
+
+    public function creator()
+    {
+        return $this->belongsTo(User::class, 'created_by');
     }
 }

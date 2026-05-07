@@ -84,6 +84,11 @@ Route::post('/customers/{customer}/debt-offset', [CustomerController::class, 'de
 Route::post('/customers/{customer}/cancel-debt-offset/{debtOffset}', [CustomerController::class, 'cancelDebtOffset'])->middleware('permission:customers.edit');
 Route::get('/customers/{customer}/debt-offset-history', [CustomerController::class, 'debtOffsetHistory'])->middleware('permission:customers.view');
 
+// Step 24.4A: Customer Group master data API
+Route::get('/customer-groups/options', [App\Http\Controllers\CustomerGroupController::class, 'options'])->name('customer-groups.options');
+Route::post('/customer-groups', [App\Http\Controllers\CustomerGroupController::class, 'store'])->name('customer-groups.store')->middleware('permission:customers.edit');
+Route::put('/customer-groups/{customerGroup}', [App\Http\Controllers\CustomerGroupController::class, 'update'])->name('customer-groups.update')->middleware('permission:customers.edit');
+
 // ===== SUPPLIERS =====
 Route::get('/suppliers', [SupplierController::class, 'index'])->name('suppliers.index')->middleware('permission:suppliers.view');
 Route::post('/suppliers', [SupplierController::class, 'store'])->name('suppliers.store')->middleware('permission:suppliers.create');
