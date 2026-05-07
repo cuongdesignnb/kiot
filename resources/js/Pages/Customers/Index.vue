@@ -11,9 +11,23 @@ import axios from "axios";
 const props = defineProps({
     customers: Object,
     filters: Object,
-    filterOptions: Object,
+    filterOptions: { type: Object, default: () => ({}) },
     summary: Object,
 });
+
+// HOTFIX 24.4A-1 — defensive fallbacks để tránh crash khi backend chưa trả filterOptions/capabilities.
+const safeFilterOptions = computed(() => props.filterOptions || {});
+const filterCapabilities = computed(() => safeFilterOptions.value.capabilities || {});
+const hasCapability = (key) => Boolean(filterCapabilities.value?.[key]);
+const filterCustomerGroups = computed(() => safeFilterOptions.value.customerGroups || []);
+const filterTypes = computed(() => safeFilterOptions.value.types || []);
+const filterGenders = computed(() => safeFilterOptions.value.genders || []);
+const filterBranches = computed(() => safeFilterOptions.value.branches || []);
+const filterCreators = computed(() => safeFilterOptions.value.creators || []);
+const filterStatuses = computed(() => safeFilterOptions.value.statuses || []);
+const filterPartnerTypes = computed(() => safeFilterOptions.value.partnerTypes || []);
+const filterDeliveryCities = computed(() => safeFilterOptions.value.deliveryCities || []);
+const filterDebtOptions = computed(() => safeFilterOptions.value.debtOptions || []);
 
 const { filters, setSort, reset } = useFilters({
     initial: props.filters,
@@ -568,7 +582,8 @@ const submitGroupModal = async () => {
 };
 
 // Capabilities from backend
-const capabilities = computed(() => props.filterOptions?.capabilities || {});
+// HOTFIX 24.4A-1: alias for backward compat with template references to `capabilities`.
+const capabilities = filterCapabilities;
 
 // Birthday filter mode
 const birthdayMode = computed({
@@ -606,7 +621,7 @@ const totalSalesTimeMode = computed({
                 </div>
                 <select v-model="filters.customer_group" class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none focus:border-blue-500">
                     <option value="">Tất cả các nhóm</option>
-                    <option v-for="g in filterOptions.customerGroups" :key="g.value" :value="g.value">{{ g.label }}</option>
+                    <option v-for="g in filterCustomerGroups" :key="g.value" :value="g.value">{{ g.label }}</option>
                 </select>
             </div>
 
@@ -615,7 +630,7 @@ const totalSalesTimeMode = computed({
                 <label class="block text-sm font-bold text-gray-800 mb-2">Loại khách hàng</label>
                 <div class="flex gap-2 text-sm">
                     <button @click="filters.type = ''" :class="!filters.type ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">Tất cả</button>
-                    <button v-for="t in filterOptions.types" :key="t.value" @click="filters.type = t.value" :class="filters.type === t.value ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">{{ t.label }}</button>
+                    <button v-for="t in filterTypes" :key="t.value" @click="filters.type = t.value" :class="filters.type === t.value ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">{{ t.label }}</button>
                 </div>
             </div>
 
@@ -624,7 +639,7 @@ const totalSalesTimeMode = computed({
                 <label class="block text-sm font-bold text-gray-800 mb-2">Giới tính</label>
                 <div class="flex gap-2 text-sm">
                     <button @click="filters.gender = ''" :class="!filters.gender ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">Tất cả</button>
-                    <button v-for="g in filterOptions.genders" :key="g.value" @click="filters.gender = g.value" :class="filters.gender === g.value ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">{{ g.label }}</button>
+                    <button v-for="g in filterGenders" :key="g.value" @click="filters.gender = g.value" :class="filters.gender === g.value ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">{{ g.label }}</button>
                 </div>
             </div>
 
@@ -703,7 +718,7 @@ const totalSalesTimeMode = computed({
                 <label class="block text-sm font-bold text-gray-800 mb-2">Khu vực giao hàng</label>
                 <select v-model="filters.delivery_city" class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none focus:border-blue-500">
                     <option value="">Tất cả tỉnh/TP</option>
-                    <option v-for="c in filterOptions.deliveryCities" :key="c.value" :value="c.value">{{ c.label }}</option>
+                    <option v-for="c in filterDeliveryCities" :key="c.value" :value="c.value">{{ c.label }}</option>
                 </select>
             </div>
 
@@ -712,7 +727,7 @@ const totalSalesTimeMode = computed({
                 <label class="block text-sm font-bold text-gray-800 mb-2">Trạng thái</label>
                 <div class="flex gap-2 text-sm">
                     <button @click="filters.status = []" :class="!filters.status?.length ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">Tất cả</button>
-                    <button v-for="s in filterOptions.statuses" :key="s.value" @click="filters.status = [s.value]" :class="filters.status?.includes?.(s.value) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">{{ s.label }}</button>
+                    <button v-for="s in filterStatuses" :key="s.value" @click="filters.status = [s.value]" :class="filters.status?.includes?.(s.value) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">{{ s.label }}</button>
                 </div>
             </div>
 
@@ -721,7 +736,7 @@ const totalSalesTimeMode = computed({
                 <label class="block text-sm font-bold text-gray-800 mb-2">Loại đối tác</label>
                 <div class="flex flex-wrap gap-2 text-sm">
                     <button @click="filters.partner_type = ''" :class="!filters.partner_type ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">Tất cả</button>
-                    <button v-for="p in filterOptions.partnerTypes" :key="p.value" @click="filters.partner_type = p.value" :class="filters.partner_type === p.value ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">{{ p.label }}</button>
+                    <button v-for="p in filterPartnerTypes" :key="p.value" @click="filters.partner_type = p.value" :class="filters.partner_type === p.value ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">{{ p.label }}</button>
                 </div>
             </div>
 
@@ -730,7 +745,7 @@ const totalSalesTimeMode = computed({
                 <label class="block text-sm font-bold text-gray-800 mb-2">Người tạo</label>
                 <select v-model="filters.created_by" class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none focus:border-blue-500">
                     <option value="">Chọn người tạo</option>
-                    <option v-for="u in filterOptions.creators" :key="u.id" :value="u.id">{{ u.name }}</option>
+                    <option v-for="u in filterCreators" :key="u.id" :value="u.id">{{ u.name }}</option>
                 </select>
             </div>
 
@@ -739,7 +754,7 @@ const totalSalesTimeMode = computed({
                 <label class="block text-sm font-bold text-gray-800 mb-2">Chi nhánh tạo</label>
                 <select v-model="filters.branch_id" class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none focus:border-blue-500">
                     <option value="">Tất cả chi nhánh</option>
-                    <option v-for="b in filterOptions.branches" :key="b.id" :value="b.id">{{ b.name }}</option>
+                    <option v-for="b in filterBranches" :key="b.id" :value="b.id">{{ b.name }}</option>
                 </select>
             </div>
 
