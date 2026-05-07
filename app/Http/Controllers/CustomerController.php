@@ -831,9 +831,26 @@ class CustomerController extends Controller
 
     public function export(Request $request)
     {
-        $customers = Customer::query()
-            ->when($request->search, fn($q, $s) => $q->where('name', 'LIKE', "%{$s}%")->orWhere('code', 'LIKE', "%{$s}%")->orWhere('phone', 'LIKE', "%{$s}%"))
-            ->orderBy('id', 'desc')->get();
+        $this->configureCustomerFilters();
+
+        $query = Customer::with('branch');
+
+        // Branch auto-lock (same as index)
+        if (Setting::get('customer_manage_by_branch', false) && auth()->user()?->branch_id) {
+            $query->where('branch_id', auth()->user()->branch_id);
+        }
+
+        // Pseudo filter: has_debt (same as index)
+        if ($request->filled('has_debt')) {
+            if ($request->has_debt === 'yes') {
+                $query->where('debt_amount', '>', 0);
+            } elseif ($request->has_debt === 'no') {
+                $query->where('debt_amount', '<=', 0);
+            }
+        }
+
+        $this->applyFilters($query, $request);
+        $customers = $query->get();
 
         return \App\Services\CsvService::export(
             ['Mã KH', 'Tên khách hàng', 'Điện thoại', 'Email', 'Nhóm KH', 'Địa chỉ', 'Phường/Xã', 'Quận/Huyện', 'Tỉnh/TP', 'Công nợ', 'Tổng mua', 'Ghi chú'],

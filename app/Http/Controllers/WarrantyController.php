@@ -55,22 +55,11 @@ class WarrantyController extends Controller
             $query->where('warranty_end_date', '<', Carbon::now());
         }
 
-        // Custom date range on purchase_date — piggy-back on canonical date_filter too
+        // Custom date range on purchase_date — handled by applyDateRange() via dateColumn
         $this->applyDateRange($query, $request);
 
-        // Legacy/custom time_filter (purchase_date) for backward compat
-        $time_filter = $request->input('time_filter');
-        if ($time_filter === 'this_month') {
-            $query->whereMonth('purchase_date', Carbon::now()->month)
-                ->whereYear('purchase_date', Carbon::now()->year);
-        } elseif ($time_filter === 'custom') {
-            if ($request->filled('time_start')) {
-                $query->whereDate('purchase_date', '>=', $request->input('time_start'));
-            }
-            if ($request->filled('time_end')) {
-                $query->whereDate('purchase_date', '<=', $request->input('time_end'));
-            }
-        }
+        // NOTE: Legacy time_filter (this_month/custom) logic removed in Step 24.4.
+        // Standard date_filter + date_from/date_to via FilterableIndex now handles this.
 
         // Expiration range (warranty_end_date)
         $expiration_filter = $request->input('expiration_filter', 'all');

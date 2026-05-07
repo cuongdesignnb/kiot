@@ -29,7 +29,7 @@ class StockTransferController extends Controller
             'items.product' => ['name', 'code', 'barcode'],
         ];
         $this->sortable = ['code', 'created_at', 'sent_date', 'total_quantity', 'total_price', 'status'];
-        $this->dateColumn = 'created_at';
+        $this->dateColumn = \Illuminate\Support\Facades\DB::raw('COALESCE(sent_date, created_at)');
         $this->creatorColumn = null;
         $this->scalarFilters = ['from_branch_id', 'to_branch_id'];
     }

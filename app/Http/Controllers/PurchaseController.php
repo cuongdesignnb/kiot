@@ -12,6 +12,7 @@ use App\Models\Product;
 use App\Models\Customer;
 use App\Models\CashFlow;
 use App\Models\SerialImei;
+use App\Enums\PaymentMethod;
 use App\Enums\PurchaseStatus;
 use App\Support\Filters\FilterableIndex;
 use App\Services\LockPeriodService;
@@ -32,7 +33,7 @@ class PurchaseController extends Controller
             'items'    => ['product_name'],
         ];
         $this->sortable = ['code', 'created_at', 'total_amount', 'discount', 'paid_amount', 'debt_amount', 'status', 'purchase_date'];
-        $this->dateColumn = 'purchases.created_at';
+        $this->dateColumn = \Illuminate\Support\Facades\DB::raw('COALESCE(purchases.purchase_date, purchases.created_at)');
         $this->creatorColumn = 'employee_id';
         $this->scalarFilters = ['branch_id', 'supplier_id', 'warehouse_id', 'payment_method'];
     }
@@ -102,11 +103,7 @@ class PurchaseController extends Controller
                 'statuses' => PurchaseStatus::options(),
                 'suppliers' => $suppliers->map(fn($s) => ['value' => $s->id, 'label' => $s->name]),
                 'employees' => $employees->map(fn($e) => ['value' => $e->id, 'label' => $e->name]),
-                'paymentMethods' => [
-                    ['value' => 'cash', 'label' => 'Tiền mặt'],
-                    ['value' => 'transfer', 'label' => 'Chuyển khoản'],
-                    ['value' => 'card', 'label' => 'Thẻ'],
-                ],
+                'paymentMethods' => PaymentMethod::basicOptions(),
                 'debtOptions' => [
                     ['value' => '1', 'label' => 'Còn nợ NCC'],
                     ['value' => '0', 'label' => 'Đã trả đủ'],

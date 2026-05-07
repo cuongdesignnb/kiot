@@ -8,6 +8,7 @@ use App\Models\BankAccount;
 use App\Services\LockPeriodService;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
+use App\Enums\PaymentMethod;
 use App\Support\Filters\FilterableIndex;
 
 class CashFlowController extends Controller
@@ -50,11 +51,7 @@ class CashFlowController extends Controller
                 ['value' => 'receipt', 'label' => 'Phiếu thu'],
                 ['value' => 'payment', 'label' => 'Phiếu chi'],
             ],
-            'paymentMethods' => [
-                ['value' => 'cash', 'label' => 'Tiền mặt'],
-                ['value' => 'bank', 'label' => 'Chuyển khoản'],
-                ['value' => 'ewallet', 'label' => 'Ví điện tử'],
-            ],
+            'paymentMethods' => PaymentMethod::cashFlowOptions(),
             'statuses' => [
                 ['value' => 'active', 'label' => 'Đã ghi nhận'],
                 ['value' => 'cancelled', 'label' => 'Đã hủy'],

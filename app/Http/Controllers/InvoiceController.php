@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Enums\InvoiceStatus;
+use App\Enums\PaymentMethod;
 use App\Models\Invoice;
 use App\Models\PriceBook;
 use App\Models\Setting;
@@ -77,12 +78,7 @@ class InvoiceController extends Controller
                 'statuses' => InvoiceStatus::options(),
                 'employees' => \App\Models\Employee::select('id', 'name')->where('is_active', true)->orderBy('name')->get(),
                 'creators' => \App\Models\User::select('id', 'name')->orderBy('name')->get(),
-                'paymentMethods' => [
-                    ['value' => 'cash', 'label' => 'Tiền mặt'],
-                    ['value' => 'card', 'label' => 'Thẻ'],
-                    ['value' => 'transfer', 'label' => 'Chuyển khoản'],
-                    ['value' => 'ewallet', 'label' => 'Ví điện tử'],
-                ],
+                'paymentMethods' => PaymentMethod::options(),
                 'salesChannels' => Invoice::query()
                     ->whereNotNull('sales_channel')->where('sales_channel', '!=', '')
                     ->distinct()->orderBy('sales_channel')->pluck('sales_channel')

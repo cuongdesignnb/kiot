@@ -12,6 +12,7 @@ use App\Models\CashFlow;
 use App\Models\SerialImei;
 use App\Models\Employee;
 use App\Models\User;
+use App\Enums\PaymentMethod;
 use App\Enums\PurchaseReturnStatus;
 use App\Services\StockMovementService;
 use App\Support\Filters\FilterableIndex;
@@ -67,10 +68,7 @@ class PurchaseReturnController extends Controller
                 'creators' => User::select('id', 'name')->orderBy('name')->get(),
                 'employees' => Employee::select('id', 'name')->where('is_active', true)->orderBy('name')->get(),
                 'suppliers' => Customer::select('id', 'name')->where('is_supplier', true)->orderBy('name')->get(),
-                'paymentMethods' => [
-                    ['value' => 'cash', 'label' => 'Tiền mặt'],
-                    ['value' => 'transfer', 'label' => 'Chuyển khoản'],
-                ],
+                'paymentMethods' => PaymentMethod::basicOptions(),
             ],
         ]);
     }
