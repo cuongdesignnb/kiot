@@ -15,10 +15,22 @@ const props = defineProps({
     summary: Object,
 });
 
-// HOTFIX 24.4A-1 — defensive fallbacks để tránh crash khi backend chưa trả filterOptions/capabilities.
+// HOTFIX 24.4A-2 — triple-safe defensive guard: default object + spread + strict === true.
+const defaultCapabilities = {
+    supportsBirthdayFilter: false,
+    supportsLastTransactionFilter: false,
+    supportsTotalSalesTimeFilter: false,
+    supportsDebtDaysFilter: false,
+    supportsPointsFilter: false,
+    supportsDeliveryAreaFilter: false,
+    supportsCreatedByFilter: false,
+};
 const safeFilterOptions = computed(() => props.filterOptions || {});
-const filterCapabilities = computed(() => safeFilterOptions.value.capabilities || {});
-const hasCapability = (key) => Boolean(filterCapabilities.value?.[key]);
+const filterCapabilities = computed(() => ({
+    ...defaultCapabilities,
+    ...(safeFilterOptions.value.capabilities || {}),
+}));
+const hasCapability = (key) => filterCapabilities.value[key] === true;
 const filterCustomerGroups = computed(() => safeFilterOptions.value.customerGroups || []);
 const filterTypes = computed(() => safeFilterOptions.value.types || []);
 const filterGenders = computed(() => safeFilterOptions.value.genders || []);
@@ -644,7 +656,7 @@ const totalSalesTimeMode = computed({
             </div>
 
             <!-- 4. SINH NHẬT -->
-            <div v-if="capabilities.supportsBirthdayFilter" class="px-3 py-4 border-b border-gray-200">
+            <div v-if="hasCapability('supportsBirthdayFilter')" class="px-3 py-4 border-b border-gray-200">
                 <label class="block text-sm font-bold text-gray-800 mb-2">Sinh nhật</label>
                 <div class="space-y-2 text-sm text-gray-700">
                     <label class="flex items-center gap-2 cursor-pointer">
@@ -663,7 +675,7 @@ const totalSalesTimeMode = computed({
             </div>
 
             <!-- 5. NGÀY GIAO DỊCH CUỐI -->
-            <div v-if="capabilities.supportsLastTransactionFilter" class="px-3 py-4 border-b border-gray-200">
+            <div v-if="hasCapability('supportsLastTransactionFilter')" class="px-3 py-4 border-b border-gray-200">
                 <label class="block text-sm font-bold text-gray-800 mb-2">Ngày giao dịch cuối</label>
                 <div class="space-y-2 text-sm text-gray-700">
                     <label class="flex items-center gap-2 cursor-pointer">
@@ -688,7 +700,7 @@ const totalSalesTimeMode = computed({
                     <input type="number" v-model="filters.total_sales_from" class="w-1/2 border rounded p-1.5 text-sm" placeholder="Giá trị từ" min="0" />
                     <input type="number" v-model="filters.total_sales_to" class="w-1/2 border rounded p-1.5 text-sm" placeholder="Giá trị tới" min="0" />
                 </div>
-                <div v-if="capabilities.supportsTotalSalesTimeFilter" class="space-y-2 text-sm text-gray-700">
+                <div v-if="hasCapability('supportsTotalSalesTimeFilter')" class="space-y-2 text-sm text-gray-700">
                     <label class="flex items-center gap-2 cursor-pointer">
                         <input type="radio" name="total_sales_time" value="all" v-model="totalSalesTimeMode" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
                         Toàn thời gian
@@ -714,7 +726,7 @@ const totalSalesTimeMode = computed({
             </div>
 
             <!-- 8. KHU VỰC GIAO HÀNG -->
-            <div v-if="capabilities.supportsDeliveryAreaFilter" class="px-3 py-4 border-b border-gray-200">
+            <div v-if="hasCapability('supportsDeliveryAreaFilter')" class="px-3 py-4 border-b border-gray-200">
                 <label class="block text-sm font-bold text-gray-800 mb-2">Khu vực giao hàng</label>
                 <select v-model="filters.delivery_city" class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none focus:border-blue-500">
                     <option value="">Tất cả tỉnh/TP</option>
@@ -741,7 +753,7 @@ const totalSalesTimeMode = computed({
             </div>
 
             <!-- 11. NGƯỜI TẠO -->
-            <div v-if="capabilities.supportsCreatedByFilter" class="px-3 py-4 border-b border-gray-200">
+            <div v-if="hasCapability('supportsCreatedByFilter')" class="px-3 py-4 border-b border-gray-200">
                 <label class="block text-sm font-bold text-gray-800 mb-2">Người tạo</label>
                 <select v-model="filters.created_by" class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none focus:border-blue-500">
                     <option value="">Chọn người tạo</option>
