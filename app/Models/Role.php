@@ -140,6 +140,8 @@ class Role extends Model
                         'invoices.create' => 'Tạo hóa đơn',
                         'invoices.delete' => 'Xóa hóa đơn',
                         'invoices.cancel' => 'Hủy hóa đơn (Step 24.0B)',
+                        'invoices.override_time_lock' => 'Sửa/hủy hóa đơn quá hạn (Step 24.3)',
+                        'invoices.change_transaction_date' => 'Đổi ngày hóa đơn (Step 24.3)',
                         'invoices.print'  => 'In hóa đơn',
                         'invoices.export' => 'Xuất file hóa đơn',
                     ],

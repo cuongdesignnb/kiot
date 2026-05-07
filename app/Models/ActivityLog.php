@@ -53,7 +53,11 @@ class ActivityLog extends Model
 
     // Bán hàng
     const ACTION_INVOICE_CREATE = 'invoice_create';
+    const ACTION_INVOICE_UPDATE = 'invoice_update';
     const ACTION_INVOICE_CANCEL = 'invoice_cancel';
+    const ACTION_INVOICE_TRANSACTION_DATE_CHANGED = 'invoice_transaction_date_changed';
+    const ACTION_INVOICE_UPDATE_TIME_LOCK_OVERRIDE = 'invoice_update_time_lock_override';
+    const ACTION_INVOICE_CANCEL_TIME_LOCK_OVERRIDE = 'invoice_cancel_time_lock_override';
     const ACTION_RETURN_CREATE = 'return_create';
     const ACTION_RETURN_CANCEL = 'return_cancel';
 
@@ -155,7 +159,11 @@ class ActivityLog extends Model
         'login'             => 'Đăng nhập',
         'logout'            => 'Đăng xuất',
         'invoice_create'    => 'Tạo hóa đơn',
+        'invoice_update'    => 'Cập nhật hóa đơn',
         'invoice_cancel'    => 'Hủy hóa đơn',
+        'invoice_transaction_date_changed' => 'Đổi ngày hóa đơn',
+        'invoice_update_time_lock_override' => 'Sửa hóa đơn quá hạn (override)',
+        'invoice_cancel_time_lock_override' => 'Hủy hóa đơn quá hạn (override)',
         'return_create'     => 'Tạo phiếu trả hàng',
         'return_cancel'     => 'Hủy phiếu trả hàng',
         'purchase_return_create' => 'Tạo phiếu trả nhà cung cấp',
@@ -232,7 +240,11 @@ class ActivityLog extends Model
         'login'             => '🔑',
         'logout'            => '🚪',
         'invoice_create'    => '🧾',
+        'invoice_update'    => '✏️',
         'invoice_cancel'    => '🚫',
+        'invoice_transaction_date_changed' => '📅',
+        'invoice_update_time_lock_override' => '🔓',
+        'invoice_cancel_time_lock_override' => '🔓',
         'return_create'     => '↩️',
         'return_cancel'     => '🚫',
         'purchase_return_create' => '📤',

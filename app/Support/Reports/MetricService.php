@@ -30,7 +30,10 @@ class MetricService
      */
     public static function invoiceScope(Carbon $from, Carbon $to, $branchId = null): Builder
     {
-        $q = Invoice::whereBetween('created_at', [$from, $to])
+        // Step 24.3: use transaction_date (business date) fallback created_at for revenue reporting
+        $dateExpr = DB::raw('COALESCE(transaction_date, created_at)');
+        $q = Invoice::where($dateExpr, '>=', $from)
+            ->where($dateExpr, '<=', $to)
             ->where('status', '!=', 'Đã hủy');
         if ($branchId) {
             $q->where('branch_id', $branchId);

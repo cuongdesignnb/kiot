@@ -8,6 +8,11 @@ class Invoice extends Model
 {
     protected $guarded = ['id'];
 
+    protected $casts = [
+        'transaction_date' => 'datetime',
+        'lock_started_at'  => 'datetime',
+    ];
+
     /**
      * Scope: chỉ lấy hóa đơn hợp lệ (loại trừ status = 'Đã hủy').
      *
