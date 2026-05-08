@@ -70,6 +70,39 @@ class InvoiceController extends Controller
 
         $invoices = $query->paginate(15)->withQueryString();
 
+        // Step 24.3C: enrich each invoice with cancel-policy hints so the UI
+        // can render the right cancel modal state without guessing or duplicating
+        // backend rules. The same checks still run server-side in destroy().
+        $user = auth()->user();
+        $canOverride = $user ? (bool) $user->hasPermission('invoices.override_time_lock') : false;
+        $blockEinvoice = (bool) Setting::get('block_edit_cancel_einvoice', false);
+        $orderChangeTime = (int) Setting::get('order_change_time', 24);
+        $now = now();
+
+        $invoices->getCollection()->transform(function ($inv) use ($canOverride, $blockEinvoice, $orderChangeTime, $now) {
+            $lockRef = $inv->lock_started_at ?? $inv->created_at;
+            $diffHours = $lockRef ? (float) Carbon::parse($lockRef)->floatDiffInHours($now) : 0.0;
+            $isTimeLocked = $diffHours > $orderChangeTime;
+
+            $blockReason = null;
+            if ($inv->status === 'Đã hủy') {
+                $blockReason = 'Hóa đơn này đã được hủy.';
+            } elseif ($blockEinvoice && !empty($inv->einvoice_code ?? null)) {
+                $blockReason = 'Không thể hủy hóa đơn đã xuất hóa đơn điện tử.';
+            } elseif ($isTimeLocked && !$canOverride) {
+                $blockReason = "Đã quá thời gian cho phép hủy hóa đơn ({$orderChangeTime} giờ). Cần quyền override.";
+            }
+
+            $inv->setAttribute('is_time_locked',          $isTimeLocked);
+            $inv->setAttribute('lock_age_hours',          round($diffHours, 2));
+            $inv->setAttribute('order_change_time_hours', $orderChangeTime);
+            $inv->setAttribute('can_override_time_lock',  $canOverride);
+            $inv->setAttribute('requires_override_reason', $isTimeLocked && $canOverride);
+            $inv->setAttribute('cancel_block_reason',     $blockReason);
+            $inv->setAttribute('can_cancel',              $blockReason === null);
+            return $inv;
+        });
+
         $filters = $this->currentFilters($request);
         $filters['has_debt'] = $request->input('has_debt', '');
 

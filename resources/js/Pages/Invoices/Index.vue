@@ -150,9 +150,62 @@ const toggleExpand = (id) => {
 const isExpanded = (id) => expandedRows.value.includes(id);
 
 
+// HOTFIX 24.3C — proper cancel modal that handles the time-lock override flow.
+// Native window.confirm couldn't collect time_lock_override_reason, so users
+// with override permission hit "Cần nhập lý do override" and were stuck.
+const showCancelModal = ref(false);
+const cancellingInvoice = ref(null);
+const cancelReason = ref('');
+const cancelError = ref('');
+const cancelSubmitting = ref(false);
+
 const cancelInvoice = (invoice) => {
-    if (!confirm(`Bạn có chắc muốn hủy hóa đơn ${invoice.code}?`)) return;
-    router.delete(`/invoices/${invoice.id}`, { preserveScroll: true });
+    cancellingInvoice.value = invoice;
+    cancelReason.value = '';
+    cancelError.value = '';
+    showCancelModal.value = true;
+};
+
+const closeCancelInvoiceModal = () => {
+    if (cancelSubmitting.value) return;
+    showCancelModal.value = false;
+    cancellingInvoice.value = null;
+    cancelReason.value = '';
+    cancelError.value = '';
+};
+
+const submitCancelInvoice = () => {
+    const inv = cancellingInvoice.value;
+    if (!inv) return;
+    if (inv.cancel_block_reason) return; // UI guard; backend also enforces
+    if (inv.requires_override_reason) {
+        const trimmed = (cancelReason.value || '').trim();
+        if (trimmed.length < 5) {
+            cancelError.value = 'Vui lòng nhập lý do override (ít nhất 5 ký tự).';
+            return;
+        }
+    }
+    cancelError.value = '';
+    cancelSubmitting.value = true;
+    router.delete(`/invoices/${inv.id}`, {
+        data: inv.requires_override_reason
+            ? { time_lock_override_reason: cancelReason.value.trim() }
+            : {},
+        preserveScroll: true,
+        onSuccess: () => {
+            showCancelModal.value = false;
+            cancellingInvoice.value = null;
+            cancelReason.value = '';
+        },
+        onError: (errors) => {
+            // Inertia surfaces validation errors; flash error comes via page props.
+            const flashErr = errors?.error || errors?.message;
+            cancelError.value = flashErr || 'Không thể hủy hóa đơn. Vui lòng kiểm tra lại.';
+        },
+        onFinish: () => {
+            cancelSubmitting.value = false;
+        },
+    });
 };
 
 const printInvoice = (invoice) => {
@@ -1120,6 +1173,92 @@ const printInvoice = (invoice) => {
                             v-html="link.label"
                         ></span>
                     </template>
+                </div>
+            </div>
+        </div>
+
+        <!-- HOTFIX 24.3C — Cancel invoice modal (replaces window.confirm) -->
+        <div
+            v-if="showCancelModal && cancellingInvoice"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+        >
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-lg">
+                <div class="flex items-center justify-between px-6 py-4 border-b">
+                    <h3 class="text-lg font-bold text-gray-800">Hủy hóa đơn</h3>
+                    <button
+                        @click="closeCancelInvoiceModal"
+                        class="text-gray-400 hover:text-gray-600 text-2xl leading-none"
+                        :disabled="cancelSubmitting"
+                    >&times;</button>
+                </div>
+
+                <div class="px-6 py-4 space-y-3 text-sm">
+                    <div class="grid grid-cols-2 gap-y-1 gap-x-4">
+                        <div class="text-gray-500">Mã hóa đơn</div>
+                        <div class="font-semibold text-gray-800">{{ cancellingInvoice.code }}</div>
+                        <div class="text-gray-500">Khách hàng</div>
+                        <div class="text-gray-800">{{ cancellingInvoice.customer?.name || 'Khách lẻ' }}</div>
+                        <div class="text-gray-500">Tổng tiền</div>
+                        <div class="text-gray-800 tabular-nums">{{ Number(cancellingInvoice.total || 0).toLocaleString('vi-VN') }} ₫</div>
+                        <div class="text-gray-500">Trạng thái</div>
+                        <div class="text-gray-800">{{ cancellingInvoice.status }}</div>
+                    </div>
+
+                    <div class="px-3 py-2 bg-amber-50 border border-amber-200 rounded text-amber-800 text-xs">
+                        Hủy hóa đơn sẽ đảo tồn kho, serial/IMEI, công nợ, dòng tiền và báo cáo liên quan.
+                    </div>
+
+                    <div
+                        v-if="cancellingInvoice.cancel_block_reason"
+                        class="px-3 py-2 bg-red-50 border border-red-200 rounded text-red-700 text-sm"
+                    >
+                        {{ cancellingInvoice.cancel_block_reason }}
+                    </div>
+
+                    <template v-else>
+                        <div
+                            v-if="cancellingInvoice.is_time_locked"
+                            class="px-3 py-2 bg-orange-50 border border-orange-200 rounded text-orange-800 text-xs"
+                        >
+                            Hóa đơn đã quá thời gian cho phép hủy ({{ cancellingInvoice.order_change_time_hours }} giờ — đã trôi {{ cancellingInvoice.lock_age_hours }} giờ). Cần lý do override.
+                        </div>
+
+                        <div v-if="cancellingInvoice.requires_override_reason">
+                            <label class="block text-xs font-medium text-gray-700 mb-1">
+                                Lý do override <span class="text-red-500">*</span>
+                            </label>
+                            <textarea
+                                v-model="cancelReason"
+                                rows="3"
+                                class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                placeholder="Nhập lý do hủy quá hạn (ít nhất 5 ký tự)"
+                                :disabled="cancelSubmitting"
+                            ></textarea>
+                            <p class="mt-1 text-xs text-gray-400">Tối thiểu 5 ký tự. Sẽ ghi vào nhật ký hệ thống.</p>
+                        </div>
+                    </template>
+
+                    <div
+                        v-if="cancelError"
+                        class="px-3 py-2 bg-red-50 border border-red-200 rounded text-red-700 text-sm"
+                    >
+                        {{ cancelError }}
+                    </div>
+                </div>
+
+                <div class="px-6 py-3 border-t bg-gray-50 flex items-center justify-end gap-2 rounded-b-lg">
+                    <button
+                        @click="closeCancelInvoiceModal"
+                        :disabled="cancelSubmitting"
+                        class="px-4 py-2 border border-gray-300 rounded text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+                    >Đóng</button>
+                    <button
+                        @click="submitCancelInvoice"
+                        :disabled="cancelSubmitting || !!cancellingInvoice.cancel_block_reason"
+                        class="px-5 py-2 bg-red-600 text-white rounded text-sm font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {{ cancelSubmitting ? 'Đang hủy...' : 'Xác nhận hủy' }}
+                    </button>
                 </div>
             </div>
         </div>
