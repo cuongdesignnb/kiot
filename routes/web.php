@@ -221,6 +221,15 @@ Route::middleware('permission:pos.use')->group(function () {
     Route::post('/api/pos/customers', [PosController::class, 'quickCreateCustomer']);
 });
 
+// Step 24.6 — POS Quick Return support (read-only). Gated by returns.create
+// because the eventual write goes through POST /returns, which has the same gate.
+Route::middleware('permission:returns.create')->group(function () {
+    Route::get('/api/pos/returnable-invoices', [PosController::class, 'returnableInvoices'])
+        ->name('api.pos.returnable-invoices');
+    Route::get('/api/pos/invoices/{invoice}/returnable-items', [PosController::class, 'returnableItems'])
+        ->name('api.pos.returnable-items');
+});
+
 // Step 22.1E: serial lookup phải dùng được cả ở Orders/Create (không có pos.use).
 // Endpoint read-only, chỉ cần đã đăng nhập.
 Route::get('/api/products/{product}/serials', [PosController::class, 'getProductSerials'])

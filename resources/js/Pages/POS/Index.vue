@@ -564,6 +564,227 @@ const submitCreateProduct = async () => {
         creatingProduct.value = false;
     }
 };
+
+// ════════════════════════════════════════════════════════════════════
+//  STEP 24.6 — POS Quick Return
+//  Modal-based, invoice-linked. All business rules (RR-08 / RR-11 /
+//  Step 23.2 serial) enforced server-side via POST /returns. The modal
+//  only builds a payload and surfaces backend errors verbatim.
+// ════════════════════════════════════════════════════════════════════
+const showQuickReturnModal = ref(false);
+const returnSearch = ref('');
+const returnSearching = ref(false);
+const returnInvoiceResults = ref([]);
+const returnInvoiceError = ref('');
+const selectedReturnInvoice = ref(null);   // { invoice, items } from API
+const returnLoadingItems = ref(false);
+const returnSubmitting = ref(false);
+const returnSubmitError = ref('');
+// Map of invoice_item_id → { qty, serial_ids: Set<number> }
+const returnLineState = ref({});
+const returnNote = ref('');
+const returnDiscount = ref(0);
+const returnFee = ref(0);
+const returnPaidToCustomer = ref(0);
+
+const openQuickReturn = () => {
+    showQuickReturnModal.value = true;
+    returnSearch.value = '';
+    returnInvoiceResults.value = [];
+    returnInvoiceError.value = '';
+    selectedReturnInvoice.value = null;
+    returnLineState.value = {};
+    returnNote.value = '';
+    returnDiscount.value = 0;
+    returnFee.value = 0;
+    returnPaidToCustomer.value = 0;
+    returnSubmitError.value = '';
+};
+
+const closeQuickReturn = () => {
+    showQuickReturnModal.value = false;
+};
+
+let returnSearchTimer = null;
+const onReturnSearchInput = () => {
+    clearTimeout(returnSearchTimer);
+    returnSearchTimer = setTimeout(searchReturnableInvoices, 250);
+};
+
+const searchReturnableInvoices = async () => {
+    returnInvoiceError.value = '';
+    const term = (returnSearch.value || '').trim();
+    if (term.length < 1) {
+        returnInvoiceResults.value = [];
+        return;
+    }
+    returnSearching.value = true;
+    try {
+        const { data } = await axios.get('/api/pos/returnable-invoices', {
+            params: { search: term },
+        });
+        returnInvoiceResults.value = Array.isArray(data) ? data : [];
+    } catch (e) {
+        if (e.response?.status === 403) {
+            returnInvoiceError.value = 'Bạn không có quyền tạo phiếu trả hàng.';
+        } else {
+            returnInvoiceError.value = e.response?.data?.message || 'Không tìm được hóa đơn.';
+        }
+        returnInvoiceResults.value = [];
+    } finally {
+        returnSearching.value = false;
+    }
+};
+
+const selectReturnInvoice = async (inv) => {
+    returnSubmitError.value = '';
+    returnLoadingItems.value = true;
+    try {
+        const { data } = await axios.get(`/api/pos/invoices/${inv.id}/returnable-items`);
+        selectedReturnInvoice.value = data;
+        const map = {};
+        for (const item of data.items || []) {
+            map[item.invoice_item_id] = { qty: 0, serial_ids: [] };
+        }
+        returnLineState.value = map;
+        // Default paid_to_customer = 0; user fills in.
+        returnPaidToCustomer.value = 0;
+        returnDiscount.value = 0;
+        returnFee.value = 0;
+        returnNote.value = '';
+    } catch (e) {
+        if (e.response?.status === 403) {
+            returnSubmitError.value = 'Bạn không có quyền tạo phiếu trả hàng.';
+        } else if (e.response?.status === 422) {
+            returnSubmitError.value = e.response?.data?.message || 'Hóa đơn không hợp lệ.';
+        } else {
+            returnSubmitError.value = e.response?.data?.message || 'Không tải được chi tiết hóa đơn.';
+        }
+    } finally {
+        returnLoadingItems.value = false;
+    }
+};
+
+const backToInvoiceSearch = () => {
+    selectedReturnInvoice.value = null;
+    returnLineState.value = {};
+    returnSubmitError.value = '';
+};
+
+const setReturnQty = (item, qty) => {
+    const ls = returnLineState.value[item.invoice_item_id] || { qty: 0, serial_ids: [] };
+    let next = Number(qty) || 0;
+    if (next < 0) next = 0;
+    if (next > item.remaining_qty) next = item.remaining_qty;
+    ls.qty = next;
+    if (item.has_serial && ls.serial_ids.length > next) {
+        ls.serial_ids = ls.serial_ids.slice(0, next);
+    }
+    returnLineState.value = { ...returnLineState.value, [item.invoice_item_id]: ls };
+};
+
+const toggleReturnSerial = (item, serialId) => {
+    const ls = returnLineState.value[item.invoice_item_id] || { qty: 0, serial_ids: [] };
+    const idx = ls.serial_ids.indexOf(serialId);
+    if (idx >= 0) {
+        ls.serial_ids = [...ls.serial_ids.slice(0, idx), ...ls.serial_ids.slice(idx + 1)];
+    } else {
+        ls.serial_ids = [...ls.serial_ids, serialId];
+    }
+    // For serial products, qty is always derived from selected serials.
+    ls.qty = ls.serial_ids.length;
+    returnLineState.value = { ...returnLineState.value, [item.invoice_item_id]: ls };
+};
+
+const returnSubtotal = computed(() => {
+    if (!selectedReturnInvoice.value) return 0;
+    let sum = 0;
+    for (const item of selectedReturnInvoice.value.items || []) {
+        const ls = returnLineState.value[item.invoice_item_id];
+        if (!ls || !ls.qty) continue;
+        sum += ls.qty * item.price - (item.discount || 0);
+    }
+    return sum;
+});
+
+const returnTotal = computed(() => {
+    return Math.max(0, returnSubtotal.value - (Number(returnDiscount.value) || 0) + (Number(returnFee.value) || 0));
+});
+
+const hasAnyReturnLine = computed(() => {
+    return Object.values(returnLineState.value).some((ls) => ls && ls.qty > 0);
+});
+
+const canSubmitReturn = computed(() => {
+    if (!selectedReturnInvoice.value) return false;
+    if (!hasAnyReturnLine.value) return false;
+    // Serial products: count(serial_ids) must equal qty.
+    for (const item of selectedReturnInvoice.value.items || []) {
+        const ls = returnLineState.value[item.invoice_item_id];
+        if (!ls || !ls.qty) continue;
+        if (item.has_serial && ls.serial_ids.length !== ls.qty) return false;
+    }
+    return true;
+});
+
+const submitQuickReturn = async () => {
+    if (!canSubmitReturn.value) return;
+    returnSubmitError.value = '';
+    returnSubmitting.value = true;
+    const sel = selectedReturnInvoice.value;
+    const itemsPayload = [];
+    for (const item of sel.items || []) {
+        const ls = returnLineState.value[item.invoice_item_id];
+        if (!ls || !ls.qty) continue;
+        itemsPayload.push({
+            product_id: item.product_id,
+            qty: ls.qty,
+            price: item.price,
+            discount: item.discount || 0,
+            invoice_item_id: item.invoice_item_id,
+            serial_ids: item.has_serial ? ls.serial_ids : [],
+        });
+    }
+    const payload = {
+        invoice_id: sel.invoice.id,
+        customer_id: sel.invoice.customer_id,
+        branch_id: sel.invoice.branch_id,
+        subtotal: returnSubtotal.value,
+        discount: Number(returnDiscount.value) || 0,
+        fee: Number(returnFee.value) || 0,
+        total: returnTotal.value,
+        paid_to_customer: Number(returnPaidToCustomer.value) || 0,
+        note: returnNote.value || null,
+        items: itemsPayload,
+    };
+    try {
+        const res = await axios.post('/returns', payload);
+        const created = res.data?.return || res.data;
+        showQuickReturnModal.value = false;
+        // Use a non-blocking toast surrogate (alert is the existing pattern in this file).
+        alert('Đã tạo phiếu trả hàng' + (created?.code ? ` ${created.code}` : '') + '.');
+        // Open the returns list filtered by the new code so the user can verify.
+        if (created?.code) {
+            window.open(`/returns?search=${encodeURIComponent(created.code)}`, '_blank');
+        }
+    } catch (e) {
+        const status = e.response?.status;
+        if (status === 403) {
+            returnSubmitError.value = 'Bạn không có quyền tạo phiếu trả hàng.';
+        } else if (status === 422) {
+            const errs = e.response?.data?.errors;
+            if (errs && typeof errs === 'object') {
+                returnSubmitError.value = Object.values(errs).flat().join(' • ');
+            } else {
+                returnSubmitError.value = e.response?.data?.message || 'Dữ liệu không hợp lệ.';
+            }
+        } else {
+            returnSubmitError.value = e.response?.data?.message || 'Có lỗi xảy ra khi tạo phiếu trả.';
+        }
+    } finally {
+        returnSubmitting.value = false;
+    }
+};
 </script>
 
 <template>
@@ -652,6 +873,15 @@ const submitCreateProduct = async () => {
                     placeholder="dd/MM/yyyy HH:mm"
                     input-class="text-[11px] font-medium text-white placeholder-white/60 bg-white/15 hover:bg-white/25 rounded px-2 py-1 whitespace-nowrap tabular-nums outline-none border-none cursor-pointer focus:ring-1 focus:ring-white/50 w-[155px]"
                 />
+                <button
+                    type="button"
+                    @click="openQuickReturn"
+                    class="flex items-center gap-1 h-7 px-2 bg-white/20 hover:bg-white/30 rounded transition-colors text-[11px] font-medium text-white whitespace-nowrap"
+                    title="Trả hàng nhanh"
+                >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h13a4 4 0 010 8h-3m-10-8l4-4m-4 4l4 4" /></svg>
+                    Trả hàng
+                </button>
                 <Link href="/" class="w-7 h-7 flex items-center justify-center bg-white/20 hover:bg-white/30 rounded transition-colors" title="Về Quản lý">
                     <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
                 </Link>
@@ -1036,6 +1266,184 @@ const submitCreateProduct = async () => {
                     </button>
                 </div>
             </form>
+        </div>
+
+        <!-- ════ STEP 24.6 — POS QUICK RETURN MODAL ════ -->
+        <div v-if="showQuickReturnModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+            <div class="bg-white rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+                <div class="flex items-center justify-between px-6 py-4 border-b">
+                    <h3 class="text-lg font-bold text-gray-800 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h13a4 4 0 010 8h-3m-10-8l4-4m-4 4l4 4" /></svg>
+                        Trả hàng nhanh
+                    </h3>
+                    <button @click="closeQuickReturn" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+                </div>
+
+                <div class="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+                    <!-- Step 1: search invoice -->
+                    <div v-if="!selectedReturnInvoice">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Tìm hóa đơn</label>
+                        <input
+                            v-model="returnSearch"
+                            @input="onReturnSearchInput"
+                            type="text"
+                            class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            placeholder="Mã hóa đơn / tên khách / số điện thoại / serial"
+                            autofocus
+                        />
+                        <div v-if="returnInvoiceError" class="mt-2 px-3 py-2 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+                            {{ returnInvoiceError }}
+                        </div>
+                        <div v-if="returnSearching" class="mt-3 text-sm text-gray-500">Đang tìm...</div>
+                        <div v-else-if="returnSearch && !returnInvoiceResults.length && !returnInvoiceError" class="mt-3 text-sm text-gray-500">Không tìm thấy hóa đơn phù hợp.</div>
+                        <ul v-if="returnInvoiceResults.length" class="mt-3 divide-y divide-gray-100 border border-gray-200 rounded">
+                            <li
+                                v-for="inv in returnInvoiceResults"
+                                :key="inv.id"
+                                @click="selectReturnInvoice(inv)"
+                                class="px-3 py-2 cursor-pointer hover:bg-blue-50 flex items-center justify-between"
+                            >
+                                <div>
+                                    <div class="text-sm font-semibold text-gray-800">{{ inv.code }}</div>
+                                    <div class="text-xs text-gray-500">{{ inv.customer_name || 'Khách lẻ' }}<span v-if="inv.customer_phone"> — {{ inv.customer_phone }}</span></div>
+                                </div>
+                                <div class="text-right">
+                                    <div class="text-sm font-medium text-gray-700 tabular-nums">{{ Number(inv.total).toLocaleString('vi-VN') }} ₫</div>
+                                    <div class="text-xs text-gray-400">{{ inv.status }}</div>
+                                </div>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- Step 2: choose items -->
+                    <div v-else>
+                        <div class="flex items-center justify-between mb-3">
+                            <div>
+                                <div class="text-sm">
+                                    <span class="font-semibold text-gray-800">{{ selectedReturnInvoice.invoice.code }}</span>
+                                    <span v-if="selectedReturnInvoice.invoice.customer_name" class="text-gray-500"> — {{ selectedReturnInvoice.invoice.customer_name }}</span>
+                                </div>
+                                <div class="text-xs text-gray-500">Tổng hóa đơn: {{ Number(selectedReturnInvoice.invoice.total).toLocaleString('vi-VN') }} ₫</div>
+                            </div>
+                            <button @click="backToInvoiceSearch" class="text-xs text-blue-600 hover:underline">← Chọn hóa đơn khác</button>
+                        </div>
+
+                        <div v-if="returnLoadingItems" class="text-sm text-gray-500">Đang tải...</div>
+
+                        <div v-else class="border border-gray-200 rounded overflow-hidden">
+                            <table class="w-full text-sm">
+                                <thead class="bg-gray-50 text-gray-600 text-xs uppercase">
+                                    <tr>
+                                        <th class="px-3 py-2 text-left">Sản phẩm</th>
+                                        <th class="px-3 py-2 text-right">Đã bán</th>
+                                        <th class="px-3 py-2 text-right">Đã trả</th>
+                                        <th class="px-3 py-2 text-right">Còn được trả</th>
+                                        <th class="px-3 py-2 text-right">Đơn giá</th>
+                                        <th class="px-3 py-2 text-center w-32">Trả</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-100">
+                                    <template v-for="item in selectedReturnInvoice.items" :key="item.invoice_item_id">
+                                        <tr>
+                                            <td class="px-3 py-2">
+                                                <div class="font-medium text-gray-800">{{ item.product_name }}</div>
+                                                <div class="text-xs text-gray-400">{{ item.product_code }}<span v-if="item.has_serial"> · Có serial</span></div>
+                                            </td>
+                                            <td class="px-3 py-2 text-right tabular-nums">{{ item.sold_qty }}</td>
+                                            <td class="px-3 py-2 text-right tabular-nums text-gray-500">{{ item.already_returned_qty }}</td>
+                                            <td class="px-3 py-2 text-right tabular-nums font-medium" :class="item.remaining_qty > 0 ? 'text-blue-600' : 'text-gray-400'">{{ item.remaining_qty }}</td>
+                                            <td class="px-3 py-2 text-right tabular-nums">{{ Number(item.price).toLocaleString('vi-VN') }}</td>
+                                            <td class="px-3 py-2 text-center">
+                                                <input
+                                                    v-if="!item.has_serial"
+                                                    type="number"
+                                                    :min="0"
+                                                    :max="item.remaining_qty"
+                                                    :disabled="item.remaining_qty <= 0"
+                                                    :value="returnLineState[item.invoice_item_id]?.qty || 0"
+                                                    @input="setReturnQty(item, $event.target.value)"
+                                                    class="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+                                                />
+                                                <span v-else class="text-xs text-gray-500 tabular-nums">{{ returnLineState[item.invoice_item_id]?.serial_ids?.length || 0 }} / {{ item.remaining_qty }}</span>
+                                            </td>
+                                        </tr>
+                                        <tr v-if="item.has_serial && item.serials.length" class="bg-gray-50/40">
+                                            <td colspan="6" class="px-3 py-2">
+                                                <div class="text-xs font-medium text-gray-600 mb-1">Chọn serial cần trả</div>
+                                                <div class="flex flex-wrap gap-1.5">
+                                                    <label
+                                                        v-for="s in item.serials"
+                                                        :key="s.id"
+                                                        :class="[
+                                                            'inline-flex items-center gap-1 px-2 py-1 rounded border text-xs cursor-pointer',
+                                                            s.already_returned ? 'border-gray-200 bg-gray-100 text-gray-400 line-through cursor-not-allowed' :
+                                                            (returnLineState[item.invoice_item_id]?.serial_ids?.includes(s.id) ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-300 bg-white text-gray-700 hover:border-blue-400')
+                                                        ]"
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            class="hidden"
+                                                            :disabled="s.already_returned"
+                                                            :checked="returnLineState[item.invoice_item_id]?.serial_ids?.includes(s.id)"
+                                                            @change="toggleReturnSerial(item, s.id)"
+                                                        />
+                                                        {{ s.serial_number }}
+                                                    </label>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-4 mt-4">
+                            <div>
+                                <label class="block text-xs font-medium text-gray-600 mb-1">Giảm trừ</label>
+                                <input v-model.number="returnDiscount" type="number" min="0" class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-600 mb-1">Phí trả hàng</label>
+                                <input v-model.number="returnFee" type="number" min="0" class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-600 mb-1">Tiền trả khách</label>
+                                <input v-model.number="returnPaidToCustomer" type="number" min="0" class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-600 mb-1">Ghi chú</label>
+                                <input v-model="returnNote" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                            </div>
+                        </div>
+
+                        <div v-if="returnSubmitError" class="px-3 py-2 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+                            {{ returnSubmitError }}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Footer -->
+                <div class="px-6 py-3 border-t bg-gray-50 flex items-center justify-between">
+                    <div class="text-sm text-gray-600">
+                        <template v-if="selectedReturnInvoice">
+                            Tạm tính: <span class="font-semibold tabular-nums">{{ Number(returnSubtotal).toLocaleString('vi-VN') }} ₫</span>
+                            <span class="mx-2 text-gray-300">|</span>
+                            Tổng trả: <span class="font-semibold text-blue-600 tabular-nums">{{ Number(returnTotal).toLocaleString('vi-VN') }} ₫</span>
+                        </template>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button @click="closeQuickReturn" class="px-4 py-2 border border-gray-300 rounded text-sm font-medium text-gray-700 hover:bg-gray-100">Đóng</button>
+                        <button
+                            v-if="selectedReturnInvoice"
+                            @click="submitQuickReturn"
+                            :disabled="!canSubmitReturn || returnSubmitting"
+                            class="px-5 py-2 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {{ returnSubmitting ? 'Đang lưu...' : 'Tạo phiếu trả' }}
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </template>

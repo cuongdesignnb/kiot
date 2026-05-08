@@ -5,6 +5,10 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use App\Models\Product;
+use App\Models\Invoice;
+use App\Models\InvoiceItem;
+use App\Models\ReturnItem;
+use App\Models\SerialImei;
 use App\Services\InvoiceSaleService;
 use App\Services\SerialAvailabilityService;
 
@@ -290,6 +294,180 @@ class PosController extends Controller
         $customer = \App\Models\Customer::create($validated);
 
         return response()->json(['customer' => $customer]);
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    //  STEP 24.6 — POS Quick Return support endpoints (read-only).
+    //
+    //  These two endpoints exist solely to populate the "Trả hàng nhanh" modal
+    //  on the POS screen.  They never mutate data.  The actual return creation
+    //  goes through OrderReturnController@store via POST /returns, which keeps
+    //  every existing rule (RR-08 serial rollback, RR-11 over-return guard,
+    //  Step 23.2 serial-belongs-to-invoice, time-limit settings, debt/cashflow,
+    //  MovingAvgCostingService, StockMovementService).
+    // ════════════════════════════════════════════════════════════════════
+
+    /**
+     * Search invoices that are eligible for a return.
+     *
+     * Filters: matches by invoice code, customer name/phone/code, or by serial number
+     * sold under the invoice. Excludes invoices already cancelled.
+     *
+     * Permission: returns.create (gated at the route level).
+     *
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function returnableInvoices(Request $request)
+    {
+        $search = trim((string) $request->input('search', ''));
+
+        $query = Invoice::query()
+            ->with('customer:id,name,phone,code')
+            ->where('status', '!=', 'Đã hủy');
+
+        if ($search !== '') {
+            $query->where(function ($q) use ($search) {
+                $q->where('code', 'LIKE', "%{$search}%")
+                  ->orWhereHas('customer', function ($cq) use ($search) {
+                      $cq->where('name', 'LIKE', "%{$search}%")
+                         ->orWhere('phone', 'LIKE', "%{$search}%")
+                         ->orWhere('code', 'LIKE', "%{$search}%");
+                  })
+                  ->orWhereHas('items.serials', function ($sq) use ($search) {
+                      $sq->where('serial_number', 'LIKE', "%{$search}%");
+                  });
+            });
+        }
+
+        $invoices = $query->orderByDesc('id')->limit(20)->get();
+
+        return response()->json(
+            $invoices->map(function (Invoice $inv) {
+                return [
+                    'id'               => $inv->id,
+                    'code'             => $inv->code,
+                    'status'           => $inv->status,
+                    'total'            => (float) $inv->total,
+                    'customer_paid'    => (float) ($inv->customer_paid ?? 0),
+                    'transaction_date' => optional($inv->transaction_date ?? $inv->created_at)->toIso8601String(),
+                    'created_at'       => optional($inv->created_at)->toIso8601String(),
+                    'customer_id'      => $inv->customer_id,
+                    'customer_name'    => $inv->customer?->name,
+                    'customer_phone'   => $inv->customer?->phone,
+                    'branch_id'        => $inv->branch_id,
+                ];
+            })->values()
+        );
+    }
+
+    /**
+     * Return per-line returnable info for a given invoice — sold qty,
+     * already-returned qty, remaining qty, plus the serial list still
+     * eligible for return (if it's a serial product).
+     *
+     * Mirrors the same remaining_qty formula used by OrderReturnController@store
+     * (RR-11): only count ReturnItem rows whose parent OrderReturn is not
+     * already cancelled.
+     *
+     * Permission: returns.create.
+     *
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function returnableItems(Invoice $invoice)
+    {
+        if ($invoice->status === 'Đã hủy') {
+            return response()->json([
+                'message' => 'Hóa đơn đã bị hủy, không thể trả hàng.',
+            ], 422);
+        }
+
+        $invoice->loadMissing(['customer:id,name,phone,code', 'items.product:id,sku,name,has_serial']);
+
+        // Aggregate already-returned qty per product (only non-cancelled returns).
+        $returnedByProduct = ReturnItem::query()
+            ->whereHas('orderReturn', function ($q) use ($invoice) {
+                $q->where('invoice_id', $invoice->id)->where('status', '!=', 'Đã hủy');
+            })
+            ->selectRaw('product_id, SUM(quantity) as qty')
+            ->groupBy('product_id')
+            ->pluck('qty', 'product_id')
+            ->toArray();
+
+        // Already-used serial ids (from non-cancelled returns).
+        $returnedSerialIds = [];
+        foreach (
+            ReturnItem::query()
+                ->whereHas('orderReturn', function ($q) use ($invoice) {
+                    $q->where('invoice_id', $invoice->id)->where('status', '!=', 'Đã hủy');
+                })
+                ->pluck('serial_ids')
+            as $row
+        ) {
+            $arr = is_array($row) ? $row : (json_decode($row ?? '[]', true) ?: []);
+            foreach ($arr as $sid) {
+                $returnedSerialIds[(int) $sid] = true;
+            }
+        }
+
+        $items = $invoice->items->map(function (InvoiceItem $line) use ($returnedByProduct, $returnedSerialIds, $invoice) {
+            $product = $line->product;
+            $hasSerial = (bool) ($product?->has_serial);
+            $sold = (float) $line->quantity;
+            $alreadyReturned = (float) ($returnedByProduct[$line->product_id] ?? 0);
+            // Note: returnedByProduct is per-product across the whole invoice.
+            // For UX clarity we still surface remaining at the line level by
+            // showing the per-product remaining (matches what backend enforces).
+            $remaining = max(0, $sold - $alreadyReturned);
+
+            $serials = [];
+            if ($hasSerial) {
+                $serials = SerialImei::where('invoice_id', $invoice->id)
+                    ->where('product_id', $line->product_id)
+                    ->where('status', 'sold')
+                    ->orderBy('serial_number')
+                    ->get(['id', 'serial_number', 'status'])
+                    ->map(function ($s) use ($returnedSerialIds) {
+                        return [
+                            'id'                => $s->id,
+                            'serial_number'     => $s->serial_number,
+                            'status'            => $s->status,
+                            'already_returned'  => isset($returnedSerialIds[$s->id]),
+                        ];
+                    })
+                    ->values();
+            }
+
+            return [
+                'invoice_item_id'      => $line->id,
+                'product_id'           => $line->product_id,
+                'product_code'         => $product?->sku,
+                'product_name'         => $product?->name ?: ('#' . $line->product_id),
+                'has_serial'           => $hasSerial,
+                'sold_qty'             => $sold,
+                'already_returned_qty' => $alreadyReturned,
+                'remaining_qty'        => $remaining,
+                'price'                => (float) $line->price,
+                'discount'             => (float) ($line->discount ?? 0),
+                'serials'              => $serials,
+            ];
+        })->values();
+
+        return response()->json([
+            'invoice' => [
+                'id'             => $invoice->id,
+                'code'           => $invoice->code,
+                'status'         => $invoice->status,
+                'total'          => (float) $invoice->total,
+                'discount'       => (float) ($invoice->discount ?? 0),
+                'fee'            => (float) ($invoice->fee ?? 0),
+                'customer_paid'  => (float) ($invoice->customer_paid ?? 0),
+                'customer_id'    => $invoice->customer_id,
+                'customer_name'  => $invoice->customer?->name,
+                'customer_phone' => $invoice->customer?->phone,
+                'branch_id'      => $invoice->branch_id,
+            ],
+            'items' => $items,
+        ]);
     }
 
     /**
