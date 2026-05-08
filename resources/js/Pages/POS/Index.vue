@@ -16,10 +16,31 @@ const query = ref('');
 const products = ref([]);
 const isSearching = ref(false);
 
-// ── Multi-tab POS system ──
+// ── Multi-tab POS workspace (Step 24.6 — KiotViet-style sale/order/return tabs) ──
 let tabIdCounter = 1;
-const createNewTab = () => ({
+const emptyReturnState = () => ({
+    sourceInvoice: null,             // { id, code, status, total, customer_id, branch_id, ... }
+    sourceItems: [],                 // [{ invoice_item_id, product_id, ... remaining_qty, serials[] }]
+    lineState: {},                   // invoice_item_id -> { qty, serial_ids: [] }
+    discount: 0,
+    fee: 0,
+    refundOther: 0,
+    paidToCustomer: 0,
+    note: '',
+    search: '',
+    searchResults: [],
+    searching: false,
+    loadingItems: false,
+    submitting: false,
+    error: '',
+    // 24.6B (deferred): exchange cart — UI placeholder only, submit disabled.
+    exchangeItems: [],
+    exchangeSearch: '',
+});
+
+const createNewTab = (type = 'sale') => ({
     id: tabIdCounter++,
+    type,                            // 'sale' | 'order' | 'return'
     cart: [],
     discount: 0,
     customerPaid: 0,
@@ -27,10 +48,11 @@ const createNewTab = () => ({
     bankAccountInfo: '',
     selectedCustomer: null,
     customerQuery: '',
-    saleMode: 'normal',
+    saleMode: type === 'order' ? 'quick_order' : 'normal',
+    returnState: type === 'return' ? emptyReturnState() : null,
 });
 
-const tabs = ref([createNewTab()]);
+const tabs = ref([createNewTab('sale')]);
 const activeTabIndex = ref(0);
 const activeTab = computed(() => tabs.value[activeTabIndex.value]);
 
@@ -61,21 +83,63 @@ const saleMode = computed({
 });
 
 // Tab management
-const addTab = () => {
-    tabs.value.push(createNewTab());
+const addTab = (type = 'sale') => {
+    tabs.value.push(createNewTab(type));
     activeTabIndex.value = tabs.value.length - 1;
 };
 const switchTab = (idx) => {
     activeTabIndex.value = idx;
 };
+const tabHasUnsavedWork = (tab) => {
+    if (tab.type === 'return') {
+        const rs = tab.returnState;
+        return !!(rs && (rs.sourceInvoice || Object.values(rs.lineState || {}).some((l) => l && l.qty > 0)));
+    }
+    return tab.cart.length > 0;
+};
 const closeTab = (idx) => {
     if (tabs.value.length <= 1) return;
+    const tab = tabs.value[idx];
+    if (tabHasUnsavedWork(tab) && !confirm('Tab này có dữ liệu chưa lưu. Đóng tab?')) {
+        return;
+    }
     tabs.value.splice(idx, 1);
     if (activeTabIndex.value >= tabs.value.length) {
         activeTabIndex.value = tabs.value.length - 1;
     }
 };
-const tabLabel = (tab) => tab.saleMode === 'quick_order' ? 'Đặt hàng' : 'Hóa đơn';
+
+// Per-type counter for friendly labels: "Hóa đơn 1", "Đặt hàng 1", "Trả hàng 1".
+const tabIndexAmongType = (tab) => {
+    let n = 0;
+    for (const t of tabs.value) {
+        if (t.type === tab.type) {
+            n++;
+            if (t.id === tab.id) return n;
+        }
+    }
+    return n;
+};
+const tabBaseLabel = (tab) => {
+    if (tab.type === 'return') return 'Trả hàng';
+    if (tab.type === 'order' || tab.saleMode === 'quick_order') return 'Đặt hàng';
+    return 'Hóa đơn';
+};
+const tabLabel = (tab) => `${tabBaseLabel(tab)} ${tabIndexAmongType(tab)}`;
+const tabDotClass = (tab) => {
+    if (tab.type === 'return') return 'bg-red-400';
+    if (tab.type === 'order' || tab.saleMode === 'quick_order') return 'bg-orange-400';
+    if (tab.saleMode === 'delivery') return 'bg-green-400';
+    return 'bg-blue-400';
+};
+const tabBadgeCount = (tab) => {
+    if (tab.type === 'return') {
+        const rs = tab.returnState;
+        if (!rs) return 0;
+        return Object.values(rs.lineState || {}).filter((l) => l && l.qty > 0).length;
+    }
+    return tab.cart.length;
+};
 
 // Employee & time (global)
 const selectedEmployeeId = ref('');
@@ -566,113 +630,111 @@ const submitCreateProduct = async () => {
 };
 
 // ════════════════════════════════════════════════════════════════════
-//  STEP 24.6 — POS Quick Return
-//  Modal-based, invoice-linked. All business rules (RR-08 / RR-11 /
-//  Step 23.2 serial) enforced server-side via POST /returns. The modal
-//  only builds a payload and surfaces backend errors verbatim.
+//  STEP 24.6 — POS Return Workspace Tab (KiotViet-style)
+//
+//  Each tab with type='return' carries its own returnState (see
+//  emptyReturnState above). All business rules (RR-08, RR-11, Step 23.2
+//  serial) stay server-side; this code only collects the payload and
+//  surfaces backend errors verbatim.
+//
+//  24.6B (return + atomic exchange) is INTENTIONALLY DEFERRED. The F7
+//  exchange input renders as visible-disabled with a backlog notice;
+//  exchangeItems are never sent to the server until the atomic
+//  PosReturnExchangeService lands in a future step.
 // ════════════════════════════════════════════════════════════════════
-const showQuickReturnModal = ref(false);
-const returnSearch = ref('');
-const returnSearching = ref(false);
-const returnInvoiceResults = ref([]);
-const returnInvoiceError = ref('');
-const selectedReturnInvoice = ref(null);   // { invoice, items } from API
-const returnLoadingItems = ref(false);
-const returnSubmitting = ref(false);
-const returnSubmitError = ref('');
-// Map of invoice_item_id → { qty, serial_ids: Set<number> }
-const returnLineState = ref({});
-const returnNote = ref('');
-const returnDiscount = ref(0);
-const returnFee = ref(0);
-const returnPaidToCustomer = ref(0);
 
-const openQuickReturn = () => {
-    showQuickReturnModal.value = true;
-    returnSearch.value = '';
-    returnInvoiceResults.value = [];
-    returnInvoiceError.value = '';
-    selectedReturnInvoice.value = null;
-    returnLineState.value = {};
-    returnNote.value = '';
-    returnDiscount.value = 0;
-    returnFee.value = 0;
-    returnPaidToCustomer.value = 0;
-    returnSubmitError.value = '';
-};
-
-const closeQuickReturn = () => {
-    showQuickReturnModal.value = false;
-};
-
-let returnSearchTimer = null;
-const onReturnSearchInput = () => {
-    clearTimeout(returnSearchTimer);
-    returnSearchTimer = setTimeout(searchReturnableInvoices, 250);
-};
-
-const searchReturnableInvoices = async () => {
-    returnInvoiceError.value = '';
-    const term = (returnSearch.value || '').trim();
-    if (term.length < 1) {
-        returnInvoiceResults.value = [];
+// Activate-or-create a Return tab.
+const openReturnTab = () => {
+    // If there's already an empty return tab, just switch to it.
+    const existingIdx = tabs.value.findIndex((t) => t.type === 'return' && !t.returnState?.sourceInvoice
+        && !Object.values(t.returnState?.lineState || {}).some((l) => l && l.qty > 0));
+    if (existingIdx >= 0) {
+        activeTabIndex.value = existingIdx;
         return;
     }
-    returnSearching.value = true;
+    addTab('return');
+};
+
+// Per-tab debounced search timers (one Map keyed by tab id).
+const returnSearchTimers = new Map();
+const onReturnSearchInput = (tab) => {
+    if (!tab || tab.type !== 'return' || !tab.returnState) return;
+    if (returnSearchTimers.has(tab.id)) clearTimeout(returnSearchTimers.get(tab.id));
+    returnSearchTimers.set(tab.id, setTimeout(() => searchReturnableInvoices(tab), 250));
+};
+
+const searchReturnableInvoices = async (tab) => {
+    const rs = tab?.returnState;
+    if (!rs) return;
+    rs.error = '';
+    const term = (rs.search || '').trim();
+    if (term.length < 1) {
+        rs.searchResults = [];
+        return;
+    }
+    rs.searching = true;
     try {
         const { data } = await axios.get('/api/pos/returnable-invoices', {
             params: { search: term },
         });
-        returnInvoiceResults.value = Array.isArray(data) ? data : [];
+        rs.searchResults = Array.isArray(data) ? data : [];
     } catch (e) {
         if (e.response?.status === 403) {
-            returnInvoiceError.value = 'Bạn không có quyền tạo phiếu trả hàng.';
+            rs.error = 'Bạn không có quyền tạo phiếu trả hàng.';
         } else {
-            returnInvoiceError.value = e.response?.data?.message || 'Không tìm được hóa đơn.';
+            rs.error = e.response?.data?.message || 'Không tìm được hóa đơn.';
         }
-        returnInvoiceResults.value = [];
+        rs.searchResults = [];
     } finally {
-        returnSearching.value = false;
+        rs.searching = false;
     }
 };
 
-const selectReturnInvoice = async (inv) => {
-    returnSubmitError.value = '';
-    returnLoadingItems.value = true;
+const selectReturnInvoice = async (tab, inv) => {
+    const rs = tab?.returnState;
+    if (!rs) return;
+    rs.error = '';
+    rs.loadingItems = true;
     try {
         const { data } = await axios.get(`/api/pos/invoices/${inv.id}/returnable-items`);
-        selectedReturnInvoice.value = data;
+        rs.sourceInvoice = data.invoice;
+        rs.sourceItems = data.items || [];
         const map = {};
-        for (const item of data.items || []) {
+        for (const item of rs.sourceItems) {
             map[item.invoice_item_id] = { qty: 0, serial_ids: [] };
         }
-        returnLineState.value = map;
-        // Default paid_to_customer = 0; user fills in.
-        returnPaidToCustomer.value = 0;
-        returnDiscount.value = 0;
-        returnFee.value = 0;
-        returnNote.value = '';
+        rs.lineState = map;
+        rs.discount = 0;
+        rs.fee = 0;
+        rs.refundOther = 0;
+        rs.paidToCustomer = 0;
+        rs.note = '';
     } catch (e) {
         if (e.response?.status === 403) {
-            returnSubmitError.value = 'Bạn không có quyền tạo phiếu trả hàng.';
+            rs.error = 'Bạn không có quyền tạo phiếu trả hàng.';
         } else if (e.response?.status === 422) {
-            returnSubmitError.value = e.response?.data?.message || 'Hóa đơn không hợp lệ.';
+            rs.error = e.response?.data?.message || 'Hóa đơn không hợp lệ.';
         } else {
-            returnSubmitError.value = e.response?.data?.message || 'Không tải được chi tiết hóa đơn.';
+            rs.error = e.response?.data?.message || 'Không tải được chi tiết hóa đơn.';
         }
     } finally {
-        returnLoadingItems.value = false;
+        rs.loadingItems = false;
     }
 };
 
-const backToInvoiceSearch = () => {
-    selectedReturnInvoice.value = null;
-    returnLineState.value = {};
-    returnSubmitError.value = '';
+const backToInvoiceSearch = (tab) => {
+    const rs = tab?.returnState;
+    if (!rs) return;
+    rs.sourceInvoice = null;
+    rs.sourceItems = [];
+    rs.lineState = {};
+    rs.error = '';
 };
 
-const setReturnQty = (item, qty) => {
-    const ls = returnLineState.value[item.invoice_item_id] || { qty: 0, serial_ids: [] };
+const setReturnQty = (tab, item, qty) => {
+    const rs = tab?.returnState;
+    if (!rs) return;
+    const ls = rs.lineState[item.invoice_item_id] || { qty: 0, serial_ids: [] };
     let next = Number(qty) || 0;
     if (next < 0) next = 0;
     if (next > item.remaining_qty) next = item.remaining_qty;
@@ -680,61 +742,78 @@ const setReturnQty = (item, qty) => {
     if (item.has_serial && ls.serial_ids.length > next) {
         ls.serial_ids = ls.serial_ids.slice(0, next);
     }
-    returnLineState.value = { ...returnLineState.value, [item.invoice_item_id]: ls };
+    rs.lineState = { ...rs.lineState, [item.invoice_item_id]: ls };
 };
 
-const toggleReturnSerial = (item, serialId) => {
-    const ls = returnLineState.value[item.invoice_item_id] || { qty: 0, serial_ids: [] };
+const toggleReturnSerial = (tab, item, serialId) => {
+    const rs = tab?.returnState;
+    if (!rs) return;
+    const ls = rs.lineState[item.invoice_item_id] || { qty: 0, serial_ids: [] };
     const idx = ls.serial_ids.indexOf(serialId);
     if (idx >= 0) {
         ls.serial_ids = [...ls.serial_ids.slice(0, idx), ...ls.serial_ids.slice(idx + 1)];
     } else {
         ls.serial_ids = [...ls.serial_ids, serialId];
     }
-    // For serial products, qty is always derived from selected serials.
     ls.qty = ls.serial_ids.length;
-    returnLineState.value = { ...returnLineState.value, [item.invoice_item_id]: ls };
+    rs.lineState = { ...rs.lineState, [item.invoice_item_id]: ls };
 };
 
-const returnSubtotal = computed(() => {
-    if (!selectedReturnInvoice.value) return 0;
+// Subtotal/total/canSubmit are computed against the active return tab.
+const activeReturnSubtotal = computed(() => {
+    const tab = activeTab.value;
+    if (!tab || tab.type !== 'return' || !tab.returnState?.sourceInvoice) return 0;
     let sum = 0;
-    for (const item of selectedReturnInvoice.value.items || []) {
-        const ls = returnLineState.value[item.invoice_item_id];
+    for (const item of tab.returnState.sourceItems || []) {
+        const ls = tab.returnState.lineState[item.invoice_item_id];
         if (!ls || !ls.qty) continue;
         sum += ls.qty * item.price - (item.discount || 0);
     }
     return sum;
 });
 
-const returnTotal = computed(() => {
-    return Math.max(0, returnSubtotal.value - (Number(returnDiscount.value) || 0) + (Number(returnFee.value) || 0));
+const activeReturnTotal = computed(() => {
+    const tab = activeTab.value;
+    if (!tab || tab.type !== 'return' || !tab.returnState) return 0;
+    return Math.max(
+        0,
+        activeReturnSubtotal.value
+        - (Number(tab.returnState.discount) || 0)
+        + (Number(tab.returnState.fee) || 0)
+        - (Number(tab.returnState.refundOther) || 0),
+    );
 });
 
-const hasAnyReturnLine = computed(() => {
-    return Object.values(returnLineState.value).some((ls) => ls && ls.qty > 0);
+const activeOriginalTotal = computed(() => {
+    const tab = activeTab.value;
+    return tab?.returnState?.sourceInvoice?.total || 0;
 });
 
-const canSubmitReturn = computed(() => {
-    if (!selectedReturnInvoice.value) return false;
-    if (!hasAnyReturnLine.value) return false;
-    // Serial products: count(serial_ids) must equal qty.
-    for (const item of selectedReturnInvoice.value.items || []) {
-        const ls = returnLineState.value[item.invoice_item_id];
+const canSubmitActiveReturn = computed(() => {
+    const tab = activeTab.value;
+    if (!tab || tab.type !== 'return' || !tab.returnState?.sourceInvoice) return false;
+    const rs = tab.returnState;
+    const anyLine = Object.values(rs.lineState).some((ls) => ls && ls.qty > 0);
+    if (!anyLine) return false;
+    for (const item of rs.sourceItems || []) {
+        const ls = rs.lineState[item.invoice_item_id];
         if (!ls || !ls.qty) continue;
         if (item.has_serial && ls.serial_ids.length !== ls.qty) return false;
     }
     return true;
 });
 
-const submitQuickReturn = async () => {
-    if (!canSubmitReturn.value) return;
-    returnSubmitError.value = '';
-    returnSubmitting.value = true;
-    const sel = selectedReturnInvoice.value;
+const submitReturnTab = async (tab) => {
+    if (!tab || tab.type !== 'return') return;
+    const rs = tab.returnState;
+    if (!rs?.sourceInvoice) return;
+    if (!canSubmitActiveReturn.value && tab.id === activeTab.value?.id) return;
+
+    rs.error = '';
+    rs.submitting = true;
     const itemsPayload = [];
-    for (const item of sel.items || []) {
-        const ls = returnLineState.value[item.invoice_item_id];
+    for (const item of rs.sourceItems || []) {
+        const ls = rs.lineState[item.invoice_item_id];
         if (!ls || !ls.qty) continue;
         itemsPayload.push({
             product_id: item.product_id,
@@ -745,46 +824,76 @@ const submitQuickReturn = async () => {
             serial_ids: item.has_serial ? ls.serial_ids : [],
         });
     }
+    const subtotal = (() => {
+        let s = 0;
+        for (const item of rs.sourceItems || []) {
+            const ls = rs.lineState[item.invoice_item_id];
+            if (!ls || !ls.qty) continue;
+            s += ls.qty * item.price - (item.discount || 0);
+        }
+        return s;
+    })();
+    const total = Math.max(
+        0,
+        subtotal - (Number(rs.discount) || 0) + (Number(rs.fee) || 0) - (Number(rs.refundOther) || 0),
+    );
     const payload = {
-        invoice_id: sel.invoice.id,
-        customer_id: sel.invoice.customer_id,
-        branch_id: sel.invoice.branch_id,
-        subtotal: returnSubtotal.value,
-        discount: Number(returnDiscount.value) || 0,
-        fee: Number(returnFee.value) || 0,
-        total: returnTotal.value,
-        paid_to_customer: Number(returnPaidToCustomer.value) || 0,
-        note: returnNote.value || null,
+        invoice_id: rs.sourceInvoice.id,
+        customer_id: rs.sourceInvoice.customer_id,
+        branch_id: rs.sourceInvoice.branch_id,
+        subtotal,
+        discount: Number(rs.discount) || 0,
+        fee: Number(rs.fee) || 0,
+        total,
+        paid_to_customer: Number(rs.paidToCustomer) || 0,
+        note: rs.note || null,
         items: itemsPayload,
     };
     try {
         const res = await axios.post('/returns', payload);
         const created = res.data?.return || res.data;
-        showQuickReturnModal.value = false;
-        // Use a non-blocking toast surrogate (alert is the existing pattern in this file).
         alert('Đã tạo phiếu trả hàng' + (created?.code ? ` ${created.code}` : '') + '.');
-        // Open the returns list filtered by the new code so the user can verify.
         if (created?.code) {
             window.open(`/returns?search=${encodeURIComponent(created.code)}`, '_blank');
         }
+        // Reset this return tab so the user can do another return without
+        // losing the workspace.
+        Object.assign(rs, emptyReturnState());
     } catch (e) {
         const status = e.response?.status;
         if (status === 403) {
-            returnSubmitError.value = 'Bạn không có quyền tạo phiếu trả hàng.';
+            rs.error = 'Bạn không có quyền tạo phiếu trả hàng.';
         } else if (status === 422) {
             const errs = e.response?.data?.errors;
             if (errs && typeof errs === 'object') {
-                returnSubmitError.value = Object.values(errs).flat().join(' • ');
+                rs.error = Object.values(errs).flat().join(' • ');
             } else {
-                returnSubmitError.value = e.response?.data?.message || 'Dữ liệu không hợp lệ.';
+                rs.error = e.response?.data?.message || 'Dữ liệu không hợp lệ.';
             }
         } else {
-            returnSubmitError.value = e.response?.data?.message || 'Có lỗi xảy ra khi tạo phiếu trả.';
+            rs.error = e.response?.data?.message || 'Có lỗi xảy ra khi tạo phiếu trả.';
         }
     } finally {
-        returnSubmitting.value = false;
+        rs.submitting = false;
     }
 };
+
+// F3 / F7 keyboard shortcuts (only when a return tab is active).
+const onGlobalKeydown = (e) => {
+    const tab = activeTab.value;
+    if (!tab || tab.type !== 'return') return;
+    if (e.key === 'F3') {
+        e.preventDefault();
+        const el = document.getElementById(`return-search-input-${tab.id}`);
+        if (el) el.focus();
+    } else if (e.key === 'F7') {
+        e.preventDefault();
+        const el = document.getElementById(`return-exchange-input-${tab.id}`);
+        if (el) el.focus();
+    }
+};
+onMounted(() => window.addEventListener('keydown', onGlobalKeydown));
+onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
 </script>
 
 <template>
@@ -841,11 +950,9 @@ const submitQuickReturn = async () => {
                         : 'bg-white/20 text-white hover:bg-white/30'"
                 >
                     <!-- Colored dot icon -->
-                    <span class="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                        :class="tab.saleMode === 'quick_order' ? 'bg-orange-400' : tab.saleMode === 'delivery' ? 'bg-green-400' : 'bg-blue-400'"
-                    ></span>
-                    {{ tabLabel(tab) }} {{ idx + 1 }}
-                    <span v-if="tab.cart.length > 0" class="text-[9px] font-bold ml-0.5" :class="idx === activeTabIndex ? 'text-blue-500' : 'text-white/80'">({{ tab.cart.length }})</span>
+                    <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" :class="tabDotClass(tab)"></span>
+                    {{ tabLabel(tab) }}
+                    <span v-if="tabBadgeCount(tab) > 0" class="text-[9px] font-bold ml-0.5" :class="idx === activeTabIndex ? 'text-blue-500' : 'text-white/80'">({{ tabBadgeCount(tab) }})</span>
                     <button v-if="tabs.length > 1" @click.stop="closeTab(idx)"
                         class="ml-0.5 w-4 h-4 flex items-center justify-center rounded hover:bg-gray-200 transition-colors"
                         :class="idx === activeTabIndex ? 'text-gray-400 hover:text-red-500' : 'text-white/60 hover:text-white hover:bg-white/20'"
@@ -875,9 +982,9 @@ const submitQuickReturn = async () => {
                 />
                 <button
                     type="button"
-                    @click="openQuickReturn"
+                    @click="openReturnTab"
                     class="flex items-center gap-1 h-7 px-2 bg-white/20 hover:bg-white/30 rounded transition-colors text-[11px] font-medium text-white whitespace-nowrap"
-                    title="Trả hàng nhanh"
+                    title="Mở tab Trả hàng"
                 >
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h13a4 4 0 010 8h-3m-10-8l4-4m-4 4l4 4" /></svg>
                     Trả hàng
@@ -889,8 +996,8 @@ const submitQuickReturn = async () => {
         </header>
 
         <!-- Main Workspace: Split Left (Products/Cart) and Right (Payment Summary) -->
-        <main class="flex-1 flex overflow-hidden">
-            
+        <main v-if="activeTab.type !== 'return'" class="flex-1 flex overflow-hidden">
+
             <!-- Left Side: Cart Items -->
             <div class="flex-1 flex flex-col bg-white overflow-hidden relative shadow-inner z-0 border-r border-gray-300">
                 <!-- Data Header -->
@@ -1203,6 +1310,224 @@ const submitQuickReturn = async () => {
                 </div>
             </div>
         </main>
+
+        <!-- ════════════════════════════════════════════════════════════
+             STEP 24.6 — RETURN TAB WORKSPACE (KiotViet-style)
+             Active when activeTab.type === 'return'. F3 focuses the
+             return search; F7 focuses the (placeholder) exchange search.
+             24.6B (atomic exchange) deferred — exchange UI is read-only.
+        ════════════════════════════════════════════════════════════ -->
+        <main v-else class="flex-1 flex overflow-hidden">
+            <!-- Left: return / exchange tables -->
+            <div class="flex-1 flex flex-col bg-white overflow-hidden border-r border-gray-300">
+                <!-- F3 search hàng trả -->
+                <div class="px-4 py-3 border-b border-gray-200 bg-gray-50">
+                    <label class="block text-xs font-semibold text-gray-500 mb-1">Tìm hàng trả (F3)</label>
+                    <input
+                        :id="`return-search-input-${activeTab.id}`"
+                        v-model="activeTab.returnState.search"
+                        @input="onReturnSearchInput(activeTab)"
+                        type="text"
+                        class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        placeholder="Mã hóa đơn / khách / SĐT / mã hàng / serial — Enter để tìm"
+                        autocomplete="off"
+                    />
+                    <div v-if="activeTab.returnState.error" class="mt-2 px-3 py-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+                        {{ activeTab.returnState.error }}
+                    </div>
+                    <div v-if="activeTab.returnState.searching" class="mt-2 text-xs text-gray-500">Đang tìm...</div>
+                    <ul
+                        v-if="activeTab.returnState.searchResults.length && !activeTab.returnState.sourceInvoice"
+                        class="mt-2 max-h-56 overflow-y-auto divide-y divide-gray-100 border border-gray-200 rounded bg-white"
+                    >
+                        <li
+                            v-for="inv in activeTab.returnState.searchResults"
+                            :key="inv.id"
+                            @click="selectReturnInvoice(activeTab, inv)"
+                            class="px-3 py-2 cursor-pointer hover:bg-blue-50 flex items-center justify-between text-sm"
+                        >
+                            <div>
+                                <div class="font-semibold text-gray-800">{{ inv.code }}</div>
+                                <div class="text-xs text-gray-500">{{ inv.customer_name || 'Khách lẻ' }}<span v-if="inv.customer_phone"> — {{ inv.customer_phone }}</span></div>
+                            </div>
+                            <div class="text-right">
+                                <div class="font-medium text-gray-700 tabular-nums">{{ Number(inv.total).toLocaleString('vi-VN') }} ₫</div>
+                                <div class="text-xs text-gray-400">{{ inv.status }}</div>
+                            </div>
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- Hàng trả -->
+                <div class="flex-1 overflow-y-auto">
+                    <div v-if="!activeTab.returnState.sourceInvoice" class="p-6 text-center text-sm text-gray-400">
+                        Tìm và chọn hóa đơn ở ô trên để bắt đầu trả hàng.
+                    </div>
+                    <div v-else class="px-4 py-3">
+                        <div class="flex items-center justify-between mb-2 text-sm">
+                            <div>
+                                <span class="font-semibold text-gray-800">Trả hàng / {{ activeTab.returnState.sourceInvoice.code }}</span>
+                                <span v-if="activeTab.returnState.sourceInvoice.customer_name" class="text-gray-500"> — {{ activeTab.returnState.sourceInvoice.customer_name }}</span>
+                            </div>
+                            <button @click="backToInvoiceSearch(activeTab)" class="text-xs text-blue-600 hover:underline">← Đổi hóa đơn</button>
+                        </div>
+                        <div v-if="activeTab.returnState.loadingItems" class="text-xs text-gray-500">Đang tải...</div>
+                        <div v-else class="border border-gray-200 rounded overflow-hidden">
+                            <table class="w-full text-sm">
+                                <thead class="bg-gray-50 text-gray-600 text-xs uppercase">
+                                    <tr>
+                                        <th class="px-3 py-2 text-left">Sản phẩm</th>
+                                        <th class="px-3 py-2 text-right">Đã bán</th>
+                                        <th class="px-3 py-2 text-right">Đã trả</th>
+                                        <th class="px-3 py-2 text-right">Còn được trả</th>
+                                        <th class="px-3 py-2 text-right">Đơn giá</th>
+                                        <th class="px-3 py-2 text-center w-32">Trả</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-100">
+                                    <template v-for="item in activeTab.returnState.sourceItems" :key="item.invoice_item_id">
+                                        <tr>
+                                            <td class="px-3 py-2">
+                                                <div class="font-medium text-gray-800">{{ item.product_name }}</div>
+                                                <div class="text-xs text-gray-400">{{ item.product_code }}<span v-if="item.has_serial"> · Có serial</span></div>
+                                            </td>
+                                            <td class="px-3 py-2 text-right tabular-nums">{{ item.sold_qty }}</td>
+                                            <td class="px-3 py-2 text-right tabular-nums text-gray-500">{{ item.already_returned_qty }}</td>
+                                            <td class="px-3 py-2 text-right tabular-nums font-medium" :class="item.remaining_qty > 0 ? 'text-blue-600' : 'text-gray-400'">{{ item.remaining_qty }}</td>
+                                            <td class="px-3 py-2 text-right tabular-nums">{{ Number(item.price).toLocaleString('vi-VN') }}</td>
+                                            <td class="px-3 py-2 text-center">
+                                                <input
+                                                    v-if="!item.has_serial"
+                                                    type="number"
+                                                    :min="0"
+                                                    :max="item.remaining_qty"
+                                                    :disabled="item.remaining_qty <= 0"
+                                                    :value="activeTab.returnState.lineState[item.invoice_item_id]?.qty || 0"
+                                                    @input="setReturnQty(activeTab, item, $event.target.value)"
+                                                    class="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+                                                />
+                                                <span v-else class="text-xs text-gray-500 tabular-nums">{{ activeTab.returnState.lineState[item.invoice_item_id]?.serial_ids?.length || 0 }} / {{ item.remaining_qty }}</span>
+                                            </td>
+                                        </tr>
+                                        <tr v-if="item.has_serial && item.serials.length" class="bg-gray-50/40">
+                                            <td colspan="6" class="px-3 py-2">
+                                                <div class="text-xs font-medium text-gray-600 mb-1">Chọn serial cần trả</div>
+                                                <div class="flex flex-wrap gap-1.5">
+                                                    <label
+                                                        v-for="s in item.serials"
+                                                        :key="s.id"
+                                                        :class="[
+                                                            'inline-flex items-center gap-1 px-2 py-1 rounded border text-xs cursor-pointer',
+                                                            s.already_returned ? 'border-gray-200 bg-gray-100 text-gray-400 line-through cursor-not-allowed' :
+                                                            (activeTab.returnState.lineState[item.invoice_item_id]?.serial_ids?.includes(s.id) ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-300 bg-white text-gray-700 hover:border-blue-400')
+                                                        ]"
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            class="hidden"
+                                                            :disabled="s.already_returned"
+                                                            :checked="activeTab.returnState.lineState[item.invoice_item_id]?.serial_ids?.includes(s.id)"
+                                                            @change="toggleReturnSerial(activeTab, item, s.id)"
+                                                        />
+                                                        {{ s.serial_number }}
+                                                    </label>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- F7 search hàng đổi (24.6B placeholder) -->
+                <div class="px-4 py-3 border-t border-gray-200 bg-amber-50">
+                    <label class="block text-xs font-semibold text-amber-800 mb-1">Tìm hàng đổi (F7)</label>
+                    <input
+                        :id="`return-exchange-input-${activeTab.id}`"
+                        v-model="activeTab.returnState.exchangeSearch"
+                        type="text"
+                        disabled
+                        class="w-full border border-amber-200 rounded px-3 py-2 text-sm bg-white text-gray-400 cursor-not-allowed"
+                        placeholder="Đổi hàng — sẽ bật ở Phase 24.6B (atomic return + exchange)"
+                    />
+                    <div class="mt-1 text-[11px] text-amber-700">
+                        Phase này chỉ làm trả hàng. Đổi hàng cần atomic transaction (return + invoice mới + chênh lệch) sẽ bật khi PosReturnExchangeService sẵn sàng.
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right: return summary panel -->
+            <div class="w-[360px] flex flex-col bg-gray-50 overflow-hidden">
+                <div class="px-4 py-3 border-b border-gray-200 bg-white">
+                    <div class="text-xs text-gray-500">Người bán</div>
+                    <div class="font-medium text-sm text-gray-800">
+                        {{ employees.find(e => e.id == selectedEmployeeId)?.name || '— Chưa chọn —' }}
+                    </div>
+                </div>
+                <div class="px-4 py-3 border-b border-gray-200 bg-white">
+                    <div class="text-xs text-gray-500">Khách hàng</div>
+                    <div class="font-medium text-sm text-gray-800">
+                        {{ activeTab.returnState.sourceInvoice?.customer_name || '— Chưa chọn hóa đơn —' }}
+                    </div>
+                    <div v-if="activeTab.returnState.sourceInvoice?.customer_phone" class="text-xs text-gray-500">
+                        {{ activeTab.returnState.sourceInvoice.customer_phone }}
+                    </div>
+                </div>
+                <div v-if="activeTab.returnState.sourceInvoice" class="px-4 py-3 border-b border-gray-200 bg-white">
+                    <div class="text-xs text-gray-500">Trả hàng</div>
+                    <div class="font-semibold text-sm text-gray-800">{{ activeTab.returnState.sourceInvoice.code }}</div>
+                    <div class="text-xs text-gray-500 mt-1">Tổng giá gốc hàng mua</div>
+                    <div class="font-medium text-sm tabular-nums">{{ Number(activeTab.returnState.sourceInvoice.total).toLocaleString('vi-VN') }} ₫</div>
+                </div>
+
+                <div class="flex-1 overflow-y-auto px-4 py-3 space-y-2 text-sm">
+                    <div class="flex items-center justify-between">
+                        <span class="text-gray-500">Tổng tiền hàng trả</span>
+                        <span class="font-medium tabular-nums">{{ Number(activeReturnSubtotal).toLocaleString('vi-VN') }} ₫</span>
+                    </div>
+                    <div class="flex items-center justify-between gap-2">
+                        <span class="text-gray-500">Giảm giá</span>
+                        <input v-model.number="activeTab.returnState.discount" type="number" min="0" class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    </div>
+                    <div class="flex items-center justify-between gap-2">
+                        <span class="text-gray-500">Phí trả hàng</span>
+                        <input v-model.number="activeTab.returnState.fee" type="number" min="0" class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    </div>
+                    <div class="flex items-center justify-between gap-2">
+                        <span class="text-gray-500">Hoàn trả thu khác</span>
+                        <input v-model.number="activeTab.returnState.refundOther" type="number" min="0" class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    </div>
+                    <div class="flex items-center justify-between border-t pt-2 mt-2">
+                        <span class="font-semibold text-gray-700">Cần trả khách</span>
+                        <span class="font-bold text-blue-600 text-base tabular-nums">{{ Number(activeReturnTotal).toLocaleString('vi-VN') }} ₫</span>
+                    </div>
+                    <div class="flex items-center justify-between gap-2">
+                        <span class="text-gray-500">Tiền trả khách (paid_to_customer)</span>
+                        <input v-model.number="activeTab.returnState.paidToCustomer" type="number" min="0" class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 mb-1">Ghi chú</label>
+                        <textarea v-model="activeTab.returnState.note" rows="2" class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" placeholder="Ghi chú trả hàng"></textarea>
+                    </div>
+                    <div v-if="activeTab.returnState.error" class="px-3 py-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+                        {{ activeTab.returnState.error }}
+                    </div>
+                </div>
+
+                <div class="px-4 py-3 border-t border-gray-200 bg-white">
+                    <button
+                        @click="submitReturnTab(activeTab)"
+                        :disabled="!canSubmitActiveReturn || activeTab.returnState.submitting"
+                        class="w-full px-4 py-3 bg-red-600 text-white rounded text-sm font-bold hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wide"
+                    >
+                        {{ activeTab.returnState.submitting ? 'Đang lưu...' : 'TRẢ HÀNG' }}
+                    </button>
+                    <p class="mt-1 text-[10px] text-gray-400 text-center">F3: ô tìm hàng trả · F7: ô tìm hàng đổi (đang khoá)</p>
+                </div>
+            </div>
+        </main>
     </div>
 
     <!-- ═══ Quick Create Customer Modal ═══ -->
@@ -1268,183 +1593,6 @@ const submitQuickReturn = async () => {
             </form>
         </div>
 
-        <!-- ════ STEP 24.6 — POS QUICK RETURN MODAL ════ -->
-        <div v-if="showQuickReturnModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-            <div class="bg-white rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
-                <div class="flex items-center justify-between px-6 py-4 border-b">
-                    <h3 class="text-lg font-bold text-gray-800 flex items-center gap-2">
-                        <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h13a4 4 0 010 8h-3m-10-8l4-4m-4 4l4 4" /></svg>
-                        Trả hàng nhanh
-                    </h3>
-                    <button @click="closeQuickReturn" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
-                </div>
-
-                <div class="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-                    <!-- Step 1: search invoice -->
-                    <div v-if="!selectedReturnInvoice">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Tìm hóa đơn</label>
-                        <input
-                            v-model="returnSearch"
-                            @input="onReturnSearchInput"
-                            type="text"
-                            class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            placeholder="Mã hóa đơn / tên khách / số điện thoại / serial"
-                            autofocus
-                        />
-                        <div v-if="returnInvoiceError" class="mt-2 px-3 py-2 bg-red-50 border border-red-200 rounded text-sm text-red-700">
-                            {{ returnInvoiceError }}
-                        </div>
-                        <div v-if="returnSearching" class="mt-3 text-sm text-gray-500">Đang tìm...</div>
-                        <div v-else-if="returnSearch && !returnInvoiceResults.length && !returnInvoiceError" class="mt-3 text-sm text-gray-500">Không tìm thấy hóa đơn phù hợp.</div>
-                        <ul v-if="returnInvoiceResults.length" class="mt-3 divide-y divide-gray-100 border border-gray-200 rounded">
-                            <li
-                                v-for="inv in returnInvoiceResults"
-                                :key="inv.id"
-                                @click="selectReturnInvoice(inv)"
-                                class="px-3 py-2 cursor-pointer hover:bg-blue-50 flex items-center justify-between"
-                            >
-                                <div>
-                                    <div class="text-sm font-semibold text-gray-800">{{ inv.code }}</div>
-                                    <div class="text-xs text-gray-500">{{ inv.customer_name || 'Khách lẻ' }}<span v-if="inv.customer_phone"> — {{ inv.customer_phone }}</span></div>
-                                </div>
-                                <div class="text-right">
-                                    <div class="text-sm font-medium text-gray-700 tabular-nums">{{ Number(inv.total).toLocaleString('vi-VN') }} ₫</div>
-                                    <div class="text-xs text-gray-400">{{ inv.status }}</div>
-                                </div>
-                            </li>
-                        </ul>
-                    </div>
-
-                    <!-- Step 2: choose items -->
-                    <div v-else>
-                        <div class="flex items-center justify-between mb-3">
-                            <div>
-                                <div class="text-sm">
-                                    <span class="font-semibold text-gray-800">{{ selectedReturnInvoice.invoice.code }}</span>
-                                    <span v-if="selectedReturnInvoice.invoice.customer_name" class="text-gray-500"> — {{ selectedReturnInvoice.invoice.customer_name }}</span>
-                                </div>
-                                <div class="text-xs text-gray-500">Tổng hóa đơn: {{ Number(selectedReturnInvoice.invoice.total).toLocaleString('vi-VN') }} ₫</div>
-                            </div>
-                            <button @click="backToInvoiceSearch" class="text-xs text-blue-600 hover:underline">← Chọn hóa đơn khác</button>
-                        </div>
-
-                        <div v-if="returnLoadingItems" class="text-sm text-gray-500">Đang tải...</div>
-
-                        <div v-else class="border border-gray-200 rounded overflow-hidden">
-                            <table class="w-full text-sm">
-                                <thead class="bg-gray-50 text-gray-600 text-xs uppercase">
-                                    <tr>
-                                        <th class="px-3 py-2 text-left">Sản phẩm</th>
-                                        <th class="px-3 py-2 text-right">Đã bán</th>
-                                        <th class="px-3 py-2 text-right">Đã trả</th>
-                                        <th class="px-3 py-2 text-right">Còn được trả</th>
-                                        <th class="px-3 py-2 text-right">Đơn giá</th>
-                                        <th class="px-3 py-2 text-center w-32">Trả</th>
-                                    </tr>
-                                </thead>
-                                <tbody class="divide-y divide-gray-100">
-                                    <template v-for="item in selectedReturnInvoice.items" :key="item.invoice_item_id">
-                                        <tr>
-                                            <td class="px-3 py-2">
-                                                <div class="font-medium text-gray-800">{{ item.product_name }}</div>
-                                                <div class="text-xs text-gray-400">{{ item.product_code }}<span v-if="item.has_serial"> · Có serial</span></div>
-                                            </td>
-                                            <td class="px-3 py-2 text-right tabular-nums">{{ item.sold_qty }}</td>
-                                            <td class="px-3 py-2 text-right tabular-nums text-gray-500">{{ item.already_returned_qty }}</td>
-                                            <td class="px-3 py-2 text-right tabular-nums font-medium" :class="item.remaining_qty > 0 ? 'text-blue-600' : 'text-gray-400'">{{ item.remaining_qty }}</td>
-                                            <td class="px-3 py-2 text-right tabular-nums">{{ Number(item.price).toLocaleString('vi-VN') }}</td>
-                                            <td class="px-3 py-2 text-center">
-                                                <input
-                                                    v-if="!item.has_serial"
-                                                    type="number"
-                                                    :min="0"
-                                                    :max="item.remaining_qty"
-                                                    :disabled="item.remaining_qty <= 0"
-                                                    :value="returnLineState[item.invoice_item_id]?.qty || 0"
-                                                    @input="setReturnQty(item, $event.target.value)"
-                                                    class="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
-                                                />
-                                                <span v-else class="text-xs text-gray-500 tabular-nums">{{ returnLineState[item.invoice_item_id]?.serial_ids?.length || 0 }} / {{ item.remaining_qty }}</span>
-                                            </td>
-                                        </tr>
-                                        <tr v-if="item.has_serial && item.serials.length" class="bg-gray-50/40">
-                                            <td colspan="6" class="px-3 py-2">
-                                                <div class="text-xs font-medium text-gray-600 mb-1">Chọn serial cần trả</div>
-                                                <div class="flex flex-wrap gap-1.5">
-                                                    <label
-                                                        v-for="s in item.serials"
-                                                        :key="s.id"
-                                                        :class="[
-                                                            'inline-flex items-center gap-1 px-2 py-1 rounded border text-xs cursor-pointer',
-                                                            s.already_returned ? 'border-gray-200 bg-gray-100 text-gray-400 line-through cursor-not-allowed' :
-                                                            (returnLineState[item.invoice_item_id]?.serial_ids?.includes(s.id) ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-300 bg-white text-gray-700 hover:border-blue-400')
-                                                        ]"
-                                                    >
-                                                        <input
-                                                            type="checkbox"
-                                                            class="hidden"
-                                                            :disabled="s.already_returned"
-                                                            :checked="returnLineState[item.invoice_item_id]?.serial_ids?.includes(s.id)"
-                                                            @change="toggleReturnSerial(item, s.id)"
-                                                        />
-                                                        {{ s.serial_number }}
-                                                    </label>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    </template>
-                                </tbody>
-                            </table>
-                        </div>
-
-                        <div class="grid grid-cols-2 gap-4 mt-4">
-                            <div>
-                                <label class="block text-xs font-medium text-gray-600 mb-1">Giảm trừ</label>
-                                <input v-model.number="returnDiscount" type="number" min="0" class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                            </div>
-                            <div>
-                                <label class="block text-xs font-medium text-gray-600 mb-1">Phí trả hàng</label>
-                                <input v-model.number="returnFee" type="number" min="0" class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                            </div>
-                            <div>
-                                <label class="block text-xs font-medium text-gray-600 mb-1">Tiền trả khách</label>
-                                <input v-model.number="returnPaidToCustomer" type="number" min="0" class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                            </div>
-                            <div>
-                                <label class="block text-xs font-medium text-gray-600 mb-1">Ghi chú</label>
-                                <input v-model="returnNote" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                            </div>
-                        </div>
-
-                        <div v-if="returnSubmitError" class="px-3 py-2 bg-red-50 border border-red-200 rounded text-sm text-red-700">
-                            {{ returnSubmitError }}
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Footer -->
-                <div class="px-6 py-3 border-t bg-gray-50 flex items-center justify-between">
-                    <div class="text-sm text-gray-600">
-                        <template v-if="selectedReturnInvoice">
-                            Tạm tính: <span class="font-semibold tabular-nums">{{ Number(returnSubtotal).toLocaleString('vi-VN') }} ₫</span>
-                            <span class="mx-2 text-gray-300">|</span>
-                            Tổng trả: <span class="font-semibold text-blue-600 tabular-nums">{{ Number(returnTotal).toLocaleString('vi-VN') }} ₫</span>
-                        </template>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <button @click="closeQuickReturn" class="px-4 py-2 border border-gray-300 rounded text-sm font-medium text-gray-700 hover:bg-gray-100">Đóng</button>
-                        <button
-                            v-if="selectedReturnInvoice"
-                            @click="submitQuickReturn"
-                            :disabled="!canSubmitReturn || returnSubmitting"
-                            class="px-5 py-2 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            {{ returnSubmitting ? 'Đang lưu...' : 'Tạo phiếu trả' }}
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
     </div>
 </template>
 
