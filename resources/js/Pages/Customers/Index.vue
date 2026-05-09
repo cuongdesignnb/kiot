@@ -7,6 +7,7 @@ import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
 import DateRangeFilter from "@/Components/Filters/DateRangeFilter.vue";
 import DateTimePicker from "@/Components/DateTimePicker.vue";
+import CustomerGroupCombobox from "@/Components/CustomerGroupCombobox.vue";
 import { useFilters } from "@/composables/useFilters.js";
 import axios from "axios";
 
@@ -649,6 +650,88 @@ const submitGroupModal = async () => {
     } finally {
         groupSubmitting.value = false;
     }
+};
+
+// HOTFIX 24.10 — quick-create a customer group inline from the Combobox
+// without opening the advanced "Tạo nhóm khách hàng" modal. The advanced
+// modal stays available via the sidebar "Tạo mới" link unchanged.
+//
+// Behaviour:
+//   - Empty name (user clicked "Tạo nhóm khách hàng mới" with no query)
+//     → fall back to opening the advanced modal so they can fill the
+//       full form (description, conditions, etc.).
+//   - Existing name (case-insensitive match in mergedCustomerGroups)
+//     → just select it; no API call.
+//   - Otherwise → POST /customer-groups, merge into localCustomerGroups,
+//     reload, run `assign(name)` so the calling form picks the new
+//     group as its value.
+async function createGroupQuick(name, assign) {
+    const trimmed = (name || '').trim();
+    if (!trimmed) {
+        openGroupModal();
+        return;
+    }
+    const existing = mergedCustomerGroups.value.find(
+        (g) => (g.label || '').toLowerCase() === trimmed.toLowerCase()
+    );
+    if (existing) {
+        assign(existing.value);
+        return;
+    }
+    try {
+        const { data } = await axios.post('/customer-groups', {
+            name: trimmed,
+            code: '',
+            discount_type: '',
+            discount_value: 0,
+            note: '',
+            description: '',
+            conditions: [],
+            update_mode: 'none',
+            auto_update: false,
+        });
+        const created = data?.group;
+        const finalName = created?.name || trimmed;
+        if (finalName) {
+            localCustomerGroups.value = [
+                ...localCustomerGroups.value.filter((g) => g.value !== finalName),
+                { value: finalName, label: finalName, id: created?.id, source: 'master' },
+            ];
+        }
+        await reloadCustomerGroups();
+        assign(finalName);
+    } catch (e) {
+        const status = e.response?.status;
+        if (status === 422) {
+            // Most common cause: duplicate name. Try to refresh and select
+            // the matching group if it exists now.
+            await reloadCustomerGroups();
+            const refreshed = mergedCustomerGroups.value.find(
+                (g) => (g.label || '').toLowerCase() === trimmed.toLowerCase()
+            );
+            if (refreshed) {
+                assign(refreshed.value);
+                return;
+            }
+            alert(e.response?.data?.message || 'Tên nhóm không hợp lệ hoặc đã tồn tại.');
+        } else if (status === 403) {
+            alert('Bạn không có quyền tạo nhóm khách hàng.');
+        } else {
+            alert(e.response?.data?.message || 'Có lỗi khi tạo nhóm.');
+        }
+    }
+}
+
+const createCustomerGroupAndSelect = (name) => {
+    return createGroupQuick(name, (val) => {
+        form.customer_group = val;
+    });
+};
+
+const createCustomerGroupAndSelectForEdit = (name) => {
+    return createGroupQuick(name, (val) => {
+        editForm.customer_group = val;
+    });
 };
 
 // Date-range filter v-model bridges for the shared DateRangeFilter component.
@@ -2437,13 +2520,12 @@ const createdDateRange = computed({
                                     <label class="block font-semibold mb-1"
                                         >Nhóm khách hàng</label
                                     >
-                                    <select
+                                    <CustomerGroupCombobox
                                         v-model="form.customer_group"
-                                        class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 outline-none bg-white"
-                                    >
-                                        <option value="">-- Chọn nhóm khách hàng --</option>
-                                        <option v-for="g in mergedCustomerGroups" :key="g.value" :value="g.value">{{ g.label }}</option>
-                                    </select>
+                                        :groups="mergedCustomerGroups"
+                                        placeholder="Chọn nhóm"
+                                        @create="createCustomerGroupAndSelect"
+                                    />
                                 </div>
                                 <div>
                                     <label class="block font-semibold mb-1"
@@ -2769,10 +2851,12 @@ const createdDateRange = computed({
                             </div>
                             <div>
                                 <label class="block text-sm font-semibold text-gray-700 mb-1">Nhóm khách hàng</label>
-                                <select v-model="editForm.customer_group" class="w-full border border-gray-300 rounded px-3 py-2 text-sm bg-white">
-                                    <option value="">-- Chọn nhóm khách hàng --</option>
-                                    <option v-for="g in mergedCustomerGroups" :key="g.value" :value="g.value">{{ g.label }}</option>
-                                </select>
+                                <CustomerGroupCombobox
+                                    v-model="editForm.customer_group"
+                                    :groups="mergedCustomerGroups"
+                                    placeholder="Chọn nhóm"
+                                    @create="createCustomerGroupAndSelectForEdit"
+                                />
                             </div>
                         </div>
                         <div>
