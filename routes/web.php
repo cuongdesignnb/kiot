@@ -217,6 +217,7 @@ Route::middleware('permission:pos.use')->group(function () {
     Route::get('/pos', [PosController::class, 'index'])->name('pos.index');
     Route::get('/api/pos/products', [PosController::class, 'searchProducts']);
     Route::post('/api/pos/checkout', [PosController::class, 'checkout']);
+    Route::post('/api/pos/quick-order', [PosController::class, 'quickOrder']);
     Route::get('/api/pos/customers', [PosController::class, 'searchCustomers']);
     Route::post('/api/pos/customers', [PosController::class, 'quickCreateCustomer']);
 });

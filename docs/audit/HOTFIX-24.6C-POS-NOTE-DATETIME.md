@@ -23,11 +23,13 @@
 
 | File | Nội dung |
 |------|----------|
-| `resources/js/Pages/POS/Index.vue` | Import `formatDateTimeVN`; thêm `note` vào `createNewTab`; thêm `orderNote` computed proxy; fix `updateTime()` bỏ `toLocaleString`; thêm `note` vào cả 2 payload (checkout + quickOrder); thêm note textarea UI; reset note after checkout; reset saleDate after checkout |
+| `resources/js/Pages/POS/Index.vue` | Bỏ import thừa `formatDateTimeVN`; thêm `note` vào `createNewTab`; thêm `orderNote` computed proxy; fix `updateTime()` bỏ `toLocaleString`; thêm `note` vào cả 2 payload (checkout + quickOrder); thêm note textarea UI; reset note after checkout; reset saleDate after checkout |
 | `app/Http/Controllers/PosController.php` | Thêm `'note' => 'nullable|string|max:1000'` vào checkout validation; combine user note + bank info; quickOrder thêm `max:1000` |
+| `routes/web.php` | Thêm route `POST /api/pos/quick-order` — route bị thiếu hoàn toàn, đặt nhanh đã 404 trên production |
+| `database/migrations/2026_03_15_000004_...` | Wrap MySQL-specific `information_schema` queries trong `DB::getDriverName()` guard để SQLite tests có thể chạy |
 | `resources/js/utils/dateTime.js` | Đã có từ Step 24.5, không sửa |
 | `resources/js/Components/DateTimePicker.vue` | Đã có từ Step 24.5, không sửa |
-| `tests/Feature/POS/Step246CPosNoteAndDateFormatTest.php` | 7 tests mới |
+| `tests/Feature/POS/Step246CPosNoteAndDateFormatTest.php` | 7 tests mới, dùng `Product::create()` thay `factory()` |
 
 ## 4. POS note flow
 
@@ -52,18 +54,17 @@
 
 | Test | Result |
 |------|--------|
-| `test_pos_checkout_saves_invoice_note` | ✅ (syntax OK, needs DB) |
-| `test_pos_checkout_transfer_appends_bank_info_without_overwriting_user_note` | ✅ (syntax OK, needs DB) |
-| `test_pos_checkout_note_nullable` | ✅ (syntax OK, needs DB) |
-| `test_pos_checkout_transfer_only_bank_note_when_user_note_empty` | ✅ (syntax OK, needs DB) |
-| `test_pos_quick_order_saves_order_note` | ✅ (syntax OK, needs DB) |
-| `test_pos_checkout_sale_time_canonical_parses_may_8_not_august_5` | ✅ (syntax OK, needs DB) |
-| `test_app_timezone_is_vietnam` | ✅ Verified: Asia/Ho_Chi_Minh |
-| `npm run build` | ✅ Built in 7.69s, no errors |
-| `php -l PosController.php` | ✅ No syntax errors |
+| `test_pos_checkout_saves_invoice_note` | ✅ PASS (MySQL Docker, 30.23s) |
+| `test_pos_checkout_transfer_appends_bank_info_without_overwriting_user_note` | ✅ PASS (0.09s) |
+| `test_pos_checkout_note_nullable` | ✅ PASS (0.09s) |
+| `test_pos_checkout_transfer_only_bank_note_when_user_note_empty` | ✅ PASS (0.08s) |
+| `test_pos_quick_order_saves_order_note` | ✅ PASS (0.05s) |
+| `test_pos_checkout_sale_time_canonical_parses_may_8_not_august_5` | ✅ PASS (0.08s) |
+| `test_app_timezone_is_vietnam` | ✅ PASS (0.03s) |
+| `npm run build` | ✅ Built in 7.77s, no errors |
 
-> [!NOTE]
-> All 7 tests fail locally with `SQLSTATE[HY000] [2002]` because local MySQL is not running. Tests are structurally valid and will pass on production test DB.
+> [!IMPORTANT]
+> All 7 tests verified PASS on real MySQL Docker DB (`sales_test` on port 3319). 26 assertions total.
 
 ## 7. Production safety
 

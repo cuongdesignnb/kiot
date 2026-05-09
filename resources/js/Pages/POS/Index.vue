@@ -1,6 +1,5 @@
 <script setup>
 import { formatVND as formatCurrency } from '@/utils/money';
-import { formatDateTimeVN } from '@/utils/dateTime.js';
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { Head, Link } from '@inertiajs/vue3';
 import axios from 'axios';

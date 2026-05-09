@@ -8,7 +8,6 @@ use App\Models\User;
 use App\Models\Product;
 use App\Models\Invoice;
 use App\Models\Order;
-use App\Models\Customer;
 
 class Step246CPosNoteAndDateFormatTest extends TestCase
 {
@@ -20,34 +19,41 @@ class Step246CPosNoteAndDateFormatTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+
         $this->user = User::factory()->create(['name' => 'Test Admin']);
-        $this->product = Product::factory()->create([
-            'is_active' => true,
-            'retail_price' => 500000,
-            'cost_price' => 300000,
+
+        // Product model has no factory — create via direct insert.
+        $this->product = Product::create([
+            'name'           => 'Test Product 246C',
+            'sku'            => 'TP246C-' . time(),
+            'barcode'        => null,
+            'retail_price'   => 500000,
+            'cost_price'     => 300000,
             'stock_quantity' => 100,
-            'has_serial' => false,
+            'has_serial'     => false,
+            'is_active'      => true,
+            'category_id'    => null,
         ]);
     }
 
     private function checkoutPayload(array $overrides = []): array
     {
         return array_merge([
-            'subtotal' => 500000,
-            'discount' => 0,
-            'total' => 500000,
-            'customer_paid' => 500000,
-            'customer_id' => null,
-            'employee_id' => null,
-            'sale_time' => '2026-05-08T10:56',
-            'payment_method' => 'cash',
+            'subtotal'          => 500000,
+            'discount'          => 0,
+            'total'             => 500000,
+            'customer_paid'     => 500000,
+            'customer_id'       => null,
+            'employee_id'       => null,
+            'sale_time'         => '2026-05-08T10:56',
+            'payment_method'    => 'cash',
             'bank_account_info' => null,
-            'note' => null,
-            'items' => [[
+            'note'              => null,
+            'items'             => [[
                 'product_id' => $this->product->id,
-                'quantity' => 1,
-                'price' => 500000,
-                'discount' => 0,
+                'quantity'   => 1,
+                'price'      => 500000,
+                'discount'   => 0,
                 'serial_ids' => [],
             ]],
         ], $overrides);
@@ -65,7 +71,7 @@ class Step246CPosNoteAndDateFormatTest extends TestCase
 
         $response->assertOk()->assertJson(['success' => true]);
 
-        $invoice = Invoice::latest()->first();
+        $invoice = Invoice::latest('id')->first();
         $this->assertNotNull($invoice);
         $this->assertStringContainsString('Khách yêu cầu giao buổi chiều', $invoice->note);
     }
@@ -74,9 +80,9 @@ class Step246CPosNoteAndDateFormatTest extends TestCase
     public function test_pos_checkout_transfer_appends_bank_info_without_overwriting_user_note()
     {
         $payload = $this->checkoutPayload([
-            'payment_method' => 'transfer',
+            'payment_method'    => 'transfer',
             'bank_account_info' => 'VCB 123456789',
-            'note' => 'Ghi chú A',
+            'note'              => 'Ghi chú A',
         ]);
 
         $response = $this->actingAs($this->user)
@@ -84,7 +90,7 @@ class Step246CPosNoteAndDateFormatTest extends TestCase
 
         $response->assertOk()->assertJson(['success' => true]);
 
-        $invoice = Invoice::latest()->first();
+        $invoice = Invoice::latest('id')->first();
         $this->assertNotNull($invoice);
         // Both user note and bank info must be present
         $this->assertStringContainsString('Ghi chú A', $invoice->note);
@@ -108,9 +114,9 @@ class Step246CPosNoteAndDateFormatTest extends TestCase
     public function test_pos_checkout_transfer_only_bank_note_when_user_note_empty()
     {
         $payload = $this->checkoutPayload([
-            'payment_method' => 'transfer',
+            'payment_method'    => 'transfer',
             'bank_account_info' => 'ACB 987654321',
-            'note' => '',
+            'note'              => '',
         ]);
 
         $response = $this->actingAs($this->user)
@@ -118,7 +124,7 @@ class Step246CPosNoteAndDateFormatTest extends TestCase
 
         $response->assertOk()->assertJson(['success' => true]);
 
-        $invoice = Invoice::latest()->first();
+        $invoice = Invoice::latest('id')->first();
         $this->assertNotNull($invoice);
         $this->assertStringContainsString('Chuyển khoản: ACB 987654321', $invoice->note);
         // Should not have an empty line before bank note
@@ -129,17 +135,17 @@ class Step246CPosNoteAndDateFormatTest extends TestCase
     public function test_pos_quick_order_saves_order_note()
     {
         $payload = [
-            'subtotal' => 500000,
-            'discount' => 0,
-            'total' => 500000,
+            'subtotal'    => 500000,
+            'discount'    => 0,
+            'total'       => 500000,
             'customer_id' => null,
             'employee_id' => null,
-            'sale_time' => '2026-05-08T10:56',
-            'note' => 'Đặt trước cho khách VIP',
-            'items' => [[
+            'sale_time'   => '2026-05-08T10:56',
+            'note'        => 'Đặt trước cho khách VIP',
+            'items'       => [[
                 'product_id' => $this->product->id,
-                'quantity' => 1,
-                'price' => 500000,
+                'quantity'   => 1,
+                'price'      => 500000,
             ]],
         ];
 
@@ -148,7 +154,7 @@ class Step246CPosNoteAndDateFormatTest extends TestCase
 
         $response->assertOk()->assertJson(['success' => true]);
 
-        $order = Order::latest()->first();
+        $order = Order::latest('id')->first();
         $this->assertNotNull($order);
         $this->assertEquals('Đặt trước cho khách VIP', $order->note);
     }
@@ -165,7 +171,7 @@ class Step246CPosNoteAndDateFormatTest extends TestCase
 
         $response->assertOk()->assertJson(['success' => true]);
 
-        $invoice = Invoice::latest()->first();
+        $invoice = Invoice::latest('id')->first();
         $this->assertNotNull($invoice);
 
         // The transaction_date (if column exists) or created_at should be May 8, not Aug 5
