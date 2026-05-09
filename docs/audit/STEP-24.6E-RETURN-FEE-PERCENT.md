@@ -14,7 +14,7 @@
 | `discount` | clamp `[0, subtotal]` |
 | `fee_amount` (amount) | `min(subtotal − discount, fee_value)` |
 | `fee_amount` (percent) | `round((subtotal − discount) * fee_value / 100)` với `fee_value ∈ [0, 100]` |
-| `total_refund` | `max(0, subtotal − discount − fee_amount + refund_other)` |
+| `total_refund` | `max(0, subtotal − discount − fee_amount)` *(refund_other deferred to backlog 24.6F — see Step 24.6E-FIX)* |
 | `paid_to_customer` | clamp `[0, total_refund]` |
 
 Implemented in `app/Services/ReturnTotalCalculator.php`. POS UI mirrors công thức để hiển thị cho user, nhưng backend luôn tự recompute.
@@ -58,7 +58,7 @@ Frontend `total` từ payload bị **ignore** — nếu FE gửi sai vẫn khôn
 Computeds:
 - `activeReturnSubtotal` = sum của line items
 - `activeReturnFeeAmount` = công thức 24.6E (mirror backend)
-- `activeReturnTotal` = subtotal − discount − feeAmount + refundOther
+- `activeReturnTotal` = subtotal − discount − feeAmount  *(refundOther dropped from UI in Step 24.6E-FIX so the FE never shows a number the backend doesn't honour)*
 - `watch(activeReturnTotal)` → auto-fill `paidToCustomer` khi user chưa sửa tay
 
 ## 6. Files changed

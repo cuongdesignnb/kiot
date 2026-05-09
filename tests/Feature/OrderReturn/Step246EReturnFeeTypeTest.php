@@ -364,6 +364,25 @@ class Step246EReturnFeeTypeTest extends TestCase
         $this->assertEquals(6300000.0,  (float) $return->total);
     }
 
+    /**
+     * Step 24.6E-FIX: backend calculator deliberately ignores any `refund_other`
+     * field the UI might send. As long as the formula stays
+     *   total_refund = subtotal − discount − fee_amount,
+     * the persisted total must NOT be inflated by an extra refund_other key.
+     * If we ever support refund_other in 24.6F, replace this test.
+     */
+    public function test_calculator_ignores_unsupported_refund_other_field(): void
+    {
+        $out = (new ReturnTotalCalculator())->calculate([
+            'items'        => [['qty' => 1, 'price' => 7000000, 'discount' => 0]],
+            'fee_type'     => 'percent',
+            'fee_value'    => 10,
+            'refund_other' => 500000, // <- unsupported in scope; must be ignored
+        ]);
+        // 7M − 0 − 700k = 6.3M. NOT 6.8M.
+        $this->assertEquals(6300000.0, $out['total_refund']);
+    }
+
     public function test_cancel_return_with_percent_fee_restores_debt_by_net_total(): void
     {
         $admin = $this->admin();

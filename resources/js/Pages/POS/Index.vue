@@ -27,7 +27,8 @@ const emptyReturnState = () => ({
     // Step 24.6E: fee can be VND amount or % of (subtotal − discount).
     feeType: 'amount',               // 'amount' | 'percent'
     feeValue: 0,                     // raw user input
-    refundOther: 0,
+    // Step 24.6E-FIX: refund_other intentionally NOT in scope until backend
+    // calculator supports it (backlog 24.6F). UI doesn't render the field.
     paidToCustomer: 0,
     paidToCustomerTouched: false,    // user typed manually → don't auto-override
     note: '',
@@ -721,7 +722,6 @@ const selectReturnInvoice = async (tab, inv) => {
         rs.lineState = map;
         rs.discount = 0;
         rs.fee = 0;
-        rs.refundOther = 0;
         rs.paidToCustomer = 0;
         rs.note = '';
     } catch (e) {
@@ -810,8 +810,7 @@ const activeReturnTotal = computed(() => {
         0,
         activeReturnSubtotal.value
         - (Number(tab.returnState.discount) || 0)
-        - activeReturnFeeAmount.value
-        + (Number(tab.returnState.refundOther) || 0),
+        - activeReturnFeeAmount.value,
     );
 });
 
@@ -883,7 +882,7 @@ const submitReturnTab = async (tab) => {
         : Math.min(base, Math.round(feeValue));
     const total = Math.max(
         0,
-        subtotal - (Number(rs.discount) || 0) - feeAmount + (Number(rs.refundOther) || 0),
+        subtotal - (Number(rs.discount) || 0) - feeAmount,
     );
     const payload = {
         invoice_id: rs.sourceInvoice.id,
@@ -1592,10 +1591,6 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                         <div v-if="activeTab.returnState.feeType === 'percent' && activeReturnFeeAmount > 0" class="flex items-center justify-end text-xs text-gray-500">
                             = {{ formatCurrency(activeReturnFeeAmount) }}
                         </div>
-                    </div>
-                    <div class="flex items-center justify-between gap-2">
-                        <span class="text-gray-500">Hoàn trả thu khác</span>
-                        <MoneyInput v-model="activeTab.returnState.refundOther" :min="0" input-class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
                     </div>
                     <div class="flex items-center justify-between border-t pt-2 mt-2">
                         <span class="font-semibold text-gray-700">Cần trả khách</span>
