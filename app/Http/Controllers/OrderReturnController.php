@@ -10,6 +10,7 @@ use App\Models\ReturnItem;
 use App\Models\SerialImei;
 use App\Services\CustomerDebtService;
 use App\Services\DebtOffsetService;
+use App\Services\ReturnTotalCalculator;
 use App\Services\StockMovementService;
 use App\Support\Filters\FilterableIndex;
 use Illuminate\Http\Request;
@@ -163,7 +164,10 @@ class OrderReturnController extends Controller
             'status' => 'nullable|string',
             'subtotal' => 'required|numeric',
             'discount' => 'nullable|numeric',
-            'fee' => 'nullable|numeric',
+            // Step 24.6E: fee can be VND amount (legacy) or percent.
+            'fee' => 'nullable|numeric|min:0',
+            'fee_type' => 'nullable|in:amount,percent',
+            'fee_value' => 'nullable|numeric|min:0',
             'total' => 'required|numeric',
             'paid_to_customer' => 'nullable|numeric',
             'note' => 'nullable|string',
@@ -176,6 +180,29 @@ class OrderReturnController extends Controller
             'items.*.serial_ids' => 'nullable|array',
             'items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
         ]);
+
+        // Step 24.6E: backend recomputes subtotal/fee/total from raw inputs.
+        // Frontend `total` is intentionally ignored — fee_type/fee_value drive
+        // the canonical net refund. Legacy payloads (no fee_type) default to
+        // 'amount' and the existing `fee` column is treated as VND.
+        $calculated = app(ReturnTotalCalculator::class)->calculate([
+            'items'            => $validated['items'],
+            'subtotal'         => $validated['subtotal'] ?? null,
+            'discount'         => $validated['discount'] ?? 0,
+            'fee_type'         => $validated['fee_type'] ?? null,
+            'fee_value'        => $validated['fee_value'] ?? null,
+            'fee'              => $validated['fee'] ?? null,
+            'paid_to_customer' => $validated['paid_to_customer'] ?? null,
+        ]);
+        // Override the validated bag with backend-canonical values so every
+        // downstream OrderReturn::create / debt / cashflow uses the same numbers.
+        $validated['subtotal']         = $calculated['subtotal'];
+        $validated['discount']         = $calculated['discount'];
+        $validated['fee']              = $calculated['fee_amount'];
+        $validated['fee_type']         = $calculated['fee_type'];
+        $validated['fee_value']        = $calculated['fee_value'];
+        $validated['total']            = $calculated['total_refund'];
+        $validated['paid_to_customer'] = $calculated['paid_to_customer'];
 
         // ── RR-11: Validate qty trả vs qty đã bán ──────────────────────
         if (!empty($validated['invoice_id'])) {
@@ -288,7 +315,7 @@ class OrderReturnController extends Controller
                 }
             }
 
-            $return = $createdReturn = OrderReturn::create([
+            $returnPayload = [
                 'code' => 'TH' . date('YmdHis') . rand(10, 99),
                 'invoice_id' => $validated['invoice_id'] ?? null,
                 'customer_id' => $validated['customer_id'] ?? null,
@@ -301,7 +328,15 @@ class OrderReturnController extends Controller
                 'paid_to_customer' => $validated['paid_to_customer'] ?? $validated['total'],
                 'note' => $validated['note'] ?? null,
                 'created_by_name' => auth()->user()?->name ?? 'Admin',
-            ]);
+            ];
+            // Step 24.6E: persist fee_type + fee_value when the schema has them.
+            if (\Illuminate\Support\Facades\Schema::hasColumn('returns', 'fee_type')) {
+                $returnPayload['fee_type'] = $validated['fee_type'] ?? 'amount';
+            }
+            if (\Illuminate\Support\Facades\Schema::hasColumn('returns', 'fee_value')) {
+                $returnPayload['fee_value'] = $validated['fee_value'] ?? 0;
+            }
+            $return = $createdReturn = OrderReturn::create($returnPayload);
 
             $costingMethod = Setting::get('inventory_costing_method', 'average');
 

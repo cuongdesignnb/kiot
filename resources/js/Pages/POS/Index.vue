@@ -24,9 +24,12 @@ const emptyReturnState = () => ({
     sourceItems: [],                 // [{ invoice_item_id, product_id, ... remaining_qty, serials[] }]
     lineState: {},                   // invoice_item_id -> { qty, serial_ids: [] }
     discount: 0,
-    fee: 0,
+    // Step 24.6E: fee can be VND amount or % of (subtotal − discount).
+    feeType: 'amount',               // 'amount' | 'percent'
+    feeValue: 0,                     // raw user input
     refundOther: 0,
     paidToCustomer: 0,
+    paidToCustomerTouched: false,    // user typed manually → don't auto-override
     note: '',
     search: '',
     searchResults: [],
@@ -784,6 +787,22 @@ const activeReturnSubtotal = computed(() => {
     return sum;
 });
 
+// Step 24.6E: derive VND fee from (feeType, feeValue). Mirrors backend
+// ReturnTotalCalculator so the user sees the same number the server will
+// charge — but the server still recomputes from the raw inputs.
+const activeReturnFeeAmount = computed(() => {
+    const tab = activeTab.value;
+    if (!tab || tab.type !== 'return' || !tab.returnState) return 0;
+    const rs = tab.returnState;
+    const base = Math.max(0, activeReturnSubtotal.value - (Number(rs.discount) || 0));
+    const value = Math.max(0, Number(rs.feeValue) || 0);
+    if (rs.feeType === 'percent') {
+        const capped = Math.min(100, value);
+        return Math.round(base * capped / 100);
+    }
+    return Math.min(base, Math.round(value));
+});
+
 const activeReturnTotal = computed(() => {
     const tab = activeTab.value;
     if (!tab || tab.type !== 'return' || !tab.returnState) return 0;
@@ -791,9 +810,19 @@ const activeReturnTotal = computed(() => {
         0,
         activeReturnSubtotal.value
         - (Number(tab.returnState.discount) || 0)
-        + (Number(tab.returnState.fee) || 0)
-        - (Number(tab.returnState.refundOther) || 0),
+        - activeReturnFeeAmount.value
+        + (Number(tab.returnState.refundOther) || 0),
     );
+});
+
+// When the user hasn't manually edited paidToCustomer, keep it in sync with
+// the canonical net refund — KiotViet UX: "tiền trả khách = cần trả khách".
+watch(activeReturnTotal, (val) => {
+    const tab = activeTab.value;
+    if (!tab || tab.type !== 'return' || !tab.returnState) return;
+    if (!tab.returnState.paidToCustomerTouched) {
+        tab.returnState.paidToCustomer = val;
+    }
 });
 
 const activeOriginalTotal = computed(() => {
@@ -845,9 +874,16 @@ const submitReturnTab = async (tab) => {
         }
         return s;
     })();
+    // Step 24.6E: send raw fee_type + fee_value; backend recomputes fee/total
+    // canonically. We still send total/fee for backward-compatible callers.
+    const base = Math.max(0, subtotal - (Number(rs.discount) || 0));
+    const feeValue = Math.max(0, Number(rs.feeValue) || 0);
+    const feeAmount = rs.feeType === 'percent'
+        ? Math.round(base * Math.min(100, feeValue) / 100)
+        : Math.min(base, Math.round(feeValue));
     const total = Math.max(
         0,
-        subtotal - (Number(rs.discount) || 0) + (Number(rs.fee) || 0) - (Number(rs.refundOther) || 0),
+        subtotal - (Number(rs.discount) || 0) - feeAmount + (Number(rs.refundOther) || 0),
     );
     const payload = {
         invoice_id: rs.sourceInvoice.id,
@@ -855,7 +891,9 @@ const submitReturnTab = async (tab) => {
         branch_id: rs.sourceInvoice.branch_id,
         subtotal,
         discount: Number(rs.discount) || 0,
-        fee: Number(rs.fee) || 0,
+        fee_type: rs.feeType || 'amount',
+        fee_value: feeValue,
+        fee: feeAmount,
         total,
         paid_to_customer: Number(rs.paidToCustomer) || 0,
         note: rs.note || null,
@@ -1514,9 +1552,46 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                         <span class="text-gray-500">Giảm giá</span>
                         <MoneyInput v-model="activeTab.returnState.discount" :min="0" input-class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
                     </div>
-                    <div class="flex items-center justify-between gap-2">
-                        <span class="text-gray-500">Phí trả hàng</span>
-                        <MoneyInput v-model="activeTab.returnState.fee" :min="0" input-class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    <!-- Step 24.6E: fee VND / % toggle -->
+                    <div class="space-y-1">
+                        <div class="flex items-center justify-between gap-2">
+                            <span class="text-gray-500">Phí trả hàng</span>
+                            <div class="flex items-center gap-1">
+                                <div class="inline-flex border border-gray-300 rounded overflow-hidden text-xs">
+                                    <button
+                                        type="button"
+                                        @click="activeTab.returnState.feeType = 'amount'"
+                                        :class="activeTab.returnState.feeType === 'amount' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'"
+                                        class="px-2 py-1"
+                                    >VND</button>
+                                    <button
+                                        type="button"
+                                        @click="activeTab.returnState.feeType = 'percent'"
+                                        :class="activeTab.returnState.feeType === 'percent' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'"
+                                        class="px-2 py-1"
+                                    >%</button>
+                                </div>
+                                <MoneyInput
+                                    v-if="activeTab.returnState.feeType === 'amount'"
+                                    v-model="activeTab.returnState.feeValue"
+                                    :min="0"
+                                    input-class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                />
+                                <input
+                                    v-else
+                                    v-model.number="activeTab.returnState.feeValue"
+                                    type="number"
+                                    min="0"
+                                    max="100"
+                                    step="0.01"
+                                    class="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                />
+                                <span v-if="activeTab.returnState.feeType === 'percent'" class="text-xs text-gray-400">%</span>
+                            </div>
+                        </div>
+                        <div v-if="activeTab.returnState.feeType === 'percent' && activeReturnFeeAmount > 0" class="flex items-center justify-end text-xs text-gray-500">
+                            = {{ formatCurrency(activeReturnFeeAmount) }}
+                        </div>
                     </div>
                     <div class="flex items-center justify-between gap-2">
                         <span class="text-gray-500">Hoàn trả thu khác</span>
@@ -1528,7 +1603,12 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                     </div>
                     <div class="flex items-center justify-between gap-2">
                         <span class="text-gray-500">Tiền trả khách (paid_to_customer)</span>
-                        <MoneyInput v-model="activeTab.returnState.paidToCustomer" :min="0" input-class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                        <MoneyInput
+                            v-model="activeTab.returnState.paidToCustomer"
+                            :min="0"
+                            input-class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            @update:model-value="activeTab.returnState.paidToCustomerTouched = true"
+                        />
                     </div>
                     <div>
                         <label class="block text-xs text-gray-500 mb-1">Ghi chú</label>
