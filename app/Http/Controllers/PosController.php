@@ -85,6 +85,7 @@ class PosController extends Controller
             'sale_time' => 'nullable|date',
             'payment_method' => 'nullable|string|in:cash,transfer',
             'bank_account_info' => 'nullable|string',
+            'note' => 'nullable|string|max:1000',
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|exists:products,id',
             'items.*.quantity' => 'required|integer|min:1',
@@ -99,6 +100,12 @@ class PosController extends Controller
             $isTransfer = $paymentMethod === 'transfer';
             $bankInfo = $validated['bank_account_info'] ?? null;
 
+            // 24.6C: combine user note + bank transfer info — never overwrite user note.
+            $userNote = trim((string) ($validated['note'] ?? ''));
+            $bankNote = $isTransfer && !empty($bankInfo) ? 'Chuyển khoản: ' . $bankInfo : '';
+            $noteParts = array_values(array_filter([$userNote, $bankNote], fn($v) => $v !== ''));
+            $finalNote = count($noteParts) ? implode("\n", $noteParts) : null;
+
             // RR-02: build normalized payload + context, gọi InvoiceSaleService
             $payload = [
                 'customer_id'    => $validated['customer_id'] ?? null,
@@ -108,7 +115,7 @@ class PosController extends Controller
                 'total'          => $validated['total'],
                 'customer_paid'  => $validated['customer_paid'],
                 'payment_method' => $paymentMethod,
-                'note'           => $isTransfer && !empty($bankInfo) ? 'Chuyển khoản: ' . $bankInfo : null,
+                'note'           => $finalNote,
                 'items'          => array_map(function ($it) {
                     return [
                         'product_id' => $it['product_id'],
@@ -169,7 +176,7 @@ class PosController extends Controller
             'customer_id' => 'nullable|exists:customers,id',
             'employee_id' => 'nullable|exists:employees,id',
             'sale_time' => 'nullable',
-            'note' => 'nullable|string',
+            'note' => 'nullable|string|max:1000',
             'items' => 'required|array',
             'items.*.product_id' => 'required|exists:products,id',
             'items.*.quantity' => 'required|numeric|min:1',

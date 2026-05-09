@@ -1,5 +1,6 @@
 <script setup>
 import { formatVND as formatCurrency } from '@/utils/money';
+import { formatDateTimeVN } from '@/utils/dateTime.js';
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { Head, Link } from '@inertiajs/vue3';
 import axios from 'axios';
@@ -48,6 +49,7 @@ const createNewTab = (type = 'sale') => ({
     bankAccountInfo: '',
     selectedCustomer: null,
     customerQuery: '',
+    note: '',                        // 24.6C: per-tab invoice/order note
     saleMode: type === 'order' ? 'quick_order' : 'normal',
     returnState: type === 'return' ? emptyReturnState() : null,
 });
@@ -81,6 +83,10 @@ const saleMode = computed({
     get: () => activeTab.value.saleMode,
     set: (v) => { activeTab.value.saleMode = v; }
 });
+const orderNote = computed({
+    get: () => activeTab.value.note || '',
+    set: (v) => { activeTab.value.note = v; }
+});
 
 // Tab management
 const addTab = (type = 'sale') => {
@@ -95,7 +101,7 @@ const tabHasUnsavedWork = (tab) => {
         const rs = tab.returnState;
         return !!(rs && (rs.sourceInvoice || Object.values(rs.lineState || {}).some((l) => l && l.qty > 0)));
     }
-    return tab.cart.length > 0;
+    return tab.cart.length > 0 || !!(tab.note && tab.note.trim());
 };
 const closeTab = (idx) => {
     if (tabs.value.length <= 1) return;
@@ -153,14 +159,14 @@ const saleDate = ref(localNowStr);
 
 const updateTime = () => {
     const now = new Date();
-    currentTime.value = now.toLocaleString('vi-VN', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-    });
+    // 24.6C: locale-independent Vietnamese datetime — never shows AM/PM or MM/DD/YYYY
+    const dd = String(now.getDate()).padStart(2, '0');
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const yyyy = now.getFullYear();
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mi = String(now.getMinutes()).padStart(2, '0');
+    const ss = String(now.getSeconds()).padStart(2, '0');
+    currentTime.value = `${dd}/${mm}/${yyyy} ${hh}:${mi}:${ss}`;
 };
 
 let timeInterval;
@@ -504,6 +510,7 @@ const processCheckout = async () => {
                 customer_id: selectedCustomer.value?.id || null,
                 employee_id: selectedEmployeeId.value || null,
                 sale_time: saleDate.value || null,
+                note: orderNote.value || null,
                 items: cart.value.map(item => ({
                     product_id: item.product.id,
                     quantity: item.quantity,
@@ -533,6 +540,7 @@ const processCheckout = async () => {
             sale_time: saleDate.value || null,
             payment_method: paymentMethod.value,
             bank_account_info: paymentMethod.value === 'transfer' ? bankAccountInfo.value : null,
+            note: orderNote.value || null,
             items: cart.value.map(item => ({
                 product_id: item.product.id,
                 quantity: item.quantity,
@@ -572,7 +580,11 @@ const resetAfterCheckout = () => {
         t.bankAccountInfo = '';
         t.selectedCustomer = null;
         t.customerQuery = '';
+        t.note = '';
     }
+    // Reset saleDate to current time after checkout
+    const now = new Date();
+    saleDate.value = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
     saveDraft();
     searchProducts();
 };
@@ -1238,6 +1250,17 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                         </div>
                     </div>
                     
+                    <!-- 24.6C: Invoice/order note -->
+                    <div class="border-t border-gray-200 pt-3 mt-3">
+                        <textarea
+                            v-model="orderNote"
+                            rows="2"
+                            class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none placeholder-gray-400"
+                            placeholder="Ghi chú đơn hàng..."
+                            maxlength="1000"
+                        ></textarea>
+                    </div>
+
                     <div class="mt-4 flex gap-2 w-full justify-between pb-6">
                          <div class="flex gap-2">
                              <button class="p-2 border border-gray-200 rounded text-gray-500 hover:bg-gray-50 hover:text-gray-700 tooltip" title="In Tạm Tính">
