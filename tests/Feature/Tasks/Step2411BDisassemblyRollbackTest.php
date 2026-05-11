@@ -111,8 +111,14 @@ class Step2411BDisassemblyRollbackTest extends TestCase
         $this->normalPart->refresh();
         $stockAfterDisassemble = $this->normalPart->stock_quantity;
 
-        $res = $this->deleteJson("/api/tasks/{$task->id}/parts/{$part->id}");
-        $res->assertStatus(422);
+        // Service-layer guard (matches Step238E TC-13 pattern): direction='import'
+        // throws RuntimeException, never silently removes.
+        try {
+            $service->removePart($part);
+            $this->fail('removePart() should reject direction=import');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('bóc tách', $e->getMessage());
+        }
 
         // No mutation: stock unchanged, part still present.
         $this->normalPart->refresh();
