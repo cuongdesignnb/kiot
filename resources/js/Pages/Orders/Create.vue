@@ -4,6 +4,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import axios from 'axios';
 import DateTimePicker from '@/Components/DateTimePicker.vue';
+import QuickCreateCustomerModal from '@/Components/QuickCreateCustomerModal.vue';
 
 const props = defineProps({
     customers: Array,
@@ -159,6 +160,20 @@ const selectCustomer = (c) => {
     activeTab.value.showCustomerDropdown = false;
     customerResults.value = [];
     customerError.value = '';
+};
+
+// STEP 24.13-FIX — quick-create customer modal for the "+" next to the
+// customer search box. Re-uses the full POS customer modal so the form
+// matches the standalone /customers create page (was a no-op button).
+const showNewCustomerModal = ref(false);
+const newCustomerInitialName = ref('');
+const openNewCustomerModal = () => {
+    newCustomerInitialName.value = activeTab.value?.searchCustomer || '';
+    showNewCustomerModal.value = true;
+};
+const onCustomerCreated = (customer) => {
+    showNewCustomerModal.value = false;
+    if (customer) selectCustomer(customer);
 };
 
 const fetchCustomers = async (query) => {
@@ -938,7 +953,7 @@ onUnmounted(() => {
                        <div class="relative flex-1">
                           <i class="fas fa-search absolute left-2 top-2 text-gray-400"></i>
                            <input v-model="activeTab.searchCustomer" @focus="activeTab.showCustomerDropdown = true" @blur="hideCustomerDropdown" placeholder="Tìm khách hàng (F4)" class="w-full border-b border-gray-300 outline-none focus:border-blue-500 py-1 pl-7 pr-6 text-[13px]" />
-                          <button class="absolute right-0 top-0.5 text-gray-400 hover:text-blue-600 font-bold px-1"><i class="fas fa-plus"></i></button>
+                          <button type="button" @click="openNewCustomerModal" title="Thêm khách hàng mới" class="absolute right-0 top-0.5 text-gray-400 hover:text-blue-600 font-bold px-1"><i class="fas fa-plus"></i></button>
                           
                           <!-- Dropdown Results (Step 22.2E: AJAX) -->
                           <div v-if="activeTab.showCustomerDropdown && (activeTab.searchCustomer || '').trim().length > 0" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded z-50 max-h-[260px] overflow-auto">
@@ -1158,6 +1173,16 @@ onUnmounted(() => {
             </div>
         </div>
     </div>
+
+    <!-- STEP 24.13-FIX — Quick Create Customer Modal (full form, matches /customers create page). -->
+    <QuickCreateCustomerModal
+        :show="showNewCustomerModal"
+        :initial-name="newCustomerInitialName"
+        api-url="/customers"
+        entity-label="khách hàng"
+        @close="showNewCustomerModal = false"
+        @created="onCustomerCreated"
+    />
 </template>
 
 <style scoped>

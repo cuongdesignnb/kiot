@@ -4,7 +4,10 @@ import { ref, computed, onMounted, watch } from 'vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import DateTimePicker from '@/Components/DateTimePicker.vue';
 import QuickCreateProductModal from '@/Components/QuickCreateProductModal.vue';
-import QuickCreateSupplierModal from '@/Components/QuickCreateSupplierModal.vue';
+// STEP 24.13-FIX — use the full customer modal in supplier mode so the form
+// matches the standalone /suppliers create page (4 accordions: basic, address,
+// group, invoice info). The previous simple modal was too sparse.
+import QuickCreateCustomerModal from '@/Components/QuickCreateCustomerModal.vue';
 
 const page = usePage();
 
@@ -25,8 +28,8 @@ const props = defineProps({
 const allProducts = ref([...(props.products || [])]);
 const localSuppliers = ref([...(props.suppliers || [])]);
 
-// STEP 24.13 — quick-create state is now owned by QuickCreateSupplierModal.
-// Page just toggles `showCreateSupplierModal` and consumes the `created` event.
+// STEP 24.13-FIX — supplier modal owns its own state; page just toggles
+// `showCreateSupplierModal` and consumes the `created` event.
 const showCreateSupplierModal = ref(false);
 
 const searchQuery = ref('');
@@ -607,9 +610,12 @@ const localBrands = ref([...(props.brands || [])]);
             @created="(p) => { allProducts.push(p); selectProduct(p); }"
         />
 
-        <!-- STEP 24.13 — Shared QuickCreateSupplierModal (replaces inline modal). -->
-        <QuickCreateSupplierModal
+        <!-- STEP 24.13-FIX — Full supplier modal (same form as /suppliers create page). -->
+        <QuickCreateCustomerModal
             :show="showCreateSupplierModal"
+            api-url="/api/suppliers/quick-store"
+            entity-label="nhà cung cấp"
+            :is-supplier="true"
             @close="showCreateSupplierModal = false"
             @created="(s) => { localSuppliers.push(s); selectedSupplierId = s.id; }"
         />
