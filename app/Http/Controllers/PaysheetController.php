@@ -91,9 +91,29 @@ class PaysheetController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $paysheet,
+            'data' => $this->withEffectiveStandard($paysheet),
             'auto_recalculated' => $autoRecalculated,
         ]);
+    }
+
+    /**
+     * Step 24.12-FIX — Annotate a paysheet payload with the *effective* standard
+     * working days for the UI. When the column is null (legacy paysheets created
+     * before STEP 24.12), fall back to the calendar lookup so the right side
+     * panel never has to invent a number — and never silently persists 26.
+     */
+    private function withEffectiveStandard(Paysheet $paysheet): Paysheet
+    {
+        $effective = $paysheet->standard_working_days
+            ? (float) $paysheet->standard_working_days
+            : (float) app(\App\Services\SalaryCalculationService::class)
+                ->standardWorkingDaysForBranch(
+                    $paysheet->branch_id,
+                    Carbon::parse($paysheet->period_start),
+                    Carbon::parse($paysheet->period_end),
+                );
+        $paysheet->setAttribute('effective_standard_working_days', $effective > 0 ? $effective : null);
+        return $paysheet;
     }
 
     /**
@@ -523,7 +543,7 @@ class PaysheetController extends Controller
             ->keyBy('employee_id');
 
         return inertia('Employees/PaysheetEdit', [
-            'paysheet' => $paysheet,
+            'paysheet' => $this->withEffectiveStandard($paysheet),
             'salarySettings' => $salarySettings,
         ]);
     }

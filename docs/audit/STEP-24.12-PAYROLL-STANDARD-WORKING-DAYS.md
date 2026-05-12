@@ -85,3 +85,24 @@
   - Recalc preview ngay trên FE trước khi gọi backend (live preview while typing)
 - **Có an toàn production không:** Có — migration nullable, legacy compat preserved, locked sheets refuse, backend là source of truth.
 - **Có thể deploy không:** Pending — chờ MySQL local 3319 khôi phục để chạy test cluster. Code đã build pass (`npm run build` 9.52s), migration ready, test file gồm 7 cases sẵn sàng.
+
+## 10. STEP 24.12-FIX — effective_standard_working_days + no-26-fallback
+
+Sau 24.12, còn 2 rủi ro thực tế chưa khoá:
+
+1. Frontend đang fallback hardcoded `26` khi `standard_working_days` null → bảng lương cũ có thể bị persist sai 26 khi user Lưu tạm, mặc dù calendar thực tế là 25 hoặc 27.
+2. Báo cáo chưa xác nhận test DB chạy thật (MySQL 3319 vẫn DOWN).
+
+Fix:
+- **Backend:** `PaysheetController` thêm helper `withEffectiveStandard(Paysheet)` inject `effective_standard_working_days` vào response của `show()` và `edit()`. Logic: `paysheet.standard_working_days` nếu set, fallback `SalaryCalculationService::standardWorkingDaysForBranch()`. **Không persist khi chỉ mở form** — chỉ thêm vào response payload.
+- **Frontend:** `PaysheetEdit.vue` đổi `initialStandard` từ hardcoded `26` thành chain `paysheet.standard_working_days ?? effective_standard_working_days ?? payslips[0].details.standard_work_units ?? 0`. Khi `= 0`, `savePanelDraft()` từ chối submit với message "Ngày công chuẩn phải nằm trong khoảng 1–31. Vui lòng kiểm tra cấu hình lịch làm việc / chi nhánh."
+- **Tests bổ sung:**
+  - TC `legacy_paysheet_null_standard_days_returns_effective_calendar_value`: paysheet null → GET `/api/paysheets/{id}` trả `data.effective_standard_working_days > 0`; DB `standard_working_days` vẫn null sau khi mở form (không bị side-effect).
+
+| Mục | Trạng thái |
+|---|---|
+| Backend effective field | ✓ inject vào show() + edit() |
+| FE 26 fallback removed | ✓ — chain 4 cấp; 0 → block submit |
+| Live preview | ⏸ defer 24.12B; UI hint "Khi đổi và Lưu, hệ thống sẽ tính lại..." |
+| Test DB chạy thật | ⏸ vẫn block bởi MySQL 3319 DOWN |
+| Legacy paysheets không bị persist 26 | ✓ — backend không persist khi chỉ mở; FE từ chối submit khi initial = 0 |

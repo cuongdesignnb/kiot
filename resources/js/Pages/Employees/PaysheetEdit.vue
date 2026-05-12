@@ -598,18 +598,30 @@ const isLocked = computed(() => localPaysheet.value.status === 'locked' || local
 const panelCollapsed = ref(false);
 const panelSaving = ref(false);
 const panelError = ref('');
+// Step 24.12-FIX — resolve the displayed standard_working_days from the
+// canonical chain: persisted column → backend-computed effective →
+// per-payslip details.standard_work_units → 0 (forces user to enter).
+// NEVER hard-fallback to 26 — that risks persisting 26 onto a legacy
+// paysheet whose calendar standard is actually 25/27.
+const initialStandard = (() => {
+    const v = localPaysheet.value.standard_working_days
+        ?? localPaysheet.value.effective_standard_working_days
+        ?? localPaysheet.value.payslips?.[0]?.details?.standard_work_units
+        ?? 0;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+})();
 const panelForm = reactive({
     name: localPaysheet.value.name || '',
-    standard_working_days: localPaysheet.value.standard_working_days
-        ? Number(localPaysheet.value.standard_working_days)
-        : 26,
+    standard_working_days: initialStandard,
     notes: localPaysheet.value.notes || '',
 });
 
 async function savePanelDraft() {
     panelError.value = '';
-    if (!panelForm.standard_working_days || panelForm.standard_working_days < 1 || panelForm.standard_working_days > 31) {
-        panelError.value = 'Ngày công chuẩn phải trong khoảng 1–31.';
+    const n = Number(panelForm.standard_working_days);
+    if (!Number.isFinite(n) || n < 1 || n > 31) {
+        panelError.value = 'Ngày công chuẩn phải nằm trong khoảng 1–31. Vui lòng kiểm tra cấu hình lịch làm việc / chi nhánh.';
         return;
     }
     panelSaving.value = true;

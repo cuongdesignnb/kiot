@@ -185,6 +185,26 @@ class Step2412PayrollStandardWorkingDaysTest extends TestCase
         $this->assertSame(25.0, (float) $b['standard_work_units']);
     }
 
+    public function test_legacy_paysheet_null_standard_days_returns_effective_calendar_value(): void
+    {
+        // Legacy paysheet — created before STEP 24.12, never had standard_working_days set.
+        $admin = $this->admin();
+        $sheet = $this->makePaysheet(null);
+        $this->assertNull($sheet->fresh()->standard_working_days);
+
+        // GET /api/paysheets/{id} should include effective_standard_working_days
+        // computed from the calendar so the FE can render without falling back to 26.
+        $res = $this->actingAs($admin)->getJson("/api/paysheets/{$sheet->id}");
+        $res->assertOk();
+
+        $effective = $res->json('data.effective_standard_working_days');
+        $this->assertNotNull($effective, 'effective_standard_working_days must be present');
+        $this->assertGreaterThan(0, (float) $effective);
+
+        // Critical: merely opening the form must NOT persist a value into the column.
+        $this->assertNull($sheet->fresh()->standard_working_days);
+    }
+
     public function test_endpoint_returns_recomputed_paysheet_data(): void
     {
         $admin = $this->admin();
