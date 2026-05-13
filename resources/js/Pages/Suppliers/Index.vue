@@ -225,6 +225,69 @@ const filteredDebt = (id) => {
     return data.filter(d => d.type === debtFilter.value);
 };
 
+// HOTFIX 24.15 — per-supplier-tab sort state. Default = newest first.
+// Key = `${supplierId}:${tab}`. Kept separate from the parent table's
+// `filters.sort_by` so toggling a tab's header doesn't trigger a server
+// fetch on the supplier list.
+const supplierTabSorts = reactive({});
+
+const getSupplierTabSort = (supplierId, tab) => {
+    return supplierTabSorts[`${supplierId}:${tab}`] || { field: 'time', direction: 'desc' };
+};
+
+const toggleSupplierTabTimeSort = (supplierId, tab) => {
+    const key = `${supplierId}:${tab}`;
+    const current = getSupplierTabSort(supplierId, tab);
+    supplierTabSorts[key] = {
+        field: 'time',
+        direction: current.direction === 'desc' ? 'asc' : 'desc',
+    };
+};
+
+const parseSupplierTabTime = (value) => {
+    if (!value) return 0;
+    if (value instanceof Date) {
+        const t = value.getTime();
+        return Number.isNaN(t) ? 0 : t;
+    }
+    const raw = String(value).trim();
+    const direct = new Date(raw).getTime();
+    if (!Number.isNaN(direct)) return direct;
+    // dd/mm/yyyy [HH:mm[:ss]] fallback (BE may format `date` for history rows).
+    const m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/);
+    if (m) {
+        const [, dd, mm, yyyy, hh = '0', mi = '0', ss = '0'] = m;
+        const d = new Date(Number(yyyy), Number(mm) - 1, Number(dd), Number(hh), Number(mi), Number(ss));
+        const t = d.getTime();
+        return Number.isNaN(t) ? 0 : t;
+    }
+    return 0;
+};
+
+const sortedSupplierHistory = (supplierId) => {
+    const data = supplierHistory[supplierId] || [];
+    const sort = getSupplierTabSort(supplierId, 'history');
+    // Copy before sorting — never mutate the cached source.
+    return [...data].sort((a, b) => {
+        const av = parseSupplierTabTime(a.date || a.purchase_date || a.created_at);
+        const bv = parseSupplierTabTime(b.date || b.purchase_date || b.created_at);
+        return sort.direction === 'desc' ? bv - av : av - bv;
+    });
+};
+
+const sortedSupplierDebt = (supplierId) => {
+    // Start from filteredDebt so the type filter still applies.
+    // Each entry already carries the correct `debt_remain` (computed on the
+    // server in chronological order), so reordering display is safe.
+    const data = filteredDebt(supplierId);
+    const sort = getSupplierTabSort(supplierId, 'debt');
+    return [...data].sort((a, b) => {
+        const av = parseSupplierTabTime(a.created_at || a.date);
+        const bv = parseSupplierTabTime(b.created_at || b.date);
+        return sort.direction === 'desc' ? bv - av : av - bv;
+    });
+};
+
 // ====== DEBT ACTION MODAL ======
 const showDebtModal = ref(false);
 const debtActionType = ref('payment'); // 'payment', 'adjustment', 'discount'
@@ -899,7 +962,14 @@ const submitActivate = (supplier) => {
                                                     <thead class="bg-gray-50 text-gray-600 text-xs uppercase">
                                                         <tr>
                                                             <th class="px-3 py-2">Mã phiếu</th>
-                                                            <th class="px-3 py-2">Thời gian</th>
+                                                            <th
+                                                                class="px-3 py-2 cursor-pointer select-none hover:text-gray-900"
+                                                                @click.stop="toggleSupplierTabTimeSort(supplier.id, 'history')"
+                                                                :title="getSupplierTabSort(supplier.id, 'history').direction === 'desc' ? 'Đang sắp xếp: mới nhất trước' : 'Đang sắp xếp: cũ nhất trước'"
+                                                            >
+                                                                Thời gian
+                                                                <span class="ml-1 text-[10px]">{{ getSupplierTabSort(supplier.id, 'history').direction === 'desc' ? '▼' : '▲' }}</span>
+                                                            </th>
                                                             <th class="px-3 py-2">Người tạo</th>
                                                             <th class="px-3 py-2">Chi nhánh</th>
                                                             <th class="px-3 py-2 text-right">Tổng cộng</th>
@@ -908,7 +978,7 @@ const submitActivate = (supplier) => {
                                                     </thead>
                                                     <tbody class="divide-y">
                                                         <tr v-if="!supplierHistory[supplier.id]?.length"><td colspan="6" class="px-3 py-6 text-center text-gray-400">Chưa có phiếu nhập/trả hàng.</td></tr>
-                                                        <tr v-for="h in supplierHistory[supplier.id]" :key="h.id" class="hover:bg-gray-50">
+                                                        <tr v-for="h in sortedSupplierHistory(supplier.id)" :key="h.id" class="hover:bg-gray-50">
                                                             <td class="px-3 py-2 text-blue-600 font-semibold cursor-pointer hover:underline" @click="showPurchaseDetail(h.id)">{{ h.code }}</td>
                                                             <td class="px-3 py-2">{{ h.date }}</td>
                                                             <td class="px-3 py-2">{{ h.user_name }}</td>
@@ -952,7 +1022,14 @@ const submitActivate = (supplier) => {
                                                     <thead class="bg-gray-50 text-gray-600 text-xs uppercase">
                                                         <tr>
                                                             <th class="px-3 py-2">Mã phiếu</th>
-                                                            <th class="px-3 py-2">Thời gian</th>
+                                                            <th
+                                                                class="px-3 py-2 cursor-pointer select-none hover:text-gray-900"
+                                                                @click.stop="toggleSupplierTabTimeSort(supplier.id, 'debt')"
+                                                                :title="getSupplierTabSort(supplier.id, 'debt').direction === 'desc' ? 'Đang sắp xếp: mới nhất trước' : 'Đang sắp xếp: cũ nhất trước'"
+                                                            >
+                                                                Thời gian
+                                                                <span class="ml-1 text-[10px]">{{ getSupplierTabSort(supplier.id, 'debt').direction === 'desc' ? '▼' : '▲' }}</span>
+                                                            </th>
                                                             <th class="px-3 py-2">Loại</th>
                                                             <th class="px-3 py-2 text-right">Giá trị</th>
                                                             <th class="px-3 py-2 text-right">Nợ cần trả nhà cung cấp</th>
@@ -960,7 +1037,7 @@ const submitActivate = (supplier) => {
                                                     </thead>
                                                     <tbody class="divide-y">
                                                         <tr v-if="!filteredDebt(supplier.id)?.length"><td colspan="5" class="px-3 py-6 text-center text-gray-400">Chưa có giao dịch công nợ.</td></tr>
-                                                        <tr v-for="d in filteredDebt(supplier.id)" :key="d.id" class="hover:bg-gray-50">
+                                                        <tr v-for="d in sortedSupplierDebt(supplier.id)" :key="d.id" class="hover:bg-gray-50">
                                                             <td class="px-3 py-2 font-semibold"
                                                                 :class="(d.code && (d.code.startsWith('CB') || d.code.startsWith('DTCN'))) ? 'text-blue-600 cursor-pointer hover:underline' : 'text-blue-600'"
                                                                 @click="(d.code && (d.code.startsWith('CB') || d.code.startsWith('DTCN'))) && showCbToast()"
