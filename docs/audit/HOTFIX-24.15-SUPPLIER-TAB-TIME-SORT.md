@@ -105,8 +105,25 @@ Code-level confidence cao (`[...arr].sort` immutable, `@click.stop` chặn paren
 
 ## 9. Commit & deployment
 
-- **Commit SHA:** _(cập nhật sau khi push)_
-- **Push status:** _(cập nhật sau khi push)_
+- **Commit SHA:** `57ec2aae4eae31a7abfdfcd1a5fe660e900af52a` — `fix(suppliers): show newest entries first in expanded tabs`
+- **Push status:** ✅ trên `origin/main` (verified: `git ls-remote origin refs/heads/main` = `57ec2aa...`).
+- **Recent main:**
+  ```
+  57ec2aa fix(suppliers): show newest entries first in expanded tabs
+  d6770b0 docs(audit): record HOTFIX 24.14 commit SHA and split QA section
+  a5dff11 fix(suppliers): export tab buttons no longer throw on .open
+  3b0b7a6 fix(forms): wire Orders + Purchases quick create to full modals
+  d009f81 fix(payroll): make all salary adjustments editable (HOTFIX 24.12C)
+  ```
+- **Production deploy step:**
+  ```bash
+  cd /www/wwwroot/kiot.cuongdesign.net
+  git pull origin main          # phải thấy 57ec2aa
+  rm -rf public/build
+  npm run build
+  php artisan optimize:clear
+  # Hard reload trình duyệt (Ctrl+Shift+R)
+  ```
 
 ## 10. Kết luận
 
