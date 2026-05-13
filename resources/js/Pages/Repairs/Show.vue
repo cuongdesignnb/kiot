@@ -45,7 +45,16 @@ const statusBadge = (status) => {
     return map[status] || { label: status, cls: "bg-gray-100 text-gray-600" };
 };
 
-const repairStatusBadge = (rs) => {
+// HOTFIX 24.16C — accept the serial object so "Sẵn bán" can be downgraded
+// to "Đã bóc tách" when the physical serial.status is dismantled (e.g. a
+// disassembly that was never put back together). Falls back to the raw
+// repair_status string for older callers.
+const repairStatusBadge = (serialOrRs) => {
+    const rs = typeof serialOrRs === "string" ? serialOrRs : serialOrRs?.repair_status;
+    const status = typeof serialOrRs === "object" ? serialOrRs?.status : null;
+    if (rs === "ready" && status === "dismantled") {
+        return { label: "⚠ Đã bóc tách", cls: "bg-red-100 text-red-700" };
+    }
     const map = {
         not_started: { label: "Chưa làm", cls: "bg-red-100 text-red-600" },
         repairing: { label: "Đang xử lý", cls: "bg-yellow-100 text-yellow-600" },
@@ -199,10 +208,10 @@ loadRepair();
                                 <span class="text-gray-500">Trạng thái serial:</span>
                                 <span
                                     v-if="repair.serial_imei?.repair_status"
-                                    :class="repairStatusBadge(repair.serial_imei.repair_status).cls"
+                                    :class="repairStatusBadge(repair.serial_imei).cls"
                                     class="px-2 py-0.5 rounded-full text-xs font-semibold"
                                 >
-                                    {{ repairStatusBadge(repair.serial_imei.repair_status).label }}
+                                    {{ repairStatusBadge(repair.serial_imei).label }}
                                 </span>
                             </div>
                             <div class="flex justify-between">

@@ -224,3 +224,64 @@ Tôi không có browser, các mục dưới chờ tester:
 - **Serial sửa xong còn tồn bán được chưa?** Có — TC-01, TC-02 PASS, helper restore status='in_stock'.
 - **Serial bóc tách thật có bị bán nhầm không?** Không — TC-03, TC-05, TC-06 pin: dismantled + active import parts vẫn không sellable; SerialAvailabilityService chặn ở mọi nhánh.
 - **Có thể deploy không?** **Code đã sẵn sàng** (test xanh trên DB thật, build pass, regression không hỏng). **Browser QA + DBA data repair** vẫn cần xác nhận trước production deploy.
+
+---
+
+## 12. ADDENDUM 24.16C — Mở rộng badge guard sang module Sửa chữa / Tasks
+
+### 12.1. Bối cảnh
+
+HOTFIX 24.16 mới chỉ guard badge "Sẵn bán" trong [`Welcome.vue`](resources/js/Pages/Welcome.vue) (danh sách Serial/IMEI ở trang chủ). Các trang khác vẫn render `repair_status` mà không check `serial.status` vật lý:
+
+- [`/repairs`](resources/js/Pages/Repairs/Index.vue) — cột "Serial ST".
+- [`/repairs/{id}`](resources/js/Pages/Repairs/Show.vue) — block "Trạng thái serial".
+- [`/my-tasks`](resources/js/Pages/Tasks/MyTasks.vue) — chip device info trong card "Việc của tôi".
+
+Thêm nữa, 2 API list endpoint (`/api/tasks`, `/api/device-repairs`) chỉ select `serialImei:id,serial_number,repair_status,...` — **không include `status`** → FE không thể tự guard kể cả có sửa template.
+
+### 12.2. File đã sửa (24.16C)
+
+| File | Nội dung |
+|---|---|
+| [`app/Http/Controllers/Api/TaskController.php`](app/Http/Controllers/Api/TaskController.php#L32) | `Task::with` ở `index()` (line 32) thêm `status` vào select của `serialImei`. `show()` line 95 đã có `status` từ trước, không sửa. |
+| [`app/Http/Controllers/Api/DeviceRepairController.php`](app/Http/Controllers/Api/DeviceRepairController.php#L28) | `with(['serialImei:...'])` ở cả `index()` (line 28) và `show()` (line 70) thêm `status`. |
+| [`resources/js/Pages/Repairs/Show.vue`](resources/js/Pages/Repairs/Show.vue#L48) | `repairStatusBadge` chuyển sang nhận serial object (vẫn nhận string cho BC); khi `repair_status='ready' && status='dismantled'` → trả về `{ label: '⚠ Đã bóc tách', cls: 'bg-red-100 text-red-700' }`. Call site truyền `repair.serial_imei`. |
+| [`resources/js/Pages/Repairs/Index.vue`](resources/js/Pages/Repairs/Index.vue#L129) | Cùng pattern như Show: helper nhận serial object, call site truyền `r.serial_imei`. |
+| [`resources/js/Pages/Tasks/MyTasks.vue`](resources/js/Pages/Tasks/MyTasks.vue#L122) | `getRepairStatusLabel(t)` và `getRepairStatusCls(t)` ưu tiên check `serial_imei.status === 'dismantled'` trước khi map `repair_status`. |
+
+**Không sửa:** `SerialAvailabilityService`, `TaskService::updateInternalRepairSerialStatus` (helper backend 24.16 không cần đụng tiếp), Welcome.vue (đã guard rồi), Tasks/Index.vue + Tasks/Show.vue (không render `repair_status` của serial), POS/Purchase/Invoice/CashFlow.
+
+### 12.3. Hành vi mới
+
+| Tình huống | Badge cũ | Badge mới |
+|---|---|---|
+| `status=in_stock, repair_status=ready` | Sẵn bán (xanh) | Sẵn bán (xanh) — **không đổi** |
+| `status=in_stock, repair_status=repairing` | Đang xử lý (vàng) | Đang xử lý (vàng) — **không đổi** |
+| `status=dismantled, repair_status=ready` | **Sẵn bán (xanh)** ❌ | **⚠ Đã bóc tách (đỏ)** ✅ |
+| `status=sold, repair_status=ready` | Sẵn bán (xanh) — không xảy ra ở /repairs vì serial đã rời kho | Sẵn bán (xanh) — bug data, không trong scope guard |
+
+`SerialAvailabilityService` vẫn block mọi case `dismantled` — không ai bán nhầm được kể cả badge sai. 24.16C chỉ sửa hiển thị.
+
+### 12.4. Test
+
+| Lệnh | Kết quả |
+|---|---|
+| `php artisan test --filter=HOTFIX2416RepairSerialReadyStatusTest` | (xem kết quả dưới — backend không đổi nghiệp vụ, 6 TC vẫn pin) |
+| `npm run build` | (xem kết quả dưới) |
+
+Không thêm TC backend mới — 24.16C là pure FE rendering + thêm field vào API response, không đổi nghiệp vụ. TC-01 → TC-06 trong [`HOTFIX2416RepairSerialReadyStatusTest`](tests/Feature/Tasks/HOTFIX2416RepairSerialReadyStatusTest.php) đã pin đủ contract backend.
+
+### 12.5. Manual QA (24.16C) — pending tester
+
+- [ ] `/repairs` → cột "Serial ST" của phiếu mà serial có `status=dismantled, repair_status=ready` → hiện "⚠ Đã bóc tách" (đỏ).
+- [ ] `/repairs/{id}` → block "Trạng thái serial" cùng pattern.
+- [ ] `/my-tasks` → card có serial dismantled/ready → chip "Đã bóc tách" đỏ.
+- [ ] Serial đã hoàn thành sửa thật sự (in_stock + ready) → vẫn hiện "Sẵn bán" xanh.
+- [ ] Serial đang sửa → vẫn hiện "Đang xử lý" vàng.
+- [ ] DevTools → response của `/api/tasks?type=repair` và `/api/device-repairs` có field `serial_imei.status`.
+
+### 12.6. Rủi ro 24.16C
+
+- **API contract broaden, không break:** chỉ thêm field `status` vào select — client cũ không sử dụng vẫn hoạt động.
+- **Helper accept cả string lẫn object:** giữ backward compat nếu có call site khác trong code không quét được — fallback nhánh string.
+- **Không đụng `SerialAvailabilityService` / disassemble / rollback:** không có khả năng `dismantled` bị "sellable hoá".

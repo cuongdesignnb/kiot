@@ -25,7 +25,7 @@ class DeviceRepairController extends Controller
      */
     public function index(Request $request)
     {
-        $query = DeviceRepair::with(['product:id,name,sku', 'serialImei:id,serial_number,repair_status', 'assignedEmployee:id,name', 'branch:id,name']);
+        $query = DeviceRepair::with(['product:id,name,sku', 'serialImei:id,serial_number,status,repair_status', 'assignedEmployee:id,name', 'branch:id,name']);
 
         if ($request->filled('status')) {
             $query->where('status', $request->status);
@@ -67,7 +67,7 @@ class DeviceRepairController extends Controller
     {
         $deviceRepair->load([
             'product:id,name,sku,image',
-            'serialImei:id,serial_number,repair_status,cost_price',
+            'serialImei:id,serial_number,status,repair_status,cost_price',
             'assignedEmployee:id,name',
             'branch:id,name',
             'parts.product:id,name,sku',

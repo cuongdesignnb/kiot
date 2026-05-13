@@ -119,22 +119,34 @@ const getSerialNumber = (t) => {
     return t.serial_imei?.serial_number || null;
 };
 
+// HOTFIX 24.16C — when the physical serial is dismantled, show "Đã bóc tách"
+// (red) instead of the misleading "Sẵn bán" green badge.
 const getRepairStatusLabel = (t) => {
+    const rs = t.serial_imei?.repair_status;
+    const status = t.serial_imei?.status;
+    if (rs === "ready" && status === "dismantled") {
+        return "⚠ Đã bóc tách";
+    }
     const map = {
         not_started: "Chưa làm",
         repairing: "Đang xử lý",
         ready: "Sẵn bán",
     };
-    return map[t.serial_imei?.repair_status] || null;
+    return map[rs] || null;
 };
 
 const getRepairStatusCls = (t) => {
+    const rs = t.serial_imei?.repair_status;
+    const status = t.serial_imei?.status;
+    if (rs === "ready" && status === "dismantled") {
+        return "bg-red-100 text-red-700";
+    }
     const map = {
         not_started: "bg-red-100 text-red-600",
         repairing: "bg-yellow-100 text-yellow-700",
         ready: "bg-green-100 text-green-700",
     };
-    return map[t.serial_imei?.repair_status] || "bg-gray-100 text-gray-600";
+    return map[rs] || "bg-gray-100 text-gray-600";
 };
 
 load();
