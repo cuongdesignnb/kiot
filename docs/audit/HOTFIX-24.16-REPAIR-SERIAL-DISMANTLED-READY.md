@@ -196,8 +196,27 @@ Tôi không có browser, các mục dưới chờ tester:
 
 ## 10. Commit & deployment
 
-- **Commit SHA:** _(cập nhật sau khi push)_
-- **Push status:** _(cập nhật sau khi push)_
+- **Commit SHA:** `dea98e1e6aae162e7e4873e8f8d7921b0cd7d4c5` — `fix(tasks): sync serial status + repair_status on internal repair complete`
+- **Push status:** ✅ trên `origin/main` (verified: `git ls-remote origin refs/heads/main` = `dea98e1...`).
+- **Recent main:**
+  ```
+  dea98e1 fix(tasks): sync serial status + repair_status on internal repair complete
+  1987961 docs(audit): record HOTFIX 24.15 commit SHA and deploy step
+  57ec2aa fix(suppliers): show newest entries first in expanded tabs
+  d6770b0 docs(audit): record HOTFIX 24.14 commit SHA and split QA section
+  a5dff11 fix(suppliers): export tab buttons no longer throw on .open
+  ```
+- **Production deploy step:**
+  ```bash
+  cd /www/wwwroot/kiot.cuongdesign.net
+  git pull origin main          # phải thấy dea98e1
+  rm -rf public/build
+  npm run build
+  php artisan optimize:clear
+  # DBA: chạy dry-run query ở §6, verify từng dòng, sau đó UPDATE
+  # php artisan tinker > \App\Models\Product::find(321)?->recomputeFromSerials();
+  # Hard reload trình duyệt (Ctrl+Shift+R)
+  ```
 
 ## 11. Kết luận
 
