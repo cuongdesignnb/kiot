@@ -280,13 +280,12 @@ class TaskService
 
         $task->update($updates);
 
-        // Repair-specific: update serial status
+        // HOTFIX 24.16 — keep `repair_status` and physical `status` in sync.
+        // The previous version only touched `repair_status`, which left
+        // serials stuck at `status=dismantled` + `repair_status=ready` after
+        // a repair finished — the UI then incorrectly badged them as "Sẵn bán".
         if ($task->is_repair && $task->serial_imei_id) {
-            if ($newStatus === Task::STATUS_COMPLETED) {
-                $task->serialImei?->update(['repair_status' => 'ready']);
-            } elseif ($newStatus === Task::STATUS_IN_PROGRESS) {
-                $task->serialImei?->update(['repair_status' => 'repairing']);
-            }
+            $this->updateInternalRepairSerialStatus($task, $newStatus);
         }
 
         // Notify assigned employees about status change
@@ -302,6 +301,71 @@ class TaskService
         }
 
         return $task->fresh();
+    }
+
+    /**
+     * HOTFIX 24.16 — sync serial's physical `status` and `repair_status`
+     * when an internal repair task transitions.
+     *
+     * Refuses to touch a serial that has already left stock (sold, returned
+     * to supplier) or whose disassembly has not been rolled back, so the
+     * machine isn't silently brought back to in_stock when the body is
+     * actually gone.
+     */
+    private function updateInternalRepairSerialStatus(Task $task, string $newStatus): void
+    {
+        if (!$task->is_repair || !$task->serial_imei_id) {
+            return;
+        }
+
+        $serial = SerialImei::lockForUpdate()->find($task->serial_imei_id);
+        if (!$serial) {
+            return;
+        }
+
+        if ($newStatus === Task::STATUS_IN_PROGRESS) {
+            // Đang sửa: chỉ đổi repair_status; giữ status vật lý.
+            if ($serial->status === 'in_stock') {
+                $serial->repair_status = 'repairing';
+                $serial->save();
+            }
+            return;
+        }
+
+        if ($newStatus !== Task::STATUS_COMPLETED) {
+            return;
+        }
+
+        $serial->repair_status = 'ready';
+
+        // Đã rời kho thật → tuyệt đối không hồi về in_stock.
+        $hasLeftStock = !empty($serial->invoice_id)
+            || !empty($serial->sold_at)
+            || !empty($serial->purchase_return_id);
+
+        if ($hasLeftStock) {
+            $serial->save();
+            return;
+        }
+
+        // Có task_part direction='import' chưa rollback nghĩa là disassembly
+        // còn hiệu lực — máy không còn nguyên vẹn, giữ status='dismantled'.
+        $hasActiveDisassemblyOutputs = $task->parts()
+            ->where('direction', 'import')
+            ->exists();
+
+        if (!$hasActiveDisassemblyOutputs
+            && in_array($serial->status, ['in_stock', 'dismantled'], true)) {
+            $serial->status = 'in_stock';
+        }
+
+        $serial->save();
+
+        // Nếu status đổi giữa in_stock/dismantled thì stock_quantity của
+        // product cần recompute để khớp với count sellable serials.
+        if ($serial->wasChanged('status') && $serial->product) {
+            $serial->product->recomputeFromSerials();
+        }
     }
 
     /**

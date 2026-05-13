@@ -1414,6 +1414,10 @@ const formatDate = (val) => {
                                                                     >{{ s.serial_number }}</span>
                                                                     <span v-if="s.repair_status === 'repairing'" class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 font-bold">🔧 Đang sửa</span>
                                                                     <span v-else-if="s.repair_status === 'not_started'" class="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-600 font-bold">⏳ Chờ sửa</span>
+                                                                    <!-- HOTFIX 24.16 — "Sẵn bán" badge requires the serial to actually be in stock.
+                                                                         A dismantled serial with repair_status=ready means the repair task ended but
+                                                                         the body is still missing — render the physical status badge separately. -->
+                                                                    <span v-else-if="s.repair_status === 'ready' && s.status === 'dismantled'" class="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-bold">⚠ Đã bóc tách</span>
                                                                     <span v-else-if="s.repair_status === 'ready'" class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-600 font-bold">✓ Sẵn bán</span>
                                                                 </div>
                                                                 <div class="text-[12px] text-gray-500 font-medium" v-if="canViewCostPrice">
@@ -1521,6 +1525,8 @@ const formatDate = (val) => {
                                                                     <div class="flex items-center gap-2">
                                                                         <span class="font-medium text-gray-800">{{ s.serial_number }}</span>
                                                                         <span v-if="s.repair_status === 'repairing'" class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 font-bold">🔧</span>
+                                                                        <!-- HOTFIX 24.16 — see longer version above. -->
+                                                                        <span v-else-if="s.repair_status === 'ready' && s.status === 'dismantled'" class="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-bold" title="Đã bóc tách">⚠</span>
                                                                         <span v-else-if="s.repair_status === 'ready'" class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-600 font-bold">✓</span>
                                                                     </div>
                                                                 </td>
