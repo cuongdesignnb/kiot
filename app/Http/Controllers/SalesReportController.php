@@ -7,6 +7,7 @@ use App\Models\Employee;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\OrderReturn;
+use App\Support\Reports\SellerResolver;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -298,28 +299,19 @@ class SalesReportController extends Controller
     // ═══════════════════════════════════════
     private function buildEmployeeSeries($invoiceQuery, $returnsQuery, $branchId)
     {
-        $employees = Employee::orderBy('name')->get(['id', 'name']);
+        // HOTFIX 24.26 — Use SellerResolver to include Admin/User sellers
+        $sellers = new SellerResolver();
+        $revBySeller = $sellers->aggregateBySeller(clone $invoiceQuery, 'SUM(total)');
+        arsort($revBySeller);
 
-        $labels = [];
+        $sellerMeta = $sellers->sellerMeta(array_keys($revBySeller));
+
+        $labels      = [];
         $revenueData = [];
-
-        foreach ($employees as $emp) {
-            $rev = (float) (clone $invoiceQuery)->where('employee_id', $emp->id)->sum('total');
-            if ($rev > 0) {
-                $labels[] = $emp->name;
-                $revenueData[] = $rev;
-            }
-        }
-
-        // If no employee data, also check created_by
-        if (empty($labels)) {
-            foreach ($employees as $emp) {
-                $rev = (float) (clone $invoiceQuery)->where('created_by', $emp->id)->sum('total');
-                if ($rev > 0) {
-                    $labels[] = $emp->name;
-                    $revenueData[] = $rev;
-                }
-            }
+        foreach ($revBySeller as $key => $rev) {
+            if ($rev <= 0) continue;
+            $labels[]      = $sellerMeta[$key]['name'] ?? $key;
+            $revenueData[] = $rev;
         }
 
         return [

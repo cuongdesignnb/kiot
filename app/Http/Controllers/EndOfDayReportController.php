@@ -8,6 +8,7 @@ use App\Models\Employee;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\OrderReturn;
+use App\Support\Reports\SellerResolver;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -38,7 +39,11 @@ class EndOfDayReportController extends Controller
 
         if ($branchId) $invoiceQuery->where('branch_id', $branchId);
         if ($customerId) $invoiceQuery->where('customer_id', $customerId);
-        if ($employeeId) $invoiceQuery->where('employee_id', $employeeId);
+        // HOTFIX 24.26 — use SellerResolver for employee filter
+        $sellers = new SellerResolver();
+        if ($employeeId) {
+            $invoiceQuery = $sellers->filterBySeller($invoiceQuery, $employeeId);
+        }
         if ($createdBy) $invoiceQuery->where('created_by', $createdBy);
         if ($paymentMethod) $invoiceQuery->where('payment_method', $paymentMethod);
         if ($salesChannel) $invoiceQuery->where('sales_channel', $salesChannel);
@@ -126,7 +131,7 @@ class EndOfDayReportController extends Controller
 
         // Filter options for dropdowns
         $branches = Branch::orderBy('name')->get(['id', 'name']);
-        $employees = Employee::orderBy('name')->get(['id', 'name']);
+        $employees = $sellers->buildSellerFilterOptions();
         $paymentMethods = Invoice::whereNotNull('payment_method')
             ->distinct()
             ->pluck('payment_method')
