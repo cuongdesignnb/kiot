@@ -177,4 +177,5 @@ function onInput(e) {
 - **Mọi input tiền đã format realtime VND chưa?** ⚠️ Một phần — các ô tiền cao tần nhất (phiếu nhập, công nợ NCC, cashflow) đã realtime. POS / Products / Customers / Repairs / Tasks / Payroll còn `type="number"` rải rác (phase 2). Helper + component đã sẵn sàng để swap mà không cần thêm logic.
 - **Backend còn nhận number raw không?** ✅ Có — `v-model` của `MoneyInput` luôn là number; payload gửi đúng `amount: 1000000`. KHÔNG bao giờ gửi `"1.000.000"`.
 - **Có thể deploy không?** ✅ Có — 255 PHP TC + 7 JS TC PASS, build PASS, không đụng nghiệp vụ backend.
-- **Commit SHA:** (điền sau commit + push).
+- **Commit SHA:** `190c9b7` — `fix(ui): format VND money inputs in realtime`.
+- **Push status:** ✅ đã push, `origin/main` = `190c9b785212f2cc90ee7b70e0fae1eb39186e12`.
