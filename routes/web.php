@@ -359,6 +359,14 @@ Route::get('/employees/workday/settings/holidays', [App\Http\Controllers\Employe
 // ═══════════════════════════════════════
 // REPORT routes
 // ═══════════════════════════════════════
+Route::get('/reports/business', [ReportController::class, 'businessOverview'])->name('reports.business-overview')->middleware('permission:reports.view');
+Route::get('/reports/cost-profit', [ReportController::class, 'costProfit'])->name('reports.cost-profit')->middleware('permission:reports.view');
+Route::get('/reports/financial-report', [App\Http\Controllers\FinancialReportController::class, 'index'])->name('reports.financial-report')->middleware('permission:reports.view');
+Route::get('/reports/sales', [App\Http\Controllers\SalesReportController::class, 'index'])->name('reports.sales')->middleware('permission:reports.view');
+Route::get('/reports/products', [App\Http\Controllers\ProductReportController::class, 'index'])->name('reports.products')->middleware('permission:reports.view');
+Route::get('/reports/customers', [App\Http\Controllers\CustomerReportController::class, 'index'])->name('reports.customers')->middleware('permission:reports.view');
+Route::get('/reports/suppliers', [App\Http\Controllers\SupplierReportController::class, 'index'])->name('reports.suppliers')->middleware('permission:reports.view');
+
 Route::get('/reports/debt-reconciliation', [ReportController::class, 'debtReconciliation'])->name('reports.debt-reconciliation');
 Route::get('/reports/debt-reconciliation/export', [ReportController::class, 'exportDebtReconciliation'])->name('reports.debt-reconciliation.export');
 
