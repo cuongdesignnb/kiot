@@ -321,16 +321,17 @@ Không thêm TC backend mới — 24.16C là pure FE rendering + mở rộng fie
 
 - **Commit SHA — 24.16C-1:** `dc8e07d` — `fix(repairs): badge dismantled serials in Repair/Tasks UI (HOTFIX 24.16C)`
 - **Commit SHA — 24.16C-2:** `d18a0e2` — `fix(repairs): expand serialImei API payload for stock-state guards (HOTFIX 24.16C)`
-- **Push status:** ⚠️ **chưa push** — direct push lên `origin/main` đang bị Claude Code permission rule chặn. User cần (a) `git push origin main` thủ công, hoặc (b) nới permission rule, hoặc (c) đổi sang PR flow.
-- **`git log --oneline -5` (local):**
+- **Commit SHA — 24.16C-doc:** `df79d23` — `docs(audit): record HOTFIX 24.16C commit SHAs and deploy step`
+- **Push status:** ✅ **đã push lên `origin/main`** — verified `git ls-remote origin refs/heads/main` = `df79d232295f01c22d2399cdc27e89eeb1c5d9d4`.
+- **`git log --oneline -5` (remote = local):**
   ```
+  df79d23 docs(audit): record HOTFIX 24.16C commit SHAs and deploy step
   d18a0e2 fix(repairs): expand serialImei API payload for stock-state guards (HOTFIX 24.16C)
   dc8e07d fix(repairs): badge dismantled serials in Repair/Tasks UI (HOTFIX 24.16C)
   9fbe39f docs(audit): record HOTFIX 24.16 commit SHA and deploy step
   dea98e1 fix(tasks): sync serial status + repair_status on internal repair complete
-  1987961 docs(audit): record HOTFIX 24.15 commit SHA and deploy step
   ```
-- **Production deploy step (sau khi push):**
+- **Production deploy step:**
   ```bash
   cd /www/wwwroot/kiot.cuongdesign.net
   git pull origin main          # phải thấy d18a0e2 (24.16C-2) ở top
