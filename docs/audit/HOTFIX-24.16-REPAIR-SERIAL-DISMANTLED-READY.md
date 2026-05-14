@@ -241,15 +241,41 @@ Thêm nữa, 2 API list endpoint (`/api/tasks`, `/api/device-repairs`) chỉ sel
 
 ### 12.2. File đã sửa (24.16C)
 
-| File | Nội dung |
-|---|---|
-| [`app/Http/Controllers/Api/TaskController.php`](app/Http/Controllers/Api/TaskController.php#L32) | `Task::with` ở `index()` (line 32) thêm `status` vào select của `serialImei`. `show()` line 95 đã có `status` từ trước, không sửa. |
-| [`app/Http/Controllers/Api/DeviceRepairController.php`](app/Http/Controllers/Api/DeviceRepairController.php#L28) | `with(['serialImei:...'])` ở cả `index()` (line 28) và `show()` (line 70) thêm `status`. |
-| [`resources/js/Pages/Repairs/Show.vue`](resources/js/Pages/Repairs/Show.vue#L48) | `repairStatusBadge` chuyển sang nhận serial object (vẫn nhận string cho BC); khi `repair_status='ready' && status='dismantled'` → trả về `{ label: '⚠ Đã bóc tách', cls: 'bg-red-100 text-red-700' }`. Call site truyền `repair.serial_imei`. |
-| [`resources/js/Pages/Repairs/Index.vue`](resources/js/Pages/Repairs/Index.vue#L129) | Cùng pattern như Show: helper nhận serial object, call site truyền `r.serial_imei`. |
-| [`resources/js/Pages/Tasks/MyTasks.vue`](resources/js/Pages/Tasks/MyTasks.vue#L122) | `getRepairStatusLabel(t)` và `getRepairStatusCls(t)` ưu tiên check `serial_imei.status === 'dismantled'` trước khi map `repair_status`. |
+24.16C gồm 2 commit nối tiếp trên `main`:
+
+| Commit | SHA | Nội dung |
+|---|---|---|
+| **24.16C-1** | `dc8e07d` | FE badge guard + thêm `status` vào API selects |
+| **24.16C-2** | `d18a0e2` | Mở rộng API payload (`invoice_id`, `sold_at`, `purchase_return_id`, `cost_price`, `product_id`) cho cả `/api/tasks` và `/api/device-repairs` để FE có đủ trường suy diễn "đã rời kho" |
+
+| File | Commit | Nội dung |
+|---|---|---|
+| [`app/Http/Controllers/Api/TaskController.php`](app/Http/Controllers/Api/TaskController.php#L32) | `dc8e07d` + `d18a0e2` | `index()` (line 32) và `show()` (line 95) → cuối cùng select: `serialImei:id,serial_number,status,repair_status,cost_price,product_id,invoice_id,sold_at,purchase_return_id`. |
+| [`app/Http/Controllers/Api/DeviceRepairController.php`](app/Http/Controllers/Api/DeviceRepairController.php#L28) | `dc8e07d` + `d18a0e2` | `index()` (line 28) và `show()` (line 70) → cùng tập field như TaskController. |
+| [`resources/js/Pages/Repairs/Show.vue`](resources/js/Pages/Repairs/Show.vue#L48) | `dc8e07d` | `repairStatusBadge` chuyển sang nhận serial object (vẫn nhận string cho BC); khi `repair_status='ready' && status='dismantled'` → trả về `{ label: '⚠ Đã bóc tách', cls: 'bg-red-100 text-red-700' }`. Call site truyền `repair.serial_imei`. |
+| [`resources/js/Pages/Repairs/Index.vue`](resources/js/Pages/Repairs/Index.vue#L129) | `dc8e07d` | Cùng pattern như Show: helper nhận serial object, call site truyền `r.serial_imei`. |
+| [`resources/js/Pages/Tasks/MyTasks.vue`](resources/js/Pages/Tasks/MyTasks.vue#L122) | `dc8e07d` | `getRepairStatusLabel(t)` và `getRepairStatusCls(t)` ưu tiên check `serial_imei.status === 'dismantled'` trước khi map `repair_status`. |
 
 **Không sửa:** `SerialAvailabilityService`, `TaskService::updateInternalRepairSerialStatus` (helper backend 24.16 không cần đụng tiếp), Welcome.vue (đã guard rồi), Tasks/Index.vue + Tasks/Show.vue (không render `repair_status` của serial), POS/Purchase/Invoice/CashFlow.
+
+### 12.2.1. Payload mới của serialImei
+
+`/api/tasks` (index + show) và `/api/device-repairs` (index + show) đều trả:
+
+```
+serial_imei: {
+  id, serial_number,
+  status,               // in_stock | dismantled | sold | ...
+  repair_status,        // not_started | repairing | ready
+  cost_price,
+  product_id,
+  invoice_id,           // != null → đã bán
+  sold_at,              // != null → đã bán
+  purchase_return_id    // != null → đã trả NCC
+}
+```
+
+3 trường mới (`invoice_id`, `sold_at`, `purchase_return_id`) đều có sẵn trên `serial_imeis` (migrations `2026_03_23_100000_add_sold_fields_to_serial_imeis_table` + `2026_04_05_003313_add_purchase_return_id_to_serial_imeis_table`). Không cần schema change. FE chưa render trường mới ở turn này — chuẩn bị cho guard tiếp theo nếu cần phân biệt "đã bán" vs "còn tồn".
 
 ### 12.3. Hành vi mới
 
@@ -262,14 +288,18 @@ Thêm nữa, 2 API list endpoint (`/api/tasks`, `/api/device-repairs`) chỉ sel
 
 `SerialAvailabilityService` vẫn block mọi case `dismantled` — không ai bán nhầm được kể cả badge sai. 24.16C chỉ sửa hiển thị.
 
-### 12.4. Test
+### 12.4. Test đã chạy thật sau commit `d18a0e2` (MySQL:3319)
 
 | Lệnh | Kết quả |
 |---|---|
-| `php artisan test --filter=HOTFIX2416RepairSerialReadyStatusTest` | (xem kết quả dưới — backend không đổi nghiệp vụ, 6 TC vẫn pin) |
-| `npm run build` | (xem kết quả dưới) |
+| `php artisan test --filter=HOTFIX2416RepairSerialReadyStatusTest` | ✅ **6 passed / 16 assertions**, 32.97s |
+| `php artisan test --filter=Task` | ✅ **80 passed / 232 assertions**, 44.09s |
+| `php artisan test --filter=Serial` | ✅ **114 passed, 2 skipped / 392 assertions**, 34.00s |
+| `npm run build` | ✅ **built in 7.23s** |
 
-Không thêm TC backend mới — 24.16C là pure FE rendering + thêm field vào API response, không đổi nghiệp vụ. TC-01 → TC-06 trong [`HOTFIX2416RepairSerialReadyStatusTest`](tests/Feature/Tasks/HOTFIX2416RepairSerialReadyStatusTest.php) đã pin đủ contract backend.
+**Ghi chú lệnh:** không dùng `--env=testing` vì repo này dùng `phpunit.xml` thiết lập sẵn test connection (MySQL:3319) ở env mặc định — truyền `--env=testing` sẽ override sang một connection không tồn tại và báo `2002 connection refused` ở tất cả TC.
+
+Không thêm TC backend mới — 24.16C là pure FE rendering + mở rộng field API, không đổi nghiệp vụ. TC-01 → TC-06 trong [`HOTFIX2416RepairSerialReadyStatusTest`](tests/Feature/Tasks/HOTFIX2416RepairSerialReadyStatusTest.php) đã pin đủ contract backend.
 
 ### 12.5. Manual QA (24.16C) — pending tester
 
@@ -278,10 +308,34 @@ Không thêm TC backend mới — 24.16C là pure FE rendering + thêm field và
 - [ ] `/my-tasks` → card có serial dismantled/ready → chip "Đã bóc tách" đỏ.
 - [ ] Serial đã hoàn thành sửa thật sự (in_stock + ready) → vẫn hiện "Sẵn bán" xanh.
 - [ ] Serial đang sửa → vẫn hiện "Đang xử lý" vàng.
-- [ ] DevTools → response của `/api/tasks?type=repair` và `/api/device-repairs` có field `serial_imei.status`.
+- [ ] DevTools → response của `/api/tasks?type=repair` chứa `serial_imei.status`, `serial_imei.invoice_id`, `serial_imei.sold_at`, `serial_imei.purchase_return_id`.
+- [ ] DevTools → response của `/api/device-repairs` (index + show) cùng tập field như trên.
 
 ### 12.6. Rủi ro 24.16C
 
-- **API contract broaden, không break:** chỉ thêm field `status` vào select — client cũ không sử dụng vẫn hoạt động.
+- **API contract broaden, không break:** chỉ thêm field vào select — client cũ không sử dụng vẫn hoạt động (Vue templates không bind trường nào sẽ bỏ qua).
 - **Helper accept cả string lẫn object:** giữ backward compat nếu có call site khác trong code không quét được — fallback nhánh string.
 - **Không đụng `SerialAvailabilityService` / disassemble / rollback:** không có khả năng `dismantled` bị "sellable hoá".
+
+### 12.7. Commit & deployment 24.16C
+
+- **Commit SHA — 24.16C-1:** `dc8e07d` — `fix(repairs): badge dismantled serials in Repair/Tasks UI (HOTFIX 24.16C)`
+- **Commit SHA — 24.16C-2:** `d18a0e2` — `fix(repairs): expand serialImei API payload for stock-state guards (HOTFIX 24.16C)`
+- **Push status:** ⚠️ **chưa push** — direct push lên `origin/main` đang bị Claude Code permission rule chặn. User cần (a) `git push origin main` thủ công, hoặc (b) nới permission rule, hoặc (c) đổi sang PR flow.
+- **`git log --oneline -5` (local):**
+  ```
+  d18a0e2 fix(repairs): expand serialImei API payload for stock-state guards (HOTFIX 24.16C)
+  dc8e07d fix(repairs): badge dismantled serials in Repair/Tasks UI (HOTFIX 24.16C)
+  9fbe39f docs(audit): record HOTFIX 24.16 commit SHA and deploy step
+  dea98e1 fix(tasks): sync serial status + repair_status on internal repair complete
+  1987961 docs(audit): record HOTFIX 24.15 commit SHA and deploy step
+  ```
+- **Production deploy step (sau khi push):**
+  ```bash
+  cd /www/wwwroot/kiot.cuongdesign.net
+  git pull origin main          # phải thấy d18a0e2 (24.16C-2) ở top
+  rm -rf public/build
+  npm run build
+  php artisan optimize:clear
+  # Hard reload trình duyệt (Ctrl+Shift+R)
+  ```
