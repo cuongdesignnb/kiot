@@ -221,6 +221,12 @@ Route::prefix('tasks')->group(function () {
     Route::post('/{task}/disassemble-part', [\App\Http\Controllers\Api\TaskController::class, 'disassemblePart'])->middleware('permission:tasks.disassemble');
     // HOTFIX 24.11B — separate rollback endpoint for direction='import' parts.
     Route::post('/{task}/parts/{partId}/rollback-disassembly', [\App\Http\Controllers\Api\TaskController::class, 'rollbackDisassemblyPart'])->middleware('permission:tasks.disassemble');
+    // HOTFIX 24.18 — operator-triggered "đã lắp lại xong" restore for a
+    // stuck dismantled+ready serial. Sits under /tasks because the
+    // service lives in TaskService and the action belongs to the repair
+    // workflow. Permission gate uses tasks.complete (matches who closes
+    // a repair task today).
+    Route::post('/serials/{serial}/restore-reassembled', [\App\Http\Controllers\Api\TaskController::class, 'restoreReassembledSerial'])->middleware('permission:tasks.complete');
     Route::post('/{task}/complete', [\App\Http\Controllers\Api\TaskController::class, 'complete'])->middleware('permission:tasks.complete');
     Route::post('/{task}/progress', [\App\Http\Controllers\Api\TaskController::class, 'updateProgress'])->middleware('permission:tasks.complete');
     Route::post('/{task}/comments', [\App\Http\Controllers\Api\TaskController::class, 'addComment'])->middleware('permission:tasks.view');

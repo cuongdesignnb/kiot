@@ -263,44 +263,53 @@ class TaskService
 
     /**
      * Thay đổi trạng thái công việc.
+     *
+     * HOTFIX 24.16B — wrapped in DB::transaction so SerialImei::lockForUpdate()
+     * inside updateInternalRepairSerialStatus() actually holds the row lock
+     * across the task + serial + recompute writes. Without an outer
+     * transaction, auto-commit releases the lock right after the SELECT and
+     * two concurrent repair completions could race on the same serial.
      */
     public function changeStatus(Task $task, string $newStatus, ?int $changedBy = null): Task
     {
-        $oldStatus = $task->status;
+        return DB::transaction(function () use ($task, $newStatus, $changedBy) {
+            $oldStatus = $task->status;
 
-        $updates = ['status' => $newStatus];
+            $updates = ['status' => $newStatus];
 
-        if ($newStatus === Task::STATUS_COMPLETED) {
-            $updates['completed_at'] = now();
-            $updates['progress'] = 100;
-        }
-        if ($newStatus === Task::STATUS_CANCELLED) {
-            $updates['cancelled_at'] = now();
-        }
+            if ($newStatus === Task::STATUS_COMPLETED) {
+                $updates['completed_at'] = now();
+                $updates['progress'] = 100;
+            }
+            if ($newStatus === Task::STATUS_CANCELLED) {
+                $updates['cancelled_at'] = now();
+            }
 
-        $task->update($updates);
+            $task->update($updates);
 
-        // HOTFIX 24.16 — keep `repair_status` and physical `status` in sync.
-        // The previous version only touched `repair_status`, which left
-        // serials stuck at `status=dismantled` + `repair_status=ready` after
-        // a repair finished — the UI then incorrectly badged them as "Sẵn bán".
-        if ($task->is_repair && $task->serial_imei_id) {
-            $this->updateInternalRepairSerialStatus($task, $newStatus);
-        }
+            // HOTFIX 24.16 — keep `repair_status` and physical `status` in sync.
+            // The previous version only touched `repair_status`, which left
+            // serials stuck at `status=dismantled` + `repair_status=ready`
+            // after a repair finished — the UI then incorrectly badged them
+            // as "Sẵn bán".
+            if ($task->is_repair && $task->serial_imei_id) {
+                $this->updateInternalRepairSerialStatus($task, $newStatus);
+            }
 
-        // Notify assigned employees about status change
-        if ($oldStatus !== $newStatus) {
-            $changerName = $changedBy ? (User::find($changedBy)?->name ?? 'Hệ thống') : 'Hệ thống';
-            $notification = new TaskStatusChangedNotification($task, $oldStatus, $newStatus, $changerName);
+            // Notify assigned employees about status change.
+            if ($oldStatus !== $newStatus) {
+                $changerName = $changedBy ? (User::find($changedBy)?->name ?? 'Hệ thống') : 'Hệ thống';
+                $notification = new TaskStatusChangedNotification($task, $oldStatus, $newStatus, $changerName);
 
-            foreach ($task->assignments as $assignment) {
-                if ($assignment->employee?->user_id) {
-                    User::find($assignment->employee->user_id)?->notify($notification);
+                foreach ($task->assignments as $assignment) {
+                    if ($assignment->employee?->user_id) {
+                        User::find($assignment->employee->user_id)?->notify($notification);
+                    }
                 }
             }
-        }
 
-        return $task->fresh();
+            return $task->fresh();
+        });
     }
 
     /**
@@ -366,6 +375,113 @@ class TaskService
         if ($serial->wasChanged('status') && $serial->product) {
             $serial->product->recomputeFromSerials();
         }
+    }
+
+    /**
+     * HOTFIX 24.18 — operator-triggered "đã lắp lại xong" restore.
+     *
+     * HOTFIX 24.16 only restores status during a Task::changeStatus
+     * transition, which means a serial that was already stuck at
+     * `dismantled + ready` BEFORE that hotfix shipped (or whose
+     * repair task was never re-completed) stays stuck forever. The
+     * UI then shows the contradiction the tester reported on
+     * `MTXNBZJ1WK`: badge says "Sẵn bán" (because repair_status=ready)
+     * while the right-hand column still reads "dismantled", and the
+     * product stock stays at 0.
+     *
+     * This helper is the explicit "hoàn nguyên / đã lắp lại" lever.
+     * It refuses to act unless the serial is genuinely back to a
+     * sellable shape:
+     *   - currently dismantled,
+     *   - repair_status already 'ready' (so we're not bypassing a
+     *     mid-repair task),
+     *   - never sold (invoice_id / sold_at null),
+     *   - never returned to supplier (purchase_return_id null),
+     *   - no live disassembly task on this serial still holding a
+     *     direction='import' part that has output stock in flight.
+     *
+     * On success: bumps the serial to in_stock + recomputes the
+     * product's stock_quantity from the sellable-serial count. Never
+     * mutates inventory_total_cost (moving-avg cost stays put — the
+     * machine had its cost re-credited when the disassembly was
+     * rolled back, if it was; otherwise the existing cost stands).
+     *
+     * Returns a short summary the API layer can echo back so the
+     * operator UI knows whether anything actually changed.
+     *
+     * @return array{restored: bool, reason?: string, serial: SerialImei}
+     */
+    public function restoreReassembledSerial(int $serialId, ?int $userId = null): array
+    {
+        return DB::transaction(function () use ($serialId, $userId) {
+            /** @var SerialImei|null $serial */
+            $serial = SerialImei::lockForUpdate()->find($serialId);
+            if (!$serial) {
+                throw new \RuntimeException('Không tìm thấy serial cần hoàn nguyên.');
+            }
+
+            // Already sellable — no-op, but surface it to the caller
+            // so the operator doesn't think the request failed.
+            if ($serial->status === 'in_stock' && $serial->repair_status === 'ready') {
+                return ['restored' => false, 'reason' => 'already_in_stock', 'serial' => $serial];
+            }
+
+            if ($serial->status !== 'dismantled') {
+                throw new \RuntimeException(
+                    'Serial "' . $serial->serial_number . '" hiện ở trạng thái "' .
+                    $serial->status . '" — chỉ phục hồi được serial đang dismantled.'
+                );
+            }
+            if ($serial->repair_status !== 'ready') {
+                throw new \RuntimeException(
+                    'Phiếu sửa serial "' . $serial->serial_number . '" chưa hoàn tất (repair_status=' .
+                    ($serial->repair_status ?? 'null') . ') — không thể hoàn nguyên.'
+                );
+            }
+            if (!empty($serial->invoice_id) || !empty($serial->sold_at)) {
+                throw new \RuntimeException('Serial đã bán, không thể hoàn nguyên về kho.');
+            }
+            if (!empty($serial->purchase_return_id)) {
+                throw new \RuntimeException('Serial đã trả NCC, không thể hoàn nguyên về kho.');
+            }
+
+            // Active import parts: any open (non-completed, non-cancelled)
+            // repair task that still has a direction='import' part is
+            // physical evidence the machine is still missing pieces.
+            // Completed/cancelled tasks no longer hold the serial open —
+            // those import parts have already been settled into inventory
+            // and the operator is now telling us the body has been put
+            // back together.
+            $activeImport = TaskPart::query()
+                ->where('direction', 'import')
+                ->whereHas('task', function ($q) use ($serialId) {
+                    $q->where('serial_imei_id', $serialId)
+                      ->whereNotIn('status', [Task::STATUS_COMPLETED, Task::STATUS_CANCELLED]);
+                })
+                ->exists();
+            if ($activeImport) {
+                throw new \RuntimeException(
+                    'Vẫn còn phiếu sửa đang mở với linh kiện đã bóc — đóng/hoàn tất phiếu trước khi hoàn nguyên.'
+                );
+            }
+
+            $serial->status = 'in_stock';
+            $serial->save();
+
+            if ($serial->product) {
+                $serial->product->recomputeFromSerials();
+            }
+
+            ActivityLog::create([
+                'user_id'      => $userId,
+                'action'       => 'serial_imei.restore_reassembled',
+                'subject_type' => SerialImei::class,
+                'subject_id'   => $serial->id,
+                'description'  => 'Hoàn nguyên serial sau khi lắp lại: ' . $serial->serial_number,
+            ]);
+
+            return ['restored' => true, 'serial' => $serial->refresh()];
+        });
     }
 
     /**

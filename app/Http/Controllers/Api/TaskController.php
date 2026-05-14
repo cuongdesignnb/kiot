@@ -696,4 +696,33 @@ class TaskController extends Controller
             'warranty_valid' => $valid,
         ]);
     }
+
+    /**
+     * HOTFIX 24.18 — operator-triggered "đã lắp lại xong" restore for a
+     * serial that got stuck at status=dismantled + repair_status=ready.
+     *
+     * Thin wrapper around TaskService::restoreReassembledSerial — that
+     * method is the place all safety guards live. Surface RuntimeException
+     * messages as 422 so the FE can show the cause inline.
+     */
+    public function restoreReassembledSerial(Request $request, SerialImei $serial)
+    {
+        try {
+            $result = $this->service->restoreReassembledSerial($serial->id, $request->user()?->id);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        $serial = $result['serial']->fresh();
+        $serial->load('product:id,stock_quantity,name,sku');
+
+        return response()->json([
+            'message'  => $result['restored']
+                ? 'Đã hoàn nguyên serial về kho.'
+                : 'Serial đã ở trạng thái sẵn bán — không cần hoàn nguyên.',
+            'restored' => $result['restored'],
+            'reason'   => $result['reason'] ?? null,
+            'serial'   => $serial,
+        ]);
+    }
 }
