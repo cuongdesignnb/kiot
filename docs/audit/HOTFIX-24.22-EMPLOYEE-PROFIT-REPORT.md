@@ -141,7 +141,8 @@ $employees = Employee::orderBy('name')->get()   // filter list không có admin
 
 ## 12. Commit & deployment
 
-(Điền sau commit + push.)
+- **Commit SHA:** `d41931a` — `fix(reports): employee report includes admin/user sellers`.
+- **Push status:** ✅ đã push, `origin/main` = `d41931aa8e8e95cfc11221515337fcd6e6f11a61`.
 
 ```bash
 cd /www/wwwroot/kiot.cuongdesign.net
