@@ -182,6 +182,90 @@ const exportSupplierTab = (supplier, tab) => {
     window.location.assign(url);
 };
 
+// ═══ HOTFIX 24.17 — Modal xuất file công nợ NCC ═══
+const showDebtExportModal = ref(false);
+const debtExportSupplier = ref(null);
+const debtExportForm = reactive({
+    date_preset: 'all',
+    date_from: '',
+    date_to: '',
+    include_detail: true,
+    columns: {
+        unit: true,
+        quantity: true,
+        unit_price: true,
+        discount: true,
+        vat: true,
+        cost: true,
+        line_total: true,
+        note: true,
+    },
+});
+
+const debtExportPresets = [
+    { value: 'today', label: 'Hôm nay' },
+    { value: 'this_week', label: 'Tuần này' },
+    { value: 'last_7_days', label: '7 ngày qua' },
+    { value: 'last_30_days', label: '30 ngày qua' },
+    { value: 'this_month', label: 'Tháng này' },
+    { value: 'last_month', label: 'Tháng trước' },
+    { value: 'this_quarter', label: 'Quý này' },
+    { value: 'this_year', label: 'Năm nay' },
+    { value: 'all', label: 'Toàn thời gian' },
+    { value: 'custom', label: 'Lựa chọn khác' },
+];
+
+const debtExportColumnOptions = [
+    { key: 'unit', label: 'ĐVT' },
+    { key: 'quantity', label: 'Số lượng' },
+    { key: 'unit_price', label: 'Đơn giá' },
+    { key: 'discount', label: 'Giảm giá' },
+    { key: 'vat', label: 'VAT' },
+    { key: 'cost', label: 'Giá nhập/trả' },
+    { key: 'line_total', label: 'Thành tiền' },
+    { key: 'note', label: 'Ghi chú dòng' },
+];
+
+const openSupplierDebtExportModal = (supplier) => {
+    if (!supplier || !supplier.id) return;
+    debtExportSupplier.value = supplier;
+    // Reset form to defaults each time the modal opens — không leak state
+    // sang NCC khác.
+    debtExportForm.date_preset = 'all';
+    debtExportForm.date_from = '';
+    debtExportForm.date_to = '';
+    debtExportForm.include_detail = true;
+    debtExportColumnOptions.forEach(o => { debtExportForm.columns[o.key] = true; });
+    showDebtExportModal.value = true;
+};
+
+const closeDebtExportModal = () => {
+    showDebtExportModal.value = false;
+    debtExportSupplier.value = null;
+};
+
+const confirmDebtExport = () => {
+    const sup = debtExportSupplier.value;
+    if (!sup || !sup.id) return;
+
+    const params = new URLSearchParams();
+    params.set('date_preset', debtExportForm.date_preset);
+    if (debtExportForm.date_preset === 'custom') {
+        if (debtExportForm.date_from) params.set('date_from', debtExportForm.date_from);
+        if (debtExportForm.date_to) params.set('date_to', debtExportForm.date_to);
+    }
+    params.set('include_detail', debtExportForm.include_detail ? '1' : '0');
+    if (debtExportForm.include_detail) {
+        debtExportColumnOptions.forEach(o => {
+            if (debtExportForm.columns[o.key]) params.append('columns[]', o.key);
+        });
+    }
+
+    const url = `/api/suppliers/${sup.id}/export-debt?${params.toString()}`;
+    window.location.assign(url);
+    closeDebtExportModal();
+};
+
 const setSupplierTab = async (id, tab) => {
     supplierTabs[id] = tab;
     if (tab === 'history' && !supplierHistory[id]) {
@@ -1054,7 +1138,7 @@ const submitActivate = (supplier) => {
                                                         <button
                                                             v-if="supplier?.id"
                                                             type="button"
-                                                            @click.stop="exportSupplierTab(supplier, 'debt')"
+                                                            @click.stop="openSupplierDebtExportModal(supplier)"
                                                             class="text-gray-600 bg-white border border-gray-300 rounded px-3 py-1.5 text-[13px] font-semibold hover:bg-gray-50 flex items-center gap-1"
                                                         >
                                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
@@ -2102,6 +2186,87 @@ const submitActivate = (supplier) => {
                         :disabled="deactivateConfirm.processing"
                         class="px-5 py-2 bg-red-600 text-white rounded text-sm font-bold hover:bg-red-700 disabled:opacity-50"
                     >{{ deactivateConfirm.processing ? 'Đang xử lý...' : 'Xác nhận ngừng' }}</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- HOTFIX 24.17 — Modal xuất file công nợ NCC -->
+        <div v-if="showDebtExportModal"
+             class="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+             @click.self="closeDebtExportModal">
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+                <div class="flex items-center justify-between px-6 py-4 border-b">
+                    <h2 class="text-lg font-bold text-gray-800">Xuất file công nợ</h2>
+                    <button @click="closeDebtExportModal" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+                </div>
+
+                <div class="px-6 py-5 space-y-5 text-sm">
+                    <div v-if="debtExportSupplier" class="bg-gray-50 px-3 py-2 rounded">
+                        <span class="text-gray-500">Nhà cung cấp:</span>
+                        <span class="font-semibold text-gray-800 ml-1">{{ debtExportSupplier.name }}</span>
+                        <span v-if="debtExportSupplier.code" class="text-gray-400 ml-1">({{ debtExportSupplier.code }})</span>
+                    </div>
+
+                    <!-- Thời gian -->
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-700 mb-2">Thời gian</h3>
+                        <div class="flex flex-wrap gap-2">
+                            <button v-for="p in debtExportPresets" :key="p.value"
+                                type="button"
+                                @click="debtExportForm.date_preset = p.value"
+                                :class="debtExportForm.date_preset === p.value
+                                    ? 'bg-blue-600 text-white border-blue-600'
+                                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'"
+                                class="px-3 py-1.5 text-xs font-semibold border rounded transition">
+                                {{ p.label }}
+                            </button>
+                        </div>
+                        <div v-if="debtExportForm.date_preset === 'custom'" class="mt-3 grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-600 mb-1">Từ ngày</label>
+                                <input v-model="debtExportForm.date_from" type="date"
+                                    class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-blue-500 outline-none" />
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-600 mb-1">Đến ngày</label>
+                                <input v-model="debtExportForm.date_to" type="date"
+                                    class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-blue-500 outline-none" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Thông tin xuất file -->
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-700 mb-2">Thông tin xuất file</h3>
+                        <div class="bg-gray-50 border border-gray-200 rounded px-3 py-2 text-xs text-gray-600 mb-3">
+                            <span class="font-semibold text-gray-700">Tổng quan luôn có:</span>
+                            Thời gian, Mã chứng từ, Loại, Giá trị, Nợ cần trả nhà cung cấp, Ghi chú.
+                        </div>
+                        <label class="flex items-center gap-2 mb-2 cursor-pointer">
+                            <input type="checkbox" v-model="debtExportForm.include_detail" class="rounded" />
+                            <span class="font-semibold text-gray-700">Chi tiết từng hàng giao dịch</span>
+                        </label>
+                        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 pl-6"
+                             :class="{ 'opacity-50 pointer-events-none': !debtExportForm.include_detail }">
+                            <label v-for="o in debtExportColumnOptions" :key="o.key"
+                                class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                                <input type="checkbox" v-model="debtExportForm.columns[o.key]" class="rounded" />
+                                <span>{{ o.label }}</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex justify-end gap-3 px-6 py-4 border-t bg-gray-50 rounded-b-xl">
+                    <button @click="closeDebtExportModal"
+                        class="px-5 py-2 border border-gray-300 rounded text-sm font-semibold hover:bg-gray-100">
+                        Bỏ qua
+                    </button>
+                    <button @click="confirmDebtExport"
+                        :disabled="debtExportForm.date_preset === 'custom' && (!debtExportForm.date_from || !debtExportForm.date_to)"
+                        class="px-5 py-2 bg-blue-600 text-white rounded text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">
+                        Đồng ý
+                    </button>
                 </div>
             </div>
         </div>

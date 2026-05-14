@@ -252,16 +252,208 @@ class SupplierController extends Controller
         );
     }
 
-    public function exportDebtHistory($id)
+    /**
+     * HOTFIX 24.17 — export công nợ NCC với date filter + chọn cột.
+     *
+     * Backwards-compat: nếu không truyền query nào (date_preset, date_from,
+     * date_to, include_detail, columns) thì giữ format CSV cũ pin trong
+     * HOTFIX 24.14 test (`Mã chứng từ`, `Còn nợ`, ...). Có query → headers
+     * mới (`Thời gian`, `Nợ cần trả nhà cung cấp`) + filter ngày + chọn
+     * cột detail.
+     *
+     * `debt_remain` được tính trên **full ledger** trước khi filter — đảo
+     * thứ tự rows không làm sai số dư.
+     */
+    public function exportDebtHistory($id, Request $request)
     {
-        $data = $this->debtTransactions($id)->getData(true);
+        // Nếu không có bất kỳ query nào → fast path legacy format.
+        $hasQuery = $request->hasAny(['date_preset', 'date_from', 'date_to', 'include_detail', 'columns']);
+
+        $data    = $this->debtTransactions($id)->getData(true);
         $entries = $data['entries'] ?? $data;
 
-        return \App\Services\CsvService::export(
-            ['Mã chứng từ', 'Loại', 'Giá trị', 'Còn nợ', 'Ngày', 'Ghi chú'],
-            collect($entries)->map(fn($t) => [$t['code'], $t['type_label'], $t['amount'], $t['debt_remain'], $t['date'] ?? ($t['created_at'] ?? ''), $t['note'] ?? '']),
-            "cong_no_ncc_{$id}.csv"
-        );
+        if (!$hasQuery) {
+            return \App\Services\CsvService::export(
+                ['Mã chứng từ', 'Loại', 'Giá trị', 'Còn nợ', 'Ngày', 'Ghi chú'],
+                collect($entries)->map(fn($t) => [
+                    $t['code'],
+                    $t['type_label'],
+                    $t['amount'],
+                    $t['debt_remain'],
+                    $t['date'] ?? ($t['created_at'] ?? ''),
+                    $t['note'] ?? '',
+                ]),
+                "cong_no_ncc_{$id}.csv"
+            );
+        }
+
+        $validated = $request->validate([
+            'date_preset'    => 'nullable|string|in:today,this_week,last_7_days,last_30_days,this_month,last_month,this_quarter,this_year,all,custom',
+            'date_from'      => 'nullable|date',
+            'date_to'        => 'nullable|date',
+            'include_detail' => 'nullable|in:0,1,true,false',
+            'columns'        => 'nullable|array',
+            'columns.*'      => 'string|in:unit,quantity,unit_price,discount,vat,cost,line_total,note',
+        ]);
+
+        $preset = $validated['date_preset'] ?? 'all';
+        [$from, $to] = $this->resolveDebtExportRange($preset, $validated['date_from'] ?? null, $validated['date_to'] ?? null);
+
+        if ($from && $to && $from->greaterThan($to)) {
+            return response()->json(['message' => 'date_from phải <= date_to'], 422);
+        }
+
+        $includeDetail = in_array((string) ($validated['include_detail'] ?? '0'), ['1', 'true'], true);
+        $selectedCols  = array_values($validated['columns'] ?? []);
+
+        // Filter theo created_at (đã được tính debt_remain ở full ledger).
+        $filtered = collect($entries)->filter(function ($t) use ($from, $to) {
+            if (!$from && !$to) return true;
+            $raw = $t['created_at'] ?? $t['date'] ?? null;
+            if (!$raw) return false;
+            try {
+                $ts = \Carbon\Carbon::parse($raw);
+            } catch (\Throwable $e) {
+                return false;
+            }
+            if ($from && $ts->lessThan($from)) return false;
+            if ($to && $ts->greaterThan($to)) return false;
+            return true;
+        })->values();
+
+        $headers = ['Thời gian', 'Mã chứng từ', 'Loại', 'Giá trị', 'Nợ cần trả nhà cung cấp', 'Ghi chú'];
+
+        $detailColumnMap = [
+            'unit'       => 'ĐVT',
+            'quantity'   => 'Số lượng',
+            'unit_price' => 'Đơn giá',
+            'discount'   => 'Giảm giá',
+            'vat'        => 'VAT',
+            'cost'       => 'Giá nhập/trả',
+            'line_total' => 'Thành tiền',
+            'note'       => 'Ghi chú dòng',
+        ];
+        $appendDetailCols = $includeDetail
+            ? array_values(array_intersect_key($detailColumnMap, array_flip($selectedCols)))
+            : [];
+        $headers = array_merge($headers, $appendDetailCols);
+
+        $rows = collect();
+        foreach ($filtered as $t) {
+            $createdRaw = $t['created_at'] ?? $t['date'] ?? '';
+            $when = $createdRaw ? \Carbon\Carbon::parse($createdRaw)->format('d/m/Y H:i') : '';
+            $base = [
+                $when,
+                $t['code'] ?? '',
+                $t['type_label'] ?? '',
+                $t['amount'] ?? 0,
+                $t['debt_remain'] ?? 0,
+                $t['note'] ?? '',
+            ];
+            $rows->push(array_merge($base, array_fill(0, count($appendDetailCols), '')));
+
+            if ($includeDetail && count($appendDetailCols) > 0) {
+                foreach ($this->loadDebtExportDetailLines($t) as $line) {
+                    $detail = [];
+                    foreach ($selectedCols as $col) {
+                        if (!array_key_exists($col, $detailColumnMap)) continue;
+                        $detail[] = $line[$col] ?? '';
+                    }
+                    $rows->push(array_merge(
+                        ['', '', '', '', '', ''], // chừa cột tổng quan
+                        $detail
+                    ));
+                }
+            }
+        }
+
+        return \App\Services\CsvService::export($headers, $rows, "cong_no_ncc_{$id}.csv");
+    }
+
+    private function resolveDebtExportRange(string $preset, ?string $from, ?string $to): array
+    {
+        $now = \Carbon\Carbon::now();
+        switch ($preset) {
+            case 'today':
+                return [$now->copy()->startOfDay(), $now->copy()->endOfDay()];
+            case 'this_week':
+                return [$now->copy()->startOfWeek(), $now->copy()->endOfWeek()];
+            case 'last_7_days':
+                return [$now->copy()->subDays(6)->startOfDay(), $now->copy()->endOfDay()];
+            case 'last_30_days':
+                return [$now->copy()->subDays(29)->startOfDay(), $now->copy()->endOfDay()];
+            case 'this_month':
+                return [$now->copy()->startOfMonth(), $now->copy()->endOfMonth()];
+            case 'last_month':
+                $lm = $now->copy()->subMonthNoOverflow();
+                return [$lm->copy()->startOfMonth(), $lm->copy()->endOfMonth()];
+            case 'this_quarter':
+                return [$now->copy()->startOfQuarter(), $now->copy()->endOfQuarter()];
+            case 'this_year':
+                return [$now->copy()->startOfYear(), $now->copy()->endOfYear()];
+            case 'custom':
+                $f = $from ? \Carbon\Carbon::parse($from)->startOfDay() : null;
+                $t = $to ? \Carbon\Carbon::parse($to)->endOfDay() : null;
+                return [$f, $t];
+            case 'all':
+            default:
+                return [null, null];
+        }
+    }
+
+    private function loadDebtExportDetailLines(array $entry): array
+    {
+        $id = $entry['id'] ?? '';
+        if (!is_string($id) || !str_contains($id, '-')) return [];
+
+        [$prefix, $rawId] = explode('-', $id, 2);
+        $rawId = (int) $rawId;
+        if ($rawId <= 0) return [];
+
+        if ($prefix === 'pur') {
+            $items = \App\Models\PurchaseItem::where('purchase_id', $rawId)->get();
+            return $items->map(fn($i) => [
+                'unit'       => '',
+                'quantity'   => $i->quantity ?? 0,
+                'unit_price' => $i->price ?? 0,
+                'discount'   => $i->discount ?? 0,
+                'vat'        => '',
+                'cost'       => $i->price ?? 0,
+                'line_total' => $i->subtotal ?? 0,
+                'note'       => $i->product_name ?? $i->product_code ?? '',
+            ])->all();
+        }
+
+        if ($prefix === 'pret') {
+            $items = \App\Models\PurchaseReturnItem::where('purchase_return_id', $rawId)->get();
+            return $items->map(fn($i) => [
+                'unit'       => '',
+                'quantity'   => $i->quantity ?? 0,
+                'unit_price' => $i->price ?? 0,
+                'discount'   => '',
+                'vat'        => '',
+                'cost'       => $i->price ?? 0,
+                'line_total' => $i->subtotal ?? 0,
+                'note'       => $i->product_name ?? $i->product_code ?? '',
+            ])->all();
+        }
+
+        if ($prefix === 'inv') {
+            $items = \App\Models\InvoiceItem::where('invoice_id', $rawId)->get();
+            return $items->map(fn($i) => [
+                'unit'       => '',
+                'quantity'   => $i->quantity ?? 0,
+                'unit_price' => $i->price ?? 0,
+                'discount'   => $i->discount ?? 0,
+                'vat'        => '',
+                'cost'       => $i->price ?? 0,
+                'line_total' => ($i->price ?? 0) * ($i->quantity ?? 0) - ($i->discount ?? 0),
+                'note'       => $i->product_name ?? '',
+            ])->all();
+        }
+
+        // payment, adjustment, discount, customer_payment, return, ... → no line detail.
+        return [];
     }
 
     public function exportPurchaseHistory($id)
