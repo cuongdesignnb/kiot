@@ -123,7 +123,8 @@ Synthetic row **không** xuất hiện (TC-04 pin). Layout không bị "1 dòng 
 
 ## 8. Commit & deployment
 
-(Sẽ điền sau khi commit + push.)
+- **Commit SHA:** `219cdb5` — `fix(suppliers): include purchase discounts in debt Excel export`.
+- **Push status:** ✅ đã push, `origin/main` = `219cdb545a00f2116b24dd7eecb7c2b3a9319e4c`.
 
 ```bash
 cd /www/wwwroot/kiot.cuongdesign.net
