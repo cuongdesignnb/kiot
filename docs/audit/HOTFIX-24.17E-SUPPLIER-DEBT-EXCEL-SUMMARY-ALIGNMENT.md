@@ -89,7 +89,8 @@ $sheet->setCellValue('L' . $row, $credit);
 
 ## 7. Commit & deployment
 
-(Sẽ điền sau khi commit + push.)
+- **Commit SHA:** `9d83141` — `fix(suppliers): align debt Excel summary with debit credit columns`.
+- **Push status:** ✅ đã push, `origin/main` = `9d8314155b2abda1a992b0ed73a88875c7314054`.
 
 ```bash
 cd /www/wwwroot/kiot.cuongdesign.net
