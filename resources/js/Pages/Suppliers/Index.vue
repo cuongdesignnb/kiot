@@ -187,6 +187,9 @@ const showDebtExportModal = ref(false);
 const debtExportSupplier = ref(null);
 const debtExportForm = reactive({
     date_preset: 'all',
+    // HOTFIX 24.17C — Vietnamese dd/mm/yyyy text inputs. We keep the
+    // raw display value here and convert to ISO on submit so backend
+    // can never misread an ambiguous M/D/Y string.
     date_from: '',
     date_to: '',
     include_detail: true,
@@ -200,6 +203,28 @@ const debtExportForm = reactive({
         line_total: true,
         note: true,
     },
+});
+
+// Returns ISO `YYYY-MM-DD` if `value` matches dd/mm/yyyy AND the date
+// is a real calendar day; otherwise returns null. Used to gate the
+// "Đồng ý" button and to normalize the value before hitting the API.
+const parseVietnameseDateToIso = (value) => {
+    if (!value) return null;
+    const m = String(value).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (!m) return null;
+    const dd = parseInt(m[1], 10);
+    const mm = parseInt(m[2], 10);
+    const yyyy = parseInt(m[3], 10);
+    if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+    const probe = new Date(yyyy, mm - 1, dd);
+    if (probe.getFullYear() !== yyyy || probe.getMonth() !== mm - 1 || probe.getDate() !== dd) return null;
+    return `${yyyy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+};
+
+const debtExportCustomDatesValid = computed(() => {
+    if (debtExportForm.date_preset !== 'custom') return true;
+    return !!parseVietnameseDateToIso(debtExportForm.date_from)
+        && !!parseVietnameseDateToIso(debtExportForm.date_to);
 });
 
 const debtExportPresets = [
@@ -261,6 +286,17 @@ const confirmDebtExport = () => {
         debtExportColumnOptions.forEach(o => {
             if (debtExportForm.columns[o.key]) params.append('columns[]', o.key);
         });
+    }
+
+    // HOTFIX 24.17C — convert dd/mm/yyyy back to ISO right before
+    // hitting the API so the backend never has to guess. The custom
+    // branch above wrote raw user input; rewrite the two params here.
+    if (debtExportForm.date_preset === 'custom') {
+        const isoFrom = parseVietnameseDateToIso(debtExportForm.date_from);
+        const isoTo   = parseVietnameseDateToIso(debtExportForm.date_to);
+        if (!isoFrom || !isoTo) return; // guarded by disabled button — defensive
+        params.set('date_from', isoFrom);
+        params.set('date_to', isoTo);
     }
 
     const url = `/api/suppliers/${sup.id}/export-debt?${params.toString()}`;
@@ -2226,14 +2262,24 @@ const submitActivate = (supplier) => {
                         <div v-if="debtExportForm.date_preset === 'custom'" class="mt-3 grid grid-cols-2 gap-3">
                             <div>
                                 <label class="block text-xs font-semibold text-gray-600 mb-1">Từ ngày</label>
-                                <input v-model="debtExportForm.date_from" type="date"
-                                    class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-blue-500 outline-none" />
+                                <input v-model="debtExportForm.date_from" type="text" inputmode="numeric"
+                                    placeholder="dd/mm/yyyy" maxlength="10"
+                                    class="w-full border rounded px-3 py-2 text-sm focus:border-blue-500 outline-none"
+                                    :class="debtExportForm.date_from && !parseVietnameseDateToIso(debtExportForm.date_from)
+                                        ? 'border-red-400' : 'border-gray-300'" />
                             </div>
                             <div>
                                 <label class="block text-xs font-semibold text-gray-600 mb-1">Đến ngày</label>
-                                <input v-model="debtExportForm.date_to" type="date"
-                                    class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-blue-500 outline-none" />
+                                <input v-model="debtExportForm.date_to" type="text" inputmode="numeric"
+                                    placeholder="dd/mm/yyyy" maxlength="10"
+                                    class="w-full border rounded px-3 py-2 text-sm focus:border-blue-500 outline-none"
+                                    :class="debtExportForm.date_to && !parseVietnameseDateToIso(debtExportForm.date_to)
+                                        ? 'border-red-400' : 'border-gray-300'" />
                             </div>
+                            <p v-if="debtExportForm.date_preset === 'custom' && !debtExportCustomDatesValid"
+                               class="col-span-2 text-xs text-red-500 -mt-1">
+                                Nhập ngày theo định dạng <code>dd/mm/yyyy</code> (ví dụ <code>30/04/2026</code>).
+                            </p>
                         </div>
                     </div>
 
@@ -2265,7 +2311,7 @@ const submitActivate = (supplier) => {
                         Bỏ qua
                     </button>
                     <button @click="confirmDebtExport"
-                        :disabled="debtExportForm.date_preset === 'custom' && (!debtExportForm.date_from || !debtExportForm.date_to)"
+                        :disabled="!debtExportCustomDatesValid"
                         class="px-5 py-2 bg-blue-600 text-white rounded text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">
                         Đồng ý
                     </button>

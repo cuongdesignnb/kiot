@@ -360,18 +360,44 @@ class SupplierDebtExcelExportService
         }
 
         if ($prefix === 'inv') {
-            return InvoiceItem::where('invoice_id', $rawId)->get()
-                ->map(fn($i) => [
-                    'code'       => '',
-                    'name'       => $i->product_name ?? '',
+            // HOTFIX 24.17C — invoice_items table only stores product_id +
+            // quantity + price + cost_price + serial. Pull product code /
+            // name via the relation so the Excel detail line is not blank.
+            $items = InvoiceItem::with('product:id,sku,name')
+                ->where('invoice_id', $rawId)
+                ->get();
+            return $items->map(function ($i) {
+                $product  = $i->product;
+                $code     = $product?->sku ?? '';
+                $name     = $product?->name ?? '';
+                // Serial is stored as plain text (often comma-separated for
+                // multi-quantity sales) — append in italics-ish hint so the
+                // operator can audit which physical unit left the warehouse.
+                $serial   = trim((string) ($i->serial ?? ''));
+                if ($serial !== '' && $name !== '') {
+                    $name = $name . ' (' . $serial . ')';
+                } elseif ($serial !== '' && $name === '') {
+                    $name = $serial;
+                }
+                $quantity = (int) ($i->quantity ?? 0);
+                $price    = (float) ($i->price ?? 0);
+                // cost_price is the per-unit cost snapshot from sale time
+                // (added by migration 2026_03_27). It's the closest analog
+                // to "giá nhập/trả" so we surface it directly — fall back
+                // to the selling price only if it's not stored.
+                $costPrice = $i->cost_price !== null ? (float) $i->cost_price : $price;
+                return [
+                    'code'       => $code,
+                    'name'       => $name,
                     'unit'       => '',
-                    'quantity'   => $i->quantity ?? 0,
-                    'unit_price' => $i->price ?? 0,
-                    'discount'   => $i->discount ?? 0,
+                    'quantity'   => $quantity,
+                    'unit_price' => $price,
+                    'discount'   => 0, // invoice_items has no per-line discount column
                     'vat'        => '',
-                    'cost'       => $i->price ?? 0,
-                    'line_total' => ($i->price ?? 0) * ($i->quantity ?? 0) - ($i->discount ?? 0),
-                ])->all();
+                    'cost'       => $costPrice,
+                    'line_total' => $price * $quantity,
+                ];
+            })->all();
         }
 
         return [];

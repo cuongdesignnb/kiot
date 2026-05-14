@@ -287,15 +287,34 @@ class SupplierController extends Controller
             );
         }
 
+        // HOTFIX 24.17C — accept Vietnamese `dd/mm/yyyy` alongside ISO
+        // `YYYY-MM-DD` so the modal's localized inputs can be passed
+        // through to the backend without ambiguity. We bypass Laravel's
+        // built-in `date` rule because that one parses `01/04/2026` as
+        // US-format (Jan 4) on PHP, which silently flips day↔month.
         $validated = $request->validate([
             'date_preset'    => 'nullable|string|in:today,this_week,last_7_days,last_30_days,this_month,last_month,this_quarter,this_year,all,custom',
-            'date_from'      => 'nullable|date',
-            'date_to'        => 'nullable|date',
+            'date_from'      => ['nullable', 'string', 'regex:#^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/\d{4})$#'],
+            'date_to'        => ['nullable', 'string', 'regex:#^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/\d{4})$#'],
             'include_detail' => 'nullable|in:0,1,true,false',
             'columns'        => 'nullable|array',
             'columns.*'      => 'string|in:unit,quantity,unit_price,discount,vat,cost,line_total,note',
             'format'         => 'nullable|string|in:csv,xlsx',
+        ], [
+            'date_from.regex' => 'Ngày bắt đầu phải có định dạng dd/mm/yyyy hoặc YYYY-MM-DD.',
+            'date_to.regex'   => 'Ngày kết thúc phải có định dạng dd/mm/yyyy hoặc YYYY-MM-DD.',
         ]);
+
+        // Reject impossible calendar dates (e.g. 31/02/2026) — the regex
+        // above is intentionally permissive about ranges.
+        foreach (['date_from', 'date_to'] as $k) {
+            if (!empty($validated[$k]) && $this->parseExportDate($validated[$k]) === null) {
+                return response()->json([
+                    'message' => "Ngày {$k} không hợp lệ.",
+                    'errors'  => [$k => ["Ngày {$k} không hợp lệ."]],
+                ], 422);
+            }
+        }
 
         $preset = $validated['date_preset'] ?? 'all';
         [$from, $to] = $this->resolveDebtExportRange($preset, $validated['date_from'] ?? null, $validated['date_to'] ?? null);
@@ -411,13 +430,34 @@ class SupplierController extends Controller
             case 'this_year':
                 return [$now->copy()->startOfYear(), $now->copy()->endOfYear()];
             case 'custom':
-                $f = $from ? \Carbon\Carbon::parse($from)->startOfDay() : null;
-                $t = $to ? \Carbon\Carbon::parse($to)->endOfDay() : null;
-                return [$f, $t];
+                $f = $this->parseExportDate($from);
+                $t = $this->parseExportDate($to);
+                return [$f ? $f->startOfDay() : null, $t ? $t->endOfDay() : null];
             case 'all':
             default:
                 return [null, null];
         }
+    }
+
+    /**
+     * HOTFIX 24.17C — strict parser: ISO `YYYY-MM-DD` and Vietnamese
+     * `dd/mm/yyyy` only. Never falls back to Carbon::parse() (which
+     * would silently flip `01/04/2026` to Jan 4 on PHP). Returns null
+     * for any unparseable / impossible calendar date (e.g. 31/02).
+     */
+    private function parseExportDate(?string $value): ?\Carbon\Carbon
+    {
+        if (!$value) return null;
+        $value = trim($value);
+        if (preg_match('#^(\d{4})-(\d{1,2})-(\d{1,2})$#', $value, $m)) {
+            $y = (int) $m[1]; $mo = (int) $m[2]; $d = (int) $m[3];
+        } elseif (preg_match('#^(\d{1,2})/(\d{1,2})/(\d{4})$#', $value, $m)) {
+            $d = (int) $m[1]; $mo = (int) $m[2]; $y = (int) $m[3];
+        } else {
+            return null;
+        }
+        if (!checkdate($mo, $d, $y)) return null;
+        return \Carbon\Carbon::create($y, $mo, $d, 0, 0, 0);
     }
 
     private function loadDebtExportDetailLines(array $entry): array
