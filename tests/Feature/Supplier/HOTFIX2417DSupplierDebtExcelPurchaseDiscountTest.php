@@ -214,9 +214,13 @@ class HOTFIX2417DSupplierDebtExcelPurchaseDiscountTest extends TestCase
         }
         $this->assertNotNull($docRow, 'purchase document row must appear');
         $this->assertNotNull($discRow, 'discount summary row must appear');
-        // Document row: Ghi nợ = ledger debit (supplier_effect of the
-        // purchase entry, which the controller pushes as total_amount).
-        $this->assertEquals(10_000_000, (int) ($docRow['K'] ?? 0), 'Ghi nợ on doc row must match ledger debit');
+        // Document row Ghi nợ = NET of purchases.discount. HOTFIX 24.17F
+        // promoted this from "match ledger gross (10M)" to "match what
+        // the detail rows sum to" so the body is internally consistent
+        // (item subtotal 10M + discount row -1M = 9M). The legacy
+        // ledger still emits a 10M gross supplier_effect; Excel renders
+        // the display-net view instead. See HOTFIX 24.17F audit doc.
+        $this->assertEquals(9_000_000, (int) ($docRow['K'] ?? 0), 'Ghi nợ on doc row must match net of purchases.discount');
         $this->assertEmpty($docRow['L'] ?? '', 'Ghi có on doc row must remain empty for a purchase');
         // Discount summary row must NOT carry Ghi nợ / Ghi có.
         $this->assertEmpty($discRow['K'] ?? '', 'discount summary row must NOT touch Ghi nợ');

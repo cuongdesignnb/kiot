@@ -36,6 +36,13 @@ class SupplierDebtExcelExportService
     /** @var array<string,bool> */
     private array $columns;
     private bool $includeDetail;
+    /**
+     * HOTFIX 24.17F — purchase_id => purchases.discount.
+     * Preloaded once in build() so displayEffectFor() can subtract
+     * doc-level discount without going N+1 across the entry list.
+     * @var array<int,float>
+     */
+    private array $purchaseDiscounts = [];
 
     public const SHEET_NAME    = 'CNCT';
     public const REPORT_TITLE  = 'Công nợ chi tiết nhà cung cấp';
@@ -101,13 +108,20 @@ class SupplierDebtExcelExportService
 
     public function build(): Spreadsheet
     {
+        $this->preloadPurchaseDiscounts();
+
         // Filter entries into the display window — but compute opening
         // / period totals against the FULL ledger we were handed.
+        // HOTFIX 24.17F — use displayEffectFor() everywhere (net of
+        // purchases.discount for `pur-*` entries) so the doc rows in
+        // the body and the period totals in the summary always agree
+        // with each other, even when the underlying ledger pushes a
+        // gross supplier_effect.
         $inWindow = array_values(array_filter($this->entries, fn($e) => $this->isInWindow($e)));
         $opening  = $this->computeOpeningDebt();
         $debit    = 0; $credit = 0;
         foreach ($inWindow as $e) {
-            $eff = (float) ($e['supplier_effect'] ?? 0);
+            $eff = $this->displayEffectFor($e);
             if ($eff > 0) $debit  += $eff;
             if ($eff < 0) $credit += -$eff;
         }
@@ -126,11 +140,56 @@ class SupplierDebtExcelExportService
         $row = $this->writeStoreHeader($sheet, $row);
         $row = $this->writeTitle($sheet, $row);
         $row = $this->writeSupplierAndSummary($sheet, $row, $opening, $debit, $credit, $closing);
-        $row = $this->writeTableHeader($sheet, $row);
-        $sheet->freezePane('A' . ($row));
-        $this->writeRows($sheet, $row, $inWindow);
+        $headerRow = $this->writeTableHeader($sheet, $row) - 1; // row containing the header itself
+        $sheet->freezePane('A' . ($headerRow + 1));
+        $lastBodyRow = $this->writeRows($sheet, $headerRow + 1, $inWindow);
+        $this->applyTableBorders($sheet, $headerRow, $lastBodyRow);
+        $this->writeFooter($sheet, $lastBodyRow + 3);
 
         return $spreadsheet;
+    }
+
+    private function preloadPurchaseDiscounts(): void
+    {
+        $ids = [];
+        foreach ($this->entries as $e) {
+            $id = $e['id'] ?? '';
+            if (is_string($id) && str_starts_with($id, 'pur-')) {
+                $raw = (int) substr($id, 4);
+                if ($raw > 0) $ids[] = $raw;
+            }
+        }
+        if (empty($ids)) return;
+        $this->purchaseDiscounts = \App\Models\Purchase::whereIn('id', array_unique($ids))
+            ->pluck('discount', 'id')
+            ->map(fn($v) => (float) $v)
+            ->all();
+    }
+
+    /**
+     * HOTFIX 24.17F — net supplier_effect used for Excel rendering.
+     * For a purchase row, subtract `purchases.discount` so the doc K
+     * (Ghi nợ) value equals the sum of the detail rows' Thành tiền
+     * (line subtotals + a negative "Giảm giá hóa đơn"). Other entry
+     * types pass through unchanged.
+     *
+     * Important — this is a *display* effect only. The underlying
+     * ledger (debt_remain) is computed elsewhere and not touched.
+     * If the ledger ever drifts from this view, fix it in a separate
+     * core-ledger hotfix.
+     */
+    private function displayEffectFor(array $entry): float
+    {
+        $effect = (float) ($entry['supplier_effect'] ?? 0);
+        $id     = $entry['id'] ?? '';
+        if (is_string($id) && str_starts_with($id, 'pur-')) {
+            $rawId = (int) substr($id, 4);
+            $docDisc = $this->purchaseDiscounts[$rawId] ?? 0.0;
+            if ($docDisc > 0) {
+                $effect -= $docDisc;
+            }
+        }
+        return $effect;
     }
 
     private function writeStoreHeader($sheet, int $row): int
@@ -247,7 +306,13 @@ class SupplierDebtExcelExportService
         return $row + 1;
     }
 
-    private function writeRows($sheet, int $startRow, array $entries): void
+    /**
+     * HOTFIX 24.17F — returns the index of the LAST row written so the
+     * caller can stamp outer table borders and place the footer.
+     * Per-row border calls were removed here; borders are now applied
+     * in one sweep by applyTableBorders() so the body reads cleanly.
+     */
+    private function writeRows($sheet, int $startRow, array $entries): int
     {
         $row = $startRow;
         foreach ($entries as $e) {
@@ -257,9 +322,10 @@ class SupplierDebtExcelExportService
             } catch (\Throwable $ex) {
                 $whenStr = (string) $created;
             }
-            $supplierEffect = (float) ($e['supplier_effect'] ?? 0);
-            $debitVal       = $supplierEffect > 0 ? $supplierEffect : null;
-            $creditVal      = $supplierEffect < 0 ? -$supplierEffect : null;
+            // HOTFIX 24.17F — net effect for purchases (gross − doc discount).
+            $eff       = $this->displayEffectFor($e);
+            $debitVal  = $eff > 0 ? $eff : null;
+            $creditVal = $eff < 0 ? -$eff : null;
 
             // Document header row.
             $sheet->setCellValue('A' . $row, $whenStr);
@@ -271,8 +337,6 @@ class SupplierDebtExcelExportService
             $sheet->getStyle('A' . $row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
             $sheet->getStyle('K' . $row . ':L' . $row)
                 ->getNumberFormat()->setFormatCode('#,##0');
-            $sheet->getStyle('A' . $row . ':L' . $row)->getBorders()->getAllBorders()
-                ->setBorderStyle(Border::BORDER_THIN);
             $row++;
 
             if ($this->includeDetail) {
@@ -289,11 +353,84 @@ class SupplierDebtExcelExportService
                     $sheet->getStyle('C' . $row)->getFont()->setItalic(true);
                     $sheet->getStyle('E' . $row . ':J' . $row)
                         ->getNumberFormat()->setFormatCode('#,##0');
-                    $sheet->getStyle('A' . $row . ':L' . $row)->getBorders()->getAllBorders()
-                        ->setBorderStyle(Border::BORDER_HAIR);
                     $row++;
                 }
             }
+        }
+        return $row - 1;
+    }
+
+    /**
+     * HOTFIX 24.17F — clean border style. The 24.17B/C/D output stamped
+     * `BORDER_THIN` on every cell of every row, which turned the body
+     * into a grid of dark lines. New scheme:
+     *  - outer medium border around the whole table (header + body),
+     *  - a single hair line BELOW each body row (horizontal separator),
+     *  - no vertical inner borders — column widths + alignment carry
+     *    the layout instead.
+     */
+    private function applyTableBorders($sheet, int $headerRow, int $lastBodyRow): void
+    {
+        if ($lastBodyRow < $headerRow) {
+            $lastBodyRow = $headerRow;
+        }
+        $whole = 'A' . $headerRow . ':L' . $lastBodyRow;
+        // Wipe whatever per-row borders were drawn earlier in the build
+        // by re-applying NONE first.
+        $sheet->getStyle($whole)->getBorders()->getAllBorders()
+            ->setBorderStyle(Border::BORDER_NONE);
+
+        // Hair horizontal separators between rows below the header.
+        if ($lastBodyRow > $headerRow) {
+            $bodyRange = 'A' . ($headerRow + 1) . ':L' . $lastBodyRow;
+            $sheet->getStyle($bodyRange)->getBorders()->getBottom()
+                ->setBorderStyle(Border::BORDER_HAIR);
+        }
+
+        // Outer medium frame + thicker line under the header row.
+        $sheet->getStyle($whole)->getBorders()->getOutline()
+            ->setBorderStyle(Border::BORDER_MEDIUM);
+        $sheet->getStyle('A' . $headerRow . ':L' . $headerRow)
+            ->getBorders()->getBottom()
+            ->setBorderStyle(Border::BORDER_MEDIUM);
+    }
+
+    /**
+     * HOTFIX 24.17F — KiotViet-style footer: export date on the right
+     * and three signature blocks (Nhà cung cấp / Người lập biểu /
+     * TM Công ty), each with a "(Ký, họ tên)" italic sub-row.
+     */
+    private function writeFooter($sheet, int $row): void
+    {
+        $now = Carbon::now();
+        $dateText = sprintf('Ngày %d tháng %d năm %d', $now->day, $now->month, $now->year);
+        $sheet->setCellValue('J' . $row, $dateText);
+        $sheet->mergeCells('J' . $row . ':L' . $row);
+        $sheet->getStyle('J' . $row)
+            ->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+        $sheet->getStyle('J' . $row)->getFont()->setItalic(true);
+        $row += 2;
+
+        $signatureRow = $row;
+        $blocks = [
+            ['range' => 'A:B', 'merge' => 'A%d:B%d', 'label' => 'Nhà cung cấp'],
+            ['range' => 'F:G', 'merge' => 'F%d:G%d', 'label' => 'Người lập biểu'],
+            ['range' => 'J:L', 'merge' => 'J%d:L%d', 'label' => 'TM Công ty'],
+        ];
+        foreach ($blocks as $b) {
+            $merge = sprintf($b['merge'], $signatureRow, $signatureRow);
+            $sheet->setCellValue(explode(':', $merge)[0], $b['label']);
+            $sheet->mergeCells($merge);
+            $sheet->getStyle($merge)->getFont()->setBold(true);
+            $sheet->getStyle($merge)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+        }
+        $signatureRow++;
+        foreach ($blocks as $b) {
+            $merge = sprintf($b['merge'], $signatureRow, $signatureRow);
+            $sheet->setCellValue(explode(':', $merge)[0], '(Ký, họ tên)');
+            $sheet->mergeCells($merge);
+            $sheet->getStyle($merge)->getFont()->setItalic(true);
+            $sheet->getStyle($merge)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
         }
     }
 
@@ -333,7 +470,9 @@ class SupplierDebtExcelExportService
                 continue;
             }
             if ($ts->lessThan($this->from)) {
-                $opening += (float) ($e['supplier_effect'] ?? 0);
+                // HOTFIX 24.17F — same display lens as in-window debit
+                // / credit so opening + period = closing internally.
+                $opening += $this->displayEffectFor($e);
             }
         }
         return $opening;
