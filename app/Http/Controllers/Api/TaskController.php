@@ -29,7 +29,7 @@ class TaskController extends Controller
     {
         $query = Task::with([
             'product:id,name,sku',
-            'serialImei:id,serial_number,status,repair_status,product_id',
+            'serialImei:id,serial_number,status,repair_status,cost_price,product_id,invoice_id,sold_at,purchase_return_id',
             'serialImei.product:id,name,sku',
             'assignedEmployee:id,name',
             'branch:id,name',
@@ -92,7 +92,7 @@ class TaskController extends Controller
     {
         $task->load([
             'product:id,name,sku,image,has_serial',
-            'serialImei:id,serial_number,status,repair_status,cost_price,product_id',
+            'serialImei:id,serial_number,status,repair_status,cost_price,product_id,invoice_id,sold_at,purchase_return_id',
             'assignedEmployee:id,name',
             'branch:id,name',
             'category:id,name,color,type',
