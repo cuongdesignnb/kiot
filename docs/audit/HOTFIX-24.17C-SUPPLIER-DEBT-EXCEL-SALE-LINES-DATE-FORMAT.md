@@ -147,7 +147,8 @@ private function parseExportDate(?string $value): ?\Carbon\Carbon
 
 ## 8. Commit & deployment
 
-(Sẽ điền sau khi commit + push.)
+- **Commit SHA:** `38abf50` — `fix(suppliers): include sale item details and Vietnamese dates in debt export`.
+- **Push status:** ✅ đã push, `origin/main` = `38abf50c41a7c56b6b4bd3eb36d58852ce212043` (verified `git ls-remote`).
 
 ```bash
 cd /www/wwwroot/kiot.cuongdesign.net
