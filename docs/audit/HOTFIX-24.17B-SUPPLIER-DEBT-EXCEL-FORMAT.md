@@ -187,7 +187,8 @@ GET /api/suppliers/{id}/export-debt
 
 ## 10. Commit & deployment
 
-(Sẽ điền sau khi commit + push.)
+- **Commit SHA:** `41c918e` — `fix(suppliers): export supplier debt as formatted Excel`.
+- **Push status:** ✅ đã push, `origin/main` chứa commit này (xác minh qua `git push` output).
 
 ```bash
 cd /www/wwwroot/kiot.cuongdesign.net
