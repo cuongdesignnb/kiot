@@ -126,74 +126,95 @@ class EmployeeReportController extends Controller
     // ═══════════════════════════════════════
 
     /**
-     * Resolve a list of seller ids to a labelled name/code/type record.
+     * Resolve a list of seller keys to a labelled name/code/type record.
+     * Keys may be integers (employee/user ids) or strings like 'orphan:Name'.
      *
-     * @param  array<int,int>  $sellerIds
-     * @return array<int,array{id:int,code:string,name:string,type:string}>
+     * @param  array  $sellerKeys
+     * @return array  key => {id, code, name, type}
      */
-    private function resolveSellerNames(array $sellerIds): array
+    private function resolveSellerNames(array $sellerKeys): array
     {
-        $sellerIds = array_values(array_unique(array_filter($sellerIds, fn ($id) => $id !== null && $id !== '')));
-        $sellerIds = array_map('intval', $sellerIds);
+        $sellerKeys = array_values(array_unique(array_filter($sellerKeys, fn ($k) => $k !== null && $k !== '')));
+        if (empty($sellerKeys)) return [];
 
-        if (empty($sellerIds)) return [];
-
-        $employeesById = Employee::whereIn('id', $sellerIds)
-            ->get(['id', 'name', 'code', 'user_id'])
-            ->keyBy('id');
-
-        $usersById = User::whereIn('id', $sellerIds)
-            ->get(['id', 'name', 'email', 'role_id', 'status'])
-            ->keyBy('id');
-
-        // Employees who happen to have a user_id matching one of the seller
-        // ids — used when the picker / report key is a `users.id` but a
-        // matching employee row exists (admin who also has an Employee
-        // profile shouldn't double-show).
-        $employeeByUserId = Employee::whereIn('user_id', $sellerIds)
-            ->get(['id', 'user_id', 'name', 'code'])
-            ->keyBy('user_id');
+        // Separate numeric ids from orphan string keys
+        $numericIds = [];
+        $orphanKeys = [];
+        foreach ($sellerKeys as $key) {
+            if (is_int($key) || (is_string($key) && ctype_digit($key))) {
+                $numericIds[] = (int) $key;
+            } else {
+                $orphanKeys[] = $key;
+            }
+        }
 
         $names = [];
-        foreach ($sellerIds as $id) {
-            if (isset($employeesById[$id])) {
-                $emp = $employeesById[$id];
+
+        if (!empty($numericIds)) {
+            $employeesById = Employee::whereIn('id', $numericIds)
+                ->get(['id', 'name', 'code', 'user_id'])
+                ->keyBy('id');
+
+            $usersById = User::whereIn('id', $numericIds)
+                ->get(['id', 'name', 'email', 'role_id', 'status'])
+                ->keyBy('id');
+
+            $employeeByUserId = Employee::whereIn('user_id', $numericIds)
+                ->get(['id', 'user_id', 'name', 'code'])
+                ->keyBy('user_id');
+
+            foreach ($numericIds as $id) {
+                if (isset($employeesById[$id])) {
+                    $emp = $employeesById[$id];
+                    $names[$id] = [
+                        'id'   => $id,
+                        'code' => $emp->code ?: "NV{$id}",
+                        'name' => $emp->name ?: "Nhân viên #{$id}",
+                        'type' => 'employee',
+                    ];
+                    continue;
+                }
+                if (isset($employeeByUserId[$id])) {
+                    $emp = $employeeByUserId[$id];
+                    $names[$id] = [
+                        'id'   => $id,
+                        'code' => $emp->code ?: "U{$id}",
+                        'name' => $emp->name ?: "User #{$id}",
+                        'type' => 'employee_user',
+                    ];
+                    continue;
+                }
+                if (isset($usersById[$id])) {
+                    $user    = $usersById[$id];
+                    $isAdmin = method_exists($user, 'isAdmin') ? $user->isAdmin() : false;
+                    $names[$id] = [
+                        'id'   => $id,
+                        'code' => $isAdmin ? 'ADMIN' : "U{$id}",
+                        'name' => $user->name ?: ($isAdmin ? 'Admin' : "User #{$id}"),
+                        'type' => $isAdmin ? 'admin' : 'user',
+                    ];
+                    continue;
+                }
                 $names[$id] = [
                     'id'   => $id,
-                    'code' => $emp->code ?: "NV{$id}",
-                    'name' => $emp->name ?: "Nhân viên #{$id}",
-                    'type' => 'employee',
+                    'code' => "SELLER{$id}",
+                    'name' => "Người bán #{$id}",
+                    'type' => 'unknown',
                 ];
-                continue;
             }
-            if (isset($employeeByUserId[$id])) {
-                $emp = $employeeByUserId[$id];
-                $names[$id] = [
-                    'id'   => $id,
-                    'code' => $emp->code ?: "U{$id}",
-                    'name' => $emp->name ?: "User #{$id}",
-                    'type' => 'employee_user',
-                ];
-                continue;
-            }
-            if (isset($usersById[$id])) {
-                $user    = $usersById[$id];
-                $isAdmin = method_exists($user, 'isAdmin') ? $user->isAdmin() : false;
-                $names[$id] = [
-                    'id'   => $id,
-                    'code' => $isAdmin ? 'ADMIN' : "U{$id}",
-                    'name' => $user->name ?: ($isAdmin ? 'Admin' : "User #{$id}"),
-                    'type' => $isAdmin ? 'admin' : 'user',
-                ];
-                continue;
-            }
-            $names[$id] = [
-                'id'   => $id,
-                'code' => "SELLER{$id}",
-                'name' => "Người bán #{$id}",
-                'type' => 'unknown',
+        }
+
+        // Resolve orphan string keys like 'orphan:Admin'
+        foreach ($orphanKeys as $key) {
+            $displayName = str_starts_with($key, 'orphan:') ? substr($key, 7) : $key;
+            $names[$key] = [
+                'id'   => $key,
+                'code' => 'ORPHAN',
+                'name' => $displayName,
+                'type' => 'admin',
             ];
         }
+
         return $names;
     }
 
@@ -313,8 +334,10 @@ class EmployeeReportController extends Controller
 
             foreach ($byOrphanName as $name => $value) {
                 $userId = $userIdByName[$name] ?? null;
-                if (!$userId) continue;
-                $byCreatedBy[$userId] = ($byCreatedBy[$userId] ?? 0) + $value;
+                // HOTFIX 24.24: if orphan name doesn't match any user,
+                // use a stable string key so the seller is never dropped.
+                $key = $userId ?: 'orphan:' . $name;
+                $byCreatedBy[$key] = ($byCreatedBy[$key] ?? 0) + $value;
             }
         }
 
@@ -381,67 +404,80 @@ class EmployeeReportController extends Controller
     }
 
     // ═══════════════════════════════════════
-    // Profit: Revenue minus cost per employee
+    // Profit: KiotViet 8-column report per employee
     // ═══════════════════════════════════════
     private function buildProfitData($invoiceQ, $returnQ)
     {
-        $empRevenue = $this->getRevenueByEmployee(clone $invoiceQ);
-        $empCosts   = $this->getCostByEmployee(clone $invoiceQ);
-        $empReturns = $this->getReturnsByEmployee(clone $returnQ);
+        $rows = $this->buildProfitReportRows($invoiceQ, $returnQ);
 
-        $merged = [];
-        $allIds = array_unique(array_merge(array_keys($empRevenue), array_keys($empCosts)));
-        foreach ($allIds as $empId) {
-            $rev  = $empRevenue[$empId] ?? 0;
-            $cost = $empCosts[$empId] ?? 0;
-            $ret  = $empReturns[$empId] ?? 0;
-            $merged[$empId] = ($rev - $ret) - $cost;
-        }
-        arsort($merged);
-        $top = array_slice($merged, 0, 10, true);
+        // Sort by gross_profit desc, take top 10
+        usort($rows, fn ($a, $b) => $b['gross_profit'] <=> $a['gross_profit']);
+        $top = array_slice($rows, 0, 10);
 
-        $sellerMap = $this->resolveSellerNames(array_keys($top));
-        $labels    = [];
-        $data      = [];
-        foreach ($top as $empId => $profit) {
-            $labels[] = $sellerMap[$empId]['name'] ?? "Người bán #{$empId}";
-            $data[]   = $profit;
+        $labels = [];
+        $data   = [];
+        foreach ($top as $row) {
+            $labels[] = $row['name'];
+            $data[]   = $row['gross_profit'];
         }
 
         return [
             'title'    => 'Top 10 nhân viên lợi nhuận cao nhất',
             'labels'   => $labels,
-            'datasets' => [['label' => 'Lợi nhuận', 'data' => $data]],
+            'datasets' => [['label' => 'Lợi nhuận gộp', 'data' => $data]],
             'type'     => 'horizontal_bar',
         ];
     }
 
     private function buildProfitReportRows($invoiceQ, $returnQ)
     {
-        $empRevenue = $this->getRevenueByEmployee(clone $invoiceQ);
-        $empCosts   = $this->getCostByEmployee(clone $invoiceQ);
-        $empReturns = $this->getReturnsByEmployee(clone $returnQ);
+        $empGrossRevenue     = $this->aggregateInvoicesBySeller(clone $invoiceQ, 'SUM(subtotal)');
+        $empInvoiceDiscount  = $this->aggregateInvoicesBySeller(clone $invoiceQ, 'SUM(discount)');
+        $empReturnSubtotal   = $this->getReturnSubtotalByEmployee(clone $returnQ);
+        $empCogsSold         = $this->getCostByEmployee(clone $invoiceQ);
+        $empCogsReturned     = $this->getReturnCogsByEmployee(clone $returnQ);
 
-        $allIds    = array_unique(array_merge(array_keys($empRevenue), array_keys($empCosts)));
+        $allIds = array_unique(array_merge(
+            array_keys($empGrossRevenue), array_keys($empInvoiceDiscount),
+            array_keys($empCogsSold), array_keys($empReturnSubtotal),
+            array_keys($empCogsReturned)
+        ));
         $sellerMap = $this->resolveSellerNames($allIds);
 
         $rows = [];
         foreach ($allIds as $empId) {
             $seller = $sellerMap[$empId] ?? null;
-            $rev    = $empRevenue[$empId] ?? 0;
-            $ret    = $empReturns[$empId] ?? 0;
-            $cost   = $empCosts[$empId] ?? 0;
+
+            $grossRevenue          = $empGrossRevenue[$empId] ?? 0;
+            $invoiceDiscount       = $empInvoiceDiscount[$empId] ?? 0;
+            $revenueAfterDiscount  = $grossRevenue - $invoiceDiscount;
+            $returnValue           = $empReturnSubtotal[$empId] ?? 0;
+            $netRevenue            = $revenueAfterDiscount - $returnValue;
+            $cogsSold              = $empCogsSold[$empId] ?? 0;
+            $cogsReturned          = $empCogsReturned[$empId] ?? 0;
+            $totalCogs             = $cogsSold - $cogsReturned;
+            $grossProfit           = $netRevenue - $totalCogs;
+
             $rows[] = [
-                'id'          => $empId,
-                'code'        => $seller['code'] ?? "SELLER{$empId}",
-                'name'        => $seller['name'] ?? "Người bán #{$empId}",
-                'seller_type' => $seller['type'] ?? 'unknown',
-                'revenue'     => $rev - $ret,
-                'returns'     => $cost,
-                'net'         => ($rev - $ret) - $cost,
+                'id'                     => $empId,
+                'code'                   => $seller['code'] ?? "SELLER{$empId}",
+                'name'                   => $seller['name'] ?? "Người bán #{$empId}",
+                'seller_type'            => $seller['type'] ?? 'unknown',
+                // 8-field KiotViet profit row
+                'gross_revenue'          => $grossRevenue,
+                'invoice_discount'       => $invoiceDiscount,
+                'revenue_after_discount' => $revenueAfterDiscount,
+                'return_value'           => $returnValue,
+                'net_revenue'            => $netRevenue,
+                'total_cogs'             => $totalCogs,
+                'gross_profit'           => $grossProfit,
+                // Backward compatibility aliases
+                'revenue'                => $netRevenue,
+                'returns'                => $totalCogs,
+                'net'                    => $grossProfit,
             ];
         }
-        usort($rows, fn ($a, $b) => $b['net'] <=> $a['net']);
+        usort($rows, fn ($a, $b) => $b['gross_profit'] <=> $a['gross_profit']);
         return $rows;
     }
 
@@ -500,12 +536,25 @@ class EmployeeReportController extends Controller
     // ═══════════════════════════════════════
     private function buildSummary(array $rows): array
     {
-        return [
+        $summary = [
             'count'        => count($rows),
             'totalRevenue' => array_sum(array_column($rows, 'revenue')),
             'totalReturns' => array_sum(array_column($rows, 'returns')),
             'totalNet'     => array_sum(array_column($rows, 'net')),
         ];
+
+        // HOTFIX 24.24: extended profit summary (8-field KiotViet)
+        if (!empty($rows) && array_key_exists('gross_revenue', $rows[0])) {
+            $summary['gross_revenue']          = array_sum(array_column($rows, 'gross_revenue'));
+            $summary['invoice_discount']       = array_sum(array_column($rows, 'invoice_discount'));
+            $summary['revenue_after_discount'] = array_sum(array_column($rows, 'revenue_after_discount'));
+            $summary['return_value']           = array_sum(array_column($rows, 'return_value'));
+            $summary['net_revenue']            = array_sum(array_column($rows, 'net_revenue'));
+            $summary['total_cogs']             = array_sum(array_column($rows, 'total_cogs'));
+            $summary['gross_profit']           = array_sum(array_column($rows, 'gross_profit'));
+        }
+
+        return $summary;
     }
 
     // ═══════════════════════════════════════
@@ -514,6 +563,98 @@ class EmployeeReportController extends Controller
     private function getRevenueByEmployee($query): array
     {
         return $this->aggregateInvoicesBySeller($query, 'SUM(total)');
+    }
+
+    /**
+     * Return subtotal by employee — joins return → invoice for seller attribution.
+     */
+    private function getReturnSubtotalByEmployee($query): array
+    {
+        $hasCreatedBy = Schema::hasColumn('returns', 'created_by');
+        if ($hasCreatedBy) {
+            return $this->aggregateInvoicesBySeller($query, 'SUM(subtotal)');
+        }
+
+        $returnIds = (clone $query)->pluck('id');
+        if ($returnIds->isEmpty()) return [];
+
+        $direct = DB::table('returns')
+            ->join('invoices', 'returns.invoice_id', '=', 'invoices.id')
+            ->whereIn('returns.id', $returnIds)
+            ->whereNotNull('invoices.created_by')
+            ->select('invoices.created_by as emp_id', DB::raw('SUM(returns.subtotal) as total'))
+            ->groupBy('emp_id')
+            ->pluck('total', 'emp_id')
+            ->map(fn ($v) => (float) $v)
+            ->toArray();
+
+        $orphan = DB::table('returns')
+            ->join('invoices', 'returns.invoice_id', '=', 'invoices.id')
+            ->whereIn('returns.id', $returnIds)
+            ->whereNull('invoices.created_by')
+            ->whereNotNull('invoices.created_by_name')
+            ->select('invoices.created_by_name as creator_name', DB::raw('SUM(returns.subtotal) as total'))
+            ->groupBy('creator_name')
+            ->pluck('total', 'creator_name')
+            ->map(fn ($v) => (float) $v)
+            ->toArray();
+
+        if (!empty($orphan)) {
+            $userIdByName = User::whereIn('name', array_keys($orphan))
+                ->pluck('id', 'name')->map(fn ($id) => (int) $id)->toArray();
+            foreach ($orphan as $name => $value) {
+                $key = $userIdByName[$name] ?? 'orphan:' . $name;
+                $direct[$key] = ($direct[$key] ?? 0) + $value;
+            }
+        }
+        return $direct;
+    }
+
+    /**
+     * COGS returned — return_items.cost_price or fallback import_price.
+     */
+    private function getReturnCogsByEmployee($query): array
+    {
+        $hasCostPrice = Schema::hasColumn('return_items', 'cost_price');
+        $costExpr = $hasCostPrice
+            ? 'SUM(return_items.quantity * COALESCE(NULLIF(return_items.cost_price, 0), return_items.import_price, 0))'
+            : 'SUM(return_items.quantity * COALESCE(return_items.import_price, 0))';
+
+        $returnIds = (clone $query)->pluck('id');
+        if ($returnIds->isEmpty()) return [];
+
+        $direct = DB::table('return_items')
+            ->join('returns', 'return_items.return_id', '=', 'returns.id')
+            ->join('invoices', 'returns.invoice_id', '=', 'invoices.id')
+            ->whereIn('return_items.return_id', $returnIds)
+            ->whereNotNull('invoices.created_by')
+            ->select('invoices.created_by as emp_id', DB::raw("$costExpr as total_cost"))
+            ->groupBy('emp_id')
+            ->pluck('total_cost', 'emp_id')
+            ->map(fn ($v) => (float) $v)
+            ->toArray();
+
+        $orphan = DB::table('return_items')
+            ->join('returns', 'return_items.return_id', '=', 'returns.id')
+            ->join('invoices', 'returns.invoice_id', '=', 'invoices.id')
+            ->whereIn('return_items.return_id', $returnIds)
+            ->whereNull('invoices.created_by')
+            ->whereNotNull('invoices.created_by_name')
+            ->select('invoices.created_by_name as creator_name', DB::raw("$costExpr as total_cost"))
+            ->groupBy('creator_name')
+            ->pluck('total_cost', 'creator_name')
+            ->map(fn ($v) => (float) $v)
+            ->toArray();
+
+        if (!empty($orphan)) {
+            $userIdByName = User::whereIn('name', array_keys($orphan))
+                ->pluck('id', 'name')->map(fn ($id) => (int) $id)->toArray();
+            foreach ($orphan as $name => $value) {
+                $key = $userIdByName[$name] ?? 'orphan:' . $name;
+                $direct[$key] = ($direct[$key] ?? 0) + $value;
+            }
+        }
+        return $direct;
     }
 
     private function getItemQtyByEmployee($query): array
@@ -548,9 +689,8 @@ class EmployeeReportController extends Controller
             $userIdByName = User::whereIn('name', array_keys($orphan))
                 ->pluck('id', 'name')->map(fn ($id) => (int) $id)->toArray();
             foreach ($orphan as $name => $qty) {
-                $userId = $userIdByName[$name] ?? null;
-                if (!$userId) continue;
-                $direct[$userId] = ($direct[$userId] ?? 0) + $qty;
+                $key = $userIdByName[$name] ?? 'orphan:' . $name;
+                $direct[$key] = ($direct[$key] ?? 0) + $qty;
             }
         }
         return $direct;
@@ -586,9 +726,8 @@ class EmployeeReportController extends Controller
             $userIdByName = User::whereIn('name', array_keys($orphan))
                 ->pluck('id', 'name')->map(fn ($id) => (int) $id)->toArray();
             foreach ($orphan as $name => $value) {
-                $userId = $userIdByName[$name] ?? null;
-                if (!$userId) continue;
-                $direct[$userId] = ($direct[$userId] ?? 0) + $value;
+                $key = $userIdByName[$name] ?? 'orphan:' . $name;
+                $direct[$key] = ($direct[$key] ?? 0) + $value;
             }
         }
         return $direct;
@@ -629,9 +768,8 @@ class EmployeeReportController extends Controller
             $userIdByName = User::whereIn('name', array_keys($orphan))
                 ->pluck('id', 'name')->map(fn ($id) => (int) $id)->toArray();
             foreach ($orphan as $name => $value) {
-                $userId = $userIdByName[$name] ?? null;
-                if (!$userId) continue;
-                $direct[$userId] = ($direct[$userId] ?? 0) + $value;
+                $key = $userIdByName[$name] ?? 'orphan:' . $name;
+                $direct[$key] = ($direct[$key] ?? 0) + $value;
             }
         }
         return $direct;
@@ -674,9 +812,8 @@ class EmployeeReportController extends Controller
             $userIdByName = User::whereIn('name', array_keys($orphan))
                 ->pluck('id', 'name')->map(fn ($id) => (int) $id)->toArray();
             foreach ($orphan as $name => $value) {
-                $userId = $userIdByName[$name] ?? null;
-                if (!$userId) continue;
-                $direct[$userId] = ($direct[$userId] ?? 0) + $value;
+                $key = $userIdByName[$name] ?? 'orphan:' . $name;
+                $direct[$key] = ($direct[$key] ?? 0) + $value;
             }
         }
         return $direct;

@@ -59,6 +59,12 @@ const formatNumber = (n) => {
     return new Intl.NumberFormat("vi-VN").format(Math.round(n));
 };
 
+/** Format negative values with minus sign for display (discount, returns) */
+const formatNeg = (n) => {
+    if (!n || n === 0) return '0';
+    return '-' + formatCurrency(Math.abs(n));
+};
+
 const barChartData = computed(() => ({
     labels: props.chartData?.labels || [],
     datasets: (props.chartData?.datasets || []).map((ds) => ({
@@ -95,6 +101,8 @@ const reportTitle = computed(() => {
     if (concern.value === 'items') return 'Báo cáo hàng bán theo nhân viên';
     return 'Báo cáo bán hàng theo nhân viên';
 });
+
+const isProfit = computed(() => concern.value === 'profit');
 
 const col2Label = computed(() => concern.value === 'profit' ? 'Doanh thu thuần' : 'Doanh thu');
 const col3Label = computed(() => {
@@ -210,39 +218,85 @@ const summary = computed(() => props.summary || { count: 0, totalRevenue: 0, tot
                     </div>
                     <div class="p-6 flex justify-center bg-[#e8e8e8] min-h-[calc(100vh-120px)]">
                         <div class="bg-white shadow-lg border border-gray-300 w-full p-10 print:shadow-none print:border-none print:p-0 print:max-w-full"
-                            :style="{ maxWidth: (900 * zoom / 100) + 'px', fontSize: (zoom / 100) + 'em' }">
+                            :style="{ maxWidth: (isProfit ? 1100 : 900) * zoom / 100 + 'px', fontSize: (zoom / 100) + 'em' }">
                             <p class="text-xs text-gray-400 mb-3" style="font-size:0.75em">Ngày lập: {{ reportDate }}</p>
                             <h1 class="text-lg font-bold text-center mb-1">{{ reportTitle }}</h1>
                             <p class="text-sm text-gray-500 text-center">Từ ngày {{ dateFromDisplay }} đến ngày {{ dateToDisplay }}</p>
                             <p class="text-sm text-gray-500 text-center mb-5">Chi nhánh: {{ branchName }}</p>
 
-                            <table class="w-full border-collapse" style="font-size:0.85em">
-                                <thead>
-                                    <tr class="bg-blue-600 text-white">
-                                        <th class="px-3 py-2 text-left font-semibold border border-blue-700">Người bán</th>
-                                        <th class="px-3 py-2 text-right font-semibold border border-blue-700">{{ col2Label }}</th>
-                                        <th class="px-3 py-2 text-right font-semibold border border-blue-700">{{ col3Label }}</th>
-                                        <th class="px-3 py-2 text-right font-semibold border border-blue-700">{{ col4Label }}</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr class="bg-blue-50 font-bold">
-                                        <td class="px-3 py-2 border border-gray-200">{{ summaryLabel }}</td>
-                                        <td class="px-3 py-2 text-right border border-gray-200">{{ formatCurrency(summary.totalRevenue) }}</td>
-                                        <td class="px-3 py-2 text-right border border-gray-200">{{ concern === 'items' ? formatCurrency(summary.totalReturns) : formatCurrency(summary.totalReturns) }}</td>
-                                        <td class="px-3 py-2 text-right border border-gray-200 text-blue-700">{{ formatCurrency(summary.totalNet) }}</td>
-                                    </tr>
-                                    <tr v-for="row in paginatedRows" :key="row.id" class="hover:bg-gray-50">
-                                        <td class="px-3 py-1.5 border border-gray-200 text-blue-600 font-medium">{{ row.name }}</td>
-                                        <td class="px-3 py-1.5 border border-gray-200 text-right">{{ formatCurrency(row.revenue) }}</td>
-                                        <td class="px-3 py-1.5 border border-gray-200 text-right">{{ concern === 'items' ? formatCurrency(row.returns) : formatCurrency(row.returns) }}</td>
-                                        <td class="px-3 py-1.5 border border-gray-200 text-right font-semibold">{{ formatCurrency(row.net) }}</td>
-                                    </tr>
-                                    <tr v-if="!reportRows?.length">
-                                        <td colspan="4" class="px-3 py-8 text-center text-gray-400 border border-gray-200">Báo cáo không có dữ liệu</td>
-                                    </tr>
-                                </tbody>
-                            </table>
+                            <!-- ═══ PROFIT TABLE (8 columns KiotViet style) ═══ -->
+                            <template v-if="isProfit">
+                                <table class="w-full border-collapse" style="font-size:0.8em">
+                                    <thead>
+                                        <tr class="bg-blue-600 text-white">
+                                            <th class="px-2 py-2 text-left font-semibold border border-blue-700">Nhân viên</th>
+                                            <th class="px-2 py-2 text-right font-semibold border border-blue-700">Tổng tiền hàng</th>
+                                            <th class="px-2 py-2 text-right font-semibold border border-blue-700">Giảm giá</th>
+                                            <th class="px-2 py-2 text-right font-semibold border border-blue-700">Doanh thu</th>
+                                            <th class="px-2 py-2 text-right font-semibold border border-blue-700">Giá trị trả</th>
+                                            <th class="px-2 py-2 text-right font-semibold border border-blue-700">Doanh thu thuần</th>
+                                            <th class="px-2 py-2 text-right font-semibold border border-blue-700">Tổng giá vốn</th>
+                                            <th class="px-2 py-2 text-right font-semibold border border-blue-700">Lợi nhuận gộp</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr class="bg-blue-50 font-bold">
+                                            <td class="px-2 py-2 border border-gray-200">{{ summaryLabel }}</td>
+                                            <td class="px-2 py-2 text-right border border-gray-200">{{ formatCurrency(summary.gross_revenue ?? 0) }}</td>
+                                            <td class="px-2 py-2 text-right border border-gray-200 text-red-600">{{ formatNeg(summary.invoice_discount ?? 0) }}</td>
+                                            <td class="px-2 py-2 text-right border border-gray-200">{{ formatCurrency(summary.revenue_after_discount ?? 0) }}</td>
+                                            <td class="px-2 py-2 text-right border border-gray-200 text-red-600">{{ formatNeg(summary.return_value ?? 0) }}</td>
+                                            <td class="px-2 py-2 text-right border border-gray-200">{{ formatCurrency(summary.net_revenue ?? 0) }}</td>
+                                            <td class="px-2 py-2 text-right border border-gray-200">{{ formatCurrency(summary.total_cogs ?? 0) }}</td>
+                                            <td class="px-2 py-2 text-right border border-gray-200 text-blue-700 font-bold">{{ formatCurrency(summary.gross_profit ?? 0) }}</td>
+                                        </tr>
+                                        <tr v-for="row in paginatedRows" :key="row.id" class="hover:bg-gray-50">
+                                            <td class="px-2 py-1.5 border border-gray-200 text-blue-600 font-medium">{{ row.name }}</td>
+                                            <td class="px-2 py-1.5 border border-gray-200 text-right">{{ formatCurrency(row.gross_revenue) }}</td>
+                                            <td class="px-2 py-1.5 border border-gray-200 text-right text-red-600">{{ formatNeg(row.invoice_discount) }}</td>
+                                            <td class="px-2 py-1.5 border border-gray-200 text-right">{{ formatCurrency(row.revenue_after_discount) }}</td>
+                                            <td class="px-2 py-1.5 border border-gray-200 text-right text-red-600">{{ formatNeg(row.return_value) }}</td>
+                                            <td class="px-2 py-1.5 border border-gray-200 text-right">{{ formatCurrency(row.net_revenue) }}</td>
+                                            <td class="px-2 py-1.5 border border-gray-200 text-right">{{ formatCurrency(row.total_cogs) }}</td>
+                                            <td class="px-2 py-1.5 border border-gray-200 text-right font-semibold">{{ formatCurrency(row.gross_profit) }}</td>
+                                        </tr>
+                                        <tr v-if="!reportRows?.length">
+                                            <td colspan="8" class="px-3 py-8 text-center text-gray-400 border border-gray-200">Báo cáo không có dữ liệu</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </template>
+
+                            <!-- ═══ SALES / ITEMS TABLE (4 columns — original) ═══ -->
+                            <template v-else>
+                                <table class="w-full border-collapse" style="font-size:0.85em">
+                                    <thead>
+                                        <tr class="bg-blue-600 text-white">
+                                            <th class="px-3 py-2 text-left font-semibold border border-blue-700">Người bán</th>
+                                            <th class="px-3 py-2 text-right font-semibold border border-blue-700">{{ col2Label }}</th>
+                                            <th class="px-3 py-2 text-right font-semibold border border-blue-700">{{ col3Label }}</th>
+                                            <th class="px-3 py-2 text-right font-semibold border border-blue-700">{{ col4Label }}</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr class="bg-blue-50 font-bold">
+                                            <td class="px-3 py-2 border border-gray-200">{{ summaryLabel }}</td>
+                                            <td class="px-3 py-2 text-right border border-gray-200">{{ formatCurrency(summary.totalRevenue) }}</td>
+                                            <td class="px-3 py-2 text-right border border-gray-200">{{ formatCurrency(summary.totalReturns) }}</td>
+                                            <td class="px-3 py-2 text-right border border-gray-200 text-blue-700">{{ formatCurrency(summary.totalNet) }}</td>
+                                        </tr>
+                                        <tr v-for="row in paginatedRows" :key="row.id" class="hover:bg-gray-50">
+                                            <td class="px-3 py-1.5 border border-gray-200 text-blue-600 font-medium">{{ row.name }}</td>
+                                            <td class="px-3 py-1.5 border border-gray-200 text-right">{{ formatCurrency(row.revenue) }}</td>
+                                            <td class="px-3 py-1.5 border border-gray-200 text-right">{{ formatCurrency(row.returns) }}</td>
+                                            <td class="px-3 py-1.5 border border-gray-200 text-right font-semibold">{{ formatCurrency(row.net) }}</td>
+                                        </tr>
+                                        <tr v-if="!reportRows?.length">
+                                            <td colspan="4" class="px-3 py-8 text-center text-gray-400 border border-gray-200">Báo cáo không có dữ liệu</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </template>
                         </div>
                     </div>
                 </template>
