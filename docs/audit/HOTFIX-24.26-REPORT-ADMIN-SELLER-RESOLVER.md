@@ -66,12 +66,31 @@
 | `app/Http/Controllers/EmployeeReportController.php` | Rewritten to use SellerResolver (845→290 lines) |
 | `app/Http/Controllers/SalesReportController.php` | `buildEmployeeSeries()` uses SellerResolver |
 | `app/Http/Controllers/EndOfDayReportController.php` | Dropdown + filter uses SellerResolver |
+| `tests/Feature/Reports/HOTFIX2426ReportSellerResolverAdminTest.php` | NEW — 11 TC pin contract end-to-end |
+| `tests/Feature/Reports/HOTFIX2422EmployeeReportIncludesAdminTest.php` | rewritten cho prefixed-key contract (legacy bare int → `user:N` / `employee:N`) |
 
 ## 7. Test đã chạy
 
 | Lệnh | Kết quả |
 |---|---|
-| `npm run build` | ✅ Built in 6.82s |
+| `php artisan test --filter=HOTFIX2426ReportSellerResolverAdminTest` | ✅ **11 passed / 43 assertions**, 1.56s |
+| `php artisan test --filter=HOTFIX2422EmployeeReportIncludesAdminTest` | ✅ **6 passed / 28 assertions**, 0.94s (rewritten cho prefixed-key contract) |
+| `php artisan test --filter="Report\|Invoice\|Return\|CashFlow"` | ✅ **194 passed / 677 assertions**, 1 unrelated fail (`Tests\Feature\ExampleTest` — Laravel scaffold hit `/` thiếu auth, không liên quan 24.26) |
+| `npm run build` | ✅ **built in 8.75s** |
+
+**11 TC pin trong `HOTFIX2426ReportSellerResolverAdminTest`:**
+
+1. `seller_resolver_maps_admin_orphan_to_user_key` — `created_by=NULL, name=admin` → `user:<id>` + type `admin`.
+2. `orphan_without_matching_user_keeps_name_visible` — `created_by_name='Admin cũ'` mà không có user match → `orphan:Admin cũ`, type `orphan`.
+3. `employee_sales_report_includes_admin` — chart + rows.
+4. `employee_profit_report_has_all_eight_fields` — 8 KiotViet field đầy đủ cho admin.
+5. `employee_items_report_counts_admin_quantity` — qty/value đúng.
+6. `seller_filter_dropdown_contains_admin_option` — type `admin` + đúng tên.
+7. `filter_by_admin_key_returns_only_admin` — `employee_id=user:<id>` lọc đúng.
+8. `sales_report_concern_employee_surfaces_admin` — `/reports/sales?concern=employee` có admin label.
+9. `admin_invoice_not_dropped_when_route_loads` — products/customers/suppliers không 500 và không drop admin invoice.
+10. `legacy_numeric_employee_id_filter_still_matches` — `employee_id=<bare-int>` map sang cả `employee:N + user:N`.
+11. `cancelled_admin_invoice_is_not_aggregated` — invoice status `Đã hủy` không cộng vào báo cáo admin.
 
 ## 8. Manual QA
 - Employee report dropdown có Admin: ✅ (buildSellerFilterOptions includes users with invoices)
@@ -91,4 +110,6 @@
 - Các report tổng không thiếu invoice Admin: ✅
 - Orphan invoices không bị mất: ✅
 - Có thể deploy: ✅
-- Commit SHA: `6471f8b`
+- Commit SHA (code+SellerResolver): `4425d20` — `fix(reports): include admin sellers across report modules`
+- Commit SHA (tests + audit doc finalize): pending (đang commit ngay sau audit doc này)
+- Push status: `4425d20` đã trên `origin/main`; SHA của commit test+doc finalize sẽ điền sau khi push.

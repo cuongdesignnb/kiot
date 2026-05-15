@@ -111,6 +111,9 @@ class HOTFIX2422EmployeeReportIncludesAdminTest extends TestCase
     }
 
     // ── TC-01 — profit report includes the admin seller ──
+    // HOTFIX 24.26 contract: seller ids are prefixed strings (`user:<id>`,
+    // `employee:<id>`, `orphan:<name>`) so employees.id can't collide with
+    // users.id. Updated the row-id assertions to match.
     public function test_profit_report_includes_admin_seller(): void
     {
         $admin   = $this->adminUser();
@@ -121,12 +124,16 @@ class HOTFIX2422EmployeeReportIncludesAdminTest extends TestCase
         $res->assertOk();
         $rows = $res->viewData('page')['props']['reportRows'];
 
-        $adminRow = collect($rows)->firstWhere('id', $admin->id);
+        $adminKey = "user:{$admin->id}";
+        $adminRow = collect($rows)->firstWhere('id', $adminKey);
         $this->assertNotNull($adminRow, 'admin row must appear in profit report');
         $this->assertSame($admin->name, $adminRow['name'], 'admin row label must be the admin user name (not "Nhân viên #N")');
         $this->assertSame('admin', $adminRow['seller_type']);
+        // 24.26 profit rows expose the KiotViet 8-field shape; legacy
+        // `revenue`/`returns`/`net` aliases still resolve to the right
+        // numbers (net_revenue / total_cogs / gross_profit).
         $this->assertEquals(3_000_000, (int) $adminRow['revenue']);
-        $this->assertEquals(2_000_000, (int) $adminRow['returns']); // legacy field name for "cost" in profit rows
+        $this->assertEquals(2_000_000, (int) $adminRow['returns']);
         $this->assertEquals(1_000_000, (int) $adminRow['net']);
     }
 
@@ -141,7 +148,7 @@ class HOTFIX2422EmployeeReportIncludesAdminTest extends TestCase
         $res->assertOk();
         $rows = $res->viewData('page')['props']['reportRows'];
 
-        $adminRow = collect($rows)->firstWhere('id', $admin->id);
+        $adminRow = collect($rows)->firstWhere('id', "user:{$admin->id}");
         $this->assertNotNull($adminRow);
         $this->assertSame($admin->name, $adminRow['name']);
         $this->assertEquals(5_000_000, (int) $adminRow['revenue']);
@@ -159,7 +166,7 @@ class HOTFIX2422EmployeeReportIncludesAdminTest extends TestCase
         $res->assertOk();
         $rows = $res->viewData('page')['props']['reportRows'];
 
-        $adminRow = collect($rows)->firstWhere('id', $admin->id);
+        $adminRow = collect($rows)->firstWhere('id', "user:{$admin->id}");
         $this->assertNotNull($adminRow);
         $this->assertSame(4, (int) $adminRow['returns'], 'items report uses `returns` for quantity');
         $this->assertEquals(4_000_000, (int) $adminRow['revenue']);
@@ -178,12 +185,12 @@ class HOTFIX2422EmployeeReportIncludesAdminTest extends TestCase
         $res->assertOk();
         $options = $res->viewData('page')['props']['employees'];
 
-        $option = collect($options)->firstWhere('id', $admin->id);
+        $option = collect($options)->firstWhere('id', "user:{$admin->id}");
         $this->assertNotNull($option, 'admin must appear in the seller filter list');
         $this->assertSame('admin', $option['type']);
         $this->assertSame($admin->name, $option['name']);
 
-        $employeeOption = collect($options)->firstWhere('id', $employee->id);
+        $employeeOption = collect($options)->firstWhere('id', "employee:{$employee->id}");
         $this->assertNotNull($employeeOption, 'plain employees stay in the list');
         $this->assertSame('employee', $employeeOption['type']);
     }
@@ -197,12 +204,16 @@ class HOTFIX2422EmployeeReportIncludesAdminTest extends TestCase
         $this->invoice(null, $admin->name, $product, 1, 1_000_000);
         $this->invoice($employee->id, $employee->name, $product, 1, 9_000_000);
 
+        // 24.26 still accepts legacy bare numeric ids via
+        // SellerResolver::normalizeRequestedSellerKey (maps to BOTH
+        // employee:N and user:N). Admin is user:<id> so only the admin
+        // row stays.
         $res  = $this->actingAs($admin)->get("/reports/employees?concern=profit&employee_id={$admin->id}");
         $res->assertOk();
         $rows = $res->viewData('page')['props']['reportRows'];
 
         $this->assertCount(1, $rows, 'filter must constrain rows to the admin only');
-        $this->assertSame($admin->id, $rows[0]['id']);
+        $this->assertSame("user:{$admin->id}", $rows[0]['id']);
         $this->assertSame($admin->name, $rows[0]['name']);
     }
 
@@ -225,6 +236,9 @@ class HOTFIX2422EmployeeReportIncludesAdminTest extends TestCase
         $res->assertOk();
         $options = $res->viewData('page')['props']['employees'];
 
+        // 24.26 dedupes via the employee.user_id back-reference: when an
+        // employee row has user_id = $linked->id, the user:<id> option is
+        // marked as already covered by the employee:<id> option.
         $matches = collect($options)->where('name', 'Linked Seller');
         $this->assertCount(1, $matches, 'linked employee+user must show up exactly once');
     }

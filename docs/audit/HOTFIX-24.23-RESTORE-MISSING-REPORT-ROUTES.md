@@ -126,4 +126,4 @@ Tất cả 13 route report đã đăng ký. Tất cả 8 link menu trong AppLayo
 - Root cause: commit `d32c91c` xóa nhầm các route cũ khi thêm Phase 4+5 reports.
 - Middleware `permission:reports.view` được thêm cho consistency (trước đây không có).
 - Có thể deploy.
-- Commit SHA: `2fd20c0`
+- Commit SHA: `fe25049`
