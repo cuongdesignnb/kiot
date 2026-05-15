@@ -104,4 +104,5 @@ Khi resolve: `invoiceSellerMap()` → `snapshot:<seller_name>` (cùng pipeline v
 - Có ảnh hưởng dữ liệu cũ: Không — chỉ ảnh hưởng hóa đơn mà user manual thao tác qua endpoint `PATCH /invoices/{id}/seller`.
 - Snapshot cũ không bị merge bừa: ✅.
 - Có thể deploy: ✅
-- Commit SHA: pending (sẽ điền sau commit).
+- Commit SHA: `2ee9a2f` — `fix(invoices): allow super admin as virtual seller`
+- Push status: chưa push (chờ user xác nhận push to origin/main).
