@@ -15,19 +15,11 @@ use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
 
 /**
- * HOTFIX 24.22 — EmployeeReport must include admin / user sellers.
- *
- * `invoices.created_by` is `employees.id` per the POSController contract
- * (POSController.php@135). When admin runs a sale without picking an
- * Employee, `created_by` is left NULL and `created_by_name` carries the
- * admin's display name. The previous report controller filtered those
- * orphan rows out entirely and only resolved names against `employees`,
- * so admin invoices disappeared from every report.
- *
- * This suite pins the new contract: orphan invoices get folded into a
- * user-id bucket via a name lookup, the seller filter exposes that user,
- * and the row label says "Admin" (or the admin's name) instead of
- * "Nhân viên #N".
+ * HOTFIX 24.22 — EmployeeReport must include sellers properly.
+ * UPDATED for HOTFIX 24.28B contract:
+ *   - created_by_name is creator (NOT seller)
+ *   - Invoices without seller go to 'unknown' bucket
+ *   - Admin creator does NOT auto-become seller
  */
 class HOTFIX2422EmployeeReportIncludesAdminTest extends TestCase
 {
@@ -35,8 +27,6 @@ class HOTFIX2422EmployeeReportIncludesAdminTest extends TestCase
 
     private function adminUser(string $name = 'Admin 2422'): User
     {
-        // role_id = null → User::isAdmin() returns true (matches the
-        // legacy convention in User.php@69).
         return User::create([
             'name'     => $name,
             'email'    => 'admin-2422-' . uniqid() . '@test.local',
@@ -79,16 +69,21 @@ class HOTFIX2422EmployeeReportIncludesAdminTest extends TestCase
     }
 
     /**
-     * Create an invoice with a fixed `created_by` / `created_by_name`
-     * shape so the seller-resolver can be exercised both for admin
-     * (NULL created_by, named) and for plain employees (created_by set).
+     * HOTFIX 24.28B: added sellerName parameter for proper contract.
      */
-    private function invoice(?int $createdBy, string $createdByName, Product $product, int $qty = 1, int $price = 1_500_000): Invoice
-    {
+    private function invoice(
+        ?int $createdBy,
+        string $createdByName,
+        Product $product,
+        int $qty = 1,
+        int $price = 1_500_000,
+        ?string $sellerName = null
+    ): Invoice {
         $inv = Invoice::create([
             'code'             => 'HD-2422-' . uniqid(),
             'created_by'       => $createdBy,
             'created_by_name'  => $createdByName,
+            'seller_name'      => $sellerName,
             'subtotal'         => $qty * $price,
             'discount'         => 0,
             'total'            => $qty * $price,
@@ -103,118 +98,113 @@ class HOTFIX2422EmployeeReportIncludesAdminTest extends TestCase
             'price'      => $price,
             'cost_price' => 1_000_000,
         ]);
-        // The report filters by `created_at` between [startOfMonth, endOfDay] —
-        // make sure these test rows fall inside the default this_month window.
         $inv->created_at = Carbon::now()->startOfDay()->addMinute();
         $inv->save();
         return $inv;
     }
 
-    // ── TC-01 — profit report includes the admin seller ──
-    // HOTFIX 24.26 contract: seller ids are prefixed strings (`user:<id>`,
-    // `employee:<id>`, `orphan:<name>`) so employees.id can't collide with
-    // users.id. Updated the row-id assertions to match.
-    public function test_profit_report_includes_admin_seller(): void
+    // ── TC-01 — invoice without seller goes to unknown, not admin ──
+    public function test_invoice_without_seller_goes_to_unknown(): void
     {
         $admin   = $this->adminUser();
         $product = $this->product();
-        $this->invoice(null, $admin->name, $product, 2, 1_500_000); // 3M revenue, 2M cost
+        $this->invoice(null, $admin->name, $product, 2, 1_500_000);
 
         $res = $this->actingAs($admin)->get('/reports/employees?concern=profit');
         $res->assertOk();
         $rows = $res->viewData('page')['props']['reportRows'];
 
-        $adminKey = "user:{$admin->id}";
-        $adminRow = collect($rows)->firstWhere('id', $adminKey);
-        $this->assertNotNull($adminRow, 'admin row must appear in profit report');
-        $this->assertSame($admin->name, $adminRow['name'], 'admin row label must be the admin user name (not "Nhân viên #N")');
-        $this->assertSame('admin', $adminRow['seller_type']);
-        // 24.26 profit rows expose the KiotViet 8-field shape; legacy
-        // `revenue`/`returns`/`net` aliases still resolve to the right
-        // numbers (net_revenue / total_cogs / gross_profit).
-        $this->assertEquals(3_000_000, (int) $adminRow['revenue']);
-        $this->assertEquals(2_000_000, (int) $adminRow['returns']);
-        $this->assertEquals(1_000_000, (int) $adminRow['net']);
+        // No admin row (admin is creator, not seller)
+        $adminRow = collect($rows)->firstWhere('id', "user:{$admin->id}");
+        $this->assertNull($adminRow, 'Admin creator must NOT appear as seller');
+
+        // Unknown bucket must exist
+        $unknownRow = collect($rows)->firstWhere('id', 'unknown');
+        $this->assertNotNull($unknownRow, 'Unknown seller bucket must exist');
+        $this->assertEquals(3_000_000, (int) $unknownRow['revenue']);
     }
 
-    // ── TC-02 — sales report includes the admin seller ──
-    public function test_sales_report_includes_admin_seller(): void
+    // ── TC-02 — employee seller appears correctly ──
+    public function test_employee_seller_appears_correctly(): void
     {
         $admin   = $this->adminUser();
+        $emp     = $this->plainEmployee('Người bán TC02');
         $product = $this->product();
-        $this->invoice(null, $admin->name, $product, 1, 5_000_000);
+        $this->invoice($emp->id, $admin->name, $product, 1, 5_000_000,
+            sellerName: $emp->name);
 
         $res  = $this->actingAs($admin)->get('/reports/employees?concern=sales');
         $res->assertOk();
         $rows = $res->viewData('page')['props']['reportRows'];
 
-        $adminRow = collect($rows)->firstWhere('id', "user:{$admin->id}");
-        $this->assertNotNull($adminRow);
-        $this->assertSame($admin->name, $adminRow['name']);
-        $this->assertEquals(5_000_000, (int) $adminRow['revenue']);
-        $this->assertEquals(5_000_000, (int) $adminRow['net']);
+        $empRow = collect($rows)->firstWhere('id', "employee:{$emp->id}");
+        $this->assertNotNull($empRow);
+        $this->assertEquals(5_000_000, (int) $empRow['revenue']);
     }
 
-    // ── TC-03 — items report includes the admin seller ──
-    public function test_items_report_includes_admin_seller(): void
+    // ── TC-03 — items report counts seller's quantity ──
+    public function test_items_report_counts_seller_quantity(): void
     {
         $admin   = $this->adminUser();
+        $emp     = $this->plainEmployee('Items TC03');
         $product = $this->product();
-        $this->invoice(null, $admin->name, $product, 4, 1_000_000);
+        $this->invoice($emp->id, $admin->name, $product, 4, 1_000_000,
+            sellerName: $emp->name);
 
         $res  = $this->actingAs($admin)->get('/reports/employees?concern=items');
         $res->assertOk();
         $rows = $res->viewData('page')['props']['reportRows'];
 
-        $adminRow = collect($rows)->firstWhere('id', "user:{$admin->id}");
-        $this->assertNotNull($adminRow);
-        $this->assertSame(4, (int) $adminRow['returns'], 'items report uses `returns` for quantity');
-        $this->assertEquals(4_000_000, (int) $adminRow['revenue']);
+        $empRow = collect($rows)->firstWhere('id', "employee:{$emp->id}");
+        $this->assertNotNull($empRow);
+        $this->assertSame(4, (int) $empRow['returns'], 'items report uses `returns` for quantity');
+        $this->assertEquals(4_000_000, (int) $empRow['revenue']);
     }
 
-    // ── TC-04 — seller filter exposes admins / users alongside employees ──
-    public function test_seller_filter_includes_admin_when_orphan_invoices_exist(): void
+    // ── TC-04 — seller filter exposes employees, unknown; no admin-as-seller ──
+    public function test_seller_filter_does_not_include_admin_creator(): void
     {
         $admin    = $this->adminUser();
         $employee = $this->plainEmployee('Người bán B');
         $product  = $this->product();
         $this->invoice(null, $admin->name, $product);
-        $this->invoice($employee->id, $employee->name, $product);
+        $this->invoice($employee->id, $employee->name, $product,
+            sellerName: $employee->name);
 
         $res = $this->actingAs($admin)->get('/reports/employees');
         $res->assertOk();
         $options = $res->viewData('page')['props']['employees'];
 
-        $option = collect($options)->firstWhere('id', "user:{$admin->id}");
-        $this->assertNotNull($option, 'admin must appear in the seller filter list');
-        $this->assertSame('admin', $option['type']);
-        $this->assertSame($admin->name, $option['name']);
+        // Admin must NOT be in seller filter (only creator)
+        $adminOpt = collect($options)->firstWhere('id', "user:{$admin->id}");
+        $this->assertNull($adminOpt, 'Admin creator must NOT appear in seller filter');
 
+        // Employee must be in seller filter
         $employeeOption = collect($options)->firstWhere('id', "employee:{$employee->id}");
         $this->assertNotNull($employeeOption, 'plain employees stay in the list');
         $this->assertSame('employee', $employeeOption['type']);
+
+        // Unknown bucket must be in seller filter (for the no-seller invoice)
+        $unknownOpt = collect($options)->first(fn($o) => $o['key'] === 'unknown');
+        $this->assertNotNull($unknownOpt, 'Unknown seller must appear in filter');
     }
 
-    // ── TC-05 — filtering by admin returns only admin invoices ──
-    public function test_filtering_by_admin_id_returns_only_admin_invoices(): void
+    // ── TC-05 — filtering by employee returns only that employee's invoices ──
+    public function test_filtering_by_employee_returns_only_employee_invoices(): void
     {
         $admin    = $this->adminUser();
         $employee = $this->plainEmployee('Người bán C');
         $product  = $this->product();
         $this->invoice(null, $admin->name, $product, 1, 1_000_000);
-        $this->invoice($employee->id, $employee->name, $product, 1, 9_000_000);
+        $this->invoice($employee->id, $employee->name, $product, 1, 9_000_000,
+            sellerName: $employee->name);
 
-        // 24.26 still accepts legacy bare numeric ids via
-        // SellerResolver::normalizeRequestedSellerKey (maps to BOTH
-        // employee:N and user:N). Admin is user:<id> so only the admin
-        // row stays.
-        $res  = $this->actingAs($admin)->get("/reports/employees?concern=profit&employee_id={$admin->id}");
+        $res  = $this->actingAs($admin)->get("/reports/employees?concern=profit&employee_id=employee:{$employee->id}");
         $res->assertOk();
         $rows = $res->viewData('page')['props']['reportRows'];
 
-        $this->assertCount(1, $rows, 'filter must constrain rows to the admin only');
-        $this->assertSame("user:{$admin->id}", $rows[0]['id']);
-        $this->assertSame($admin->name, $rows[0]['name']);
+        $this->assertCount(1, $rows, 'filter must constrain rows to the employee only');
+        $this->assertSame("employee:{$employee->id}", $rows[0]['id']);
     }
 
     // ── TC-06 — employee-with-user is not duplicated in the filter list ──
@@ -230,15 +220,13 @@ class HOTFIX2422EmployeeReportIncludesAdminTest extends TestCase
         ]);
         $employee = $this->employeeUser('Linked Seller', $linked);
         $product  = $this->product();
-        $this->invoice($employee->id, $employee->name, $product);
+        $this->invoice($employee->id, $employee->name, $product,
+            sellerName: $employee->name);
 
         $res     = $this->actingAs($admin)->get('/reports/employees');
         $res->assertOk();
         $options = $res->viewData('page')['props']['employees'];
 
-        // 24.26 dedupes via the employee.user_id back-reference: when an
-        // employee row has user_id = $linked->id, the user:<id> option is
-        // marked as already covered by the employee:<id> option.
         $matches = collect($options)->where('name', 'Linked Seller');
         $this->assertCount(1, $matches, 'linked employee+user must show up exactly once');
     }

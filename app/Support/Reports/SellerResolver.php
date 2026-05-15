@@ -4,43 +4,27 @@ namespace App\Support\Reports;
 
 use App\Models\Employee;
 use App\Models\Invoice;
-use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * HOTFIX 24.26 — Centralised seller resolution for all report controllers.
- * HOTFIX 24.27 — Fix duplicate sellers and align invoice filter consistency.
+ * HOTFIX 24.28B — Seller resolution using correct data contract.
  *
- * Seller keys use prefixed strings to avoid ambiguity between
- * employees.id and users.id:
+ * Data contract (from InvoiceSaleService::buildInvoiceAttributes):
+ *   invoices.created_by      = seller employee id (from context['seller_id'])
+ *   invoices.seller_name     = seller name snapshot (from context['seller_name'])
+ *   invoices.created_by_name = creator name snapshot (auth user name — NOT seller)
  *
- *   employee:<id>   — invoice created by an employee
- *   user:<id>       — invoice created by a user (admin/staff without employee row)
- *   orphan:<name>   — created_by IS NULL, created_by_name doesn't match any user
- *   unknown         — no creator info at all
+ * Seller keys:
+ *   employee:<id>           — seller has a known employee record
+ *   snapshot:<seller_name>  — seller_name present but no employee id
+ *   unknown                 — no seller info (created_by NULL + seller_name NULL)
  *
- * HOTFIX 24.27 canonical merge rules:
- *   - If employee has user_id → user:<user_id> merges into employee:<employee_id>
- *   - If created_by matches a user who has an employee row → canonical = employee:<employee_id>
- *   - If created_by matches employee AND user with DIFFERENT names → use created_by_name to disambiguate
- *   - Orphan names matching exactly ONE employee → merge to employee:<id>
- *   - Orphan names matching multiple employees → stay orphan:<name>
+ * CRITICAL: created_by_name is NEVER used for seller resolution.
+ * It is the login user's name at invoice creation time (creator snapshot).
  */
 class SellerResolver
 {
-    /**
-     * HOTFIX 24.27 — Build a map from user_id → employee for merge.
-     * Returns: array<user_id, Employee>
-     */
-    private function buildUserToEmployeeMap(): array
-    {
-        return Employee::whereNotNull('user_id')
-            ->get(['id', 'name', 'code', 'user_id'])
-            ->keyBy('user_id')
-            ->all();
-    }
-
     // ═══════════════════════════════════════
     // Key generation
     // ═══════════════════════════════════════
@@ -51,11 +35,7 @@ class SellerResolver
      */
     public function invoiceSellerMap($query): array
     {
-        // HOTFIX 24.27 — only select columns that exist
-        $selectCols = ['id', 'created_by', 'created_by_name'];
-        if (Schema::hasColumn('invoices', 'employee_id')) {
-            $selectCols[] = 'employee_id';
-        }
+        $selectCols = ['id', 'created_by', 'seller_name'];
 
         $invoices = (clone $query)
             ->select($selectCols)
@@ -63,38 +43,26 @@ class SellerResolver
 
         if ($invoices->isEmpty()) return [];
 
-        // Preload lookup tables
+        // Preload employee lookup
         $createdByIds = $invoices->pluck('created_by')->filter()->unique()->values()->all();
-        $employeeIds  = Schema::hasColumn('invoices', 'employee_id')
-            ? $invoices->pluck('employee_id')->filter()->unique()->values()->all()
-            : [];
-        $allIds       = array_values(array_unique(array_merge($createdByIds, $employeeIds)));
-
-        $employeeIdSet = !empty($allIds)
-            ? Employee::whereIn('id', $allIds)->pluck('name', 'id')->all()
-            : [];
-        $userIdSet = !empty($allIds)
-            ? User::whereIn('id', $allIds)->whereNull('deleted_at')->pluck('name', 'id')->all()
+        $employeeIdSet = !empty($createdByIds)
+            ? Employee::whereIn('id', $createdByIds)->pluck('name', 'id')->all()
             : [];
 
-        // HOTFIX 24.27 — user_id → employee map for canonical merge
-        $userToEmployee = $this->buildUserToEmployeeMap();
-
-        $orphanNames = $invoices->whereNull('created_by')
-            ->pluck('created_by_name')->filter()->unique()->values()->all();
-        $userByName = !empty($orphanNames)
-            ? User::whereIn('name', $orphanNames)->whereNull('deleted_at')->pluck('id', 'name')->all()
-            : [];
-        // HOTFIX 24.27 — orphan name → employee match (only if exactly one match)
-        $employeeByName = [];
-        if (!empty($orphanNames)) {
-            $empsByName = Employee::whereIn('name', $orphanNames)->get(['id', 'name', 'code']);
+        // For seller_name → employee match (orphan resolution)
+        $sellerNames = $invoices->whereNull('created_by')
+            ->pluck('seller_name')->filter()->unique()->values()->all();
+        $employeeBySellerName = [];
+        if (!empty($sellerNames)) {
+            $empsByName = Employee::where('is_active', true)
+                ->whereIn('name', $sellerNames)
+                ->get(['id', 'name', 'code']);
             $grouped = $empsByName->groupBy('name');
             foreach ($grouped as $name => $emps) {
                 if ($emps->count() === 1) {
-                    $employeeByName[$name] = $emps->first();
+                    $employeeBySellerName[$name] = $emps->first();
                 }
-                // If multiple employees share the same name, do NOT merge — stay orphan
+                // Multiple employees with same name → stay snapshot
             }
         }
 
@@ -102,110 +70,58 @@ class SellerResolver
         foreach ($invoices as $inv) {
             $map[$inv->id] = $this->resolveKey(
                 $inv->created_by,
-                $inv->created_by_name,
-                $inv->employee_id ?? null,
+                $inv->seller_name,
                 $employeeIdSet,
-                $userIdSet,
-                $userByName,
-                $userToEmployee,
-                $employeeByName
+                $employeeBySellerName
             );
         }
         return $map;
     }
 
     /**
-     * HOTFIX 24.27 — Determine seller key for a single invoice record.
+     * HOTFIX 24.28B — Determine seller key for a single invoice.
      *
-     * Resolution priority:
-     * 1. If created_by present:
-     *    a. Check if it's a user who has an employee row → canonical employee:<emp_id>
-     *    b. If both employee and user exist with same ID, use created_by_name to disambiguate
-     *    c. If only employee exists → employee:<id>
-     *    d. If only user exists → check if user has employee row → merge or user:<id>
-     *    e. Neither → orphan:User #<id>
-     * 2. If created_by NULL + created_by_name present:
-     *    a. Match user → check if user has employee row → merge or user:<id>
-     *    b. Match exactly one employee → employee:<id>
-     *    c. No match → orphan:<name>
-     * 3. No info → unknown
+     * Resolution:
+     * 1. created_by present → employee:<id> if employee exists, else snapshot or unknown
+     * 2. created_by NULL + seller_name present → match employee or snapshot
+     * 3. Both NULL → unknown
+     *
+     * NEVER uses created_by_name (that's the creator, not the seller).
      */
     private function resolveKey(
         $createdBy,
-        $createdByName,
-        $employeeId,
+        $sellerName,
         array $empNameById,
-        array $userNameById,
-        array $userByName,
-        array $userToEmployee,
-        array $employeeByName
+        array $employeeBySellerName
     ): string {
-        // Priority 1: created_by present
+        // Priority 1: created_by has a value (seller employee id)
         if ($createdBy !== null && $createdBy !== '') {
             $id = (int) $createdBy;
-            $empExists  = array_key_exists($id, $empNameById);
-            $userExists = array_key_exists($id, $userNameById);
 
-            if ($empExists && $userExists) {
-                // HOTFIX 24.27 — Both employee and user share the same numeric ID.
-                // Use created_by_name to disambiguate.
-                $empName  = $empNameById[$id];
-                $userName = $userNameById[$id];
-
-                if ($createdByName !== null && $createdByName !== '') {
-                    if ($createdByName === $userName && $createdByName !== $empName) {
-                        // Name matches user, not employee → this is a user invoice
-                        // Check if user has an employee row for merge
-                        if (isset($userToEmployee[$id])) {
-                            return "employee:{$userToEmployee[$id]->id}";
-                        }
-                        return "user:{$id}";
-                    }
-                    if ($createdByName === $empName && $createdByName !== $userName) {
-                        // Name matches employee → this is an employee invoice
-                        return "employee:{$id}";
-                    }
-                }
-                // Names are the same or can't disambiguate — prefer user (admin)
-                // then check for employee merge
-                if (isset($userToEmployee[$id])) {
-                    return "employee:{$userToEmployee[$id]->id}";
-                }
-                return "user:{$id}";
-            }
-
-            if ($userExists) {
-                // HOTFIX 24.27 — User exists; check if they have an employee row
-                if (isset($userToEmployee[$id])) {
-                    return "employee:{$userToEmployee[$id]->id}";
-                }
-                return "user:{$id}";
-            }
-
-            if ($empExists) {
+            // Check if this employee exists
+            if (array_key_exists($id, $empNameById)) {
                 return "employee:{$id}";
             }
 
-            return "orphan:User #{$id}";
+            // Employee ID doesn't exist in DB — use seller_name if available
+            if ($sellerName !== null && $sellerName !== '') {
+                return "snapshot:{$sellerName}";
+            }
+
+            // No seller info at all despite having created_by
+            return 'unknown';
         }
 
-        // Priority 2: orphan with created_by_name
-        if ($createdByName !== null && $createdByName !== '') {
-            $userId = $userByName[$createdByName] ?? null;
-            if ($userId) {
-                // Check if this user has an employee row → merge
-                if (isset($userToEmployee[$userId])) {
-                    return "employee:{$userToEmployee[$userId]->id}";
-                }
-                return "user:{$userId}";
+        // Priority 2: created_by NULL, seller_name present
+        if ($sellerName !== null && $sellerName !== '') {
+            // Try to match to exactly one active employee
+            if (isset($employeeBySellerName[$sellerName])) {
+                return "employee:{$employeeBySellerName[$sellerName]->id}";
             }
-            // HOTFIX 24.27 — Check if name matches exactly one employee
-            if (isset($employeeByName[$createdByName])) {
-                return "employee:{$employeeByName[$createdByName]->id}";
-            }
-            return "orphan:{$createdByName}";
+            return "snapshot:{$sellerName}";
         }
 
+        // Priority 3: No seller info at all
         return 'unknown';
     }
 
@@ -271,12 +187,10 @@ class SellerResolver
         $invoiceIds = $returnRows->pluck('invoice_id')->filter()->unique()->values()->all();
         if (empty($invoiceIds)) return [];
 
-        // Build seller map for the original invoices
         $invoiceSellerMap = $this->invoiceSellerMap(
             Invoice::whereIn('id', $invoiceIds)
         );
 
-        // Map return_id → seller_key via invoice_id
         $returnSellerMap = [];
         foreach ($returnRows as $ret) {
             $returnSellerMap[$ret->id] = $invoiceSellerMap[$ret->invoice_id] ?? 'unknown';
@@ -379,8 +293,6 @@ class SellerResolver
 
     /**
      * Resolve seller keys to display meta.
-     * HOTFIX 24.27 — adds seller_key, seller_type, seller_code fields
-     * and disambiguates duplicate display names with code/type suffix.
      *
      * Returns: array<seller_key, {id, key, raw_id, name, code, type, display_name}>
      */
@@ -391,27 +303,21 @@ class SellerResolver
 
         // Extract numeric ids by prefix
         $empIds = [];
-        $userIds = [];
-        $orphanNames = [];
+        $snapshotNames = [];
 
         foreach ($sellerKeys as $key) {
             if (str_starts_with($key, 'employee:')) {
                 $empIds[] = (int) substr($key, 9);
-            } elseif (str_starts_with($key, 'user:')) {
-                $userIds[] = (int) substr($key, 5);
-            } elseif (str_starts_with($key, 'orphan:')) {
-                $orphanNames[] = substr($key, 7);
+            } elseif (str_starts_with($key, 'snapshot:')) {
+                $snapshotNames[] = substr($key, 9);
             }
         }
 
         $employees = !empty($empIds)
             ? Employee::whereIn('id', $empIds)->get(['id', 'name', 'code'])->keyBy('id')
             : collect();
-        $users = !empty($userIds)
-            ? User::whereIn('id', $userIds)->get(['id', 'name', 'email', 'role_id'])->keyBy('id')
-            : collect();
 
-        // HOTFIX 24.27 — First pass: build raw meta
+        // Build raw meta
         $meta = [];
         foreach ($sellerKeys as $key) {
             if (str_starts_with($key, 'employee:')) {
@@ -425,50 +331,51 @@ class SellerResolver
                     'code'   => $emp->code ?? "NV{$id}",
                     'type'   => 'employee',
                 ];
-            } elseif (str_starts_with($key, 'user:')) {
-                $id   = (int) substr($key, 5);
-                $user = $users[$id] ?? null;
-                $isAdmin = $user && method_exists($user, 'isAdmin') ? $user->isAdmin() : false;
-                $meta[$key] = [
-                    'id'     => $key,
-                    'key'    => $key,
-                    'raw_id' => $id,
-                    'name'   => $user->name ?? ($isAdmin ? 'Admin' : "User #{$id}"),
-                    'code'   => $isAdmin ? 'ADMIN' : "U{$id}",
-                    'type'   => $isAdmin ? 'admin' : 'user',
-                ];
-            } elseif (str_starts_with($key, 'orphan:')) {
-                $name = substr($key, 7);
+            } elseif (str_starts_with($key, 'snapshot:')) {
+                $name = substr($key, 9);
                 $meta[$key] = [
                     'id'     => $key,
                     'key'    => $key,
                     'raw_id' => null,
                     'name'   => $name,
-                    'code'   => 'ORPHAN',
-                    'type'   => 'orphan',
+                    'code'   => 'SNAPSHOT',
+                    'type'   => 'seller_snapshot',
+                ];
+            } elseif ($key === 'unknown') {
+                $meta[$key] = [
+                    'id'     => 'unknown',
+                    'key'    => 'unknown',
+                    'raw_id' => null,
+                    'name'   => 'Chưa xác định người bán',
+                    'code'   => 'UNKNOWN',
+                    'type'   => 'unknown_seller',
                 ];
             } else {
+                // Catch-all for any legacy keys
                 $meta[$key] = [
                     'id'     => $key,
                     'key'    => $key,
                     'raw_id' => null,
-                    'name'   => 'Không xác định',
-                    'code'   => 'UNK',
-                    'type'   => 'unknown',
+                    'name'   => $key,
+                    'code'   => 'LEGACY',
+                    'type'   => 'legacy',
                 ];
             }
         }
 
-        // HOTFIX 24.27 — Second pass: disambiguate duplicate display names
+        // Disambiguate duplicate display names
         $nameCount = [];
         foreach ($meta as $m) {
             $nameCount[$m['name']] = ($nameCount[$m['name']] ?? 0) + 1;
         }
         foreach ($meta as $key => &$m) {
             if (($nameCount[$m['name']] ?? 0) > 1) {
-                // Append code/type to disambiguate
-                $suffix = $m['code'] ?? strtoupper($m['type']);
-                $m['display_name'] = "{$m['name']} — {$suffix}";
+                if ($m['type'] === 'seller_snapshot') {
+                    $m['display_name'] = "{$m['name']} — snapshot người bán";
+                } else {
+                    $suffix = $m['code'] ?? strtoupper($m['type']);
+                    $m['display_name'] = "{$m['name']} — {$suffix}";
+                }
             } else {
                 $m['display_name'] = $m['name'];
             }
@@ -483,38 +390,25 @@ class SellerResolver
     // ═══════════════════════════════════════
 
     /**
-     * HOTFIX 24.27 — Build seller filter options using canonical keys.
-     * Merges employee+user when employee.user_id links to a user.
-     * Only includes sellers who actually have invoices, plus all active employees.
+     * HOTFIX 24.28B — Build seller filter options.
+     *
+     * Sources:
+     * 1. All active employees (canonical sellers)
+     * 2. Snapshot seller names from invoices that don't map to an employee
+     * 3. 'unknown' bucket if any invoices have no seller
+     *
+     * NEVER includes created_by_name (creator snapshot).
      */
     public function buildSellerFilterOptions(): array
     {
-        $userToEmployee = $this->buildUserToEmployeeMap();
-
-        // All active employees
-        $employees = Employee::orderBy('name')->get(['id', 'name', 'code', 'user_id']);
-
-        // Sellers from invoice data
-        $directIds = Invoice::whereNotNull('created_by')
-            ->distinct()->pluck('created_by')
-            ->map(fn ($id) => (int) $id)->filter()->values()->all();
-
-        $orphanNames = Invoice::whereNull('created_by')
-            ->whereNotNull('created_by_name')
-            ->distinct()->pluck('created_by_name')
-            ->filter()->values()->all();
-
-        $userByName = !empty($orphanNames)
-            ? User::whereIn('name', $orphanNames)->whereNull('deleted_at')->pluck('id', 'name')->all()
-            : [];
-
-        $empIdSet  = Employee::pluck('id')->flip()->all();
-        $userIdSet = User::whereNull('deleted_at')->pluck('id')->flip()->all();
-
         $options = [];
-        $seen    = [];
+        $seen = [];
 
-        // Add employees (canonical keys)
+        // 1. All active employees
+        $employees = Employee::where('is_active', true)
+            ->orderBy('name')
+            ->get(['id', 'name', 'code']);
+
         foreach ($employees as $emp) {
             $key = "employee:{$emp->id}";
             $options[] = [
@@ -525,86 +419,90 @@ class SellerResolver
                 'type' => 'employee',
             ];
             $seen[$key] = true;
-            // HOTFIX 24.27 — Mark the user key as seen too (merged)
-            if ($emp->user_id) {
-                $seen["user:{$emp->user_id}"] = true;
-            }
         }
 
-        // Add direct sellers not already represented
+        // 2. Direct created_by values that are employee IDs not already in active employees
+        $directIds = Invoice::whereNotNull('created_by')
+            ->where('status', '!=', 'Đã hủy')
+            ->distinct()->pluck('created_by')
+            ->map(fn($id) => (int) $id)->filter()->values()->all();
+
+        $empIdSet = Employee::pluck('id')->flip()->all();
         foreach ($directIds as $id) {
-            // If this ID is a user who has an employee row → already covered
-            if (isset($userIdSet[$id]) && isset($userToEmployee[$id])) {
-                continue; // merged into employee:<emp_id>
-            }
-            if (isset($empIdSet[$id]) && isset($seen["employee:{$id}"])) continue;
-            if (isset($userIdSet[$id])) {
-                $key = "user:{$id}";
-                if (isset($seen[$key])) continue;
-                $user = User::find($id);
-                $isAdmin = $user && method_exists($user, 'isAdmin') ? $user->isAdmin() : false;
-                $options[] = [
-                    'id'   => $key,
-                    'key'  => $key,
-                    'name' => $user->name ?? "User #{$id}",
-                    'code' => $isAdmin ? 'ADMIN' : "U{$id}",
-                    'type' => $isAdmin ? 'admin' : 'user',
-                ];
-                $seen[$key] = true;
+            if (isset($empIdSet[$id]) && !isset($seen["employee:{$id}"])) {
+                $emp = Employee::find($id);
+                if ($emp) {
+                    $key = "employee:{$emp->id}";
+                    $options[] = [
+                        'id'   => $key,
+                        'key'  => $key,
+                        'name' => $emp->name,
+                        'code' => $emp->code ?: "NV{$emp->id}",
+                        'type' => 'employee',
+                    ];
+                    $seen[$key] = true;
+                }
             }
         }
 
-        // Add orphan names
-        foreach ($orphanNames as $name) {
-            $userId = $userByName[$name] ?? null;
-            if ($userId) {
-                // HOTFIX 24.27 — Check if user has employee row → already merged
-                if (isset($userToEmployee[$userId])) {
-                    continue; // merged into employee:<emp_id>
-                }
-                if (isset($seen["user:{$userId}"])) continue;
-                $key = "user:{$userId}";
-                $user = User::find($userId);
-                $isAdmin = $user && method_exists($user, 'isAdmin') ? $user->isAdmin() : false;
-                $options[] = [
-                    'id'   => $key,
-                    'key'  => $key,
-                    'name' => $user->name ?? $name,
-                    'code' => $isAdmin ? 'ADMIN' : "U{$userId}",
-                    'type' => $isAdmin ? 'admin' : 'user',
-                ];
-                $seen[$key] = true;
-            } else {
-                // HOTFIX 24.27 — Check if orphan name matches exactly one employee
-                $matchingEmps = Employee::where('name', $name)->get(['id', 'name', 'code']);
-                if ($matchingEmps->count() === 1) {
-                    $empKey = "employee:{$matchingEmps->first()->id}";
-                    if (isset($seen[$empKey])) continue;
-                    // Already in employee list, skip
-                    continue;
-                }
-                $key = "orphan:{$name}";
-                if (isset($seen[$key])) continue;
-                $options[] = [
-                    'id'   => $key,
-                    'key'  => $key,
-                    'name' => $name,
-                    'code' => 'ORPHAN',
-                    'type' => 'orphan',
-                ];
-                $seen[$key] = true;
+        // 3. Snapshot seller names (created_by NULL but seller_name present)
+        $snapshotNames = Invoice::whereNull('created_by')
+            ->where('status', '!=', 'Đã hủy')
+            ->whereNotNull('seller_name')
+            ->where('seller_name', '!=', '')
+            ->distinct()->pluck('seller_name')
+            ->filter()->values()->all();
+
+        foreach ($snapshotNames as $name) {
+            // Check if this name matches exactly one active employee → already covered
+            $matchCount = Employee::where('is_active', true)->where('name', $name)->count();
+            if ($matchCount === 1) {
+                continue; // Already in employee list
             }
+            $key = "snapshot:{$name}";
+            if (isset($seen[$key])) continue;
+            $options[] = [
+                'id'   => $key,
+                'key'  => $key,
+                'name' => $name,
+                'code' => 'SNAPSHOT',
+                'type' => 'seller_snapshot',
+            ];
+            $seen[$key] = true;
         }
 
-        // HOTFIX 24.27 — Disambiguate duplicate display names
+        // 4. Unknown bucket if any invoices have no seller
+        $unknownCount = Invoice::whereNull('created_by')
+            ->where('status', '!=', 'Đã hủy')
+            ->where(function ($q) {
+                $q->whereNull('seller_name')
+                  ->orWhere('seller_name', '');
+            })
+            ->count();
+
+        if ($unknownCount > 0) {
+            $options[] = [
+                'id'   => 'unknown',
+                'key'  => 'unknown',
+                'name' => 'Chưa xác định người bán',
+                'code' => 'UNKNOWN',
+                'type' => 'unknown_seller',
+            ];
+        }
+
+        // Disambiguate duplicate display names
         $nameCount = [];
         foreach ($options as $opt) {
             $nameCount[$opt['name']] = ($nameCount[$opt['name']] ?? 0) + 1;
         }
         foreach ($options as &$opt) {
             if (($nameCount[$opt['name']] ?? 0) > 1) {
-                $suffix = $opt['code'] ?? strtoupper($opt['type']);
-                $opt['display_name'] = "{$opt['name']} — {$suffix}";
+                if ($opt['type'] === 'seller_snapshot') {
+                    $opt['display_name'] = "{$opt['name']} — snapshot người bán";
+                } else {
+                    $suffix = $opt['code'] ?? strtoupper($opt['type']);
+                    $opt['display_name'] = "{$opt['name']} — {$suffix}";
+                }
             } else {
                 $opt['display_name'] = $opt['name'];
             }
@@ -615,9 +513,34 @@ class SellerResolver
     }
 
     /**
+     * Build creator filter options from distinct created_by_name snapshots.
+     * These are purely for "Người tạo" filter — NOT seller.
+     */
+    public function buildCreatorFilterOptions(): array
+    {
+        $names = Invoice::where('status', '!=', 'Đã hủy')
+            ->whereNotNull('created_by_name')
+            ->where('created_by_name', '!=', '')
+            ->distinct()
+            ->pluck('created_by_name')
+            ->sort()
+            ->values();
+
+        return $names->map(fn($name) => [
+            'id'           => "creator_snapshot:{$name}",
+            'key'          => "creator_snapshot:{$name}",
+            'name'         => $name,
+            'type'         => 'creator_snapshot',
+            'display_name' => "{$name}",
+        ])->all();
+    }
+
+    // ═══════════════════════════════════════
+    // Filter by seller
+    // ═══════════════════════════════════════
+
+    /**
      * Normalize a seller filter value from the frontend request.
-     * Supports new prefixed keys and legacy numeric ids.
-     * Returns array of seller keys to match against.
      */
     public function normalizeRequestedSellerKey($value): array
     {
@@ -627,14 +550,14 @@ class SellerResolver
 
         // Already prefixed
         if (str_starts_with($value, 'employee:') ||
-            str_starts_with($value, 'user:') ||
-            str_starts_with($value, 'orphan:')) {
+            str_starts_with($value, 'snapshot:') ||
+            $value === 'unknown') {
             return [$value];
         }
 
-        // Legacy numeric id — match both employee and user
+        // Legacy numeric id — treat as employee id
         if (ctype_digit($value)) {
-            return ["employee:{$value}", "user:{$value}"];
+            return ["employee:{$value}"];
         }
 
         return [];
@@ -642,40 +565,70 @@ class SellerResolver
 
     /**
      * Filter an invoice query to only include invoices from a specific seller.
+     *
+     * HOTFIX 24.28B — Direct SQL filtering instead of loading all invoices.
      */
-    public function filterBySeller($invoiceQuery, string $employeeIdParam)
+    public function filterBySeller($invoiceQuery, string $sellerKeyParam)
     {
-        $matchKeys = $this->normalizeRequestedSellerKey($employeeIdParam);
-        if (empty($matchKeys)) return $invoiceQuery;
+        $value = (string) $sellerKeyParam;
 
-        $sellerMap = $this->invoiceSellerMap($invoiceQuery);
-        $matchingIds = [];
-        foreach ($sellerMap as $invoiceId => $key) {
-            if (in_array($key, $matchKeys)) {
-                $matchingIds[] = $invoiceId;
-            }
+        // employee:<id> → where created_by = <id>
+        if (preg_match('/^employee:(\d+)$/', $value, $m)) {
+            $empId = (int) $m[1];
+            return $invoiceQuery->where(function ($q) use ($empId) {
+                $emp = Employee::find($empId);
+                $q->where('created_by', $empId);
+                // Also match seller_name if employee exists (for invoices where created_by is NULL)
+                if ($emp) {
+                    $empName = $emp->name;
+                    // Only match seller_name if this employee is the ONLY one with this name
+                    $nameCount = Employee::where('is_active', true)->where('name', $empName)->count();
+                    if ($nameCount === 1) {
+                        $q->orWhere(function ($sq) use ($empName) {
+                            $sq->whereNull('created_by')
+                               ->where('seller_name', $empName);
+                        });
+                    }
+                }
+            });
         }
 
-        return $invoiceQuery->whereIn('id', $matchingIds);
+        // snapshot:<name> → where created_by IS NULL AND seller_name = <name>
+        if (str_starts_with($value, 'snapshot:')) {
+            $name = substr($value, 9);
+            return $invoiceQuery->whereNull('created_by')->where('seller_name', $name);
+        }
+
+        // unknown → where created_by IS NULL AND (seller_name IS NULL OR seller_name = '')
+        if ($value === 'unknown') {
+            return $invoiceQuery->whereNull('created_by')
+                ->where(function ($q) {
+                    $q->whereNull('seller_name')
+                      ->orWhere('seller_name', '');
+                });
+        }
+
+        // Legacy numeric id
+        if (ctype_digit($value)) {
+            return $invoiceQuery->where('created_by', (int) $value);
+        }
+
+        return $invoiceQuery;
     }
 
     /**
-     * HOTFIX 24.27 — Filter for invoice list page (Cách A).
-     * Accepts seller_key and returns invoice IDs matching that seller.
-     * This allows the invoice page to use the same SellerResolver logic.
+     * Filter by creator snapshot (created_by_name).
      */
-    public function getInvoiceIdsForSeller($invoiceQuery, string $sellerKey): array
+    public function filterByCreator($invoiceQuery, string $creatorKey)
     {
-        $matchKeys = $this->normalizeRequestedSellerKey($sellerKey);
-        if (empty($matchKeys)) return [];
+        $value = (string) $creatorKey;
 
-        $sellerMap = $this->invoiceSellerMap($invoiceQuery);
-        $ids = [];
-        foreach ($sellerMap as $invoiceId => $key) {
-            if (in_array($key, $matchKeys)) {
-                $ids[] = $invoiceId;
-            }
+        if (str_starts_with($value, 'creator_snapshot:')) {
+            $name = substr($value, 17);
+            return $invoiceQuery->where('created_by_name', $name);
         }
-        return $ids;
+
+        // Plain name
+        return $invoiceQuery->where('created_by_name', $value);
     }
 }

@@ -84,12 +84,12 @@ const sidebarConfig = computed(() => [
         zone: "main",
     },
     {
-        key: "created_by",
+        key: "creator_key",
         type: "select",
         label: "Người tạo",
-        options: (props.filterOptions?.creators || []).map((u) => ({
-            value: u.id,
-            label: u.name,
+        options: (props.filterOptions?.creators || []).map((c) => ({
+            value: c.key,
+            label: c.display_name || c.name,
         })),
         placeholder: "-- Tất cả --",
         zone: "advanced",

@@ -15,14 +15,13 @@ use Tests\TestCase;
 
 /**
  * HOTFIX 24.27 — Prevent duplicate sellers and align invoice filter consistency.
+ * UPDATED for HOTFIX 24.28B contract: created_by_name is creator, NOT seller.
  *
  * Key invariants:
- *   - User and employee with same name and linked via user_id → one canonical key
  *   - Two employees with same name but different people → disambiguated labels
  *   - Report and invoice list use same SellerResolver → same seller matches same invoices
  *   - Employee with no invoices has no revenue
- *   - Mismatched created_by (employee id = user id) → correct assignment via name check
- *   - Admin still appears (no regression from HOTFIX 24.26)
+ *   - seller_name matching one employee → merges
  *   - Profit 8 columns still correct
  *   - Cancelled invoices excluded
  */
@@ -75,6 +74,9 @@ class HOTFIX2427SellerDuplicateAndInvoiceFilterTest extends TestCase
         ]);
     }
 
+    /**
+     * HOTFIX 24.28B: invoice helper now accepts seller_name for proper contract.
+     */
     private function invoice(
         ?int $createdBy,
         ?string $createdByName,
@@ -83,13 +85,15 @@ class HOTFIX2427SellerDuplicateAndInvoiceFilterTest extends TestCase
         int $price = 1_000_000,
         int $discount = 0,
         string $status = 'Hoàn thành',
-        ?int $costPrice = 600_000
+        ?int $costPrice = 600_000,
+        ?string $sellerName = null
     ): Invoice {
         $subtotal = $qty * $price;
         $inv = Invoice::create([
             'code'             => 'HD-2427-' . uniqid(),
             'created_by'       => $createdBy,
             'created_by_name'  => $createdByName,
+            'seller_name'      => $sellerName,
             'subtotal'         => $subtotal,
             'discount'         => $discount,
             'total'            => $subtotal - $discount,
@@ -109,25 +113,25 @@ class HOTFIX2427SellerDuplicateAndInvoiceFilterTest extends TestCase
         return $inv;
     }
 
-    // ── TC-01 — User and employee same name, linked via user_id → no duplicate ──
+    // ── TC-01 — Employee seller with linked user → one row, employee key ──
     public function test_user_and_employee_same_name_same_person_no_duplicate(): void
     {
         $user = $this->regularUser('Vũ Hồng Nhung');
         $emp  = $this->employee('Vũ Hồng Nhung', 'NV001', $user->id);
         $product = $this->product();
 
-        // Invoice created by user (created_by = NULL, created_by_name = user.name)
-        $this->invoice(null, $user->name, $product, 1, 2_000_000);
+        // Invoice created by user, seller = employee
+        $this->invoice($emp->id, $user->name, $product, 1, 2_000_000, sellerName: $emp->name);
 
         $res = $this->actingAs($user)->get('/reports/employees?concern=profit&view=report');
         $res->assertOk();
         $rows = $res->viewData('page')['props']['reportRows'];
 
-        // Only 1 row for Vũ Hồng Nhung, not 2
+        // Only 1 row for Vũ Hồng Nhung
         $matchingRows = collect($rows)->filter(fn($r) => str_contains($r['name'], 'Vũ Hồng Nhung'));
-        $this->assertCount(1, $matchingRows, 'Same person (user + employee linked) must appear as one row');
+        $this->assertCount(1, $matchingRows, 'Same person (employee) must appear as one row');
 
-        // Canonical key should be employee:<emp_id> (merged)
+        // Canonical key should be employee:<emp_id>
         $row = $matchingRows->first();
         $this->assertSame("employee:{$emp->id}", $row['id']);
 
@@ -145,8 +149,8 @@ class HOTFIX2427SellerDuplicateAndInvoiceFilterTest extends TestCase
         $emp2 = $this->employee('Vũ Hồng Nhung', 'NV002');
         $product = $this->product();
 
-        $this->invoice($emp1->id, $emp1->name, $product, 1, 1_000_000);
-        $this->invoice($emp2->id, $emp2->name, $product, 1, 2_000_000);
+        $this->invoice($emp1->id, $admin->name, $product, 1, 1_000_000, sellerName: $emp1->name);
+        $this->invoice($emp2->id, $admin->name, $product, 1, 2_000_000, sellerName: $emp2->name);
 
         $res = $this->actingAs($admin)->get('/reports/employees?concern=sales&view=report');
         $res->assertOk();
@@ -167,20 +171,21 @@ class HOTFIX2427SellerDuplicateAndInvoiceFilterTest extends TestCase
     // ── TC-03 — Invoice report and invoice list filter use same seller key ──
     public function test_invoice_report_and_invoice_list_use_same_seller_key(): void
     {
-        $user = $this->adminUser('Seller TC03');
+        $admin = $this->adminUser();
+        $emp = $this->employee('Seller TC03', 'NV-TC03');
         $product = $this->product();
-        $inv = $this->invoice(null, $user->name, $product, 1, 3_000_000);
+        $inv = $this->invoice($emp->id, $admin->name, $product, 1, 3_000_000, sellerName: $emp->name);
 
         // Get the seller key from report
-        $resReport = $this->actingAs($user)->get('/reports/employees?concern=sales&view=report');
+        $resReport = $this->actingAs($admin)->get('/reports/employees?concern=sales&view=report');
         $resReport->assertOk();
         $rows = $resReport->viewData('page')['props']['reportRows'];
-        $row = collect($rows)->firstWhere('seller_name', $user->name);
+        $row = collect($rows)->firstWhere('id', "employee:{$emp->id}");
         $this->assertNotNull($row, 'Seller must appear in report');
         $sellerKey = $row['seller_key'];
 
         // Filter invoices with same seller key
-        $resInvoice = $this->actingAs($user)->get("/invoices?seller_key={$sellerKey}");
+        $resInvoice = $this->actingAs($admin)->get("/invoices?seller_key={$sellerKey}");
         $resInvoice->assertOk();
         $invoices = $resInvoice->viewData('page')['props']['invoices']['data'];
 
@@ -195,7 +200,7 @@ class HOTFIX2427SellerDuplicateAndInvoiceFilterTest extends TestCase
         $admin = $this->adminUser();
         $emp = $this->employee('Ghost Employee', 'NV999');
         $product = $this->product();
-        // Create invoice for admin only
+        // Create invoice for unknown seller (no employee selected)
         $this->invoice(null, $admin->name, $product, 1, 5_000_000);
 
         $res = $this->actingAs($admin)->get('/reports/employees?concern=sales&view=report');
@@ -203,43 +208,29 @@ class HOTFIX2427SellerDuplicateAndInvoiceFilterTest extends TestCase
         $rows = $res->viewData('page')['props']['reportRows'];
 
         $ghostRow = collect($rows)->firstWhere('id', "employee:{$emp->id}");
-        // Ghost employee should not appear in report rows (no invoices = no row)
         $this->assertNull($ghostRow, 'Employee with no invoices must not appear in report with revenue');
     }
 
-    // ── TC-05 — Mismatched created_by doesn't assign wrong person's revenue ──
-    public function test_mismatched_created_by_does_not_assign_wrong_revenue(): void
+    // ── TC-05 — created_by = employee id resolves correctly ──
+    public function test_created_by_employee_id_resolves_correctly(): void
     {
         $admin = $this->adminUser();
         $emp = $this->employee('Nhân viên Thật', 'NV-REAL');
-        $user = $this->regularUser('User Khác');
         $product = $this->product();
 
-        // Invoice created by the user (created_by = user.id, created_by_name = user.name)
-        $inv = $this->invoice($user->id, $user->name, $product, 1, 10_000_000);
+        // Invoice with created_by = employee.id (seller = employee)
+        $inv = $this->invoice($emp->id, $admin->name, $product, 1, 10_000_000, sellerName: $emp->name);
 
         $resolver = new SellerResolver();
         $map = $resolver->invoiceSellerMap(Invoice::whereKey($inv->id));
 
         $sellerKey = $map[$inv->id];
-        // The key must NOT be employee:<emp_id> unless employee is linked to this user
-        if (str_starts_with($sellerKey, 'employee:')) {
-            $empId = (int) substr($sellerKey, 9);
-            $linkedEmp = Employee::find($empId);
-            $this->assertNotNull($linkedEmp);
-            $this->assertSame($user->id, $linkedEmp->user_id,
-                'If mapped to employee, must be linked via user_id');
-        } else {
-            // Must map to user key, not to the employee with coincidentally same numeric ID
-            $this->assertTrue(
-                str_starts_with($sellerKey, 'user:'),
-                "Invoice by user must map to user: key, got: {$sellerKey}"
-            );
-        }
+        $this->assertSame("employee:{$emp->id}", $sellerKey,
+            'Invoice with created_by = employee id must map to employee key');
     }
 
-    // ── TC-06 — Admin still appears (no regression from 24.26) ──
-    public function test_admin_still_appears_in_report(): void
+    // ── TC-06 — Invoice with no seller goes to unknown ──
+    public function test_invoice_with_no_seller_goes_to_unknown(): void
     {
         $admin = $this->adminUser('Admin Persistence');
         $product = $this->product();
@@ -249,30 +240,25 @@ class HOTFIX2427SellerDuplicateAndInvoiceFilterTest extends TestCase
         $res->assertOk();
         $rows = $res->viewData('page')['props']['reportRows'];
 
-        // Admin must appear
-        $adminRow = collect($rows)->first(fn($r) =>
-            str_contains($r['id'], 'user:') || str_contains($r['id'], 'employee:')
-        );
-        $this->assertNotNull($adminRow, 'Admin must still appear in report');
-        $this->assertEquals(1_500_000, (int) $adminRow['revenue']);
-
-        // Filter dropdown must contain admin
-        $options = $res->viewData('page')['props']['employees'];
-        $adminOpt = collect($options)->first(fn($o) => $o['name'] === 'Admin Persistence');
-        $this->assertNotNull($adminOpt, 'Admin must be in dropdown');
+        // Invoice without seller → unknown bucket (not admin)
+        $unknownRow = collect($rows)->firstWhere('id', 'unknown');
+        $this->assertNotNull($unknownRow, 'Invoice without seller must go to unknown bucket');
+        $this->assertEquals(1_500_000, (int) $unknownRow['revenue']);
     }
 
     // ── TC-07 — Profit 8 columns still correct ──
     public function test_profit_8_columns_still_correct(): void
     {
-        $admin = $this->adminUser('Profit TC-07');
+        $admin = $this->adminUser();
+        $emp = $this->employee('Profit TC-07', 'NV-P07');
         $product = $this->product(cost: 600_000);
-        $this->invoice(null, $admin->name, $product, 2, 1_000_000, discount: 100_000, costPrice: 600_000);
+        $this->invoice($emp->id, $admin->name, $product, 2, 1_000_000,
+            discount: 100_000, costPrice: 600_000, sellerName: $emp->name);
 
         $res = $this->actingAs($admin)->get('/reports/employees?concern=profit&view=report');
         $res->assertOk();
         $rows = $res->viewData('page')['props']['reportRows'];
-        $row = collect($rows)->first(fn($r) => str_contains($r['seller_name'] ?? $r['name'], 'Profit TC-07'));
+        $row = collect($rows)->firstWhere('id', "employee:{$emp->id}");
         $this->assertNotNull($row);
 
         $this->assertArrayHasKey('gross_revenue', $row);
@@ -293,84 +279,99 @@ class HOTFIX2427SellerDuplicateAndInvoiceFilterTest extends TestCase
     // ── TC-08 — Cancelled invoice not counted ──
     public function test_cancelled_invoice_not_counted(): void
     {
-        $admin = $this->adminUser('Cancel TC-08');
+        $admin = $this->adminUser();
+        $emp = $this->employee('Cancel TC-08', 'NV-C08');
         $product = $this->product();
-        $this->invoice(null, $admin->name, $product, 1, 5_000_000, status: 'Đã hủy');
-        $this->invoice(null, $admin->name, $product, 1, 2_000_000, status: 'Hoàn thành');
+        $this->invoice($emp->id, $admin->name, $product, 1, 5_000_000,
+            status: 'Đã hủy', sellerName: $emp->name);
+        $this->invoice($emp->id, $admin->name, $product, 1, 2_000_000,
+            sellerName: $emp->name);
 
         $res = $this->actingAs($admin)->get('/reports/employees?concern=sales&view=report');
         $res->assertOk();
         $rows = $res->viewData('page')['props']['reportRows'];
-        $row = collect($rows)->first(fn($r) => str_contains($r['name'], 'Cancel TC-08'));
+        $row = collect($rows)->firstWhere('id', "employee:{$emp->id}");
         $this->assertNotNull($row);
         $this->assertEquals(2_000_000, (int) $row['revenue'], 'Only non-cancelled invoice should count');
     }
 
-    // ── TC-09 — SellerResolver canonical merge: user with employee row ──
-    public function test_seller_resolver_merges_user_with_employee(): void
+    // ── TC-09 — seller_name matching employee resolves to employee key ──
+    public function test_seller_name_matching_employee_resolves(): void
     {
         $user = $this->regularUser('Merged Person');
         $emp  = $this->employee('Merged Person', 'NV-MERGE', $user->id);
         $product = $this->product();
 
-        // Invoice with created_by = user.id
-        $inv = $this->invoice($user->id, $user->name, $product, 1, 1_000_000);
+        // Invoice with created_by = employee.id
+        $inv = $this->invoice($emp->id, $user->name, $product, 1, 1_000_000, sellerName: $emp->name);
 
         $resolver = new SellerResolver();
         $map = $resolver->invoiceSellerMap(Invoice::whereKey($inv->id));
 
-        // Should merge to employee:<emp_id> since employee.user_id = user.id
         $this->assertSame("employee:{$emp->id}", $map[$inv->id],
-            'User with linked employee must merge to employee canonical key');
+            'Invoice with created_by = employee id must map to employee key');
     }
 
-    // ── TC-10 — SellerResolver orphan name matching one employee → merges ──
-    public function test_orphan_name_matching_one_employee_merges(): void
+    // ── TC-10 — seller_name matching one active employee (no created_by) → merges ──
+    public function test_seller_name_matching_one_employee_merges(): void
     {
         $admin = $this->adminUser();
         $emp = $this->employee('Unique Seller', 'NV-UNIQ');
         $product = $this->product();
 
-        // Invoice with no created_by, created_by_name = employee name
-        $inv = $this->invoice(null, 'Unique Seller', $product, 1, 1_000_000);
+        // Invoice with seller_name but no created_by
+        $inv = $this->invoice(null, $admin->name, $product, 1, 1_000_000,
+            sellerName: 'Unique Seller');
 
         $resolver = new SellerResolver();
         $map = $resolver->invoiceSellerMap(Invoice::whereKey($inv->id));
 
         $this->assertSame("employee:{$emp->id}", $map[$inv->id],
-            'Orphan name matching exactly one employee must merge to employee key');
+            'seller_name matching exactly one active employee must merge to employee key');
     }
 
-    // ── TC-11 — SellerResolver orphan name matching multiple employees stays orphan ──
-    public function test_orphan_name_matching_multiple_employees_stays_orphan(): void
+    // ── TC-11 — seller_name matching multiple employees stays snapshot ──
+    public function test_seller_name_matching_multiple_employees_stays_snapshot(): void
     {
         $admin = $this->adminUser();
         $this->employee('Ambiguous Name', 'NV-AMB1');
         $this->employee('Ambiguous Name', 'NV-AMB2');
         $product = $this->product();
 
-        $inv = $this->invoice(null, 'Ambiguous Name', $product, 1, 1_000_000);
+        $inv = $this->invoice(null, $admin->name, $product, 1, 1_000_000,
+            sellerName: 'Ambiguous Name');
 
         $resolver = new SellerResolver();
         $map = $resolver->invoiceSellerMap(Invoice::whereKey($inv->id));
 
-        $this->assertSame('orphan:Ambiguous Name', $map[$inv->id],
-            'Orphan name matching multiple employees must stay orphan');
+        $this->assertSame('snapshot:Ambiguous Name', $map[$inv->id],
+            'seller_name matching multiple employees must stay snapshot');
     }
 
     // ── TC-12 — Invoice filter options contain sellers from SellerResolver ──
     public function test_invoice_filter_options_contain_sellers(): void
     {
         $admin = $this->adminUser('Invoice Filter Admin');
+        $emp = $this->employee('Invoice Seller', 'NV-FILT');
         $product = $this->product();
-        $this->invoice(null, $admin->name, $product);
+        $this->invoice($emp->id, $admin->name, $product, sellerName: $emp->name);
 
         $res = $this->actingAs($admin)->get('/invoices');
         $res->assertOk();
         $filterOptions = $res->viewData('page')['props']['filterOptions'];
         $this->assertArrayHasKey('sellers', $filterOptions, 'Invoice page must have sellers in filter options');
 
+        // Employee seller must be in options
+        $empOpt = collect($filterOptions['sellers'])->first(fn($s) => $s['name'] === 'Invoice Seller');
+        $this->assertNotNull($empOpt, 'Employee seller must appear in seller options');
+
+        // Admin (creator) must NOT be in seller options
         $adminOpt = collect($filterOptions['sellers'])->first(fn($s) => $s['name'] === 'Invoice Filter Admin');
-        $this->assertNotNull($adminOpt, 'Admin must appear in invoice seller options');
+        $this->assertNull($adminOpt, 'Creator must NOT appear in seller options');
+
+        // Admin should be in creator options
+        $this->assertArrayHasKey('creators', $filterOptions);
+        $adminCreator = collect($filterOptions['creators'])->first(fn($c) => $c['name'] === 'Invoice Filter Admin');
+        $this->assertNotNull($adminCreator, 'Creator must appear in creator options');
     }
 }

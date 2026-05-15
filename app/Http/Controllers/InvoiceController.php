@@ -69,11 +69,17 @@ class InvoiceController extends Controller
 
         $this->applyFilters($query, $request);
 
-        // HOTFIX 24.27 — seller_key filter using SellerResolver (replaces employee_id scalar)
+        // HOTFIX 24.28B — seller_key filter (Người bán)
         $sellerKey = $request->input('seller_key') ?? $request->input('employee_id');
+        $sellerResolver = new SellerResolver();
         if ($sellerKey) {
-            $sellers = new SellerResolver();
-            $query = $sellers->filterBySeller($query, $sellerKey);
+            $query = $sellerResolver->filterBySeller($query, $sellerKey);
+        }
+
+        // HOTFIX 24.28B — creator_key filter (Người tạo snapshot)
+        $creatorKey = $request->input('creator_key');
+        if ($creatorKey) {
+            $query = $sellerResolver->filterByCreator($query, $creatorKey);
         }
 
         $invoices = $query->paginate(15)->withQueryString();
@@ -113,12 +119,13 @@ class InvoiceController extends Controller
 
         $filters = $this->currentFilters($request);
         $filters['has_debt'] = $request->input('has_debt', '');
-        // HOTFIX 24.27 — pass seller_key back to frontend
+        // HOTFIX 24.28B — pass seller_key and creator_key back to frontend
         $filters['seller_key'] = $sellerKey ?? '';
+        $filters['creator_key'] = $creatorKey ?? '';
 
-        // HOTFIX 24.27 — Use SellerResolver for seller dropdown (aligned with reports)
-        $sellerResolver = new SellerResolver();
+        // HOTFIX 24.28B — seller and creator options
         $sellerOptions = $sellerResolver->buildSellerFilterOptions();
+        $creatorOptions = $sellerResolver->buildCreatorFilterOptions();
 
         return Inertia::render('Invoices/Index', [
             'invoices' => $invoices,
@@ -127,8 +134,7 @@ class InvoiceController extends Controller
                 'branches' => \App\Models\Branch::select('id', 'name')->get(),
                 'statuses' => InvoiceStatus::options(),
                 'sellers' => $sellerOptions,
-                'employees' => \App\Models\Employee::select('id', 'name')->where('is_active', true)->orderBy('name')->get(),
-                'creators' => \App\Models\User::select('id', 'name')->orderBy('name')->get(),
+                'creators' => $creatorOptions,
                 'paymentMethods' => PaymentMethod::options(),
                 'salesChannels' => Invoice::query()
                     ->whereNotNull('sales_channel')->where('sales_channel', '!=', '')
