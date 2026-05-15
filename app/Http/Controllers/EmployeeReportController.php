@@ -53,6 +53,16 @@ class EmployeeReportController extends Controller
             ->where('status', '!=', 'Đã hủy');
         if ($branchId) $returnQ->where('branch_id', $branchId);
 
+        // HOTFIX 24.31 — scope returns by the same seller and sales_channel
+        // as the invoice query. Otherwise returns of seller B leak into a
+        // report filtered for seller A and create phantom negative rows.
+        if ($employeeId) {
+            $returnQ = $this->sellers->filterReturnsBySeller($returnQ, $employeeId);
+        }
+        if ($salesChannel) {
+            $returnQ = $this->sellers->filterReturnsByInvoiceSalesChannel($returnQ, $salesChannel);
+        }
+
         // Build data
         switch ($concern) {
             case 'profit':

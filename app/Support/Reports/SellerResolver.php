@@ -639,6 +639,34 @@ class SellerResolver
     }
 
     /**
+     * HOTFIX 24.31 — Scope a returns query to only include returns whose
+     * original invoice matches the given seller key.
+     *
+     * Without this, a report filtered by seller A still pulls in returns
+     * of seller B (because returnQ has no seller scope), so seller B
+     * appears in rows with a negative net.
+     */
+    public function filterReturnsBySeller($returnQuery, string $sellerKey)
+    {
+        return $returnQuery->whereHas('invoice', function ($q) use ($sellerKey) {
+            $this->filterBySeller($q, $sellerKey);
+        });
+    }
+
+    /**
+     * HOTFIX 24.31 — Scope a returns query to only include returns whose
+     * original invoice has the given sales_channel. The returns table has
+     * its own sales_channel column but the canonical value lives on the
+     * invoice (set at sale time), so we filter via the relation.
+     */
+    public function filterReturnsByInvoiceSalesChannel($returnQuery, string $channel)
+    {
+        return $returnQuery->whereHas('invoice', function ($q) use ($channel) {
+            $q->where('sales_channel', $channel);
+        });
+    }
+
+    /**
      * Filter by creator snapshot (created_by_name).
      */
     public function filterByCreator($invoiceQuery, string $creatorKey)
