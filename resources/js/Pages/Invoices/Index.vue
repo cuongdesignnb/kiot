@@ -215,6 +215,40 @@ const printInvoice = (invoice) => {
         "width=400,height=600",
     );
 };
+
+// HOTFIX 24.30 — Change seller for an invoice
+const sellerUpdating = reactive({});
+const invoiceSellerOptions = computed(() => props.filterOptions?.invoiceSellerOptions || []);
+
+const changeSeller = async (invoice, newSellerKey) => {
+    if (!newSellerKey || sellerUpdating[invoice.id]) return;
+
+    const currentKey = invoice.created_by ? `employee:${invoice.created_by}` : '';
+    if (newSellerKey === currentKey) return;
+
+    const oldName = invoice.seller_name || 'Chưa xác định';
+    const newOpt = invoiceSellerOptions.value.find(o => o.key === newSellerKey);
+    const newName = newOpt?.display_name || newOpt?.name || newSellerKey;
+
+    const confirmed = window.confirm(
+        `Bạn có chắc muốn đổi người bán của hóa đơn ${invoice.code} từ "${oldName}" sang "${newName}"?\n\nThay đổi này sẽ ảnh hưởng báo cáo doanh số/lợi nhuận theo nhân viên.`
+    );
+    if (!confirmed) return;
+
+    sellerUpdating[invoice.id] = true;
+    try {
+        const { data } = await axios.patch(`/invoices/${invoice.id}/seller`, {
+            seller_key: newSellerKey,
+        });
+        // Update the invoice row in-place
+        invoice.created_by = data.created_by;
+        invoice.seller_name = data.seller_name;
+    } catch (e) {
+        const msg = e.response?.data?.message || 'Không thể đổi người bán. Vui lòng thử lại.';
+        alert(msg);
+    }
+    sellerUpdating[invoice.id] = false;
+};
 </script>
 
 <template>
@@ -547,7 +581,7 @@ const printInvoice = (invoice) => {
                                                             class="text-gray-800"
                                                             >{{
                                                                 invoice.created_by_name ||
-                                                                "Trần Văn Tiến"
+                                                                "Không rõ"
                                                             }}</span
                                                         >
                                                     </div>
@@ -560,12 +594,20 @@ const printInvoice = (invoice) => {
                                                         >
                                                         <select
                                                             class="border border-gray-300 rounded px-2 py-0.5 outline-none flex-1"
+                                                            :class="{ 'opacity-50': sellerUpdating[invoice.id] }"
+                                                            :disabled="sellerUpdating[invoice.id] || invoice.status === 'Đã hủy'"
+                                                            :value="invoice.created_by ? `employee:${invoice.created_by}` : ''"
+                                                            @change="changeSeller(invoice, $event.target.value)"
                                                         >
-                                                            <option>
-                                                                {{
-                                                                    invoice.seller_name ||
-                                                                    "Trần Văn Tiến"
-                                                                }}
+                                                            <option value="" disabled>
+                                                                {{ invoice.seller_name || "Chưa xác định người bán" }}
+                                                            </option>
+                                                            <option
+                                                                v-for="opt in invoiceSellerOptions"
+                                                                :key="opt.key"
+                                                                :value="opt.key"
+                                                            >
+                                                                {{ opt.display_name || opt.name }}
                                                             </option>
                                                         </select>
                                                     </div>

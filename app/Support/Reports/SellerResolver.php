@@ -4,6 +4,7 @@ namespace App\Support\Reports;
 
 use App\Models\Employee;
 use App\Models\Invoice;
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -314,8 +315,14 @@ class SellerResolver
         }
 
         $employees = !empty($empIds)
-            ? Employee::whereIn('id', $empIds)->get(['id', 'name', 'code'])->keyBy('id')
+            ? Employee::whereIn('id', $empIds)->get(['id', 'name', 'code', 'user_id'])->keyBy('id')
             : collect();
+
+        // HOTFIX 24.30 Hướng A: resolve linked user names
+        $linkedUserIds = $employees->pluck('user_id')->filter()->unique()->values()->all();
+        $linkedUsers = !empty($linkedUserIds)
+            ? User::whereIn('id', $linkedUserIds)->where('status', 'active')->pluck('name', 'id')->all()
+            : [];
 
         // Build raw meta
         $meta = [];
@@ -323,11 +330,16 @@ class SellerResolver
             if (str_starts_with($key, 'employee:')) {
                 $id  = (int) substr($key, 9);
                 $emp = $employees[$id] ?? null;
+                // Hướng A: if employee has linked active user, display user's current name
+                $displayName = $emp->name ?? "Nhân viên #{$id}";
+                if ($emp && $emp->user_id && isset($linkedUsers[$emp->user_id])) {
+                    $displayName = $linkedUsers[$emp->user_id];
+                }
                 $meta[$key] = [
                     'id'     => $key,
                     'key'    => $key,
                     'raw_id' => $id,
-                    'name'   => $emp->name ?? "Nhân viên #{$id}",
+                    'name'   => $displayName,
                     'code'   => $emp->code ?? "NV{$id}",
                     'type'   => 'employee',
                 ];
@@ -407,14 +419,24 @@ class SellerResolver
         // 1. All active employees
         $employees = Employee::where('is_active', true)
             ->orderBy('name')
-            ->get(['id', 'name', 'code']);
+            ->get(['id', 'name', 'code', 'user_id']);
+
+        // HOTFIX 24.30 Hướng A: resolve linked user names for display
+        $linkedUserIds = $employees->pluck('user_id')->filter()->unique()->values()->all();
+        $linkedUsers = !empty($linkedUserIds)
+            ? User::whereIn('id', $linkedUserIds)->where('status', 'active')->pluck('name', 'id')->all()
+            : [];
 
         foreach ($employees as $emp) {
             $key = "employee:{$emp->id}";
+            $displayName = $emp->name;
+            if ($emp->user_id && isset($linkedUsers[$emp->user_id])) {
+                $displayName = $linkedUsers[$emp->user_id];
+            }
             $options[] = [
                 'id'   => $key,
                 'key'  => $key,
-                'name' => $emp->name,
+                'name' => $displayName,
                 'code' => $emp->code ?: "NV{$emp->id}",
                 'type' => 'employee',
             ];
@@ -630,5 +652,61 @@ class SellerResolver
 
         // Plain name
         return $invoiceQuery->where('created_by_name', $value);
+    }
+
+    // ═══════════════════════════════════════
+    // Invoice detail seller options
+    // ═══════════════════════════════════════
+
+    /**
+     * HOTFIX 24.30 — Build seller options for invoice detail dropdown.
+     *
+     * Returns ALL active employees with display_name.
+     * If employee has linked user, display user's current name.
+     * Does NOT include snapshots, unknown, or creator.
+     */
+    public function buildInvoiceSellerOptions(): array
+    {
+        $employees = Employee::where('is_active', true)
+            ->orderBy('name')
+            ->get(['id', 'name', 'code', 'user_id']);
+
+        $linkedUserIds = $employees->pluck('user_id')->filter()->unique()->values()->all();
+        $linkedUsers = !empty($linkedUserIds)
+            ? User::whereIn('id', $linkedUserIds)->where('status', 'active')->pluck('name', 'id')->all()
+            : [];
+
+        $options = [];
+        foreach ($employees as $emp) {
+            $displayName = $emp->name;
+            if ($emp->user_id && isset($linkedUsers[$emp->user_id])) {
+                $displayName = $linkedUsers[$emp->user_id];
+            }
+            $options[] = [
+                'id'           => "employee:{$emp->id}",
+                'key'          => "employee:{$emp->id}",
+                'raw_id'       => $emp->id,
+                'name'         => $displayName,
+                'code'         => $emp->code ?: "NV{$emp->id}",
+                'type'         => 'employee',
+                'display_name' => $displayName . ' — ' . ($emp->code ?: "NV{$emp->id}"),
+            ];
+        }
+
+        // Disambiguate duplicate display names
+        $nameCount = [];
+        foreach ($options as $opt) {
+            $nameCount[$opt['name']] = ($nameCount[$opt['name']] ?? 0) + 1;
+        }
+        foreach ($options as &$opt) {
+            if (($nameCount[$opt['name']] ?? 0) > 1) {
+                $opt['display_name'] = "{$opt['name']} — {$opt['code']}";
+            } else {
+                $opt['display_name'] = $opt['name'];
+            }
+        }
+        unset($opt);
+
+        return collect($options)->sortBy('name')->values()->all();
     }
 }

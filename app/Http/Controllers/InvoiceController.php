@@ -4,11 +4,14 @@ namespace App\Http\Controllers;
 
 use App\Enums\InvoiceStatus;
 use App\Enums\PaymentMethod;
+use App\Models\ActivityLog;
+use App\Models\Employee;
 use App\Models\Invoice;
 use App\Models\PriceBook;
 use App\Models\Setting;
 use App\Models\CashFlow;
 use App\Models\SerialImei;
+use App\Models\User;
 use App\Services\CustomerDebtService;
 use App\Services\DebtOffsetService;
 use App\Services\InvoiceSaleService;
@@ -148,6 +151,8 @@ class InvoiceController extends Controller
                     ['value' => '1', 'label' => 'Còn nợ'],
                     ['value' => '0', 'label' => 'Đã trả đủ'],
                 ],
+                // HOTFIX 24.30 — full active employee list for invoice detail dropdown
+                'invoiceSellerOptions' => $sellerResolver->buildInvoiceSellerOptions(),
             ],
         ]);
     }
@@ -590,6 +595,107 @@ class InvoiceController extends Controller
                 'discount' => $item->discount ?? 0,
                 'subtotal' => $item->subtotal,
             ]),
+        ]);
+    }
+
+    /**
+     * HOTFIX 24.30 — Update the seller of an invoice.
+     *
+     * Only accepts employee:<id> as seller_key.
+     * Updates created_by and seller_name. NEVER touches created_by_name.
+     */
+    public function updateSeller(Request $request, Invoice $invoice)
+    {
+        $user = auth()->user();
+
+        // Check permission: admin (role_id = null) or user with invoices.cancel (closest existing permission)
+        if ($user->role_id !== null && !$user->hasPermission('invoices.cancel')) {
+            abort(403, 'Bạn không có quyền sửa người bán hóa đơn.');
+        }
+
+        // Cannot update cancelled invoices
+        if ($invoice->status === 'Đã hủy') {
+            return response()->json([
+                'message' => 'Không thể sửa người bán của hóa đơn đã hủy.',
+            ], 422);
+        }
+
+        $request->validate([
+            'seller_key' => 'required|string',
+        ]);
+
+        $sellerKey = $request->input('seller_key');
+
+        // Only accept employee:<id> format
+        if (!preg_match('/^employee:(\d+)$/', $sellerKey, $m)) {
+            return response()->json([
+                'message' => 'seller_key không hợp lệ. Chỉ chấp nhận employee:<id>.',
+            ], 422);
+        }
+
+        $employeeId = (int) $m[1];
+        $employee = Employee::where('id', $employeeId)
+            ->where('is_active', true)
+            ->first();
+
+        if (!$employee) {
+            return response()->json([
+                'message' => 'Nhân viên không tồn tại hoặc đã ngưng hoạt động.',
+            ], 422);
+        }
+
+        // Time-lock check
+        $orderChangeTime = (int) Setting::get('order_change_time', 24);
+        $lockRef = $invoice->lock_started_at ?? $invoice->created_at;
+        $diffHours = $lockRef ? (float) Carbon::parse($lockRef)->floatDiffInHours(now()) : 0.0;
+        $isTimeLocked = $diffHours > $orderChangeTime;
+        $canOverride = $user->role_id === null || ($user->hasPermission('invoices.override_time_lock') ?? false);
+
+        if ($isTimeLocked && !$canOverride) {
+            return response()->json([
+                'message' => "Đã quá thời gian cho phép sửa hóa đơn ({$orderChangeTime} giờ). Cần quyền override.",
+            ], 422);
+        }
+
+        // Capture old values for audit
+        $oldCreatedBy = $invoice->created_by;
+        $oldSellerName = $invoice->seller_name;
+
+        // Resolve display name for seller (Hướng A)
+        $sellerDisplayName = $employee->name;
+        if ($employee->user_id) {
+            $linkedUser = User::where('id', $employee->user_id)->where('status', 'active')->first();
+            if ($linkedUser) {
+                $sellerDisplayName = $linkedUser->name;
+            }
+        }
+
+        // Update seller fields only
+        $invoice->created_by = $employee->id;
+        $invoice->seller_name = $employee->name; // store employee name as snapshot
+        $invoice->save();
+
+        // Audit log
+        ActivityLog::log(
+            ActivityLog::ACTION_INVOICE_UPDATE,
+            "Đổi người bán hóa đơn {$invoice->code}",
+            $invoice,
+            [
+                'action_detail'    => 'seller_change',
+                'old_created_by'   => $oldCreatedBy,
+                'old_seller_name'  => $oldSellerName,
+                'new_created_by'   => $employee->id,
+                'new_seller_name'  => $employee->name,
+                'new_seller_display' => $sellerDisplayName,
+                'employee_code'    => $employee->code,
+            ]
+        );
+
+        return response()->json([
+            'message'     => 'Đã đổi người bán thành công.',
+            'created_by'  => $employee->id,
+            'seller_name' => $sellerDisplayName,
+            'seller_key'  => "employee:{$employee->id}",
         ]);
     }
 }

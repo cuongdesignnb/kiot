@@ -192,6 +192,8 @@ Route::middleware('permission:invoices.view')->group(function () {
 Route::post('/invoices', [InvoiceController::class, 'store'])->name('invoices.store')->middleware('permission:invoices.create');
 // Step 24.0B: hủy hóa đơn dùng quyền tách `invoices.cancel`.
 Route::delete('/invoices/{invoice}', [InvoiceController::class, 'destroy'])->name('invoices.destroy')->middleware('permission:invoices.cancel');
+// HOTFIX 24.30: đổi người bán hóa đơn — dùng quyền invoices.cancel (nearest edit permission)
+Route::patch('/invoices/{invoice}/seller', [InvoiceController::class, 'updateSeller'])->name('invoices.update-seller')->middleware('permission:invoices.cancel');
 
 // ===== RETURNS =====
 Route::get('/returns', [OrderReturnController::class, 'index'])->name('returns.index')->middleware('permission:returns.view');
