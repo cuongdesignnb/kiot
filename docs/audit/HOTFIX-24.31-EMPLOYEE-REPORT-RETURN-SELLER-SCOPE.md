@@ -133,4 +133,5 @@ Không tự thêm Admin vào dropdown khi Admin không có employee active. Test
 - Báo cáo còn âm sai do return leak: **Không** (đã hết với data test; data thật cần tester confirm).
 - Admin có cần tạo/link employee không: tuỳ data thực tế — không nằm trong scope HOTFIX, cần xác nhận nếu muốn thao tác.
 - Có thể deploy: ✅
-- Commit SHA: pending (sẽ điền sau commit).
+- Commit SHA: `07d298e` — `fix(reports): scope returns by selected seller in employee reports`
+- Push status: chưa push (chờ user xác nhận push to origin/main).
