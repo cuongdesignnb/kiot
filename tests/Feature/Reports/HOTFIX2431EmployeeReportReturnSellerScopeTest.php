@@ -232,16 +232,30 @@ class HOTFIX2431EmployeeReportReturnSellerScopeTest extends TestCase
             'Only returns of Shopee invoices counted; direct-channel return must not leak');
     }
 
-    // ── Test 6 — admin user without active employee is NOT in seller options ──
-    public function test_admin_user_without_employee_is_not_in_seller_options(): void
+    // ── Test 6 — non-admin user without employee is NOT in seller options ──
+    // HOTFIX 24.32 changed the rule for super admins (they DO appear via
+    // admin_user:<id>); regular users still must not appear.
+    public function test_non_admin_user_without_employee_is_not_in_seller_options(): void
     {
-        $this->admin(); // user only, no employee
+        $role = \App\Models\Role::firstOrCreate(
+            ['name' => 'staff-2431-test'],
+            ['display_name' => 'Staff 2431 Test', 'permissions' => ['invoices.view']]
+        );
+        $role->permissions = ['invoices.view'];
+        $role->save();
+        $staff = User::create([
+            'name'     => 'Staff Plain 2431',
+            'email'    => 'staff-2431-' . uniqid() . '@test.local',
+            'password' => bcrypt('password'),
+            'role_id'  => $role->id,
+            'status'   => 'active',
+        ]);
+
         $resolver = new SellerResolver();
         $options = $resolver->buildInvoiceSellerOptions();
 
-        $names = collect($options)->pluck('name')->all();
-        $this->assertNotContains('Admin 2431', $names,
-            'A pure user without an employee record must not show up as a seller');
+        $opt = collect($options)->firstWhere('key', "admin_user:{$staff->id}");
+        $this->assertNull($opt, 'Non-admin user without employee must not surface');
     }
 
     // ── Test 7 — admin user with active linked employee IS in seller options ──

@@ -626,10 +626,79 @@ class InvoiceController extends Controller
 
         $sellerKey = $request->input('seller_key');
 
-        // Only accept employee:<id> format
-        if (!preg_match('/^employee:(\d+)$/', $sellerKey, $m)) {
+        // Time-lock check (shared between both seller key types)
+        $orderChangeTime = (int) Setting::get('order_change_time', 24);
+        $lockRef = $invoice->lock_started_at ?? $invoice->created_at;
+        $diffHours = $lockRef ? (float) Carbon::parse($lockRef)->floatDiffInHours(now()) : 0.0;
+        $isTimeLocked = $diffHours > $orderChangeTime;
+        $canOverride = $user->role_id === null || ($user->hasPermission('invoices.override_time_lock') ?? false);
+
+        if ($isTimeLocked && !$canOverride) {
             return response()->json([
-                'message' => 'seller_key không hợp lệ. Chỉ chấp nhận employee:<id>.',
+                'message' => "Đã quá thời gian cho phép sửa hóa đơn ({$orderChangeTime} giờ). Cần quyền override.",
+            ], 422);
+        }
+
+        $oldCreatedBy  = $invoice->created_by;
+        $oldSellerName = $invoice->seller_name;
+
+        // HOTFIX 24.32 — admin_user:<id> virtual seller branch.
+        // Used when the super-admin user has no Employee record. We store
+        // the seller as a snapshot (created_by=NULL, seller_name=user.name)
+        // and never touch created_by_name.
+        if (preg_match('/^admin_user:(\d+)$/', (string) $sellerKey, $m)) {
+            $adminUserId = (int) $m[1];
+            $adminUser = User::find($adminUserId);
+            if (!$adminUser
+                || ($adminUser->status ?? 'active') !== 'active'
+                || !$adminUser->isAdmin()) {
+                return response()->json([
+                    'message' => 'admin_user không hợp lệ. Chỉ chấp nhận tài khoản quản trị hệ thống đang hoạt động.',
+                ], 422);
+            }
+
+            // If this admin already has an active linked Employee, force
+            // the caller to use employee:<id> instead — keeps reports
+            // grouped on the canonical key.
+            $linkedEmployee = Employee::where('user_id', $adminUserId)
+                ->where('is_active', true)->first();
+            if ($linkedEmployee) {
+                return response()->json([
+                    'message' => 'Tài khoản admin này đã có nhân viên active. Hãy dùng employee:' . $linkedEmployee->id . '.',
+                ], 422);
+            }
+
+            $invoice->created_by  = null;
+            $invoice->seller_name = $adminUser->name;
+            $invoice->save();
+
+            ActivityLog::log(
+                ActivityLog::ACTION_INVOICE_UPDATE,
+                "Đổi người bán hóa đơn {$invoice->code} sang admin",
+                $invoice,
+                [
+                    'action_detail'   => 'seller_change_admin_user',
+                    'old_created_by'  => $oldCreatedBy,
+                    'old_seller_name' => $oldSellerName,
+                    'new_created_by'  => null,
+                    'new_seller_name' => $adminUser->name,
+                    'admin_user_id'   => $adminUser->id,
+                    'actor_user_id'   => $user->id,
+                ]
+            );
+
+            return response()->json([
+                'message'     => 'Đã đổi người bán sang admin.',
+                'created_by'  => null,
+                'seller_name' => $adminUser->name,
+                'seller_key'  => "admin_user:{$adminUser->id}",
+            ]);
+        }
+
+        // employee:<id> branch (original behaviour)
+        if (!preg_match('/^employee:(\d+)$/', (string) $sellerKey, $m)) {
+            return response()->json([
+                'message' => 'seller_key không hợp lệ. Chỉ chấp nhận employee:<id> hoặc admin_user:<id>.',
             ], 422);
         }
 
@@ -644,23 +713,6 @@ class InvoiceController extends Controller
             ], 422);
         }
 
-        // Time-lock check
-        $orderChangeTime = (int) Setting::get('order_change_time', 24);
-        $lockRef = $invoice->lock_started_at ?? $invoice->created_at;
-        $diffHours = $lockRef ? (float) Carbon::parse($lockRef)->floatDiffInHours(now()) : 0.0;
-        $isTimeLocked = $diffHours > $orderChangeTime;
-        $canOverride = $user->role_id === null || ($user->hasPermission('invoices.override_time_lock') ?? false);
-
-        if ($isTimeLocked && !$canOverride) {
-            return response()->json([
-                'message' => "Đã quá thời gian cho phép sửa hóa đơn ({$orderChangeTime} giờ). Cần quyền override.",
-            ], 422);
-        }
-
-        // Capture old values for audit
-        $oldCreatedBy = $invoice->created_by;
-        $oldSellerName = $invoice->seller_name;
-
         // Resolve display name for seller (Hướng A)
         $sellerDisplayName = $employee->name;
         if ($employee->user_id) {
@@ -670,24 +722,22 @@ class InvoiceController extends Controller
             }
         }
 
-        // Update seller fields only
         $invoice->created_by = $employee->id;
-        $invoice->seller_name = $employee->name; // store employee name as snapshot
+        $invoice->seller_name = $employee->name;
         $invoice->save();
 
-        // Audit log
         ActivityLog::log(
             ActivityLog::ACTION_INVOICE_UPDATE,
             "Đổi người bán hóa đơn {$invoice->code}",
             $invoice,
             [
-                'action_detail'    => 'seller_change',
-                'old_created_by'   => $oldCreatedBy,
-                'old_seller_name'  => $oldSellerName,
-                'new_created_by'   => $employee->id,
-                'new_seller_name'  => $employee->name,
+                'action_detail'      => 'seller_change',
+                'old_created_by'     => $oldCreatedBy,
+                'old_seller_name'    => $oldSellerName,
+                'new_created_by'     => $employee->id,
+                'new_seller_name'    => $employee->name,
                 'new_seller_display' => $sellerDisplayName,
-                'employee_code'    => $employee->code,
+                'employee_code'      => $employee->code,
             ]
         );
 

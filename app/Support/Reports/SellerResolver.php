@@ -512,6 +512,15 @@ class SellerResolver
             ];
         }
 
+        // HOTFIX 24.32 — append virtual admin sellers (users only, no employee)
+        $employeeLinkedUserIds = Employee::where('is_active', true)
+            ->whereNotNull('user_id')->pluck('user_id')->all();
+        foreach ($this->virtualAdminSellerOptions($employeeLinkedUserIds) as $opt) {
+            if (isset($seen[$opt['key']])) continue;
+            $options[] = $opt;
+            $seen[$opt['key']] = true;
+        }
+
         // Disambiguate duplicate display names
         $nameCount = [];
         foreach ($options as $opt) {
@@ -521,12 +530,16 @@ class SellerResolver
             if (($nameCount[$opt['name']] ?? 0) > 1) {
                 if ($opt['type'] === 'seller_snapshot') {
                     $opt['display_name'] = "{$opt['name']} — snapshot người bán";
+                } elseif ($opt['type'] === 'admin_user') {
+                    $opt['display_name'] = "{$opt['name']} — Admin";
                 } else {
                     $suffix = $opt['code'] ?? strtoupper($opt['type']);
                     $opt['display_name'] = "{$opt['name']} — {$suffix}";
                 }
             } else {
-                $opt['display_name'] = $opt['name'];
+                $opt['display_name'] = $opt['type'] === 'admin_user'
+                    ? "{$opt['name']} — Admin"
+                    : $opt['name'];
             }
         }
         unset($opt);
@@ -572,6 +585,7 @@ class SellerResolver
 
         // Already prefixed
         if (str_starts_with($value, 'employee:') ||
+            str_starts_with($value, 'admin_user:') ||
             str_starts_with($value, 'snapshot:') ||
             $value === 'unknown') {
             return [$value];
@@ -593,6 +607,21 @@ class SellerResolver
     public function filterBySeller($invoiceQuery, string $sellerKeyParam)
     {
         $value = (string) $sellerKeyParam;
+
+        // HOTFIX 24.32 — admin_user:<id> → super admin virtual seller.
+        // Maps to invoices with NULL created_by + seller_name = user.name
+        // (the snapshot we write when this option is chosen). Falsy guard:
+        // user must exist, be active, and be admin — otherwise return an
+        // empty result rather than risk matching arbitrary snapshots.
+        if (preg_match('/^admin_user:(\d+)$/', $value, $m)) {
+            $userId = (int) $m[1];
+            $user = User::find($userId);
+            if (!$user || ($user->status ?? 'active') !== 'active' || !$user->isAdmin()) {
+                return $invoiceQuery->whereRaw('1=0');
+            }
+            return $invoiceQuery->whereNull('created_by')
+                ->where('seller_name', $user->name);
+        }
 
         // employee:<id> → where created_by = <id>
         if (preg_match('/^employee:(\d+)$/', $value, $m)) {
@@ -688,10 +717,13 @@ class SellerResolver
 
     /**
      * HOTFIX 24.30 — Build seller options for invoice detail dropdown.
+     * HOTFIX 24.32 — Also surface super-admin users without a linked
+     * employee as virtual sellers (admin_user:<id>).
      *
-     * Returns ALL active employees with display_name.
-     * If employee has linked user, display user's current name.
-     * Does NOT include snapshots, unknown, or creator.
+     * Returns ALL active employees with display_name. Plus, for each
+     * active super-admin user that has no active linked employee, a
+     * virtual option keyed admin_user:<id>. Does NOT include snapshots,
+     * unknown, or creator.
      */
     public function buildInvoiceSellerOptions(): array
     {
@@ -721,13 +753,20 @@ class SellerResolver
             ];
         }
 
+        // HOTFIX 24.32 — append virtual admin sellers
+        foreach ($this->virtualAdminSellerOptions($linkedUserIds) as $opt) {
+            $options[] = $opt;
+        }
+
         // Disambiguate duplicate display names
         $nameCount = [];
         foreach ($options as $opt) {
             $nameCount[$opt['name']] = ($nameCount[$opt['name']] ?? 0) + 1;
         }
         foreach ($options as &$opt) {
-            if (($nameCount[$opt['name']] ?? 0) > 1) {
+            if ($opt['type'] === 'admin_user') {
+                $opt['display_name'] = "{$opt['name']} — Admin";
+            } elseif (($nameCount[$opt['name']] ?? 0) > 1) {
                 $opt['display_name'] = "{$opt['name']} — {$opt['code']}";
             } else {
                 $opt['display_name'] = $opt['name'];
@@ -736,5 +775,39 @@ class SellerResolver
         unset($opt);
 
         return collect($options)->sortBy('name')->values()->all();
+    }
+
+    /**
+     * HOTFIX 24.32 — Active super-admin users that do not have an active
+     * linked employee. Exposed so they can be chosen as seller for an
+     * invoice without forcing an Employee record to exist.
+     *
+     * @param  array $excludeUserIds  user_ids already covered by an active employee option
+     * @return array<int,array>
+     */
+    private function virtualAdminSellerOptions(array $excludeUserIds = []): array
+    {
+        $exclude = array_flip(array_map('intval', $excludeUserIds));
+
+        // Filter at the PHP layer via User::isAdmin() to reuse the auth
+        // model's exact admin definition (role_id NULL OR role.* permission).
+        $admins = User::with('role')
+            ->where('status', 'active')
+            ->get(['id', 'name', 'role_id', 'status'])
+            ->filter(fn ($u) => $u->isAdmin() && !isset($exclude[$u->id]));
+
+        $options = [];
+        foreach ($admins as $u) {
+            $options[] = [
+                'id'           => "admin_user:{$u->id}",
+                'key'          => "admin_user:{$u->id}",
+                'raw_id'       => $u->id,
+                'name'         => $u->name,
+                'code'         => 'ADMIN',
+                'type'         => 'admin_user',
+                'display_name' => $u->name . ' — Admin',
+            ];
+        }
+        return $options;
     }
 }

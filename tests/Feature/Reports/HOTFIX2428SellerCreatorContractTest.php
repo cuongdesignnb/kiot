@@ -423,9 +423,16 @@ class HOTFIX2428SellerCreatorContractTest extends TestCase
         $this->assertArrayHasKey('sellers', $opts);
         $empOpt = collect($opts['sellers'])->first(fn($s) => $s['name'] === 'Seller Filter');
         $this->assertNotNull($empOpt, 'Employee must appear in seller options');
-        // Admin must NOT be in seller options (only in creator)
+        // HOTFIX 24.32 evolved contract: super-admin without linked
+        // employee surfaces as virtual seller (admin_user). The original
+        // 24.28 separation that mattered was "creator_snapshot must not
+        // be a seller" — that still holds because admin_user and
+        // creator_snapshot are distinct types.
         $adminSeller = collect($opts['sellers'])->first(fn($s) => $s['name'] === 'Admin Filter Test');
-        $this->assertNull($adminSeller, 'Creator must NOT appear in seller options');
+        $this->assertNotNull($adminSeller, 'Super admin surfaces as virtual seller (24.32)');
+        $this->assertSame('admin_user', $adminSeller['type']);
+        $this->assertNotSame('creator_snapshot', $adminSeller['type'],
+            'Admin seller must be admin_user, NEVER creator_snapshot');
 
         // Creators from snapshots
         $this->assertArrayHasKey('creators', $opts);

@@ -365,11 +365,16 @@ class HOTFIX2427SellerDuplicateAndInvoiceFilterTest extends TestCase
         $empOpt = collect($filterOptions['sellers'])->first(fn($s) => $s['name'] === 'Invoice Seller');
         $this->assertNotNull($empOpt, 'Employee seller must appear in seller options');
 
-        // Admin (creator) must NOT be in seller options
+        // HOTFIX 24.32 evolved contract: super-admin users without a
+        // linked employee DO appear in seller options as virtual
+        // admin_user:<id>. They must NOT appear with type creator_snapshot,
+        // which is the original separation HOTFIX 24.27 was protecting.
         $adminOpt = collect($filterOptions['sellers'])->first(fn($s) => $s['name'] === 'Invoice Filter Admin');
-        $this->assertNull($adminOpt, 'Creator must NOT appear in seller options');
+        $this->assertNotNull($adminOpt, 'Super admin appears as virtual seller (24.32)');
+        $this->assertSame('admin_user', $adminOpt['type'],
+            'Admin must surface as admin_user type, not creator_snapshot');
 
-        // Admin should be in creator options
+        // Admin should still also be in creator options (snapshot from created_by_name)
         $this->assertArrayHasKey('creators', $filterOptions);
         $adminCreator = collect($filterOptions['creators'])->first(fn($c) => $c['name'] === 'Invoice Filter Admin');
         $this->assertNotNull($adminCreator, 'Creator must appear in creator options');

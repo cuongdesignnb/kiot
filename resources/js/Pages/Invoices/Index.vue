@@ -220,11 +220,15 @@ const printInvoice = (invoice) => {
 const sellerUpdating = reactive({});
 const invoiceSellerOptions = computed(() => props.filterOptions?.invoiceSellerOptions || []);
 
+const currentSellerKey = (invoice) => {
+    if (invoice.seller_key) return invoice.seller_key;
+    if (invoice.created_by) return `employee:${invoice.created_by}`;
+    return '';
+};
+
 const changeSeller = async (invoice, newSellerKey) => {
     if (!newSellerKey || sellerUpdating[invoice.id]) return;
-
-    const currentKey = invoice.created_by ? `employee:${invoice.created_by}` : '';
-    if (newSellerKey === currentKey) return;
+    if (newSellerKey === currentSellerKey(invoice)) return;
 
     const oldName = invoice.seller_name || 'Chưa xác định';
     const newOpt = invoiceSellerOptions.value.find(o => o.key === newSellerKey);
@@ -240,9 +244,9 @@ const changeSeller = async (invoice, newSellerKey) => {
         const { data } = await axios.patch(`/invoices/${invoice.id}/seller`, {
             seller_key: newSellerKey,
         });
-        // Update the invoice row in-place
         invoice.created_by = data.created_by;
         invoice.seller_name = data.seller_name;
+        invoice.seller_key = data.seller_key;
     } catch (e) {
         const msg = e.response?.data?.message || 'Không thể đổi người bán. Vui lòng thử lại.';
         alert(msg);
@@ -596,7 +600,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                             class="border border-gray-300 rounded px-2 py-0.5 outline-none flex-1"
                                                             :class="{ 'opacity-50': sellerUpdating[invoice.id] }"
                                                             :disabled="sellerUpdating[invoice.id] || invoice.status === 'Đã hủy'"
-                                                            :value="invoice.created_by ? `employee:${invoice.created_by}` : ''"
+                                                            :value="currentSellerKey(invoice)"
                                                             @change="changeSeller(invoice, $event.target.value)"
                                                         >
                                                             <option value="" disabled>
