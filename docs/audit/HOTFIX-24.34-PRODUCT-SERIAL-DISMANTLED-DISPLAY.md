@@ -113,4 +113,5 @@ Không sửa data, không recompute, không migration.
 - Dismantled còn bị tính là sẵn bán: **Không** (đã đúng từ HOTFIX 24.16/24.18; HOTFIX 24.34 chỉ fix hiển thị/filter).
 - POS bán được serial dismantled: **Không** (TC-5 pin).
 - Có thể deploy: ✅
-- Commit SHA: pending (sẽ điền sau commit).
+- Commit SHA: `2573064` — `fix(products): display dismantled serials correctly`.
+- Push status: chưa push (chờ user xác nhận push to origin/main).
