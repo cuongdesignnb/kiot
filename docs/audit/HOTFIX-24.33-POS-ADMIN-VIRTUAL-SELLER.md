@@ -105,4 +105,5 @@ Code fix không phụ thuộc kết quả query — dùng đúng `User::isAdmin(
 - Snapshot cũ không bị merge: ✅.
 - Quyền cao nhất theo `User::isAdmin()` — không tự đổi role/permission.
 - Có thể deploy: ✅
-- Commit SHA: pending.
+- Commit SHA: `509e087` — `fix(pos): allow super admin as virtual seller`.
+- Push status: chưa push (chờ user xác nhận push to origin/main).
