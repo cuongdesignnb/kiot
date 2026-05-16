@@ -11,15 +11,81 @@ use App\Models\ReturnItem;
 use App\Models\SerialImei;
 use App\Services\InvoiceSaleService;
 use App\Services\SerialAvailabilityService;
+use App\Support\Reports\SellerResolver;
 
 class PosController extends Controller
 {
     public function index()
     {
+        // HOTFIX 24.33 — POS seller dropdown now reuses SellerResolver so a
+        // super-admin user without a linked Employee can be the seller as
+        // virtual admin_user:<id>. The legacy `employees` prop is kept for
+        // backward compatibility with anything still reading it.
+        $sellerOptions = app(SellerResolver::class)->buildInvoiceSellerOptions();
+
         return Inertia::render('POS/Index', [
             'employees' => \App\Models\Employee::where('is_active', true)->get(['id', 'name', 'code']),
+            'sellerOptions' => $sellerOptions,
             'bankAccounts' => \App\Models\BankAccount::where('status', 'active')->get(),
         ]);
+    }
+
+    /**
+     * HOTFIX 24.33 — Resolve a POS seller_key payload field into
+     * concrete (seller_id, seller_name) values for InvoiceSaleService.
+     *
+     * Returns: [int|null seller_id, string|null seller_name]
+     *
+     * Throws \Exception with HTTP-friendly message if the key is malformed,
+     * the referenced user is not actually admin, or the employee is missing.
+     */
+    private function resolveSellerForPos(?string $sellerKey, ?int $legacyEmployeeId): array
+    {
+        // Prefer explicit seller_key; fall back to legacy employee_id.
+        if (!$sellerKey && $legacyEmployeeId) {
+            $sellerKey = 'employee:' . $legacyEmployeeId;
+        }
+        if (!$sellerKey) {
+            return [null, null];
+        }
+
+        if (preg_match('/^admin_user:(\d+)$/', $sellerKey, $m)) {
+            $userId = (int) $m[1];
+            $user = \App\Models\User::find($userId);
+            if (!$user
+                || ($user->status ?? 'active') !== 'active'
+                || !$user->isAdmin()) {
+                throw new \InvalidArgumentException(
+                    'admin_user không hợp lệ. Chỉ chấp nhận tài khoản quản trị hệ thống đang hoạt động.'
+                );
+            }
+            // If admin already has an active linked Employee, force the
+            // canonical employee:<id> key so reports stay grouped on it.
+            $linked = \App\Models\Employee::where('user_id', $userId)
+                ->where('is_active', true)->first();
+            if ($linked) {
+                throw new \InvalidArgumentException(
+                    'Tài khoản admin này đã có nhân viên active. Hãy chọn employee:' . $linked->id . '.'
+                );
+            }
+            return [null, $user->name];
+        }
+
+        if (preg_match('/^employee:(\d+)$/', $sellerKey, $m)) {
+            $empId = (int) $m[1];
+            $emp = \App\Models\Employee::where('id', $empId)
+                ->where('is_active', true)->first();
+            if (!$emp) {
+                throw new \InvalidArgumentException(
+                    'Nhân viên không tồn tại hoặc đã ngưng hoạt động.'
+                );
+            }
+            return [$emp->id, $emp->name];
+        }
+
+        throw new \InvalidArgumentException(
+            'seller_key không hợp lệ. Chỉ chấp nhận employee:<id> hoặc admin_user:<id>.'
+        );
     }
 
     public function searchProducts(Request $request)
@@ -82,6 +148,7 @@ class PosController extends Controller
             'customer_paid' => 'required|numeric|min:0',
             'customer_id' => 'nullable|exists:customers,id',
             'employee_id' => 'nullable|exists:employees,id',
+            'seller_key' => 'nullable|string',
             'sale_time' => 'nullable|date',
             'payment_method' => 'nullable|string|in:cash,transfer',
             'bank_account_info' => 'nullable|string',
@@ -95,7 +162,16 @@ class PosController extends Controller
         ]);
 
         try {
-            $employee = !empty($validated['employee_id']) ? \App\Models\Employee::find($validated['employee_id']) : null;
+            // HOTFIX 24.33 — resolve seller via seller_key (admin_user:<id> or employee:<id>),
+            // falling back to legacy employee_id payload.
+            try {
+                [$sellerId, $sellerName] = $this->resolveSellerForPos(
+                    $validated['seller_key'] ?? null,
+                    !empty($validated['employee_id']) ? (int) $validated['employee_id'] : null
+                );
+            } catch (\InvalidArgumentException $e) {
+                return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+            }
             $paymentMethod = $validated['payment_method'] ?? 'cash';
             $isTransfer = $paymentMethod === 'transfer';
             $bankInfo = $validated['bank_account_info'] ?? null;
@@ -132,8 +208,8 @@ class PosController extends Controller
                 'code_prefix'                    => 'HD' . time(),
                 'default_status'                 => 'Hoàn thành',
                 'sales_channel'                  => 'Bán trực tiếp',
-                'seller_id'                      => $employee?->id,
-                'seller_name'                    => $employee?->name,
+                'seller_id'                      => $sellerId,
+                'seller_name'                    => $sellerName,
                 'created_by_name'                => auth()->user()?->name ?? 'POS',
                 'transaction_date'               => $validated['sale_time'] ?? null,
                 'validate_before_purchase_date'  => false,
@@ -175,6 +251,7 @@ class PosController extends Controller
             'total' => 'required|numeric',
             'customer_id' => 'nullable|exists:customers,id',
             'employee_id' => 'nullable|exists:employees,id',
+            'seller_key'  => 'nullable|string',
             'sale_time' => 'nullable',
             'note' => 'nullable|string|max:1000',
             'items' => 'required|array',
@@ -185,14 +262,26 @@ class PosController extends Controller
 
         try {
             $customer = $validated['customer_id'] ? \App\Models\Customer::find($validated['customer_id']) : null;
-            $employee = !empty($validated['employee_id']) ? \App\Models\Employee::find($validated['employee_id']) : null;
+
+            // HOTFIX 24.33 — resolve seller_key (admin_user:<id> or employee:<id>),
+            // falling back to legacy employee_id. assigned_to_name holds the seller
+            // name snapshot; created_by_name stays the auth user (creator), never
+            // the seller.
+            try {
+                [, $sellerName] = $this->resolveSellerForPos(
+                    $validated['seller_key'] ?? null,
+                    !empty($validated['employee_id']) ? (int) $validated['employee_id'] : null
+                );
+            } catch (\InvalidArgumentException $e) {
+                return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+            }
 
             $order = \App\Models\Order::create([
                 'code' => 'DH' . time() . rand(10, 99),
                 'customer_id' => $customer?->id,
                 'branch_id' => null,
-                'created_by_name' => $employee?->name ?? auth()->user()?->name ?? 'Admin',
-                'assigned_to_name' => $employee?->name ?? auth()->user()?->name ?? 'Admin',
+                'created_by_name' => auth()->user()?->name ?? 'Admin',
+                'assigned_to_name' => $sellerName ?? auth()->user()?->name ?? 'Admin',
                 'sales_channel' => 'Bán trực tiếp',
                 'price_book_name' => 'Bảng giá chung',
                 'status' => 'draft',

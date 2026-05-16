@@ -10,6 +10,7 @@ import MoneyInput from '@/Components/MoneyInput.vue';
 
 const props = defineProps({
     employees: Array,
+    sellerOptions: Array,
     bankAccounts: Array,
 });
 
@@ -153,7 +154,21 @@ const tabBadgeCount = (tab) => {
 };
 
 // Employee & time (global)
-const selectedEmployeeId = ref('');
+// HOTFIX 24.33 — selectedSellerKey is the canonical seller selection
+// ("employee:<id>" or "admin_user:<id>"). selectedEmployeeId is kept
+// purely for legacy draft compat and is derived from selectedSellerKey.
+const selectedSellerKey = ref('');
+const sellerOptions = computed(() => props.sellerOptions || []);
+const selectedEmployeeId = computed({
+    get: () => {
+        const k = selectedSellerKey.value;
+        if (k && k.startsWith('employee:')) return k.slice('employee:'.length);
+        return '';
+    },
+    set: (v) => {
+        selectedSellerKey.value = v ? `employee:${v}` : '';
+    },
+});
 const currentTime = ref('');
 
 // Ngày bán
@@ -331,7 +346,7 @@ const saveDraft = () => {
     const data = {
         tabs: tabs.value,
         activeTabIndex: activeTabIndex.value,
-        selectedEmployeeId: selectedEmployeeId.value,
+        selectedSellerKey: selectedSellerKey.value,
         saleDate: saleDate.value,
     };
     localStorage.setItem(DRAFT_KEY, JSON.stringify(data));
@@ -356,7 +371,13 @@ const loadDraft = () => {
                 }));
                 activeTabIndex.value = Math.min(data.activeTabIndex || 0, tabs.value.length - 1);
             }
-            if (data.selectedEmployeeId) selectedEmployeeId.value = data.selectedEmployeeId;
+            // HOTFIX 24.33 — prefer new seller_key draft; fall back to legacy
+            // employee id (convert to employee:<id>).
+            if (data.selectedSellerKey) {
+                selectedSellerKey.value = data.selectedSellerKey;
+            } else if (data.selectedEmployeeId) {
+                selectedSellerKey.value = `employee:${data.selectedEmployeeId}`;
+            }
             // KHÔNG restore saleDate từ draft — luôn dùng thời gian hiện tại
             // để tránh hoá đơn mới bị ghi ngày cũ
 
@@ -465,7 +486,7 @@ const updateQuantity = (index, delta) => {
     }
 };
 
-watch([tabs, activeTabIndex, selectedEmployeeId, saleDate], () => {
+watch([tabs, activeTabIndex, selectedSellerKey, saleDate], () => {
     saveDraft();
 }, { deep: true });
 
@@ -513,6 +534,7 @@ const processCheckout = async () => {
                 discount: discount.value,
                 total: totalAmount.value,
                 customer_id: selectedCustomer.value?.id || null,
+                seller_key: selectedSellerKey.value || null,
                 employee_id: selectedEmployeeId.value || null,
                 sale_time: saleDate.value || null,
                 note: orderNote.value || null,
@@ -541,6 +563,7 @@ const processCheckout = async () => {
             total: totalAmount.value,
             customer_paid: customerPaid.value,
             customer_id: selectedCustomer.value?.id || null,
+            seller_key: selectedSellerKey.value || null,
             employee_id: selectedEmployeeId.value || null,
             sale_time: saleDate.value || null,
             payment_method: paymentMethod.value,
@@ -971,9 +994,9 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
 
             <!-- Right controls -->
             <div class="flex items-center gap-2 self-center ml-2">
-                <select v-model="selectedEmployeeId" class="bg-white/20 text-white text-[11px] outline-none border-none rounded px-2 py-1 font-medium cursor-pointer min-w-[100px]">
-                    <option value="" class="text-gray-800">-- Nhân viên --</option>
-                    <option v-for="emp in employees" :key="emp.id" :value="emp.id" class="text-gray-800">{{ emp.name }}</option>
+                <select v-model="selectedSellerKey" class="bg-white/20 text-white text-[11px] outline-none border-none rounded px-2 py-1 font-medium cursor-pointer min-w-[100px]">
+                    <option value="" class="text-gray-800">-- Người bán --</option>
+                    <option v-for="seller in sellerOptions" :key="seller.key" :value="seller.key" class="text-gray-800">{{ seller.display_name || seller.name }}</option>
                 </select>
                 <DateTimePicker
                     v-model="saleDate"
@@ -1476,7 +1499,7 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                 <div class="px-4 py-3 border-b border-gray-200 bg-white">
                     <div class="text-xs text-gray-500">Người bán</div>
                     <div class="font-medium text-sm text-gray-800">
-                        {{ employees.find(e => e.id == selectedEmployeeId)?.name || '— Chưa chọn —' }}
+                        {{ sellerOptions.find(s => s.key === selectedSellerKey)?.name || '— Chưa chọn —' }}
                     </div>
                 </div>
                 <div class="px-4 py-3 border-b border-gray-200 bg-white">
