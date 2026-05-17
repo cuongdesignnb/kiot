@@ -133,14 +133,16 @@ class HOTFIX2416RepairSerialReadyStatusTest extends TestCase
     }
 
     // ── TC-03 ─────────────────────────────────────────────────────────
-    public function test_internal_repair_completion_does_not_restore_dismantled_when_import_parts_exist(): void
+    // HOTFIX 24.35 updated contract: completing a repair task always
+    // restores the device serial to in_stock (unless sold/returned), even
+    // if direction='import' task_parts are still on file. The task_parts
+    // stay for audit trail; only the physical serial status is flipped.
+    public function test_internal_repair_completion_restores_dismantled_even_with_import_parts(): void
     {
         $serial  = $this->makeSerial('in_stock', null);
         $task    = $this->makeRepairTask($serial);
         $service = app(TaskService::class);
 
-        // Real disassembly path — sets device serial to 'dismantled' and
-        // creates a direction='import' task_part.
         $service->disassemblePart($task, $this->partProduct->id, 1, 50000);
 
         $serial->refresh();
@@ -153,11 +155,16 @@ class HOTFIX2416RepairSerialReadyStatusTest extends TestCase
         $service->markCompleted($task, $this->admin->id);
 
         $fresh = $serial->fresh();
-        $this->assertSame('dismantled', $fresh->status, 'Active disassembly must block in_stock restore.');
+        $this->assertSame('in_stock', $fresh->status,
+            'HOTFIX 24.35: completed repair restores device serial regardless of import parts');
         $this->assertSame('ready', $fresh->repair_status);
-        $this->assertFalse(
+        $this->assertTrue(
             app(SerialAvailabilityService::class)->isSellable($fresh, $this->deviceProduct->id),
-            'Dismantled serial must remain unsellable even with repair_status=ready.'
+            'Restored serial must be sellable.'
+        );
+        $this->assertTrue(
+            $task->parts()->where('direction', 'import')->exists(),
+            'task_parts stay for audit trail — only the serial is flipped'
         );
     }
 
@@ -196,23 +203,23 @@ class HOTFIX2416RepairSerialReadyStatusTest extends TestCase
 
     // ── TC-06 ─────────────────────────────────────────────────────────
     /**
-     * Pins the FE contract: the new TaskService keeps the same JSON shape
-     * (status + repair_status fields) the UI badges depend on. A dismantled
-     * serial reflected by the API must continue to carry status='dismantled'
-     * so the corrected Welcome.vue badge can render "⚠ Đã bóc tách".
+     * HOTFIX 24.35 evolved contract: a dismantled serial in a task that is
+     * NOT yet completed still carries status='dismantled' so the corrected
+     * Welcome.vue badge can render "⚠ Đã bóc tách". Once the task completes,
+     * the serial flips to in_stock (see TC-03). This TC pins the not-yet-
+     * completed path that the UI relies on.
      */
-    public function test_disassembled_serial_keeps_dismantled_status_in_model_payload(): void
+    public function test_disassembled_serial_keeps_dismantled_until_task_completes(): void
     {
         $serial  = $this->makeSerial('in_stock', null);
         $task    = $this->makeRepairTask($serial);
         $service = app(TaskService::class);
         $service->disassemblePart($task, $this->partProduct->id, 1, 50000);
-        $service->markCompleted($task, $this->admin->id);
+        // task remains in_progress / created — NOT completed
 
         $row = SerialImei::find($serial->id);
         $this->assertSame('dismantled', $row->status);
-        $this->assertSame('ready', $row->repair_status);
-        // Sellable-only scope must NOT return this serial.
+        // Sellable-only scope must NOT return this serial while still dismantled.
         $sellableIds = app(SerialAvailabilityService::class)
             ->querySellableForProduct($this->deviceProduct->id)
             ->pluck('id')

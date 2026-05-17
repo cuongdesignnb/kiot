@@ -357,14 +357,12 @@ class TaskService
             return;
         }
 
-        // Có task_part direction='import' chưa rollback nghĩa là disassembly
-        // còn hiệu lực — máy không còn nguyên vẹn, giữ status='dismantled'.
-        $hasActiveDisassemblyOutputs = $task->parts()
-            ->where('direction', 'import')
-            ->exists();
-
-        if (!$hasActiveDisassemblyOutputs
-            && in_array($serial->status, ['in_stock', 'dismantled'], true)) {
+        // HOTFIX 24.35 — nghiệp vụ chốt: completed task = máy phải về sẵn bán.
+        // Không còn gate task_parts.direction='import': vì khi task đã được
+        // operator bấm Hoàn thành, hệ thống coi như máy đã lắp lại xong.
+        // task_parts vẫn được giữ để audit trail (giá vốn / linh kiện tiêu
+        // hao đã ghi nhận); chỉ trạng thái vật lý của serial được hồi về.
+        if (in_array($serial->status, ['in_stock', 'dismantled'], true)) {
             $serial->status = 'in_stock';
         }
 
