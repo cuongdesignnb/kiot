@@ -152,4 +152,6 @@ Cập nhật 24.16:
 - Không đụng giá vốn / stock_movements / task_parts / serial costing: ✅.
 - POS vẫn chặn dismantled (BLOCKED_STATUSES): ✅.
 - Code fix có thể deploy ngay. Data fix command có sẵn, **chờ user xác nhận** mới chạy `--apply` trên production.
-- Commit SHA: pending (sẽ điền sau commit).
+- Commit SHA: `57ec915` — `fix(repairs): restore dismantled serials when task completes`.
+- Push status: chưa push (chờ user xác nhận push to origin/main).
+- Data fix `serials:restore-completed-dismantled --apply`: **chưa chạy trên production** — chờ user xác nhận sau khi backup + chạy `--dry-run` đối soát.
