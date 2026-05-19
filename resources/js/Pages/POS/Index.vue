@@ -1,6 +1,6 @@
 <script setup>
 import { formatVND as formatCurrency } from '@/utils/money';
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { Head, Link } from '@inertiajs/vue3';
 import axios from 'axios';
 import QuickCreateCustomerModal from '@/Components/QuickCreateCustomerModal.vue';
@@ -40,9 +40,15 @@ const emptyReturnState = () => ({
     loadingItems: false,
     submitting: false,
     error: '',
-    // 24.6B (deferred): exchange cart — UI placeholder only, submit disabled.
     exchangeItems: [],
     exchangeSearch: '',
+    exchangeResults: [],
+    exchangeSearchOpen: false,
+    exchangeSearching: false,
+    exchangeDiscount: 0,
+    exchangeCustomerPaid: 0,
+    exchangePaymentMethod: 'cash',
+    exchangeBankAccountInfo: '',
 });
 
 const createNewTab = (type = 'sale') => ({
@@ -105,7 +111,11 @@ const switchTab = (idx) => {
 const tabHasUnsavedWork = (tab) => {
     if (tab.type === 'return') {
         const rs = tab.returnState;
-        return !!(rs && (rs.sourceInvoice || Object.values(rs.lineState || {}).some((l) => l && l.qty > 0)));
+        return !!(rs && (
+            rs.sourceInvoice
+            || Object.values(rs.lineState || {}).some((l) => l && l.qty > 0)
+            || (rs.exchangeItems || []).length > 0
+        ));
     }
     return tab.cart.length > 0 || !!(tab.note && tab.note.trim());
 };
@@ -148,7 +158,8 @@ const tabBadgeCount = (tab) => {
     if (tab.type === 'return') {
         const rs = tab.returnState;
         if (!rs) return 0;
-        return Object.values(rs.lineState || {}).filter((l) => l && l.qty > 0).length;
+        return Object.values(rs.lineState || {}).filter((l) => l && l.qty > 0).length
+            + (rs.exchangeItems || []).length;
     }
     return tab.cart.length;
 };
@@ -629,10 +640,8 @@ const openCreateProductModal = () => { showCreateProductModal.value = true; };
 //  serial) stay server-side; this code only collects the payload and
 //  surfaces backend errors verbatim.
 //
-//  24.6B (return + atomic exchange) is INTENTIONALLY DEFERRED. The F7
-//  exchange input renders as visible-disabled with a backlog notice;
-//  exchangeItems are never sent to the server until the atomic
-//  PosReturnExchangeService lands in a future step.
+//  24.6B: exchange items are submitted to /api/pos/return-exchange so
+//  return + exchange invoice commit atomically on the backend.
 // ════════════════════════════════════════════════════════════════════
 
 // Activate-or-create a Return tab.
@@ -693,7 +702,7 @@ const selectReturnInvoice = async (tab, inv) => {
         rs.sourceItems = data.items || [];
         const map = {};
         for (const item of rs.sourceItems) {
-            map[item.invoice_item_id] = { qty: 0, serial_ids: [] };
+            map[returnLineKey(item)] = { qty: 0, serial_ids: [] };
         }
         rs.lineState = map;
         rs.discount = 0;
@@ -713,6 +722,20 @@ const selectReturnInvoice = async (tab, inv) => {
     }
 };
 
+const returnLineKey = (item) => item?.invoice_item_id ?? item?.id;
+const returnLineState = (tab, item) => tab?.returnState?.lineState?.[returnLineKey(item)] || { qty: 0, serial_ids: [] };
+const returnLineDiscount = (item, qty) => {
+    const lineDiscount = Number(item?.discount) || 0;
+    if (!lineDiscount || !qty) return 0;
+    const soldQty = Number(item?.sold_qty) || qty;
+    return Math.round(lineDiscount * qty / Math.max(1, soldQty));
+};
+const returnLineAmount = (item, tab = activeTab.value) => {
+    const ls = returnLineState(tab, item);
+    const qty = Number(ls.qty) || 0;
+    return Math.max(0, qty * (Number(item?.price) || 0) - returnLineDiscount(item, qty));
+};
+
 const backToInvoiceSearch = (tab) => {
     const rs = tab?.returnState;
     if (!rs) return;
@@ -725,7 +748,8 @@ const backToInvoiceSearch = (tab) => {
 const setReturnQty = (tab, item, qty) => {
     const rs = tab?.returnState;
     if (!rs) return;
-    const ls = rs.lineState[item.invoice_item_id] || { qty: 0, serial_ids: [] };
+    const key = returnLineKey(item);
+    const ls = rs.lineState[key] || { qty: 0, serial_ids: [] };
     let next = Number(qty) || 0;
     if (next < 0) next = 0;
     if (next > item.remaining_qty) next = item.remaining_qty;
@@ -733,13 +757,14 @@ const setReturnQty = (tab, item, qty) => {
     if (item.has_serial && ls.serial_ids.length > next) {
         ls.serial_ids = ls.serial_ids.slice(0, next);
     }
-    rs.lineState = { ...rs.lineState, [item.invoice_item_id]: ls };
+    rs.lineState = { ...rs.lineState, [key]: ls };
 };
 
 const toggleReturnSerial = (tab, item, serialId) => {
     const rs = tab?.returnState;
     if (!rs) return;
-    const ls = rs.lineState[item.invoice_item_id] || { qty: 0, serial_ids: [] };
+    const key = returnLineKey(item);
+    const ls = rs.lineState[key] || { qty: 0, serial_ids: [] };
     const idx = ls.serial_ids.indexOf(serialId);
     if (idx >= 0) {
         ls.serial_ids = [...ls.serial_ids.slice(0, idx), ...ls.serial_ids.slice(idx + 1)];
@@ -747,7 +772,163 @@ const toggleReturnSerial = (tab, item, serialId) => {
         ls.serial_ids = [...ls.serial_ids, serialId];
     }
     ls.qty = ls.serial_ids.length;
-    rs.lineState = { ...rs.lineState, [item.invoice_item_id]: ls };
+    rs.lineState = { ...rs.lineState, [key]: ls };
+};
+
+const exchangeSearchTimers = new Map();
+const focusExchangeSearchOverlay = (tab) => {
+    nextTick(() => {
+        document.getElementById(`return-exchange-overlay-input-${tab?.id}`)?.focus();
+    });
+};
+
+const openExchangeSearch = (tab) => {
+    const rs = tab?.returnState;
+    if (!rs) return;
+    rs.exchangeSearchOpen = true;
+    focusExchangeSearchOverlay(tab);
+    if ((rs.exchangeSearch || '').trim()) {
+        searchExchangeProducts(tab);
+    }
+};
+
+const closeExchangeSearch = (tab) => {
+    const rs = tab?.returnState;
+    if (!rs) return;
+    rs.exchangeSearchOpen = false;
+};
+
+const exchangeAvailableQty = (productOrLine) => {
+    const product = productOrLine?.product || productOrLine;
+    if (!product) return 0;
+    const raw = product.has_serial && product.sellable_quantity !== undefined
+        ? product.sellable_quantity
+        : product.stock_quantity;
+    return Math.max(0, Number(raw) || 0);
+};
+
+const exchangeLineAmount = (item) => Math.max(
+    0,
+    (Number(item?.price) || 0) * (Number(item?.quantity) || 0) - (Number(item?.discount) || 0),
+);
+
+const validateExchangeLineQty = (line) => {
+    if (!line) return false;
+    const available = exchangeAvailableQty(line);
+    if (line.is_serial_product) {
+        line.quantity = line.serials?.length || 0;
+        line.stockWarning = line.quantity > available ? `Vượt tồn khả dụng (${available})` : '';
+        return line.quantity > 0 && line.quantity <= available;
+    }
+    const qty = Number(line.quantity) || 0;
+    line.stockWarning = qty > available ? `Vượt tồn khả dụng (${available})` : '';
+    return qty > 0 && qty <= available;
+};
+
+const setExchangeQty = (line, value) => {
+    if (!line || line.is_serial_product) return;
+    const available = exchangeAvailableQty(line);
+    let next = Number.parseInt(value, 10);
+    if (!Number.isFinite(next) || next < 1) next = 1;
+    if (available <= 0) {
+        line.quantity = 0;
+        line.stockWarning = 'Hết tồn kho';
+        return;
+    }
+    if (next > available) {
+        next = available;
+        line.stockWarning = `Chỉ còn ${available} trong kho`;
+    } else {
+        line.stockWarning = '';
+    }
+    line.quantity = next;
+};
+
+const focusExchangeSerialOverlay = (item) => {
+    nextTick(() => {
+        document.getElementById(`exchange-serial-overlay-input-${item?.product?.id}`)?.focus();
+    });
+};
+
+const openExchangeSerialSearch = (item) => {
+    if (!item) return;
+    item.showSerialDropdown = true;
+    searchSerialsForItem(item, true);
+    focusExchangeSerialOverlay(item);
+};
+
+const onExchangeSearchInput = (tab) => {
+    if (!tab || tab.type !== 'return' || !tab.returnState) return;
+    tab.returnState.exchangeSearchOpen = true;
+    if (exchangeSearchTimers.has(tab.id)) clearTimeout(exchangeSearchTimers.get(tab.id));
+    exchangeSearchTimers.set(tab.id, setTimeout(() => searchExchangeProducts(tab), 250));
+};
+
+const searchExchangeProducts = async (tab) => {
+    const rs = tab?.returnState;
+    if (!rs) return;
+    const term = (rs.exchangeSearch || '').trim();
+    if (term.length < 1) {
+        rs.exchangeResults = [];
+        return;
+    }
+    rs.exchangeSearching = true;
+    rs.error = '';
+    try {
+        const { data } = await axios.get('/api/pos/products', { params: { search: term } });
+        rs.exchangeResults = Array.isArray(data) ? data : [];
+    } catch (e) {
+        rs.error = e.response?.data?.message || 'Không tìm được hàng đổi.';
+        rs.exchangeResults = [];
+    } finally {
+        rs.exchangeSearching = false;
+    }
+};
+
+const addExchangeItem = async (tab, product) => {
+    const rs = tab?.returnState;
+    if (!rs || !product) return;
+    if (exchangeAvailableQty(product) <= 0) {
+        rs.error = 'Hàng đổi đã hết tồn kho, không thể chọn để đổi.';
+        return;
+    }
+    const existing = rs.exchangeItems.find((line) => line.product.id === product.id && !line.is_serial_product);
+    if (existing && !product.has_serial) {
+        setExchangeQty(existing, (Number(existing.quantity) || 0) + 1);
+    } else {
+        const line = {
+            product,
+            quantity: product.has_serial ? 0 : 1,
+            price: Number(product.retail_price) || 0,
+            discount: 0,
+            is_serial_product: !!product.has_serial,
+            serials: [],
+            serialInput: '',
+            availableSerials: [],
+            allAvailableSerials: [],
+            showSerialDropdown: false,
+            serialLoading: false,
+            stockWarning: '',
+        };
+        rs.exchangeItems.push(line);
+        if (line.is_serial_product) {
+            await loadSerialsForProduct(line);
+        }
+    }
+    rs.exchangeSearch = '';
+    rs.exchangeResults = [];
+    rs.exchangeSearchOpen = false;
+};
+
+const removeExchangeItem = (tab, idx) => {
+    const rs = tab?.returnState;
+    if (!rs) return;
+    rs.exchangeItems.splice(idx, 1);
+};
+
+const updateExchangeQty = (line, delta) => {
+    if (!line || line.is_serial_product) return;
+    setExchangeQty(line, (Number(line.quantity) || 1) + delta);
 };
 
 // Subtotal/total/canSubmit are computed against the active return tab.
@@ -756,9 +937,7 @@ const activeReturnSubtotal = computed(() => {
     if (!tab || tab.type !== 'return' || !tab.returnState?.sourceInvoice) return 0;
     let sum = 0;
     for (const item of tab.returnState.sourceItems || []) {
-        const ls = tab.returnState.lineState[item.invoice_item_id];
-        if (!ls || !ls.qty) continue;
-        sum += ls.qty * item.price - (item.discount || 0);
+        sum += returnLineAmount(item, tab);
     }
     return sum;
 });
@@ -790,6 +969,56 @@ const activeReturnTotal = computed(() => {
     );
 });
 
+const activeExchangeSubtotal = computed(() => {
+    const tab = activeTab.value;
+    if (!tab || tab.type !== 'return' || !tab.returnState) return 0;
+    return (tab.returnState.exchangeItems || []).reduce((sum, item) => {
+        return sum + exchangeLineAmount(item);
+    }, 0);
+});
+
+const activeExchangeTotal = computed(() => {
+    const tab = activeTab.value;
+    if (!tab || tab.type !== 'return' || !tab.returnState) return 0;
+    return Math.max(0, activeExchangeSubtotal.value - (Number(tab.returnState.exchangeDiscount) || 0));
+});
+
+const activeExchangeSerialValid = computed(() => {
+    const tab = activeTab.value;
+    if (!tab || tab.type !== 'return' || !tab.returnState) return true;
+    return (tab.returnState.exchangeItems || []).every((item) => {
+        if (!validateExchangeLineQty(item)) return false;
+        if (!item.is_serial_product) return true;
+        return item.serials.length > 0 && item.serials.length === (Number(item.quantity) || 0);
+    });
+});
+
+const activeExchangeValidationMessage = computed(() => {
+    const tab = activeTab.value;
+    if (!tab || tab.type !== 'return' || !tab.returnState) return '';
+    for (const item of tab.returnState.exchangeItems || []) {
+        const available = exchangeAvailableQty(item);
+        const qty = Number(item.quantity) || 0;
+        if (available <= 0) return `${item.product.name} đã hết tồn kho.`;
+        if (!item.is_serial_product && qty > available) return `${item.product.name} chỉ còn ${available} trong kho.`;
+        if (item.is_serial_product && item.serials.length === 0) return `${item.product.name} cần chọn Serial/IMEI hàng đổi.`;
+        if (item.is_serial_product && item.serials.length > available) return `${item.product.name} vượt số serial sẵn bán (${available}).`;
+    }
+    return '';
+});
+
+const activeExchangeNetAmount = computed(() => activeExchangeTotal.value - activeReturnTotal.value);
+const activeCustomerPays = computed(() => Math.max(0, activeExchangeNetAmount.value));
+const activeRefundToCustomer = computed(() => Math.max(0, -activeExchangeNetAmount.value));
+
+const canSubmitActiveExchange = computed(() => {
+    const tab = activeTab.value;
+    if (!tab || tab.type !== 'return' || !tab.returnState?.sourceInvoice) return false;
+    if (!canSubmitActiveReturn.value) return false;
+    if ((tab.returnState.exchangeItems || []).length === 0) return true;
+    return activeExchangeTotal.value >= 0 && activeExchangeSerialValid.value && !activeExchangeValidationMessage.value;
+});
+
 // When the user hasn't manually edited paidToCustomer, keep it in sync with
 // the canonical net refund — KiotViet UX: "tiền trả khách = cần trả khách".
 watch(activeReturnTotal, (val) => {
@@ -812,7 +1041,7 @@ const canSubmitActiveReturn = computed(() => {
     const anyLine = Object.values(rs.lineState).some((ls) => ls && ls.qty > 0);
     if (!anyLine) return false;
     for (const item of rs.sourceItems || []) {
-        const ls = rs.lineState[item.invoice_item_id];
+        const ls = rs.lineState[returnLineKey(item)];
         if (!ls || !ls.qty) continue;
         if (item.has_serial && ls.serial_ids.length !== ls.qty) return false;
     }
@@ -823,19 +1052,19 @@ const submitReturnTab = async (tab) => {
     if (!tab || tab.type !== 'return') return;
     const rs = tab.returnState;
     if (!rs?.sourceInvoice) return;
-    if (!canSubmitActiveReturn.value && tab.id === activeTab.value?.id) return;
+    if (!canSubmitActiveExchange.value && tab.id === activeTab.value?.id) return;
 
     rs.error = '';
     rs.submitting = true;
     const itemsPayload = [];
     for (const item of rs.sourceItems || []) {
-        const ls = rs.lineState[item.invoice_item_id];
+        const ls = rs.lineState[returnLineKey(item)];
         if (!ls || !ls.qty) continue;
         itemsPayload.push({
             product_id: item.product_id,
             qty: ls.qty,
             price: item.price,
-            discount: item.discount || 0,
+            discount: returnLineDiscount(item, ls.qty),
             invoice_item_id: item.invoice_item_id,
             serial_ids: item.has_serial ? ls.serial_ids : [],
         });
@@ -843,9 +1072,7 @@ const submitReturnTab = async (tab) => {
     const subtotal = (() => {
         let s = 0;
         for (const item of rs.sourceItems || []) {
-            const ls = rs.lineState[item.invoice_item_id];
-            if (!ls || !ls.qty) continue;
-            s += ls.qty * item.price - (item.discount || 0);
+            s += returnLineAmount(item, tab);
         }
         return s;
     })();
@@ -870,15 +1097,52 @@ const submitReturnTab = async (tab) => {
         fee_value: feeValue,
         fee: feeAmount,
         total,
-        paid_to_customer: Number(rs.paidToCustomer) || 0,
+        paid_to_customer: (rs.exchangeItems || []).length > 0 ? activeRefundToCustomer.value : (Number(rs.paidToCustomer) || 0),
         note: rs.note || null,
         items: itemsPayload,
     };
     try {
-        const res = await axios.post('/returns', payload);
+        const hasExchange = (rs.exchangeItems || []).length > 0;
+        const res = hasExchange
+            ? await axios.post('/api/pos/return-exchange', {
+                invoice_id: rs.sourceInvoice.id,
+                customer_id: rs.sourceInvoice.customer_id,
+                branch_id: rs.sourceInvoice.branch_id,
+                seller_key: selectedSellerKey.value || null,
+                employee_id: selectedEmployeeId.value || null,
+                sale_time: saleDate.value || null,
+                payment_method: rs.exchangePaymentMethod || 'cash',
+                bank_account_info: rs.exchangePaymentMethod === 'transfer' ? rs.exchangeBankAccountInfo : null,
+                note: rs.note || null,
+                return: {
+                    discount: Number(rs.discount) || 0,
+                    fee_type: rs.feeType || 'amount',
+                    fee_value: feeValue,
+                    paid_to_customer: activeRefundToCustomer.value,
+                    items: itemsPayload,
+                },
+                exchange: {
+                    discount: Number(rs.exchangeDiscount) || 0,
+                    customer_paid: activeCustomerPays.value,
+                    items: rs.exchangeItems.map((item) => ({
+                        product_id: item.product.id,
+                        quantity: item.quantity,
+                        price: Number(item.price) || 0,
+                        discount: Number(item.discount) || 0,
+                        serial_ids: item.is_serial_product ? item.serials.map((s) => s.id) : [],
+                    })),
+                },
+            })
+            : await axios.post('/returns', payload);
         const created = res.data?.return || res.data;
-        alert('Đã tạo phiếu trả hàng' + (created?.code ? ` ${created.code}` : '') + '.');
-        if (created?.code) {
+        if (hasExchange) {
+            const invoice = res.data?.exchange_invoice;
+            alert(`Đổi hàng thành công: ${created?.code || ''}, ${invoice?.code || ''}`);
+            if (invoice?.code) window.open(`/invoices?search=${encodeURIComponent(invoice.code)}`, '_blank');
+        } else {
+            alert('Đã tạo phiếu trả hàng' + (created?.code ? ` ${created.code}` : '') + '.');
+        }
+        if (!hasExchange && created?.code) {
             window.open(`/returns?search=${encodeURIComponent(created.code)}`, '_blank');
         }
         // Reset this return tab so the user can do another return without
@@ -1418,6 +1682,7 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                                         <th class="px-3 py-2 text-right">Còn được trả</th>
                                         <th class="px-3 py-2 text-right">Đơn giá</th>
                                         <th class="px-3 py-2 text-center w-32">Trả</th>
+                                        <th class="px-3 py-2 text-right">Thành tiền</th>
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-gray-100">
@@ -1438,15 +1703,16 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                                                     :min="0"
                                                     :max="item.remaining_qty"
                                                     :disabled="item.remaining_qty <= 0"
-                                                    :value="activeTab.returnState.lineState[item.invoice_item_id]?.qty || 0"
+                                                    :value="returnLineState(activeTab, item).qty || 0"
                                                     @input="setReturnQty(activeTab, item, $event.target.value)"
                                                     class="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
                                                 />
-                                                <span v-else class="text-xs text-gray-500 tabular-nums">{{ activeTab.returnState.lineState[item.invoice_item_id]?.serial_ids?.length || 0 }} / {{ item.remaining_qty }}</span>
+                                                <span v-else class="text-xs text-gray-500 tabular-nums">{{ returnLineState(activeTab, item).serial_ids?.length || 0 }} / {{ item.remaining_qty }}</span>
                                             </td>
+                                            <td class="px-3 py-2 text-right tabular-nums font-semibold text-gray-800">{{ formatCurrency(returnLineAmount(item, activeTab)) }}</td>
                                         </tr>
                                         <tr v-if="item.has_serial && item.serials.length" class="bg-gray-50/40">
-                                            <td colspan="6" class="px-3 py-2">
+                                            <td colspan="7" class="px-3 py-2">
                                                 <div class="text-xs font-medium text-gray-600 mb-1">Chọn serial cần trả</div>
                                                 <div class="flex flex-wrap gap-1.5">
                                                     <label
@@ -1455,15 +1721,15 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                                                         :class="[
                                                             'inline-flex items-center gap-1 px-2 py-1 rounded border text-xs cursor-pointer',
                                                             s.already_returned ? 'border-gray-200 bg-gray-100 text-gray-400 line-through cursor-not-allowed' :
-                                                            (activeTab.returnState.lineState[item.invoice_item_id]?.serial_ids?.includes(s.id) ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-300 bg-white text-gray-700 hover:border-blue-400')
+                                                            (returnLineState(activeTab, item).serial_ids?.includes(s.id) ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-300 bg-white text-gray-700 hover:border-blue-400')
                                                         ]"
+                                                        @click.prevent="!s.already_returned && toggleReturnSerial(activeTab, item, s.id)"
                                                     >
                                                         <input
                                                             type="checkbox"
                                                             class="hidden"
                                                             :disabled="s.already_returned"
-                                                            :checked="activeTab.returnState.lineState[item.invoice_item_id]?.serial_ids?.includes(s.id)"
-                                                            @change="toggleReturnSerial(activeTab, item, s.id)"
+                                                            :checked="returnLineState(activeTab, item).serial_ids?.includes(s.id)"
                                                         />
                                                         {{ s.serial_number }}
                                                     </label>
@@ -1477,19 +1743,185 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                     </div>
                 </div>
 
-                <!-- F7 search hàng đổi (24.6B placeholder) -->
                 <div class="px-4 py-3 border-t border-gray-200 bg-amber-50">
                     <label class="block text-xs font-semibold text-amber-800 mb-1">Tìm hàng đổi (F7)</label>
-                    <input
-                        :id="`return-exchange-input-${activeTab.id}`"
-                        v-model="activeTab.returnState.exchangeSearch"
-                        type="text"
-                        disabled
-                        class="w-full border border-amber-200 rounded px-3 py-2 text-sm bg-white text-gray-400 cursor-not-allowed"
-                        placeholder="Đổi hàng — sẽ bật ở Phase 24.6B (atomic return + exchange)"
-                    />
-                    <div class="mt-1 text-[11px] text-amber-700">
-                        Phase này chỉ làm trả hàng. Đổi hàng cần atomic transaction (return + invoice mới + chênh lệch) sẽ bật khi PosReturnExchangeService sẵn sàng.
+                    <div>
+                        <input
+                            :id="`return-exchange-input-${activeTab.id}`"
+                            v-model="activeTab.returnState.exchangeSearch"
+                            @input="onExchangeSearchInput(activeTab)"
+                            @focus="openExchangeSearch(activeTab)"
+                            @click="openExchangeSearch(activeTab)"
+                            type="text"
+                            class="w-full border border-amber-200 rounded px-3 py-2 text-sm bg-white text-gray-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                            placeholder="Nhập tên / SKU / barcode / Serial/IMEI hàng đổi"
+                        />
+                        <div
+                            v-if="activeTab.returnState.exchangeSearchOpen"
+                            class="fixed left-1/2 top-[44%] z-[80] w-[min(820px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2"
+                        >
+                            <div
+                                class="overflow-hidden rounded-md border border-amber-200 bg-white shadow-2xl"
+                            >
+                                <div class="border-b border-amber-100 bg-amber-50 px-3 py-2">
+                                    <div class="mb-1 flex items-center justify-between gap-3">
+                                        <label :for="`return-exchange-overlay-input-${activeTab.id}`" class="text-xs font-semibold text-amber-800">Tìm hàng đổi (F7)</label>
+                                        <button type="button" class="text-xl leading-none text-gray-400 hover:text-gray-700" @click="closeExchangeSearch(activeTab)" title="Đóng">&times;</button>
+                                    </div>
+                                    <input
+                                        :id="`return-exchange-overlay-input-${activeTab.id}`"
+                                        v-model="activeTab.returnState.exchangeSearch"
+                                        @input="onExchangeSearchInput(activeTab)"
+                                        @keydown.esc.prevent="closeExchangeSearch(activeTab)"
+                                        type="text"
+                                        class="w-full rounded border border-amber-300 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                                        placeholder="Nhập tên / SKU / barcode / Serial/IMEI hàng đổi"
+                                    />
+                                    <div class="mt-1 text-[11px] text-gray-500">Gõ Serial/IMEI, SKU, barcode hoặc tên hàng rồi bấm chọn kết quả.</div>
+                                </div>
+                                <div class="max-h-[46vh] overflow-y-auto">
+                                    <div v-if="activeTab.returnState.exchangeSearching" class="px-3 py-6 text-center text-sm text-gray-500">
+                                        Đang tìm...
+                                    </div>
+                                    <div v-else-if="!activeTab.returnState.exchangeSearch" class="px-3 py-6 text-center text-sm text-gray-500">
+                                        Nhập từ khóa để tìm hàng đổi.
+                                    </div>
+                                    <div v-else-if="!activeTab.returnState.exchangeResults.length" class="px-3 py-6 text-center text-sm text-gray-500">
+                                        Không có kết quả phù hợp.
+                                    </div>
+                                    <div
+                                        v-else
+                                        v-for="product in activeTab.returnState.exchangeResults"
+                                        :key="`exchange-${product.id}`"
+                                        @mousedown.prevent="addExchangeItem(activeTab, product)"
+                                        class="flex cursor-pointer items-start justify-between gap-3 border-b border-gray-100 px-3 py-2.5 last:border-0 hover:bg-amber-50"
+                                        :class="exchangeAvailableQty(product) <= 0 ? 'opacity-40 pointer-events-none' : ''"
+                                    >
+                                        <div class="min-w-0 flex-1">
+                                            <div class="truncate text-sm font-semibold text-gray-800">{{ product.name }}</div>
+                                            <div class="text-xs text-gray-500">
+                                                {{ product.sku }} · Tồn: {{ product.stock_quantity }} · Đặt: 0<span v-if="product.has_serial"> · Sẵn: {{ product.sellable_quantity }}</span>
+                                                <span v-if="exchangeAvailableQty(product) <= 0" class="ml-1 font-semibold text-red-600">Hết tồn</span>
+                                            </div>
+                                            <div v-if="product.matched_serials && product.matched_serials.length" class="mt-1 flex flex-wrap gap-1">
+                                                <span
+                                                    v-for="s in product.matched_serials"
+                                                    :key="`matched-${product.id}-${s.id}`"
+                                                    class="inline-flex items-center rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 font-mono text-[11px] text-blue-700"
+                                                >
+                                                    {{ s.serial_number }}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div class="text-sm font-bold tabular-nums text-amber-700">{{ formatCurrency(product.retail_price || 0) }}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div v-if="activeTab.returnState.exchangeItems.length" class="mt-3 border border-amber-200 bg-white rounded divide-y divide-gray-100">
+                        <div class="grid grid-cols-12 gap-2 bg-amber-50 px-2 py-1.5 text-[11px] font-semibold uppercase text-amber-800">
+                            <div class="col-span-3">Hàng đổi</div>
+                            <div class="col-span-2 text-center">SL</div>
+                            <div class="col-span-2 text-right">Đơn giá</div>
+                            <div class="col-span-2 text-right">Giảm giá</div>
+                            <div class="col-span-2 text-right">Thành tiền</div>
+                        </div>
+                        <div
+                            v-for="(item, idx) in activeTab.returnState.exchangeItems"
+                            :key="`exchange-line-${idx}`"
+                            class="p-2"
+                        >
+                            <div class="grid grid-cols-12 gap-2 items-center">
+                            <div class="col-span-3 min-w-0">
+                                    <div class="font-semibold text-sm text-gray-800 truncate">{{ item.product.name }}</div>
+                                    <div class="text-xs text-gray-500">
+                                        {{ item.product.sku }} · Tồn: {{ item.product.stock_quantity ?? 0 }} · Đặt: 0<span v-if="item.is_serial_product"> · Sẵn: {{ item.product.sellable_quantity ?? exchangeAvailableQty(item) }} · Serial/IMEI</span>
+                                    </div>
+                                </div>
+                                <div class="col-span-2 flex items-center justify-center">
+                                    <template v-if="item.is_serial_product">
+                                        <span class="text-xs font-bold px-2 py-1 rounded bg-gray-100" :class="item.quantity === 0 ? 'text-red-600 bg-red-50 border border-red-200' : 'text-gray-700'">{{ item.quantity }}</span>
+                                    </template>
+                                    <template v-else>
+                                        <button @click="updateExchangeQty(item, -1)" class="w-7 h-7 border rounded bg-white hover:bg-gray-50">-</button>
+                                        <input
+                                            :value="item.quantity"
+                                            @input="setExchangeQty(item, $event.target.value)"
+                                            type="number"
+                                            min="1"
+                                            :max="exchangeAvailableQty(item)"
+                                            class="mx-1 w-14 rounded border border-gray-300 px-1 py-1 text-center text-sm font-bold tabular-nums focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                        />
+                                        <button
+                                            @click="updateExchangeQty(item, 1)"
+                                            :disabled="(Number(item.quantity) || 0) >= exchangeAvailableQty(item)"
+                                            class="w-7 h-7 border rounded bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                                        >+</button>
+                                    </template>
+                                </div>
+                                <div class="col-span-2">
+                                    <MoneyInput v-model="item.price" :min="0" input-class="w-full border border-gray-300 rounded px-2 py-1 text-sm text-right" />
+                                </div>
+                                <div class="col-span-2">
+                                    <MoneyInput v-model="item.discount" :min="0" input-class="w-full border border-gray-300 rounded px-2 py-1 text-sm text-right" />
+                                </div>
+                                <div class="col-span-2 text-right text-xs font-bold text-gray-800">{{ formatCurrency(exchangeLineAmount(item)) }}</div>
+                                <button @click="removeExchangeItem(activeTab, idx)" class="col-span-1 text-gray-400 hover:text-red-600 px-1 text-right" title="Xóa">&times;</button>
+                            </div>
+                            <div v-if="item.stockWarning" class="mt-1 text-right text-[11px] font-medium text-red-600">{{ item.stockWarning }}</div>
+                            <div v-if="item.is_serial_product" class="mt-2">
+                                <div class="flex flex-wrap gap-1 mb-1">
+                                    <span v-for="(s, sIdx) in item.serials" :key="s.id" class="inline-flex items-center gap-1 bg-blue-50 text-blue-700 text-[11px] px-1.5 py-0.5 rounded border border-blue-200 font-mono">
+                                        {{ s.serial_number }}
+                                        <button @click="removeSerialFromItem(item, sIdx)" class="text-blue-500 hover:text-red-600">&times;</button>
+                                    </span>
+                                </div>
+                                <div class="relative">
+                                    <input
+                                        v-model="item.serialInput"
+                                        @input="searchSerialsForItem(item)"
+                                        @focus="openExchangeSerialSearch(item)"
+                                        @click="openExchangeSerialSearch(item)"
+                                        @keydown.enter.prevent="addSerialToItem(item)"
+                                        type="text"
+                                        class="w-full border border-gray-300 rounded px-2 py-1 text-xs"
+                                        placeholder="Nhập/Quét serial hàng đổi"
+                                    />
+                                    <div v-if="item.showSerialDropdown" class="fixed left-1/2 top-[44%] z-[85] w-[min(620px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-md border border-blue-200 bg-white shadow-2xl">
+                                        <div class="border-b border-blue-100 bg-blue-50 px-3 py-2">
+                                            <div class="mb-1 flex items-center justify-between gap-3">
+                                                <label :for="`exchange-serial-overlay-input-${item.product.id}`" class="text-xs font-semibold text-blue-800">Chọn Serial/IMEI hàng đổi</label>
+                                                <button type="button" class="text-xl leading-none text-gray-400 hover:text-gray-700" @mousedown.prevent="hideSerialDropdown(item)" title="Đóng">&times;</button>
+                                            </div>
+                                            <input
+                                                :id="`exchange-serial-overlay-input-${item.product.id}`"
+                                                v-model="item.serialInput"
+                                                @input="searchSerialsForItem(item)"
+                                                @keydown.enter.prevent="addSerialToItem(item)"
+                                                @keydown.esc.prevent="hideSerialDropdown(item)"
+                                                type="text"
+                                                class="w-full rounded border border-blue-300 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                placeholder="Nhập/Quét serial hàng đổi"
+                                            />
+                                        </div>
+                                        <div class="max-h-[40vh] overflow-y-auto">
+                                            <div v-if="item.serialLoading" class="p-3 text-center text-xs text-gray-400">Đang tải mã...</div>
+                                            <div v-else-if="!item.availableSerials || item.availableSerials.length === 0" class="p-3 text-center text-xs text-gray-400">Không còn mã nào</div>
+                                            <div
+                                                v-for="s in item.availableSerials"
+                                                :key="s.id"
+                                                @mousedown.prevent="selectSerialForItem(item, s)"
+                                                class="cursor-pointer border-b border-gray-100 p-2 font-mono text-xs font-medium text-gray-700 last:border-0 hover:bg-blue-50"
+                                            >
+                                                {{ s.serial_number }}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div v-if="item.quantity === 0" class="mt-1 text-[10px] text-red-600">Cần chọn đủ serial hàng đổi.</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1583,6 +2015,48 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                         <span class="font-semibold text-gray-700">Cần trả khách</span>
                         <span class="font-bold text-blue-600 text-base tabular-nums">{{ formatCurrency(activeReturnTotal || 0) }}</span>
                     </div>
+                    <div v-if="activeTab.returnState.exchangeItems.length" class="border-t pt-2 mt-2 space-y-2">
+                        <div class="flex items-center justify-between">
+                            <span class="text-gray-500">Tổng tiền hàng đổi</span>
+                            <span class="font-medium tabular-nums">{{ formatCurrency(activeExchangeSubtotal || 0) }}</span>
+                        </div>
+                        <div class="flex items-center justify-between gap-2">
+                            <span class="text-gray-500">Giảm giá hàng đổi</span>
+                            <MoneyInput v-model="activeTab.returnState.exchangeDiscount" :min="0" input-class="w-44 border border-gray-300 rounded-md px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="font-semibold text-gray-700">Sau đổi hàng</span>
+                            <span class="font-bold text-gray-900 tabular-nums">{{ formatCurrency(activeExchangeTotal || 0) }}</span>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="font-semibold" :class="activeCustomerPays > 0 ? 'text-blue-700' : 'text-red-700'">
+                                {{ activeCustomerPays > 0 ? 'Khách trả thêm' : 'Trả khách' }}
+                            </span>
+                            <span class="font-bold tabular-nums" :class="activeCustomerPays > 0 ? 'text-blue-700' : 'text-red-700'">
+                                {{ formatCurrency(activeCustomerPays > 0 ? activeCustomerPays : activeRefundToCustomer) }}
+                            </span>
+                        </div>
+                        <div class="flex items-center gap-4 text-xs">
+                            <label class="flex items-center gap-1.5 cursor-pointer">
+                                <input type="radio" v-model="activeTab.returnState.exchangePaymentMethod" value="cash" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
+                                <span>Tiền mặt</span>
+                            </label>
+                            <label class="flex items-center gap-1.5 cursor-pointer">
+                                <input type="radio" v-model="activeTab.returnState.exchangePaymentMethod" value="transfer" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
+                                <span>Chuyển khoản</span>
+                            </label>
+                        </div>
+                        <select
+                            v-if="activeTab.returnState.exchangePaymentMethod === 'transfer'"
+                            v-model="activeTab.returnState.exchangeBankAccountInfo"
+                            class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm outline-none focus:border-blue-500 bg-white"
+                        >
+                            <option value="">-- Chọn tài khoản --</option>
+                            <option v-for="ba in bankAccounts" :key="ba.id" :value="ba.bank_name + ' - ' + ba.account_number + ' - ' + ba.account_holder">
+                                {{ ba.bank_name }} - {{ ba.account_number }} ({{ ba.account_holder }})
+                            </option>
+                        </select>
+                    </div>
                     <div class="flex items-center justify-between gap-2">
                         <span class="text-gray-500">Tiền trả khách (paid_to_customer)</span>
                         <MoneyInput
@@ -1590,6 +2064,7 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                             :min="0"
                             input-class="w-44 border border-gray-300 rounded-md px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500"
                             @update:model-value="activeTab.returnState.paidToCustomerTouched = true"
+                            :disabled="activeTab.returnState.exchangeItems.length > 0"
                         />
                     </div>
                     <div>
@@ -1599,17 +2074,20 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                     <div v-if="activeTab.returnState.error" class="px-3 py-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
                         {{ activeTab.returnState.error }}
                     </div>
+                    <div v-else-if="activeExchangeValidationMessage" class="px-3 py-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+                        {{ activeExchangeValidationMessage }}
+                    </div>
                 </div>
 
                 <div class="px-4 py-3 border-t border-gray-200 bg-white">
                     <button
                         @click="submitReturnTab(activeTab)"
-                        :disabled="!canSubmitActiveReturn || activeTab.returnState.submitting"
+                        :disabled="!canSubmitActiveExchange || activeTab.returnState.submitting"
                         class="w-full px-4 py-3 bg-red-600 text-white rounded text-sm font-bold hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wide"
                     >
-                        {{ activeTab.returnState.submitting ? 'Đang lưu...' : 'TRẢ HÀNG' }}
+                        {{ activeTab.returnState.submitting ? 'Đang lưu...' : (activeTab.returnState.exchangeItems.length ? 'ĐỔI HÀNG' : 'TRẢ HÀNG') }}
                     </button>
-                    <p class="mt-1 text-[10px] text-gray-400 text-center">F3: ô tìm hàng trả · F7: ô tìm hàng đổi (đang khoá)</p>
+                    <p class="mt-1 text-[10px] text-gray-400 text-center">F3: ô tìm hàng trả · F7: ô tìm hàng đổi</p>
                 </div>
             </div>
         </main>

@@ -160,6 +160,19 @@ class Step246PosQuickReturnTest extends TestCase
         $this->assertContains($invoice->id, collect($byPhone->json())->pluck('id')->all());
     }
 
+    public function test_returnable_invoices_search_by_product_sku(): void
+    {
+        $admin = $this->adminUser();
+        $customer = $this->makeCustomer();
+        $product = $this->makeProduct(false, 20, 100000);
+        $invoice = $this->sellNormal($admin, $customer, $product, 1, 200000, 200000);
+
+        $res = $this->actingAs($admin)->getJson('/api/pos/returnable-invoices?search=' . urlencode($product->sku));
+
+        $res->assertOk();
+        $this->assertContains($invoice->id, collect($res->json())->pluck('id')->all());
+    }
+
     // ─────────────────────────────────────────────────────────────────
     // TC-03: returnable items show remaining_qty after a partial return
     // ─────────────────────────────────────────────────────────────────

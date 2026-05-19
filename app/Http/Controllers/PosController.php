@@ -10,6 +10,7 @@ use App\Models\InvoiceItem;
 use App\Models\ReturnItem;
 use App\Models\SerialImei;
 use App\Services\InvoiceSaleService;
+use App\Services\PosReturnExchangeService;
 use App\Services\SerialAvailabilityService;
 use App\Support\Reports\SellerResolver;
 
@@ -91,9 +92,9 @@ class PosController extends Controller
     public function searchProducts(Request $request)
     {
         $query = Product::where('is_active', true);
+        $search = trim((string) $request->input('search', ''));
 
-        if ($request->filled('search')) {
-            $search = $request->input('search');
+        if ($search !== '') {
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
                     ->orWhere('sku', 'like', "%{$search}%")
@@ -115,10 +116,22 @@ class PosController extends Controller
             ->limit(20)->get();
 
         // Add sellable_quantity: total stock minus repairing units
-        $products->each(function ($p) {
+        $availability = app(SerialAvailabilityService::class);
+        $products->each(function ($p) use ($search, $availability) {
             $p->sellable_quantity = $p->has_serial
                 ? max(0, $p->stock_quantity - $p->repairing_count)
                 : $p->stock_quantity;
+
+            $p->matched_serials = [];
+            if ($p->has_serial && $search !== '') {
+                $p->matched_serials = $availability->querySellableForProduct($p->id)
+                    ->where('serial_number', 'like', "%{$search}%")
+                    ->orderBy('serial_number')
+                    ->limit(5)
+                    ->get()
+                    ->map(fn ($s) => $availability->normalizeForResponse($s))
+                    ->values();
+            }
         });
 
         return response()->json($products);
@@ -236,6 +249,91 @@ class PosController extends Controller
                 'line'    => $e->getLine(),
             ]);
             return response()->json(['success' => false, 'message' => 'Có lỗi xảy ra: ' . $e->getMessage()], 500);
+        }
+    }
+
+    public function returnExchange(Request $request, PosReturnExchangeService $service)
+    {
+        $validated = $request->validate([
+            'invoice_id' => 'required|exists:invoices,id',
+            'customer_id' => 'nullable|exists:customers,id',
+            'branch_id' => 'nullable|exists:branches,id',
+            'seller_key' => 'nullable|string',
+            'employee_id' => 'nullable|exists:employees,id',
+            'sale_time' => 'nullable|date',
+            'payment_method' => 'nullable|string|in:cash,transfer',
+            'bank_account_info' => 'nullable|string',
+            'note' => 'nullable|string|max:1000',
+            'return' => 'required|array',
+            'return.discount' => 'nullable|numeric|min:0',
+            'return.fee_type' => 'nullable|in:amount,percent',
+            'return.fee_value' => 'nullable|numeric|min:0',
+            'return.paid_to_customer' => 'nullable|numeric|min:0',
+            'return.items' => 'required|array|min:1',
+            'return.items.*.product_id' => 'required|exists:products,id',
+            'return.items.*.invoice_item_id' => 'nullable|exists:invoice_items,id',
+            'return.items.*.qty' => 'required|integer|min:1',
+            'return.items.*.price' => 'required|numeric|min:0',
+            'return.items.*.discount' => 'nullable|numeric|min:0',
+            'return.items.*.serial_ids' => 'nullable|array',
+            'return.items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
+            'exchange' => 'required|array',
+            'exchange.discount' => 'nullable|numeric|min:0',
+            'exchange.customer_paid' => 'nullable|numeric|min:0',
+            'exchange.items' => 'required|array|min:1',
+            'exchange.items.*.product_id' => 'required|exists:products,id',
+            'exchange.items.*.quantity' => 'required|integer|min:1',
+            'exchange.items.*.price' => 'required|numeric|min:0',
+            'exchange.items.*.discount' => 'nullable|numeric|min:0',
+            'exchange.items.*.serial_ids' => 'nullable|array',
+            'exchange.items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
+        ]);
+
+        try {
+            try {
+                [$sellerId, $sellerName] = $this->resolveSellerForPos(
+                    $validated['seller_key'] ?? null,
+                    !empty($validated['employee_id']) ? (int) $validated['employee_id'] : null
+                );
+            } catch (\InvalidArgumentException $e) {
+                return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+            }
+
+            $result = $service->create($validated, [
+                'created_by_name' => auth()->user()?->name ?? 'POS',
+                'sale_context' => [
+                    'seller_id' => $sellerId,
+                    'seller_name' => $sellerName,
+                    'created_by_name' => auth()->user()?->name ?? 'POS',
+                ],
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'return' => [
+                    'id' => $result['return']->id,
+                    'code' => $result['return']->code,
+                ],
+                'exchange_invoice' => [
+                    'id' => $result['exchange_invoice']->id,
+                    'code' => $result['exchange_invoice']->code,
+                ],
+                'settlement' => $result['settlement'],
+                'message' => 'Đổi hàng thành công',
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('POS Return Exchange Error', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Có lỗi xảy ra: ' . $e->getMessage(),
+            ], 500);
         }
     }
 
@@ -429,6 +527,11 @@ class PosController extends Controller
                          ->orWhere('phone', 'LIKE', "%{$search}%")
                          ->orWhere('code', 'LIKE', "%{$search}%");
                   })
+                  ->orWhereHas('items.product', function ($pq) use ($search) {
+                      $pq->where('name', 'LIKE', "%{$search}%")
+                         ->orWhere('sku', 'LIKE', "%{$search}%")
+                         ->orWhere('barcode', 'LIKE', "%{$search}%");
+                  })
                   ->orWhereHas('items.serials', function ($sq) use ($search) {
                       $sq->where('serial_number', 'LIKE', "%{$search}%");
                   });
@@ -588,4 +691,3 @@ class PosController extends Controller
         return response()->json($suppliers);
     }
 }
-

@@ -10,6 +10,7 @@ use App\Models\ReturnItem;
 use App\Models\SerialImei;
 use App\Services\CustomerDebtService;
 use App\Services\DebtOffsetService;
+use App\Services\OrderReturnCreationService;
 use App\Services\ReturnTotalCalculator;
 use App\Services\StockMovementService;
 use App\Support\Filters\FilterableIndex;
@@ -203,6 +204,24 @@ class OrderReturnController extends Controller
         $validated['fee_value']        = $calculated['fee_value'];
         $validated['total']            = $calculated['total_refund'];
         $validated['paid_to_customer'] = $calculated['paid_to_customer'];
+
+        $createdReturn = app(OrderReturnCreationService::class)->create($validated, [
+            'created_by_name' => auth()->user()?->name ?? 'Admin',
+            'order_date' => $request->input('order_date'),
+        ]);
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'success' => true,
+                'return' => [
+                    'id' => $createdReturn->id,
+                    'code' => $createdReturn->code,
+                ],
+                'message' => 'Phiếu trả hàng đã được tạo thành công.',
+            ]);
+        }
+
+        return redirect()->route('returns.index')->with('success', 'Phiếu trả hàng đã được tạo thành công.');
 
         // ── RR-11: Validate qty trả vs qty đã bán ──────────────────────
         if (!empty($validated['invoice_id'])) {
