@@ -20,9 +20,11 @@
 ## Root Cause
 - POS quick-create still rendered `form.customer_group` as a plain text input.
 - The main Customers screen already used `CustomerGroupCombobox` with `/customer-groups/options`.
+- Follow-up QA found the POS combobox could still be empty because `/customer-groups/options` only returned master `customer_groups`, while the Customers sidebar merged master groups with legacy distinct strings from `customers.customer_group`.
 
 ## Fix
 - POS quick-create customer modal now loads active customer groups from `/customer-groups/options` when opened.
+- `/customer-groups/options` now returns the same business list expected by the Customers screen: active master groups plus legacy `customers.customer_group` values that are not yet in master data.
 - Customer modal uses `CustomerGroupCombobox` with string `v-model`, preserving the existing `customers.customer_group` column contract.
 - Inline create is supported through `POST /customer-groups`; duplicate names refresh and select the existing group, and 403/422 errors are reported clearly.
 - Supplier quick-create keeps the previous text input so this hotfix does not mix customer-group UX into supplier-group workflow.

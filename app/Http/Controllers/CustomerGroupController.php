@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Customer;
 use App\Models\CustomerGroup;
 use Illuminate\Http\Request;
 
@@ -13,16 +14,40 @@ use Illuminate\Http\Request;
 class CustomerGroupController extends Controller
 {
     /**
-     * List active groups for sidebar filter dropdown.
+     * List active master groups plus legacy string values already used by customers.
      */
     public function options()
     {
-        $groups = CustomerGroup::where('is_active', true)
+        $masterGroups = CustomerGroup::where('is_active', true)
             ->orderBy('sort_order')
             ->orderBy('name')
-            ->get(['id', 'code', 'name', 'discount_type', 'discount_value', 'note', 'is_active']);
+            ->get(['id', 'code', 'name', 'discount_type', 'discount_value', 'note', 'is_active'])
+            ->map(function (CustomerGroup $group) {
+                $group->source = 'master';
+                return $group;
+            });
 
-        return response()->json($groups);
+        $masterNames = $masterGroups->pluck('name');
+
+        $legacyGroups = Customer::whereNotNull('customer_group')
+            ->where('customer_group', '!=', '')
+            ->distinct()
+            ->pluck('customer_group')
+            ->diff($masterNames)
+            ->sort()
+            ->values()
+            ->map(fn ($name) => [
+                'id' => null,
+                'code' => null,
+                'name' => $name,
+                'discount_type' => null,
+                'discount_value' => null,
+                'note' => null,
+                'is_active' => true,
+                'source' => 'legacy',
+            ]);
+
+        return response()->json($masterGroups->concat($legacyGroups)->values());
     }
 
     /**

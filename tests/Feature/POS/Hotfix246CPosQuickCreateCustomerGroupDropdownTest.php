@@ -30,6 +30,12 @@ class Hotfix246CPosQuickCreateCustomerGroupDropdownTest extends TestCase
         $user = $this->userWith(['pos.use']);
         CustomerGroup::create(['name' => 'VIP POS 24.6C', 'is_active' => true]);
         CustomerGroup::create(['name' => 'Inactive POS 24.6C', 'is_active' => false]);
+        Customer::create([
+            'code' => 'KH-LEGACY-246C',
+            'name' => 'Legacy POS 24.6C',
+            'customer_group' => 'Legacy POS Group 24.6C',
+            'is_customer' => true,
+        ]);
 
         $response = $this->actingAs($user)->getJson('/customer-groups/options');
 
@@ -37,6 +43,7 @@ class Hotfix246CPosQuickCreateCustomerGroupDropdownTest extends TestCase
         $names = collect($response->json())->pluck('name')->all();
 
         $this->assertContains('VIP POS 24.6C', $names);
+        $this->assertContains('Legacy POS Group 24.6C', $names);
         $this->assertNotContains('Inactive POS 24.6C', $names);
     }
 
