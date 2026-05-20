@@ -12,20 +12,21 @@ use App\Models\PriceBook;
 use App\Models\PriceBookProduct;
 use App\Models\ProductAttribute;
 use App\Models\ProductVariant;
+use App\Services\ProductSearchService;
 
 class ProductController extends Controller
 {
-    public function apiSearch(Request $request)
+    public function apiSearch(Request $request, ProductSearchService $productSearch)
     {
         $query = Product::query();
 
         if ($request->filled('search')) {
-            $search = $request->input('search');
-            $query->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                    ->orWhere('sku', 'like', "%{$search}%")
-                    ->orWhere('barcode', 'like', "%{$search}%");
-            });
+            $search = trim((string) $request->input('search'));
+            $productSearch->apply($query, $search, [
+                'include_serials' => true,
+                'serial_relation' => 'serialImeis',
+            ]);
+            $productSearch->applyScore($query, $search);
         }
 
         $productIds = $request->input('product_ids', []);
@@ -71,20 +72,17 @@ class ProductController extends Controller
         return response()->json($result);
     }
 
-    public function index(Request $request)
+    public function index(Request $request, ProductSearchService $productSearch)
     {
         $query = Product::with(['category', 'brand']);
 
         if ($request->filled('search')) {
-            $search = $request->input('search');
-            $query->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                    ->orWhere('sku', 'like', "%{$search}%")
-                    ->orWhere('barcode', 'like', "%{$search}%")
-                    ->orWhereHas('serialImeis', function ($sq) use ($search) {
-                        $sq->where('serial_number', 'like', "%{$search}%");
-                    });
-            });
+            $search = trim((string) $request->input('search'));
+            $productSearch->apply($query, $search, [
+                'include_serials' => true,
+                'serial_relation' => 'serialImeis',
+            ]);
+            $productSearch->applyScore($query, $search);
         }
 
         // Lọc theo nhóm hàng (bao gồm cả nhóm con)
@@ -155,9 +153,10 @@ class ProductController extends Controller
         $products = $query->paginate(50)->withQueryString();
 
         $searchTerm = $request->input('search');
+        $serialLike = $productSearch->serialLikePattern($searchTerm);
 
         // Append serial counts for serial products
-        $products->getCollection()->transform(function ($product) use ($searchTerm) {
+        $products->getCollection()->transform(function ($product) use ($searchTerm, $serialLike) {
             if ($product->has_serial) {
                 $inStockSerials = $product->serialImeis()->where('status', 'in_stock');
                 // Tồn kho = tất cả serial có status 'in_stock' (kể cả đang sửa chữa)
@@ -184,9 +183,9 @@ class ProductController extends Controller
 
                 // Nếu user search theo serial → attach các serial khớp + status/repair_status
                 // để UI có thể hiển thị nhãn (Sẵn hàng / Đang sửa / Đã bán...)
-                if ($searchTerm) {
+                if ($searchTerm && $serialLike !== null) {
                     $product->matched_serials = $product->serialImeis()
-                        ->where('serial_number', 'like', "%{$searchTerm}%")
+                        ->where('serial_number', 'like', $serialLike)
                         ->limit(10)
                         ->get(['id', 'serial_number', 'status', 'repair_status']);
                 }
@@ -1082,11 +1081,20 @@ class ProductController extends Controller
 
         return redirect()->back()->with('success', 'Đã xoá hàng hóa!');
     }
-    public function export(Request $request)
+    public function export(Request $request, ProductSearchService $productSearch)
     {
-        $products = Product::with(['category', 'brand'])
-            ->when($request->search, fn($q, $s) => $q->where('name', 'LIKE', "%{$s}%")->orWhere('sku', 'LIKE', "%{$s}%"))
-            ->orderBy('id', 'desc')->get();
+        $query = Product::with(['category', 'brand']);
+
+        if ($request->filled('search')) {
+            $search = trim((string) $request->input('search'));
+            $productSearch->apply($query, $search, [
+                'include_serials' => true,
+                'serial_relation' => 'serialImeis',
+            ]);
+            $productSearch->applyScore($query, $search);
+        }
+
+        $products = $query->orderBy('id', 'desc')->get();
 
         return \App\Services\CsvService::export(
             ['Mã hàng', 'Tên hàng', 'Loại', 'Nhóm hàng', 'Thương hiệu', 'Giá vốn', 'Giá bán', 'Tồn kho', 'Định mức tồn ít nhất', 'Định mức tồn nhiều nhất', 'Trọng lượng', 'Vị trí', 'Mô tả'],

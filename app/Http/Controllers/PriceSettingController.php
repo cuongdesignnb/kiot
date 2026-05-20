@@ -9,21 +9,22 @@ use App\Models\Category;
 use App\Models\PriceBook;
 use App\Models\PriceBookProduct;
 use App\Models\Branch;
+use App\Services\ProductSearchService;
 use Illuminate\Support\Facades\Response;
 
 class PriceSettingController extends Controller
 {
-    private function buildQuery(Request $request)
+    private function buildQuery(Request $request, ProductSearchService $productSearch)
     {
         $query = Product::with('category');
 
         if ($request->filled('search')) {
-            $search = $request->input('search');
-            $query->where(function ($q) use ($search) {
-                $q->where('sku', 'like', "%{$search}%")
-                    ->orWhere('name', 'like', "%{$search}%")
-                    ->orWhere('barcode', 'like', "%{$search}%");
-            });
+            $search = trim((string) $request->input('search'));
+            $productSearch->apply($query, $search, [
+                'include_serials' => true,
+                'serial_relation' => 'serials',
+            ]);
+            $productSearch->applyScore($query, $search);
         }
 
         if ($request->filled('category_id')) {
@@ -52,9 +53,9 @@ class PriceSettingController extends Controller
         return $query;
     }
 
-    public function index(Request $request)
+    public function index(Request $request, ProductSearchService $productSearch)
     {
-        $query = $this->buildQuery($request);
+        $query = $this->buildQuery($request, $productSearch);
         $activePriceBookId = $request->input('price_book_id');
 
         // If a custom price book is selected, join prices
@@ -324,9 +325,9 @@ class PriceSettingController extends Controller
         }
     }
 
-    public function export(Request $request)
+    public function export(Request $request, ProductSearchService $productSearch)
     {
-        $query = $this->buildQuery($request);
+        $query = $this->buildQuery($request, $productSearch);
         $priceBookId = $request->input('price_book_id');
         $priceBook = $priceBookId ? PriceBook::find($priceBookId) : null;
 

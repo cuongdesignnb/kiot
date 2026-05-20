@@ -12,6 +12,7 @@ use App\Models\ReturnItem;
 use App\Models\SerialImei;
 use App\Services\InvoiceSaleService;
 use App\Services\PosReturnExchangeService;
+use App\Services\ProductSearchService;
 use App\Services\SerialAvailabilityService;
 use App\Support\Reports\SellerResolver;
 
@@ -90,20 +91,17 @@ class PosController extends Controller
         );
     }
 
-    public function searchProducts(Request $request)
+    public function searchProducts(Request $request, ProductSearchService $productSearch)
     {
         $query = Product::where('is_active', true);
         $search = trim((string) $request->input('search', ''));
 
         if ($search !== '') {
-            $query->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                    ->orWhere('sku', 'like', "%{$search}%")
-                    ->orWhere('barcode', 'like', "%{$search}%")
-                    ->orWhereHas('serials', function ($sq) use ($search) {
-                        $sq->where('serial_number', 'like', "%{$search}%");
-                    });
-            });
+            $productSearch->apply($query, $search, [
+                'include_serials' => true,
+                'serial_relation' => 'serials',
+            ]);
+            $productSearch->applyScore($query, $search);
         }
 
         // Return top 20 matches for POS search
@@ -118,15 +116,16 @@ class PosController extends Controller
 
         // Add sellable_quantity: total stock minus repairing units
         $availability = app(SerialAvailabilityService::class);
-        $products->each(function ($p) use ($search, $availability) {
+        $serialLike = $productSearch->serialLikePattern($search);
+        $products->each(function ($p) use ($search, $serialLike, $availability) {
             $p->sellable_quantity = $p->has_serial
                 ? max(0, $p->stock_quantity - $p->repairing_count)
                 : $p->stock_quantity;
 
             $p->matched_serials = [];
-            if ($p->has_serial && $search !== '') {
+            if ($p->has_serial && $search !== '' && $serialLike !== null) {
                 $p->matched_serials = $availability->querySellableForProduct($p->id)
-                    ->where('serial_number', 'like', "%{$search}%")
+                    ->where('serial_number', 'like', $serialLike)
                     ->orderBy('serial_number')
                     ->limit(5)
                     ->get()
@@ -529,7 +528,7 @@ class PosController extends Controller
      *
      * @return \Illuminate\Http\JsonResponse
      */
-    public function returnableInvoices(Request $request)
+    public function returnableInvoices(Request $request, ProductSearchService $productSearch)
     {
         $search = trim((string) $request->input('search', ''));
 
@@ -538,17 +537,15 @@ class PosController extends Controller
             ->where('status', '!=', 'Đã hủy');
 
         if ($search !== '') {
-            $query->where(function ($q) use ($search) {
+            $query->where(function ($q) use ($search, $productSearch) {
                 $q->where('code', 'LIKE', "%{$search}%")
                   ->orWhereHas('customer', function ($cq) use ($search) {
                       $cq->where('name', 'LIKE', "%{$search}%")
                          ->orWhere('phone', 'LIKE', "%{$search}%")
                          ->orWhere('code', 'LIKE', "%{$search}%");
                   })
-                  ->orWhereHas('items.product', function ($pq) use ($search) {
-                      $pq->where('name', 'LIKE', "%{$search}%")
-                         ->orWhere('sku', 'LIKE', "%{$search}%")
-                         ->orWhere('barcode', 'LIKE', "%{$search}%");
+                  ->orWhereHas('items.product', function ($pq) use ($search, $productSearch) {
+                      $productSearch->apply($pq, $search, ['include_serials' => false]);
                   })
                   ->orWhereHas('items.serials', function ($sq) use ($search) {
                       $sq->where('serial_number', 'LIKE', "%{$search}%")

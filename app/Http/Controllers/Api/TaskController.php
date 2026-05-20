@@ -9,6 +9,7 @@ use App\Models\Employee;
 use App\Models\SerialImei;
 use App\Models\Product;
 use App\Models\Warranty;
+use App\Services\ProductSearchService;
 use App\Services\TaskService;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
@@ -469,17 +470,21 @@ class TaskController extends Controller
     /**
      * Tìm sản phẩm (linh kiện).
      */
-    public function searchProducts(Request $request)
+    public function searchProducts(Request $request, ProductSearchService $productSearch)
     {
         $q = $request->get('q', '');
         if (mb_strlen($q) < 2) {
             return response()->json([]);
         }
 
-        $products = Product::where(function ($query) use ($q) {
-                $query->where('name', 'like', '%' . $q . '%')
-                      ->orWhere('sku', 'like', '%' . $q . '%');
-            })
+        $query = Product::query();
+        $productSearch->apply($query, $q, [
+            'include_serials' => true,
+            'serial_relation' => 'serials',
+        ]);
+        $productSearch->applyScore($query, $q);
+
+        $products = $query
             ->limit(10)
             ->get(['id', 'name', 'sku', 'cost_price', 'stock_quantity']);
 

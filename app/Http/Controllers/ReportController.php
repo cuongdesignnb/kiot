@@ -14,6 +14,7 @@ use App\Models\Product;
 use App\Models\SerialImei;
 use App\Models\StockMovement;
 use App\Models\Branch;
+use App\Services\ProductSearchService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -1045,7 +1046,7 @@ class ReportController extends Controller
      * So sánh product.cost_price (snapshot) vs avg(serial.cost_price WHERE in_stock).
      * Cảnh báo khi lệch quá ngưỡng.
      */
-    public function costAnalysis(Request $request)
+    public function costAnalysis(Request $request, ProductSearchService $productSearch)
     {
         $threshold = (float) $request->input('threshold_pct', 1); // 1% mặc định
         $onlyMismatch = $request->boolean('only_mismatch', false);
@@ -1057,9 +1058,11 @@ class ReportController extends Controller
             ->where('is_active', true);
 
         if ($search !== '') {
-            $q->where(function ($w) use ($search) {
-                $w->where('sku', 'like', "%$search%")->orWhere('name', 'like', "%$search%");
-            });
+            $productSearch->apply($q, $search, [
+                'include_serials' => true,
+                'serial_relation' => 'serialImeis',
+            ]);
+            $productSearch->applyScore($q, $search);
         }
 
         $products = $q->orderBy('name')->limit(500)->get();
