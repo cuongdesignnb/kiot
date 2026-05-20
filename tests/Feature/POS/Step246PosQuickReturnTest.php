@@ -5,6 +5,7 @@ namespace Tests\Feature\POS;
 use App\Models\Category;
 use App\Models\Customer;
 use App\Models\Invoice;
+use App\Models\InvoiceItemSerial;
 use App\Models\OrderReturn;
 use App\Models\Product;
 use App\Models\Role;
@@ -168,6 +169,41 @@ class Step246PosQuickReturnTest extends TestCase
         $invoice = $this->sellNormal($admin, $customer, $product, 1, 200000, 200000);
 
         $res = $this->actingAs($admin)->getJson('/api/pos/returnable-invoices?search=' . urlencode($product->sku));
+
+        $res->assertOk();
+        $this->assertContains($invoice->id, collect($res->json())->pluck('id')->all());
+    }
+
+    public function test_returnable_invoices_search_by_serial_from_invoice_item_serial_link(): void
+    {
+        $admin = $this->adminUser();
+        $customer = $this->makeCustomer();
+        $product = $this->makeProduct(true, 0, 5000000);
+        $serial = $this->makeSerial($product);
+        $product->update(['stock_quantity' => 1, 'inventory_total_cost' => 5000000]);
+        $invoice = $this->sellSerial($admin, $customer, $product, [$serial], 8000000, 8000000);
+
+        $res = $this->actingAs($admin)
+            ->getJson('/api/pos/returnable-invoices?search=' . urlencode($serial->serial_number));
+
+        $res->assertOk();
+        $this->assertContains($invoice->id, collect($res->json())->pluck('id')->all());
+    }
+
+    public function test_returnable_invoices_search_by_serial_invoice_id_fallback(): void
+    {
+        $admin = $this->adminUser();
+        $customer = $this->makeCustomer();
+        $product = $this->makeProduct(true, 0, 5000000);
+        $serial = $this->makeSerial($product);
+        $product->update(['stock_quantity' => 1, 'inventory_total_cost' => 5000000]);
+        $invoice = $this->sellSerial($admin, $customer, $product, [$serial], 8000000, 8000000);
+        InvoiceItemSerial::where('serial_imei_id', $serial->id)->delete();
+
+        $this->assertSame((int) $invoice->id, (int) $serial->fresh()->invoice_id);
+
+        $res = $this->actingAs($admin)
+            ->getJson('/api/pos/returnable-invoices?search=' . urlencode($serial->serial_number));
 
         $res->assertOk();
         $this->assertContains($invoice->id, collect($res->json())->pluck('id')->all());

@@ -25,6 +25,7 @@ const emptyReturnState = () => ({
     sourceInvoice: null,             // { id, code, status, total, customer_id, branch_id, ... }
     sourceItems: [],                 // [{ invoice_item_id, product_id, ... remaining_qty, serials[] }]
     lineState: {},                   // invoice_item_id -> { qty, serial_ids: [] }
+    hiddenReturnLines: {},           // frontend-only: invoice_item_id -> true, never deletes original invoice data
     discount: 0,
     // Step 24.6E: fee can be VND amount or % of (subtotal − discount).
     feeType: 'amount',               // 'amount' | 'percent'
@@ -705,9 +706,11 @@ const selectReturnInvoice = async (tab, inv) => {
             map[returnLineKey(item)] = { qty: 0, serial_ids: [] };
         }
         rs.lineState = map;
+        rs.hiddenReturnLines = {};
         rs.discount = 0;
         rs.fee = 0;
         rs.paidToCustomer = 0;
+        rs.paidToCustomerTouched = false;
         rs.note = '';
     } catch (e) {
         if (e.response?.status === 403) {
@@ -724,6 +727,12 @@ const selectReturnInvoice = async (tab, inv) => {
 
 const returnLineKey = (item) => item?.invoice_item_id ?? item?.id;
 const returnLineState = (tab, item) => tab?.returnState?.lineState?.[returnLineKey(item)] || { qty: 0, serial_ids: [] };
+const isReturnLineHidden = (tab, item) => !!tab?.returnState?.hiddenReturnLines?.[returnLineKey(item)];
+const visibleReturnItems = (tab) => {
+    const rs = tab?.returnState;
+    if (!rs) return [];
+    return (rs.sourceItems || []).filter((item) => !isReturnLineHidden(tab, item));
+};
 const returnLineDiscount = (item, qty) => {
     const lineDiscount = Number(item?.discount) || 0;
     if (!lineDiscount || !qty) return 0;
@@ -742,7 +751,18 @@ const backToInvoiceSearch = (tab) => {
     rs.sourceInvoice = null;
     rs.sourceItems = [];
     rs.lineState = {};
+    rs.hiddenReturnLines = {};
     rs.error = '';
+};
+
+const hideReturnLine = (tab, item) => {
+    const rs = tab?.returnState;
+    if (!rs) return;
+    const key = returnLineKey(item);
+    const nextLineState = { ...(rs.lineState || {}) };
+    nextLineState[key] = { qty: 0, serial_ids: [] };
+    rs.lineState = nextLineState;
+    rs.hiddenReturnLines = { ...(rs.hiddenReturnLines || {}), [key]: true };
 };
 
 const setReturnQty = (tab, item, qty) => {
@@ -936,7 +956,7 @@ const activeReturnSubtotal = computed(() => {
     const tab = activeTab.value;
     if (!tab || tab.type !== 'return' || !tab.returnState?.sourceInvoice) return 0;
     let sum = 0;
-    for (const item of tab.returnState.sourceItems || []) {
+    for (const item of visibleReturnItems(tab)) {
         sum += returnLineAmount(item, tab);
     }
     return sum;
@@ -1010,6 +1030,10 @@ const activeExchangeValidationMessage = computed(() => {
 const activeExchangeNetAmount = computed(() => activeExchangeTotal.value - activeReturnTotal.value);
 const activeCustomerPays = computed(() => Math.max(0, activeExchangeNetAmount.value));
 const activeRefundToCustomer = computed(() => Math.max(0, -activeExchangeNetAmount.value));
+const hasActiveExchangeItems = computed(() => {
+    const tab = activeTab.value;
+    return !!(tab?.type === 'return' && tab.returnState?.exchangeItems?.length);
+});
 
 const canSubmitActiveExchange = computed(() => {
     const tab = activeTab.value;
@@ -1021,11 +1045,16 @@ const canSubmitActiveExchange = computed(() => {
 
 // When the user hasn't manually edited paidToCustomer, keep it in sync with
 // the canonical net refund — KiotViet UX: "tiền trả khách = cần trả khách".
-watch(activeReturnTotal, (val) => {
+watch([activeReturnTotal, activeRefundToCustomer, hasActiveExchangeItems], () => {
     const tab = activeTab.value;
     if (!tab || tab.type !== 'return' || !tab.returnState) return;
+    if (hasActiveExchangeItems.value) {
+        tab.returnState.paidToCustomer = activeRefundToCustomer.value;
+        tab.returnState.paidToCustomerTouched = false;
+        return;
+    }
     if (!tab.returnState.paidToCustomerTouched) {
-        tab.returnState.paidToCustomer = val;
+        tab.returnState.paidToCustomer = activeReturnTotal.value;
     }
 });
 
@@ -1038,9 +1067,13 @@ const canSubmitActiveReturn = computed(() => {
     const tab = activeTab.value;
     if (!tab || tab.type !== 'return' || !tab.returnState?.sourceInvoice) return false;
     const rs = tab.returnState;
-    const anyLine = Object.values(rs.lineState).some((ls) => ls && ls.qty > 0);
+    const items = visibleReturnItems(tab);
+    const anyLine = items.some((item) => {
+        const ls = rs.lineState[returnLineKey(item)];
+        return ls && ls.qty > 0;
+    });
     if (!anyLine) return false;
-    for (const item of rs.sourceItems || []) {
+    for (const item of items) {
         const ls = rs.lineState[returnLineKey(item)];
         if (!ls || !ls.qty) continue;
         if (item.has_serial && ls.serial_ids.length !== ls.qty) return false;
@@ -1057,7 +1090,8 @@ const submitReturnTab = async (tab) => {
     rs.error = '';
     rs.submitting = true;
     const itemsPayload = [];
-    for (const item of rs.sourceItems || []) {
+    const returnItems = visibleReturnItems(tab);
+    for (const item of returnItems) {
         const ls = rs.lineState[returnLineKey(item)];
         if (!ls || !ls.qty) continue;
         itemsPayload.push({
@@ -1071,7 +1105,7 @@ const submitReturnTab = async (tab) => {
     }
     const subtotal = (() => {
         let s = 0;
-        for (const item of rs.sourceItems || []) {
+        for (const item of returnItems) {
             s += returnLineAmount(item, tab);
         }
         return s;
@@ -1683,10 +1717,16 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                                         <th class="px-3 py-2 text-right">Đơn giá</th>
                                         <th class="px-3 py-2 text-center w-32">Trả</th>
                                         <th class="px-3 py-2 text-right">Thành tiền</th>
+                                        <th class="px-3 py-2 text-center w-10"></th>
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-gray-100">
-                                    <template v-for="item in activeTab.returnState.sourceItems" :key="item.invoice_item_id">
+                                    <tr v-if="!visibleReturnItems(activeTab).length">
+                                        <td colspan="8" class="px-3 py-8 text-center text-sm text-gray-400">
+                                            Không còn dòng hàng nào trong phiếu trả.
+                                        </td>
+                                    </tr>
+                                    <template v-for="item in visibleReturnItems(activeTab)" :key="item.invoice_item_id">
                                         <tr>
                                             <td class="px-3 py-2">
                                                 <div class="font-medium text-gray-800">{{ item.product_name }}</div>
@@ -1710,9 +1750,19 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                                                 <span v-else class="text-xs text-gray-500 tabular-nums">{{ returnLineState(activeTab, item).serial_ids?.length || 0 }} / {{ item.remaining_qty }}</span>
                                             </td>
                                             <td class="px-3 py-2 text-right tabular-nums font-semibold text-gray-800">{{ formatCurrency(returnLineAmount(item, activeTab)) }}</td>
+                                            <td class="px-3 py-2 text-center">
+                                                <button
+                                                    type="button"
+                                                    class="inline-flex h-7 w-7 items-center justify-center rounded border border-gray-200 text-lg leading-none text-gray-400 hover:border-red-300 hover:bg-red-50 hover:text-red-600"
+                                                    title="Ẩn dòng khỏi phiếu trả"
+                                                    @click="hideReturnLine(activeTab, item)"
+                                                >
+                                                    &times;
+                                                </button>
+                                            </td>
                                         </tr>
                                         <tr v-if="item.has_serial && item.serials.length" class="bg-gray-50/40">
-                                            <td colspan="7" class="px-3 py-2">
+                                            <td colspan="8" class="px-3 py-2">
                                                 <div class="text-xs font-medium text-gray-600 mb-1">Chọn serial cần trả</div>
                                                 <div class="flex flex-wrap gap-1.5">
                                                     <label
@@ -2058,15 +2108,27 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                         </select>
                     </div>
                     <div class="flex items-center justify-between gap-2">
-                        <span class="text-gray-500">Tiền trả khách (paid_to_customer)</span>
+                        <span class="text-gray-500">
+                            {{ activeTab.returnState.exchangeItems.length ? 'Tiền trả khách sau đổi' : 'Tiền trả khách (paid_to_customer)' }}
+                        </span>
                         <MoneyInput
+                            v-if="activeTab.returnState.exchangeItems.length"
+                            :model-value="activeRefundToCustomer"
+                            :min="0"
+                            input-class="w-44 border border-gray-300 rounded-md px-2 py-1 text-sm text-right tabular-nums bg-gray-50 text-gray-600"
+                            disabled
+                        />
+                        <MoneyInput
+                            v-else
                             v-model="activeTab.returnState.paidToCustomer"
                             :min="0"
                             input-class="w-44 border border-gray-300 rounded-md px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500"
                             @update:model-value="activeTab.returnState.paidToCustomerTouched = true"
-                            :disabled="activeTab.returnState.exchangeItems.length > 0"
                         />
                     </div>
+                    <p v-if="activeTab.returnState.exchangeItems.length" class="text-[11px] text-gray-400 text-right">
+                        Đã tính net sau hàng đổi; không nhập tay ở luồng đổi hàng.
+                    </p>
                     <div>
                         <label class="block text-xs text-gray-500 mb-1">Ghi chú</label>
                         <textarea v-model="activeTab.returnState.note" rows="2" class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" placeholder="Ghi chú trả hàng"></textarea>

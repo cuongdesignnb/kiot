@@ -52,6 +52,8 @@
 - `resources/js/Pages/POS/Index.vue`
   - Enables F7 product search via `/api/pos/products`.
   - Maintains `returnState.exchangeItems`.
+  - HOTFIX 24.6B.1: allows hiding individual source invoice lines from the return voucher without deleting invoice data; hidden lines are reset to qty 0 and are not submitted.
+  - HOTFIX 24.6B.1: when exchange items exist, `paid_to_customer` is shown as readonly net refund after exchange so stale full-return values are not displayed.
   - Shows exchange item table headers and per-line `Tồn: X | Đặt: 0`.
   - Allows direct quantity input plus `+/-` for non-serial exchange items, clamped to available stock.
   - Disables selecting out-of-stock exchange products.
@@ -65,6 +67,8 @@
 - Backend recomputes return subtotal, fee, return total, exchange subtotal, exchange total, customer pays, and refund to customer.
 - Frontend sends money as numbers, not formatted VND strings.
 - Frontend may display `Đặt: 0`; reserved/order stock is not yet part of the POS product API.
+- HOTFIX 24.6B.1: F3 return invoice search now matches serials through both `invoice_item_serials` links and the `serial_imeis.invoice_id` fallback path.
+- HOTFIX 24.6B.1: backend rejects stale `return.paid_to_customer` or `exchange.customer_paid` amounts that do not match the recomputed net settlement.
 
 ## Settlement Policy
 - If `exchange_total > return_total`:
@@ -90,14 +94,20 @@
 | Command | Result |
 |---|---|
 | `php -l app/Services/PosReturnExchangeService.php` | PASS - no syntax errors |
-| `php artisan test tests/Feature/POS/Step246BPosReturnExchangeTest.php` | PASS - 15 passed, 59 assertions; includes out-of-stock normal product, quantity over available stock, under-repair serial, returned-to-supplier serial |
-| `php artisan test tests/Feature/POS/Step246PosQuickReturnTest.php` | PASS - 13 passed, 34 assertions |
+| `php -l app/Http/Controllers/PosController.php` | PASS - no syntax errors |
+| `php artisan test tests/Feature/POS/Step246BPosReturnExchangeTest.php` | PASS - 17 passed, 71 assertions; includes stale net settlement validation, out-of-stock normal product, quantity over available stock, under-repair serial, returned-to-supplier serial |
+| `php artisan test tests/Feature/POS/Step246PosQuickReturnTest.php` | PASS - 15 passed, 39 assertions; includes F3 serial search via `invoice_item_serials` and `serial_imeis.invoice_id` fallback |
 | `php artisan test tests/Feature/OrderReturn` | PASS - 30 passed, 101 assertions |
+| `php artisan test tests/Feature/POS/Step246DPosMoneyFormatTest.php` | PASS - 4 passed, 12 assertions |
 | `php artisan test tests/Feature/Invoice tests/Feature/Invoices` | PASS - 53 passed, 2 skipped, 163 assertions |
 | `php artisan test tests/Feature/Purchase/Step233PurchaseReturnFlowTest.php` | PASS - 14 passed, 47 assertions |
 | `npm run build` | PASS - Vite built successfully |
 
 PHP emitted startup warnings for missing local extensions `oci8_12c`, `oci8_19`, `pdo_firebird`, and `pdo_oci`; test/build commands still exited successfully.
+
+HOTFIX 24.6B.1 note:
+- The first test run failed because local Docker DB `sales_mysql_test` was stopped; after `docker start sales_mysql_test`, the test suite above passed.
+- Browser UI QA still must be run before production deployment.
 
 ## Manual QA Checklist
 - POS tab Hoa don: not manually browser-tested.

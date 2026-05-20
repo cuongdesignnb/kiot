@@ -201,6 +201,46 @@ class Step246BPosReturnExchangeTest extends TestCase
         $this->assertSame(0.0, (float) $customer->fresh()->debt_amount);
     }
 
+    public function test_return_exchange_rejects_stale_paid_to_customer_amount(): void
+    {
+        $admin = $this->adminUser();
+        $customer = $this->customer();
+        $productA = $this->product(false, 5, 100000, 100000);
+        $productB = $this->product(false, 5, 100000, 100000);
+        $invoice = $this->sell($admin, $customer, $productA, 1, 100000, 100000);
+        $payload = $this->exchangePayload($invoice, $productA, $productB, 100000, 100000);
+        $payload['return']['paid_to_customer'] = 100000;
+        $returnsBefore = OrderReturn::count();
+        $invoicesBefore = Invoice::count();
+
+        $this->actingAs($admin)->postJson('/api/pos/return-exchange', $payload)
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('return.paid_to_customer');
+
+        $this->assertSame($returnsBefore, OrderReturn::count());
+        $this->assertSame($invoicesBefore, Invoice::count());
+    }
+
+    public function test_return_exchange_rejects_stale_customer_paid_amount(): void
+    {
+        $admin = $this->adminUser();
+        $customer = $this->customer();
+        $productA = $this->product(false, 5, 100000, 100000);
+        $productB = $this->product(false, 5, 100000, 100000);
+        $invoice = $this->sell($admin, $customer, $productA, 1, 100000, 100000);
+        $payload = $this->exchangePayload($invoice, $productA, $productB, 100000, 100000);
+        $payload['exchange']['customer_paid'] = 100000;
+        $returnsBefore = OrderReturn::count();
+        $invoicesBefore = Invoice::count();
+
+        $this->actingAs($admin)->postJson('/api/pos/return-exchange', $payload)
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('exchange.customer_paid');
+
+        $this->assertSame($returnsBefore, OrderReturn::count());
+        $this->assertSame($invoicesBefore, Invoice::count());
+    }
+
     public function test_return_exchange_serial_product_restores_return_serial_and_sells_exchange_serial(): void
     {
         $admin = $this->adminUser();

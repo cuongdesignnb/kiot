@@ -7,6 +7,7 @@ use Inertia\Inertia;
 use App\Models\Product;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
+use App\Models\InvoiceItemSerial;
 use App\Models\ReturnItem;
 use App\Models\SerialImei;
 use App\Services\InvoiceSaleService;
@@ -533,7 +534,16 @@ class PosController extends Controller
                          ->orWhere('barcode', 'LIKE', "%{$search}%");
                   })
                   ->orWhereHas('items.serials', function ($sq) use ($search) {
-                      $sq->where('serial_number', 'LIKE', "%{$search}%");
+                      $sq->where('serial_number', 'LIKE', "%{$search}%")
+                         ->orWhereHas('serial', function ($ssq) use ($search) {
+                             $ssq->where('serial_number', 'LIKE', "%{$search}%");
+                         });
+                  })
+                  ->orWhereExists(function ($sq) use ($search) {
+                      $sq->selectRaw('1')
+                         ->from('serial_imeis')
+                         ->whereColumn('serial_imeis.invoice_id', 'invoices.id')
+                         ->where('serial_imeis.serial_number', 'LIKE', "%{$search}%");
                   });
             });
         }
@@ -620,7 +630,29 @@ class PosController extends Controller
 
             $serials = [];
             if ($hasSerial) {
-                $serials = SerialImei::where('invoice_id', $invoice->id)
+                $linkedSerials = InvoiceItemSerial::with('serial')
+                    ->where('invoice_item_id', $line->id)
+                    ->get()
+                    ->map(function (InvoiceItemSerial $link) use ($line, $returnedSerialIds) {
+                        $serial = $link->serial;
+                        if (!$serial || (int) $serial->product_id !== (int) $line->product_id) {
+                            return null;
+                        }
+                        if ($serial->status !== 'sold' && !isset($returnedSerialIds[$serial->id])) {
+                            return null;
+                        }
+
+                        return [
+                            'id'                => $serial->id,
+                            'serial_number'     => $serial->serial_number ?: $link->serial_number,
+                            'status'            => $serial->status,
+                            'already_returned'  => isset($returnedSerialIds[$serial->id]),
+                        ];
+                    })
+                    ->filter()
+                    ->values();
+
+                $fallbackSerials = SerialImei::where('invoice_id', $invoice->id)
                     ->where('product_id', $line->product_id)
                     ->where('status', 'sold')
                     ->orderBy('serial_number')
@@ -633,6 +665,12 @@ class PosController extends Controller
                             'already_returned'  => isset($returnedSerialIds[$s->id]),
                         ];
                     })
+                    ->values();
+
+                $serials = $linkedSerials
+                    ->concat($fallbackSerials)
+                    ->unique('id')
+                    ->sortBy('serial_number')
                     ->values();
             }
 

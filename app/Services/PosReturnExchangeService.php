@@ -40,6 +40,18 @@ class PosReturnExchangeService
             $exchangeTotal = (float) $exchange['total'];
             $customerPays = max(0.0, $exchangeTotal - $returnTotal);
             $refundToCustomer = max(0.0, $returnTotal - $exchangeTotal);
+            $providedRefund = data_get($payload, 'return.paid_to_customer');
+            if ($providedRefund !== null && abs((float) $providedRefund - $refundToCustomer) > 0.5) {
+                throw ValidationException::withMessages([
+                    'return.paid_to_customer' => 'Tien tra khach khong khop voi so tien net sau doi hang.',
+                ]);
+            }
+            $providedCustomerPays = data_get($payload, 'exchange.customer_paid');
+            if ($providedCustomerPays !== null && abs((float) $providedCustomerPays - $customerPays) > 0.5) {
+                throw ValidationException::withMessages([
+                    'exchange.customer_paid' => 'Tien khach tra them khong khop voi so tien net sau doi hang.',
+                ]);
+            }
 
             $returnPayload = [
                 'invoice_id' => $sourceInvoice->id,
