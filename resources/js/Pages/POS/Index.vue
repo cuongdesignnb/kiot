@@ -41,6 +41,8 @@ const emptyReturnState = () => ({
     loadingItems: false,
     submitting: false,
     error: '',
+    errorTitle: '',
+    successResult: null,
     exchangeItems: [],
     exchangeSearch: '',
     exchangeResults: [],
@@ -1135,6 +1137,50 @@ const canSubmitActiveReturn = computed(() => {
     return true;
 });
 
+const formatAxiosError = (e, fallback = 'Có lỗi xảy ra.') => {
+    if (!e.response) {
+        return 'Không kết nối được máy chủ. Vui lòng kiểm tra mạng hoặc đăng nhập lại.';
+    }
+
+    const status = e.response.status;
+    const data = e.response.data || {};
+
+    if (status === 404) {
+        return 'Không tìm thấy API đổi hàng (/api/pos/return-exchange). Có thể server chưa deploy đúng code hoặc route cache cũ.';
+    }
+
+    if (status === 419) {
+        return 'Phiên đăng nhập đã hết hạn hoặc CSRF không hợp lệ. Vui lòng tải lại trang rồi thử lại.';
+    }
+
+    if (status === 403) {
+        return data.message || 'Bạn không có quyền thực hiện thao tác này.';
+    }
+
+    if (status === 422) {
+        if (data.errors && typeof data.errors === 'object') {
+            return Object.values(data.errors).flat().join(' • ');
+        }
+        return data.message || 'Dữ liệu không hợp lệ.';
+    }
+
+    if (data.debug_id) {
+        return `${data.message || fallback} (${data.error_code || 'ERROR'} / ${data.debug_id})`;
+    }
+
+    if (data.message) {
+        return data.message;
+    }
+
+    return `${fallback} HTTP ${status}`;
+};
+
+const resetReturnTab = (tab) => {
+    const rs = tab?.returnState;
+    if (!rs) return;
+    Object.assign(rs, emptyReturnState());
+};
+
 const submitReturnTab = async (tab) => {
     if (!tab || tab.type !== 'return') return;
     const rs = tab.returnState;
@@ -1142,7 +1188,10 @@ const submitReturnTab = async (tab) => {
     normalizeAllExchangeLines(tab);
     if (!canSubmitActiveExchange.value && tab.id === activeTab.value?.id) return;
 
+    const hasExchange = (rs.exchangeItems || []).length > 0;
     rs.error = '';
+    rs.errorTitle = '';
+    rs.successResult = null;
     rs.submitting = true;
     const itemsPayload = [];
     const returnItems = visibleReturnItems(tab);
@@ -1186,12 +1235,11 @@ const submitReturnTab = async (tab) => {
         fee_value: feeValue,
         fee: feeAmount,
         total,
-        paid_to_customer: (rs.exchangeItems || []).length > 0 ? activeRefundToCustomer.value : (Number(rs.paidToCustomer) || 0),
+        paid_to_customer: hasExchange ? activeRefundToCustomer.value : (Number(rs.paidToCustomer) || 0),
         note: rs.note || null,
         items: itemsPayload,
     };
     try {
-        const hasExchange = (rs.exchangeItems || []).length > 0;
         const res = hasExchange
             ? await axios.post('/api/pos/return-exchange', {
                 invoice_id: rs.sourceInvoice.id,
@@ -1226,31 +1274,32 @@ const submitReturnTab = async (tab) => {
         const created = res.data?.return || res.data;
         if (hasExchange) {
             const invoice = res.data?.exchange_invoice;
-            alert(`Đổi hàng thành công: ${created?.code || ''}, ${invoice?.code || ''}`);
-            if (invoice?.code) window.open(`/invoices?search=${encodeURIComponent(invoice.code)}`, '_blank');
+            rs.successResult = {
+                return: created,
+                exchange_invoice: invoice,
+                settlement: res.data?.settlement || {
+                    return_total: total,
+                    exchange_total: activeExchangeTotal.value,
+                    customer_pays: activeCustomerPays.value,
+                    refund_to_customer: activeRefundToCustomer.value,
+                },
+            };
         } else {
             alert('Đã tạo phiếu trả hàng' + (created?.code ? ` ${created.code}` : '') + '.');
         }
         if (!hasExchange && created?.code) {
             window.open(`/returns?search=${encodeURIComponent(created.code)}`, '_blank');
         }
-        // Reset this return tab so the user can do another return without
-        // losing the workspace.
-        Object.assign(rs, emptyReturnState());
-    } catch (e) {
-        const status = e.response?.status;
-        if (status === 403) {
-            rs.error = 'Bạn không có quyền tạo phiếu trả hàng.';
-        } else if (status === 422) {
-            const errs = e.response?.data?.errors;
-            if (errs && typeof errs === 'object') {
-                rs.error = Object.values(errs).flat().join(' • ');
-            } else {
-                rs.error = e.response?.data?.message || 'Dữ liệu không hợp lệ.';
-            }
-        } else {
-            rs.error = e.response?.data?.message || 'Có lỗi xảy ra khi tạo phiếu trả.';
+        if (!hasExchange) {
+            // Reset return-only tab so the user can do another return without losing the workspace.
+            Object.assign(rs, emptyReturnState());
         }
+    } catch (e) {
+        rs.errorTitle = hasExchange ? 'Không thể đổi hàng' : 'Không thể tạo phiếu trả';
+        rs.error = formatAxiosError(
+            e,
+            hasExchange ? 'Có lỗi xảy ra khi đổi hàng.' : 'Có lỗi xảy ra khi tạo phiếu trả.',
+        );
     } finally {
         rs.submitting = false;
     }
@@ -2215,7 +2264,8 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                         <textarea v-model="activeTab.returnState.note" rows="2" class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" placeholder="Ghi chú trả hàng"></textarea>
                     </div>
                     <div v-if="activeTab.returnState.error" class="px-3 py-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
-                        {{ activeTab.returnState.error }}
+                        <div v-if="activeTab.returnState.errorTitle" class="mb-0.5 font-semibold">{{ activeTab.returnState.errorTitle }}</div>
+                        <div>{{ activeTab.returnState.error }}</div>
                     </div>
                     <div v-else-if="activeExchangeValidationMessage" class="px-3 py-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
                         {{ activeExchangeValidationMessage }}
@@ -2234,6 +2284,106 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                 </div>
             </div>
         </main>
+
+        <div
+            v-if="activeTab?.type === 'return' && activeTab.returnState?.successResult"
+            class="fixed inset-0 z-[120] flex items-center justify-center bg-black/40 px-4"
+        >
+            <div class="w-full max-w-lg rounded-lg bg-white shadow-2xl">
+                <div class="border-b border-gray-200 px-5 py-4">
+                    <div class="text-lg font-bold text-gray-900">Đổi hàng thành công</div>
+                    <div class="mt-1 text-sm text-gray-500">
+                        Phiếu trả và hóa đơn đổi đã được tạo trong cùng giao dịch.
+                    </div>
+                </div>
+                <div class="space-y-3 px-5 py-4 text-sm">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="rounded border border-gray-200 px-3 py-2">
+                            <div class="text-xs text-gray-500">Mã phiếu trả</div>
+                            <div class="mt-0.5 font-bold text-gray-900">{{ activeTab.returnState.successResult.return?.code || '—' }}</div>
+                        </div>
+                        <div class="rounded border border-gray-200 px-3 py-2">
+                            <div class="text-xs text-gray-500">Mã hóa đơn đổi</div>
+                            <div class="mt-0.5 font-bold text-gray-900">{{ activeTab.returnState.successResult.exchange_invoice?.code || '—' }}</div>
+                        </div>
+                    </div>
+                    <div class="space-y-2 rounded border border-gray-200 px-3 py-3">
+                        <div class="flex items-center justify-between">
+                            <span class="text-gray-500">Giá trị hàng trả</span>
+                            <span class="font-semibold tabular-nums">{{ formatCurrency(activeTab.returnState.successResult.settlement?.return_total || 0) }}</span>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-gray-500">Tổng tiền hàng đổi</span>
+                            <span class="font-semibold tabular-nums">{{ formatCurrency(activeTab.returnState.successResult.settlement?.exchange_total || 0) }}</span>
+                        </div>
+                        <div
+                            v-if="(activeTab.returnState.successResult.settlement?.customer_pays || 0) > 0"
+                            class="rounded border border-blue-300 bg-blue-50 px-3 py-2"
+                        >
+                            <div class="text-xs font-semibold uppercase text-blue-700">Chênh lệch sau đổi</div>
+                            <div class="mt-1 flex items-center justify-between">
+                                <span class="font-bold text-blue-800">Khách trả thêm</span>
+                                <span class="text-lg font-extrabold tabular-nums text-blue-800">{{ formatCurrency(activeTab.returnState.successResult.settlement.customer_pays || 0) }}</span>
+                            </div>
+                        </div>
+                        <div
+                            v-else-if="(activeTab.returnState.successResult.settlement?.refund_to_customer || 0) > 0"
+                            class="rounded border border-red-300 bg-red-50 px-3 py-2"
+                        >
+                            <div class="text-xs font-semibold uppercase text-red-700">Chênh lệch sau đổi</div>
+                            <div class="mt-1 flex items-center justify-between">
+                                <span class="font-bold text-red-800">Trả khách</span>
+                                <span class="text-lg font-extrabold tabular-nums text-red-800">{{ formatCurrency(activeTab.returnState.successResult.settlement.refund_to_customer || 0) }}</span>
+                            </div>
+                        </div>
+                        <div
+                            v-else
+                            class="rounded border border-emerald-300 bg-emerald-50 px-3 py-2"
+                        >
+                            <div class="text-xs font-semibold uppercase text-emerald-700">Chênh lệch sau đổi</div>
+                            <div class="mt-1 flex items-center justify-between">
+                                <span class="font-bold text-emerald-800">Không phát sinh thu/trả</span>
+                                <span class="text-lg font-extrabold tabular-nums text-emerald-800">0đ</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <a
+                            v-if="activeTab.returnState.successResult.return?.code"
+                            :href="`/returns?search=${encodeURIComponent(activeTab.returnState.successResult.return.code)}`"
+                            target="_blank"
+                            class="rounded border border-gray-300 px-3 py-2 text-center font-semibold text-gray-700 hover:bg-gray-50"
+                        >
+                            Xem phiếu trả
+                        </a>
+                        <a
+                            v-if="activeTab.returnState.successResult.exchange_invoice?.code"
+                            :href="`/invoices?search=${encodeURIComponent(activeTab.returnState.successResult.exchange_invoice.code)}`"
+                            target="_blank"
+                            class="rounded border border-gray-300 px-3 py-2 text-center font-semibold text-gray-700 hover:bg-gray-50"
+                        >
+                            Xem hóa đơn đổi
+                        </a>
+                    </div>
+                </div>
+                <div class="flex items-center justify-end gap-2 border-t border-gray-200 px-5 py-3">
+                    <button
+                        type="button"
+                        class="rounded border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                        @click="activeTab.returnState.successResult = null"
+                    >
+                        Đóng
+                    </button>
+                    <button
+                        type="button"
+                        class="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                        @click="resetReturnTab(activeTab)"
+                    >
+                        Tạo phiếu mới
+                    </button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- ═══ Quick Create Customer Modal ═══ -->

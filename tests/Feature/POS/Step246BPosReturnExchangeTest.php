@@ -145,6 +145,83 @@ class Step246BPosReturnExchangeTest extends TestCase
             ->assertStatus(403);
     }
 
+    public function test_return_exchange_route_exists_and_requires_auth_or_validation(): void
+    {
+        $admin = $this->adminUser();
+
+        $this->actingAs($admin)->postJson('/api/pos/return-exchange', [])
+            ->assertStatus(422)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('error_code', 'POS_RETURN_EXCHANGE_VALIDATION_FAILED')
+            ->assertJsonStructure(['message', 'errors']);
+    }
+
+    public function test_return_exchange_success_response_contains_documents_and_settlement(): void
+    {
+        $admin = $this->adminUser();
+        $customer = $this->customer();
+        $productA = $this->product(false, 5, 100000, 4550000);
+        $productB = $this->product(false, 5, 100000, 4550000);
+        $invoice = $this->sell($admin, $customer, $productA, 1, 4550000, 4550000);
+
+        $res = $this->actingAs($admin)->postJson('/api/pos/return-exchange',
+            $this->exchangePayload($invoice, $productA, $productB, 4550000, 4550000)
+        );
+
+        $res->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('settlement.return_total', 4550000)
+            ->assertJsonPath('settlement.exchange_total', 4550000)
+            ->assertJsonPath('settlement.customer_pays', 0)
+            ->assertJsonPath('settlement.refund_to_customer', 0)
+            ->assertJsonStructure([
+                'return' => ['id', 'code'],
+                'exchange_invoice' => ['id', 'code'],
+                'settlement' => ['return_total', 'exchange_total', 'customer_pays', 'refund_to_customer'],
+            ]);
+    }
+
+    public function test_return_exchange_validation_error_returns_clear_422(): void
+    {
+        $admin = $this->adminUser();
+        $customer = $this->customer();
+        $productA = $this->product(false, 5, 100000, 100000);
+        $productB = $this->product(false, 5, 100000, 100000);
+        $invoice = $this->sell($admin, $customer, $productA, 1, 100000, 100000);
+        $payload = $this->exchangePayload($invoice, $productA, $productB, 100000, 0);
+        $returnsBefore = OrderReturn::count();
+        $invoicesBefore = Invoice::count();
+
+        $this->actingAs($admin)->postJson('/api/pos/return-exchange', $payload)
+            ->assertStatus(422)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('error_code', 'POS_RETURN_EXCHANGE_VALIDATION_FAILED')
+            ->assertJsonValidationErrors('exchange.items');
+
+        $this->assertSame($returnsBefore, OrderReturn::count());
+        $this->assertSame($invoicesBefore, Invoice::count());
+    }
+
+    public function test_return_exchange_server_error_returns_debug_id(): void
+    {
+        $admin = $this->adminUser();
+        $customer = $this->customer();
+        $productA = $this->product(false, 5, 100000, 100000);
+        $productB = $this->product(false, 5, 100000, 100000);
+        $invoice = $this->sell($admin, $customer, $productA, 1, 100000, 100000);
+        $payload = $this->exchangePayload($invoice, $productA, $productB, 100000, 100000);
+
+        $this->mock(\App\Services\PosReturnExchangeService::class, function ($mock) {
+            $mock->shouldReceive('create')->once()->andThrow(new \RuntimeException('forced failure'));
+        });
+
+        $this->actingAs($admin)->postJson('/api/pos/return-exchange', $payload)
+            ->assertStatus(500)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('error_code', 'POS_RETURN_EXCHANGE_FAILED')
+            ->assertJsonStructure(['debug_id', 'message']);
+    }
+
     public function test_return_exchange_normal_product_customer_pays_difference(): void
     {
         $admin = $this->adminUser();

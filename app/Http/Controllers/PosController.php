@@ -255,42 +255,42 @@ class PosController extends Controller
 
     public function returnExchange(Request $request, PosReturnExchangeService $service)
     {
-        $validated = $request->validate([
-            'invoice_id' => 'required|exists:invoices,id',
-            'customer_id' => 'nullable|exists:customers,id',
-            'branch_id' => 'nullable|exists:branches,id',
-            'seller_key' => 'nullable|string',
-            'employee_id' => 'nullable|exists:employees,id',
-            'sale_time' => 'nullable|date',
-            'payment_method' => 'nullable|string|in:cash,transfer',
-            'bank_account_info' => 'nullable|string',
-            'note' => 'nullable|string|max:1000',
-            'return' => 'required|array',
-            'return.discount' => 'nullable|numeric|min:0',
-            'return.fee_type' => 'nullable|in:amount,percent',
-            'return.fee_value' => 'nullable|numeric|min:0',
-            'return.paid_to_customer' => 'nullable|numeric|min:0',
-            'return.items' => 'required|array|min:1',
-            'return.items.*.product_id' => 'required|exists:products,id',
-            'return.items.*.invoice_item_id' => 'nullable|exists:invoice_items,id',
-            'return.items.*.qty' => 'required|integer|min:1',
-            'return.items.*.price' => 'required|numeric|min:0',
-            'return.items.*.discount' => 'nullable|numeric|min:0',
-            'return.items.*.serial_ids' => 'nullable|array',
-            'return.items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
-            'exchange' => 'required|array',
-            'exchange.discount' => 'nullable|numeric|min:0',
-            'exchange.customer_paid' => 'nullable|numeric|min:0',
-            'exchange.items' => 'required|array|min:1',
-            'exchange.items.*.product_id' => 'required|exists:products,id',
-            'exchange.items.*.quantity' => 'required|integer|min:1',
-            'exchange.items.*.price' => 'required|numeric|min:0',
-            'exchange.items.*.discount' => 'nullable|numeric|min:0',
-            'exchange.items.*.serial_ids' => 'nullable|array',
-            'exchange.items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
-        ]);
-
         try {
+            $validated = $request->validate([
+                'invoice_id' => 'required|exists:invoices,id',
+                'customer_id' => 'nullable|exists:customers,id',
+                'branch_id' => 'nullable|exists:branches,id',
+                'seller_key' => 'nullable|string',
+                'employee_id' => 'nullable|exists:employees,id',
+                'sale_time' => 'nullable|date',
+                'payment_method' => 'nullable|string|in:cash,transfer',
+                'bank_account_info' => 'nullable|string',
+                'note' => 'nullable|string|max:1000',
+                'return' => 'required|array',
+                'return.discount' => 'nullable|numeric|min:0',
+                'return.fee_type' => 'nullable|in:amount,percent',
+                'return.fee_value' => 'nullable|numeric|min:0',
+                'return.paid_to_customer' => 'nullable|numeric|min:0',
+                'return.items' => 'required|array|min:1',
+                'return.items.*.product_id' => 'required|exists:products,id',
+                'return.items.*.invoice_item_id' => 'nullable|exists:invoice_items,id',
+                'return.items.*.qty' => 'required|integer|min:1',
+                'return.items.*.price' => 'required|numeric|min:0',
+                'return.items.*.discount' => 'nullable|numeric|min:0',
+                'return.items.*.serial_ids' => 'nullable|array',
+                'return.items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
+                'exchange' => 'required|array',
+                'exchange.discount' => 'nullable|numeric|min:0',
+                'exchange.customer_paid' => 'nullable|numeric|min:0',
+                'exchange.items' => 'required|array|min:1',
+                'exchange.items.*.product_id' => 'required|exists:products,id',
+                'exchange.items.*.quantity' => 'required|integer|min:1',
+                'exchange.items.*.price' => 'required|numeric|min:0',
+                'exchange.items.*.discount' => 'nullable|numeric|min:0',
+                'exchange.items.*.serial_ids' => 'nullable|array',
+                'exchange.items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
+            ]);
+
             try {
                 [$sellerId, $sellerName] = $this->resolveSellerForPos(
                     $validated['seller_key'] ?? null,
@@ -323,17 +323,34 @@ class PosController extends Controller
                 'message' => 'Đổi hàng thành công',
             ]);
         } catch (\Illuminate\Validation\ValidationException $e) {
-            throw $e;
+            return response()->json([
+                'success' => false,
+                'error_code' => 'POS_RETURN_EXCHANGE_VALIDATION_FAILED',
+                'message' => 'Dữ liệu đổi hàng không hợp lệ.',
+                'errors' => $e->errors(),
+            ], 422);
         } catch (\Throwable $e) {
+            $debugId = 'pos-exchange-' . now()->format('YmdHis') . '-' . substr((string) \Illuminate\Support\Str::uuid(), 0, 8);
+
             \Illuminate\Support\Facades\Log::error('POS Return Exchange Error', [
+                'debug_id' => $debugId,
                 'message' => $e->getMessage(),
+                'exception' => get_class($e),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
+                'invoice_id' => $validated['invoice_id'] ?? null,
+                'customer_id' => $validated['customer_id'] ?? null,
+                'return_items_count' => count(data_get($validated ?? [], 'return.items', [])),
+                'exchange_items_count' => count(data_get($validated ?? [], 'exchange.items', [])),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Có lỗi xảy ra: ' . $e->getMessage(),
+                'error_code' => 'POS_RETURN_EXCHANGE_FAILED',
+                'debug_id' => $debugId,
+                'message' => app()->environment('production')
+                    ? "Không tạo được phiếu đổi hàng. Mã lỗi: {$debugId}"
+                    : 'Không tạo được phiếu đổi hàng: ' . $e->getMessage(),
             ], 500);
         }
     }
