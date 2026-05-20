@@ -28,6 +28,44 @@ const { filters, setSort, reset } = useFilters({
 
 const handleSort = (field, direction) => setSort(field, direction);
 
+const defaultReceiptCategories = ["Thu tiền khách trả", "Thu nhập khác", "Chuyển/Rút", "Bán đồng nát"];
+const defaultPaymentCategories = [
+    "Chi trả lương NV",
+    "Chi tiền trả NCC",
+    "Chi phí điện nước",
+    "Quảng cáo",
+    "Nạp tiền chợ tốt",
+    "Tiền Internet",
+    "Chi khác",
+];
+
+const mergeUnique = (defaults, saved) => {
+    const set = new Map();
+
+    [...defaults, ...(saved || [])].forEach((raw) => {
+        const value = String(raw || "").trim();
+        if (!value) return;
+
+        const key = value.toLowerCase();
+        if (!set.has(key)) {
+            set.set(key, value);
+        }
+    });
+
+    return [...set.values()];
+};
+
+const cashFlowCategoryFilterOptions = computed(() => {
+    const saved = (props.filterOptions?.categories || []).map((option) =>
+        typeof option === "string" ? option : option?.value
+    );
+
+    return mergeUnique(
+        [...defaultReceiptCategories, ...defaultPaymentCategories],
+        saved
+    ).map((category) => ({ value: category, label: category }));
+});
+
 const sidebarConfig = computed(() => [
     { key: "keyword", type: "search", label: "Tìm mã phiếu, nội dung", placeholder: "Tìm theo mã, nội dung...", zone: "quick" },
     {
@@ -39,17 +77,11 @@ const sidebarConfig = computed(() => [
     },
     { key: "payment_method", type: "select", label: "Quỹ tiền", options: props.filterOptions?.paymentMethods || [], placeholder: "Tất cả (Tổng quỹ)", zone: "quick" },
     { key: "type", type: "checkbox", label: "Loại chứng từ", options: props.filterOptions?.types || [], zone: "main" },
-    { key: "category", type: "select", label: "Loại thu chi", options: props.filterOptions?.categories || [], placeholder: "-- Tất cả --", zone: "main" },
+    { key: "category", type: "select", label: "Loại thu chi", options: cashFlowCategoryFilterOptions.value, placeholder: "-- Tất cả --", zone: "main" },
     { key: "status", type: "checkbox", label: "Trạng thái", options: props.filterOptions?.statuses || [], zone: "main" },
     { key: "bank_account_id", type: "select", label: "Tài khoản NH", options: props.filterOptions?.bankAccounts || [], placeholder: "Tất cả", zone: "advanced" },
     { key: "target_type", type: "select", label: "Đối tượng", options: props.filterOptions?.targetTypes || [], placeholder: "Tất cả", zone: "advanced" },
 ]);
-
-const mergeUnique = (defaults, saved) => {
-    const set = new Set(defaults);
-    (saved || []).forEach(c => set.add(c));
-    return [...set];
-};
 
 const isModalOpen = ref(false);
 const modalType = ref("receipt"); // receipt or payment
@@ -71,14 +103,49 @@ const form = useForm({
 const selectedFlowObj = ref(null);
 const getSelectedFlow = () => selectedFlowObj.value;
 
-const receiptCategories = ref(mergeUnique(
-    ["Thu tiền khách trả", "Thu nhập khác", "Chuyển/Rút", "Bán đồng nát"],
-    props.savedReceiptCategories
-));
-const paymentCategories = ref(mergeUnique(
-    ["Chi trả lương NV", "Chi tiền trả NCC", "Chi phí điện nước", "Chi khác"],
-    props.savedPaymentCategories
-));
+const receiptCategories = ref(mergeUnique(defaultReceiptCategories, props.savedReceiptCategories));
+const paymentCategories = ref(mergeUnique(defaultPaymentCategories, props.savedPaymentCategories));
+const adKeywords = [
+    "fb ads",
+    "facebook",
+    "tiktok",
+    "tik tok",
+    "google ads",
+    "chatgpt",
+    "chat gpt",
+    "ads",
+];
+
+const normalizeText = (value) => String(value || "").trim().toLowerCase();
+
+const isAdvertisingText = (text) => {
+    const normalized = normalizeText(text);
+    return adKeywords.some((keyword) => normalized.includes(keyword));
+};
+
+const looksLikeAdvertisingExpense = computed(() => {
+    if (modalType.value !== "payment") return false;
+
+    return isAdvertisingText(`${form.description || ""} ${form.category || ""}`);
+});
+
+const shouldWarnAdvertisingCategory = computed(() => {
+    return looksLikeAdvertisingExpense.value && normalizeText(form.category) !== "quảng cáo";
+});
+
+const isLikelyAdFlow = (flow) => {
+    if (!flow || flow.type !== "payment") return false;
+    return isAdvertisingText(`${flow.description || ""} ${flow.category || ""}`);
+};
+
+const isAdFlowMisclassified = (flow) => {
+    return isLikelyAdFlow(flow) && normalizeText(flow.category) !== "quảng cáo";
+};
+
+const activeCategoryFilter = computed(() => {
+    const value = filters.category;
+    return Array.isArray(value) ? value[0] : value;
+});
 const targetTypes = [
     "Khách hàng",
     "Nhà cung cấp",
@@ -370,6 +437,14 @@ const printFlow = (flow) => {
                 </div>
             </div>
 
+            <div
+                v-if="normalizeText(activeCategoryFilter) === 'quảng cáo'"
+                class="m-3 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700"
+            >
+                Bộ lọc này chỉ hiển thị các phiếu có Loại thu chi đúng là "Quảng cáo".
+                Các phiếu ghi chú FB Ads/TikTok nhưng đang lưu ở "Chi khác" cần được sửa loại chi để xuất hiện trong bộ lọc này.
+            </div>
+
             <!-- Table -->
             <div class="flex-1 overflow-auto">
                 <table class="w-full text-sm text-left">
@@ -445,6 +520,13 @@ const printFlow = (flow) => {
                                             ? "Thu nhập khác"
                                             : "Chi khác")
                                     }}
+                                    <span
+                                        v-if="isAdFlowMisclassified(flow)"
+                                        class="ml-2 rounded bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700"
+                                        title="Ghi chú có vẻ là chi phí quảng cáo nhưng Loại thu chi chưa phải Quảng cáo"
+                                    >
+                                        Có vẻ là quảng cáo
+                                    </span>
                                 </td>
                                 <td class="px-4 py-3 text-gray-700 font-medium">
                                     {{
@@ -913,6 +995,19 @@ const printFlow = (flow) => {
                                         ></path>
                                     </svg>
                                 </div>
+                            </div>
+                            <div
+                                v-if="shouldWarnAdvertisingCategory"
+                                class="mt-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+                            >
+                                Ghi chú có vẻ là chi phí quảng cáo. Nên chọn Loại chi = "Quảng cáo" để khi lọc/báo cáo hiển thị đúng.
+                                <button
+                                    type="button"
+                                    class="ml-2 font-semibold text-blue-600 hover:underline"
+                                    @click="form.category = 'Quảng cáo'"
+                                >
+                                    Chọn Quảng cáo
+                                </button>
                             </div>
                         </div>
 
