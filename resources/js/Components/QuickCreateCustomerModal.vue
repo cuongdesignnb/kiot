@@ -1,6 +1,7 @@
 <script setup>
 import { ref, watch, reactive } from 'vue';
 import axios from 'axios';
+import CustomerGroupCombobox from '@/Components/CustomerGroupCombobox.vue';
 
 const props = defineProps({
     show: { type: Boolean, default: false },
@@ -13,6 +14,9 @@ const props = defineProps({
 const emit = defineEmits(['close', 'created']);
 
 const creating = ref(false);
+const customerGroupOptions = ref([]);
+const customerGroupLoading = ref(false);
+const customerGroupError = ref('');
 
 const form = ref({
     name: '',
@@ -54,6 +58,99 @@ const existingResults = ref([]);
 const showExistingDropdown = ref(false);
 const selectedExistingEntity = ref(null);
 let searchExistingTimeout = null;
+
+const normalizeCustomerGroupOptions = (groups) => {
+    return (Array.isArray(groups) ? groups : [])
+        .filter((group) => group?.name)
+        .map((group) => ({
+            value: group.name,
+            label: group.name,
+            id: group.id,
+            source: 'master',
+        }));
+};
+
+const loadCustomerGroups = async () => {
+    if (props.isSupplier) {
+        customerGroupOptions.value = [];
+        customerGroupError.value = '';
+        return;
+    }
+
+    customerGroupLoading.value = true;
+    customerGroupError.value = '';
+
+    try {
+        const { data } = await axios.get('/customer-groups/options');
+        customerGroupOptions.value = normalizeCustomerGroupOptions(data);
+    } catch (e) {
+        customerGroupError.value = 'Không tải được danh sách nhóm khách hàng.';
+    } finally {
+        customerGroupLoading.value = false;
+    }
+};
+
+const upsertCustomerGroupOption = (name, id = null) => {
+    const finalName = (name || '').trim();
+    if (!finalName) return;
+
+    customerGroupOptions.value = [
+        ...customerGroupOptions.value.filter(
+            (group) => (group.value || '').toLowerCase() !== finalName.toLowerCase()
+        ),
+        { value: finalName, label: finalName, id, source: 'master' },
+    ];
+    form.value.customer_group = finalName;
+};
+
+const createCustomerGroupAndSelect = async (name) => {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return;
+
+    const existing = customerGroupOptions.value.find(
+        (group) => (group.label || '').toLowerCase() === trimmed.toLowerCase()
+    );
+    if (existing) {
+        form.value.customer_group = existing.value;
+        return;
+    }
+
+    try {
+        const { data } = await axios.post('/customer-groups', {
+            name: trimmed,
+            code: '',
+            discount_type: '',
+            discount_value: 0,
+            note: '',
+            description: '',
+            conditions: [],
+            update_mode: 'none',
+            auto_update: false,
+        });
+        const created = data?.group;
+        upsertCustomerGroupOption(created?.name || trimmed, created?.id || null);
+    } catch (e) {
+        if (e.response?.status === 422) {
+            await loadCustomerGroups();
+            const refreshed = customerGroupOptions.value.find(
+                (group) => (group.label || '').toLowerCase() === trimmed.toLowerCase()
+            );
+            if (refreshed) {
+                form.value.customer_group = refreshed.value;
+                return;
+            }
+            alert(e.response?.data?.message || 'Tên nhóm khách hàng không hợp lệ hoặc đã tồn tại.');
+            return;
+        }
+
+        if (e.response?.status === 403) {
+            alert('Bạn không có quyền tạo nhóm khách hàng.');
+            return;
+        }
+
+        alert(e.response?.data?.message || 'Có lỗi khi tạo nhóm khách hàng.');
+    }
+};
 
 watch(searchExistingQuery, (val) => {
     if (!val) {
@@ -113,6 +210,8 @@ watch(() => props.show, (val) => {
         existingResults.value = [];
         selectedExistingEntity.value = null;
         form.value.link_existing_id = null;
+        customerGroupError.value = '';
+        loadCustomerGroups();
     }
 });
 
@@ -290,7 +389,21 @@ const cancelDualRole = () => {
                         <div class="p-4 space-y-4">
                             <div>
                                 <label class="block font-semibold mb-1">Nhóm {{ entityLabel }}</label>
-                                <input v-model="form.customer_group" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 outline-none" placeholder="Chọn nhóm" />
+                                <template v-if="isSupplier">
+                                    <input v-model="form.customer_group" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 outline-none" placeholder="Chọn nhóm" />
+                                </template>
+                                <template v-else>
+                                    <CustomerGroupCombobox
+                                        v-model="form.customer_group"
+                                        :groups="customerGroupOptions"
+                                        placeholder="Chọn nhóm"
+                                        :disabled="customerGroupLoading"
+                                        @create="createCustomerGroupAndSelect"
+                                    />
+                                    <p v-if="customerGroupError" class="mt-1 text-xs text-red-600">
+                                        {{ customerGroupError }}
+                                    </p>
+                                </template>
                             </div>
                             <div>
                                 <label class="block font-semibold mb-1">Ghi chú</label>
