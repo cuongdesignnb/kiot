@@ -21,6 +21,13 @@ const { filters, setSort, reset } = useFilters({
 });
 
 const expandedRow = ref(null);
+const datePresetOptions = computed(() => props.filterOptions?.datePresets || [
+    { value: "all", label: "Toàn thời gian" },
+    { value: "today", label: "Hôm nay" },
+    { value: "this_month", label: "Tháng này" },
+]);
+const creatorOptions = computed(() => props.filterOptions?.creators || []);
+const destroyerOptions = computed(() => props.filterOptions?.destroyers || []);
 
 // Bridge: UI uses object map by label; canonical filter uses array of status codes
 const statusLabelMap = {
@@ -166,41 +173,31 @@ const cancelDamage = (damage) => {
                         </div>
                         <div class="space-y-2">
                             <label
+                                v-for="preset in datePresetOptions"
+                                :key="preset.value"
                                 class="flex items-center gap-2 cursor-pointer group hover:text-blue-600 transition-colors"
                             >
                                 <input
                                     type="radio"
                                     v-model="filters.date_filter"
-                                    value="all"
+                                    :value="preset.value"
                                     name="date"
                                     class="w-4 h-4 text-blue-600 focus:ring-blue-500 border-gray-300"
                                 />
-                                <span>Tất cả thời gian</span>
+                                <span>{{ preset.label }}</span>
                             </label>
-                            <label
-                                class="flex items-center gap-2 cursor-pointer group hover:text-blue-600 transition-colors"
-                            >
+                            <div v-if="filters.date_filter === 'custom'" class="mt-3 space-y-2">
                                 <input
-                                    type="radio"
-                                    v-model="filters.date_filter"
-                                    value="today"
-                                    name="date"
-                                    class="w-4 h-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                                    v-model="filters.date_from"
+                                    type="date"
+                                    class="w-full rounded border border-gray-300 px-2 py-1.5 text-[13px] outline-none focus:border-blue-500"
                                 />
-                                <span>Hôm nay</span>
-                            </label>
-                            <label
-                                class="flex items-center gap-2 cursor-pointer group hover:text-blue-600 transition-colors"
-                            >
                                 <input
-                                    type="radio"
-                                    v-model="filters.date_filter"
-                                    value="this_month"
-                                    name="date"
-                                    class="w-4 h-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                                    v-model="filters.date_to"
+                                    type="date"
+                                    class="w-full rounded border border-gray-300 px-2 py-1.5 text-[13px] outline-none focus:border-blue-500"
                                 />
-                                <span>Tháng này</span>
-                            </label>
+                            </div>
                         </div>
                     </div>
 
@@ -209,12 +206,19 @@ const cancelDamage = (damage) => {
                         <div class="font-bold mb-2 text-gray-800">
                             Người tạo
                         </div>
-                        <input
-                            type="text"
+                        <select
                             v-model="filters.created_by_name"
-                            placeholder="Chọn người tạo"
-                            class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-shadow text-[13px] shadow-sm"
-                        />
+                            class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-shadow text-[13px] shadow-sm bg-white"
+                        >
+                            <option value="">Chọn người tạo</option>
+                            <option
+                                v-for="creator in creatorOptions"
+                                :key="creator.value"
+                                :value="creator.value"
+                            >
+                                {{ creator.label }}
+                            </option>
+                        </select>
                     </div>
 
                     <!-- Destroyer Filter -->
@@ -222,12 +226,19 @@ const cancelDamage = (damage) => {
                         <div class="font-bold mb-2 text-gray-800">
                             Người xuất hủy
                         </div>
-                        <input
-                            type="text"
+                        <select
                             v-model="filters.destroyed_by_name"
-                            placeholder="Chọn người xuất hủy"
-                            class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-shadow text-[13px] shadow-sm"
-                        />
+                            class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-shadow text-[13px] shadow-sm bg-white"
+                        >
+                            <option value="">Chọn người xuất hủy</option>
+                            <option
+                                v-for="destroyer in destroyerOptions"
+                                :key="destroyer.value"
+                                :value="destroyer.value"
+                            >
+                                {{ destroyer.label }}
+                            </option>
+                        </select>
                     </div>
                 </div>
             </div>

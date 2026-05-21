@@ -27,6 +27,7 @@
 - Frontend tạo phiếu lỗi runtime vì dùng `watch` nhưng chưa import từ Vue.
 - Frontend tạo phiếu chưa có UI chọn `serial_ids`, trong khi backend yêu cầu với phiếu completed của hàng serial.
 - Detail trên danh sách có các nút `Sao chép`, `Xuất file`, `Lưu` chưa có handler thật.
+- Màn tạo phiếu đang hardcode người xuất hủy thay vì cho chọn nhân viên/current user.
 
 ## Root cause
 - `Create.vue` thiếu import `watch`, làm trang tạo phiếu có thể lỗi runtime.
@@ -36,7 +37,11 @@
 ## Thay đổi
 - Sửa import `watch` trong `Create.vue`.
 - Thêm serial selector dùng API read-only `/api/products/{product}/serials`.
+- Serial selector có fallback sang `/products/{product}/serials?status=ready`, timeout và nút `Tải lại` để không kẹt loading khi endpoint chính lỗi.
 - Payload tạo phiếu gửi `items[].serial_ids`.
+- Thêm dropdown tìm/chọn nhân viên xuất hủy và gửi `employee_id` về backend.
+- Backend lưu `created_by_name`/`destroyed_by_name` theo nhân viên đã chọn hoặc current user fallback; `action_date` tiếp tục điều khiển `created_at`/`destroyed_date`.
+- Nút xóa sản phẩm trên dòng hàng luôn hiển thị, không chỉ hiện khi hover.
 - Frontend validate:
   - không cho lưu khi chưa chọn hàng;
   - không cho thiếu chi nhánh;
@@ -65,8 +70,10 @@
 ## Tests
 - `php artisan test tests/Feature/Damage/RR09DamageStockTest.php`: PASS, 5 tests, 12 assertions.
 - `php artisan test tests/Feature/Damage/DamageExportRouteTest.php`: PASS, 1 test, 4 assertions.
-- `php artisan test tests/Feature/Damage`: PASS, 23 tests, 74 assertions.
-- `npm run build`: PASS, Vite built successfully in 8.73s.
+- `php artisan test tests/Feature/Damage/DamageCreateMetaTest.php`: PASS, 1 test, 5 assertions.
+- `php artisan test tests/Feature/Damage/DamageIndexFilterTest.php`: PASS, 2 tests, 32 assertions.
+- `php artisan test tests/Feature/Damage`: PASS, 26 tests, 111 assertions.
+- `npm run build`: PASS, Vite built successfully in 8.41s.
 
 Ghi chú môi trường test: PHP local có warning thiếu extension `oci8_12c`, `oci8_19`, `pdo_firebird`, `pdo_oci`; các warning này không làm fail test.
 

@@ -8,10 +8,12 @@ use App\Models\Damage;
 use App\Models\DamageItem;
 use App\Models\Product;
 use App\Models\Branch;
+use App\Models\Employee;
 use App\Models\SerialImei;
 use App\Enums\DamageStatus;
 use App\Services\MovingAvgCostingService;
 use App\Services\StockMovementService;
+use App\Support\Filters\DateRangePresets;
 use App\Support\Filters\FilterableIndex;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -31,7 +33,7 @@ class DamageController extends Controller
             ? \Illuminate\Support\Facades\DB::raw('COALESCE(destroyed_date, created_at)')
             : 'created_at';
         $this->creatorColumn = null;
-        $this->scalarFilters = ['branch_id'];
+        $this->scalarFilters = ['branch_id', 'created_by_name', 'destroyed_by_name'];
     }
 
     public function index(Request $request)
@@ -43,6 +45,27 @@ class DamageController extends Controller
 
         $damages = $query->paginate(20)->withQueryString();
         $branches = Branch::all();
+        $employees = Employee::where('is_active', true)
+            ->orderBy('name')
+            ->get(['id', 'name', 'code']);
+        $employeeNames = $employees->pluck('name');
+        $creatorNames = Damage::query()
+            ->whereNotNull('created_by_name')
+            ->where('created_by_name', '!=', '')
+            ->distinct()
+            ->pluck('created_by_name');
+        $destroyerNames = Damage::query()
+            ->whereNotNull('destroyed_by_name')
+            ->where('destroyed_by_name', '!=', '')
+            ->distinct()
+            ->pluck('destroyed_by_name');
+        $actorOptions = fn ($names) => $employeeNames
+            ->merge($names)
+            ->filter()
+            ->unique()
+            ->sortBy(fn ($name) => mb_strtolower((string) $name))
+            ->values()
+            ->map(fn ($name) => ['value' => $name, 'label' => $name]);
 
         // Step 22.1B (read-only): enrich items[].destroyed_serials cho UI hiển thị.
         $allSerialIds = [];
@@ -82,6 +105,9 @@ class DamageController extends Controller
             'filterOptions' => [
                 'branches' => $branches->map(fn($b) => ['value' => $b->id, 'label' => $b->name]),
                 'statuses' => DamageStatus::options(),
+                'datePresets' => DateRangePresets::options(),
+                'creators' => $actorOptions($creatorNames),
+                'destroyers' => $actorOptions($destroyerNames),
             ],
         ]);
     }
@@ -91,10 +117,24 @@ class DamageController extends Controller
         $products = Product::where('is_active', true)->get();
         $branches = Branch::all();
         $defaultBranch = Branch::first();
+        $currentUser = auth()->user();
+        $currentEmployee = $currentUser
+            ? Employee::where('user_id', $currentUser->id)
+                ->where('is_active', true)
+                ->first(['id', 'name', 'code'])
+            : null;
 
         return Inertia::render('Damages/Create', [
             'products' => $products,
             'branches' => $branches,
+            'employees' => Employee::where('is_active', true)
+                ->orderBy('name')
+                ->get(['id', 'name', 'code', 'user_id']),
+            'currentDamageActor' => $currentUser ? [
+                'employee_id' => $currentEmployee?->id,
+                'name' => $currentEmployee?->name ?: $currentUser->name,
+                'code' => $currentEmployee?->code,
+            ] : null,
             'defaultBranchId' => $defaultBranch ? $defaultBranch->id : null,
             'damageCode' => 'XH' . date('YmdHis')
         ]);
@@ -110,6 +150,7 @@ class DamageController extends Controller
             'items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
             'status' => 'required|in:draft,completed',
             'branch_id' => 'required|exists:branches,id',
+            'employee_id' => 'nullable|exists:employees,id',
             'note' => 'nullable|string'
         ]);
 
@@ -200,12 +241,19 @@ class DamageController extends Controller
         try {
             DB::beginTransaction();
 
+            $selectedEmployee = $request->filled('employee_id')
+                ? Employee::find($request->employee_id)
+                : null;
+            $currentUser = auth()->user();
+            $employeeName = $selectedEmployee?->name
+                ?: ($currentUser?->employee?->name ?: $currentUser?->name ?: 'Chưa có');
+
             $damage = Damage::create([
                 'code' => $request->code ?? 'XH' . time(),
                 'branch_id' => $request->branch_id,
                 'status' => $request->status,
-                'created_by_name' => 'Trần Văn Tiến', // hardcoded cho demo
-                'destroyed_by_name' => $serverTotalQty > 0 ? 'Trần Văn Tiến' : 'Chưa có',
+                'created_by_name' => $employeeName,
+                'destroyed_by_name' => $serverTotalQty > 0 ? $employeeName : 'Chưa có',
                 'destroyed_date' => clone Carbon::now(),
                 'note' => $request->note,
                 'total_qty' => $serverTotalQty,

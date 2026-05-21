@@ -7,6 +7,8 @@ import DateTimePicker from '@/Components/DateTimePicker.vue';
 const props = defineProps({
     products: Array,
     branches: Array,
+    employees: Array,
+    currentDamageActor: Object,
     defaultBranchId: Number,
     damageCode: String
 });
@@ -22,6 +24,12 @@ const items = ref([]);
 const note = ref('');
 const submitRef = ref(false);
 const selectedBranch = ref(props.defaultBranchId || '');
+const selectedEmployeeKey = ref(props.currentDamageActor?.employee_id
+    ? String(props.currentDamageActor.employee_id)
+    : (props.currentDamageActor ? 'current_user' : '')
+);
+const showEmployeeDropdown = ref(false);
+const employeeSearch = ref('');
 
 const filteredProducts = ref([]);
 const isSearchingProduct = ref(false);
@@ -31,8 +39,15 @@ const toInt = (value) => parseInt(value, 10) || 0;
 const lineTotal = (item) => Math.max(0, toInt(item.qty)) * toNumber(item.cost_price);
 const isSerialProduct = (item) => Boolean(item?.has_serial);
 
-const loadSerialsForItem = async (item) => {
-    if (!item || !item.product_id || !item.has_serial || item.serial_loading) {
+const serialsFromResponse = (response) => {
+    const payload = response?.data;
+    if (Array.isArray(payload)) return payload;
+    if (Array.isArray(payload?.data)) return payload.data;
+    return [];
+};
+
+const loadSerialsForItem = async (item, force = false) => {
+    if (!item || !item.product_id || !item.has_serial || (item.serial_loading && !force)) {
         return;
     }
 
@@ -40,11 +55,25 @@ const loadSerialsForItem = async (item) => {
     item.serial_error = '';
 
     try {
-        const response = await axios.get(`/api/products/${item.product_id}/serials`);
-        item.serials = Array.isArray(response.data) ? response.data : [];
+        let serials = [];
+
+        try {
+            const response = await axios.get(`/api/products/${item.product_id}/serials`, {
+                timeout: 10000,
+            });
+            serials = serialsFromResponse(response);
+        } catch (primaryError) {
+            const fallback = await axios.get(`/products/${item.product_id}/serials`, {
+                params: { status: 'ready' },
+                timeout: 10000,
+            });
+            serials = serialsFromResponse(fallback);
+        }
+
+        item.serials = serials;
     } catch (error) {
         console.error('Lỗi tải serial/IMEI khả dụng:', error);
-        item.serial_error = 'Không tải được danh sách serial/IMEI khả dụng.';
+        item.serial_error = 'Không tải được danh sách serial/IMEI khả dụng. Bấm tải lại hoặc kiểm tra serial còn trong kho.';
         item.serials = [];
     } finally {
         item.serial_loading = false;
@@ -93,6 +122,57 @@ const toggleSerial = (item, serial) => {
 };
 
 const serialLabel = (serial) => serial.serial_number || serial.imei || serial.code || `#${serial.id}`;
+
+const employeeOptions = computed(() => {
+    const options = (props.employees || []).map((employee) => ({
+        value: String(employee.id),
+        label: employee.name,
+        code: employee.code,
+        is_current_user: props.currentDamageActor?.employee_id === employee.id,
+    }));
+
+    if (props.currentDamageActor && !props.currentDamageActor.employee_id) {
+        options.unshift({
+            value: 'current_user',
+            label: props.currentDamageActor.name,
+            code: props.currentDamageActor.code,
+            is_current_user: true,
+        });
+    }
+
+    return options;
+});
+
+const selectedEmployee = computed(() => {
+    return employeeOptions.value.find((employee) => employee.value === selectedEmployeeKey.value) || null;
+});
+
+const filteredEmployeeOptions = computed(() => {
+    const q = employeeSearch.value.trim().toLowerCase();
+    if (!q) return employeeOptions.value;
+
+    return employeeOptions.value.filter((employee) => {
+        return employee.label.toLowerCase().includes(q)
+            || String(employee.code || '').toLowerCase().includes(q);
+    });
+});
+
+const selectedEmployeeId = () => selectedEmployeeKey.value === 'current_user'
+    ? null
+    : (selectedEmployeeKey.value || null);
+
+const selectEmployee = (employee) => {
+    selectedEmployeeKey.value = employee.value;
+    employeeSearch.value = '';
+    showEmployeeDropdown.value = false;
+};
+
+const hideEmployeeDropdown = () => {
+    setTimeout(() => {
+        showEmployeeDropdown.value = false;
+        employeeSearch.value = '';
+    }, 160);
+};
 
 let searchTimeout = null;
 watch(searchQuery, (val) => {
@@ -184,6 +264,10 @@ const validateBeforeSave = (status) => {
         return 'Vui lòng chọn chi nhánh xuất hủy.';
     }
 
+    if (!selectedEmployee.value) {
+        return 'Vui lòng chọn nhân viên xuất hủy.';
+    }
+
     for (const item of items.value) {
         normalizeQty(item);
 
@@ -222,6 +306,7 @@ const save = (status) => {
             code: props.damageCode,
             status: status, // 'draft' | 'completed'
             branch_id: selectedBranch.value,
+            employee_id: selectedEmployeeId(),
             action_date: transactionDate.value,
             note: note.value,
             items: items.value.map((item) => ({
@@ -317,9 +402,16 @@ const save = (status) => {
                         </thead>
                         <tbody v-if="items.length > 0">
                             <tr v-for="(item, index) in items" :key="item.product_id" class="border-b border-gray-100 hover:bg-[#f0f9ff]/40 transition-colors align-top">
-                                <td class="p-3 text-center text-gray-500 group relative w-12">
-                                    <span class="group-hover:hidden">{{ index + 1 }}</span>
-                                    <button @click="removeItem(index)" class="hidden group-hover:flex items-center justify-center w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full mx-auto" title="Xóa">
+                                <td class="p-3 text-center text-gray-500 relative w-12">
+                                    <div class="flex items-center justify-center gap-1">
+                                        <span>{{ index + 1 }}</span>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        @click="removeItem(index)"
+                                        class="mt-2 inline-flex items-center justify-center w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full"
+                                        title="Xóa sản phẩm khỏi phiếu"
+                                    >
                                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                                     </button>
                                 </td>
@@ -343,9 +435,19 @@ const save = (status) => {
                                     >
                                         <div class="mb-2 flex items-center justify-between gap-2 text-[12px]">
                                             <span class="font-semibold text-gray-700">Chọn serial/IMEI hủy</span>
-                                            <span class="text-gray-500">
-                                                Đã chọn {{ item.serial_ids?.length || 0 }}/{{ item.qty || 0 }}
-                                            </span>
+                                            <div class="flex items-center gap-2">
+                                                <span class="text-gray-500">
+                                                    Đã chọn {{ item.serial_ids?.length || 0 }}/{{ item.qty || 0 }}
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    class="rounded border border-gray-300 bg-white px-2 py-0.5 text-[11px] font-medium text-blue-600 hover:border-blue-400 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                                    :disabled="item.serial_loading"
+                                                    @click="loadSerialsForItem(item, true)"
+                                                >
+                                                    Tải lại
+                                                </button>
+                                            </div>
                                         </div>
 
                                         <div v-if="item.serial_loading" class="text-[12px] text-gray-500">
@@ -418,19 +520,78 @@ const save = (status) => {
             <div class="w-[340px] flex-shrink-0 flex flex-col bg-white shadow-[-1px_0_0_rgba(0,0,0,0.05)] z-20">
                 <div class="flex-1 overflow-auto bg-gray-50 flex flex-col">
                     
-                    <div class="p-4 flex items-center gap-2 border-b border-gray-200 bg-white justify-between">
-                        <div class="flex items-center gap-2">
-                             <div class="w-7 h-7 bg-gray-200 rounded-full flex items-center justify-center border border-gray-300 shadow-inner">
+                    <div class="p-4 flex items-start gap-2 border-b border-gray-200 bg-white justify-between">
+                        <div class="relative flex min-w-0 flex-1 items-start gap-2">
+                             <div class="mt-0.5 w-7 h-7 bg-gray-200 rounded-full flex items-center justify-center border border-gray-300 shadow-inner">
                                 <svg class="w-4 h-4 text-gray-500" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"></path></svg>
                             </div>
-                            <span class="font-medium text-gray-800">Trần Văn Tiến</span>
+                            <div class="relative min-w-0 flex-1">
+                                <button
+                                    type="button"
+                                    class="flex w-full items-center justify-between rounded border border-gray-300 bg-white px-2.5 py-1.5 text-left text-[13px] text-gray-800 shadow-sm hover:border-blue-400 focus:border-blue-500 focus:outline-none"
+                                    @click="showEmployeeDropdown = !showEmployeeDropdown"
+                                    @blur="hideEmployeeDropdown"
+                                >
+                                    <span class="truncate">
+                                        {{ selectedEmployee?.label || 'Chọn nhân viên' }}
+                                    </span>
+                                    <svg class="ml-2 h-3.5 w-3.5 shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                                    </svg>
+                                </button>
+
+                                <div
+                                    v-if="showEmployeeDropdown"
+                                    class="absolute left-0 right-0 top-full z-50 mt-1 rounded border border-gray-200 bg-white shadow-xl"
+                                    @mousedown.prevent
+                                >
+                                    <div class="p-2">
+                                        <input
+                                            v-model="employeeSearch"
+                                            type="text"
+                                            class="w-full rounded border border-blue-400 px-2 py-1.5 text-[13px] outline-none"
+                                            placeholder="Tìm nhân viên"
+                                            @keydown.stop
+                                        />
+                                    </div>
+                                    <div class="max-h-48 overflow-auto pb-1">
+                                        <button
+                                            v-for="employee in filteredEmployeeOptions"
+                                            :key="employee.value"
+                                            type="button"
+                                            class="flex w-full items-center justify-between px-3 py-2 text-left text-[13px] hover:bg-blue-50"
+                                            :class="employee.value === selectedEmployeeKey ? 'bg-blue-50 text-blue-700' : 'text-gray-700'"
+                                            @click="selectEmployee(employee)"
+                                        >
+                                            <span class="truncate">
+                                                {{ employee.label }}
+                                                <span v-if="employee.is_current_user" class="text-[11px] text-gray-400">(hiện tại)</span>
+                                            </span>
+                                            <svg
+                                                v-if="employee.value === selectedEmployeeKey"
+                                                class="h-4 w-4 shrink-0 text-blue-600"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                viewBox="0 0 24 24"
+                                            >
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                                            </svg>
+                                        </button>
+                                        <div
+                                            v-if="filteredEmployeeOptions.length === 0"
+                                            class="px-3 py-3 text-[12px] text-gray-400"
+                                        >
+                                            Không tìm thấy nhân viên.
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                         <DateTimePicker
                             v-model="transactionDate"
                             naked
-                            compact
                             placeholder="dd/MM/yyyy HH:mm"
-                            input-class="text-gray-500 text-[12px] bg-gray-100 px-2 py-0.5 rounded border border-gray-200 outline-none focus:border-blue-500 hover:border-blue-400 w-[150px]"
+                            input-class="text-gray-600 text-[12px] bg-white px-2 py-1.5 rounded border border-gray-300 outline-none focus:border-blue-500 hover:border-blue-400 w-[150px] shadow-sm"
                         />
                     </div>
 
