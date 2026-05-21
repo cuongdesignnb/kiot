@@ -87,6 +87,47 @@ const loadSalesHistory = async (customerId) => {
     tabLoading[customerId] = false;
 };
 
+const getCustomerSalesReturnEntries = (customerId) => {
+    const data = salesHistoryData[customerId];
+
+    if (!data) {
+        return [];
+    }
+
+    const invoices = (data.invoices || []).map((inv) => ({
+        ...inv,
+        _entryType: "invoice",
+        _entryKey: `inv-${inv.id}`,
+        _entryCode: inv.code,
+        _entryLabel: "Bán hàng",
+        _entryAmount: Number(inv.total) || 0,
+        _entryStatus: inv.status,
+        _entryCreatedAt: inv.created_at,
+    }));
+
+    const returns = (data.returns || []).map((ret) => ({
+        ...ret,
+        _entryType: "return",
+        _entryKey: `ret-${ret.id}`,
+        _entryCode: ret.code,
+        _entryLabel: "Trả hàng",
+        _entryAmount: -(Number(ret.total) || 0),
+        _entryStatus: ret.status,
+        _entryCreatedAt: ret.created_at,
+    }));
+
+    return [...invoices, ...returns].sort((a, b) => {
+        const at = Date.parse(a._entryCreatedAt || a.created_at || "") || 0;
+        const bt = Date.parse(b._entryCreatedAt || b.created_at || "") || 0;
+
+        if (bt !== at) {
+            return bt - at;
+        }
+
+        return String(b._entryCode || "").localeCompare(String(a._entryCode || ""));
+    });
+};
+
 const loadDebtHistory = async (customerId) => {
     tabLoading[customerId] = true;
     try {
@@ -1759,13 +1800,9 @@ const createdDateRange = computed({
                                             >
                                                 <div
                                                     v-if="
-                                                        salesHistoryData[
-                                                            customer.id
-                                                        ].invoices.length ===
-                                                            0 &&
-                                                        salesHistoryData[
-                                                            customer.id
-                                                        ].returns.length === 0
+                                                        getCustomerSalesReturnEntries(
+                                                            customer.id,
+                                                        ).length === 0
                                                     "
                                                     class="text-center py-12 text-gray-400"
                                                 >
@@ -1824,71 +1861,46 @@ const createdDateRange = computed({
                                                         class="divide-y divide-gray-100"
                                                     >
                                                         <tr
-                                                            v-for="inv in salesHistoryData[
-                                                                customer.id
-                                                            ].invoices"
-                                                            :key="
-                                                                'inv-' + inv.id
-                                                            "
-                                                            class="hover:bg-blue-50/30"
-                                                        >
-                                                            <td
-                                                                class="px-3 py-2 text-blue-600 font-medium cursor-pointer hover:underline"
-                                                                @click="showInvoiceDetail(inv.id)"
-                                                            >
-                                                                {{ inv.code }}
-                                                            </td>
-                                                            <td
-                                                                class="px-3 py-2"
-                                                            >
-                                                                <span
-                                                                    class="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs"
-                                                                    >Bán
-                                                                    hàng</span
-                                                                >
-                                                            </td>
-                                                            <td
-                                                                class="px-3 py-2"
-                                                            >
-                                                                {{
-                                                                    formatDate(
-                                                                        inv.created_at,
-                                                                    )
-                                                                }}
-                                                            </td>
-                                                            <td
-                                                                class="px-3 py-2 text-right font-medium"
-                                                            >
-                                                                {{
-                                                                    formatCurrency(
-                                                                        inv.total,
-                                                                    )
-                                                                }}
-                                                            </td>
-                                                            <td
-                                                                class="px-3 py-2"
-                                                            >
-                                                                {{ inv.status }}
-                                                            </td>
-                                                        </tr>
-                                                        <tr
-                                                            v-for="ret in salesHistoryData[
-                                                                customer.id
-                                                            ].returns"
-                                                            :key="
-                                                                'ret-' + ret.id
-                                                            "
+                                                            v-for="entry in getCustomerSalesReturnEntries(
+                                                                customer.id,
+                                                            )"
+                                                            :key="entry._entryKey"
                                                             class="hover:bg-blue-50/30"
                                                         >
                                                             <td
                                                                 class="px-3 py-2 text-blue-600 font-medium"
+                                                                :class="
+                                                                    entry._entryType ===
+                                                                    'invoice'
+                                                                        ? 'cursor-pointer hover:underline'
+                                                                        : ''
+                                                                "
+                                                                @click="
+                                                                    entry._entryType ===
+                                                                        'invoice' &&
+                                                                    showInvoiceDetail(
+                                                                        entry.id,
+                                                                    )
+                                                                "
                                                             >
-                                                                {{ ret.code }}
+                                                                {{
+                                                                    entry._entryCode
+                                                                }}
                                                             </td>
                                                             <td
                                                                 class="px-3 py-2"
                                                             >
                                                                 <span
+                                                                    v-if="
+                                                                        entry._entryType ===
+                                                                        'invoice'
+                                                                    "
+                                                                    class="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs"
+                                                                    >Bán
+                                                                    hàng</span
+                                                                >
+                                                                <span
+                                                                    v-else
                                                                     class="bg-red-100 text-red-700 px-2 py-0.5 rounded text-xs"
                                                                     >Trả
                                                                     hàng</span
@@ -1899,23 +1911,49 @@ const createdDateRange = computed({
                                                             >
                                                                 {{
                                                                     formatDate(
-                                                                        ret.created_at,
+                                                                        entry._entryCreatedAt,
                                                                     )
                                                                 }}
                                                             </td>
                                                             <td
-                                                                class="px-3 py-2 text-right font-medium text-red-500"
+                                                                class="px-3 py-2 text-right font-medium"
+                                                                :class="
+                                                                    entry._entryAmount <
+                                                                    0
+                                                                        ? 'text-red-500'
+                                                                        : ''
+                                                                "
                                                             >
-                                                                -{{
-                                                                    formatCurrency(
-                                                                        ret.total,
-                                                                    )
-                                                                }}
+                                                                <template
+                                                                    v-if="
+                                                                        entry._entryAmount <
+                                                                        0
+                                                                    "
+                                                                >
+                                                                    -{{
+                                                                        formatCurrency(
+                                                                            Math.abs(
+                                                                                entry._entryAmount,
+                                                                            ),
+                                                                        )
+                                                                    }}
+                                                                </template>
+                                                                <template
+                                                                    v-else
+                                                                >
+                                                                    {{
+                                                                        formatCurrency(
+                                                                            entry._entryAmount,
+                                                                        )
+                                                                    }}
+                                                                </template>
                                                             </td>
                                                             <td
                                                                 class="px-3 py-2"
                                                             >
-                                                                {{ ret.status }}
+                                                                {{
+                                                                    entry._entryStatus
+                                                                }}
                                                             </td>
                                                         </tr>
                                                     </tbody>
