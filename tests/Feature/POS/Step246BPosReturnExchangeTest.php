@@ -5,6 +5,7 @@ namespace Tests\Feature\POS;
 use App\Models\CashFlow;
 use App\Models\Category;
 use App\Models\Customer;
+use App\Models\CustomerDebt;
 use App\Models\Invoice;
 use App\Models\OrderReturn;
 use App\Models\Product;
@@ -276,6 +277,76 @@ class Step246BPosReturnExchangeTest extends TestCase
         $res->assertOk()->assertJsonPath('settlement.customer_pays', 0);
         $this->assertSame($cashBefore, CashFlow::count());
         $this->assertSame(0.0, (float) $customer->fresh()->debt_amount);
+    }
+
+    public function test_return_exchange_equal_value_does_not_create_negative_customer_debt(): void
+    {
+        $admin = $this->adminUser();
+        $customer = $this->customer();
+        $productA = $this->product(false, 5, 100000, 100000);
+        $productB = $this->product(false, 5, 100000, 100000);
+        $invoice = $this->sell($admin, $customer, $productA, 1, 100000, 100000);
+
+        $res = $this->actingAs($admin)->postJson('/api/pos/return-exchange',
+            $this->exchangePayload($invoice, $productA, $productB, 100000, 100000)
+        );
+
+        $res->assertOk()->assertJsonPath('settlement.refund_to_customer', 0);
+        $returnCode = $res->json('return.code');
+        $this->assertSame(0.0, (float) $customer->fresh()->debt_amount);
+        $this->assertSame(0, CustomerDebt::where('ref_code', $returnCode)->where('type', 'adjustment')->where('amount', '>', 0)->count());
+    }
+
+    public function test_return_exchange_cheaper_item_fully_refunded_does_not_leave_credit(): void
+    {
+        $admin = $this->adminUser();
+        $customer = $this->customer();
+        $productA = $this->product(false, 5, 100000, 100000);
+        $productB = $this->product(false, 5, 50000, 50000);
+        $invoice = $this->sell($admin, $customer, $productA, 1, 100000, 100000);
+
+        $res = $this->actingAs($admin)->postJson('/api/pos/return-exchange',
+            $this->exchangePayload($invoice, $productA, $productB, 100000, 50000)
+        );
+
+        $res->assertOk()->assertJsonPath('settlement.refund_to_customer', 50000);
+        $returnCode = $res->json('return.code');
+        $this->assertSame(0.0, (float) $customer->fresh()->debt_amount);
+        $this->assertSame(1, CustomerDebt::where('ref_code', $returnCode)->where('type', 'adjustment')->where('amount', '>', 0)->count());
+        $this->assertSame(50000.0, (float) CustomerDebt::where('ref_code', $returnCode)->where('type', 'adjustment')->where('amount', '>', 0)->sum('amount'));
+    }
+
+    public function test_return_exchange_more_expensive_paid_in_full_does_not_leave_debt(): void
+    {
+        $admin = $this->adminUser();
+        $customer = $this->customer();
+        $productA = $this->product(false, 5, 100000, 100000);
+        $productB = $this->product(false, 5, 150000, 150000);
+        $invoice = $this->sell($admin, $customer, $productA, 1, 100000, 100000);
+
+        $this->actingAs($admin)->postJson('/api/pos/return-exchange',
+            $this->exchangePayload($invoice, $productA, $productB, 100000, 150000)
+        )->assertOk()->assertJsonPath('settlement.customer_pays', 50000);
+
+        $this->assertSame(0.0, (float) $customer->fresh()->debt_amount);
+    }
+
+    public function test_return_exchange_does_not_double_apply_paid_refund_settlement(): void
+    {
+        $admin = $this->adminUser();
+        $customer = $this->customer();
+        $productA = $this->product(false, 5, 100000, 100000);
+        $productB = $this->product(false, 5, 50000, 50000);
+        $invoice = $this->sell($admin, $customer, $productA, 1, 100000, 100000);
+
+        $res = $this->actingAs($admin)->postJson('/api/pos/return-exchange',
+            $this->exchangePayload($invoice, $productA, $productB, 100000, 50000)
+        );
+
+        $res->assertOk();
+        $returnCode = $res->json('return.code');
+        $this->assertSame(1, CustomerDebt::where('ref_code', $returnCode)->where('type', 'adjustment')->where('amount', '>', 0)->count());
+        $this->assertSame(50000.0, (float) CustomerDebt::where('ref_code', $returnCode)->where('type', 'adjustment')->where('amount', '>', 0)->sum('amount'));
     }
 
     public function test_return_exchange_rejects_exchange_item_zero_price(): void

@@ -55,7 +55,7 @@ class OrderReturnCreationService
                 $this->createReturnItemAndRestoreStock($return, $item, $payload);
             }
 
-            $this->recordCustomerImpact($return, $payload);
+            $this->recordCustomerImpact($return, $payload, $context);
             $this->recordCashFlow($return, $payload, $context);
             $this->applyReturnDate($return, $payload, $context);
 
@@ -297,7 +297,7 @@ class OrderReturnCreationService
         );
     }
 
-    private function recordCustomerImpact(OrderReturn $return, array $payload): void
+    private function recordCustomerImpact(OrderReturn $return, array $payload, array $context): void
     {
         if (empty($payload['customer_id'])) {
             return;
@@ -314,6 +314,17 @@ class OrderReturnCreationService
             $return,
             "Giam cong no do tra hang phieu {$return->code}"
         );
+
+        $paidToCustomer = (float) ($payload['paid_to_customer'] ?? 0);
+        if (($context['record_paid_refund_debt_settlement'] ?? true) && $paidToCustomer > 0) {
+            app(CustomerDebtService::class)->recordAdjustment(
+                $customer->id,
+                $paidToCustomer,
+                "Tat toan tien da tra khach cho phieu tra {$return->code}",
+                ['order_return_id' => $return->id, 'ref_code' => $return->code]
+            );
+        }
+
         $customer->decrement('total_spent', $payload['total']);
     }
 

@@ -102,15 +102,6 @@ class PosReturnExchangeService
                 'stock_movement_branch_id' => $payload['branch_id'] ?? $sourceInvoice->branch_id,
             ], $context['sale_context'] ?? []));
 
-            if ($refundToCustomer > 0 && !empty($returnPayload['customer_id'])) {
-                app(CustomerDebtService::class)->recordAdjustment(
-                    (int) $returnPayload['customer_id'],
-                    $refundToCustomer,
-                    "Tat toan tien hoan cho doi hang {$return->code} / {$invoice->code}",
-                    ['order_return_id' => $return->id, 'ref_code' => $return->code]
-                );
-            }
-
             $this->annotateDocuments($return, $invoice, $sourceInvoice);
 
             return [

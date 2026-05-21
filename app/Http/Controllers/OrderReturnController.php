@@ -625,6 +625,15 @@ class OrderReturnController extends Controller
                         "Khôi phục công nợ do hủy phiếu trả hàng {$return->code}",
                         ['order_return_id' => $return->id, 'ref_code' => $return->code]
                     );
+                    if ((float) $return->paid_to_customer > 0) {
+                        app(CustomerDebtService::class)->recordAdjustment(
+                            $customer->id,
+                            -(float) $return->paid_to_customer,
+                            "Dao tat toan tien da tra khach do huy phieu tra {$return->code}",
+                            ['order_return_id' => $return->id, 'ref_code' => $return->code]
+                        );
+                    }
+
                     $customer->increment('total_spent', $return->total);
                 }
             }

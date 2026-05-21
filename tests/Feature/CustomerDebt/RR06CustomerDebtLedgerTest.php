@@ -196,7 +196,7 @@ class RR06CustomerDebtLedgerTest extends TestCase
             'customer_id'     => $this->customer->id,
             'subtotal'        => 200000,
             'total'           => 200000,
-            'paid_to_customer'=> 200000,
+            'paid_to_customer'=> 0,
             'items'           => [[
                 'product_id'      => $product->id,
                 'qty'             => 1,

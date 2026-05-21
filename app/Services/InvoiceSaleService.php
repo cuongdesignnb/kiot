@@ -105,7 +105,7 @@ class InvoiceSaleService
      */
     private function buildInvoiceAttributes(array $payload, array $context): array
     {
-        $code = ($context['code_prefix'] ?? ('HD' . date('YmdHis'))) . rand(10, 99);
+        $code = $this->generateUniqueInvoiceCode($context);
 
         $attrs = [
             'code'             => $code,
@@ -142,6 +142,21 @@ class InvoiceSaleService
         }
 
         return $attrs;
+    }
+
+    private function generateUniqueInvoiceCode(array $context): string
+    {
+        $prefix = $context['code_prefix'] ?? ('HD' . date('YmdHis'));
+
+        for ($attempt = 0; $attempt < 10; $attempt++) {
+            $code = $prefix . random_int(10, 99);
+
+            if (!Invoice::where('code', $code)->exists()) {
+                return $code;
+            }
+        }
+
+        return $prefix . random_int(1000, 9999);
     }
 
     /**
