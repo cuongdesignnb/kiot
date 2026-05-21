@@ -18,11 +18,39 @@ use App\Services\StockMovementService;
 use App\Support\Filters\FilterableIndex;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use App\Services\DebtOffsetService;
 
 class PurchaseReturnController extends Controller
 {
     use FilterableIndex;
+
+    private function activeReturnEmployees()
+    {
+        return Employee::where('is_active', true)
+            ->orderBy('name')
+            ->get(['id', 'name', 'code', 'user_id']);
+    }
+
+    private function currentReturnerOption(): ?array
+    {
+        $user = auth()->user();
+        if (!$user) {
+            return null;
+        }
+
+        $employee = Employee::where('user_id', $user->id)
+            ->where('is_active', true)
+            ->first(['id', 'name', 'code']);
+
+        return [
+            'value' => $employee ? (string) $employee->id : 'current_user',
+            'employee_id' => $employee?->id,
+            'name' => $employee?->name ?: $user->name,
+            'code' => $employee?->code,
+            'is_current_user' => true,
+        ];
+    }
 
     protected function configurePurchaseReturnFilters(): void
     {
@@ -100,7 +128,8 @@ class PurchaseReturnController extends Controller
             'purchase' => $purchase,
             'returnCode' => 'PTN' . date('YmdHis'),
             'bankAccounts' => \App\Models\BankAccount::where('status', 'active')->get(),
-            'employees' => \App\Models\Employee::where('is_active', true)->get(['id', 'name', 'code']),
+            'employees' => $this->activeReturnEmployees(),
+            'currentReturner' => $this->currentReturnerOption(),
         ]);
     }
 
@@ -119,7 +148,8 @@ class PurchaseReturnController extends Controller
                 ->orderBy('name')
                 ->get(),
             'bankAccounts' => \App\Models\BankAccount::where('status', 'active')->get(),
-            'employees'    => \App\Models\Employee::where('is_active', true)->get(['id', 'name', 'code']),
+            'employees'    => $this->activeReturnEmployees(),
+            'currentReturner' => $this->currentReturnerOption(),
         ]);
     }
 
@@ -347,10 +377,37 @@ class PurchaseReturnController extends Controller
             'items.*.price' => 'required|numeric|min:0',
             'refund_amount' => 'nullable|numeric|min:0',
             'note' => 'nullable|string',
+            'payment_method' => 'nullable|string|in:cash,transfer',
+            'bank_account_info' => 'nullable|string',
         ]);
 
         try {
             DB::beginTransaction();
+
+            $productIds = collect($request->items)->pluck('product_id')->unique()->values();
+            $products = Product::whereIn('id', $productIds)->lockForUpdate()->get()->keyBy('id');
+
+            foreach ($request->items as $i => $item) {
+                $product = $products->get($item['product_id']);
+
+                if (!$product) {
+                    throw ValidationException::withMessages([
+                        "items.{$i}.product_id" => 'Sản phẩm trả nhanh không hợp lệ.',
+                    ]);
+                }
+
+                if ($product->has_serial) {
+                    throw ValidationException::withMessages([
+                        "items.{$i}.product_id" => "Sản phẩm \"{$product->name}\" có Serial/IMEI. Vui lòng trả theo phiếu nhập để chọn đúng serial.",
+                    ]);
+                }
+
+                if ((int) $product->stock_quantity < (int) $item['quantity']) {
+                    throw ValidationException::withMessages([
+                        "items.{$i}.quantity" => "Sản phẩm \"{$product->name}\" không đủ tồn kho để trả hàng nhập (Còn: {$product->stock_quantity}, Cần trả: {$item['quantity']}).",
+                    ]);
+                }
+            }
 
             $totalAmount = collect($request->items)->sum(fn($item) => $item['quantity'] * $item['price']);
             $refundAmount = $request->refund_amount ?? $totalAmount;
@@ -367,11 +424,12 @@ class PurchaseReturnController extends Controller
                 'status' => 'completed',
                 'note' => $request->note,
                 'payment_method' => $request->payment_method ?? 'cash',
+                'bank_account_info' => $request->bank_account_info,
                 'return_date' => now(),
             ]);
 
             foreach ($request->items as $item) {
-                $product = Product::find($item['product_id']);
+                $product = $products->get($item['product_id']);
 
                 // Trả nhanh: không có purchase_id → fallback dùng product.cost_price hiện tại làm cost out
                 $unitCostAtPurchase = (float) $product->cost_price;
@@ -387,10 +445,6 @@ class PurchaseReturnController extends Controller
                 ]);
 
                 // Reduce stock
-                if ($product->stock_quantity < $item['quantity']) {
-                    throw new \Exception("San pham '{$product->name}' khong du ton kho (Con: {$product->stock_quantity}, Can tra: {$item['quantity']}).");
-                }
-
                 // BQ DI ĐỘNG: rút khỏi tồn ở giá trả nhanh
                 \App\Services\MovingAvgCostingService::applyPurchaseReturn(
                     $product,
@@ -447,6 +501,9 @@ class PurchaseReturnController extends Controller
             }
             return redirect()->route('purchase-returns.index')
                 ->with('success', 'Tạo phiếu trả hàng nhập (trả nhanh) thành công!');
+        } catch (ValidationException $e) {
+            DB::rollBack();
+            throw $e;
         } catch (\Exception $e) {
             DB::rollBack();
             if ($request->wantsJson() && !$request->header('X-Inertia')) {

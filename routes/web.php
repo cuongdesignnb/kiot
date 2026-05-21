@@ -113,12 +113,14 @@ Route::delete('/purchases/{purchase}', [PurchaseController::class, 'destroy'])->
 
 // ===== PURCHASE RETURNS =====
 Route::get('/purchase-returns/create', [PurchaseReturnController::class, 'create'])->name('purchase-returns.create')->middleware('permission:purchases.create');
+Route::get('/purchase-returns/create-quick', [PurchaseReturnController::class, 'createQuick'])->name('purchase-returns.create-quick')->middleware('permission:purchases.return.create');
 Route::middleware('permission:purchases.view')->group(function () {
     Route::get('/purchase-returns', [PurchaseReturnController::class, 'index'])->name('purchase-returns.index');
     Route::get('/purchase-returns/{purchaseReturn}', [PurchaseReturnController::class, 'show'])->name('purchase-returns.show');
 });
 // Step 24.0B: tách quyền tạo / hủy phiếu trả NCC.
 Route::post('/purchase-returns', [PurchaseReturnController::class, 'store'])->name('purchase-returns.store')->middleware('permission:purchases.return.create');
+Route::post('/purchase-returns/quick', [PurchaseReturnController::class, 'quickStore'])->name('purchase-returns.quick-store')->middleware('permission:purchases.return.create');
 Route::delete('/purchase-returns/{purchaseReturn}', [PurchaseReturnController::class, 'destroy'])->name('purchase-returns.destroy')->middleware('permission:purchases.return.cancel');
 
 // ===== PRICE SETTINGS =====

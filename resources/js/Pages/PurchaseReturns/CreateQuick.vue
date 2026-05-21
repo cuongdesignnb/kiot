@@ -10,6 +10,7 @@ const props = defineProps({
     products: Array,
     bankAccounts: Array,
     employees: Array,
+    currentReturner: Object,
 });
 
 // ====== STATE ======
@@ -23,10 +24,38 @@ const items = ref([]); // {product_id, name, sku, price, quantity, max_stock}
 
 const refundAmount = ref(0);
 const note = ref('');
-const employeeId = ref('');
 const paymentMethod = ref('cash');
 const bankAccountInfo = ref('');
 const submitting = ref(false);
+
+const returnerOptions = computed(() => {
+    const options = (props.employees || []).map(emp => ({
+        value: String(emp.id),
+        label: emp.name,
+        code: emp.code,
+        is_current_user: props.currentReturner?.employee_id === emp.id,
+    }));
+
+    if (props.currentReturner && !props.currentReturner.employee_id) {
+        options.unshift({
+            value: 'current_user',
+            label: props.currentReturner.name,
+            code: props.currentReturner.code,
+            is_current_user: true,
+        });
+    }
+
+    return options;
+});
+
+const employeeId = ref(props.currentReturner?.employee_id
+    ? String(props.currentReturner.employee_id)
+    : (props.currentReturner ? 'current_user' : '')
+);
+
+const selectedEmployeeId = () => employeeId.value === 'current_user'
+    ? null
+    : (employeeId.value || null);
 
 // ====== COMPUTED ======
 const selectedSupplier = computed(() =>
@@ -68,9 +97,17 @@ const clearSupplier = () => {
 };
 
 const addProduct = (p) => {
+    if (p.has_serial) {
+        alert(`Sản phẩm "${p.name}" có Serial/IMEI. Vui lòng dùng luồng trả theo phiếu nhập để chọn đúng serial.`);
+        return;
+    }
+    if ((Number(p.stock_quantity) || 0) <= 0) {
+        alert(`Sản phẩm "${p.name}" đã hết tồn kho, không thể trả nhanh.`);
+        return;
+    }
     const existing = items.value.find(i => i.product_id === p.id);
     if (existing) {
-        existing.quantity += 1;
+        existing.quantity = Math.min(existing.quantity + 1, existing.max_stock);
     } else {
         items.value.push({
             product_id: p.id,
@@ -113,6 +150,10 @@ const save = () => {
             alert(`Số lượng của "${i.name}" phải > 0.`);
             return;
         }
+        if (i.has_serial) {
+            alert(`Sản phẩm "${i.name}" có Serial/IMEI. Vui lòng dùng luồng trả theo phiếu nhập để chọn đúng serial.`);
+            return;
+        }
         if (i.quantity > i.max_stock) {
             alert(`"${i.name}" chỉ còn ${i.max_stock} trong kho, không thể trả ${i.quantity}.`);
             return;
@@ -123,7 +164,7 @@ const save = () => {
     router.post('/purchase-returns/quick', {
         code: props.returnCode,
         supplier_id: supplierId.value,
-        employee_id: employeeId.value || null,
+        employee_id: selectedEmployeeId(),
         refund_amount: refundAmount.value,
         note: note.value,
         payment_method: paymentMethod.value,
@@ -209,12 +250,21 @@ const save = () => {
                             class="absolute top-full left-4 right-4 mt-1 bg-white border border-gray-200 rounded shadow-lg z-20 max-h-[320px] overflow-auto">
                             <div v-for="p in filteredProducts" :key="p.id"
                                 @click="addProduct(p)"
-                                class="px-3 py-2 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-0 flex items-center justify-between">
+                                class="px-3 py-2 border-b border-gray-100 last:border-0 flex items-center justify-between"
+                                :class="p.has_serial || Number(p.stock_quantity || 0) <= 0 ? 'bg-gray-50 text-gray-400 cursor-not-allowed' : 'hover:bg-blue-50 cursor-pointer'">
                                 <div>
                                     <div class="font-medium">{{ p.name }}</div>
                                     <div class="text-[12px] text-gray-500">{{ p.sku }} · Tồn: {{ p.stock_quantity }} · Giá vốn: {{ formatCurrency(p.cost_price) }}</div>
+                                    <div v-if="p.has_serial" class="text-[11px] text-orange-600 mt-0.5">
+                                        Serial/IMEI: trả theo phiếu nhập để chọn serial
+                                    </div>
                                 </div>
-                                <button class="text-green-600 text-sm font-medium">+ Thêm</button>
+                                <button
+                                    class="text-sm font-medium"
+                                    :class="p.has_serial || Number(p.stock_quantity || 0) <= 0 ? 'text-gray-400' : 'text-green-600'"
+                                >
+                                    {{ p.has_serial ? 'Không hỗ trợ trả nhanh' : '+ Thêm' }}
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -273,7 +323,9 @@ const save = () => {
                         <label class="block text-[12px] text-gray-500 mb-1">Người trả hàng</label>
                         <select v-model="employeeId" class="w-full border border-gray-300 rounded px-2 py-1.5 bg-white">
                             <option value="">-- Chọn nhân viên --</option>
-                            <option v-for="emp in employees" :key="emp.id" :value="emp.id">{{ emp.name }}</option>
+                            <option v-for="emp in returnerOptions" :key="emp.value" :value="emp.value">
+                                {{ emp.label }}{{ emp.is_current_user ? ' (hiện tại)' : '' }}
+                            </option>
                         </select>
                     </div>
 
