@@ -1150,16 +1150,129 @@ class CustomerController extends Controller
         );
     }
 
-    public function exportDebtHistory(Customer $customer)
+    public function exportDebtHistory(Customer $customer, Request $request)
     {
         $data = $this->debtHistory($customer)->getData(true);
         $entries = $data['entries'] ?? [];
+
+        $hasQuery = $request->hasAny(['date_preset', 'date_from', 'date_to', 'include_detail', 'columns', 'format']);
+
+        if ($hasQuery) {
+            $validated = $request->validate([
+                'date_preset'    => 'nullable|string|in:today,this_week,last_7_days,last_30_days,this_month,last_month,this_quarter,this_year,all,custom',
+                'date_from'      => ['nullable', 'string', 'regex:#^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/\d{4})$#'],
+                'date_to'        => ['nullable', 'string', 'regex:#^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/\d{4})$#'],
+                'include_detail' => 'nullable|in:0,1,true,false',
+                'columns'        => 'nullable|array',
+                'columns.*'      => 'string|in:unit,quantity,unit_price,discount,vat,cost,line_total,note',
+                'format'         => 'nullable|string|in:csv,xlsx',
+            ], [
+                'date_from.regex' => 'Ngay bat dau phai co dinh dang dd/mm/yyyy hoac YYYY-MM-DD.',
+                'date_to.regex'   => 'Ngay ket thuc phai co dinh dang dd/mm/yyyy hoac YYYY-MM-DD.',
+            ]);
+
+            foreach (['date_from', 'date_to'] as $key) {
+                if (!empty($validated[$key]) && $this->parseDebtExportDate($validated[$key]) === null) {
+                    return response()->json([
+                        'message' => "Ngay {$key} khong hop le.",
+                        'errors' => [$key => ["Ngay {$key} khong hop le."]],
+                    ], 422);
+                }
+            }
+
+            [$from, $to] = $this->resolveCustomerDebtExportRange(
+                $validated['date_preset'] ?? 'all',
+                $validated['date_from'] ?? null,
+                $validated['date_to'] ?? null
+            );
+
+            if ($from && $to && $from->greaterThan($to)) {
+                return response()->json(['message' => 'date_from phai <= date_to'], 422);
+            }
+
+            $includeDetail = in_array((string) ($validated['include_detail'] ?? '0'), ['1', 'true'], true);
+            $selectedColumns = array_values($validated['columns'] ?? []);
+
+            if (($validated['format'] ?? '') === 'xlsx') {
+                return (new \App\Services\Exports\CustomerDebtExcelExportService(
+                    $customer,
+                    is_array($entries) ? $entries : collect($entries)->toArray(),
+                    $from,
+                    $to,
+                    $includeDetail,
+                    $selectedColumns
+                ))->download('cong_no_kh_' . ($customer->code ?: $customer->id) . '.xlsx');
+            }
+
+            $entries = collect($entries)->filter(function ($entry) use ($from, $to) {
+                if (!$from && !$to) return true;
+                $raw = $entry['recorded_at'] ?? $entry['created_at'] ?? $entry['date'] ?? null;
+                if (!$raw) return false;
+                try {
+                    $ts = \Carbon\Carbon::parse($raw);
+                } catch (\Throwable) {
+                    return false;
+                }
+                if ($from && $ts->lessThan($from)) return false;
+                return !($to && $ts->greaterThan($to));
+            })->values()->all();
+        }
 
         return \App\Services\CsvService::export(
             ['Mã chứng từ', 'Loại', 'Giá trị', 'Dư nợ sau GD', 'Ngày'],
             collect($entries)->map(fn($e) => [$e['code'], $e['type'], $e['amount'], $e['balance'], $e['created_at']]),
             "cong_no_kh_{$customer->code}.csv"
         );
+    }
+
+    private function resolveCustomerDebtExportRange(string $preset, ?string $from, ?string $to): array
+    {
+        $now = \Carbon\Carbon::now();
+
+        return match ($preset) {
+            'today' => [$now->copy()->startOfDay(), $now->copy()->endOfDay()],
+            'this_week' => [$now->copy()->startOfWeek(), $now->copy()->endOfWeek()],
+            'last_7_days' => [$now->copy()->subDays(6)->startOfDay(), $now->copy()->endOfDay()],
+            'last_30_days' => [$now->copy()->subDays(29)->startOfDay(), $now->copy()->endOfDay()],
+            'this_month' => [$now->copy()->startOfMonth(), $now->copy()->endOfMonth()],
+            'last_month' => [
+                $now->copy()->subMonthNoOverflow()->startOfMonth(),
+                $now->copy()->subMonthNoOverflow()->endOfMonth(),
+            ],
+            'this_quarter' => [$now->copy()->startOfQuarter(), $now->copy()->endOfQuarter()],
+            'this_year' => [$now->copy()->startOfYear(), $now->copy()->endOfYear()],
+            'custom' => [
+                ($this->parseDebtExportDate($from))?->startOfDay(),
+                ($this->parseDebtExportDate($to))?->endOfDay(),
+            ],
+            default => [null, null],
+        };
+    }
+
+    private function parseDebtExportDate(?string $value): ?\Carbon\Carbon
+    {
+        if (!$value) {
+            return null;
+        }
+
+        $value = trim($value);
+        if (preg_match('#^(\d{4})-(\d{1,2})-(\d{1,2})$#', $value, $matches)) {
+            $year = (int) $matches[1];
+            $month = (int) $matches[2];
+            $day = (int) $matches[3];
+        } elseif (preg_match('#^(\d{1,2})/(\d{1,2})/(\d{4})$#', $value, $matches)) {
+            $day = (int) $matches[1];
+            $month = (int) $matches[2];
+            $year = (int) $matches[3];
+        } else {
+            return null;
+        }
+
+        if (!checkdate($month, $day, $year)) {
+            return null;
+        }
+
+        return \Carbon\Carbon::create($year, $month, $day, 0, 0, 0);
     }
 
     public function exportSalesHistory(Customer $customer)

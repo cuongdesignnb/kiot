@@ -100,6 +100,115 @@ const loadDebtHistory = async (customerId) => {
     tabLoading[customerId] = false;
 };
 
+const showCustomerDebtExportModal = ref(false);
+const debtExportCustomer = ref(null);
+const customerDebtExportForm = reactive({
+    date_preset: 'all',
+    date_from: '',
+    date_to: '',
+    include_detail: true,
+    columns: {
+        unit: true,
+        quantity: true,
+        unit_price: true,
+        discount: true,
+        vat: true,
+        cost: true,
+        line_total: true,
+        note: true,
+    },
+});
+
+const parseVietnameseDateToIso = (value) => {
+    if (!value) return null;
+    const m = String(value).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (!m) return null;
+    const dd = parseInt(m[1], 10);
+    const mm = parseInt(m[2], 10);
+    const yyyy = parseInt(m[3], 10);
+    if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+    const probe = new Date(yyyy, mm - 1, dd);
+    if (probe.getFullYear() !== yyyy || probe.getMonth() !== mm - 1 || probe.getDate() !== dd) return null;
+    return `${yyyy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+};
+
+const customerDebtExportCustomDatesValid = computed(() => {
+    if (customerDebtExportForm.date_preset !== 'custom') return true;
+    return !!parseVietnameseDateToIso(customerDebtExportForm.date_from)
+        && !!parseVietnameseDateToIso(customerDebtExportForm.date_to);
+});
+
+const customerDebtExportPresets = [
+    { value: 'today', label: 'Hôm nay' },
+    { value: 'this_week', label: 'Tuần này' },
+    { value: 'last_7_days', label: '7 ngày qua' },
+    { value: 'last_30_days', label: '30 ngày qua' },
+    { value: 'this_month', label: 'Tháng này' },
+    { value: 'last_month', label: 'Tháng trước' },
+    { value: 'this_quarter', label: 'Quý này' },
+    { value: 'this_year', label: 'Năm nay' },
+    { value: 'all', label: 'Toàn thời gian' },
+    { value: 'custom', label: 'Lựa chọn khác' },
+];
+
+const customerDebtExportColumnOptions = [
+    { key: 'unit', label: 'ĐVT' },
+    { key: 'quantity', label: 'Số lượng' },
+    { key: 'unit_price', label: 'Đơn giá' },
+    { key: 'discount', label: 'Giảm giá' },
+    { key: 'vat', label: 'VAT' },
+    { key: 'cost', label: 'Giá bán/trả' },
+    { key: 'line_total', label: 'Thành tiền' },
+    { key: 'note', label: 'Ghi chú dòng' },
+];
+
+const openCustomerDebtExportModal = (customer) => {
+    if (!customer || !customer.id) return;
+    debtExportCustomer.value = customer;
+    customerDebtExportForm.date_preset = 'all';
+    customerDebtExportForm.date_from = '';
+    customerDebtExportForm.date_to = '';
+    customerDebtExportForm.include_detail = true;
+    customerDebtExportColumnOptions.forEach((option) => {
+        customerDebtExportForm.columns[option.key] = true;
+    });
+    showCustomerDebtExportModal.value = true;
+};
+
+const closeCustomerDebtExportModal = () => {
+    showCustomerDebtExportModal.value = false;
+    debtExportCustomer.value = null;
+};
+
+const confirmCustomerDebtExport = () => {
+    const customer = debtExportCustomer.value;
+    if (!customer || !customer.id) return;
+
+    const params = new URLSearchParams();
+    params.set('format', 'xlsx');
+    params.set('date_preset', customerDebtExportForm.date_preset);
+
+    if (customerDebtExportForm.date_preset === 'custom') {
+        const isoFrom = parseVietnameseDateToIso(customerDebtExportForm.date_from);
+        const isoTo = parseVietnameseDateToIso(customerDebtExportForm.date_to);
+        if (!isoFrom || !isoTo) return;
+        params.set('date_from', isoFrom);
+        params.set('date_to', isoTo);
+    }
+
+    params.set('include_detail', customerDebtExportForm.include_detail ? '1' : '0');
+    if (customerDebtExportForm.include_detail) {
+        customerDebtExportColumnOptions.forEach((option) => {
+            if (customerDebtExportForm.columns[option.key]) {
+                params.append('columns[]', option.key);
+            }
+        });
+    }
+
+    window.location.assign(`/customers/${customer.id}/export-debt?${params.toString()}`);
+    closeCustomerDebtExportModal();
+};
+
 // ====== INVOICE DETAIL MODAL ======
 const invoiceDetail = reactive({ show: false, loading: false, data: null });
 const showInvoiceDetail = async (invoiceId) => {
@@ -2001,7 +2110,7 @@ const createdDateRange = computed({
                                                         class="flex gap-3 text-[13px]"
                                                     >
                                                         <button
-                                                            @click="window.open(`/customers/${customer.id}/export-debt`)"
+                                                            @click="openCustomerDebtExportModal(customer)"
                                                             class="text-blue-600 hover:text-blue-800 flex items-center gap-1 font-medium"
                                                         >
                                                             <svg
@@ -2019,8 +2128,10 @@ const createdDateRange = computed({
                                                             </svg>
                                                             Xuất file công nợ
                                                         </button>
-                                                        <button
-                                                            @click="window.open(`/customers/${customer.id}/export-sales`)"
+                                                        <a
+                                                            :href="`/customers/${customer.id}/export-sales`"
+                                                            target="_blank"
+                                                            rel="noopener"
                                                             class="text-blue-600 hover:text-blue-800 flex items-center gap-1 font-medium"
                                                         >
                                                             <svg
@@ -2037,7 +2148,7 @@ const createdDateRange = computed({
                                                                 ></path>
                                                             </svg>
                                                             Xuất file
-                                                        </button>
+                                                        </a>
                                                     </div>
                                                     <div
                                                         class="flex gap-2 text-[13px]"
@@ -3375,6 +3486,121 @@ const createdDateRange = computed({
             </div>
         </div>
 
+
+        <!-- HOTFIX 24.6I — Customer debt Excel export modal -->
+        <div
+            v-if="showCustomerDebtExportModal"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+            @click.self="closeCustomerDebtExportModal"
+        >
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+                <div class="flex items-center justify-between px-6 py-4 border-b">
+                    <h2 class="text-lg font-bold text-gray-800">Xuất file công nợ</h2>
+                    <button @click="closeCustomerDebtExportModal" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+                </div>
+
+                <div class="px-6 py-5 space-y-5 text-sm">
+                    <div v-if="debtExportCustomer" class="bg-gray-50 px-3 py-2 rounded">
+                        <span class="text-gray-500">Khách hàng:</span>
+                        <span class="font-semibold text-gray-800 ml-1">{{ debtExportCustomer.name }}</span>
+                        <span v-if="debtExportCustomer.code" class="text-gray-400 ml-1">({{ debtExportCustomer.code }})</span>
+                    </div>
+
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-700 mb-2">Thời gian</h3>
+                        <div class="flex flex-wrap gap-2">
+                            <button
+                                v-for="preset in customerDebtExportPresets"
+                                :key="preset.value"
+                                type="button"
+                                @click="customerDebtExportForm.date_preset = preset.value"
+                                :class="customerDebtExportForm.date_preset === preset.value
+                                    ? 'bg-blue-600 text-white border-blue-600'
+                                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'"
+                                class="px-3 py-1.5 text-xs font-semibold border rounded transition"
+                            >
+                                {{ preset.label }}
+                            </button>
+                        </div>
+                        <div v-if="customerDebtExportForm.date_preset === 'custom'" class="mt-3 grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-600 mb-1">Từ ngày</label>
+                                <input
+                                    v-model="customerDebtExportForm.date_from"
+                                    type="text"
+                                    inputmode="numeric"
+                                    placeholder="dd/mm/yyyy"
+                                    maxlength="10"
+                                    class="w-full border rounded px-3 py-2 text-sm focus:border-blue-500 outline-none"
+                                    :class="customerDebtExportForm.date_from && !parseVietnameseDateToIso(customerDebtExportForm.date_from)
+                                        ? 'border-red-400' : 'border-gray-300'"
+                                />
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-600 mb-1">Đến ngày</label>
+                                <input
+                                    v-model="customerDebtExportForm.date_to"
+                                    type="text"
+                                    inputmode="numeric"
+                                    placeholder="dd/mm/yyyy"
+                                    maxlength="10"
+                                    class="w-full border rounded px-3 py-2 text-sm focus:border-blue-500 outline-none"
+                                    :class="customerDebtExportForm.date_to && !parseVietnameseDateToIso(customerDebtExportForm.date_to)
+                                        ? 'border-red-400' : 'border-gray-300'"
+                                />
+                            </div>
+                            <p
+                                v-if="customerDebtExportForm.date_preset === 'custom' && !customerDebtExportCustomDatesValid"
+                                class="col-span-2 text-xs text-red-500 -mt-1"
+                            >
+                                Nhập ngày theo định dạng <code>dd/mm/yyyy</code> (ví dụ <code>30/04/2026</code>).
+                            </p>
+                        </div>
+                    </div>
+
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-700 mb-2">Thông tin xuất file</h3>
+                        <div class="bg-gray-50 border border-gray-200 rounded px-3 py-2 text-xs text-gray-600 mb-3">
+                            <span class="font-semibold text-gray-700">Tổng quan luôn có:</span>
+                            Thời gian, Mã chứng từ, Loại, Giá trị, Nợ hiện tại/Công nợ, Ghi chú.
+                        </div>
+                        <label class="flex items-center gap-2 mb-2 cursor-pointer">
+                            <input type="checkbox" v-model="customerDebtExportForm.include_detail" class="rounded" />
+                            <span class="font-semibold text-gray-700">Chi tiết từng hàng giao dịch</span>
+                        </label>
+                        <div
+                            class="grid grid-cols-2 sm:grid-cols-3 gap-2 pl-6"
+                            :class="{ 'opacity-50 pointer-events-none': !customerDebtExportForm.include_detail }"
+                        >
+                            <label
+                                v-for="option in customerDebtExportColumnOptions"
+                                :key="option.key"
+                                class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer"
+                            >
+                                <input type="checkbox" v-model="customerDebtExportForm.columns[option.key]" class="rounded" />
+                                <span>{{ option.label }}</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex justify-end gap-3 px-6 py-4 border-t bg-gray-50 rounded-b-xl">
+                    <button
+                        @click="closeCustomerDebtExportModal"
+                        class="px-5 py-2 border border-gray-300 rounded text-sm font-semibold hover:bg-gray-100"
+                    >
+                        Bỏ qua
+                    </button>
+                    <button
+                        @click="confirmCustomerDebtExport"
+                        :disabled="!customerDebtExportCustomDatesValid"
+                        class="px-5 py-2 bg-blue-600 text-white rounded text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
+                    >
+                        Đồng ý
+                    </button>
+                </div>
+            </div>
+        </div>
 
         <!-- ====== CUSTOMER GROUP CREATE MODAL (KiotViet-style 2 tabs) ====== -->
         <div v-if="showGroupModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
