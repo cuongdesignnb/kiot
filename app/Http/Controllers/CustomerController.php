@@ -531,11 +531,79 @@ class CustomerController extends Controller
             ->limit(200)
             ->get();
 
-        $ledgerEntries = $debts->map(function ($d) use ($typeLabels) {
+        $autoReturnSettlementNotes = [
+            'Tat toan tien da tra khach cho phieu tra',
+            'Bo sung tat toan tien da tra khach cho phieu tra',
+        ];
+
+        $isAutoReturnSettlement = static function ($debt) use ($autoReturnSettlementNotes): bool {
+            if ($debt->type !== 'adjustment' || (float) $debt->amount <= 0) {
+                return false;
+            }
+
+            if (empty($debt->order_return_id) && empty($debt->ref_code)) {
+                return false;
+            }
+
+            $note = (string) $debt->note;
+            foreach ($autoReturnSettlementNotes as $needle) {
+                if (str_contains($note, $needle)) {
+                    return true;
+                }
+            }
+
+            return false;
+        };
+
+        $matchesReturnSettlement = static function ($returnDebt, $settlementDebt): bool {
+            if (!empty($returnDebt->order_return_id) && !empty($settlementDebt->order_return_id)
+                && (int) $returnDebt->order_return_id === (int) $settlementDebt->order_return_id) {
+                return true;
+            }
+
+            return !empty($returnDebt->ref_code) && !empty($settlementDebt->ref_code)
+                && (string) $returnDebt->ref_code === (string) $settlementDebt->ref_code;
+        };
+
+        $autoReturnSettlements = $debts->filter($isAutoReturnSettlement)->values();
+        $matchedSettlementIds = [];
+        $returnSettlementMeta = [];
+
+        foreach ($debts->where('type', 'return') as $returnDebt) {
+            $settlements = $autoReturnSettlements
+                ->filter(fn($settlementDebt) => $matchesReturnSettlement($returnDebt, $settlementDebt))
+                ->values();
+
+            if ($settlements->isEmpty()) {
+                continue;
+            }
+
+            $lastSettlement = $settlements
+                ->sortBy(function ($settlementDebt) {
+                    $recordedAt = $settlementDebt->recorded_at ?? $settlementDebt->created_at;
+                    $timeKey = $recordedAt ? $recordedAt->format('YmdHis.u') : '';
+                    return $timeKey . '-' . str_pad((string) $settlementDebt->id, 12, '0', STR_PAD_LEFT);
+                })
+                ->last();
+
+            $settlementIds = $settlements->pluck('id')->values()->all();
+            $matchedSettlementIds = array_merge($matchedSettlementIds, $settlementIds);
+
+            $returnSettlementMeta[$returnDebt->id] = [
+                'display_balance' => (float) $lastSettlement->debt_total,
+                'settlement_adjusted_amount' => (float) $settlements->sum('amount'),
+                'settlement_adjustment_ids' => $settlementIds,
+            ];
+        }
+
+        $matchedSettlementIds = array_values(array_unique($matchedSettlementIds));
+
+        $mapLedgerEntry = function ($d, array $settlementMetaByDebtId = []) use ($typeLabels) {
             $amount = (float) $d->amount;
-            $balance = (float) $d->debt_total;
+            $settlementMeta = $settlementMetaByDebtId[$d->id] ?? null;
+            $balance = $settlementMeta['display_balance'] ?? (float) $d->debt_total;
             $recordedAt = $d->recorded_at ?? $d->created_at;
-            return [
+            $entry = [
                 'id'              => 'ldg-' . $d->id,
                 'code'            => $d->ref_code,
                 'type'            => $typeLabels[$d->type] ?? $d->type,
@@ -550,7 +618,21 @@ class CustomerController extends Controller
                 'created_at'      => $recordedAt,
                 'source'          => 'ledger',
             ];
-        })->values();
+
+            if ($settlementMeta) {
+                $entry['settlement_adjusted_amount'] = $settlementMeta['settlement_adjusted_amount'];
+                $entry['settlement_adjustment_ids'] = $settlementMeta['settlement_adjustment_ids'];
+                $entry['display_merged_settlement'] = true;
+            }
+
+            return $entry;
+        };
+
+        $ledgerEntriesRaw = $debts->map(fn($d) => $mapLedgerEntry($d))->values();
+        $ledgerEntries = $debts
+            ->reject(fn($d) => $isAutoReturnSettlement($d) && in_array($d->id, $matchedSettlementIds, true))
+            ->map(fn($d) => $mapLedgerEntry($d, $returnSettlementMeta))
+            ->values();
 
         // ─── 2) LEGACY entries (logic cũ pre-RR06) ──────────────────────
         $legacyEntries = collect();
@@ -691,14 +773,14 @@ class CustomerController extends Controller
 
         return response()->json([
             'entries'         => $combined,
-            'ledger_entries'  => $ledgerEntries,
+            'ledger_entries'  => $ledgerEntriesRaw,
             'legacy_entries'  => $legacyEntries,
             'summary' => [
                 'net'             => (float) $customer->debt_amount,
                 'is_dual_role'    => $isDualRole,
                 'source'          => 'hybrid',
                 'count'           => $combined->count(),
-                'ledger_count'    => $ledgerEntries->count(),
+                'ledger_count'    => $ledgerEntriesRaw->count(),
                 'legacy_count'    => $legacyEntries->count(),
                 'dedup_skipped'   => $legacyEntries->count() - $legacyFiltered->count(),
             ],
