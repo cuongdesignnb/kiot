@@ -36,10 +36,10 @@
 
 ## Thay đổi
 - Sửa import `watch` trong `Create.vue`.
-- Thêm serial selector dùng API read-only `/api/products/{product}/serials`.
-- Serial selector có fallback sang `/products/{product}/serials?status=ready`, timeout và nút `Tải lại` để không kẹt loading khi endpoint chính lỗi.
+- Thêm serial selector dùng endpoint sản phẩm `/products/{product}/serials?status=ready`.
+- Serial selector có fallback sang API read-only `/api/products/{product}/serials`, timeout và nút `Tải lại` để không kẹt loading khi endpoint chính lỗi.
 - Payload tạo phiếu gửi `items[].serial_ids`.
-- Thêm dropdown tìm/chọn nhân viên xuất hủy và gửi `employee_id` về backend.
+- Thêm chọn nhân viên xuất hủy bằng select ổn định, gửi `employee_id` về backend.
 - Backend lưu `created_by_name`/`destroyed_by_name` theo nhân viên đã chọn hoặc current user fallback; `action_date` tiếp tục điều khiển `created_at`/`destroyed_date`.
 - Nút xóa sản phẩm trên dòng hàng luôn hiển thị, không chỉ hiện khi hover.
 - Frontend validate:
@@ -73,7 +73,7 @@
 - `php artisan test tests/Feature/Damage/DamageCreateMetaTest.php`: PASS, 1 test, 5 assertions.
 - `php artisan test tests/Feature/Damage/DamageIndexFilterTest.php`: PASS, 2 tests, 32 assertions.
 - `php artisan test tests/Feature/Damage`: PASS, 26 tests, 111 assertions.
-- `npm run build`: PASS, Vite built successfully in 8.41s.
+- `npm run build`: PASS, Vite built successfully in 6.93s.
 
 Ghi chú môi trường test: PHP local có warning thiếu extension `oci8_12c`, `oci8_19`, `pdo_firebird`, `pdo_oci`; các warning này không làm fail test.
 
