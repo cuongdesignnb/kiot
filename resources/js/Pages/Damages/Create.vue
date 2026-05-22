@@ -3,6 +3,7 @@ import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, watch } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
+import DateTimePicker from '@/Components/DateTimePicker.vue';
 
 const props = defineProps({
     products: Array,
@@ -36,6 +37,28 @@ const toInt = (value) => parseInt(value, 10) || 0;
 const toBool = (value) => value === true || value === 1 || value === '1';
 const lineTotal = (item) => Math.max(0, toInt(item.qty)) * toNumber(item.cost_price);
 const isSerialProduct = (item) => Boolean(item?.has_serial);
+const selectedSerialSet = (item) => new Set(Array.isArray(item?.serial_ids) ? item.serial_ids : []);
+
+const visibleSerialsForItem = (item) => {
+    if (!item || !Array.isArray(item.serials)) return [];
+
+    const q = String(item.serial_search || '').trim().toLowerCase();
+    const selected = selectedSerialSet(item);
+
+    const matched = item.serials.filter((serial) => {
+        const label = serialLabel(serial).toLowerCase();
+        return !q || label.includes(q);
+    });
+
+    const selectedRows = item.serials.filter((serial) => selected.has(serial.id));
+    const selectedIds = new Set(selectedRows.map((serial) => serial.id));
+
+    const limited = matched
+        .filter((serial) => !selectedIds.has(serial.id))
+        .slice(0, 50);
+
+    return [...selectedRows, ...limited];
+};
 
 const serialLoadControllers = new WeakMap();
 const serialLoadTimeoutMs = 8000;
@@ -57,6 +80,7 @@ const loadSerialsForItem = async (item, force = false) => {
     item.serial_error = '';
 
     try {
+        const startedAt = performance.now();
         console.info('[Damage serial] loading product', item.product_id);
 
         const response = await axios.get(`/api/products/${item.product_id}/serials`, {
@@ -70,6 +94,12 @@ const loadSerialsForItem = async (item, force = false) => {
         console.info('[Damage serial] response', response.status, response.data);
 
         const serials = Array.isArray(response.data) ? response.data : [];
+
+        console.info('[Damage serial] loaded', {
+            product_id: item.product_id,
+            count: serials.length,
+            ms: Math.round(performance.now() - startedAt),
+        });
 
         item.serials = serials;
 
@@ -166,25 +196,6 @@ const selectedActor = computed(() => {
     return actorOptions.value.find((actor) => actor.value === selectedActorKey.value) || null;
 });
 
-const transactionDateDay = computed({
-    get: () => String(transactionDate.value || '').slice(0, 10),
-    set: (value) => {
-        const time = transactionDateTime.value || '00:00';
-        transactionDate.value = value ? `${value}T${time}` : '';
-    },
-});
-
-const transactionDateTime = computed({
-    get: () => {
-        const raw = String(transactionDate.value || '');
-        return raw.includes('T') ? raw.split('T')[1].slice(0, 5) : '';
-    },
-    set: (value) => {
-        const day = transactionDateDay.value || `${nowInit.getFullYear()}-${pad(nowInit.getMonth()+1)}-${pad(nowInit.getDate())}`;
-        transactionDate.value = `${day}T${value || '00:00'}`;
-    },
-});
-
 let searchTimeout = null;
 watch(searchQuery, (val) => {
     if (!val) {
@@ -222,6 +233,7 @@ const selectProduct = (product) => {
             has_serial: toBool(product.has_serial),
             serial_ids: [],
             serials: [],
+            serial_search: '',
             serial_loading: false,
             serial_error: '',
         };
@@ -474,29 +486,41 @@ const save = (status) => {
                                         <div v-else-if="item.serial_error" class="text-[12px] text-red-600">
                                             {{ item.serial_error }}
                                         </div>
-                                        <div v-else-if="!item.serials || item.serials.length === 0" class="text-[12px] text-red-600">
-                                            Không có serial/IMEI khả dụng để xuất hủy.
-                                        </div>
                                         <div v-else>
-                                            <div class="mb-2 text-[11px] text-green-600">
-                                                Tìm thấy {{ item.serials.length }} serial/IMEI khả dụng
+                                            <input
+                                                v-model="item.serial_search"
+                                                type="text"
+                                                class="mb-2 w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-[12px] outline-none focus:border-blue-500"
+                                                placeholder="T?m serial/IMEI..."
+                                            />
+
+                                            <div v-if="!item.serials || item.serials.length === 0" class="text-[12px] text-red-600">
+                                                Kh?ng c? serial/IMEI kh? d?ng ?? xu?t h?y.
                                             </div>
-                                            <div class="flex max-h-32 flex-wrap gap-2 overflow-auto">
-                                                <button
-                                                    v-for="serial in item.serials"
-                                                    :key="serial.id"
-                                                    type="button"
-                                                    class="rounded border px-2 py-1 text-[12px] font-medium transition-colors"
-                                                    :class="isSerialSelected(item, serial)
-                                                        ? 'border-blue-500 bg-blue-600 text-white'
-                                                        : 'border-gray-300 bg-white text-gray-700 hover:border-blue-400 hover:text-blue-700'"
-                                                    @click="toggleSerial(item, serial)"
-                                                >
-                                                    {{ serialLabel(serial) }}
-                                                </button>
+
+                                            <div v-else>
+                                                <div class="mb-2 text-[11px] text-green-600">
+                                                    T?m th?y {{ item.serials.length }} serial/IMEI kh? d?ng
+                                                    <span v-if="visibleSerialsForItem(item).length < item.serials.length" class="text-gray-500">
+                                                        ? ?ang hi?n th? {{ visibleSerialsForItem(item).length }} k?t qu?, h?y g? ?? l?c nhanh.
+                                                    </span>
+                                                </div>
+                                                <div class="flex max-h-40 flex-wrap gap-2 overflow-auto">
+                                                    <button
+                                                        v-for="serial in visibleSerialsForItem(item)"
+                                                        :key="serial.id"
+                                                        type="button"
+                                                        class="rounded border px-2 py-1 text-[12px] font-medium transition-colors"
+                                                        :class="isSerialSelected(item, serial)
+                                                            ? 'border-blue-500 bg-blue-600 text-white'
+                                                            : 'border-gray-300 bg-white text-gray-700 hover:border-blue-400 hover:text-blue-700'"
+                                                        @click="toggleSerial(item, serial)"
+                                                    >
+                                                        {{ serialLabel(serial) }}
+                                                    </button>
+                                                </div>
                                             </div>
                                         </div>
-
                                         <div class="mt-2 text-[11px] text-gray-500">
                                             Phiếu hoàn thành yêu cầu số serial/IMEI được chọn đúng bằng số lượng hủy.
                                         </div>
@@ -562,21 +586,13 @@ const save = (status) => {
                                 </option>
                             </select>
                         </div>
-                        <div class="grid w-[170px] grid-cols-[1fr_64px] gap-1">
-                            <input
-                                v-model="transactionDateDay"
-                                type="date"
-                                class="rounded border border-gray-300 bg-white px-2 py-1.5 text-[12px] text-gray-700 shadow-sm outline-none hover:border-blue-400 focus:border-blue-500"
-                                title="Ngày xuất hủy"
-                            />
-                            <input
-                                v-model="transactionDateTime"
-                                type="time"
-                                step="60"
-                                class="rounded border border-gray-300 bg-white px-2 py-1.5 text-[12px] text-gray-700 shadow-sm outline-none hover:border-blue-400 focus:border-blue-500"
-                                title="Giờ xuất hủy"
-                            />
-                        </div>
+                        <DateTimePicker
+                            v-model="transactionDate"
+                            compact
+                            class="w-[170px]"
+                            input-class="text-[12px] py-1.5"
+                            placeholder="dd/MM/yyyy HH:mm"
+                        />
                     </div>
 
                     <div class="p-4 flex flex-col gap-4 bg-white border-b border-gray-200 flex-1">
