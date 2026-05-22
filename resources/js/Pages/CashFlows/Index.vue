@@ -1281,7 +1281,7 @@ const printFlow = (flow) => {
             class="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/60 transition-opacity"
         >
             <div
-                class="bg-white rounded-md shadow-2xl w-full max-w-[900px] flex flex-col max-h-[90vh] mx-4"
+                class="bg-white rounded-md shadow-2xl w-[96vw] max-w-[1200px] flex flex-col max-h-[92vh] mx-4"
                 @click.stop
             >
                 <div
@@ -1314,11 +1314,11 @@ const printFlow = (flow) => {
 
                 <form
                     @submit.prevent="submitForm"
-                    class="p-6 space-y-4 overflow-y-auto"
+                    class="p-7 space-y-5 overflow-y-auto"
                 >
-                    <div class="flex flex-col md:flex-row gap-8">
+                    <div class="flex flex-col xl:flex-row gap-10">
                         <!-- Left cols -->
-                        <div class="flex-1 grid grid-cols-2 gap-x-8 gap-y-5">
+                        <div class="flex-[1.45] grid grid-cols-2 gap-x-10 gap-y-5">
                             <div class="flex items-center">
                                 <span
                                     class="w-32 text-gray-700 font-medium text-[13px]"
@@ -1485,7 +1485,7 @@ const printFlow = (flow) => {
 
                         <!-- Right col for Notes -->
                         <div
-                            class="flex-1 md:max-w-xs border-l border-gray-200 pl-8"
+                            class="flex-1 xl:max-w-[380px] xl:border-l border-gray-200 xl:pl-8"
                         >
                             <textarea
                                 v-model="form.description"
