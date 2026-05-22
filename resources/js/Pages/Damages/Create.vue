@@ -2,6 +2,7 @@
 import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, watch } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
+import axios from 'axios';
 
 const props = defineProps({
     products: Array,
@@ -36,30 +37,34 @@ const toBool = (value) => value === true || value === 1 || value === '1';
 const lineTotal = (item) => Math.max(0, toInt(item.qty)) * toNumber(item.cost_price);
 const isSerialProduct = (item) => Boolean(item?.has_serial);
 
-const withTimeout = (promise, ms, message) => {
-    let timer;
-    const timeout = new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(message)), ms);
-    });
-
-    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-};
+const serialLoadControllers = new WeakMap();
+const serialLoadTimeoutMs = 8000;
 
 const loadSerialsForItem = async (item, force = false) => {
     if (!item || !item.product_id || !item.has_serial || (item.serial_loading && !force)) {
         return;
     }
 
+    if (force) {
+        serialLoadControllers.get(item)?.abort();
+    }
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), serialLoadTimeoutMs);
+
+    serialLoadControllers.set(item, controller);
     item.serial_loading = true;
     item.serial_error = '';
 
     try {
-        const response = await withTimeout(
-            axios.get(`/api/products/${item.product_id}/serials`),
-            8000,
-            'Tải serial/IMEI quá thời gian.'
-        );
-        const serials = Array.isArray(response.data) ? response.data : [];
+        const response = await axios.get(`/api/products/${item.product_id}/serials`, {
+            signal: controller.signal,
+            headers: { Accept: 'application/json' },
+        });
+        const payload = response.data;
+        const serials = Array.isArray(payload)
+            ? payload
+            : (Array.isArray(payload?.data) ? payload.data : []);
 
         item.serials = serials;
 
@@ -69,7 +74,9 @@ const loadSerialsForItem = async (item, force = false) => {
     } catch (error) {
         console.error('Lỗi tải serial/IMEI khả dụng:', error);
 
-        if (error.response?.status === 403) {
+        if (error.code === 'ERR_CANCELED' || error.name === 'CanceledError' || error.name === 'AbortError') {
+            item.serial_error = 'Tải serial/IMEI quá thời gian. Vui lòng bấm Tải lại.';
+        } else if (error.response?.status === 403) {
             item.serial_error = 'Bạn không có quyền tải serial/IMEI.';
         } else if (error.response?.status === 404) {
             item.serial_error = 'Không tìm thấy sản phẩm để tải serial/IMEI.';
@@ -79,6 +86,10 @@ const loadSerialsForItem = async (item, force = false) => {
 
         item.serials = [];
     } finally {
+        window.clearTimeout(timeoutId);
+        if (serialLoadControllers.get(item) === controller) {
+            serialLoadControllers.delete(item);
+        }
         item.serial_loading = false;
     }
 };

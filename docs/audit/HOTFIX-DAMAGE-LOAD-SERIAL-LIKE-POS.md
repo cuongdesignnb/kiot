@@ -21,8 +21,12 @@
 - `Damages/Create.vue` chi goi:
   - `GET /api/products/${item.product_id}/serials`
 - Bo logic goi `/products/${item.product_id}/serials` va `/damages/products/${item.product_id}/serials` trong frontend.
-- Giu timeout 8 giay va `finally` de khong ket UI o trang thai dang tai.
+- Import `axios` truc tiep nhu POS thay vi phu thuoc global.
+- Dung `AbortController` timeout 8 giay de huy request that, khong chi `Promise.race`.
+- Nut tai lai huy request dang treo truoc khi goi lai endpoint POS.
+- Giu `finally` de khong ket UI o trang thai dang tai.
 - Loi 403/404/network hien message ro.
+- Timeout hien message `Tai serial/IMEI qua thoi gian. Vui long bam Tai lai.`
 - Neu endpoint tra mang rong, hien message khong co serial kha dung.
 - Label serial uu tien `serial.label`, sau do `serial_number`, `imei`, `code`, `#id`.
 - UI hien `Tim thay X serial/IMEI kha dung` khi co ket qua.
@@ -44,7 +48,7 @@
 ## Tests
 - `php artisan test tests/Feature/Damage/RR09DamageStockTest.php`: blocked in local environment. MySQL connection refused with `SQLSTATE[HY000] [2002] No connection could be made because the target machine actively refused it`; 5 tests failed before assertions.
 - `php artisan test tests/Feature/Damage/DamageCreateMetaTest.php`: blocked in local environment. Same MySQL connection refused error; 5 tests failed before assertions.
-- `npm run build`: pass, Vite build completed in 7.01s.
+- `npm run build`: pass, Vite build completed in 7.60s.
 
 ## Manual QA
 - POS load serial duoc voi cung san pham.
