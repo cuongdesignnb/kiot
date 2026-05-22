@@ -55,15 +55,53 @@ const mergeUnique = (defaults, saved) => {
     return [...set.values()];
 };
 
-const cashFlowCategoryFilterOptions = computed(() => {
-    const saved = (props.filterOptions?.categories || []).map((option) =>
-        typeof option === "string" ? option : option?.value
-    );
+const receiptCategories = ref(props.savedReceiptCategories || []);
+const paymentCategories = ref(props.savedPaymentCategories || []);
 
-    return mergeUnique(
-        [...defaultReceiptCategories, ...defaultPaymentCategories],
-        saved
-    ).map((category) => ({ value: category, label: category }));
+const receiptCategoryOptions = computed(() =>
+    mergeUnique(defaultReceiptCategories, receiptCategories.value)
+);
+
+const paymentCategoryOptions = computed(() =>
+    mergeUnique(defaultPaymentCategories, paymentCategories.value)
+);
+
+const selectedTypeFilter = computed(() => {
+    const value = filters.type;
+    if (Array.isArray(value)) return value;
+    return value ? [value] : [];
+});
+
+const cashFlowCategoryFilterOptions = computed(() => {
+    const types = selectedTypeFilter.value;
+
+    const receipt = receiptCategoryOptions.value.map((cat) => ({
+        key: `receipt-${cat}`,
+        value: cat,
+        label: `Thu - ${cat}`,
+        rawLabel: cat,
+        type: "receipt",
+        group: "Loại thu",
+    }));
+
+    const payment = paymentCategoryOptions.value.map((cat) => ({
+        key: `payment-${cat}`,
+        value: cat,
+        label: `Chi - ${cat}`,
+        rawLabel: cat,
+        type: "payment",
+        group: "Loại chi",
+    }));
+
+    if (types.length === 1 && types[0] === "receipt") {
+        return receipt.map((o) => ({ ...o, label: o.rawLabel }));
+    }
+
+    if (types.length === 1 && types[0] === "payment") {
+        return payment.map((o) => ({ ...o, label: o.rawLabel }));
+    }
+
+    return [...receipt, ...payment];
 });
 
 const sidebarConfig = computed(() => [
@@ -77,7 +115,7 @@ const sidebarConfig = computed(() => [
     },
     { key: "payment_method", type: "select", label: "Quỹ tiền", options: props.filterOptions?.paymentMethods || [], placeholder: "Tất cả (Tổng quỹ)", zone: "quick" },
     { key: "type", type: "checkbox", label: "Loại chứng từ", options: props.filterOptions?.types || [], zone: "main" },
-    { key: "category", type: "select", label: "Loại thu chi", options: cashFlowCategoryFilterOptions.value, placeholder: "-- Tất cả --", zone: "main" },
+    { key: "category", type: "select", label: "Loại thu/chi", options: cashFlowCategoryFilterOptions.value, placeholder: "-- Tất cả --", zone: "main" },
     { key: "status", type: "checkbox", label: "Trạng thái", options: props.filterOptions?.statuses || [], zone: "main" },
     { key: "bank_account_id", type: "select", label: "Tài khoản NH", options: props.filterOptions?.bankAccounts || [], placeholder: "Tất cả", zone: "advanced" },
     { key: "target_type", type: "select", label: "Đối tượng", options: props.filterOptions?.targetTypes || [], placeholder: "Tất cả", zone: "advanced" },
@@ -103,10 +141,8 @@ const form = useForm({
 const selectedFlowObj = ref(null);
 const getSelectedFlow = () => selectedFlowObj.value;
 
-const receiptCategories = ref(mergeUnique(defaultReceiptCategories, props.savedReceiptCategories));
-const paymentCategories = ref(mergeUnique(defaultPaymentCategories, props.savedPaymentCategories));
 const currentCategoryOptions = computed(() =>
-    form.type === "receipt" ? receiptCategories.value : paymentCategories.value
+    form.type === "receipt" ? receiptCategoryOptions.value : paymentCategoryOptions.value
 );
 const adKeywords = [
     "fb ads",
@@ -149,6 +185,23 @@ const activeCategoryFilter = computed(() => {
     const value = filters.category;
     return Array.isArray(value) ? value[0] : value;
 });
+
+watch(
+    () => filters.type,
+    () => {
+        const currentCategory = Array.isArray(filters.category)
+            ? filters.category[0]
+            : filters.category;
+
+        if (!currentCategory) return;
+
+        const allowed = cashFlowCategoryFilterOptions.value.map((o) => o.value);
+
+        if (!allowed.includes(currentCategory)) {
+            filters.category = "";
+        }
+    },
+);
 const targetTypes = [
     "Khách hàng",
     "Nhà cung cấp",
@@ -998,9 +1051,7 @@ const printFlow = (flow) => {
                                         }}
                                     </option>
                                     <option
-                                        v-for="cat in modalType === 'receipt'
-                                            ? receiptCategories
-                                            : paymentCategories"
+                                        v-for="cat in currentCategoryOptions"
                                         :key="cat"
                                         :value="cat"
                                     >

@@ -58,6 +58,20 @@ class CashFlowController extends Controller
             ],
             'bankAccounts' => BankAccount::where('status', 'active')->orderBy('bank_name')->get(['id', 'bank_name as name'])->map(fn($b) => ['value' => $b->id, 'label' => $b->name]),
             'categories' => collect(array_merge($savedReceiptCategories, $savedPaymentCategories))->unique()->values()->map(fn($c) => ['value' => $c, 'label' => $c]),
+            'categoryGroups' => [
+                'receipt' => collect($savedReceiptCategories)->unique()->values()->map(fn($c) => [
+                    'value' => $c,
+                    'label' => $c,
+                    'type' => 'receipt',
+                    'group' => 'Loại thu',
+                ]),
+                'payment' => collect($savedPaymentCategories)->unique()->values()->map(fn($c) => [
+                    'value' => $c,
+                    'label' => $c,
+                    'type' => 'payment',
+                    'group' => 'Loại chi',
+                ]),
+            ],
             'targetTypes' => [
                 ['value' => 'customer', 'label' => 'Khách hàng'],
                 ['value' => 'supplier', 'label' => 'Nhà cung cấp'],

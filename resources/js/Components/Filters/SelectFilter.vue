@@ -26,7 +26,7 @@ const emit = defineEmits(["update:modelValue"]);
             class="w-full border border-gray-300 rounded px-2 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
         >
             <option value="">{{ placeholder }}</option>
-            <option v-for="opt in options" :key="opt.value" :value="opt.value">
+            <option v-for="opt in options" :key="opt.key || opt.value" :value="opt.value">
                 {{ opt.label }}
             </option>
         </select>
