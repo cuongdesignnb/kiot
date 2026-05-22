@@ -192,4 +192,60 @@ class DamageCreateMetaTest extends TestCase
 
         $this->assertSame([$sellable->id], $ids);
     }
+
+    public function test_pos_product_serials_endpoint_used_by_damage_returns_only_sellable_serials(): void
+    {
+        $admin = User::create([
+            'name' => 'Damage POS Serial Admin',
+            'email' => 'damage-pos-serial-' . uniqid() . '@test.local',
+            'password' => bcrypt('password'),
+            'role_id' => null,
+            'status' => 'active',
+        ]);
+
+        $category = Category::firstOrCreate(['name' => 'Damage POS Serial Category']);
+        $product = Product::create([
+            'sku' => 'DAMAGE-POS-SERIAL-' . uniqid(),
+            'name' => 'Damage POS Serial Product',
+            'cost_price' => 100000,
+            'retail_price' => 150000,
+            'stock_quantity' => 1,
+            'inventory_total_cost' => 100000,
+            'is_active' => true,
+            'has_serial' => true,
+            'category_id' => $category->id,
+        ]);
+
+        $sellable = SerialImei::create([
+            'product_id' => $product->id,
+            'serial_number' => 'DAMAGE-POS-SERIAL-OK-' . uniqid(),
+            'status' => 'in_stock',
+            'cost_price' => 100000,
+        ]);
+
+        foreach (['sold', 'defective', 'dismantled', 'in_transit', 'warranty', 'returned'] as $status) {
+            SerialImei::create([
+                'product_id' => $product->id,
+                'serial_number' => 'DAMAGE-POS-SERIAL-' . strtoupper($status) . '-' . uniqid(),
+                'status' => $status,
+                'cost_price' => 100000,
+            ]);
+        }
+
+        SerialImei::create([
+            'product_id' => $product->id,
+            'serial_number' => 'DAMAGE-POS-SERIAL-REPAIRING-' . uniqid(),
+            'status' => 'in_stock',
+            'repair_status' => 'repairing',
+            'cost_price' => 100000,
+        ]);
+
+        $response = $this->actingAs($admin)
+            ->getJson(route('api.products.serials', $product));
+
+        $response->assertOk();
+        $ids = collect($response->json())->pluck('id')->all();
+
+        $this->assertSame([$sellable->id], $ids);
+    }
 }

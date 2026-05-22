@@ -36,13 +36,6 @@ const toBool = (value) => value === true || value === 1 || value === '1';
 const lineTotal = (item) => Math.max(0, toInt(item.qty)) * toNumber(item.cost_price);
 const isSerialProduct = (item) => Boolean(item?.has_serial);
 
-const serialsFromResponse = (response) => {
-    const payload = response?.data;
-    if (Array.isArray(payload)) return payload;
-    if (Array.isArray(payload?.data)) return payload.data;
-    return [];
-};
-
 const withTimeout = (promise, ms, message) => {
     let timer;
     const timeout = new Promise((_, reject) => {
@@ -61,23 +54,29 @@ const loadSerialsForItem = async (item, force = false) => {
     item.serial_error = '';
 
     try {
-        let serials = [];
-
-        try {
-            const response = await withTimeout(
-                axios.get(`/damages/products/${item.product_id}/serials`),
-                8000,
-                'Tải serial từ Damage API quá thời gian.'
-            );
-            serials = serialsFromResponse(response);
-        } catch (primaryError) {
-            throw primaryError;
-        }
+        const response = await withTimeout(
+            axios.get(`/api/products/${item.product_id}/serials`),
+            8000,
+            'Tải serial/IMEI quá thời gian.'
+        );
+        const serials = Array.isArray(response.data) ? response.data : [];
 
         item.serials = serials;
+
+        if (serials.length === 0) {
+            item.serial_error = 'Không có serial/IMEI khả dụng để xuất hủy. Vui lòng kiểm tra trạng thái serial trong hàng hóa.';
+        }
     } catch (error) {
         console.error('Lỗi tải serial/IMEI khả dụng:', error);
-        item.serial_error = 'Không tải được serial/IMEI. Vui lòng kiểm tra quyền hoặc dữ liệu serial còn trong kho.';
+
+        if (error.response?.status === 403) {
+            item.serial_error = 'Bạn không có quyền tải serial/IMEI.';
+        } else if (error.response?.status === 404) {
+            item.serial_error = 'Không tìm thấy sản phẩm để tải serial/IMEI.';
+        } else {
+            item.serial_error = 'Không tải được serial/IMEI. Vui lòng thử bấm Tải lại.';
+        }
+
         item.serials = [];
     } finally {
         item.serial_loading = false;
@@ -125,7 +124,8 @@ const toggleSerial = (item, serial) => {
     item.qty = item.serial_ids.length || 1;
 };
 
-const serialLabel = (serial) => serial.serial_number || serial.imei || serial.code || `#${serial.id}`;
+const serialLabel = (serial) =>
+    serial.label || serial.serial_number || serial.imei || serial.code || `#${serial.id}`;
 
 const actorOptions = computed(() => {
     if (Array.isArray(props.damageActorOptions) && props.damageActorOptions.length > 0) {
@@ -459,19 +459,24 @@ const save = (status) => {
                                         <div v-else-if="!item.serials || item.serials.length === 0" class="text-[12px] text-red-600">
                                             Không có serial/IMEI khả dụng để xuất hủy.
                                         </div>
-                                        <div v-else class="flex max-h-32 flex-wrap gap-2 overflow-auto">
-                                            <button
-                                                v-for="serial in item.serials"
-                                                :key="serial.id"
-                                                type="button"
-                                                class="rounded border px-2 py-1 text-[12px] font-medium transition-colors"
-                                                :class="isSerialSelected(item, serial)
-                                                    ? 'border-blue-500 bg-blue-600 text-white'
-                                                    : 'border-gray-300 bg-white text-gray-700 hover:border-blue-400 hover:text-blue-700'"
-                                                @click="toggleSerial(item, serial)"
-                                            >
-                                                {{ serialLabel(serial) }}
-                                            </button>
+                                        <div v-else>
+                                            <div class="mb-2 text-[12px] font-medium text-green-700">
+                                                Tìm thấy {{ item.serials.length }} serial/IMEI khả dụng
+                                            </div>
+                                            <div class="flex max-h-32 flex-wrap gap-2 overflow-auto">
+                                                <button
+                                                    v-for="serial in item.serials"
+                                                    :key="serial.id"
+                                                    type="button"
+                                                    class="rounded border px-2 py-1 text-[12px] font-medium transition-colors"
+                                                    :class="isSerialSelected(item, serial)
+                                                        ? 'border-blue-500 bg-blue-600 text-white'
+                                                        : 'border-gray-300 bg-white text-gray-700 hover:border-blue-400 hover:text-blue-700'"
+                                                    @click="toggleSerial(item, serial)"
+                                                >
+                                                    {{ serialLabel(serial) }}
+                                                </button>
+                                            </div>
                                         </div>
 
                                         <div class="mt-2 text-[11px] text-gray-500">
