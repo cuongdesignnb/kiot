@@ -12,6 +12,7 @@ use App\Models\Category;
 use App\Models\Branch;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
+use App\Models\InvoiceItemSerial;
 use App\Models\Purchase;
 use App\Models\PurchaseItem;
 use App\Models\OrderReturn;
@@ -19,6 +20,7 @@ use App\Models\ReturnItem;
 use App\Models\StockTake;
 use App\Models\StockTransfer;
 use App\Models\Damage;
+use App\Models\SerialImei;
 use App\Services\DocumentLinkResolver;
 
 /**
@@ -253,6 +255,88 @@ class Step247StockCardDocumentResolverTest extends TestCase
         $res->assertJsonPath('source_document.can_open', true);
         $res->assertJsonPath('source_document.code', $invoice->code);
         $this->assertStringContainsString('/invoices/' . $invoice->id, $res->json('source_document.open_url'));
+    }
+
+
+    public function testDocumentDetailInvoiceIncludesItemSerialsAndSerialCount(): void
+    {
+        $admin = $this->admin();
+        $this->actingAs($admin);
+
+        $product = $this->makeProduct();
+        $product->update(['has_serial' => true]);
+        $cust = Customer::create(['code' => 'KH-' . uniqid(), 'name' => 'KH', 'is_customer' => true]);
+        $invoice = Invoice::create([
+            'code'       => 'HD-247s-' . uniqid(),
+            'customer_id'=> $cust->id,
+            'subtotal'   => 200000,
+            'total'      => 200000,
+            'status'     => 'Hoàn thành',
+        ]);
+        $item = InvoiceItem::create([
+            'invoice_id' => $invoice->id,
+            'product_id' => $product->id,
+            'quantity'   => 2,
+            'price'      => 100000,
+            'subtotal'   => 200000,
+        ]);
+
+        $serial = SerialImei::create([
+            'product_id' => $product->id,
+            'serial_number' => 'IMEI-247-' . uniqid(),
+            'status' => 'sold',
+            'invoice_id' => $invoice->id,
+            'cost_price' => 100000,
+        ]);
+
+        InvoiceItemSerial::create([
+            'invoice_item_id' => $item->id,
+            'serial_imei_id' => $serial->id,
+            'serial_number' => $serial->serial_number,
+            'cost_price' => 100000,
+        ]);
+
+        $res = $this->getJson('/products/document-detail?type=invoice&id=' . $invoice->id);
+        $res->assertOk();
+        $res->assertJsonPath('items.0.serials.0.serial_number', $serial->serial_number);
+        $res->assertJsonPath('items.0.serial_count', 1);
+        $res->assertJsonPath('items.0.serials.0.legacy', false);
+    }
+
+    public function testDocumentDetailInvoiceFallsBackToLegacySerialStringWhenSnapshotMissing(): void
+    {
+        if (!\Illuminate\Support\Facades\Schema::hasColumn('invoice_items', 'serial')) {
+            $this->markTestSkipped('Current test DB schema has no invoice_items.serial column for legacy fallback verification.');
+        }
+
+        $admin = $this->admin();
+        $this->actingAs($admin);
+
+        $product = $this->makeProduct();
+        $product->update(['has_serial' => true]);
+        $cust = Customer::create(['code' => 'KH-' . uniqid(), 'name' => 'KH', 'is_customer' => true]);
+        $invoice = Invoice::create([
+            'code'       => 'HD-247l-' . uniqid(),
+            'customer_id'=> $cust->id,
+            'subtotal'   => 200000,
+            'total'      => 200000,
+            'status'     => 'Hoàn thành',
+        ]);
+        InvoiceItem::create([
+            'invoice_id' => $invoice->id,
+            'product_id' => $product->id,
+            'quantity'   => 2,
+            'price'      => 100000,
+            'subtotal'   => 200000,
+            'serial'     => 'SER-LEGACY-1, SER-LEGACY-2',
+        ]);
+
+        $res = $this->getJson('/products/document-detail?type=invoice&id=' . $invoice->id);
+        $res->assertOk();
+        $res->assertJsonPath('items.0.serial_count', 2);
+        $res->assertJsonPath('items.0.serials.0.serial_number', 'SER-LEGACY-1');
+        $res->assertJsonPath('items.0.serials.1.serial_number', 'SER-LEGACY-2');
+        $res->assertJsonPath('items.0.serials.0.legacy', true);
     }
 
     public function test_inventory_card_emits_doc_type_and_doc_id(): void

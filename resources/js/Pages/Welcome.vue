@@ -197,11 +197,17 @@ const closeDropdown = () => {
 const showDocPopup = ref(false);
 const docLoading = ref(false);
 const docDetail = ref(null);
+const openDocSerialIndex = ref(null);
+
+const toggleDocItemSerials = (idx) => {
+    openDocSerialIndex.value = openDocSerialIndex.value === idx ? null : idx;
+};
 
 const openDocPopup = async (docType, docId) => {
     showDocPopup.value = true;
     docLoading.value = true;
     docDetail.value = null;
+    openDocSerialIndex.value = null;
     try {
         const res = await axios.get("/products/document-detail", {
             params: { type: docType, id: docId },
@@ -217,6 +223,7 @@ const openDocPopup = async (docType, docId) => {
 const closeDocPopup = () => {
     showDocPopup.value = false;
     docDetail.value = null;
+    openDocSerialIndex.value = null;
 };
 
 const toggleExpand = async (product) => {
@@ -2035,6 +2042,18 @@ const formatDate = (val) => {
                                                 >
                                                     {{ item.product_name }}
                                                 </div>
+                                                <div
+                                                    v-if="(item.serial_count || item.serials?.length || 0) > 0"
+                                                    class="mt-1 text-[12px]"
+                                                >
+                                                    <button
+                                                        type="button"
+                                                        class="text-blue-600 hover:underline font-medium"
+                                                        @click.stop="toggleDocItemSerials(idx)"
+                                                    >
+                                                        {{ item.serial_count || item.serials?.length || 0 }} serial/IMEI. Xem chi tiết
+                                                    </button>
+                                                </div>
                                             </td>
                                             <td class="p-3 text-right">
                                                 {{ item.quantity }}
@@ -2069,6 +2088,24 @@ const formatDate = (val) => {
                                                         item.subtotal,
                                                     )
                                                 }}
+                                            </td>
+                                        </tr>
+                                        <tr v-if="openDocSerialIndex === idx && item.serials?.length">
+                                            <td colspan="7" class="px-3 pb-3">
+                                                <div class="rounded border border-blue-100 bg-blue-50 p-3 text-[12px]">
+                                                    <div class="mb-2 font-semibold text-gray-700">
+                                                        Có {{ item.serials.length }} serial/IMEI
+                                                    </div>
+                                                    <div class="flex flex-wrap gap-2">
+                                                        <span
+                                                            v-for="serial in item.serials"
+                                                            :key="serial.id || serial.serial_number"
+                                                            class="rounded bg-white border border-blue-200 px-2 py-1 font-semibold text-gray-700"
+                                                        >
+                                                            {{ serial.serial_number }}
+                                                        </span>
+                                                    </div>
+                                                </div>
                                             </td>
                                         </tr>
                                     </template>

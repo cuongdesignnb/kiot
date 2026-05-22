@@ -836,7 +836,7 @@ class ProductController extends Controller
 
         switch ($type) {
             case 'invoice':
-                $doc = \App\Models\Invoice::with(['items.product', 'customer'])->find($id);
+                $doc = \App\Models\Invoice::with(['items.product', 'items.serials', 'customer'])->find($id);
                 if (!$doc) return response()->json(['error' => 'Not found'], 404);
                 return response()->json([
                     'source_document' => $source,
@@ -851,22 +851,47 @@ class ProductController extends Controller
                     'price_book' => $doc->price_book_name ?? 'Bảng giá chung',
                     'date' => $doc->created_at?->format('d/m/Y H:i'),
                     'note' => $doc->note,
-                    'items' => $doc->items->map(fn($i) => [
-                        'product_code' => $i->product->sku ?? '',
-                        'product_name' => $i->product->name ?? '',
-                        'has_serial' => $i->product->has_serial ?? false,
-                        'quantity' => $i->quantity,
-                        'price' => (float) $i->price,
-                        'discount' => (float) ($i->discount ?? 0),
-                        'sell_price' => (float) ($i->price - ($i->discount ?? 0)),
-                        'subtotal' => (float) $i->subtotal,
-                    ]),
+                    'items' => $doc->items->map(function ($i) {
+                        $serials = $i->serials
+                            ->map(fn ($s) => [
+                                'id' => $s->id,
+                                'serial_imei_id' => $s->serial_imei_id,
+                                'serial_number' => $s->serial_number,
+                                'cost_price' => (float) ($s->cost_price ?? 0),
+                                'legacy' => false,
+                            ])
+                            ->values();
+
+                        if ($serials->isEmpty() && !empty($i->serial)) {
+                            $serials = collect(array_filter(array_map('trim', explode(',', $i->serial))))
+                                ->map(fn ($serialNumber) => [
+                                    'id' => null,
+                                    'serial_imei_id' => null,
+                                    'serial_number' => $serialNumber,
+                                    'cost_price' => 0,
+                                    'legacy' => true,
+                                ])
+                                ->values();
+                        }
+
+                        return [
+                            'product_code' => $i->product->sku ?? '',
+                            'product_name' => $i->product->name ?? '',
+                            'has_serial' => $i->product->has_serial ?? false,
+                            'quantity' => $i->quantity,
+                            'price' => (float) $i->price,
+                            'discount' => (float) ($i->discount ?? 0),
+                            'sell_price' => (float) ($i->price - ($i->discount ?? 0)),
+                            'subtotal' => (float) $i->subtotal,
+                            'serials' => $serials,
+                            'serial_count' => $serials->count(),
+                        ];
+                    }),
                     'subtotal' => (float) $doc->subtotal,
                     'discount' => (float) ($doc->discount ?? 0),
                     'total' => (float) $doc->total,
                     'customer_paid' => (float) ($doc->customer_paid ?? 0),
                 ]);
-
             case 'purchase':
                 $doc = \App\Models\Purchase::with(['items.product', 'supplier', 'user'])->find($id);
                 if (!$doc) return response()->json(['error' => 'Not found'], 404);
