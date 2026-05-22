@@ -57,14 +57,19 @@ const loadSerialsForItem = async (item, force = false) => {
     item.serial_error = '';
 
     try {
+        console.info('[Damage serial] loading product', item.product_id);
+
         const response = await axios.get(`/api/products/${item.product_id}/serials`, {
             signal: controller.signal,
-            headers: { Accept: 'application/json' },
+            headers: {
+                Accept: 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+            },
         });
-        const payload = response.data;
-        const serials = Array.isArray(payload)
-            ? payload
-            : (Array.isArray(payload?.data) ? payload.data : []);
+
+        console.info('[Damage serial] response', response.status, response.data);
+
+        const serials = Array.isArray(response.data) ? response.data : [];
 
         item.serials = serials;
 
@@ -72,7 +77,7 @@ const loadSerialsForItem = async (item, force = false) => {
             item.serial_error = 'Không có serial/IMEI khả dụng để xuất hủy. Vui lòng kiểm tra trạng thái serial trong hàng hóa.';
         }
     } catch (error) {
-        console.error('Lỗi tải serial/IMEI khả dụng:', error);
+        console.error('[Damage serial] error', error);
 
         if (error.code === 'ERR_CANCELED' || error.name === 'CanceledError' || error.name === 'AbortError') {
             item.serial_error = 'Tải serial/IMEI quá thời gian. Vui lòng bấm Tải lại.';
@@ -80,6 +85,8 @@ const loadSerialsForItem = async (item, force = false) => {
             item.serial_error = 'Bạn không có quyền tải serial/IMEI.';
         } else if (error.response?.status === 404) {
             item.serial_error = 'Không tìm thấy sản phẩm để tải serial/IMEI.';
+        } else if (error.response?.status >= 500) {
+            item.serial_error = 'Máy chủ lỗi khi tải serial/IMEI. Vui lòng kiểm tra log Laravel.';
         } else {
             item.serial_error = 'Không tải được serial/IMEI. Vui lòng thử bấm Tải lại.';
         }
@@ -471,7 +478,7 @@ const save = (status) => {
                                             Không có serial/IMEI khả dụng để xuất hủy.
                                         </div>
                                         <div v-else>
-                                            <div class="mb-2 text-[12px] font-medium text-green-700">
+                                            <div class="mb-2 text-[11px] text-green-600">
                                                 Tìm thấy {{ item.serials.length }} serial/IMEI khả dụng
                                             </div>
                                             <div class="flex max-h-32 flex-wrap gap-2 overflow-auto">
