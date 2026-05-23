@@ -1,6 +1,6 @@
 <script setup>
 import { formatVND as formatCurrency } from '@/utils/money';
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onMounted, watch, onBeforeUnmount } from 'vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import DateTimePicker from '@/Components/DateTimePicker.vue';
 import QuickCreateProductModal from '@/Components/QuickCreateProductModal.vue';
@@ -115,12 +115,164 @@ const removeOtherCost = (index) => {
 };
 const totalOtherCosts = computed(() => otherCosts.value.reduce((s, c) => s + (Number(c.amount) || 0), 0));
 
+const PURCHASE_DRAFT_KEY = 'kiot.purchase.create.draft.v1';
+
+const isRestoringDraft = ref(false);
+const lastDraftSavedAt = ref(null);
+const showRestoreDraftBanner = ref(false);
+const pendingDraft = ref(null);
+
+const buildDraftSnapshot = () => ({
+    version: 1,
+    saved_at: new Date().toISOString(),
+    purchaseCode: props.purchaseCode,
+    selectedSupplierId: selectedSupplierId.value || '',
+    supplierQuery: supplierQuery.value || '',
+    selectedEmployeeId: selectedEmployeeId.value || '',
+    purchaseDate: purchaseDate.value || '',
+    status: status.value || 'completed',
+    discount: Number(discount.value) || 0,
+    paidAmount: Number(paidAmount.value) || 0,
+    note: note.value || '',
+    paymentMethod: paymentMethod.value || 'cash',
+    bankAccountInfo: bankAccountInfo.value || '',
+    otherCosts: Array.isArray(otherCosts.value) ? otherCosts.value : [],
+    items: items.value.map((item) => ({
+        product_id: item.product_id,
+        sku: item.sku,
+        name: item.name,
+        has_serial: !!item.has_serial,
+        quantity: Number(item.quantity) || 0,
+        price: Number(item.price) || 0,
+        retail_price: Number(item.retail_price) || 0,
+        technician_price: Number(item.technician_price) || 0,
+        discount: Number(item.discount) || 0,
+        stock_quantity: Number(item.stock_quantity) || 0,
+        serials: Array.isArray(item.serials) ? [...item.serials] : [],
+        serialInput: item.serialInput || '',
+        showSerialArea: !!item.showSerialArea,
+        warranty_months: Number(item.warranty_months) || 0,
+    })),
+});
+
+const hasMeaningfulDraft = computed(() =>
+    items.value.length > 0 ||
+    !!selectedSupplierId.value ||
+    !!note.value ||
+    Number(discount.value) > 0 ||
+    Number(paidAmount.value) > 0 ||
+    otherCosts.value.length > 0
+);
+
+const saveBrowserDraft = (silent = false) => {
+    if (!hasMeaningfulDraft.value) return;
+
+    const snapshot = buildDraftSnapshot();
+    localStorage.setItem(PURCHASE_DRAFT_KEY, JSON.stringify(snapshot));
+    lastDraftSavedAt.value = new Date();
+
+    if (!silent) {
+        alert('Đã lưu nháp phiếu nhập trên trình duyệt.');
+    }
+};
+
+const clearBrowserDraft = () => {
+    localStorage.removeItem(PURCHASE_DRAFT_KEY);
+    pendingDraft.value = null;
+    showRestoreDraftBanner.value = false;
+    lastDraftSavedAt.value = null;
+};
+
+const restoreDraft = (draft) => {
+    if (!draft || draft.version !== 1) return;
+
+    isRestoringDraft.value = true;
+
+    selectedSupplierId.value = draft.selectedSupplierId || '';
+    supplierQuery.value = draft.supplierQuery || '';
+    selectedEmployeeId.value = draft.selectedEmployeeId || '';
+    purchaseDate.value = draft.purchaseDate || purchaseDate.value;
+    status.value = draft.status || 'completed';
+    discount.value = Number(draft.discount) || 0;
+    paidAmount.value = Number(draft.paidAmount) || 0;
+    note.value = draft.note || '';
+    paymentMethod.value = draft.paymentMethod || 'cash';
+    bankAccountInfo.value = draft.bankAccountInfo || '';
+    otherCosts.value = Array.isArray(draft.otherCosts) ? draft.otherCosts : [];
+    items.value = Array.isArray(draft.items) ? draft.items : [];
+
+    showRestoreDraftBanner.value = false;
+    pendingDraft.value = null;
+
+    setTimeout(() => {
+        isRestoringDraft.value = false;
+    }, 0);
+};
+
+let draftSaveTimer = null;
+
+watch(
+    [
+        items,
+        selectedSupplierId,
+        selectedEmployeeId,
+        purchaseDate,
+        status,
+        discount,
+        paidAmount,
+        note,
+        paymentMethod,
+        bankAccountInfo,
+        otherCosts,
+    ],
+    () => {
+        if (isRestoringDraft.value) return;
+        if (!hasMeaningfulDraft.value) return;
+
+        clearTimeout(draftSaveTimer);
+        draftSaveTimer = setTimeout(() => {
+            saveBrowserDraft(true);
+        }, 800);
+    },
+    { deep: true }
+);
+
+const beforeUnloadHandler = (e) => {
+    if (!hasMeaningfulDraft.value || submitRef.value) return;
+
+    saveBrowserDraft(true);
+    e.preventDefault();
+    e.returnValue = '';
+};
+
 onMounted(() => {
     if (props.purchaseOrderInfo) {
         selectedSupplierId.value = props.purchaseOrderInfo.supplier_id || '';
         discount.value = props.purchaseOrderInfo.discount || 0;
         items.value = props.purchaseOrderInfo.items || [];
     }
+
+    const rawDraft = localStorage.getItem(PURCHASE_DRAFT_KEY);
+    if (rawDraft) {
+        try {
+            const draft = JSON.parse(rawDraft);
+
+            if (draft?.items?.length || draft?.selectedSupplierId || draft?.note) {
+                pendingDraft.value = draft;
+                showRestoreDraftBanner.value = true;
+            }
+        } catch (e) {
+            console.warn('Invalid purchase draft, clearing', e);
+            localStorage.removeItem(PURCHASE_DRAFT_KEY);
+        }
+    }
+
+    window.addEventListener('beforeunload', beforeUnloadHandler);
+});
+
+onBeforeUnmount(() => {
+    window.removeEventListener('beforeunload', beforeUnloadHandler);
+    if (draftSaveTimer) clearTimeout(draftSaveTimer);
 });
 
 const filteredProducts = computed(() => {
@@ -264,6 +416,9 @@ const save = () => {
             warranty_months: item.warranty_months || 0,
         }))
     }, {
+        onSuccess: () => {
+            clearBrowserDraft();
+        },
         onError: (errors) => {
             const firstError = Object.values(errors)[0];
             if (firstError) alert(firstError);
@@ -298,6 +453,21 @@ const localBrands = ref([...(props.brands || [])]);
         <div v-if="page.props.flash?.success" class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 text-sm flex items-center gap-2">
             <svg class="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
             {{ page.props.flash.success }}
+        </div>
+
+        <!-- Restore Draft Banner -->
+        <div v-if="showRestoreDraftBanner && pendingDraft" class="bg-yellow-50 border-b border-yellow-200 px-4 py-3 text-[13px] text-yellow-800 flex items-center justify-between gap-3">
+            <div>
+                Có phiếu nhập nháp chưa lưu <span v-if="pendingDraft.saved_at" class="font-semibold">({{ new Date(pendingDraft.saved_at).toLocaleString('vi-VN') }})</span> — gồm {{ pendingDraft.items?.length || 0 }} dòng hàng.
+            </div>
+            <div class="flex items-center gap-2">
+                <button type="button" class="rounded bg-yellow-600 px-3 py-1.5 text-white font-semibold hover:bg-yellow-700" @click="restoreDraft(pendingDraft)">
+                    Khôi phục
+                </button>
+                <button type="button" class="rounded border border-yellow-300 px-3 py-1.5 text-yellow-800 hover:bg-yellow-100" @click="clearBrowserDraft">
+                    Bỏ qua
+                </button>
+            </div>
         </div>
 
         <!-- Header -->
@@ -639,7 +809,15 @@ const localBrands = ref([...(props.brands || [])]);
                 </div>
 
                 <!-- Action Button -->
-                <div class="p-4 bg-white border-t border-gray-200 shadow-[0_-2px_10px_rgba(0,0,0,0.05)]">
+                <div class="p-4 bg-white border-t border-gray-200 shadow-[0_-2px_10px_rgba(0,0,0,0.05)] space-y-2">
+                    <button
+                        type="button"
+                        @click="saveBrowserDraft(false)"
+                        :disabled="!hasMeaningfulDraft"
+                        class="w-full bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 font-bold py-2.5 rounded text-[14px] transition-colors disabled:opacity-50"
+                    >
+                        Lưu nháp
+                    </button>
                     <button @click="save" :disabled="submitRef" class="w-full bg-[#2ebc5b] hover:bg-[#209644] text-white font-bold py-3 rounded text-[15px] uppercase tracking-wide transition-colors flex justify-center items-center gap-2 disabled:opacity-50">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Hoàn thành
                     </button>
@@ -661,14 +839,23 @@ const localBrands = ref([...(props.brands || [])]);
             @created="(p) => { allProducts.push(p); selectProduct(p); }"
         />
 
-        <!-- STEP 24.13-FIX — Full supplier modal (same form as /suppliers create page). -->
         <QuickCreateCustomerModal
             :show="showCreateSupplierModal"
             api-url="/api/suppliers/quick-store"
             entity-label="nhà cung cấp"
             :is-supplier="true"
             @close="showCreateSupplierModal = false"
-            @created="(s) => { localSuppliers.push(s); selectedSupplierId = s.id; }"
+            @created="(s) => {
+                const exists = localSuppliers.some((item) => item.id === s.id);
+                if (!exists) localSuppliers.push(s);
+
+                selectedSupplierId = s.id;
+                supplierQuery = '';
+                showSupplierDropdown = false;
+                showCreateSupplierModal = false;
+
+                saveBrowserDraft(true);
+            }"
         />
 
     </div>
