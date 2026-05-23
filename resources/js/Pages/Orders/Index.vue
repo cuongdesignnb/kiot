@@ -5,6 +5,7 @@ import { Head, router, Link, usePage } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
+import MoneyInput from "@/Components/MoneyInput.vue";
 import SidebarFilter from "@/Components/Filters/SidebarFilter.vue";
 import { useFilters } from "@/composables/useFilters.js";
 
@@ -225,7 +226,7 @@ const submitProcessOrder = () => {
     isProcessing.value = true;
     processError.value = '';
     router.post(`/orders/${processingOrder.value.id}/process`, {
-        amount_paid: processAmountPaid.value,
+        amount_paid: Number(processAmountPaid.value) || 0,
         payment_method: processPaymentMethod.value,
     }, {
         preserveScroll: true,
@@ -1763,7 +1764,7 @@ const submitProcessOrder = () => {
                 <div class="p-5 space-y-4">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Khách thanh toán</label>
-                        <input type="number" v-model.number="processAmountPaid" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-blue-500 outline-none" />
+                        <MoneyInput v-model="processAmountPaid" :min="0" input-class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-blue-500 outline-none text-right" />
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Phương thức</label>

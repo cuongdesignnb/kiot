@@ -5,6 +5,7 @@ import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import axios from 'axios';
 import DateTimePicker from '@/Components/DateTimePicker.vue';
 import QuickCreateCustomerModal from '@/Components/QuickCreateCustomerModal.vue';
+import MoneyInput from '@/Components/MoneyInput.vue';
 
 const props = defineProps({
     customers: Array,
@@ -470,18 +471,22 @@ const save = async () => {
             customer_id: activeTab.value.selectedCustomer?.id || null,
             branch_id: activeTab.value.selectedBranchId || (props.branches?.[0]?.id || null),
             note: activeTab.value.note,
-            total_price: totalAmount.value,
-            discount: activeTab.value.discount,
-            total_payment: totalPayment.value,
-            amount_paid: activeTab.value.amountPaid,
+            total_price: Number(totalAmount.value) || 0,
+            discount: Number(activeTab.value.discount) || 0,
+            total_payment: Number(totalPayment.value) || 0,
+            amount_paid: Number(activeTab.value.amountPaid) || 0,
             price_book_id: activeTab.value.selectedPriceBookId,
             price_book_name: activeTab.value.selectedPriceBookName,
-            items: itemsComputed.value,
+            items: itemsComputed.value.map(item => ({
+                ...item,
+                price: Number(item.price) || 0,
+                discount: Number(item.discount) || 0,
+            })),
             invoice_id: activeTab.value.invoice_id,
-            subtotal: totalAmount.value,
-            total: totalPayment.value,
-            paid_to_customer: activeTab.value.amountPaid,
-            other_fees: activeTab.value.otherFees,
+            subtotal: Number(totalAmount.value) || 0,
+            total: Number(totalPayment.value) || 0,
+            paid_to_customer: Number(activeTab.value.amountPaid) || 0,
+            other_fees: Number(activeTab.value.otherFees) || 0,
             is_delivery: activeTab.value.isDelivery,
             receiver_name: activeTab.value.receiverName,
             receiver_phone: activeTab.value.receiverPhone,
@@ -490,9 +495,9 @@ const save = async () => {
             receiver_district: activeTab.value.receiverDistrict,
             receiver_city: activeTab.value.receiverCity,
             weight: activeTab.value.weight,
-            delivery_fee: activeTab.value.deliveryFee,
+            delivery_fee: Number(activeTab.value.deliveryFee) || 0,
             delivery_note: activeTab.value.deliveryNote,
-            cod_amount: activeTab.value.isCod ? totalPayment.value : 0,
+            cod_amount: activeTab.value.isCod ? (Number(totalPayment.value) || 0) : 0,
             length: activeTab.value.sizeL,
             width: activeTab.value.sizeW,
             height: activeTab.value.sizeH,
@@ -504,8 +509,8 @@ const save = async () => {
             payload.items = payload.items.map(item => ({
                 product_id: item.product_id,
                 quantity: item.qty || item.quantity,
-                price: item.price,
-                discount: item.discount || 0,
+                price: Number(item.price) || 0,
+                discount: Number(item.discount) || 0,
                 serial_ids: item.serial_ids || [],
             }));
             payload.customer_paid = payload.amount_paid;
@@ -622,18 +627,22 @@ const saveAndPrint = async () => {
             customer_id: activeTab.value.selectedCustomer?.id || null,
             branch_id: activeTab.value.selectedBranchId || (props.branches?.[0]?.id || null),
             note: activeTab.value.note,
-            total_price: totalAmount.value,
-            discount: activeTab.value.discount,
-            total_payment: totalPayment.value,
-            amount_paid: activeTab.value.amountPaid,
+            total_price: Number(totalAmount.value) || 0,
+            discount: Number(activeTab.value.discount) || 0,
+            total_payment: Number(totalPayment.value) || 0,
+            amount_paid: Number(activeTab.value.amountPaid) || 0,
             price_book_id: activeTab.value.selectedPriceBookId,
             price_book_name: activeTab.value.selectedPriceBookName,
-            items: itemsComputed.value,
+            items: itemsComputed.value.map(item => ({
+                ...item,
+                price: Number(item.price) || 0,
+                discount: Number(item.discount) || 0,
+            })),
             invoice_id: activeTab.value.invoice_id,
-            subtotal: totalAmount.value,
-            total: totalPayment.value,
-            paid_to_customer: activeTab.value.amountPaid,
-            other_fees: activeTab.value.otherFees,
+            subtotal: Number(totalAmount.value) || 0,
+            total: Number(totalPayment.value) || 0,
+            paid_to_customer: Number(activeTab.value.amountPaid) || 0,
+            other_fees: Number(activeTab.value.otherFees) || 0,
             is_delivery: activeTab.value.isDelivery,
             receiver_name: activeTab.value.receiverName,
             receiver_phone: activeTab.value.receiverPhone,
@@ -642,9 +651,9 @@ const saveAndPrint = async () => {
             receiver_district: activeTab.value.receiverDistrict,
             receiver_city: activeTab.value.receiverCity,
             weight: activeTab.value.weight,
-            delivery_fee: activeTab.value.deliveryFee,
+            delivery_fee: Number(activeTab.value.deliveryFee) || 0,
             delivery_note: activeTab.value.deliveryNote,
-            cod_amount: activeTab.value.isCod ? totalPayment.value : 0,
+            cod_amount: activeTab.value.isCod ? (Number(totalPayment.value) || 0) : 0,
             length: activeTab.value.sizeL,
             width: activeTab.value.sizeW,
             height: activeTab.value.sizeH,
@@ -857,7 +866,7 @@ onUnmounted(() => {
                                     </div>
                                 </td>
                                 <td class="p-3 text-right font-medium text-gray-800">
-                                    <input type="text" :value="formatCurrency(item.price)" @change="e => activeTab.items[index].price = e.target.value.replace(/\D/g,'')" class="w-24 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-right outline-none bg-transparent">
+                                    <MoneyInput v-model="activeTab.items[index].price" :min="0" input-class="w-24 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-right outline-none bg-transparent" />
                                 </td>
                                 <td class="p-3 text-right font-bold text-gray-800 pr-4">{{ formatCurrency(item.subtotal) }}</td>
                             </tr>
@@ -890,13 +899,13 @@ onUnmounted(() => {
                         <div class="flex justify-between items-center mb-1">
                             <span>Giảm giá</span>
                             <div class="border-b border-gray-300 hover:border-blue-500 w-24 transition-colors">
-                                <input type="text" :value="formatCurrency(activeTab.discount)" @change="e => activeTab.discount = Number(e.target.value.replace(/\D/g, ''))" class="w-full text-right outline-none bg-transparent text-gray-800">
+                                <MoneyInput v-model="activeTab.discount" :min="0" input-class="w-full text-right outline-none bg-transparent text-gray-800" />
                             </div>
                         </div>
                         <div class="flex justify-between items-center mb-2">
                             <span>Thu khác</span>
                             <div class="border-b border-gray-300 hover:border-blue-500 w-24 transition-colors">
-                                <input type="text" :value="formatCurrency(activeTab.otherFees)" @change="e => activeTab.otherFees = Number(e.target.value.replace(/\D/g, ''))" class="w-full text-right outline-none bg-transparent text-gray-800">
+                                <MoneyInput v-model="activeTab.otherFees" :min="0" input-class="w-full text-right outline-none bg-transparent text-gray-800" />
                             </div>
                         </div>
                         <div class="flex justify-between items-center text-[15px] font-bold text-gray-800 pt-1">
@@ -1036,7 +1045,7 @@ onUnmounted(() => {
                     <div class="flex justify-between items-center mb-3 text-[13px] text-gray-700">
                        <span class="font-bold flex items-center gap-1 cursor-pointer hover:text-blue-600">Khách thanh toán <i class="fas fa-th-list text-[11px] ml-1"></i></span>
                        <div class="border-b border-gray-300 hover:border-blue-500 w-24 transition-colors">
-                           <input type="text" :value="formatCurrency(activeTab.amountPaid)" @change="e => activeTab.amountPaid = Number(e.target.value.replace(/\D/g, ''))" class="w-full text-right outline-none bg-transparent font-bold text-gray-800">
+                           <MoneyInput v-model="activeTab.amountPaid" :min="0" input-class="w-full text-right outline-none bg-transparent font-bold text-gray-800" />
                        </div>
                     </div>
                     <div class="flex justify-between items-center mb-3">

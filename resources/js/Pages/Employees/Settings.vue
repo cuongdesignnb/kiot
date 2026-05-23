@@ -5,6 +5,7 @@ import axios from 'axios';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import SetupSidebar from '@/Pages/Employees/Partials/SetupSidebar.vue';
 import { formatVND as formatMoney } from '@/utils/money';
+import MoneyInput from '@/Components/MoneyInput.vue';
 
 const props = defineProps({
     overview: {
@@ -177,10 +178,24 @@ const saveCellEdit = async () => {
             has_commission: cellForm.custom_commissions.length > 0,
             has_allowance: cellForm.custom_allowances.length > 0,
             has_deduction: cellForm.custom_deductions.length > 0,
-            custom_bonuses: cellForm.custom_bonuses,
-            custom_commissions: cellForm.custom_commissions,
-            custom_allowances: cellForm.custom_allowances.filter(a => a.name),
-            custom_deductions: cellForm.custom_deductions.filter(d => d.name),
+            custom_bonuses: cellForm.custom_bonuses.map(b => ({
+                ...b,
+                revenue_from: Number(b.revenue_from) || 0,
+                bonus_value: Number(b.bonus_value) || 0,
+            })),
+            custom_commissions: cellForm.custom_commissions.map(c => ({
+                ...c,
+                revenue_from: Number(c.revenue_from) || 0,
+                commission_value: Number(c.commission_value) || 0,
+            })),
+            custom_allowances: cellForm.custom_allowances.filter(a => a.name).map(a => ({
+                ...a,
+                amount: Number(a.amount) || 0,
+            })),
+            custom_deductions: cellForm.custom_deductions.filter(d => d.name).map(d => ({
+                ...d,
+                amount: Number(d.amount) || 0,
+            })),
             salary_template_id: existing.salary_template_id || null,
             advanced_salary: existing.advanced_salary || false,
             holiday_rate: existing.holiday_rate || 200,
@@ -1076,7 +1091,7 @@ const handleItemLink = (key) => {
                         </div>
                         <div>
                             <label class="mb-1 block text-sm font-medium text-gray-700">{{ cellForm.salary_type === 'hourly' ? 'Đơn giá / giờ' : 'Lương cơ bản / tháng' }}</label>
-                            <input v-model.number="cellForm.base_salary" type="number" min="0" step="100000" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500" />
+                            <MoneyInput v-model="cellForm.base_salary" :min="0" input-class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500" />
                         </div>
                     </template>
                     <template v-if="editingCell.section === 'overtime'">
@@ -1094,10 +1109,11 @@ const handleItemLink = (key) => {
                             <div class="flex-1 space-y-2">
                                 <div class="grid grid-cols-2 gap-2">
                                     <div><label class="text-xs text-gray-500">Loại hình</label><select v-model="b.role_type" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"><option v-for="r in roleTypes" :key="r.value" :value="r.value">{{ r.label }}</option></select></div>
-                                    <div><label class="text-xs text-gray-500">Doanh thu từ</label><input v-model.number="b.revenue_from" type="number" min="0" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm text-right" /></div>
+                                    <div><label class="text-xs text-gray-500">Doanh thu từ</label><MoneyInput v-model="b.revenue_from" :min="0" input-class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm text-right" /></div>
                                 </div>
                                 <div class="flex items-center gap-2">
-                                    <input v-model.number="b.bonus_value" type="number" min="0" class="w-24 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                    <MoneyInput v-if="!b.bonus_is_percentage" v-model="b.bonus_value" :min="0" input-class="w-24 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                    <input v-else v-model.number="b.bonus_value" type="number" min="0" class="w-24 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
                                     <select v-model="b.bonus_is_percentage" class="rounded border border-gray-300 px-2 py-1.5 text-xs"><option :value="true">%</option><option :value="false">Cố định</option></select>
                                 </div>
                             </div>
@@ -1110,10 +1126,11 @@ const handleItemLink = (key) => {
                             <div class="flex-1 space-y-2">
                                 <div class="grid grid-cols-2 gap-2">
                                     <div><label class="text-xs text-gray-500">Loại hình</label><select v-model="c.role_type" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"><option v-for="r in roleTypes" :key="r.value" :value="r.value">{{ r.label }}</option></select></div>
-                                    <div><label class="text-xs text-gray-500">Doanh thu từ</label><input v-model.number="c.revenue_from" type="number" min="0" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm text-right" /></div>
+                                    <div><label class="text-xs text-gray-500">Doanh thu từ</label><MoneyInput v-model="c.revenue_from" :min="0" input-class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm text-right" /></div>
                                 </div>
                                 <div class="flex items-center gap-2">
-                                    <input v-model.number="c.commission_value" type="number" min="0" class="w-24 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                    <MoneyInput v-if="!c.commission_is_percentage" v-model="c.commission_value" :min="0" input-class="w-24 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                    <input v-else v-model.number="c.commission_value" type="number" min="0" class="w-24 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
                                     <select v-model="c.commission_is_percentage" class="rounded border border-gray-300 px-2 py-1.5 text-xs"><option :value="true">%</option><option :value="false">Cố định</option></select>
                                 </div>
                             </div>
@@ -1128,7 +1145,7 @@ const handleItemLink = (key) => {
                                     <div><label class="text-xs text-gray-500">Tên phụ cấp</label><select v-model="a.name" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"><option value="">Chọn loại</option><option v-for="n in allowanceNames" :key="n.value" :value="n.value">{{ n.label }}</option></select></div>
                                     <div><label class="text-xs text-gray-500">Loại phụ cấp</label><select v-model="a.allowance_type" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"><option v-for="opt in allowanceTypeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option></select></div>
                                 </div>
-                                <div><label class="text-xs text-gray-500">Số tiền</label><input v-model.number="a.amount" type="number" min="0" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm text-right" /></div>
+                                <div><label class="text-xs text-gray-500">Số tiền</label><MoneyInput v-model="a.amount" :min="0" input-class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm text-right" /></div>
                             </div>
                             <button type="button" class="mt-1 text-gray-400 hover:text-red-500" @click="cellForm.custom_allowances.splice(i, 1)">✕</button>
                         </div>
@@ -1138,7 +1155,7 @@ const handleItemLink = (key) => {
                         <div v-for="(d, i) in cellForm.custom_deductions" :key="i" class="flex items-start gap-2 rounded-lg border border-gray-200 p-3">
                             <div class="flex-1 space-y-2">
                                 <div><label class="text-xs text-gray-500">Tên giảm trừ</label><input v-model="d.name" type="text" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm" placeholder="VD: BHXH, thuế TNCN" /></div>
-                                <div><label class="text-xs text-gray-500">Số tiền</label><input v-model.number="d.amount" type="number" min="0" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm text-right" /></div>
+                                <div><label class="text-xs text-gray-500">Số tiền</label><MoneyInput v-model="d.amount" :min="0" input-class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm text-right" /></div>
                             </div>
                             <button type="button" class="mt-1 text-gray-400 hover:text-red-500" @click="cellForm.custom_deductions.splice(i, 1)">✕</button>
                         </div>

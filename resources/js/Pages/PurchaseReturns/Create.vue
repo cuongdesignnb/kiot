@@ -1,5 +1,6 @@
 <script setup>
 import { formatVND as formatCurrency } from '@/utils/money';
+import MoneyInput from '@/Components/MoneyInput.vue';
 import { ref, computed } from 'vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 
@@ -104,7 +105,7 @@ const save = () => {
         code: props.returnCode,
         purchase_id: props.purchase.id,
         employee_id: selectedEmployeeId(),
-        refund_amount: refundAmount.value,
+        refund_amount: Number(refundAmount.value) || 0,
         note: note.value,
         payment_method: paymentMethod.value,
         bank_account_info: paymentMethod.value === 'transfer' ? bankAccountInfo.value : null,
@@ -254,7 +255,7 @@ const save = () => {
                     <!-- Refund Amount -->
                     <div>
                         <label class="block text-[12px] text-gray-500 mb-1">NCC hoàn tiền</label>
-                        <input type="number" v-model.number="refundAmount" :max="totalAmount" min="0" class="w-full border border-gray-300 rounded px-2 py-1.5 text-[13px] text-right outline-none focus:border-green-500 font-bold text-blue-600">
+                        <MoneyInput v-model="refundAmount" :min="0" input-class="w-full border border-gray-300 rounded px-2 py-1.5 text-[13px] text-right outline-none focus:border-green-500 font-bold text-blue-600" />
                     </div>
 
                     <!-- Payment Method -->

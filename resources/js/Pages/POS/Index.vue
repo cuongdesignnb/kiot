@@ -548,9 +548,9 @@ const processCheckout = async () => {
         // Đặt nhanh: tạo Order (Phiếu tạm) — không cần thanh toán
         if (saleMode.value === 'quick_order') {
             const orderPayload = {
-                subtotal: subtotal.value,
-                discount: discount.value,
-                total: totalAmount.value,
+                subtotal: Number(subtotal.value) || 0,
+                discount: Number(discount.value) || 0,
+                total: Number(totalAmount.value) || 0,
                 customer_id: selectedCustomer.value?.id || null,
                 seller_key: selectedSellerKey.value || null,
                 employee_id: selectedEmployeeId.value || null,
@@ -559,7 +559,7 @@ const processCheckout = async () => {
                 items: cart.value.map(item => ({
                     product_id: item.product.id,
                     quantity: item.quantity,
-                    price: item.price,
+                    price: Number(item.price) || 0,
                 }))
             };
 
@@ -576,10 +576,10 @@ const processCheckout = async () => {
 
         // Bán thường / Bán giao hàng: tạo Invoice
         const payload = {
-            subtotal: subtotal.value,
-            discount: discount.value,
-            total: totalAmount.value,
-            customer_paid: customerPaid.value,
+            subtotal: Number(subtotal.value) || 0,
+            discount: Number(discount.value) || 0,
+            total: Number(totalAmount.value) || 0,
+            customer_paid: Number(customerPaid.value) || 0,
             customer_id: selectedCustomer.value?.id || null,
             seller_key: selectedSellerKey.value || null,
             employee_id: selectedEmployeeId.value || null,
@@ -590,7 +590,7 @@ const processCheckout = async () => {
             items: cart.value.map(item => ({
                 product_id: item.product.id,
                 quantity: item.quantity,
-                price: item.price,
+                price: Number(item.price) || 0,
                 discount: Number(item.discount) || 0,
                 serial_ids: item.is_serial_product ? item.serials.map(s => s.id) : [],
             }))
@@ -1201,8 +1201,8 @@ const submitReturnTab = async (tab) => {
         itemsPayload.push({
             product_id: item.product_id,
             qty: ls.qty,
-            price: item.price,
-            discount: returnLineDiscount(item, ls.qty),
+            price: Number(item.price) || 0,
+            discount: Number(returnLineDiscount(item, ls.qty)) || 0,
             invoice_item_id: item.invoice_item_id,
             serial_ids: item.has_serial ? ls.serial_ids : [],
         });
@@ -1234,8 +1234,8 @@ const submitReturnTab = async (tab) => {
         fee_type: rs.feeType || 'amount',
         fee_value: feeValue,
         fee: feeAmount,
-        total,
-        paid_to_customer: hasExchange ? activeRefundToCustomer.value : (Number(rs.paidToCustomer) || 0),
+        total: Number(total) || 0,
+        paid_to_customer: hasExchange ? (Number(activeRefundToCustomer.value) || 0) : (Number(rs.paidToCustomer) || 0),
         note: rs.note || null,
         items: itemsPayload,
     };
@@ -1255,12 +1255,12 @@ const submitReturnTab = async (tab) => {
                     discount: Number(rs.discount) || 0,
                     fee_type: rs.feeType || 'amount',
                     fee_value: feeValue,
-                    paid_to_customer: activeRefundToCustomer.value,
+                    paid_to_customer: Number(activeRefundToCustomer.value) || 0,
                     items: itemsPayload,
                 },
                 exchange: {
                     discount: Number(rs.exchangeDiscount) || 0,
-                    customer_paid: activeCustomerPays.value,
+                    customer_paid: Number(activeCustomerPays.value) || 0,
                     items: rs.exchangeItems.map((item) => ({
                         product_id: item.product.id,
                         quantity: item.quantity,
@@ -1279,9 +1279,9 @@ const submitReturnTab = async (tab) => {
                 exchange_invoice: invoice,
                 settlement: res.data?.settlement || {
                     return_total: total,
-                    exchange_total: activeExchangeTotal.value,
-                    customer_pays: activeCustomerPays.value,
-                    refund_to_customer: activeRefundToCustomer.value,
+                    exchange_total: Number(activeExchangeTotal.value) || 0,
+                    customer_pays: Number(activeCustomerPays.value) || 0,
+                    refund_to_customer: Number(activeRefundToCustomer.value) || 0,
                 },
             };
         } else {

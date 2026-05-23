@@ -4,6 +4,7 @@ import { ref, watch, onMounted, computed } from 'vue';
 import { Head, router, Link } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import SortableHeader from '@/Components/SortableHeader.vue';
+import MoneyInput from '@/Components/MoneyInput.vue';
 import axios from 'axios';
 
 const props = defineProps({
@@ -280,7 +281,10 @@ const openFormulaModal = (product = null) => {
 };
 
 const applyFormula = () => {
-    router.post('/price-settings/apply-formula', formulaForm.value, {
+    router.post('/price-settings/apply-formula', {
+        ...formulaForm.value,
+        value: Number(formulaForm.value.value) || 0,
+    }, {
         preserveScroll: true,
         onSuccess: () => { isFormulaModalOpen.value = false; }
     });
@@ -373,12 +377,18 @@ const submitPriceBook = () => {
         return;
     }
     if (editingPriceBook.value) {
-        router.put(`/price-settings/price-books/${editingPriceBook.value.id}`, pbForm.value, {
+        router.put(`/price-settings/price-books/${editingPriceBook.value.id}`, {
+            ...pbForm.value,
+            formula_value: Number(pbForm.value.formula_value) || 0,
+        }, {
             preserveScroll: true,
             onSuccess: () => { isPriceBookModalOpen.value = false; }
         });
     } else {
-        router.post('/price-settings/price-books', pbForm.value, {
+        router.post('/price-settings/price-books', {
+            ...pbForm.value,
+            formula_value: Number(pbForm.value.formula_value) || 0,
+        }, {
             preserveScroll: true,
             onSuccess: () => { isPriceBookModalOpen.value = false; }
         });
@@ -583,17 +593,17 @@ const formulaBaseOptions = computed(() => {
                                 <td class="p-2.5 text-right">
                                     <div class="flex items-center justify-end gap-1.5 relative group">
                                         <div class="relative w-[130px]">
-                                            <input
+                                            <MoneyInput
                                                 v-model="product.editPrice"
+                                                :min="0"
                                                 @blur="updatePrice(product, index)"
                                                 @keyup.enter="updatePrice(product, index)"
-                                                type="number"
-                                                class="w-full text-right bg-white border rounded py-1.5 px-2.5 text-[13px] font-bold text-gray-900 border-gray-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-shadow"
+                                                input-class="w-full text-right bg-white border rounded py-1.5 px-2.5 text-[13px] font-bold text-gray-900 border-gray-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-shadow"
                                                 :class="{
                                                     'ring-1 ring-green-500 border-green-500 bg-green-50': product.updateSuccess,
                                                     'animate-pulse opacity-70': product.isUpdating
                                                 }"
-                                            >
+                                            />
                                             <div v-if="product.updateSuccess" class="absolute left-2 top-1/2 -translate-y-1/2 text-green-600">
                                                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>
                                             </div>
@@ -609,34 +619,34 @@ const formulaBaseOptions = computed(() => {
                                 <td v-if="showRetailColumn" class="p-2.5 text-right">
                                     <div class="flex items-center justify-end gap-1.5 relative group">
                                         <div class="relative w-[130px]">
-                                            <input
+                                            <MoneyInput
                                                 v-model="product.editRetailPrice"
+                                                :min="0"
                                                 @blur="updateOptionalBookPrice(product, index, 'retail_price')"
                                                 @keyup.enter="updateOptionalBookPrice(product, index, 'retail_price')"
-                                                type="number"
-                                                class="w-full text-right bg-white border rounded py-1.5 px-2.5 text-[13px] font-bold text-gray-900 border-gray-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-shadow"
+                                                input-class="w-full text-right bg-white border rounded py-1.5 px-2.5 text-[13px] font-bold text-gray-900 border-gray-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-shadow"
                                                 :class="{
                                                     'ring-1 ring-green-500 border-green-500 bg-green-50': product.updateSuccess,
                                                     'animate-pulse opacity-70': product.isUpdating
                                                 }"
-                                            >
+                                            />
                                         </div>
                                     </div>
                                 </td>
                                 <td v-if="showTechnicianColumn" class="p-2.5 text-right">
                                     <div class="flex items-center justify-end gap-1.5 relative group">
                                         <div class="relative w-[130px]">
-                                            <input
+                                            <MoneyInput
                                                 v-model="product.editTechnicianPrice"
+                                                :min="0"
                                                 @blur="updateOptionalBookPrice(product, index, 'technician_price')"
                                                 @keyup.enter="updateOptionalBookPrice(product, index, 'technician_price')"
-                                                type="number"
-                                                class="w-full text-right bg-white border rounded py-1.5 px-2.5 text-[13px] font-bold text-gray-900 border-gray-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-shadow"
+                                                input-class="w-full text-right bg-white border rounded py-1.5 px-2.5 text-[13px] font-bold text-gray-900 border-gray-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-shadow"
                                                 :class="{
                                                     'ring-1 ring-green-500 border-green-500 bg-green-50': product.updateSuccess,
                                                     'animate-pulse opacity-70': product.isUpdating
                                                 }"
-                                            >
+                                            />
                                         </div>
                                     </div>
                                 </td>
@@ -693,7 +703,8 @@ const formulaBaseOptions = computed(() => {
                                 <option value="+">+</option>
                                 <option value="-">-</option>
                             </select>
-                            <input v-model="formulaForm.value" type="number" min="0" class="border rounded p-1.5 w-24 outline-none focus:border-blue-500">
+                            <MoneyInput v-if="!formulaForm.is_percent" v-model="formulaForm.value" :min="0" input-class="border rounded p-1.5 w-24 outline-none focus:border-blue-500" />
+                            <input v-else v-model="formulaForm.value" type="number" min="0" class="border rounded p-1.5 w-24 outline-none focus:border-blue-500">
                             <select v-model="formulaForm.is_percent" class="border rounded p-1.5 outline-none focus:border-blue-500 w-16">
                                 <option :value="false">VNĐ</option>
                                 <option :value="true">%</option>
@@ -804,7 +815,8 @@ const formulaBaseOptions = computed(() => {
                                         <option value="+">+</option>
                                         <option value="-">-</option>
                                     </select>
-                                    <input type="number" v-model.number="pbForm.formula_value" min="0" class="border rounded px-2.5 py-1.5 w-24 outline-none focus:border-blue-500 text-[13px]">
+                                    <MoneyInput v-if="!pbForm.formula_is_percent" v-model="pbForm.formula_value" :min="0" input-class="border rounded px-2.5 py-1.5 w-24 outline-none focus:border-blue-500 text-[13px]" />
+                                    <input v-else type="number" v-model.number="pbForm.formula_value" min="0" class="border rounded px-2.5 py-1.5 w-24 outline-none focus:border-blue-500 text-[13px]">
                                     <select v-model="pbForm.formula_is_percent" class="border rounded px-2 py-1.5 outline-none focus:border-blue-500 w-14 text-[13px]">
                                         <option :value="false">VNĐ</option>
                                         <option :value="true">%</option>

@@ -4,6 +4,7 @@ import { ref, computed, watch } from 'vue';
 import { Head, router, Link } from '@inertiajs/vue3';
 import axios from 'axios';
 import DateTimePicker from '@/Components/DateTimePicker.vue';
+import MoneyInput from '@/Components/MoneyInput.vue';
 
 const props = defineProps({
     products: Array,
@@ -141,7 +142,7 @@ const save = async (actionStatus) => {
                 const payload = {
                     product_id: i.id,
                     quantity: i.quantity,
-                    price: i.transfer_price || 0,
+                    price: Number(i.transfer_price) || 0,
                 };
                 if (i.has_serial && i.selected_serial_ids?.length) {
                     payload.serial_ids = i.selected_serial_ids;
@@ -259,7 +260,7 @@ const save = async (actionStatus) => {
                                         <input type="number" v-model="item.quantity" min="1" class="w-16 border border-gray-300 rounded p-1 text-center outline-none focus:border-blue-500 text-[13px] transition-colors mx-auto block">
                                     </td>
                                     <td class="p-3 text-right w-[120px]">
-                                        <input type="number" v-model="item.transfer_price" min="0" class="w-full border border-gray-300 rounded p-1 inline-block text-right outline-none focus:border-blue-500 text-[13px] transition-colors">
+                                        <MoneyInput v-model="item.transfer_price" :min="0" input-class="w-full border border-gray-300 rounded p-1 inline-block text-right outline-none focus:border-blue-500 text-[13px] transition-colors" />
                                     </td>
                                     <td class="p-3 font-bold text-gray-800 text-right w-[120px]">{{ formatCurrency((item.quantity || 0) * (item.transfer_price || 0)) }}</td>
                                 </tr>

@@ -1,6 +1,7 @@
 <script setup>
 import { useForm } from '@inertiajs/vue3';
 import { ref, computed, watch } from 'vue';
+import MoneyInput from '@/Components/MoneyInput.vue';
 
 const props = defineProps({
     otherFees: Array,
@@ -72,6 +73,7 @@ const openEdit = (fee) => {
 };
 
 const submitNew = () => {
+    newForm.value = Number(newForm.value) || 0;
     newForm.post('/settings/other-fees', {
         preserveScroll: true,
         onSuccess: () => {
@@ -82,6 +84,7 @@ const submitNew = () => {
 };
 
 const submitEdit = () => {
+    editForm.value = Number(editForm.value) || 0;
     editForm.put(`/settings/other-fees/${editingFee.value.id}`, {
         preserveScroll: true,
         onSuccess: () => {
@@ -100,7 +103,7 @@ const deleteFee = (fee) => {
 const toggleStatus = (fee) => {
     const form = useForm({
         name: fee.name,
-        value: fee.value,
+        value: Number(fee.value) || 0,
         value_type: fee.value_type,
         auto_apply: fee.auto_apply,
         refund_on_return: fee.refund_on_return,
@@ -225,7 +228,21 @@ const statusClass = (s) => s === 'active' ? 'text-green-600' : 'text-gray-400';
             <div>
                 <label class="block text-xs font-medium text-gray-500 mb-1">Giá trị <svg class="inline w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg></label>
                 <div class="flex">
-                    <input v-model="newForm.value" type="number" min="0" step="any" placeholder="0" class="flex-1 border border-gray-300 rounded-l px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                    <MoneyInput
+                        v-if="newForm.value_type === 'fixed'"
+                        v-model="newForm.value"
+                        :min="0"
+                        placeholder="0"
+                        input-class="flex-1 border border-gray-300 rounded-l px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                    />
+                    <input
+                        v-else
+                        v-model="newForm.value"
+                        type="text"
+                        inputmode="decimal"
+                        placeholder="0"
+                        class="flex-1 border border-gray-300 rounded-l px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                    >
                     <div class="flex border border-l-0 border-gray-300 rounded-r overflow-hidden">
                         <button @click="newForm.value_type = 'fixed'" :class="newForm.value_type === 'fixed' ? 'bg-blue-600 text-white' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'" class="px-3 py-2 text-sm font-medium transition-colors">VND</button>
                         <button @click="newForm.value_type = 'percent'" :class="newForm.value_type === 'percent' ? 'bg-blue-600 text-white' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'" class="px-3 py-2 text-sm font-medium transition-colors border-l border-gray-300">%</button>
@@ -301,7 +318,19 @@ const statusClass = (s) => s === 'active' ? 'text-green-600' : 'text-gray-400';
             <div>
                 <label class="block text-xs font-medium text-gray-500 mb-1">Giá trị</label>
                 <div class="flex">
-                    <input v-model="editForm.value" type="number" min="0" step="any" class="flex-1 border border-gray-300 rounded-l px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                    <MoneyInput
+                        v-if="editForm.value_type === 'fixed'"
+                        v-model="editForm.value"
+                        :min="0"
+                        input-class="flex-1 border border-gray-300 rounded-l px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                    />
+                    <input
+                        v-else
+                        v-model="editForm.value"
+                        type="text"
+                        inputmode="decimal"
+                        class="flex-1 border border-gray-300 rounded-l px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                    >
                     <div class="flex border border-l-0 border-gray-300 rounded-r overflow-hidden">
                         <button @click="editForm.value_type = 'fixed'" :class="editForm.value_type === 'fixed' ? 'bg-blue-600 text-white' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'" class="px-3 py-2 text-sm font-medium transition-colors">VND</button>
                         <button @click="editForm.value_type = 'percent'" :class="editForm.value_type === 'percent' ? 'bg-blue-600 text-white' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'" class="px-3 py-2 text-sm font-medium transition-colors border-l border-gray-300">%</button>

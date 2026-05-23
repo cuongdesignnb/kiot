@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue';
 import axios from 'axios';
-import { formatMoneyInput, parseVND } from '@/utils/money';
+import MoneyInput from '@/Components/MoneyInput.vue';
 
 const props = defineProps({
     show: { type: Boolean, default: false },
@@ -67,17 +67,6 @@ const reset = () => {
 watch(() => props.show, (val) => {
     if (val) reset();
 });
-
-// Money input handlers — display formatted, store numeric.
-const onMoneyFocus = (event) => {
-    const v = parseVND(event.target.value);
-    event.target.value = v === 0 ? '' : String(v);
-};
-const onMoneyBlur = (field, event) => {
-    const v = parseVND(event.target.value);
-    form.value[field] = v;
-    event.target.value = formatMoneyInput(v);
-};
 
 // Inline quick-create for category / brand inside this modal.
 const showNewCategory = ref(false);
@@ -154,9 +143,9 @@ const submit = async () => {
             barcode: form.value.barcode?.trim() || null,
             category_id: form.value.category_id || null,
             brand_id: form.value.brand_id || null,
-            cost_price: Number(parseVND(form.value.cost_price)) || 0,
-            retail_price: Number(parseVND(form.value.retail_price)) || 0,
-            technician_price: Number(parseVND(form.value.technician_price)) || 0,
+            cost_price: Number(form.value.cost_price) || 0,
+            retail_price: Number(form.value.retail_price) || 0,
+            technician_price: Number(form.value.technician_price) || 0,
             has_serial: !!form.value.has_serial,
             warranty_months: Number(form.value.warranty_months) || 0,
         };
@@ -249,43 +238,31 @@ const close = () => emit('close');
                         </div>
                     </div>
 
-                    <!-- Money inputs use formatted display + numeric payload (STEP 24.13). -->
+                    <!-- Money inputs use MoneyInput for realtime VND formatting + numeric payload. -->
                     <div>
                         <label class="block text-sm font-semibold text-gray-700 mb-1">Giá vốn (giá nhập)</label>
-                        <input
-                            type="text"
-                            inputmode="numeric"
-                            :value="formatMoneyInput(form.cost_price)"
-                            @focus="onMoneyFocus"
-                            @blur="(e) => onMoneyBlur('cost_price', e)"
-                            class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-right tabular-nums"
+                        <MoneyInput
+                            v-model="form.cost_price"
                             placeholder="0"
+                            input-class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-right tabular-nums"
                         />
                     </div>
 
                     <div>
                         <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán</label>
-                        <input
-                            type="text"
-                            inputmode="numeric"
-                            :value="formatMoneyInput(form.retail_price)"
-                            @focus="onMoneyFocus"
-                            @blur="(e) => onMoneyBlur('retail_price', e)"
-                            class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-right tabular-nums"
+                        <MoneyInput
+                            v-model="form.retail_price"
                             placeholder="0"
+                            input-class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-right tabular-nums"
                         />
                     </div>
 
                     <div v-if="showTechnicianPrice">
                         <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán thợ</label>
-                        <input
-                            type="text"
-                            inputmode="numeric"
-                            :value="formatMoneyInput(form.technician_price)"
-                            @focus="onMoneyFocus"
-                            @blur="(e) => onMoneyBlur('technician_price', e)"
-                            class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-right tabular-nums"
+                        <MoneyInput
+                            v-model="form.technician_price"
                             placeholder="0"
+                            input-class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-right tabular-nums"
                         />
                     </div>
 

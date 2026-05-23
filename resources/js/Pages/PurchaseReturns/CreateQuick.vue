@@ -1,5 +1,6 @@
 <script setup>
 import { formatVND as formatCurrency } from '@/utils/money';
+import MoneyInput from '@/Components/MoneyInput.vue';
 import { ref, computed } from 'vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 
@@ -165,14 +166,14 @@ const save = () => {
         code: props.returnCode,
         supplier_id: supplierId.value,
         employee_id: selectedEmployeeId(),
-        refund_amount: refundAmount.value,
+        refund_amount: Number(refundAmount.value) || 0,
         note: note.value,
         payment_method: paymentMethod.value,
         bank_account_info: paymentMethod.value === 'transfer' ? bankAccountInfo.value : null,
         items: items.value.map(i => ({
             product_id: i.product_id,
             quantity: i.quantity,
-            price: i.price,
+            price: Number(i.price) || 0,
         })),
     }, {
         onError: (errors) => {
@@ -300,9 +301,8 @@ const save = () => {
                                         class="w-[80px] border border-gray-300 rounded py-1 text-center outline-none focus:border-green-500" />
                                 </td>
                                 <td class="p-3 text-right">
-                                    <input type="number" v-model.number="item.price" @input="onQtyOrPriceChange"
-                                        min="0"
-                                        class="w-[110px] border border-gray-300 rounded py-1 text-right outline-none focus:border-green-500" />
+                                    <MoneyInput v-model="item.price" :min="0" @input="onQtyOrPriceChange"
+                                        input-class="w-[110px] border border-gray-300 rounded py-1 text-right outline-none focus:border-green-500" />
                                 </td>
                                 <td class="p-3 text-right font-bold text-red-600">{{ formatCurrency(item.quantity * item.price) }}</td>
                                 <td class="p-3 text-center">
@@ -340,8 +340,8 @@ const save = () => {
 
                     <div>
                         <label class="block text-[12px] text-gray-500 mb-1">Tiền NCC trả thực tế</label>
-                        <input type="number" v-model.number="refundAmount" :max="totalAmount" min="0"
-                            class="w-full border border-gray-300 rounded px-2 py-1.5 text-right font-bold text-blue-600" />
+                        <MoneyInput v-model="refundAmount" :min="0"
+                            input-class="w-full border border-gray-300 rounded px-2 py-1.5 text-right font-bold text-blue-600" />
                     </div>
 
                     <div class="flex justify-between pt-2 border-t border-gray-200">

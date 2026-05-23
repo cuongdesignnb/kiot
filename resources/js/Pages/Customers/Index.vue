@@ -8,6 +8,7 @@ import SortableHeader from "@/Components/SortableHeader.vue";
 import DateRangeFilter from "@/Components/Filters/DateRangeFilter.vue";
 import DateTimePicker from "@/Components/DateTimePicker.vue";
 import CustomerGroupCombobox from "@/Components/CustomerGroupCombobox.vue";
+import MoneyInput from "@/Components/MoneyInput.vue";
 import { useFilters } from "@/composables/useFilters.js";
 import axios from "axios";
 
@@ -426,7 +427,7 @@ const submitDebtModal = async () => {
         try {
             await axios.post(`/customers/${customerId}/debt-payment`, {
                 mode: "auto",
-                amount: debtForm.amount,
+                amount: Number(debtForm.amount) || 0,
                 note: debtForm.note,
                 date: debtForm.date,
             });
@@ -445,7 +446,7 @@ const submitDebtModal = async () => {
         return;
     }
     try {
-        await axios.post(`/customers/${customerId}/debt-adjust`, { amount: debtForm.amount, note: debtForm.note, date: debtForm.date });
+        await axios.post(`/customers/${customerId}/debt-adjust`, { amount: Number(debtForm.amount) || 0, note: debtForm.note, date: debtForm.date });
         debtModal.value.show = false;
         await loadDebtHistory(customerId);
         router.reload({ only: ["customers"], preserveScroll: true });
@@ -558,7 +559,7 @@ const submitOffset = async () => {
     offsetModal.submitting = true;
     try {
         await axios.post(`/customers/${offsetModal.customerId}/debt-offset`, {
-            amount: offsetForm.amount,
+            amount: Number(offsetForm.amount) || 0,
             note: offsetForm.note,
         });
         offsetModal.show = false;
@@ -775,7 +776,10 @@ const submitGroupModal = async () => {
     }
     groupSubmitting.value = true;
     try {
-        const { data } = await axios.post('/customer-groups', groupForm);
+        const { data } = await axios.post('/customer-groups', {
+            ...groupForm,
+            discount_value: Number(groupForm.discount_value) || 0,
+        });
         const created = data?.group;
         if (created?.name) {
             localCustomerGroups.value = [
@@ -989,8 +993,8 @@ const createdDateRange = computed({
             <div class="px-3 py-4 border-b border-gray-200">
                 <label class="block text-sm font-bold text-gray-800 mb-2">Tổng bán</label>
                 <div class="grid grid-cols-2 gap-2 mb-3">
-                    <input type="number" v-model="filters.total_sales_from" class="w-full min-w-0 border rounded p-1.5 text-sm" placeholder="Giá trị từ" min="0" />
-                    <input type="number" v-model="filters.total_sales_to" class="w-full min-w-0 border rounded p-1.5 text-sm" placeholder="Giá trị tới" min="0" />
+                    <MoneyInput v-model="filters.total_sales_from" :min="0" placeholder="Giá trị từ" input-class="w-full min-w-0 border rounded p-1.5 text-sm" />
+                    <MoneyInput v-model="filters.total_sales_to" :min="0" placeholder="Giá trị tới" input-class="w-full min-w-0 border rounded p-1.5 text-sm" />
                 </div>
                 <DateRangeFilter v-if="hasCapability('supportsTotalSalesTimeFilter')" v-model="totalSalesDateRange" label="Thời gian tổng bán" flat />
             </div>
@@ -999,8 +1003,8 @@ const createdDateRange = computed({
             <div class="px-3 py-4 border-b border-gray-200">
                 <label class="block text-sm font-bold text-gray-800 mb-2">Nợ hiện tại</label>
                 <div class="grid grid-cols-2 gap-2">
-                    <input type="number" v-model="filters.net_debt_from" class="w-full min-w-0 border rounded p-1.5 text-sm" placeholder="Từ" />
-                    <input type="number" v-model="filters.net_debt_to" class="w-full min-w-0 border rounded p-1.5 text-sm" placeholder="Tới" />
+                    <MoneyInput v-model="filters.net_debt_from" placeholder="Từ" input-class="w-full min-w-0 border rounded p-1.5 text-sm" />
+                    <MoneyInput v-model="filters.net_debt_to" placeholder="Tới" input-class="w-full min-w-0 border rounded p-1.5 text-sm" />
                 </div>
             </div>
 
@@ -3093,13 +3097,7 @@ const createdDateRange = computed({
                         <!-- AUTO mode -->
                         <div v-if="debtForm.mode === 'auto'">
                             <label class="block text-sm font-medium text-gray-700 mb-1">Số tiền thu từ khách</label>
-                            <input
-                                v-model.number="debtForm.amount"
-                                type="number"
-                                min="0"
-                                class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500"
-                                placeholder="Nhập số tiền thu"
-                            />
+                            <MoneyInput v-model="debtForm.amount" placeholder="0" input-class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500" />
                             <p class="text-xs text-gray-400 mt-1">Hệ thống sẽ phân bổ vào hóa đơn cũ trước</p>
                         </div>
 
@@ -3122,13 +3120,11 @@ const createdDateRange = computed({
                                         </div>
                                     </div>
                                     <div class="ml-3 w-28">
-                                        <input
-                                            v-model.number="inv.allocAmount"
-                                            type="number"
-                                            min="0"
-                                            :max="inv.remaining"
-                                            class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm text-right focus:ring-blue-500 focus:border-blue-500"
+                                        <MoneyInput
+                                            v-model="inv.allocAmount"
+                                            :min="0"
                                             placeholder="0"
+                                            input-class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm text-right focus:ring-blue-500 focus:border-blue-500"
                                         />
                                     </div>
                                 </div>
@@ -3150,12 +3146,7 @@ const createdDateRange = computed({
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Nợ cuối mong muốn</label>
-                            <input
-                                v-model.number="debtForm.amount"
-                                type="number"
-                                class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500"
-                                placeholder="Nhập giá trị nợ cuối (VD: 0 để xóa nợ)"
-                            />
+                            <MoneyInput v-model="debtForm.amount" placeholder="0" input-class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500" />
                         </div>
                     </template>
 
@@ -3373,9 +3364,7 @@ const createdDateRange = computed({
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Số tiền cấn bằng</label>
-                        <input v-model.number="offsetForm.amount" type="number" min="1" :max="offsetModal.maxOffset"
-                            class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-purple-500 focus:border-purple-500"
-                            placeholder="Nhập số tiền cấn bằng"/>
+                        <MoneyInput v-model="offsetForm.amount" :min="1" placeholder="Nhập số tiền cần bù trừ" input-class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-purple-500 focus:border-purple-500" />
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Ghi chú</label>
@@ -3680,7 +3669,8 @@ const createdDateRange = computed({
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Giá trị giảm</label>
-                                <input v-model.number="groupForm.discount_value" type="number" min="0" class="w-full border rounded p-2 text-sm" />
+                                <MoneyInput v-if="groupForm.discount_type === 'amount'" v-model="groupForm.discount_value" :min="0" input-class="w-full border rounded p-2 text-sm" />
+                                <input v-else v-model.number="groupForm.discount_value" type="number" min="0" class="w-full border rounded p-2 text-sm" />
                             </div>
                         </div>
                         <div>

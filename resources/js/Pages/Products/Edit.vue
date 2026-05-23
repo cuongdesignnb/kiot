@@ -842,9 +842,10 @@ const generateVariants = () => {
                                             </select>
                                         </td>
                                         <td class="px-3 py-2 text-right">
-                                            <input v-if="s.status === 'in_stock' && editSerialStatus === 'in_stock'"
-                                                v-model.number="editSerialCost" type="number" min="0"
-                                                class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right focus:ring-1 focus:ring-blue-500 outline-none" />
+                                            <MoneyInput v-if="s.status === 'in_stock' && editSerialStatus === 'in_stock'"
+                                                v-model="editSerialCost"
+                                                :min="0"
+                                                input-class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right focus:ring-1 focus:ring-blue-500 outline-none" />
                                             <span v-else class="text-gray-400 text-xs italic" :title="'Chỉ sửa được khi còn tồn'">{{ formatCurrency(s.cost_price) }}</span>
                                         </td>
                                         <td class="px-3 py-2 text-center">

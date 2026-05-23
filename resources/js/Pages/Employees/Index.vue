@@ -5,6 +5,7 @@ import { Head, router, Link, useForm, usePage } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
+import MoneyInput from "@/Components/MoneyInput.vue";
 import axios from "axios";
 
 const props = defineProps({
@@ -337,7 +338,7 @@ const saveSalarySetting = async (employeeId) => {
     try {
         await axios.post(`/api/employee-salary-settings/${employeeId}`, {
             salary_type: salaryForm.salary_type,
-            base_salary: salaryForm.base_salary,
+            base_salary: Number(salaryForm.base_salary) || 0,
             salary_template_id: salaryForm.salary_template_id,
             advanced_salary: salaryForm.advanced_salary,
             holiday_rate: salaryForm.holiday_rate,
@@ -354,10 +355,24 @@ const saveSalarySetting = async (employeeId) => {
             has_deduction: salaryForm.has_deduction,
             bonus_type: salaryForm.bonus_type,
             bonus_calculation: salaryForm.bonus_calculation,
-            custom_bonuses: salaryForm.custom_bonuses,
-            custom_commissions: salaryForm.custom_commissions,
-            custom_allowances: salaryForm.custom_allowances,
-            custom_deductions: salaryForm.custom_deductions,
+            custom_bonuses: salaryForm.custom_bonuses.map(b => ({
+                ...b,
+                revenue_from: Number(b.revenue_from) || 0,
+                bonus_value: Number(b.bonus_value) || 0,
+            })),
+            custom_commissions: salaryForm.custom_commissions.map(c => ({
+                ...c,
+                revenue_from: Number(c.revenue_from) || 0,
+                commission_value: Number(c.commission_value) || 0,
+            })),
+            custom_allowances: salaryForm.custom_allowances.map(a => ({
+                ...a,
+                amount: Number(a.amount) || 0,
+            })),
+            custom_deductions: salaryForm.custom_deductions.map(d => ({
+                ...d,
+                amount: Number(d.amount) || 0,
+            })),
         });
     } catch (e) {
         console.error('Failed to save salary settings', e);
@@ -965,12 +980,11 @@ const bonusCalcLabel = (calc) => {
                                     <div>
                                         <label class="block font-semibold mb-1 text-gray-500">Mức lương</label>
                                         <div class="flex items-center gap-2">
-                                            <input
-                                                v-model.number="salaryForm.base_salary"
-                                                type="number"
-                                                min="0"
-                                                class="w-full border border-gray-300 rounded-md px-3 py-1.5 focus:border-blue-500 outline-none"
+                                            <MoneyInput
+                                                v-model="salaryForm.base_salary"
+                                                :min="0"
                                                 placeholder="0"
+                                                input-class="w-full border border-gray-300 rounded-md px-3 py-1.5 focus:border-blue-500 outline-none"
                                             />
                                             <span class="text-gray-500 whitespace-nowrap text-sm">/ {{ salaryForm.salary_type === 'hourly' ? 'giờ' : 'tháng' }}</span>
                                         </div>
@@ -1112,8 +1126,9 @@ const bonusCalcLabel = (calc) => {
                                             </thead>
                                             <tbody>
                                                 <tr v-for="(b, i) in salaryForm.custom_bonuses" :key="i" class="border-t">
-                                                    <td class="px-2 py-1"><input v-model.number="b.revenue_from" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
-                                                    <td class="px-2 py-1"><input v-model.number="b.bonus_value" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
+                                                    <td class="px-2 py-1"><MoneyInput v-model="b.revenue_from" :min="0" input-class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
+                                                    <td class="px-2 py-1"><MoneyInput v-if="!b.bonus_is_percentage" v-model="b.bonus_value" :min="0" input-class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" />
+                                                        <input v-else v-model.number="b.bonus_value" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
                                                     <td class="px-2 py-1 text-center"><input type="checkbox" v-model="b.bonus_is_percentage" class="accent-blue-600" /></td>
                                                     <td class="px-1 py-1"><button type="button" @click="salaryForm.custom_bonuses.splice(i, 1)" class="text-red-400 hover:text-red-600">&times;</button></td>
                                                 </tr>
@@ -1150,14 +1165,15 @@ const bonusCalcLabel = (calc) => {
                                             </thead>
                                             <tbody>
                                                 <tr v-for="(c, i) in salaryForm.custom_commissions" :key="i" class="border-t">
-                                                    <td class="px-2 py-1"><input v-model.number="c.revenue_from" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
+                                                    <td class="px-2 py-1"><MoneyInput v-model="c.revenue_from" :min="0" input-class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
                                                     <td class="px-2 py-1">
                                                         <select v-model="c.commission_table_id" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none">
                                                             <option :value="null">-- Không --</option>
                                                             <option v-for="ct in commissionTables" :key="ct.id" :value="ct.id">{{ ct.name }}</option>
                                                         </select>
                                                     </td>
-                                                    <td class="px-2 py-1"><input v-model.number="c.commission_value" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" :disabled="!!c.commission_table_id" /></td>
+                                                    <td class="px-2 py-1"><MoneyInput v-if="!c.commission_is_percentage" v-model="c.commission_value" :min="0" :disabled="!!c.commission_table_id" input-class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" />
+                                                        <input v-else v-model.number="c.commission_value" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" :disabled="!!c.commission_table_id" /></td>
                                                     <td class="px-2 py-1 text-center"><input type="checkbox" v-model="c.commission_is_percentage" class="accent-blue-600" :disabled="!!c.commission_table_id" /></td>
                                                     <td class="px-1 py-1"><button type="button" @click="salaryForm.custom_commissions.splice(i, 1)" class="text-red-400 hover:text-red-600">&times;</button></td>
                                                 </tr>
@@ -1201,7 +1217,7 @@ const bonusCalcLabel = (calc) => {
                                                             <option value="percentage">% lương</option>
                                                         </select>
                                                     </td>
-                                                    <td class="px-2 py-1"><input v-model.number="a.amount" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
+                                                    <td class="px-2 py-1"><MoneyInput v-model="a.amount" :min="0" input-class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
                                                     <td class="px-1 py-1"><button type="button" @click="salaryForm.custom_allowances.splice(i, 1)" class="text-red-400 hover:text-red-600">&times;</button></td>
                                                 </tr>
                                             </tbody>
@@ -1270,7 +1286,7 @@ const bonusCalcLabel = (calc) => {
                                                     </td>
                                                     <td class="px-2 py-1">
                                                         <div class="relative">
-                                                            <input v-model.number="d.amount" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" />
+                                                            <MoneyInput v-model="d.amount" :min="0" input-class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" />
                                                         </div>
                                                         <div v-if="d.calculation_type === 'per_minute' && d.per_minutes" class="text-[10px] text-gray-400 mt-0.5">
                                                             Trừ {{ formatCurrency(d.amount || 0) }}đ / {{ d.per_minutes }} phút

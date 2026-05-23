@@ -1,10 +1,11 @@
 <script setup>
-import { formatVND as formatCurrency, formatMoneyInput as formatCurrencyInput } from '@/utils/money';
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, watch } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
 import QuickCreateCustomerModal from '@/Components/QuickCreateCustomerModal.vue';
 import DateTimePicker from '@/Components/DateTimePicker.vue';
+import MoneyInput from '@/Components/MoneyInput.vue';
 
 const props = defineProps({
     purchase: Object,
@@ -291,18 +292,18 @@ const save = async () => {
             employee_id: selectedEmployeeId.value || null,
             purchase_date: purchaseDate.value || null,
             note: note.value,
-            discount: discount.value,
-            paid_amount: paidAmount.value,
+            discount: Number(discount.value) || 0,
+            paid_amount: Number(paidAmount.value) || 0,
             payment_method: paymentMethod.value,
             bank_account_info: paymentMethod.value === 'transfer' ? bankAccountInfo.value : null,
-            other_costs: otherCosts.value.map(c => ({ name: c.name, amount: c.amount })),
+            other_costs: otherCosts.value.map(c => ({ name: c.name, amount: Number(c.amount) || 0 })),
             items: items.value.map(item => ({
                 product_id: item.product_id,
                 quantity: item.has_serial ? (item.serials?.length || 0) : (parseInt(item.quantity) || 0),
-                price: item.price,
-                retail_price: item.retail_price || 0,
-                technician_price: item.technician_price || 0,
-                discount: item.discount,
+                price: Number(item.price) || 0,
+                retail_price: Number(item.retail_price) || 0,
+                technician_price: Number(item.technician_price) || 0,
+                discount: Number(item.discount) || 0,
                 serials: item.serials || [],
                 warranty_months: item.warranty_months || 0,
             }))
@@ -311,22 +312,6 @@ const save = async () => {
         alert("Có lỗi xảy ra, vui lòng kiểm tra lại dữ liệu.");
         submitRef.value = false;
     }
-};
-
-const parseCurrencyInput = (str) => {
-    if (!str && str !== 0) return 0;
-    return Number(String(str).replace(/\./g, '').replace(/,/g, '')) || 0;
-};
-
-const onCurrencyFocus = (event) => {
-    const val = parseCurrencyInput(event.target.value);
-    if (val === 0) event.target.value = '';
-    else event.target.value = String(val);
-};
-const onCurrencyBlur = (obj, field, event) => {
-    const val = parseCurrencyInput(event.target.value);
-    obj[field] = val;
-    event.target.value = formatCurrencyInput(val);
 };
 
 // Navigate to full product creation page
@@ -433,16 +418,16 @@ const goToCreateProduct = () => {
                                     <span v-else class="font-medium text-gray-700">{{ item.serials.length }}</span>
                                 </td>
                                 <td class="p-3 w-[120px]">
-                                    <input type="text" :value="formatCurrencyInput(item.price)" @focus="onCurrencyFocus" @blur="onCurrencyBlur(item, 'price', $event)" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-green-500 text-[13px] hover:bg-green-50 font-medium tracking-wide">
+                                    <MoneyInput v-model="item.price" :min="0" input-class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-green-500 text-[13px] hover:bg-green-50 font-medium tracking-wide" />
                                 </td>
                                 <td v-if="showRetailPrice" class="p-3 w-[120px]">
-                                    <input type="text" :value="formatCurrencyInput(item.retail_price)" @focus="onCurrencyFocus" @blur="onCurrencyBlur(item, 'retail_price', $event)" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-blue-500 text-[13px] hover:bg-blue-50 font-medium tracking-wide">
+                                    <MoneyInput v-model="item.retail_price" :min="0" input-class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-blue-500 text-[13px] hover:bg-blue-50 font-medium tracking-wide" />
                                 </td>
                                 <td v-if="showTechnicianPrice" class="p-3 w-[120px]">
-                                    <input type="text" :value="formatCurrencyInput(item.technician_price)" @focus="onCurrencyFocus" @blur="onCurrencyBlur(item, 'technician_price', $event)" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-purple-500 text-[13px] hover:bg-purple-50 font-medium tracking-wide">
+                                    <MoneyInput v-model="item.technician_price" :min="0" input-class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-purple-500 text-[13px] hover:bg-purple-50 font-medium tracking-wide" />
                                 </td>
                                 <td class="p-3 w-[100px]">
-                                    <input type="text" :value="formatCurrencyInput(item.discount)" @focus="onCurrencyFocus" @blur="onCurrencyBlur(item, 'discount', $event)" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-green-500 text-[13px] hover:bg-green-50">
+                                    <MoneyInput v-model="item.discount" :min="0" input-class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-green-500 text-[13px] hover:bg-green-50" />
                                 </td>
                                 <td class="p-3 w-[80px] text-center">
                                     <input type="number" v-model.number="item.warranty_months" min="0" class="w-full border-b border-dashed border-gray-400 py-1 text-center outline-none focus:border-orange-500 text-[13px] hover:bg-orange-50" placeholder="0">
@@ -584,7 +569,7 @@ const goToCreateProduct = () => {
 
                             <div class="flex justify-between items-center text-[13px]">
                                 <label class="text-gray-700 font-medium">Giảm giá</label>
-                                <input type="text" :value="formatCurrencyInput(discount)" @focus="onCurrencyFocus" @blur="(e) => { discount = parseCurrencyInput(e.target.value); e.target.value = formatCurrencyInput(discount); }" class="w-[150px] border-b border-dashed border-gray-300 text-right pr-2 py-0.5 outline-none focus:border-green-500 hover:bg-green-50">
+                                <MoneyInput v-model="discount" :min="0" input-class="w-[150px] border-b border-dashed border-gray-300 text-right pr-2 py-0.5 outline-none focus:border-green-500 hover:bg-green-50" />
                             </div>
 
                             <!-- Chi phí nhập khác -->
@@ -598,12 +583,12 @@ const goToCreateProduct = () => {
                             <div v-if="showOtherCosts" class="bg-gray-50 border border-gray-200 rounded-lg p-3 text-[13px] space-y-2">
                                 <div v-for="(cost, ci) in otherCosts" :key="cost.id" class="flex items-center gap-2">
                                     <input type="text" v-model="cost.name" class="flex-1 border border-gray-300 rounded px-2 py-1 text-[12px] outline-none focus:border-green-500" />
-                                    <input type="text" :value="formatCurrencyInput(cost.amount)" @focus="onCurrencyFocus" @blur="onCurrencyBlur(cost, 'amount', $event)" class="w-[100px] border border-gray-300 rounded px-2 py-1 text-right text-[12px] outline-none focus:border-green-500" />
+                                    <MoneyInput v-model="cost.amount" :min="0" input-class="w-[100px] border border-gray-300 rounded px-2 py-1 text-right text-[12px] outline-none focus:border-green-500" />
                                     <button @click="removeOtherCost(ci)" class="text-red-400 hover:text-red-600 text-sm">✕</button>
                                 </div>
                                 <div class="flex items-center gap-2">
                                     <input type="text" v-model="newCostName" @keydown.enter="addOtherCost" class="flex-1 border border-gray-300 rounded px-2 py-1 text-[12px] outline-none focus:border-green-500" placeholder="Tên chi phí (VD: Ship hàng)" />
-                                    <input type="text" :value="formatCurrencyInput(newCostAmount)" @focus="onCurrencyFocus" @blur="(e) => { newCostAmount = parseCurrencyInput(e.target.value); e.target.value = formatCurrencyInput(newCostAmount); }" class="w-[100px] border border-gray-300 rounded px-2 py-1 text-right text-[12px] outline-none focus:border-green-500" placeholder="Số tiền" />
+                                    <MoneyInput v-model="newCostAmount" :min="0" placeholder="Số tiền" input-class="w-[100px] border border-gray-300 rounded px-2 py-1 text-right text-[12px] outline-none focus:border-green-500" />
                                     <button @click="addOtherCost" class="text-green-600 hover:text-green-700 text-sm font-bold">+</button>
                                 </div>
                             </div>
@@ -615,7 +600,7 @@ const goToCreateProduct = () => {
 
                             <div class="flex justify-between items-center text-[13px]">
                                 <label class="text-gray-700 font-medium">Tiền trả nhà cung cấp</label>
-                                <input type="text" :value="formatCurrencyInput(paidAmount)" @focus="onCurrencyFocus" @blur="(e) => { paidAmount = parseCurrencyInput(e.target.value); e.target.value = formatCurrencyInput(paidAmount); }" class="w-[150px] border-b border-gray-400 text-right pr-2 py-0.5 outline-none focus:border-green-500 hover:bg-green-50 font-bold text-blue-600">
+                                <MoneyInput v-model="paidAmount" :min="0" input-class="w-[150px] border-b border-gray-400 text-right pr-2 py-0.5 outline-none focus:border-green-500 hover:bg-green-50 font-bold text-blue-600" />
                             </div>
 
                             <!-- HOTFIX 24.21 — overpayment row + supplier balance projection. -->

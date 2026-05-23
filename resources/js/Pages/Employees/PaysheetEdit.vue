@@ -328,7 +328,7 @@
                             <h4 class="text-sm font-semibold text-gray-600 mb-2">Điều chỉnh thủ công</h4>
                             <div v-for="adj in popupAdjustments" :key="adj.id" class="flex items-center gap-2 mb-2">
                                 <span class="flex-1 text-sm text-gray-700">{{ adj.name }}</span>
-                                <input v-model.number="adj.amount" :disabled="isLocked" type="number" class="w-32 text-sm border rounded px-2 py-1 text-right" />
+                                <MoneyInput v-model="adj.amount" :disabled="isLocked" input-class="w-32 text-sm border rounded px-2 py-1 text-right" />
                                 <button v-if="!isLocked" @click="deleteAdjustment(adj)" class="text-red-400 hover:text-red-600 text-lg">&times;</button>
                             </div>
                             <button v-if="!isLocked" @click="addAdjustmentRow('ot')"
@@ -399,8 +399,7 @@
                                             placeholder="Hoa hồng bán hàng, KPI doanh số..." />
                                     </td>
                                     <td class="px-2 py-1">
-                                        <input v-model.number="adj.amount" :disabled="isLocked" type="number" min="0"
-                                            class="w-full border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
+                                        <MoneyInput v-model="adj.amount" :disabled="isLocked" :min="0" input-class="w-full border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
                                     </td>
                                     <td class="px-1 py-1 text-center">
                                         <button v-if="!isLocked" @click="deleteAdjustment(adj)" class="text-red-400 hover:text-red-600">&times;</button>
@@ -449,8 +448,7 @@
                                             placeholder="Ăn trưa, đi lại..." />
                                     </td>
                                     <td class="px-2 py-1">
-                                        <input v-model.number="adj.amount" :disabled="isLocked" type="number" min="0"
-                                            class="w-full border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
+                                        <MoneyInput v-model="adj.amount" :disabled="isLocked" :min="0" input-class="w-full border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
                                     </td>
                                     <td class="px-1 py-1 text-center">
                                         <button v-if="!isLocked" @click="deleteAdjustment(adj)" class="text-red-400 hover:text-red-600">&times;</button>
@@ -497,8 +495,7 @@
                                             placeholder="Thưởng KPI, thưởng doanh số..." />
                                     </td>
                                     <td class="px-2 py-1">
-                                        <input v-model.number="adj.amount" :disabled="isLocked" type="number" min="0"
-                                            class="w-full border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
+                                        <MoneyInput v-model="adj.amount" :disabled="isLocked" :min="0" input-class="w-full border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
                                     </td>
                                     <td class="px-1 py-1 text-center">
                                         <button v-if="!isLocked" @click="deleteAdjustment(adj)" class="text-red-400 hover:text-red-600">&times;</button>
@@ -560,8 +557,7 @@
                                         </select>
                                     </td>
                                     <td class="px-2 py-1">
-                                        <input v-model.number="adj.amount" :disabled="isLocked" type="number" min="0"
-                                            class="w-full border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
+                                        <MoneyInput v-model="adj.amount" :disabled="isLocked" :min="0" input-class="w-full border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
                                     </td>
                                     <td class="px-1 py-1 text-center">
                                         <button v-if="!isLocked" @click="deleteAdjustment(adj)" class="text-red-400 hover:text-red-600">&times;</button>
@@ -630,6 +626,7 @@ import AppLayout from "@/Layouts/AppLayout.vue";
 import { ref, computed, reactive, onMounted } from "vue";
 import axios from "axios";
 import { formatVND as fmt } from '@/utils/money';
+import MoneyInput from '@/Components/MoneyInput.vue';
 
 const props = defineProps({
     paysheet: { type: Object, required: true },

@@ -1,5 +1,6 @@
 <script setup>
 import { formatVND as formatCurrency } from '@/utils/money';
+import MoneyInput from '@/Components/MoneyInput.vue';
 import { ref, computed, watch } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
@@ -119,10 +120,10 @@ const save = async (saveStatus) => {
             expected_date: expectedDate.value || null,
             order_date: orderDate.value || null,
             note: note.value,
-            discount: discount.value,
-            import_fee: importFee.value,
-            other_import_fee: otherImportFee.value,
-            items: itemsComputed.value
+            discount: Number(discount.value) || 0,
+            import_fee: Number(importFee.value) || 0,
+            other_import_fee: Number(otherImportFee.value) || 0,
+            items: itemsComputed.value.map(item => ({ ...item, price: Number(item.price) || 0, discount: Number(item.discount) || 0 }))
         });
     } catch (e) {
         alert("Có lỗi xảy ra, vui lòng kiểm tra lại dữ liệu.");
@@ -224,10 +225,10 @@ const save = async (saveStatus) => {
                                     <input type="number" v-model="item.qty" min="1" class="w-[70px] border-b border-dashed border-gray-400 py-1 text-center outline-none focus:border-blue-500 text-[13px] hover:bg-yellow-50 font-medium">
                                 </td>
                                 <td class="p-3 w-[120px]">
-                                    <input type="number" v-model="item.price" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-blue-500 text-[13px] hover:bg-yellow-50 font-medium tracking-wide">
+                                    <MoneyInput v-model="item.price" :min="0" input-class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-blue-500 text-[13px] hover:bg-yellow-50 font-medium tracking-wide" />
                                 </td>
                                 <td class="p-3 w-[100px]">
-                                    <input type="number" v-model="item.discount" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-blue-500 text-[13px] hover:bg-yellow-50">
+                                    <MoneyInput v-model="item.discount" :min="0" input-class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-blue-500 text-[13px] hover:bg-yellow-50" />
                                 </td>
                                 <td class="p-3 font-bold text-gray-800 text-right w-[140px] pr-6">{{ formatCurrency(item.total_value) }}</td>
                             </tr>
@@ -304,13 +305,13 @@ const save = async (saveStatus) => {
                             <div class="flex justify-between items-center text-[13px]">
                                 <label class="text-gray-700 font-medium">Giảm giá</label>
                                 <div class="relative w-[150px]">
-                                    <input type="number" v-model="discount" class="w-full border-b border-dashed border-gray-300 text-right pr-2 py-0.5 outline-none focus:border-blue-500 hover:bg-yellow-50">
+                                    <MoneyInput v-model="discount" :min="0" input-class="w-full border-b border-dashed border-gray-300 text-right pr-2 py-0.5 outline-none focus:border-blue-500 hover:bg-yellow-50" />
                                 </div>
                             </div>
 
                             <div class="flex justify-between items-center text-[13px]">
                                 <label class="text-gray-700 font-medium">Chi phí nhập hàng</label>
-                                <input type="number" v-model="importFee" class="w-[150px] border-b border-dashed border-gray-300 text-right pr-2 py-0.5 outline-none focus:border-blue-500 hover:bg-yellow-50">
+                                <MoneyInput v-model="importFee" :min="0" input-class="w-[150px] border-b border-dashed border-gray-300 text-right pr-2 py-0.5 outline-none focus:border-blue-500 hover:bg-yellow-50" />
                             </div>
 
                             <div class="flex justify-between items-center text-[13px] pt-2">
@@ -325,7 +326,7 @@ const save = async (saveStatus) => {
 
                              <div class="flex justify-between items-center text-[13px]">
                                 <label class="text-gray-700 font-medium text-blue-600 flex items-center gap-1 cursor-pointer">Chi phí nhập khác <span>→</span></label>
-                                <input type="number" v-model="otherImportFee" class="w-[150px] border-b border-dashed border-gray-300 text-right pr-2 py-0.5 outline-none focus:border-blue-500 hover:bg-yellow-50">
+                                <MoneyInput v-model="otherImportFee" :min="0" input-class="w-[150px] border-b border-dashed border-gray-300 text-right pr-2 py-0.5 outline-none focus:border-blue-500 hover:bg-yellow-50" />
                             </div>
 
                              <div class="flex justify-between items-center text-[13px]">

@@ -3,6 +3,7 @@ import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, watch } from "vue";
 import { Head, router } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
+import MoneyInput from "@/Components/MoneyInput.vue";
 import axios from "axios";
 
 const props = defineProps({
@@ -272,7 +273,7 @@ const submitDisassemble = async () => {
         const payload = {
             product_id: disForm.value.product_id,
             quantity: disForm.value.quantity,
-            unit_cost: disForm.value.unit_cost,
+            unit_cost: Number(disForm.value.unit_cost) || 0,
             notes: disForm.value.notes,
         };
         if (disSelectedProduct.value?.has_serial) {
@@ -315,7 +316,11 @@ const submitQuickProduct = async () => {
     if (!quickProduct.value.name.trim()) { quickCreateError.value = "Nhập tên sản phẩm."; return; }
     quickCreateLoading.value = true;
     try {
-        const payload = { ...quickProduct.value };
+        const payload = {
+            ...quickProduct.value,
+            cost_price: Number(quickProduct.value.cost_price) || 0,
+            retail_price: Number(quickProduct.value.retail_price) || 0,
+        };
         if (!payload.category_id) delete payload.category_id;
         if (!payload.brand_id) delete payload.brand_id;
         if (!payload.sku) delete payload.sku;
@@ -446,7 +451,9 @@ const submitComplete = async () => {
             paid_amount: Number(completeForm.value.paid_amount || 0),
             payment_method: completeForm.value.payment_method || 'cash',
             note: completeForm.value.note || "",
-            part_prices: completeForm.value.part_prices,
+            part_prices: Object.fromEntries(
+                Object.entries(completeForm.value.part_prices || {}).map(([id, value]) => [id, Number(value) || 0])
+            ),
             warranty_policy: completeForm.value.warranty_policy,
         };
         await axios.post(`/api/tasks/${props.taskId}/complete`, payload);
@@ -957,7 +964,7 @@ loadTask();
                         </div>
                         <div>
                             <label class="block font-semibold text-sm mb-1">Đơn giá nhập kho</label>
-                            <input v-model.number="disForm.unit_cost" type="number" min="0" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                            <MoneyInput v-model="disForm.unit_cost" :min="0" input-class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-right" />
                             <p class="text-[11px] text-gray-400 mt-1">Mặc định = giá vốn BQ, có thể sửa</p>
                         </div>
                     </div>
@@ -1055,14 +1062,14 @@ loadTask();
                         <div>
                             <label class="block text-sm font-semibold text-gray-700 mb-1">Giá vốn</label>
                             <div class="relative">
-                                <input v-model.number="quickProduct.cost_price" type="number" min="0" class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-8 text-sm text-right font-semibold focus:border-green-500 outline-none" />
+                                <MoneyInput v-model="quickProduct.cost_price" :min="0" input-class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-8 text-sm text-right font-semibold focus:border-green-500 outline-none" />
                                 <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₫</span>
                             </div>
                         </div>
                         <div>
                             <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán</label>
                             <div class="relative">
-                                <input v-model.number="quickProduct.retail_price" type="number" min="0" class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-8 text-sm text-right font-semibold text-blue-700 focus:border-green-500 outline-none" />
+                                <MoneyInput v-model="quickProduct.retail_price" :min="0" input-class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-8 text-sm text-right font-semibold text-blue-700 focus:border-green-500 outline-none" />
                                 <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₫</span>
                             </div>
                         </div>
@@ -1097,7 +1104,7 @@ loadTask();
                     <!-- Labor fee -->
                     <div>
                         <label class="block font-semibold text-sm mb-1">Tiền công (labor_fee)</label>
-                        <input v-model.number="completeForm.labor_fee" type="number" min="0" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-right font-semibold" />
+                        <MoneyInput v-model="completeForm.labor_fee" :min="0" input-class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-right font-semibold" />
                     </div>
 
                     <!-- Part prices table -->
@@ -1119,8 +1126,8 @@ loadTask();
                                     <td class="px-2 py-2 text-center">{{ p.quantity }}</td>
                                     <td class="px-2 py-2 text-right text-gray-500">{{ formatCurrency(p.unit_cost) }}</td>
                                     <td class="px-2 py-2 text-right">
-                                        <input v-model.number="completeForm.part_prices[p.id]" type="number" min="0"
-                                            class="w-28 border border-gray-300 rounded px-2 py-1 text-sm text-right" />
+                                        <MoneyInput v-model="completeForm.part_prices[p.id]" :min="0"
+                                            input-class="w-28 border border-gray-300 rounded px-2 py-1 text-sm text-right" />
                                     </td>
                                     <td class="px-2 py-2 text-right font-semibold">
                                         {{ formatCurrency((Number(completeForm.part_prices[p.id]) || 0) * Number(p.quantity)) }}
@@ -1160,8 +1167,8 @@ loadTask();
                     <div class="grid grid-cols-2 gap-3">
                         <div>
                             <label class="block font-semibold text-sm mb-1">Số tiền đã thu</label>
-                            <input v-model.number="completeForm.paid_amount" type="number" min="0" :max="completePayable"
-                                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-right font-semibold" />
+                            <MoneyInput v-model="completeForm.paid_amount" :min="0"
+                                input-class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-right font-semibold" />
                         </div>
                         <div>
                             <label class="block font-semibold text-sm mb-1">Phương thức</label>
