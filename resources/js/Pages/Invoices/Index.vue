@@ -467,7 +467,17 @@ const changeSeller = async (invoice, newSellerKey) => {
                                     {{ formatCurrency(invoice.total) }}
                                 </td>
                                 <td class="px-4 py-2 text-right">
-                                    {{ formatCurrency(invoice.customer_paid) }}
+                                    <div class="text-right">
+                                        <div>
+                                            {{ formatCurrency(effectiveCustomerPaid(invoice)) }}
+                                        </div>
+                                        <div
+                                            v-if="isInvoiceCancelled(invoice) && Number(invoice.customer_paid || 0) > 0"
+                                            class="text-[11px] text-gray-400 font-normal"
+                                        >
+                                            Trước hủy: {{ formatCurrency(invoice.customer_paid) }}
+                                        </div>
+                                    </div>
                                 </td>
                             </tr>
                             <tr
