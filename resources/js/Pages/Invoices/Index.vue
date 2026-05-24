@@ -940,22 +940,21 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                                 }}</span
                                                             >
                                                         </div>
-                                                        <div
-                                                            class="flex justify-between py-1.5 text-gray-500"
-                                                        >
-                                                            <span
-                                                                >Khách đã
-                                                                trả</span
-                                                            >
-                                                            <span
-                                                                class="text-gray-800 font-medium"
-                                                                >{{
-                                                                    formatCurrency(
-                                                                        invoice.customer_paid,
-                                                                    )
-                                                                }}</span
-                                                            >
-                                                        </div>
+                                                        <div class="flex justify-between py-1.5 text-gray-500">
+                                                             <span>
+                                                                 {{ isInvoiceCancelled(invoice) ? 'Khách đã trả hiệu lực' : 'Khách đã trả' }}
+                                                             </span>
+                                                             <span class="text-gray-800 font-medium">
+                                                                 {{ formatCurrency(effectiveCustomerPaid(invoice)) }}
+                                                             </span>
+                                                         </div>
+                                                         <div
+                                                             v-if="isInvoiceCancelled(invoice) && Number(invoice.customer_paid || 0) > 0"
+                                                             class="flex justify-between py-1 text-xs text-gray-400 font-normal"
+                                                         >
+                                                             <span>Đã trả trước hủy</span>
+                                                             <span>{{ formatCurrency(invoice.customer_paid) }}</span>
+                                                         </div>
                                                     </div>
                                                 </div>
 
