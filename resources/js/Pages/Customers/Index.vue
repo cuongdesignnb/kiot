@@ -455,6 +455,160 @@ const submitDebtModal = async () => {
     }
 };
 
+// ====== CUSTOMER PAYMENT DISCOUNTS ======
+const paymentDiscountModal = reactive({
+    show: false,
+    loadingInvoices: false,
+    submitting: false,
+    customer: null,
+    invoices: [],
+    users: [],
+});
+
+const paymentDiscountForm = reactive({
+    amount: 0,
+    discount_at: '',
+    performed_by: '',
+    note: '',
+    allocate_to_invoices: true,
+});
+
+const openPaymentDiscountModal = async (customer) => {
+    if (Number(customer.debt_amount || 0) <= 0) {
+        alert("Khách hàng không còn nợ phải thu, không thể tạo chiết khấu thanh toán.");
+        return;
+    }
+
+    paymentDiscountModal.customer = customer;
+    paymentDiscountModal.invoices = [];
+    paymentDiscountModal.users = [];
+    
+    paymentDiscountForm.amount = 0;
+    paymentDiscountForm.note = "";
+    paymentDiscountForm.allocate_to_invoices = true;
+    paymentDiscountForm.performed_by = "";
+
+    const _now = new Date();
+    _now.setMinutes(_now.getMinutes() - _now.getTimezoneOffset());
+    paymentDiscountForm.discount_at = _now.toISOString().slice(0, 16);
+
+    paymentDiscountModal.show = true;
+    paymentDiscountModal.loadingInvoices = true;
+
+    try {
+        const { data } = await axios.get(`/customers/${customer.id}/payment-discount-invoices`);
+        paymentDiscountModal.invoices = (data.invoices || []).map(inv => ({ ...inv, allocAmount: 0 }));
+        paymentDiscountModal.users = data.users || [];
+    } catch (e) {
+        paymentDiscountModal.invoices = [];
+        paymentDiscountModal.users = [];
+    } finally {
+        paymentDiscountModal.loadingInvoices = false;
+    }
+};
+
+const allocatePaymentDiscount = () => {
+    let remaining = Number(paymentDiscountForm.amount || 0);
+    paymentDiscountModal.invoices = paymentDiscountModal.invoices.map((inv) => {
+        const max = Number(inv.remaining || 0);
+        const alloc = Math.min(max, Math.max(remaining, 0));
+        remaining -= alloc;
+        return { ...inv, allocAmount: alloc };
+    });
+};
+
+watch(() => paymentDiscountForm.amount, () => {
+    if (paymentDiscountForm.allocate_to_invoices) {
+        allocatePaymentDiscount();
+    }
+});
+
+watch(() => paymentDiscountForm.allocate_to_invoices, (newVal) => {
+    if (newVal) {
+        allocatePaymentDiscount();
+    } else {
+        paymentDiscountModal.invoices = paymentDiscountModal.invoices.map(inv => ({ ...inv, allocAmount: 0 }));
+    }
+});
+
+const unallocatedAmount = computed(() => {
+    if (!paymentDiscountForm.allocate_to_invoices) return 0;
+    const totalAlloc = paymentDiscountModal.invoices.reduce((sum, inv) => sum + Number(inv.allocAmount || 0), 0);
+    return Number(paymentDiscountForm.amount || 0) - totalAlloc;
+});
+
+const submitPaymentDiscount = async () => {
+    if (!paymentDiscountForm.amount || paymentDiscountForm.amount <= 0) {
+        alert("Vui lòng nhập số tiền chiết khấu hợp lệ");
+        return;
+    }
+
+    if (paymentDiscountForm.amount > Number(paymentDiscountModal.customer?.debt_amount || 0)) {
+        alert("Số tiền chiết khấu không được vượt quá số nợ phải thu hiện tại.");
+        return;
+    }
+
+    if (paymentDiscountForm.allocate_to_invoices && Math.abs(unallocatedAmount.value) > 0.01) {
+        alert("Vui lòng phân bổ hết số tiền chiết khấu vào các hóa đơn.");
+        return;
+    }
+
+    if (paymentDiscountForm.allocate_to_invoices) {
+        for (const inv of paymentDiscountModal.invoices) {
+            if (Number(inv.allocAmount || 0) > Number(inv.remaining || 0) + 0.01) {
+                alert(`Số tiền phân bổ cho hóa đơn ${inv.code} không được vượt quá số tiền còn phải thu.`);
+                return;
+            }
+        }
+    }
+
+    paymentDiscountModal.submitting = true;
+    try {
+        const payload = {
+            amount: Number(paymentDiscountForm.amount || 0),
+            discount_at: paymentDiscountForm.discount_at,
+            performed_by: paymentDiscountForm.performed_by || null,
+            note: paymentDiscountForm.note,
+            allocate_to_invoices: paymentDiscountForm.allocate_to_invoices,
+            allocations: paymentDiscountForm.allocate_to_invoices
+                ? paymentDiscountModal.invoices
+                    .filter(inv => Number(inv.allocAmount || 0) > 0)
+                    .map(inv => ({ invoice_id: inv.id, amount: Number(inv.allocAmount || 0) }))
+                : [],
+        };
+
+        const { data } = await axios.post(`/customers/${paymentDiscountModal.customer.id}/payment-discounts`, payload);
+        if (data.success) {
+            paymentDiscountModal.show = false;
+            await loadDebtHistory(paymentDiscountModal.customer.id);
+            router.reload({ only: ['customers'], preserveScroll: true });
+        } else {
+            alert(data.message || "Có lỗi xảy ra");
+        }
+    } catch (e) {
+        alert(e.response?.data?.message || "Có lỗi xảy ra");
+    } finally {
+        paymentDiscountModal.submitting = false;
+    }
+};
+
+const cancelPaymentDiscount = async (customerId, discountId) => {
+    const reason = prompt("Nhập lý do hủy chiết khấu thanh toán (không bắt buộc):");
+    if (reason === null) return;
+
+    try {
+        const { data } = await axios.post(`/customers/${customerId}/payment-discounts/${discountId}/cancel`, { reason });
+        if (data.success) {
+            await loadDebtHistory(customerId);
+            router.reload({ only: ['customers'], preserveScroll: true });
+        } else {
+            alert(data.message || "Có lỗi xảy ra");
+        }
+    } catch (e) {
+        alert(e.response?.data?.message || "Có lỗi xảy ra");
+    }
+};
+
 // ====== MERGE CUSTOMER ↔ SUPPLIER ======
 const mergeModal = reactive({
     show: false,
@@ -2073,11 +2227,21 @@ const createdDateRange = computed({
                                                             class="hover:bg-blue-50/30"
                                                         >
                                                             <td
-                                                                class="px-3 py-2 font-medium"
-                                                                :class="isCbCode(entry.code) ? 'text-blue-600 cursor-pointer hover:underline' : 'text-blue-600'"
-                                                                @click="isCbCode(entry.code) && openCbDetail(entry.code, customer.id)"
+                                                                class="px-3 py-2 font-medium text-blue-600"
                                                             >
-                                                                {{ entry.code }}
+                                                                <span
+                                                                    :class="isCbCode(entry.code) ? 'cursor-pointer hover:underline' : ''"
+                                                                    @click="isCbCode(entry.code) && openCbDetail(entry.code, customer.id)"
+                                                                >
+                                                                    {{ entry.code }}
+                                                                </span>
+                                                                <button
+                                                                    v-if="entry.can_cancel"
+                                                                    @click.stop="cancelPaymentDiscount(customer.id, entry.payment_discount_id)"
+                                                                    class="ml-2 text-xs text-red-600 hover:text-red-800 font-semibold underline"
+                                                                >
+                                                                    Hủy
+                                                                </button>
                                                             </td>
                                                             <td
                                                                 class="px-3 py-2"
@@ -2244,10 +2408,10 @@ const createdDateRange = computed({
                                                             Thanh toán
                                                         </button>
                                                         <button
+                                                            @click="openPaymentDiscountModal(customer)"
                                                             class="bg-white border border-gray-300 text-gray-700 rounded px-3 py-1.5 font-semibold hover:bg-gray-50 flex items-center gap-1"
                                                         >
-                                                            Chiết khấu thanh
-                                                            toán
+                                                            Chiết khấu thanh toán
                                                         </button>
                                                         <button
                                                             class="bg-white border border-gray-300 text-gray-700 rounded px-3 py-1.5 font-semibold hover:bg-gray-50 flex items-center gap-1"
@@ -3193,6 +3357,150 @@ const createdDateRange = computed({
                                 ? "Thanh toán"
                                 : "Điều chỉnh"
                         }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Payment Discount Modal -->
+        <div
+            v-if="paymentDiscountModal.show"
+            class="fixed inset-0 z-[60] flex items-center justify-center"
+        >
+            <div
+                class="fixed inset-0 bg-black/40"
+                @click="paymentDiscountModal.show = false"
+            ></div>
+            <div class="bg-white rounded-lg shadow-xl w-[580px] max-h-[90vh] overflow-y-auto relative z-10">
+                <div class="px-6 py-4 border-b border-gray-200">
+                    <h3 class="text-lg font-bold text-gray-800">
+                        Chiết khấu thanh toán
+                    </h3>
+                    <p class="text-sm text-gray-500 mt-1">
+                        {{ paymentDiscountModal.customer?.name }}
+                    </p>
+                </div>
+                <div class="px-6 py-4 space-y-4">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-500 mb-1">Nợ phải thu hiện tại</label>
+                            <div class="text-base font-bold text-red-600">
+                                {{ formatCurrency(paymentDiscountModal.customer?.debt_amount) }}
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-500 mb-1">Nợ còn lại sau CK</label>
+                            <div class="text-base font-bold text-gray-800">
+                                {{ formatCurrency(Math.max(0, Number(paymentDiscountModal.customer?.debt_amount || 0) - Number(paymentDiscountForm.amount || 0))) }}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-500 mb-1">Thời gian chiết khấu</label>
+                            <DateTimePicker
+                                v-model="paymentDiscountForm.discount_at"
+                                placeholder="dd/MM/yyyy HH:mm"
+                                input-class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500"
+                            />
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-500 mb-1">Người thực hiện</label>
+                            <select
+                                v-model="paymentDiscountForm.performed_by"
+                                class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500"
+                            >
+                                <option value="">Tài khoản hiện tại</option>
+                                <option
+                                    v-for="user in paymentDiscountModal.users"
+                                    :key="user.id"
+                                    :value="user.id"
+                                >
+                                    {{ user.name }}
+                                </option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 mb-1">Số tiền chiết khấu</label>
+                        <MoneyInput
+                            v-model="paymentDiscountForm.amount"
+                            placeholder="0"
+                            input-class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500 font-semibold text-lg text-blue-600"
+                        />
+                    </div>
+
+                    <div>
+                        <label class="flex items-center gap-2 text-sm text-gray-700 font-medium">
+                            <input
+                                type="checkbox"
+                                v-model="paymentDiscountForm.allocate_to_invoices"
+                                class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            Phân bổ số tiền chiết khấu vào hóa đơn
+                        </label>
+                    </div>
+
+                    <!-- Allocations table -->
+                    <div v-if="paymentDiscountForm.allocate_to_invoices" class="space-y-2">
+                        <label class="block text-xs font-medium text-gray-500">Danh sách hóa đơn còn nợ</label>
+                        <div v-if="paymentDiscountModal.loadingInvoices" class="text-sm text-gray-400 py-2">Đang tải hóa đơn...</div>
+                        <div v-else-if="paymentDiscountModal.invoices.length === 0" class="text-sm text-gray-400 py-2">Không có hóa đơn còn nợ</div>
+                        <div v-else class="space-y-2 max-h-48 overflow-y-auto border border-gray-200 rounded p-2 bg-gray-50">
+                            <div
+                                v-for="inv in paymentDiscountModal.invoices"
+                                :key="inv.id"
+                                class="flex items-center justify-between bg-white rounded p-2 text-xs border border-gray-100 shadow-sm"
+                            >
+                                <div class="flex-1 min-w-0">
+                                    <div class="font-bold text-gray-700">{{ inv.code }}</div>
+                                    <div class="text-[10px] text-gray-400">
+                                        Tổng: {{ formatCurrency(inv.total) }} | Còn nợ: <span class="text-red-500 font-bold">{{ formatCurrency(inv.remaining) }}</span>
+                                    </div>
+                                </div>
+                                <div class="ml-3 w-28">
+                                    <MoneyInput
+                                        v-model="inv.allocAmount"
+                                        :min="0"
+                                        placeholder="0"
+                                        input-class="w-full border border-gray-300 rounded px-2 py-1 text-xs text-right focus:ring-blue-500 focus:border-blue-500"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flex justify-between text-xs font-semibold mt-2 pt-2 border-t border-gray-200">
+                            <span>Chưa phân bổ:</span>
+                            <span :class="Math.abs(unallocatedAmount) > 0.01 ? 'text-red-500' : 'text-green-600'">
+                                {{ formatCurrency(unallocatedAmount) }}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 mb-1">Ghi chú</label>
+                        <textarea
+                            v-model="paymentDiscountForm.note"
+                            rows="2"
+                            class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500"
+                            placeholder="Ghi chú chiết khấu..."
+                        ></textarea>
+                    </div>
+                </div>
+                <div class="px-6 py-4 border-t border-gray-200 flex justify-end gap-3 bg-gray-50">
+                    <button
+                        @click="paymentDiscountModal.show = false"
+                        class="px-4 py-2 border border-gray-300 rounded text-gray-700 bg-white font-medium hover:bg-gray-50 text-sm"
+                    >
+                        Bỏ qua
+                    </button>
+                    <button
+                        @click="submitPaymentDiscount"
+                        :disabled="paymentDiscountModal.submitting"
+                        class="px-4 py-2 rounded text-white bg-blue-600 hover:bg-blue-700 font-medium text-sm flex items-center gap-1"
+                    >
+                        {{ paymentDiscountModal.submitting ? 'Đang tạo...' : 'Tạo phiếu' }}
                     </button>
                 </div>
             </div>

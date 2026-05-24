@@ -14,6 +14,8 @@ use App\Models\SupplierDebtTransaction;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use App\Services\CustomerDebtService;
+use App\Services\CustomerPaymentDiscountService;
+use App\Models\CustomerPaymentDiscount;
 use App\Services\DebtOffsetService;
 use App\Models\DebtOffset;
 use App\Support\Filters\FilterableIndex;
@@ -546,6 +548,14 @@ class CustomerController extends Controller
             ->limit(200)
             ->get();
 
+        $discountCodes = $debts->pluck('ref_code')
+            ->filter(fn ($code) => str_starts_with((string) $code, 'CKTT'))
+            ->values();
+
+        $discountsByCode = CustomerPaymentDiscount::whereIn('code', $discountCodes)
+            ->get()
+            ->keyBy('code');
+
         $autoReturnSettlementNotes = [
             'Tat toan tien da tra khach cho phieu tra',
             'Bo sung tat toan tien da tra khach cho phieu tra',
@@ -613,19 +623,30 @@ class CustomerController extends Controller
 
         $matchedSettlementIds = array_values(array_unique($matchedSettlementIds));
 
-        $mapLedgerEntry = function ($d, array $settlementMetaByDebtId = []) use ($typeLabels, $isInvoiceCancelDebt) {
+        $mapLedgerEntry = function ($d, array $settlementMetaByDebtId = []) use ($typeLabels, $isInvoiceCancelDebt, $discountsByCode) {
             $amount = (float) $d->amount;
             $settlementMeta = $settlementMetaByDebtId[$d->id] ?? null;
             $balance = $settlementMeta['display_balance'] ?? (float) $d->debt_total;
             $recordedAt = $d->recorded_at ?? $d->created_at;
 
-            $label = $isInvoiceCancelDebt($d)
-                ? 'Hủy hóa đơn'
-                : ($typeLabels[$d->type] ?? $d->type);
+            $isPaymentDiscount = str_starts_with((string) $d->ref_code, 'CKTT');
+            $isDiscountCancel = $isPaymentDiscount && (float) $d->amount > 0 && str_contains(mb_strtolower((string) $d->note), 'hủy chiết khấu');
 
-            $typeRaw = $isInvoiceCancelDebt($d)
-                ? 'invoice_cancel_reversal'
-                : $d->type;
+            if ($isPaymentDiscount && !$isDiscountCancel && (float) $d->amount < 0) {
+                $label = 'Chiết khấu thanh toán';
+                $typeRaw = 'payment_discount';
+            } elseif ($isDiscountCancel) {
+                $label = 'Hủy chiết khấu thanh toán';
+                $typeRaw = 'payment_discount_cancel';
+            } else {
+                $label = $isInvoiceCancelDebt($d)
+                    ? 'Hủy hóa đơn'
+                    : ($typeLabels[$d->type] ?? $d->type);
+
+                $typeRaw = $isInvoiceCancelDebt($d)
+                    ? 'invoice_cancel_reversal'
+                    : $d->type;
+            }
 
             $entry = [
                 'id'              => 'ldg-' . $d->id,
@@ -647,6 +668,13 @@ class CustomerController extends Controller
                 $entry['settlement_adjusted_amount'] = $settlementMeta['settlement_adjusted_amount'];
                 $entry['settlement_adjustment_ids'] = $settlementMeta['settlement_adjustment_ids'];
                 $entry['display_merged_settlement'] = true;
+            }
+
+            $discount = $discountsByCode[$d->ref_code] ?? null;
+            if ($discount) {
+                $entry['payment_discount_id'] = $discount->id;
+                $entry['payment_discount_status'] = $discount->status;
+                $entry['can_cancel'] = $typeRaw === 'payment_discount' && $discount->status === 'active';
             }
 
             return $entry;
@@ -859,7 +887,7 @@ class CustomerController extends Controller
 
                 if (!$invoice) continue;
 
-                $remaining = $invoice->total - $invoice->customer_paid;
+                $remaining = app(CustomerPaymentDiscountService::class)->getInvoiceRemainingReceivable($invoice);
                 $payAmount = min($alloc['amount'], $remaining);
 
                 if ($payAmount <= 0) continue;
@@ -922,7 +950,9 @@ class CustomerController extends Controller
             foreach ($invoices as $invoice) {
                 if ($remaining <= 0) break;
 
-                $invoiceDebt = $invoice->total - $invoice->customer_paid;
+                $invoiceDebt = app(CustomerPaymentDiscountService::class)->getInvoiceRemainingReceivable($invoice);
+                if ($invoiceDebt <= 0) continue;
+
                 $payAmount = min($remaining, $invoiceDebt);
 
                 $invoice->increment('customer_paid', $payAmount);
@@ -975,17 +1005,30 @@ class CustomerController extends Controller
     {
         $invoices = Invoice::where('customer_id', $customer->id)
             ->where('status', '!=', 'Đã hủy')
-            ->whereRaw('total > customer_paid')
+            ->select('id', 'code', 'total', 'customer_paid', 'created_at')
+            ->selectSub(function ($query) {
+                $query->from('customer_payment_discount_allocations')
+                    ->join('customer_payment_discounts', 'customer_payment_discount_allocations.customer_payment_discount_id', '=', 'customer_payment_discounts.id')
+                    ->whereColumn('customer_payment_discount_allocations.invoice_id', 'invoices.id')
+                    ->where('customer_payment_discounts.status', 'active')
+                    ->selectRaw('COALESCE(SUM(customer_payment_discount_allocations.amount), 0)');
+            }, 'discount_allocated')
             ->orderBy('created_at', 'asc')
-            ->get(['id', 'code', 'total', 'customer_paid', 'created_at'])
-            ->map(fn($inv) => [
-                'id' => $inv->id,
-                'code' => $inv->code,
-                'total' => $inv->total,
-                'customer_paid' => $inv->customer_paid,
-                'remaining' => $inv->total - $inv->customer_paid,
-                'created_at' => $inv->created_at,
-            ]);
+            ->get()
+            ->map(function ($inv) {
+                $remaining = (float) $inv->total - (float) $inv->customer_paid - (float) $inv->discount_allocated;
+                return [
+                    'id' => $inv->id,
+                    'code' => $inv->code,
+                    'total' => (float) $inv->total,
+                    'customer_paid' => (float) $inv->customer_paid,
+                    'discount_allocated' => (float) $inv->discount_allocated,
+                    'remaining' => max(0.0, $remaining),
+                    'created_at' => $inv->created_at,
+                ];
+            })
+            ->filter(fn($inv) => $inv['remaining'] > 0)
+            ->values();
 
         return response()->json($invoices);
     }

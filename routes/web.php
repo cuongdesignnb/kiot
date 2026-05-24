@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\CustomerController;
+use App\Http\Controllers\CustomerPaymentDiscountController;
 use App\Http\Controllers\SupplierController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\PurchaseController;
@@ -265,6 +266,15 @@ Route::get('/api/customers/search', [CustomerController::class, 'apiSearch'])
 Route::post('/customers/{customer}/debt-payment', [CustomerController::class, 'debtPayment'])->middleware('permission:customers.debt_payment');
 Route::post('/customers/{customer}/debt-adjust', [CustomerController::class, 'debtAdjust'])->middleware('permission:customers.debt_adjust');
 Route::get('/customers/{customer}/outstanding-invoices', [CustomerController::class, 'outstandingInvoices'])->middleware('permission:customers.debt_payment');
+
+Route::middleware('permission:customers.view')->group(function () {
+    Route::get('/customers/{customer}/payment-discount-invoices', [CustomerPaymentDiscountController::class, 'discountableInvoices']);
+});
+
+Route::middleware('permission:customers.debt_adjust')->group(function () {
+    Route::post('/customers/{customer}/payment-discounts', [CustomerPaymentDiscountController::class, 'store']);
+    Route::post('/customers/{customer}/payment-discounts/{paymentDiscount}/cancel', [CustomerPaymentDiscountController::class, 'cancel']);
+});
 
 // Print & show routes
 Route::get('/invoices/{invoice}/print', [InvoiceController::class, 'print'])->name('invoices.print')->middleware('permission:invoices.print');
