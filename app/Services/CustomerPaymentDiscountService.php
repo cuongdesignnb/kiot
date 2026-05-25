@@ -6,6 +6,7 @@ use App\Models\Customer;
 use App\Models\Invoice;
 use App\Models\CustomerPaymentDiscount;
 use App\Models\CustomerPaymentDiscountAllocation;
+use App\Models\CustomerDebt;
 use App\Services\CustomerDebtService;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
@@ -30,42 +31,87 @@ class CustomerPaymentDiscountService
         return max(0.0, (float) $invoice->total - (float) $invoice->customer_paid - $allocated);
     }
 
-    public function getDiscountableInvoices(Customer $customer): array
+    public function getCustomerReceivableInvoices(Customer $customer): array
     {
-        $invoices = Invoice::where('customer_id', $customer->id)
+        // Source 1: Direct invoices
+        $directInvoices = Invoice::where('customer_id', $customer->id)
             ->where('status', '!=', 'Đã hủy')
-            ->select('id', 'code', 'total', 'customer_paid', 'created_at')
-            ->selectSub(function ($query) {
-                $query->from('customer_payment_discount_allocations')
-                    ->join('customer_payment_discounts', 'customer_payment_discount_allocations.customer_payment_discount_id', '=', 'customer_payment_discounts.id')
-                    ->whereColumn('customer_payment_discount_allocations.invoice_id', 'invoices.id')
-                    ->where('customer_payment_discounts.status', 'active')
-                    ->selectRaw('COALESCE(SUM(customer_payment_discount_allocations.amount), 0)');
-            }, 'discount_allocated')
-            ->orderBy('created_at', 'asc')
             ->get();
 
-        $result = [];
-        foreach ($invoices as $inv) {
-            $total = (float) $inv->total;
-            $paid = (float) $inv->customer_paid;
-            $allocated = (float) $inv->discount_allocated;
-            $remaining = max(0.0, $total - $paid - $allocated);
+        // Source 2: Ledger invoices
+        $ledgerInvoiceCodes = CustomerDebt::where('customer_id', $customer->id)
+            ->where('type', 'sale')
+            ->where('amount', '>', 0)
+            ->whereNotNull('ref_code')
+            ->where('ref_code', 'like', 'HD%')
+            ->pluck('ref_code')
+            ->unique()
+            ->all();
 
+        $ledgerInvoices = [];
+        if (!empty($ledgerInvoiceCodes)) {
+            $ledgerInvoices = Invoice::whereIn('code', $ledgerInvoiceCodes)
+                ->where('status', '!=', 'Đã hủy')
+                ->get();
+        }
+
+        $merged = collect();
+        $addedIds = [];
+
+        foreach ($directInvoices as $invoice) {
+            $remaining = $this->getInvoiceRemainingReceivable($invoice);
             if ($remaining > 0) {
-                $result[] = [
-                    'id' => $inv->id,
-                    'code' => $inv->code,
-                    'created_at' => $inv->created_at,
-                    'total' => $total,
-                    'customer_paid' => $paid,
-                    'discount_allocated' => $allocated,
+                $merged->push([
+                    'invoice' => $invoice,
+                    'source' => 'direct_invoice',
                     'remaining' => $remaining,
-                ];
+                ]);
+                $addedIds[$invoice->id] = true;
             }
         }
 
+        foreach ($ledgerInvoices as $invoice) {
+            if (isset($addedIds[$invoice->id])) {
+                continue;
+            }
+            $remaining = $this->getInvoiceRemainingReceivable($invoice);
+            if ($remaining > 0) {
+                $merged->push([
+                    'invoice' => $invoice,
+                    'source' => 'ledger_invoice',
+                    'remaining' => $remaining,
+                ]);
+                $addedIds[$invoice->id] = true;
+            }
+        }
+
+        // Sort by created_at ascending (oldest first)
+        $sorted = $merged->sortBy(function ($item) {
+            return $item['invoice']->created_at;
+        })->values();
+
+        $result = [];
+        foreach ($sorted as $item) {
+            $inv = $item['invoice'];
+            $allocated = $this->getInvoiceDiscountAllocatedAmount($inv->id);
+            $result[] = [
+                'id' => $inv->id,
+                'code' => $inv->code,
+                'created_at' => $inv->created_at,
+                'total' => (float) $inv->total,
+                'customer_paid' => (float) $inv->customer_paid,
+                'discount_allocated' => $allocated,
+                'remaining' => $item['remaining'],
+                'source' => $item['source'],
+            ];
+        }
+
         return $result;
+    }
+
+    public function getDiscountableInvoices(Customer $customer): array
+    {
+        return $this->getCustomerReceivableInvoices($customer);
     }
 
     public function create(Customer $customer, array $payload): CustomerPaymentDiscount
@@ -92,17 +138,20 @@ class CustomerPaymentDiscountService
                 }
 
                 $totalAlloc = 0.0;
-                foreach ($allocations as $alloc) {
-                    $invoice = Invoice::where('id', $alloc['invoice_id'])
-                        ->where('customer_id', $customer->id)
-                        ->where('status', '!=', 'Đã hủy')
-                        ->first();
+                $receivableInvoices = collect($this->getCustomerReceivableInvoices($customer))->keyBy('id');
 
+                foreach ($allocations as $alloc) {
+                    $resolved = $receivableInvoices->get((int) $alloc['invoice_id']);
+                    if (!$resolved) {
+                        throw new \InvalidArgumentException("Hóa đơn ID {$alloc['invoice_id']} không hợp lệ hoặc đã hủy.");
+                    }
+
+                    $invoice = Invoice::find($resolved['id']);
                     if (!$invoice) {
                         throw new \InvalidArgumentException("Hóa đơn ID {$alloc['invoice_id']} không hợp lệ hoặc đã hủy.");
                     }
 
-                    $remaining = $this->getInvoiceRemainingReceivable($invoice);
+                    $remaining = $resolved['remaining'];
                     $allocAmount = (float) $alloc['amount'];
 
                     if ($allocAmount <= 0) {

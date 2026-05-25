@@ -3447,7 +3447,10 @@ const createdDateRange = computed({
                     <div v-if="paymentDiscountForm.allocate_to_invoices" class="space-y-2">
                         <label class="block text-xs font-medium text-gray-500">Danh sách hóa đơn còn nợ</label>
                         <div v-if="paymentDiscountModal.loadingInvoices" class="text-sm text-gray-400 py-2">Đang tải hóa đơn...</div>
-                        <div v-else-if="paymentDiscountModal.invoices.length === 0" class="text-sm text-gray-400 py-2">Không có hóa đơn còn nợ</div>
+                        <div v-else-if="paymentDiscountModal.invoices.length === 0" class="text-sm text-gray-400 py-2">
+                            Không tìm thấy hóa đơn bán hàng còn phải thu để phân bổ.
+                            Chiết khấu thanh toán khách hàng chỉ phân bổ vào hóa đơn bán hàng HD, không phân bổ vào PN/NCC.
+                        </div>
                         <div v-else class="space-y-2 max-h-48 overflow-y-auto border border-gray-200 rounded p-2 bg-gray-50">
                             <div
                                 v-for="inv in paymentDiscountModal.invoices"
@@ -3455,7 +3458,15 @@ const createdDateRange = computed({
                                 class="flex items-center justify-between bg-white rounded p-2 text-xs border border-gray-100 shadow-sm"
                             >
                                 <div class="flex-1 min-w-0">
-                                    <div class="font-bold text-gray-700">{{ inv.code }}</div>
+                                    <div class="font-bold text-gray-700">
+                                        {{ inv.code }}
+                                        <span
+                                            v-if="inv.source === 'ledger_invoice'"
+                                            class="ml-1 inline-block rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700 border border-blue-200"
+                                        >
+                                            Ledger
+                                        </span>
+                                    </div>
                                     <div class="text-[10px] text-gray-400">
                                         Tổng: {{ formatCurrency(inv.total) }} | Còn nợ: <span class="text-red-500 font-bold">{{ formatCurrency(inv.remaining) }}</span>
                                     </div>

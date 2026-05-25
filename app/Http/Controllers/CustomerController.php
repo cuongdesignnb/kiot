@@ -879,18 +879,27 @@ class CustomerController extends Controller
             $totalAmount = 0;
             $allocationCodes = [];
 
+            $receivableInvoices = collect(app(CustomerPaymentDiscountService::class)
+                ->getCustomerReceivableInvoices($customer))
+                ->keyBy('id');
+
             foreach ($validated['allocations'] as $alloc) {
-                $invoice = Invoice::where('id', $alloc['invoice_id'])
-                    ->where('customer_id', $customer->id)
-                    ->where('status', '!=', 'Đã hủy')
-                    ->first();
+                $resolved = $receivableInvoices->get((int) $alloc['invoice_id']);
+                if (!$resolved) {
+                    continue;
+                }
 
-                if (!$invoice) continue;
+                $invoice = Invoice::find($resolved['id']);
+                if (!$invoice || $invoice->status === 'Đã hủy') {
+                    continue;
+                }
 
-                $remaining = app(CustomerPaymentDiscountService::class)->getInvoiceRemainingReceivable($invoice);
-                $payAmount = min($alloc['amount'], $remaining);
+                $remaining = (float) $resolved['remaining'];
+                $payAmount = min((float) $alloc['amount'], $remaining);
 
-                if ($payAmount <= 0) continue;
+                if ($payAmount <= 0) {
+                    continue;
+                }
 
                 $invoice->increment('customer_paid', $payAmount);
                 $totalAmount += $payAmount;
@@ -898,7 +907,10 @@ class CustomerController extends Controller
             }
 
             if ($totalAmount <= 0) {
-                return back()->with('error', 'Không có khoản nào hợp lệ để thu.');
+                $msg = 'Không có khoản nào hợp lệ để thu.';
+                return $request->wantsJson()
+                    ? response()->json(['success' => false, 'message' => $msg], 422)
+                    : back()->with('error', $msg);
             }
 
             $cf = CashFlow::create([
@@ -940,17 +952,18 @@ class CustomerController extends Controller
             $remaining = $validated['amount'];
             $allocationCodes = [];
 
-            // Get invoices with outstanding balance, oldest first
-            $invoices = Invoice::where('customer_id', $customer->id)
-                ->where('status', '!=', 'Đã hủy')
-                ->whereRaw('total > customer_paid')
-                ->orderBy('created_at', 'asc')
-                ->get();
+            $receivableInvoices = collect(app(CustomerPaymentDiscountService::class)
+                ->getCustomerReceivableInvoices($customer));
 
-            foreach ($invoices as $invoice) {
+            foreach ($receivableInvoices as $resolved) {
                 if ($remaining <= 0) break;
 
-                $invoiceDebt = app(CustomerPaymentDiscountService::class)->getInvoiceRemainingReceivable($invoice);
+                $invoice = Invoice::find($resolved['id']);
+                if (!$invoice || $invoice->status === 'Đã hủy') {
+                    continue;
+                }
+
+                $invoiceDebt = (float) $resolved['remaining'];
                 if ($invoiceDebt <= 0) continue;
 
                 $payAmount = min($remaining, $invoiceDebt);
@@ -961,7 +974,13 @@ class CustomerController extends Controller
             }
 
             $actualPaid = $validated['amount'] - $remaining;
-            if ($actualPaid <= 0) $actualPaid = $validated['amount']; // fallback: reduce debt even without invoices
+
+            if ($actualPaid <= 0) {
+                $msg = 'Không có hóa đơn còn phải thu hợp lệ để thanh toán.';
+                return $request->wantsJson()
+                    ? response()->json(['success' => false, 'message' => $msg], 422)
+                    : back()->with('error', $msg);
+            }
 
             $cf = CashFlow::create([
                 'code' => 'PT' . date('ymdHis') . rand(10, 99),
@@ -1003,32 +1022,8 @@ class CustomerController extends Controller
      */
     public function outstandingInvoices(Customer $customer)
     {
-        $invoices = Invoice::where('customer_id', $customer->id)
-            ->where('status', '!=', 'Đã hủy')
-            ->select('id', 'code', 'total', 'customer_paid', 'created_at')
-            ->selectSub(function ($query) {
-                $query->from('customer_payment_discount_allocations')
-                    ->join('customer_payment_discounts', 'customer_payment_discount_allocations.customer_payment_discount_id', '=', 'customer_payment_discounts.id')
-                    ->whereColumn('customer_payment_discount_allocations.invoice_id', 'invoices.id')
-                    ->where('customer_payment_discounts.status', 'active')
-                    ->selectRaw('COALESCE(SUM(customer_payment_discount_allocations.amount), 0)');
-            }, 'discount_allocated')
-            ->orderBy('created_at', 'asc')
-            ->get()
-            ->map(function ($inv) {
-                $remaining = (float) $inv->total - (float) $inv->customer_paid - (float) $inv->discount_allocated;
-                return [
-                    'id' => $inv->id,
-                    'code' => $inv->code,
-                    'total' => (float) $inv->total,
-                    'customer_paid' => (float) $inv->customer_paid,
-                    'discount_allocated' => (float) $inv->discount_allocated,
-                    'remaining' => max(0.0, $remaining),
-                    'created_at' => $inv->created_at,
-                ];
-            })
-            ->filter(fn($inv) => $inv['remaining'] > 0)
-            ->values();
+        $invoices = app(CustomerPaymentDiscountService::class)
+            ->getCustomerReceivableInvoices($customer);
 
         return response()->json($invoices);
     }
