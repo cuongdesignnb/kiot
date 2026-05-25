@@ -774,6 +774,55 @@ const isCbCode = (code) => {
     return code && (code.startsWith('CB') || code.startsWith('DTCN'));
 };
 
+const debtVoucherDetailModal = reactive({
+    show: false,
+    loading: false,
+    type: '',
+    title: '',
+    code: '',
+    data: null,
+    error: '',
+});
+
+const openDebtVoucherDetail = async (entry, customerId) => {
+    const code = entry?.code || entry?.ref_code;
+    if (!code) return;
+
+    if (isCbCode(code)) {
+        openCbDetail(code, customerId);
+        return;
+    }
+
+    debtVoucherDetailModal.show = true;
+    debtVoucherDetailModal.loading = true;
+    debtVoucherDetailModal.error = '';
+    debtVoucherDetailModal.type = '';
+    debtVoucherDetailModal.title = '';
+    debtVoucherDetailModal.code = code;
+    debtVoucherDetailModal.data = null;
+
+    try {
+        const { data } = await axios.get(`/customers/${customerId}/debt-voucher-detail`, {
+            params: { code },
+        });
+
+        if (!data.success) {
+            debtVoucherDetailModal.error = data.message || 'Không tìm thấy chứng từ';
+            return;
+        }
+
+        debtVoucherDetailModal.type = data.type;
+        debtVoucherDetailModal.title = data.title || 'Chi tiết chứng từ';
+        debtVoucherDetailModal.code = data.code || code;
+        debtVoucherDetailModal.data = data.data;
+    } catch (e) {
+        debtVoucherDetailModal.error =
+            e.response?.data?.message || 'Không thể tải chi tiết chứng từ';
+    } finally {
+        debtVoucherDetailModal.loading = false;
+    }
+};
+
 const deleteCbOffset = async () => {
     if (!cbDetailModal.offset || !confirm('Bạn có chắc muốn xóa phiếu cấn bằng này?')) return;
     await cancelOffset(cbDetailModal.customerId, cbDetailModal.offset.id);
@@ -2230,10 +2279,14 @@ const createdDateRange = computed({
                                                                 class="px-3 py-2 font-medium text-blue-600"
                                                             >
                                                                 <span
-                                                                    :class="isCbCode(entry.code) ? 'cursor-pointer hover:underline' : ''"
-                                                                    @click="isCbCode(entry.code) && openCbDetail(entry.code, customer.id)"
+                                                                    v-if="entry.code"
+                                                                    class="cursor-pointer hover:underline text-blue-600 font-medium"
+                                                                    @click="openDebtVoucherDetail(entry, customer.id)"
                                                                 >
                                                                     {{ entry.code }}
+                                                                </span>
+                                                                <span v-else>
+                                                                    -
                                                                 </span>
                                                                 <button
                                                                     v-if="entry.can_cancel"
@@ -3828,6 +3881,340 @@ const createdDateRange = computed({
                     <div class="flex gap-2">
                         <button @click="cbDetailModal.show = false" class="px-4 py-2 border rounded text-sm font-medium hover:bg-gray-50">Bỏ qua</button>
                     </div>
+                </div>
+            </div>
+        </div>
+
+
+        <!-- Unified Debt Voucher Detail Modal (Read-only) -->
+        <div v-if="debtVoucherDetailModal.show" class="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center" @click.self="debtVoucherDetailModal.show = false">
+            <div class="bg-white rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto relative z-10">
+                <!-- Header -->
+                <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between bg-gray-50/50 rounded-t-lg">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <h3 class="text-lg font-bold text-gray-800">
+                                {{ debtVoucherDetailModal.title }}
+                            </h3>
+                            <span v-if="debtVoucherDetailModal.data?.status" 
+                                  class="px-2 py-0.5 rounded text-xs font-semibold"
+                                  :class="{
+                                      'bg-green-100 text-green-700': debtVoucherDetailModal.data.status === 'completed' || debtVoucherDetailModal.data.status === 'active' || debtVoucherDetailModal.data.status === 'Đã hoàn thành',
+                                      'bg-red-100 text-red-700': debtVoucherDetailModal.data.status === 'cancelled' || debtVoucherDetailModal.data.status === 'Đã hủy',
+                                      'bg-yellow-100 text-yellow-700': debtVoucherDetailModal.data.status === 'pending' || debtVoucherDetailModal.data.status === 'Chờ xử lý',
+                                      'bg-blue-100 text-blue-700': !['completed', 'active', 'cancelled', 'pending', 'Đã hoàn thành', 'Đã hủy', 'Chờ xử lý'].includes(debtVoucherDetailModal.data.status)
+                                  }">
+                                {{ debtVoucherDetailModal.data.status_label || debtVoucherDetailModal.data.status }}
+                            </span>
+                        </div>
+                        <p class="text-sm text-gray-500 font-medium mt-0.5">
+                            Mã chứng từ: <span class="text-blue-600 font-bold">{{ debtVoucherDetailModal.code }}</span>
+                        </p>
+                    </div>
+                    <button @click="debtVoucherDetailModal.show = false" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">
+                        &times;
+                    </button>
+                </div>
+
+                <!-- Content -->
+                <div class="px-6 py-5 text-sm">
+                    <div v-if="debtVoucherDetailModal.loading" class="text-sm text-gray-400 py-12 text-center flex flex-col items-center justify-center gap-2">
+                        <span class="animate-spin text-2xl">⏳</span>
+                        <span>Đang tải chi tiết...</span>
+                    </div>
+
+                    <div v-else-if="debtVoucherDetailModal.error" class="text-sm text-red-600 py-12 text-center font-medium">
+                        ⚠️ {{ debtVoucherDetailModal.error }}
+                    </div>
+
+                    <template v-else-if="debtVoucherDetailModal.data">
+                        <!-- Invoice Template -->
+                        <div v-if="debtVoucherDetailModal.type === 'invoice'" class="space-y-6">
+                            <!-- Summary Metadata -->
+                            <div class="grid grid-cols-2 md:grid-cols-3 gap-x-8 gap-y-3 bg-gray-50 p-4 rounded border border-gray-100">
+                                <div><span class="text-gray-500">Khách hàng:</span> <span class="font-semibold text-gray-800 ml-1">{{ debtVoucherDetailModal.data.customer_name }}</span></div>
+                                <div><span class="text-gray-500">Thời gian:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.created_at }}</span></div>
+                                <div><span class="text-gray-500">Người tạo:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.created_by_name }}</span></div>
+                                <div><span class="text-gray-500">Người bán:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.seller_name }}</span></div>
+                                <div><span class="text-gray-500">Chi nhánh:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.branch_name || '-' }}</span></div>
+                                <div><span class="text-gray-500">Phương thức:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.payment_method || '-' }}</span></div>
+                            </div>
+
+                            <!-- Note if exists -->
+                            <div v-if="debtVoucherDetailModal.data.note" class="bg-blue-50/50 text-blue-800 p-3 rounded text-xs border border-blue-100 flex items-start gap-1.5">
+                                <span class="text-blue-500">✏️</span>
+                                <div><span class="font-bold">Ghi chú:</span> {{ debtVoucherDetailModal.data.note }}</div>
+                            </div>
+
+                            <!-- Items Table -->
+                            <div>
+                                <h4 class="font-semibold text-gray-700 mb-2.5">Danh sách hàng hóa</h4>
+                                <div class="border rounded overflow-hidden">
+                                    <table class="w-full text-xs">
+                                        <thead class="bg-gray-50 text-gray-600 uppercase border-b font-semibold">
+                                            <tr>
+                                                <th class="px-3 py-2 text-left">Mã hàng</th>
+                                                <th class="px-3 py-2 text-left">Tên hàng</th>
+                                                <th class="px-3 py-2 text-right">SL</th>
+                                                <th class="px-3 py-2 text-right">Đơn giá</th>
+                                                <th class="px-3 py-2 text-right">Giảm giá</th>
+                                                <th class="px-3 py-2 text-right">Thành tiền</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="divide-y text-gray-700 font-normal">
+                                            <tr v-for="(item, idx) in debtVoucherDetailModal.data.items" :key="idx" class="hover:bg-gray-50">
+                                                <td class="px-3 py-2 text-blue-600 font-semibold">{{ item.product_code }}</td>
+                                                <td class="px-3 py-2">{{ item.product_name }}</td>
+                                                <td class="px-3 py-2 text-right font-medium">{{ item.quantity }}</td>
+                                                <td class="px-3 py-2 text-right">{{ formatCurrency(item.price) }}</td>
+                                                <td class="px-3 py-2 text-right text-red-500">{{ formatCurrency(item.discount) }}</td>
+                                                <td class="px-3 py-2 text-right font-semibold">{{ formatCurrency(item.subtotal) }}</td>
+                                            </tr>
+                                            <tr v-if="!debtVoucherDetailModal.data.items || debtVoucherDetailModal.data.items.length === 0">
+                                                <td colspan="6" class="px-3 py-4 text-center text-gray-400 italic">Không có hàng hóa</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- Financial Summary -->
+                            <div class="flex justify-end pt-2">
+                                <div class="w-80 space-y-2 border rounded p-4 bg-gray-50 text-xs">
+                                    <div class="flex justify-between text-gray-500">
+                                        <span>Tổng tiền hàng:</span>
+                                        <span class="font-medium text-gray-800">{{ formatCurrency(debtVoucherDetailModal.data.subtotal) }}</span>
+                                    </div>
+                                    <div v-if="debtVoucherDetailModal.data.discount > 0" class="flex justify-between text-gray-500">
+                                        <span>Giảm giá hóa đơn:</span>
+                                        <span class="font-medium text-red-500">-{{ formatCurrency(debtVoucherDetailModal.data.discount) }}</span>
+                                    </div>
+                                    <div class="flex justify-between font-bold text-sm border-t border-gray-200 pt-2 text-gray-800">
+                                        <span>Khách cần trả (Tổng cộng):</span>
+                                        <span class="text-blue-600">{{ formatCurrency(debtVoucherDetailModal.data.total) }}</span>
+                                    </div>
+                                    <div class="flex justify-between text-gray-500">
+                                        <span>Khách đã thanh toán:</span>
+                                        <span class="font-semibold text-green-600">{{ formatCurrency(debtVoucherDetailModal.data.customer_paid) }}</span>
+                                    </div>
+                                    <div class="flex justify-between font-bold border-t border-gray-200 pt-2 text-gray-850">
+                                        <span>Dư nợ hóa đơn:</span>
+                                        <span class="text-red-500">{{ formatCurrency(debtVoucherDetailModal.data.debt_amount) }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Purchase Template -->
+                        <div v-if="debtVoucherDetailModal.type === 'purchase'" class="space-y-6">
+                            <!-- Summary Metadata -->
+                            <div class="grid grid-cols-2 md:grid-cols-3 gap-x-8 gap-y-3 bg-gray-50 p-4 rounded border border-gray-100">
+                                <div><span class="text-gray-500">Nhà cung cấp:</span> <span class="font-semibold text-gray-800 ml-1">{{ debtVoucherDetailModal.data.supplier_name }}</span> <span class="text-gray-400">({{ debtVoucherDetailModal.data.supplier_code }})</span></div>
+                                <div><span class="text-gray-500">Ngày nhập hàng:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.purchase_date }}</span></div>
+                                <div><span class="text-gray-500">Người tạo:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.user_name }}</span></div>
+                                <div><span class="text-gray-500">Nhân viên:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.employee_name || '-' }}</span></div>
+                                <div><span class="text-gray-500">Thanh toán:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.payment_method || '-' }}</span></div>
+                            </div>
+
+                            <!-- Note if exists -->
+                            <div v-if="debtVoucherDetailModal.data.note" class="bg-blue-50/50 text-blue-800 p-3 rounded text-xs border border-blue-100 flex items-start gap-1.5">
+                                <span class="text-blue-500">✏️</span>
+                                <div><span class="font-bold">Ghi chú:</span> {{ debtVoucherDetailModal.data.note }}</div>
+                            </div>
+
+                            <!-- Items Table -->
+                            <div>
+                                <h4 class="font-semibold text-gray-700 mb-2.5">Danh sách hàng hóa nhập</h4>
+                                <div class="border rounded overflow-hidden">
+                                    <table class="w-full text-xs">
+                                        <thead class="bg-gray-50 text-gray-600 uppercase border-b font-semibold">
+                                            <tr>
+                                                <th class="px-3 py-2 text-left">Mã hàng</th>
+                                                <th class="px-3 py-2 text-left">Tên hàng</th>
+                                                <th class="px-3 py-2 text-right">SL</th>
+                                                <th class="px-3 py-2 text-right">Đơn giá</th>
+                                                <th class="px-3 py-2 text-right">Giảm giá</th>
+                                                <th class="px-3 py-2 text-right">Thành tiền</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="divide-y text-gray-700 font-normal">
+                                            <tr v-for="(item, idx) in debtVoucherDetailModal.data.items" :key="idx" class="hover:bg-gray-50">
+                                                <td class="px-3 py-2 text-blue-600 font-semibold">{{ item.product_code }}</td>
+                                                <td class="px-3 py-2">{{ item.product_name }}</td>
+                                                <td class="px-3 py-2 text-right font-medium">{{ item.quantity }}</td>
+                                                <td class="px-3 py-2 text-right">{{ formatCurrency(item.price) }}</td>
+                                                <td class="px-3 py-2 text-right text-red-500">{{ formatCurrency(item.discount) }}</td>
+                                                <td class="px-3 py-2 text-right font-semibold">{{ formatCurrency(item.subtotal) }}</td>
+                                            </tr>
+                                            <tr v-if="!debtVoucherDetailModal.data.items || debtVoucherDetailModal.data.items.length === 0">
+                                                <td colspan="6" class="px-3 py-4 text-center text-gray-400 italic">Không có hàng hóa</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- Financial Summary -->
+                            <div class="flex justify-end pt-2">
+                                <div class="w-80 space-y-2 border rounded p-4 bg-gray-50 text-xs">
+                                    <div class="flex justify-between text-gray-500">
+                                        <span>Cần trả nhà cung cấp:</span>
+                                        <span class="font-bold text-gray-800 text-sm">{{ formatCurrency(debtVoucherDetailModal.data.total_amount) }}</span>
+                                    </div>
+                                    <div v-if="debtVoucherDetailModal.data.discount > 0" class="flex justify-between text-gray-500">
+                                        <span>Giảm giá phiếu nhập:</span>
+                                        <span class="font-medium text-red-500">-{{ formatCurrency(debtVoucherDetailModal.data.discount) }}</span>
+                                    </div>
+                                    <div class="flex justify-between text-gray-500 border-t border-gray-200 pt-2">
+                                        <span>Đã trả nhà cung cấp:</span>
+                                        <span class="font-semibold text-green-600">{{ formatCurrency(debtVoucherDetailModal.data.paid_amount) }}</span>
+                                    </div>
+                                    <div class="flex justify-between font-bold border-t border-gray-200 pt-2 text-gray-850">
+                                        <span>Dư nợ NCC:</span>
+                                        <span class="text-red-500">{{ formatCurrency(debtVoucherDetailModal.data.debt_amount) }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- CashFlow Template -->
+                        <div v-if="debtVoucherDetailModal.type === 'cashflow'" class="space-y-4">
+                            <div class="grid grid-cols-2 gap-x-8 gap-y-4 bg-gray-50 p-5 rounded border border-gray-100">
+                                <div>
+                                    <span class="text-gray-500 block text-xs uppercase tracking-wider font-semibold">Loại phiếu</span>
+                                    <span class="font-bold text-gray-800 text-base">{{ debtVoucherDetailModal.data.type === 'thu' ? 'Phiếu thu' : 'Phiếu chi' }}</span>
+                                </div>
+                                <div>
+                                    <span class="text-gray-500 block text-xs uppercase tracking-wider font-semibold">Giá trị</span>
+                                    <span class="font-bold text-blue-600 text-base">{{ formatCurrency(debtVoucherDetailModal.data.amount) }}</span>
+                                </div>
+                                <div>
+                                    <span class="text-gray-500 block text-xs uppercase tracking-wider font-semibold">Thời gian</span>
+                                    <span class="font-medium text-gray-800">{{ debtVoucherDetailModal.data.time || debtVoucherDetailModal.data.created_at }}</span>
+                                </div>
+                                <div>
+                                    <span class="text-gray-500 block text-xs uppercase tracking-wider font-semibold">Phương thức thanh toán</span>
+                                    <span class="font-medium text-gray-800">{{ debtVoucherDetailModal.data.payment_method || 'Tiền mặt' }}</span>
+                                </div>
+                                <div v-if="debtVoucherDetailModal.data.bank_account_name">
+                                    <span class="text-gray-500 block text-xs uppercase tracking-wider font-semibold">Tài khoản ngân hàng</span>
+                                    <span class="font-medium text-gray-800">{{ debtVoucherDetailModal.data.bank_account_name }}</span>
+                                </div>
+                                <div>
+                                    <span class="text-gray-500 block text-xs uppercase tracking-wider font-semibold">Hạng mục thu chi</span>
+                                    <span class="font-medium text-gray-800">{{ debtVoucherDetailModal.data.category || '-' }}</span>
+                                </div>
+                                <div>
+                                    <span class="text-gray-500 block text-xs uppercase tracking-wider font-semibold">Người nộp/nhận</span>
+                                    <span class="font-medium text-gray-800">{{ debtVoucherDetailModal.data.target_name }}</span>
+                                    <span class="text-gray-400 text-xs ml-1">({{ debtVoucherDetailModal.data.target_type }})</span>
+                                </div>
+                                <div v-if="debtVoucherDetailModal.data.reference_code">
+                                    <span class="text-gray-500 block text-xs uppercase tracking-wider font-semibold">Mã chứng từ tham chiếu</span>
+                                    <span class="font-semibold text-blue-600">{{ debtVoucherDetailModal.data.reference_code }}</span>
+                                    <span class="text-gray-400 text-xs ml-1">({{ debtVoucherDetailModal.data.reference_type }})</span>
+                                </div>
+                            </div>
+
+                            <div v-if="debtVoucherDetailModal.data.description" class="bg-blue-50/50 text-blue-800 p-4 rounded text-xs border border-blue-100 flex items-start gap-1.5">
+                                <span class="text-blue-500">✏️</span>
+                                <div><span class="font-bold">Ghi chú/Mô tả:</span> {{ debtVoucherDetailModal.data.description }}</div>
+                            </div>
+                        </div>
+
+                        <!-- CustomerPaymentDiscount (CKTT) Template -->
+                        <div v-if="debtVoucherDetailModal.type === 'payment_discount'" class="space-y-6">
+                            <!-- Metadata -->
+                            <div class="grid grid-cols-2 md:grid-cols-3 gap-x-8 gap-y-3 bg-gray-50 p-4 rounded border border-gray-100">
+                                <div><span class="text-gray-500">Giá trị chiết khấu:</span> <span class="font-bold text-blue-600 ml-1">{{ formatCurrency(debtVoucherDetailModal.data.amount) }}</span></div>
+                                <div><span class="text-gray-500">Ngày chiết khấu:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.discount_at }}</span></div>
+                                <div><span class="text-gray-500">Người thực hiện:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.performed_by_name }}</span></div>
+                                <div><span class="text-gray-500">Người tạo:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.created_by_name }}</span></div>
+                                <div><span class="text-gray-500">Hóa đơn phân bổ:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.allocate_to_invoices ? 'Có' : 'Không' }}</span></div>
+                                <div v-if="debtVoucherDetailModal.data.cancelled_at"><span class="text-red-500 font-semibold">Ngày hủy:</span> <span class="font-medium text-red-600 ml-1">{{ debtVoucherDetailModal.data.cancelled_at }}</span></div>
+                            </div>
+
+                            <!-- Cancel Reason -->
+                            <div v-if="debtVoucherDetailModal.data.cancel_reason" class="bg-red-50 text-red-800 p-3 rounded text-xs border border-red-100">
+                                <span class="font-bold">Lý do hủy:</span> {{ debtVoucherDetailModal.data.cancel_reason }}
+                            </div>
+
+                            <!-- Note -->
+                            <div v-if="debtVoucherDetailModal.data.note" class="bg-blue-50/50 text-blue-800 p-3 rounded text-xs border border-blue-100 flex items-start gap-1.5">
+                                <span class="text-blue-500">✏️</span>
+                                <div><span class="font-bold">Ghi chú:</span> {{ debtVoucherDetailModal.data.note }}</div>
+                            </div>
+
+                            <!-- Allocations -->
+                            <div v-if="debtVoucherDetailModal.data.allocate_to_invoices">
+                                <h4 class="font-semibold text-gray-700 mb-2.5">Danh sách hóa đơn được phân bổ</h4>
+                                <div class="border rounded overflow-hidden">
+                                    <table class="w-full text-xs">
+                                        <thead class="bg-gray-50 text-gray-600 uppercase border-b font-semibold">
+                                            <tr>
+                                                <th class="px-3 py-2 text-left">Mã hóa đơn</th>
+                                                <th class="px-3 py-2 text-right">Tổng giá trị</th>
+                                                <th class="px-3 py-2 text-right">Khách đã trả</th>
+                                                <th class="px-3 py-2 text-right text-blue-600">Tiền CKTT phân bổ</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="divide-y text-gray-700 font-normal">
+                                            <tr v-for="(alloc, idx) in debtVoucherDetailModal.data.allocations" :key="idx" class="hover:bg-gray-50">
+                                                <td class="px-3 py-2 font-semibold text-blue-600">{{ alloc.invoice_code }}</td>
+                                                <td class="px-3 py-2 text-right">{{ formatCurrency(alloc.invoice_total) }}</td>
+                                                <td class="px-3 py-2 text-right">{{ formatCurrency(alloc.invoice_customer_paid) }}</td>
+                                                <td class="px-3 py-2 text-right font-bold text-blue-600">{{ formatCurrency(alloc.amount) }}</td>
+                                            </tr>
+                                            <tr v-if="!debtVoucherDetailModal.data.allocations || debtVoucherDetailModal.data.allocations.length === 0">
+                                                <td colspan="4" class="px-3 py-4 text-center text-gray-400 italic">Không có hóa đơn phân bổ</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Ledger Template -->
+                        <div v-if="debtVoucherDetailModal.type === 'ledger'" class="space-y-6">
+                            <!-- Single / Multiple Ledger Adjustments -->
+                            <div>
+                                <h4 class="font-semibold text-gray-700 mb-2.5">Nhật ký điều chỉnh công nợ</h4>
+                                <div class="border rounded overflow-hidden">
+                                    <table class="w-full text-xs">
+                                        <thead class="bg-gray-50 text-gray-600 uppercase border-b font-semibold">
+                                            <tr>
+                                                <th class="px-3 py-2 text-left">Thời gian</th>
+                                                <th class="px-3 py-2 text-left">Mã tham chiếu</th>
+                                                <th class="px-3 py-2 text-left">Loại giao dịch</th>
+                                                <th class="px-3 py-2 text-right">Giá trị thay đổi</th>
+                                                <th class="px-3 py-2 text-right">Dư nợ sau giao dịch</th>
+                                                <th class="px-3 py-2 text-left">Mô tả/Ghi chú</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="divide-y text-gray-700 font-normal">
+                                            <tr v-for="(entry, idx) in debtVoucherDetailModal.data.entries" :key="idx" class="hover:bg-gray-50">
+                                                <td class="px-3 py-2 text-gray-600">{{ entry.recorded_at || entry.created_at }}</td>
+                                                <td class="px-3 py-2 font-semibold text-blue-600">{{ entry.code }}</td>
+                                                <td class="px-3 py-2">{{ entry.type }}</td>
+                                                <td class="px-3 py-2 text-right font-medium" :class="Number(entry.amount) < 0 ? 'text-red-500' : 'text-green-600'">
+                                                    {{ Number(entry.amount) > 0 ? '+' : '' }}{{ formatCurrency(entry.amount) }}
+                                                </td>
+                                                <td class="px-3 py-2 text-right font-semibold text-gray-800">{{ formatCurrency(entry.debt_total) }}</td>
+                                                <td class="px-3 py-2 text-gray-600">{{ entry.note || '-' }}</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- Footer -->
+                <div class="px-6 py-4 border-t border-gray-200 flex justify-end bg-gray-50 rounded-b-lg">
+                    <button @click="debtVoucherDetailModal.show = false" class="px-4 py-2 border border-gray-300 rounded text-gray-700 bg-white hover:bg-gray-50 font-medium text-xs">
+                        Đóng
+                    </button>
                 </div>
             </div>
         </div>

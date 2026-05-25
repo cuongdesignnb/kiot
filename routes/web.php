@@ -78,6 +78,7 @@ Route::middleware('permission:customers.view')->group(function () {
     Route::get('/customers/{customer}/debt-history', [CustomerController::class, 'debtHistory']);
     Route::get('/customers/{customer}/export-debt', [CustomerController::class, 'exportDebtHistory']);
     Route::get('/customers/{customer}/export-sales', [CustomerController::class, 'exportSalesHistory']);
+    Route::get('/customers/{customer}/debt-voucher-detail', [CustomerController::class, 'debtVoucherDetail'])->name('customers.debt-voucher-detail');
 });
 Route::post('/customers', [CustomerController::class, 'store'])->name('customers.store')->middleware('permission:customers.create');
 Route::put('/customers/{customer}', [CustomerController::class, 'update'])->name('customers.update')->middleware('permission:customers.edit');

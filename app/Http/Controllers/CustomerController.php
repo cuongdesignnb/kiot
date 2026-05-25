@@ -1484,4 +1484,280 @@ class CustomerController extends Controller
 
         return response()->json($offsets);
     }
+
+    /**
+     * Helper guard: check if customer has a debt reference matching the code
+     */
+    private function customerHasDebtRef(Customer $customer, string $code): bool
+    {
+        return \App\Models\CustomerDebt::where('customer_id', $customer->id)
+            ->where('ref_code', $code)
+            ->exists();
+    }
+
+    /**
+     * Hotfix — Khách hàng/Công nợ: Bấm mã phiếu mở chi tiết chứng từ read-only giống KiotViet
+     */
+    public function debtVoucherDetail(Request $request, Customer $customer)
+    {
+        $code = $request->query('code');
+        if (empty($code)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Mã chứng từ không được để trống.'
+            ], 422);
+        }
+
+        // 1. HD - Hóa đơn bán hàng
+        if (str_starts_with($code, 'HD')) {
+            $invoice = Invoice::where('code', $code)->first();
+            if (!$invoice) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.'
+                ], 404);
+            }
+
+            $belongsToCustomer = (int) $invoice->customer_id === (int) $customer->id
+                || $this->customerHasDebtRef($customer, $invoice->code);
+
+            if (!$belongsToCustomer) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.'
+                ], 404);
+            }
+
+            $invoice->load(['customer', 'items.product', 'branch', 'employee']);
+
+            $data = [
+                'id' => $invoice->id,
+                'code' => $invoice->code,
+                'status' => $invoice->status,
+                'created_at' => $invoice->created_at ? $invoice->created_at->format('d/m/Y H:i') : '',
+                'created_by_name' => $invoice->created_by_name ?? 'Admin',
+                'seller_name' => $invoice->seller_name ?? ($invoice->employee->name ?? 'Admin'),
+                'customer_name' => $invoice->customer->name ?? 'Khách lẻ',
+                'branch_name' => $invoice->branch->name ?? '',
+                'note' => $invoice->note,
+                'subtotal' => $invoice->subtotal,
+                'discount' => $invoice->discount,
+                'total' => $invoice->total,
+                'customer_paid' => $invoice->customer_paid,
+                'effective_paid' => $invoice->customer_paid,
+                'debt_amount' => max(0, $invoice->total - $invoice->customer_paid),
+                'payment_method' => $invoice->payment_method,
+                'items' => $invoice->items->map(fn($item) => [
+                    'product_code' => $item->product->code ?? '',
+                    'product_name' => $item->product->name ?? '',
+                    'quantity' => $item->quantity,
+                    'price' => $item->price,
+                    'discount' => $item->discount ?? 0,
+                    'subtotal' => $item->subtotal,
+                ]),
+            ];
+
+            return response()->json([
+                'success' => true,
+                'type' => 'invoice',
+                'title' => 'Hóa đơn',
+                'code' => $invoice->code,
+                'data' => $data,
+            ]);
+        }
+
+        // 2. PN - Phiếu nhập hàng
+        if (str_starts_with($code, 'PN')) {
+            $purchase = Purchase::where('code', $code)->first();
+            if (!$purchase) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.'
+                ], 404);
+            }
+
+            $belongsToCustomer = (int) $purchase->supplier_id === (int) $customer->id
+                || $this->customerHasDebtRef($customer, $purchase->code);
+
+            if (!$belongsToCustomer) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.'
+                ], 404);
+            }
+
+            $purchase->load(['supplier', 'items.product', 'user', 'employee']);
+
+            $data = [
+                'id' => $purchase->id,
+                'code' => $purchase->code,
+                'status' => $purchase->status,
+                'status_label' => $purchase->status === 'completed' ? 'Đã nhập hàng' : ($purchase->status === 'returned' ? 'Đã trả hàng' : ($purchase->status === 'cancelled' ? 'Đã hủy' : ucfirst($purchase->status))),
+                'purchase_date' => $purchase->purchase_date ? $purchase->purchase_date->format('d/m/Y H:i') : ($purchase->created_at ? $purchase->created_at->format('d/m/Y H:i') : ''),
+                'user_name' => $purchase->user->name ?? 'Admin',
+                'employee_name' => $purchase->employee->name ?? null,
+                'supplier_name' => $purchase->supplier->name ?? '',
+                'supplier_code' => $purchase->supplier->code ?? '',
+                'note' => $purchase->note,
+                'total_amount' => $purchase->total_amount,
+                'discount' => $purchase->discount,
+                'paid_amount' => $purchase->paid_amount,
+                'debt_amount' => $purchase->debt_amount,
+                'payment_method' => $purchase->payment_method,
+                'items' => $purchase->items->map(fn($item) => [
+                    'product_code' => $item->product->code ?? '',
+                    'product_name' => $item->product->name ?? '',
+                    'quantity' => $item->quantity,
+                    'price' => $item->price,
+                    'discount' => $item->discount ?? 0,
+                    'subtotal' => $item->subtotal,
+                ]),
+            ];
+
+            return response()->json([
+                'success' => true,
+                'type' => 'purchase',
+                'title' => 'Phiếu nhập hàng',
+                'code' => $purchase->code,
+                'data' => $data,
+            ]);
+        }
+
+        // 3. PT / TTHD - Phiếu thu / thanh toán
+        if (str_starts_with($code, 'PT') || str_starts_with($code, 'TTHD')) {
+            $cashFlow = CashFlow::where('code', $code)->first();
+            if (!$cashFlow) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.'
+                ], 404);
+            }
+
+            $belongsToCustomer = ((int) $cashFlow->target_id === (int) $customer->id && $cashFlow->target_type === 'Khách hàng')
+                || $this->customerHasDebtRef($customer, $cashFlow->code);
+
+            if (!$belongsToCustomer) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.'
+                ], 404);
+            }
+
+            $cashFlow->load('bankAccount');
+
+            $data = [
+                'id' => $cashFlow->id,
+                'code' => $cashFlow->code,
+                'type' => $cashFlow->type,
+                'amount' => $cashFlow->amount,
+                'time' => $cashFlow->time ? (\Carbon\Carbon::parse($cashFlow->time)->format('d/m/Y H:i')) : '',
+                'category' => $cashFlow->category,
+                'target_type' => $cashFlow->target_type,
+                'target_name' => $cashFlow->target_name,
+                'payment_method' => $cashFlow->payment_method,
+                'bank_account_name' => $cashFlow->bankAccount ? ($cashFlow->bankAccount->bank_name . ' - ' . $cashFlow->bankAccount->account_number) : null,
+                'reference_type' => $cashFlow->reference_type,
+                'reference_code' => $cashFlow->reference_code,
+                'description' => $cashFlow->description,
+                'status' => $cashFlow->status,
+                'created_at' => $cashFlow->created_at ? $cashFlow->created_at->format('d/m/Y H:i') : '',
+            ];
+
+            return response()->json([
+                'success' => true,
+                'type' => 'cashflow',
+                'title' => 'Phiếu thu/thanh toán',
+                'code' => $cashFlow->code,
+                'data' => $data,
+            ]);
+        }
+
+        // 4. CKTT - Chiết khấu thanh toán
+        if (str_starts_with($code, 'CKTT')) {
+            $discount = CustomerPaymentDiscount::where('code', $code)
+                ->where('customer_id', $customer->id)
+                ->first();
+            if (!$discount) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.'
+                ], 404);
+            }
+
+            $discount->load(['allocations.invoice', 'performer', 'creator']);
+
+            $data = [
+                'id' => $discount->id,
+                'code' => $discount->code,
+                'status' => $discount->status,
+                'amount' => $discount->amount,
+                'discount_at' => $discount->discount_at ? $discount->discount_at->format('d/m/Y H:i') : '',
+                'performed_by_name' => $discount->performer->name ?? 'Admin',
+                'created_by_name' => $discount->creator->name ?? 'Admin',
+                'note' => $discount->note,
+                'allocate_to_invoices' => $discount->allocate_to_invoices,
+                'cancelled_at' => $discount->cancelled_at ? $discount->cancelled_at->format('d/m/Y H:i') : null,
+                'cancel_reason' => $discount->cancel_reason,
+                'allocations' => $discount->allocations->map(fn($alloc) => [
+                    'invoice_code' => $alloc->invoice->code ?? '',
+                    'invoice_id' => $alloc->invoice_id,
+                    'invoice_total' => $alloc->invoice->total ?? 0,
+                    'invoice_customer_paid' => $alloc->invoice->customer_paid ?? 0,
+                    'amount' => $alloc->amount,
+                ]),
+            ];
+
+            return response()->json([
+                'success' => true,
+                'type' => 'payment_discount',
+                'title' => 'Chiết khấu thanh toán',
+                'code' => $discount->code,
+                'data' => $data,
+            ]);
+        }
+
+        // 5. MERGE / ledger adjustment (fallbacks to customer_debts)
+        $debts = \App\Models\CustomerDebt::where('customer_id', $customer->id)
+            ->where('ref_code', $code)
+            ->get();
+
+        if ($debts->isEmpty()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.'
+            ], 404);
+        }
+
+        $entries = $debts->map(fn($d) => [
+            'code' => $d->ref_code,
+            'type' => $d->type,
+            'amount' => $d->amount,
+            'debt_total' => $d->debt_total,
+            'note' => $d->note,
+            'recorded_at' => $d->recorded_at ? $d->recorded_at->format('d/m/Y H:i') : '',
+            'created_at' => $d->created_at ? $d->created_at->format('d/m/Y H:i') : '',
+            'source' => 'ledger',
+        ]);
+
+        $first = $debts->first();
+        $data = [
+            'code' => $first->ref_code,
+            'type' => $first->type,
+            'amount' => $first->amount,
+            'debt_total' => $first->debt_total,
+            'note' => $first->note,
+            'recorded_at' => $first->recorded_at ? $first->recorded_at->format('d/m/Y H:i') : '',
+            'created_at' => $first->created_at ? $first->created_at->format('d/m/Y H:i') : '',
+            'source' => 'ledger',
+            'entries' => $entries,
+        ];
+
+        return response()->json([
+            'success' => true,
+            'type' => 'ledger',
+            'title' => 'Điều chỉnh công nợ',
+            'code' => $first->ref_code,
+            'data' => $data,
+        ]);
+    }
 }
