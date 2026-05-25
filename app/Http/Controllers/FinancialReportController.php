@@ -62,16 +62,19 @@ class FinancialReportController extends Controller
         // (6) CHI PHÍ — từ phiếu chi (cash_flows type=payment)
         // Loại trừ: chi trả NCC (đã vào giá vốn), điều chỉnh công nợ
         // ══════════════════════════════════════
-        $timeColumn = Schema::hasColumn('cash_flows', 'time') ? 'time' : 'created_at';
+        $otherExpenseCategories = [
+            'Chi phí khác',
+            'Chi phi khac',
+            'Khác',
+            'Khac',
+        ];
 
-        $expenseQ = CashFlow::where('type', 'payment')
-            ->whereBetween($timeColumn, [$startDate, $endDate])
-            ->whereNotIn('category', [
-                'Chi tiền trả NCC',
-                'Chi thanh toan NCC',
-                'Điều chỉnh công nợ',
-                'Chuyển/Rút',
-            ]);
+        // (6) CHI PHÍ
+        $expenseQ = $this->pnlCashFlowBaseQuery('payment', $startDate, $endDate, $branchId)
+            ->where(function ($q) use ($otherExpenseCategories) {
+                $q->whereNull('category')
+                  ->orWhereNotIn('category', $otherExpenseCategories);
+            });
 
         // Breakdown expenses by category
         $expensesByCategory = (clone $expenseQ)
@@ -87,19 +90,20 @@ class FinancialReportController extends Controller
 
         $totalExpenses = array_sum(array_column($expensesByCategory, 'amount'));
 
-        // ══════════════════════════════════════
-        // (8) THU NHẬP KHÁC — từ phiếu thu (cash_flows type=receipt)
-        // Loại trừ: thu nợ KH (đã vào doanh thu), chuyển/rút, điều chỉnh công nợ
-        // ══════════════════════════════════════
-        $otherIncomeQ = CashFlow::where('type', 'receipt')
-            ->whereBetween($timeColumn, [$startDate, $endDate])
-            ->whereNotIn('category', [
-                'Thu tiền khách trả',
-                'Thu nợ khách hàng',
-                'Điều chỉnh công nợ',
-                'Chuyển/Rút',
-                '',
-            ]);
+        // (8) THU NHẬP KHÁC
+        $otherIncomeQ = $this->pnlCashFlowBaseQuery('receipt', $startDate, $endDate, $branchId)
+            ->where(function ($q) {
+                $q->whereNull('category')
+                  ->orWhereNotIn('category', [
+                      'Thu tiền khách trả',
+                      'Thu tien khach tra',
+                      'Thu nợ khách hàng',
+                      'Thu no khach hang',
+                      'Bán hàng',
+                      'Ban hang',
+                      '',
+                  ]);
+            });
 
         $otherIncomeByCategory = (clone $otherIncomeQ)
             ->select('category', DB::raw('SUM(amount) as total'))
@@ -114,16 +118,9 @@ class FinancialReportController extends Controller
 
         $totalOtherIncome = array_sum(array_column($otherIncomeByCategory, 'amount'));
 
-        // ══════════════════════════════════════
-        // (9) CHI PHÍ KHÁC — cash_flows category chứa "khác"
-        // Nếu chưa có, để 0 — user có thể phân nhóm lại sau
-        // ══════════════════════════════════════
-        $otherExpenseQ = CashFlow::where('type', 'payment')
-            ->whereBetween($timeColumn, [$startDate, $endDate])
-            ->where(function ($q) {
-                $q->where('category', 'LIKE', '%khác%')
-                  ->orWhere('category', 'LIKE', '%Khác%');
-            });
+        // (9) CHI PHÍ KHÁC
+        $otherExpenseQ = $this->pnlCashFlowBaseQuery('payment', $startDate, $endDate, $branchId)
+            ->whereIn('category', $otherExpenseCategories);
 
         $otherExpensesByCategory = (clone $otherExpenseQ)
             ->select('category', DB::raw('SUM(amount) as total'))
@@ -199,5 +196,67 @@ class FinancialReportController extends Controller
                 'netProfit'          => $netProfit,
             ],
         ]);
+    }
+
+    private function pnlCashFlowBaseQuery(string $type, Carbon $startDate, Carbon $endDate, $branchId = null)
+    {
+        $timeColumn = Schema::hasColumn('cash_flows', 'time') ? 'time' : 'created_at';
+
+        $excludedReferenceTypes = [
+            'OrderReturn',
+            'PurchaseReturn',
+            'DebtOffset',
+            'DebtOffsetCancel',
+        ];
+
+        $excludedCategories = [
+            'Chi tiền trả hàng khách',
+            'Chi tien tra hang khach',
+            'Chi trả hàng khách',
+            'Chi tra hang khach',
+
+            'Thu tiền NCC trả hàng',
+            'Thu tien NCC tra hang',
+            'NCC hoàn tiền trả hàng',
+            'NCC hoan tien tra hang',
+
+            'Đối trừ công nợ',
+            'Doi tru cong no',
+            'Hủy đối trừ công nợ',
+            'Huy doi tru cong no',
+
+            'Chi tiền trả NCC',
+            'Chi thanh toan NCC',
+            'Chi tiền trả NCC hàng',
+            'Chi tien tra NCC hang',
+
+            'Điều chỉnh công nợ',
+            'Dieu chinh cong no',
+            'Chuyển/Rút',
+            'Chuyen/Rut',
+            '',
+        ];
+
+        $query = CashFlow::active()
+            ->where('type', $type)
+            ->whereBetween($timeColumn, [$startDate, $endDate])
+            ->where(function ($q) use ($excludedReferenceTypes) {
+                $q->whereNull('reference_type')
+                  ->orWhereNotIn('reference_type', $excludedReferenceTypes);
+            })
+            ->where(function ($q) use ($excludedCategories) {
+                $q->whereNull('category')
+                  ->orWhereNotIn('category', $excludedCategories);
+            });
+
+        if (Schema::hasColumn('cash_flows', 'accounting_result')) {
+            $query->where('accounting_result', true);
+        }
+
+        if ($branchId && Schema::hasColumn('cash_flows', 'branch_id')) {
+            $query->where('branch_id', $branchId);
+        }
+
+        return $query;
     }
 }
