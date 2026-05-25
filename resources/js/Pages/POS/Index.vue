@@ -67,6 +67,27 @@ const createNewTab = (type = 'sale') => ({
     note: '',                        // 24.6C: per-tab invoice/order note
     saleMode: type === 'order' ? 'quick_order' : 'normal',
     returnState: type === 'return' ? emptyReturnState() : null,
+    // POS order process extensions
+    mode: 'normal',                  // 'normal' | 'process_order'
+    source_order_id: null,
+    source_order_code: '',
+    orderDepositAmount: 0,
+    delivery: {
+        is_delivery: false,
+        delivery_mode: 'none',       // 'none' | 'self' | 'partner'
+        delivery_partner: '',
+        tracking_code: '',
+        delivery_fee: 0,
+        cod_amount: 0,
+        receiver_name: '',
+        receiver_phone: '',
+        receiver_address: '',
+        receiver_ward: '',
+        receiver_district: '',
+        receiver_city: '',
+        weight: 0,
+        delivery_note: '',
+    }
 });
 
 const tabs = ref([createNewTab('sale')]);
@@ -203,12 +224,160 @@ const updateTime = () => {
     currentTime.value = `${dd}/${mm}/${yyyy} ${hh}:${mi}:${ss}`;
 };
 
+const checkAndHydrateOrderFromUrl = async () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const orderId = urlParams.get('order_id');
+    const mode = urlParams.get('mode');
+
+    if (mode === 'process_order' && orderId) {
+        // Clear query parameters from URL so hard-reload doesn't keep duplicating/reloading
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+
+        try {
+            const res = await axios.get(`/orders/${orderId}/pos-payload`);
+            if (res.data && res.data.success) {
+                const orderData = res.data.order;
+                
+                // Check if this order tab already exists
+                const existingIndex = tabs.value.findIndex(t => t.source_order_id === orderData.id);
+                if (existingIndex !== -1) {
+                    activeTabIndex.value = existingIndex;
+                    return;
+                }
+
+                // If first tab is empty and has no customer, we can reuse it
+                let tabToUse;
+                if (tabs.value.length === 1 && tabs.value[0].cart.length === 0 && !tabs.value[0].selectedCustomer && tabs.value[0].mode === 'normal') {
+                    tabToUse = tabs.value[0];
+                } else {
+                    tabToUse = createNewTab('sale');
+                    tabs.value.push(tabToUse);
+                    activeTabIndex.value = tabs.value.length - 1;
+                }
+
+                // Prefill tab details
+                tabToUse.mode = 'process_order';
+                tabToUse.source_order_id = orderData.id;
+                tabToUse.source_order_code = orderData.code;
+                tabToUse.selectedCustomer = orderData.customer;
+                tabToUse.discount = orderData.totals.discount;
+                tabToUse.orderDepositAmount = orderData.totals.amount_paid;
+                tabToUse.note = orderData.note;
+                tabToUse.saleMode = orderData.delivery.is_delivery ? 'delivery' : 'normal';
+                
+                // Delivery fields
+                tabToUse.delivery = {
+                    is_delivery: orderData.delivery.is_delivery,
+                    delivery_mode: orderData.delivery.delivery_mode || (orderData.delivery.is_delivery ? 'self' : 'none'),
+                    delivery_partner: orderData.delivery.delivery_partner || '',
+                    tracking_code: orderData.delivery.tracking_code || '',
+                    delivery_fee: orderData.delivery.delivery_fee || 0,
+                    cod_amount: orderData.delivery.cod_amount || 0,
+                    receiver_name: orderData.delivery.receiver_name || orderData.customer?.name || '',
+                    receiver_phone: orderData.delivery.receiver_phone || orderData.customer?.phone || '',
+                    receiver_address: orderData.delivery.receiver_address || orderData.customer?.address || '',
+                    receiver_ward: orderData.delivery.receiver_ward || '',
+                    receiver_district: orderData.delivery.receiver_district || '',
+                    receiver_city: orderData.delivery.receiver_city || '',
+                    weight: orderData.delivery.weight || 0,
+                    delivery_note: orderData.delivery.delivery_note || '',
+                };
+
+                // Cart items
+                tabToUse.cart = orderData.items.map(item => {
+                    const cartItem = {
+                        product: {
+                            id: item.product_id,
+                            sku: item.sku,
+                            name: item.name,
+                            cost_price: item.cost_price || 0,
+                            retail_price: item.price,
+                            has_serial: item.has_serial,
+                            stock_quantity: item.stock_quantity,
+                        },
+                        quantity: item.qty,
+                        targetQuantity: item.qty,
+                        price: item.price,
+                        discount: item.discount,
+                        is_serial_product: item.has_serial,
+                        serials: item.selected_serials || [],
+                        serialInput: '',
+                        showSerialDropdown: false,
+                        allAvailableSerials: [],
+                        availableSerials: [],
+                        serialLoading: false,
+                    };
+                    if (item.has_serial) {
+                        loadSerialsForProduct(cartItem);
+                    }
+                    return cartItem;
+                });
+
+                // Default pay additional: remaining debt (or 0 if negative)
+                tabToUse.customerPaid = Math.max(0, orderData.totals.remaining);
+
+                saveDraft();
+            } else {
+                alert("Lỗi load đơn đặt hàng: " + res.data.message);
+            }
+        } catch (e) {
+            console.error(e);
+            alert("Lỗi kết nối máy chủ khi load đơn đặt hàng.");
+        }
+    }
+};
+
+watch(() => saleMode.value, (newMode) => {
+    if (!activeTab.value) return;
+    if (newMode === 'delivery') {
+        if (!activeTab.value.delivery) {
+            activeTab.value.delivery = {
+                is_delivery: true,
+                delivery_mode: 'self',
+                delivery_partner: '',
+                tracking_code: '',
+                delivery_fee: 0,
+                cod_amount: 0,
+                receiver_name: selectedCustomer.value?.name || '',
+                receiver_phone: selectedCustomer.value?.phone || '',
+                receiver_address: selectedCustomer.value?.address || '',
+                receiver_ward: '',
+                receiver_district: '',
+                receiver_city: '',
+                weight: 0,
+                delivery_note: '',
+            };
+        } else {
+            activeTab.value.delivery.is_delivery = true;
+            if (activeTab.value.delivery.delivery_mode === 'none') {
+                activeTab.value.delivery.delivery_mode = 'self';
+            }
+        }
+    } else {
+        if (activeTab.value.delivery) {
+            activeTab.value.delivery.is_delivery = false;
+            activeTab.value.delivery.delivery_mode = 'none';
+        }
+    }
+});
+
+watch(() => selectedCustomer.value, (customer) => {
+    if (customer && activeTab.value && activeTab.value.delivery) {
+        const d = activeTab.value.delivery;
+        if (!d.receiver_name) d.receiver_name = customer.name || '';
+        if (!d.receiver_phone) d.receiver_phone = customer.phone || '';
+        if (!d.receiver_address) d.receiver_address = customer.address || '';
+    }
+});
+
 let timeInterval;
 onMounted(() => {
     updateTime();
     timeInterval = setInterval(updateTime, 1000);
     searchProducts();
     loadDraft();
+    checkAndHydrateOrderFromUrl();
 });
 onUnmounted(() => {
     clearInterval(timeInterval);
@@ -302,9 +471,15 @@ const searchSerialsForItem = (item, isFocus = false) => {
 };
 
 const selectSerialForItem = (item, serialObj) => {
+    if (activeTab.value && activeTab.value.mode === 'process_order' && item.serials.length >= item.targetQuantity) {
+        alert(`Sản phẩm này yêu cầu chính xác ${item.targetQuantity} serial. Vui lòng bỏ chọn serial cũ trước khi chọn serial mới.`);
+        return;
+    }
     if (!item.serials.find(s => s.id === serialObj.id)) {
         item.serials.push(serialObj);
-        item.quantity = item.serials.length;
+        if (!activeTab.value || activeTab.value.mode !== 'process_order') {
+            item.quantity = item.serials.length;
+        }
         normalizeExchangeLineDiscount(item);
     }
     item.serialInput = '';
@@ -327,7 +502,9 @@ const addSerialToItem = (item) => {
 
 const removeSerialFromItem = (item, idx) => {
     item.serials.splice(idx, 1);
-    item.quantity = item.serials.length;
+    if (!activeTab.value || activeTab.value.mode !== 'process_order') {
+        item.quantity = item.serials.length;
+    }
     normalizeExchangeLineDiscount(item);
     searchSerialsForItem(item);
 };
@@ -335,11 +512,16 @@ const removeSerialFromItem = (item, idx) => {
 const selectAllSerialsForItem = (item) => {
     if (!item.availableSerials) return;
     item.availableSerials.forEach(s => {
+        if (activeTab.value && activeTab.value.mode === 'process_order' && item.serials.length >= item.targetQuantity) {
+            return;
+        }
         if (!item.serials.find(sel => sel.id === s.id)) {
             item.serials.push(s);
         }
     });
-    item.quantity = item.serials.length;
+    if (!activeTab.value || activeTab.value.mode !== 'process_order') {
+        item.quantity = item.serials.length;
+    }
     normalizeExchangeLineDiscount(item);
     item.serialInput = '';
     item.showSerialDropdown = false;
@@ -348,7 +530,9 @@ const selectAllSerialsForItem = (item) => {
 
 const deselectAllSerialsForItem = (item) => {
     item.serials = [];
-    item.quantity = 0;
+    if (!activeTab.value || activeTab.value.mode !== 'process_order') {
+        item.quantity = 0;
+    }
     normalizeExchangeLineDiscount(item);
     searchSerialsForItem(item);
 };
@@ -521,7 +705,22 @@ const totalAmount = computed(() => {
     return subtotal.value - calculatedDiscount.value;
 });
 
+const priorDeposit = computed(() => {
+    return activeTab.value ? (activeTab.value.orderDepositAmount || 0) : 0;
+});
+
+const totalPaidOverall = computed(() => {
+    return priorDeposit.value + (Number(customerPaid.value) || 0);
+});
+
+const remainingDebt = computed(() => {
+    return totalAmount.value - totalPaidOverall.value;
+});
+
 const changeDue = computed(() => {
+    if (activeTab.value && activeTab.value.mode === 'process_order') {
+        return totalPaidOverall.value > totalAmount.value ? (totalPaidOverall.value - totalAmount.value) : 0;
+    }
     return (customerPaid.value > 0) ? (customerPaid.value - totalAmount.value) : 0;
 });
 
@@ -542,6 +741,55 @@ const processCheckout = async () => {
         if (invalidItems.length > 0) {
             alert("Có sản phẩm quản lý theo Serial/IMEI chưa được chọn mã nào. Vui lòng chọn ít nhất 1 Serial hoặc xóa khỏi đơn.");
             isCheckingOut.value = false;
+            return;
+        }
+
+        // Bán từ Đơn đặt hàng (Xử lý đơn hàng qua POS)
+        if (activeTab.value.mode === 'process_order') {
+            const invalidSerials = cart.value.filter(i => i.is_serial_product && i.serials.length !== i.targetQuantity);
+            if (invalidSerials.length > 0) {
+                const names = invalidSerials.map(i => `'${i.product.name}' (yêu cầu ${i.targetQuantity}, đã chọn ${i.serials.length})`).join(', ');
+                alert(`Có sản phẩm Serial/IMEI chưa chọn đủ số lượng mã: ${names}`);
+                isCheckingOut.value = false;
+                return;
+            }
+
+            const processPayload = {
+                from_pos: true,
+                amount_paid: Number(customerPaid.value) || 0,
+                payment_method: paymentMethod.value,
+                bank_account_info: paymentMethod.value === 'transfer' ? bankAccountInfo.value : null,
+                delivery: {
+                    is_delivery: activeTab.value.delivery?.is_delivery || false,
+                    delivery_mode: activeTab.value.delivery?.delivery_mode || 'none',
+                    delivery_partner: activeTab.value.delivery?.delivery_partner || '',
+                    tracking_code: activeTab.value.delivery?.tracking_code || '',
+                    delivery_fee: Number(activeTab.value.delivery?.delivery_fee) || 0,
+                    cod_amount: Number(activeTab.value.delivery?.cod_amount) || 0,
+                    receiver_name: activeTab.value.delivery?.receiver_name || '',
+                    receiver_phone: activeTab.value.delivery?.receiver_phone || '',
+                    receiver_address: activeTab.value.delivery?.receiver_address || '',
+                    receiver_ward: activeTab.value.delivery?.receiver_ward || '',
+                    receiver_district: activeTab.value.delivery?.receiver_district || '',
+                    receiver_city: activeTab.value.delivery?.receiver_city || '',
+                    weight: Number(activeTab.value.delivery?.weight) || 0,
+                    delivery_note: activeTab.value.delivery?.delivery_note || '',
+                },
+                items: cart.value.map(item => ({
+                    product_id: item.product.id,
+                    quantity: item.quantity,
+                    serial_ids: item.is_serial_product ? item.serials.map(s => s.id) : [],
+                }))
+            };
+
+            const response = await axios.post(`/orders/${activeTab.value.source_order_id}/process`, processPayload);
+            if (response.data.success) {
+                toastMsg.value = response.data.message;
+                setTimeout(() => toastMsg.value = '', 4000);
+                resetAfterCheckout();
+            } else {
+                alert("Lỗi: " + response.data.message);
+            }
             return;
         }
 
@@ -1344,8 +1592,9 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                         v-model="query" 
                         @input="handleSearchInput" 
                         type="text" 
-                        placeholder="Tìm hàng hóa (F3)" 
-                        class="w-full pl-7 pr-2 py-1.5 bg-white/90 hover:bg-white focus:bg-white text-gray-800 placeholder-gray-400 rounded text-[12px] outline-none focus:ring-2 focus:ring-white/50 border-none font-medium shadow-sm"
+                        :placeholder="activeTab.mode === 'process_order' ? 'Đơn hàng đang xử lý...' : 'Tìm hàng hóa (F3)'" 
+                        :disabled="activeTab.mode === 'process_order'"
+                        class="w-full pl-7 pr-2 py-1.5 bg-white/90 hover:bg-white focus:bg-white text-gray-800 placeholder-gray-400 rounded text-[12px] outline-none focus:ring-2 focus:ring-white/50 border-none font-medium shadow-sm disabled:opacity-75 disabled:cursor-not-allowed"
                     >
                     <svg class="w-3.5 h-3.5 text-gray-400 absolute left-2 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                     <!-- Quick Dropdown Search Results -->
@@ -1437,6 +1686,15 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                     <div class="col-span-1"></div>
                 </div>
                 
+                <!-- Order Process Warning Note -->
+                <div v-if="activeTab.mode === 'process_order'" class="bg-blue-50 border-b border-blue-200 px-4 py-2.5 text-xs text-blue-700 flex items-center gap-2">
+                    <svg class="w-4 h-4 text-blue-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    <div>
+                        Đang xử lý đơn đặt hàng <span class="font-bold font-mono">{{ activeTab.source_order_code }}</span>. 
+                        Số lượng và đơn giá được cố định. Bạn có thể chọn lại Serial/IMEI nếu cần thiết.
+                    </div>
+                </div>
+
                 <!-- Cart List -->
                 <div class="flex-1 overflow-y-auto p-2 space-y-2">
                     <div v-if="!cart || cart.length === 0" class="flex flex-col items-center justify-center h-full text-gray-400">
@@ -1500,30 +1758,31 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                             </template>
                             <template v-else>
                                 <div class="flex items-center bg-gray-100/50 rounded-lg p-1 w-fit ring-1 ring-gray-300">
-                                    <button @click="updateQuantity(index, -1)" class="w-7 h-7 flex items-center justify-center rounded bg-white text-gray-600 hover:bg-red-50 hover:text-red-500 transition-colors shadow-sm cursor-pointer disabled:opacity-50">
+                                    <button @click="updateQuantity(index, -1)" :disabled="activeTab.mode === 'process_order'" class="w-7 h-7 flex items-center justify-center rounded bg-white text-gray-600 hover:bg-red-50 hover:text-red-500 transition-colors shadow-sm cursor-pointer disabled:opacity-50">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M20 12H4"></path></svg>
                                     </button>
                                     <input type="text" readonly :value="item.quantity" class="w-10 text-center bg-transparent text-sm font-bold text-gray-800 focus:outline-none focus:ring-0 select-none">
-                                    <button @click="updateQuantity(index, 1)" class="w-7 h-7 flex items-center justify-center rounded bg-white text-gray-600 hover:bg-blue-50 hover:text-blue-600 transition-colors shadow-sm cursor-pointer disabled:opacity-50">
+                                    <button @click="updateQuantity(index, 1)" :disabled="activeTab.mode === 'process_order'" class="w-7 h-7 flex items-center justify-center rounded bg-white text-gray-600 hover:bg-blue-50 hover:text-blue-600 transition-colors shadow-sm cursor-pointer disabled:opacity-50">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"></path></svg>
                                     </button>
                                 </div>
                             </template>
                         </div>
                         <div class="col-span-2 text-right">
-                            <MoneyInput v-model="item.price" :min="0" input-class="w-full text-right outline-none bg-transparent border-b border-dashed border-gray-300 focus:border-blue-500 py-1 font-semibold text-gray-700" />
+                            <MoneyInput v-model="item.price" :min="0" :disabled="activeTab.mode === 'process_order'" input-class="w-full text-right outline-none bg-transparent border-b border-dashed border-gray-300 focus:border-blue-500 py-1 font-semibold text-gray-700 disabled:border-none disabled:bg-transparent" />
                         </div>
                         <div class="col-span-2 text-right">
                             <div class="font-bold text-gray-900 text-[15px]">{{ formatCurrency(Number(item.price * item.quantity - (item.discount || 0)) || 0) }}</div>
                             <div class="flex items-center justify-end gap-1 mt-0.5">
                                 <span class="text-[10px] text-gray-400">CK:</span>
-                                <MoneyInput v-model="item.discount" :min="0" input-class="w-16 text-right text-[11px] outline-none bg-transparent border-b border-dashed border-gray-300 focus:border-blue-500 py-0 text-gray-500" placeholder="0" />
+                                <MoneyInput v-model="item.discount" :min="0" :disabled="activeTab.mode === 'process_order'" input-class="w-16 text-right text-[11px] outline-none bg-transparent border-b border-dashed border-gray-300 focus:border-blue-500 py-0 text-gray-500 disabled:border-none disabled:bg-transparent" placeholder="0" />
                             </div>
                         </div>
                         <div class="col-span-1 flex justify-center">
-                            <button @click="removeFromCart(index)" class="text-gray-400 hover:text-red-500 hover:bg-red-50 p-2 rounded-full transition-colors">
+                            <button v-if="activeTab.mode !== 'process_order'" @click="removeFromCart(index)" class="text-gray-400 hover:text-red-500 hover:bg-red-50 p-2 rounded-full transition-colors">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                             </button>
+                            <svg v-else class="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
                         </div>
                     </div>
                 </div>
@@ -1543,9 +1802,9 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                             v-else
                             v-for="product in products" 
                             :key="'quick-'+product.id"
-                            @click="addToCart(product)"
+                            @click="activeTab.mode !== 'process_order' ? addToCart(product) : null"
                             class="w-32 flex-none bg-white rounded border border-gray-200 p-2 hover:border-blue-500 hover:shadow-md cursor-pointer transition-all flex flex-col shadow-sm group"
-                            :class="product.has_serial && product.sellable_quantity <= 0 ? 'opacity-40 pointer-events-none' : ''"
+                            :class="product.has_serial && product.sellable_quantity <= 0 ? 'opacity-40 pointer-events-none' : (activeTab.mode === 'process_order' ? 'opacity-50 cursor-not-allowed' : '')"
                         >
                             <div class="flex-1 text-sm font-semibold text-gray-800 line-clamp-3 leading-snug group-hover:text-blue-700">{{ product.name }}</div>
                             <div v-if="product.repairing_count > 0" class="text-[10px] text-yellow-600 font-bold mt-1">{{ product.repairing_count }} đang sửa</div>
@@ -1632,15 +1891,31 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                         <span class="text-blue-700 tracking-tight text-xl">{{ formatCurrency(totalAmount || 0) }}</span>
                     </div>
 
-                    <div class="flex justify-between items-center pt-2 text-gray-700 font-medium">
-                        <span>Khách thanh toán</span>
-                        <MoneyInput v-model="customerPaid" :min="0" :placeholder="String(totalAmount)" input-class="w-32 text-right border-b border-gray-300 focus:border-blue-500 outline-none font-bold text-gray-900" />
-                    </div>
+                    <template v-if="activeTab.mode === 'process_order'">
+                        <div class="flex justify-between items-center text-gray-700 font-medium pt-2">
+                            <span>Khách đã đặt cọc</span>
+                            <span class="font-bold text-gray-800">{{ formatCurrency(priorDeposit || 0) }}</span>
+                        </div>
+                        <div class="flex justify-between items-center pt-2 text-gray-700 font-medium">
+                            <span>Khách trả thêm</span>
+                            <MoneyInput v-model="customerPaid" :min="0" :placeholder="String(Math.max(0, totalAmount - priorDeposit))" input-class="w-32 text-right border-b border-gray-300 focus:border-blue-500 outline-none font-bold text-gray-900" />
+                        </div>
+                        <div class="flex justify-between items-center pb-2 text-gray-500 text-sm font-medium">
+                            <span :class="remainingDebt > 0 ? 'text-red-500 font-semibold' : ''">{{ remainingDebt > 0 ? 'Còn nợ' : 'Tiền thừa trả khách' }}</span>
+                            <span :class="remainingDebt > 0 ? 'text-red-500 font-semibold' : ''">{{ formatCurrency(Math.abs(remainingDebt) || 0) }}</span>
+                        </div>
+                    </template>
+                    <template v-else>
+                        <div class="flex justify-between items-center pt-2 text-gray-700 font-medium">
+                            <span>Khách thanh toán</span>
+                            <MoneyInput v-model="customerPaid" :min="0" :placeholder="String(totalAmount)" input-class="w-32 text-right border-b border-gray-300 focus:border-blue-500 outline-none font-bold text-gray-900" />
+                        </div>
 
-                    <div class="flex justify-between items-center pb-2 text-gray-500 text-sm font-medium">
-                        <span>Tiền thừa trả khách</span>
-                        <span>{{ formatCurrency(changeDue || 0) }}</span>
-                    </div>
+                        <div class="flex justify-between items-center pb-2 text-gray-500 text-sm font-medium">
+                            <span>Tiền thừa trả khách</span>
+                            <span>{{ formatCurrency(changeDue || 0) }}</span>
+                        </div>
+                    </template>
 
                     <!-- Payment Method -->
                     <div class="border-t border-gray-200 pt-3">
@@ -1664,7 +1939,96 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                             <input v-if="!bankAccounts || bankAccounts.length === 0" type="text" v-model="bankAccountInfo" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm outline-none focus:border-blue-500 mt-1" placeholder="Nhập số tài khoản" />
                         </div>
                     </div>
-                    
+
+                    <!-- Delivery details section (Bán giao hàng) -->
+                    <div v-if="saleMode === 'delivery' && activeTab.delivery" class="border-t border-gray-200 pt-3 space-y-3 bg-gray-50/50 p-3 rounded-lg border border-gray-150 text-xs">
+                        <div class="font-bold text-sm text-green-700 uppercase tracking-wide flex items-center gap-1">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1-1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l2.414 2.414a1 1 0 01.293.707V15a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0"></path></svg>
+                            Thông tin giao hàng
+                        </div>
+
+                        <!-- Delivery mode selection tabs: Self vs Partner -->
+                        <div class="flex rounded-md shadow-sm text-xs font-semibold bg-white p-0.5 border border-gray-200">
+                            <button 
+                                type="button"
+                                @click="activeTab.delivery.delivery_mode = 'self'"
+                                :class="activeTab.delivery.delivery_mode === 'self' ? 'bg-green-600 text-white' : 'text-gray-700 hover:bg-gray-50'"
+                                class="flex-1 py-1 px-3 rounded transition-colors text-center font-bold"
+                            >
+                                Tự giao hàng
+                            </button>
+                            <button 
+                                type="button"
+                                @click="activeTab.delivery.delivery_mode = 'partner'"
+                                :class="activeTab.delivery.delivery_mode === 'partner' ? 'bg-green-600 text-white' : 'text-gray-700 hover:bg-gray-50'"
+                                class="flex-1 py-1 px-3 rounded transition-colors text-center font-bold"
+                            >
+                                Đối tác giao hàng
+                            </button>
+                        </div>
+
+                        <!-- Delivery fields -->
+                        <div class="space-y-2 text-xs">
+                            <div v-if="activeTab.delivery.delivery_mode === 'partner'">
+                                <label class="block text-[10px] font-medium text-gray-500 mb-0.5">Đối tác giao hàng</label>
+                                <select v-model="activeTab.delivery.delivery_partner" class="w-full border border-gray-300 rounded px-2 py-1 text-xs outline-none focus:border-green-500 bg-white">
+                                    <option value="">-- Chọn đối tác --</option>
+                                    <option value="Grab">Grab</option>
+                                    <option value="Ahamove">Ahamove</option>
+                                    <option value="GHN">Giao Hàng Nhanh (GHN)</option>
+                                    <option value="GHTK">Giao Hàng Tiết Kiệm (GHTK)</option>
+                                    <option value="Viettel Post">Viettel Post</option>
+                                    <option value="Giao hàng ngoài">Giao hàng ngoài</option>
+                                    <option value="Khác">Khác</option>
+                                </select>
+                            </div>
+
+                            <div v-if="activeTab.delivery.delivery_mode === 'partner'" class="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label class="block text-[10px] font-medium text-gray-500 mb-0.5">Mã vận đơn</label>
+                                    <input type="text" v-model="activeTab.delivery.tracking_code" placeholder="Mã bưu tá..." class="w-full border border-gray-300 rounded px-2 py-1 text-xs outline-none focus:border-green-500" />
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-medium text-gray-500 mb-0.5">Cân nặng (kg)</label>
+                                    <input type="number" v-model="activeTab.delivery.weight" step="0.1" min="0" placeholder="0" class="w-full border border-gray-300 rounded px-2 py-1 text-xs outline-none focus:border-green-500" />
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label class="block text-[10px] font-medium text-gray-500 mb-0.5">Phí giao hàng</label>
+                                    <MoneyInput v-model="activeTab.delivery.delivery_fee" :min="0" input-class="w-full border border-gray-300 rounded px-2 py-1 text-xs outline-none focus:border-green-500" />
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-medium text-gray-500 mb-0.5">Thu hộ tiền (COD)</label>
+                                    <MoneyInput v-model="activeTab.delivery.cod_amount" :min="0" input-class="w-full border border-gray-300 rounded px-2 py-1 text-xs outline-none focus:border-green-500" />
+                                </div>
+                            </div>
+
+                            <div class="border-t border-gray-200/60 my-1 pt-1.5 space-y-1.5">
+                                <div class="font-bold text-[10px] text-gray-500 uppercase tracking-wider">Thông tin người nhận</div>
+                                
+                                <div class="grid grid-cols-2 gap-2">
+                                    <input type="text" v-model="activeTab.delivery.receiver_name" placeholder="Tên người nhận..." class="w-full border border-gray-300 rounded px-2 py-1 text-xs outline-none focus:border-green-500" />
+                                    <input type="text" v-model="activeTab.delivery.receiver_phone" placeholder="Số điện thoại..." class="w-full border border-gray-300 rounded px-2 py-1 text-xs outline-none focus:border-green-500" />
+                                </div>
+
+                                <input type="text" v-model="activeTab.delivery.receiver_address" placeholder="Địa chỉ chi tiết..." class="w-full border border-gray-300 rounded px-2 py-1 text-xs outline-none focus:border-green-500" />
+
+                                <div class="grid grid-cols-3 gap-1">
+                                    <input type="text" v-model="activeTab.delivery.receiver_ward" placeholder="Phường/Xã..." class="w-full border border-gray-300 rounded px-1.5 py-1 text-[11px] outline-none focus:border-green-500" />
+                                    <input type="text" v-model="activeTab.delivery.receiver_district" placeholder="Quận/Huyện..." class="w-full border border-gray-300 rounded px-1.5 py-1 text-[11px] outline-none focus:border-green-500" />
+                                    <input type="text" v-model="activeTab.delivery.receiver_city" placeholder="Tỉnh/Thành..." class="w-full border border-gray-300 rounded px-1.5 py-1 text-[11px] outline-none focus:border-green-500" />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block text-[10px] font-medium text-gray-500 mb-0.5">Ghi chú giao hàng</label>
+                                <textarea v-model="activeTab.delivery.delivery_note" rows="2" placeholder="Ghi chú cho shipper..." class="w-full border border-gray-300 rounded px-2 py-1 outline-none focus:border-green-500 resize-none text-xs"></textarea>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- 24.6C: Invoice/order note -->
                     <div class="border-t border-gray-200 pt-3 mt-3">
                         <textarea

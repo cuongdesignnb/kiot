@@ -212,6 +212,7 @@ Route::post('/returns/{return}/cancel', [OrderReturnController::class, 'cancel']
 // ===== ORDERS =====
 Route::middleware('permission:orders.view')->group(function () {
     Route::get('/orders', [OrderController::class, 'index'])->name('orders.index');
+    Route::get('/orders/{order}/pos-payload', [OrderController::class, 'posPayload'])->name('orders.pos-payload');
 });
 Route::middleware('permission:orders.create')->group(function () {
     Route::get('/orders/create', [OrderController::class, 'create'])->name('orders.create');
