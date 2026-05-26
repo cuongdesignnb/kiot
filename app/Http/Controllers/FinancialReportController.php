@@ -8,6 +8,7 @@ use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\OrderReturn;
 use App\Models\Purchase;
+use App\Models\Paysheet;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -87,6 +88,14 @@ class FinancialReportController extends Controller
                 'amount' => (float) $row->total,
             ])
             ->toArray();
+ 
+        $payrollExpense = $this->payrollExpenseAmount($startDate, $endDate, $branchId);
+        if ($payrollExpense > 0) {
+            $expensesByCategory[] = [
+                'name' => 'Chi lương nhân viên',
+                'amount' => $payrollExpense,
+            ];
+        }
 
         $totalExpenses = array_sum(array_column($expensesByCategory, 'amount'));
 
@@ -207,6 +216,9 @@ class FinancialReportController extends Controller
             'PurchaseReturn',
             'DebtOffset',
             'DebtOffsetCancel',
+            'paysheet',
+            'Paysheet',
+            'PaysheetPayment',
         ];
 
         $excludedCategories = [
@@ -224,6 +236,13 @@ class FinancialReportController extends Controller
             'Doi tru cong no',
             'Hủy đối trừ công nợ',
             'Huy doi tru cong no',
+
+            'Chi lương nhân viên',
+            'Chi luong nhan vien',
+            'Lương nhân viên',
+            'Luong nhan vien',
+            'Thanh toán lương',
+            'Thanh toan luong',
 
             'Chi tiền trả NCC',
             'Chi thanh toan NCC',
@@ -258,5 +277,25 @@ class FinancialReportController extends Controller
         }
 
         return $query;
+    }
+
+    private function payrollExpenseQuery(Carbon $startDate, Carbon $endDate, $branchId = null)
+    {
+        $query = Paysheet::query()
+            ->whereIn('status', ['calculated', 'locked'])
+            ->whereDate('period_start', '>=', $startDate->toDateString())
+            ->whereDate('period_end', '<=', $endDate->toDateString());
+
+        if ($branchId) {
+            $query->where('branch_id', $branchId);
+        }
+
+        return $query;
+    }
+
+    private function payrollExpenseAmount(Carbon $startDate, Carbon $endDate, $branchId = null): float
+    {
+        return (float) $this->payrollExpenseQuery($startDate, $endDate, $branchId)
+            ->sum('total_salary');
     }
 }
