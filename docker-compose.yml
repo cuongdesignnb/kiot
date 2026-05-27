@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kiotviet-app-clone
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./database:/var/www/database
+      - ./storage:/var/www/storage
+    env_file:
+      - .env.docker
+    restart: unless-stopped
