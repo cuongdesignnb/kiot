@@ -43,6 +43,7 @@ class GrantSensitivePermissions extends Command
     protected array $newPermissions = [
         // Sales
         'invoices.cancel',
+        'invoices.edit',
         'returns.cancel',
 
         // Purchases

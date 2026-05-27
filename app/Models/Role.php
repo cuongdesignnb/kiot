@@ -139,6 +139,7 @@ class Role extends Model
                     'Hóa đơn' => [
                         'invoices.view'   => 'Xem hóa đơn',
                         'invoices.create' => 'Tạo hóa đơn',
+                        'invoices.edit'   => 'Chỉnh sửa hóa đơn',
                         'invoices.delete' => 'Xóa hóa đơn',
                         'invoices.cancel' => 'Hủy hóa đơn (Step 24.0B)',
                         'invoices.override_time_lock' => 'Sửa/hủy hóa đơn quá hạn (Step 24.3)',

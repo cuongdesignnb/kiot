@@ -781,9 +781,12 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                                     class="px-6 py-3 text-blue-500 font-medium"
                                                                 >
                                                                     {{
-                                                                        item
-                                                                            .product
-                                                                            ?.code
+                                                                        item.product?.sku ||
+                                                                        item.product?.code ||
+                                                                        item.product?.barcode ||
+                                                                        item.sku ||
+                                                                        item.product_code ||
+                                                                        '---'
                                                                     }}
                                                                 </td>
                                                                 <td

@@ -26,6 +26,17 @@ const currentTime = computed(() => {
     });
 });
 
+const pageTitle = computed(() => {
+    if (props.invoice) {
+        if (props.action === 'edit') {
+            return `Sửa hóa đơn ${props.invoice.code} - KiotViet Clone`;
+        } else if (props.action === 'return') {
+            return `Trả hàng ${props.invoice.code} - KiotViet Clone`;
+        }
+    }
+    return 'Tạo đơn đặt hàng - KiotViet Clone';
+});
+
 // Format datetime-local input value
 const formatDatetimeLocal = (date) => {
     const d = new Date(date);
@@ -54,7 +65,7 @@ const createInitialTab = (index) => ({
     note: '',
     orderDate: formatDatetimeLocal(new Date()),
     
-    isDelivery: true,
+    isDelivery: false,
     receiverName: '',
     receiverPhone: '',
     receiverAddress: '',
@@ -589,7 +600,13 @@ const selectInvoiceForReturn = (invoice) => {
 const selectInvoiceForEdit = (invoice) => {
     activeTab.value.selectedCustomer = invoice.customer;
     activeTab.value.searchCustomer = invoice.customer?.name || '';
-    activeTab.value.name = `Sửa HĐ ${invoice.code}`;
+    
+    const isDeliveryInvoice = !!invoice.is_delivery;
+    activeTab.value.name = isDeliveryInvoice
+        ? `Sửa giao hàng ${invoice.code}`
+        : `Sửa HĐ ${invoice.code}`;
+    activeTab.value.isDelivery = isDeliveryInvoice;
+
     activeTab.value.status = 'draft';
     activeTab.value.editing_invoice_id = invoice.id;
     activeTab.value.invoice_id = invoice.id;
@@ -599,8 +616,21 @@ const selectInvoiceForEdit = (invoice) => {
     activeTab.value.amountPaid = invoice.customer_paid || 0;
     activeTab.value.note = invoice.note || '';
     activeTab.value.paymentMethod = invoice.payment_method || 'Tiền mặt';
-    activeTab.value.isDelivery = !!invoice.is_delivery;
+    
     activeTab.value.deliveryFee = invoice.delivery_fee || 0;
+    activeTab.value.receiverName = invoice.receiver_name || '';
+    activeTab.value.receiverPhone = invoice.receiver_phone || '';
+    activeTab.value.receiverAddress = invoice.receiver_address || '';
+    activeTab.value.receiverWard = invoice.receiver_ward || '';
+    activeTab.value.receiverDistrict = invoice.receiver_district || '';
+    activeTab.value.receiverCity = invoice.receiver_city || '';
+    activeTab.value.deliveryNote = invoice.delivery_note || '';
+    activeTab.value.isCod = !!invoice.cod_amount;
+    activeTab.value.weight = invoice.weight || 500;
+    activeTab.value.sizeL = invoice.length || 10;
+    activeTab.value.sizeW = invoice.width || 10;
+    activeTab.value.sizeH = invoice.height || 10;
+
     activeTab.value.items = (invoice.items || []).map(item => ({
         product_id: item.product_id,
         sku: item.product?.sku || '',
@@ -690,7 +720,7 @@ onMounted(() => {
     if (props.invoice) {
         if (props.action === 'edit') {
             selectInvoiceForEdit(props.invoice);
-        } else {
+        } else if (props.action === 'return') {
             selectInvoiceForReturn(props.invoice);
         }
     }
@@ -703,7 +733,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-    <Head title="Tạo đơn đặt hàng - KiotViet Clone">
+    <Head :title="pageTitle">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" />
     </Head>
     <div class="h-screen w-screen flex flex-col bg-[#eef1f5] text-[13px] overflow-hidden font-sans fixed inset-0 z-50">
@@ -752,7 +782,7 @@ onUnmounted(() => {
                             activeTabIndex === index ? 'bg-white text-[#0062c3] font-bold shadow-sm' : 'bg-[#00478e] text-white hover:bg-[#003d7a]'
                          ]">
                         <i class="fas fa-exchange-alt"></i> {{ tab.name }}
-                        <i v-if="tab.items.length > 0" class="fas fa-truck" :class="activeTabIndex === index ? 'text-gray-300' : 'text-blue-300'"></i>
+                        <i v-if="tab.isDelivery" class="fas fa-truck" :class="activeTabIndex === index ? 'text-gray-300' : 'text-blue-300'"></i>
                         <i class="fas fa-times cursor-pointer" 
                            :class="activeTabIndex === index ? 'text-gray-400 hover:text-red-500' : 'text-blue-200 hover:text-white'"
                            @click.stop="closeTab(index)"></i>
@@ -918,8 +948,20 @@ onUnmounted(() => {
                 <div class="h-[40px] bg-[#f8f9fc] border-t border-gray-200 flex items-center justify-between px-3 text-[13px] text-gray-600 flex-shrink-0">
                     <div class="flex items-center gap-4">
                         <div class="cursor-pointer hover:text-blue-600 flex items-center gap-1.5"><i class="fas fa-bolt text-blue-500"></i> Bán nhanh</div>
-                        <div class="cursor-pointer hover:text-blue-600 flex items-center gap-1.5"><i class="fas fa-clock text-gray-400"></i> Bán thường</div>
-                        <div class="cursor-pointer font-bold text-blue-600 bg-white px-2 py-1 rounded border border-blue-200 shadow-sm flex items-center gap-1.5"><i class="fas fa-truck text-blue-500"></i> Bán giao hàng</div>
+                        <div 
+                            class="cursor-pointer flex items-center gap-1.5 px-2 py-0.5 rounded"
+                            :class="[!activeTab.isDelivery ? 'font-bold text-blue-600 bg-white border border-blue-200 shadow-sm' : 'text-gray-500 hover:text-blue-600']"
+                            @click="activeTab.isDelivery = false"
+                        >
+                            <i class="fas fa-clock" :class="[!activeTab.isDelivery ? 'text-blue-500' : 'text-gray-400']"></i> Bán thường
+                        </div>
+                        <div 
+                            class="cursor-pointer flex items-center gap-1.5 px-2 py-0.5 rounded"
+                            :class="[activeTab.isDelivery ? 'font-bold text-blue-600 bg-white border border-blue-200 shadow-sm' : 'text-gray-500 hover:text-blue-600']"
+                            @click="activeTab.isDelivery = true"
+                        >
+                            <i class="fas fa-truck" :class="[activeTab.isDelivery ? 'text-blue-500' : 'text-gray-400']"></i> Bán giao hàng
+                        </div>
                     </div>
                     <div class="flex items-center gap-4">
                         <div class="text-blue-600 cursor-pointer font-bold"><i class="fas fa-comment-dots"></i> 1900 6522</div>
@@ -1007,23 +1049,25 @@ onUnmounted(() => {
                                 <option v-for="branch in branches" :key="branch.id" :value="branch.id">{{ branch.name }} - {{ branch.address }}</option>
                             </select>
                         </div>
-                        <div class="flex gap-4 mb-3">
-                            <div class="flex-1 relative">
-                                <div class="w-2 h-2 rounded-full bg-green-500 absolute -left-4 top-2.5 border border-white"></div>
-                                <input v-model="activeTab.receiverName" placeholder="Tên người nhận" class="w-full border-b border-gray-300 outline-none focus:border-blue-500 py-1 text-[13px]">
+                        <div v-show="activeTab.isDelivery">
+                            <div class="flex gap-4 mb-3 mt-3">
+                                <div class="flex-1 relative">
+                                    <div class="w-2 h-2 rounded-full bg-green-500 absolute -left-4 top-2.5 border border-white"></div>
+                                    <input v-model="activeTab.receiverName" placeholder="Tên người nhận" class="w-full border-b border-gray-300 outline-none focus:border-blue-500 py-1 text-[13px]">
+                                </div>
+                                <div class="flex-1">
+                                    <input v-model="activeTab.receiverPhone" placeholder="Số điện thoại" class="w-full border-b border-gray-300 outline-none focus:border-blue-500 py-1 text-[13px]">
+                                </div>
                             </div>
-                            <div class="flex-1">
-                                <input v-model="activeTab.receiverPhone" placeholder="Số điện thoại" class="w-full border-b border-gray-300 outline-none focus:border-blue-500 py-1 text-[13px]">
+                            <div class="mb-3 pl-2 border-l-2 border-dotted border-gray-300 -ml-[13px] pl-6 space-y-3">
+                                <input v-model="activeTab.receiverAddress" placeholder="Địa chỉ chi tiết (Số nhà, ngõ, đường)" class="w-full border-b border-gray-300 outline-none focus:border-blue-500 py-1 text-[13px]"/>
+                                <input v-model="activeTab.receiverDistrict" placeholder="Khu vực" class="w-full border-b border-gray-300 outline-none focus:border-blue-500 py-1 text-[13px]"/>
+                                <input v-model="activeTab.receiverWard" placeholder="Phường/Xã" class="w-full border-b border-gray-300 outline-none focus:border-blue-500 py-1 text-[13px]"/>
                             </div>
-                        </div>
-                        <div class="mb-3 pl-2 border-l-2 border-dotted border-gray-300 -ml-[13px] pl-6 space-y-3">
-                            <input v-model="activeTab.receiverAddress" placeholder="Địa chỉ chi tiết (Số nhà, ngõ, đường)" class="w-full border-b border-gray-300 outline-none focus:border-blue-500 py-1 text-[13px]"/>
-                            <input v-model="activeTab.receiverDistrict" placeholder="Khu vực" class="w-full border-b border-gray-300 outline-none focus:border-blue-500 py-1 text-[13px]"/>
-                            <input v-model="activeTab.receiverWard" placeholder="Phường/Xã" class="w-full border-b border-gray-300 outline-none focus:border-blue-500 py-1 text-[13px]"/>
                         </div>
                     </div>
                     
-                    <div class="p-4 flex-1">
+                    <div v-if="activeTab.isDelivery" class="p-4 flex-1">
                         <div class="font-bold flex items-center gap-2 mb-3 text-gray-700">
                            <i class="fas fa-box text-gray-500"></i> 1 kiện
                         </div>
@@ -1048,7 +1092,7 @@ onUnmounted(() => {
                            <MoneyInput v-model="activeTab.amountPaid" :min="0" input-class="w-full text-right outline-none bg-transparent font-bold text-gray-800" />
                        </div>
                     </div>
-                    <div class="flex justify-between items-center mb-3">
+                    <div v-if="activeTab.isDelivery" class="flex justify-between items-center mb-3">
                        <span class="font-bold text-gray-700">Thu hộ tiền (COD)</span>
                        <div class="flex items-center gap-3">
                           <label class="relative inline-flex items-center cursor-pointer">
@@ -1062,11 +1106,20 @@ onUnmounted(() => {
                        <span>Tiền thừa trả khách</span>
                        <span class="font-bold text-gray-600">{{ balance < 0 ? '-' : '' }} {{ formatCurrency(Math.abs(balance)) }}</span>
                     </div>
+                    
+                    <!-- Only when NOT isDelivery, we show the Save Button here -->
+                    <div v-if="!activeTab.isDelivery" class="mt-4 pt-3 border-t border-gray-100">
+                        <button @click="save" :disabled="submitRef" class="w-full bg-[#0062c3] hover:bg-blue-700 text-white font-bold py-3 px-4 rounded transition-colors text-[16px] shadow-sm flex items-center justify-center gap-2">
+                            <i v-if="submitRef" class="fas fa-circle-notch fa-spin"></i>
+                            {{ activeTab.editing_invoice_id ? 'CẬP NHẬT HÓA ĐƠN' : activeTab.status === 'return' ? 'TRẢ HÀNG' : 'ĐẶT HÀNG' }}
+                        </button>
+                        <div @click="saveAndPrint" class="text-center font-bold text-gray-500 mt-2 text-[12px] cursor-pointer hover:text-blue-600"><i class="fas fa-print"></i> (F9)</div>
+                    </div>
                 </div>
             </div>
 
             <!-- Right Side: Delivery Service -->
-            <div class="w-[280px] bg-white flex flex-col flex-shrink-0 relative z-30 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.05)]">
+            <div v-if="activeTab.isDelivery" class="w-[280px] bg-white flex flex-col flex-shrink-0 relative z-30 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.05)]">
                 <!-- Toggle Chevron -->
                 <div class="absolute -left-3 top-1/2 -translate-y-1/2 w-6 h-10 bg-white border border-[#dce3ec] rounded-full flex items-center justify-center cursor-pointer z-10 shadow-sm hover:bg-gray-50 text-gray-400">
                     <i class="fas fa-angle-double-right"></i>

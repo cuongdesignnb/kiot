@@ -1,4 +1,4 @@
-﻿<script setup>
+<script setup>
 import { formatVND as fmt } from '@/utils/money';
 import { Head, Link } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
@@ -94,7 +94,7 @@ const statusColors = {
                     </thead>
                     <tbody class="divide-y">
                         <tr v-for="(item, idx) in invoice.items" :key="idx" class="hover:bg-gray-50">
-                            <td class="px-4 py-3 text-blue-600 font-semibold">{{ item.product_code }}</td>
+                            <td class="px-4 py-3 text-blue-600 font-semibold">{{ item.product_code || item.sku || item.product?.sku || item.product?.code || '---' }}</td>
                             <td class="px-4 py-3">{{ item.product_name }}</td>
                             <td class="px-4 py-3 text-right">{{ item.quantity }}</td>
                             <td class="px-4 py-3 text-right">{{ fmt(item.price) }}</td>

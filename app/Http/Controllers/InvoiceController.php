@@ -579,7 +579,7 @@ class InvoiceController extends Controller
                 'delivery_partner' => $invoice->delivery_partner,
                 'payment_method' => $invoice->payment_method,
                 'items' => $invoice->items->map(fn($item) => [
-                    'product_code' => $item->product->code ?? '',
+                    'product_code' => $item->product?->sku ?: $item->product?->code ?: $item->product?->barcode ?: '',
                     'product_name' => $item->product->name ?? '',
                     'quantity' => $item->quantity,
                     'price' => $item->price,
@@ -612,7 +612,7 @@ class InvoiceController extends Controller
             'delivery_partner' => $invoice->delivery_partner,
             'payment_method' => $invoice->payment_method,
             'items' => $invoice->items->map(fn($item) => [
-                'product_code' => $item->product->code ?? '',
+                'product_code' => $item->product?->sku ?: $item->product?->code ?: $item->product?->barcode ?: '',
                 'product_name' => $item->product->name ?? '',
                 'quantity' => $item->quantity,
                 'price' => $item->price,
