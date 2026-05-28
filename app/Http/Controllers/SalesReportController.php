@@ -59,7 +59,7 @@ class SalesReportController extends Controller
                 $chartData = $this->buildReturnsSeries($returnsQuery, $startDate, $endDate, $groupBy);
                 break;
             case 'employee':
-                $chartData = $this->buildEmployeeSeries($invoiceQuery, $returnsQuery, $branchId);
+                $chartData = $this->buildEmployeeSeries($invoiceQuery, $returnsQuery, $branchId, $salesChannel);
                 break;
         }
 
@@ -297,22 +297,65 @@ class SalesReportController extends Controller
     // ═══════════════════════════════════════
     // Concern: Nhân viên
     // ═══════════════════════════════════════
-    private function buildEmployeeSeries($invoiceQuery, $returnsQuery, $branchId)
+    private function buildEmployeeSeries($invoiceQuery, $returnsQuery, $branchId, $salesChannel = null)
     {
-        // HOTFIX 24.26 — Use SellerResolver to include Admin/User sellers
         $sellers = new SellerResolver();
-        $revBySeller = $sellers->aggregateBySeller(clone $invoiceQuery, 'SUM(total)');
-        arsort($revBySeller);
 
-        $sellerMeta = $sellers->sellerMeta(array_keys($revBySeller));
+        // Scope returns by sales channel through invoice if provided
+        if ($salesChannel) {
+            $returnsQuery = $sellers->filterReturnsByInvoiceSalesChannel(clone $returnsQuery, $salesChannel);
+        }
 
+        $empRevenue = $sellers->aggregateBySeller(clone $invoiceQuery, 'SUM(total)');
+        $empReturns = $sellers->aggregateReturnsBySeller(clone $returnsQuery, 'SUM(total)');
+
+        $allKeys = array_unique(array_merge(array_keys($empRevenue), array_keys($empReturns)));
+        $sellerMeta = $sellers->sellerMeta($allKeys);
+
+        $filters = [
+            'branch_id' => $branchId,
+            'sales_channel' => $salesChannel,
+        ];
+        $childrenBySeller = $this->buildSalesDailyChildren($invoiceQuery, $returnsQuery, $filters);
+
+        $rows = [];
+        foreach ($allKeys as $key) {
+            $meta = $sellerMeta[$key] ?? null;
+            $children = $childrenBySeller[$key] ?? [];
+
+            $rev = round(array_sum(array_column($children, 'revenue')), 2);
+            $ret = round(array_sum(array_column($children, 'returns')), 2);
+
+            $rows[] = [
+                'id'            => $key,
+                'seller_key'    => $key,
+                'name'          => $meta['display_name'] ?? $meta['name'] ?? $key,
+                'revenue'       => $rev,
+                'returns'       => $ret,
+                'net'           => round($rev - $ret, 2),
+                'children'      => $children,
+            ];
+        }
+
+        // Sort parent rows by revenue descending
+        usort($rows, fn($a, $b) => $b['revenue'] <=> $a['revenue']);
+
+        // Build chartData: labels and datasets for the chart view
         $labels      = [];
         $revenueData = [];
-        foreach ($revBySeller as $key => $rev) {
-            if ($rev <= 0) continue;
-            $labels[]      = $sellerMeta[$key]['name'] ?? $key;
-            $revenueData[] = $rev;
+        foreach ($rows as $row) {
+            if ($row['revenue'] <= 0) continue;
+            $labels[]      = $row['name'];
+            $revenueData[] = $row['revenue'];
         }
+
+        // Summary builder
+        $summary = [
+            'count'   => count($rows),
+            'revenue' => array_sum(array_column($rows, 'revenue')),
+            'returns' => array_sum(array_column($rows, 'returns')),
+            'net'     => array_sum(array_column($rows, 'net')),
+        ];
 
         return [
             'title' => 'Doanh thu theo nhân viên',
@@ -322,6 +365,104 @@ class SalesReportController extends Controller
             ],
             'total' => array_sum($revenueData),
             'type' => 'bar',
+            'rows' => $rows,
+            'summary' => $summary,
         ];
+    }
+
+    private function buildSalesDailyChildren($invoiceQuery, $returnsQuery, array $filters): array
+    {
+        $sellers = new SellerResolver();
+        $sellerMap = $sellers->invoiceSellerMap(clone $invoiceQuery);
+        $children = [];
+
+        if (!empty($sellerMap)) {
+            $invoiceIds = array_keys($sellerMap);
+            $invoiceRows = \Illuminate\Support\Facades\DB::table('invoices')
+                ->whereIn('id', $invoiceIds)
+                ->selectRaw('id, DATE(created_at) as report_date, total')
+                ->get();
+
+            foreach ($invoiceRows as $row) {
+                $key = $sellerMap[$row->id] ?? 'unknown';
+                $date = $row->report_date;
+                if (!isset($children[$key][$date])) {
+                    $children[$key][$date] = [
+                        'date' => $date,
+                        'date_display' => Carbon::parse($date)->format('d/m/Y'),
+                        'revenue' => 0.0,
+                        'returns' => 0.0,
+                        'net' => 0.0,
+                        'invoice_count' => 0,
+                        'return_count' => 0,
+                    ];
+                }
+                $children[$key][$date]['revenue'] += (float) $row->total;
+                $children[$key][$date]['invoice_count'] += 1;
+            }
+        }
+
+        $returnRows = (clone $returnsQuery)
+            ->select('id', 'invoice_id', 'created_at', 'total')
+            ->get();
+
+        if ($returnRows->isNotEmpty()) {
+            $returnInvoiceIds = $returnRows->pluck('invoice_id')->filter()->unique()->values()->all();
+            
+            $returnInvoiceSellerMap = !empty($returnInvoiceIds)
+                ? $sellers->invoiceSellerMap(Invoice::whereIn('id', $returnInvoiceIds))
+                : [];
+
+            foreach ($returnRows as $ret) {
+                $sellerKey = $returnInvoiceSellerMap[$ret->invoice_id] ?? 'unknown';
+                $date = Carbon::parse($ret->created_at)->toDateString();
+
+                if (!isset($children[$sellerKey][$date])) {
+                    $children[$sellerKey][$date] = [
+                        'date' => $date,
+                        'date_display' => Carbon::parse($date)->format('d/m/Y'),
+                        'revenue' => 0.0,
+                        'returns' => 0.0,
+                        'net' => 0.0,
+                        'invoice_count' => 0,
+                        'return_count' => 0,
+                    ];
+                }
+                $children[$sellerKey][$date]['returns'] += (float) $ret->total;
+                $children[$sellerKey][$date]['return_count'] += 1;
+            }
+        }
+
+        foreach ($children as $sellerKey => &$dates) {
+            foreach ($dates as $date => &$dayData) {
+                $dayData['revenue'] = round($dayData['revenue'], 2);
+                $dayData['returns'] = round($dayData['returns'], 2);
+                $dayData['net'] = round($dayData['revenue'] - $dayData['returns'], 2);
+
+                $params = [
+                    'date_filter' => 'custom',
+                    'date_from' => $date,
+                    'date_to' => $date,
+                    'seller_key' => $sellerKey,
+                ];
+                if (!empty($filters['branch_id'])) {
+                    $params['branch_id'] = $filters['branch_id'];
+                }
+                if (!empty($filters['sales_channel'])) {
+                    $params['sales_channel'] = $filters['sales_channel'];
+                }
+                $params['sort_by'] = 'created_at';
+                $params['sort_direction'] = 'desc';
+
+                $dayData['invoice_url'] = '/invoices?' . http_build_query($params);
+            }
+            // Sort dates descending
+            uksort($dates, fn($a, $b) => strcmp($b, $a));
+            // Convert to sequential list
+            $dates = array_values($dates);
+        }
+        unset($dates);
+
+        return $children;
     }
 }

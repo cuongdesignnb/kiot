@@ -34,6 +34,16 @@ const branchId = ref(props.filters.branch_id || "");
 const salesChannel = ref(props.filters.sales_channel || "");
 const viewMode = ref(props.filters.view || "chart");
 
+// State for expandable rows (only for concern=employee)
+const expandedRows = ref({});
+const isEmployeeReport = computed(() => concern.value === 'employee');
+const hasChildren = (row) => isEmployeeReport.value && Array.isArray(row.children) && row.children.length > 0;
+const isExpanded = (row) => !!expandedRows.value[row.id];
+const toggleRow = (row) => {
+    if (!hasChildren(row)) return;
+    expandedRows.value[row.id] = !expandedRows.value[row.id];
+};
+
 const concernOptions = [
     { value: "time", label: "Thời gian" },
     { value: "profit", label: "Lợi nhuận" },
@@ -66,6 +76,7 @@ const applyFilter = () => {
         params.date_from = dateFrom.value;
         params.date_to = dateTo.value;
     }
+    expandedRows.value = {}; // Reset expanded rows when filter changes
     router.get("/reports/sales", params, { preserveState: true });
 };
 
@@ -141,13 +152,24 @@ const reportRows = computed(() => {
 const PDF_ROWS = 20;
 const pdfPage = ref(1);
 const pdfZoom = ref(100);
-const pdfTotalPages = computed(() => Math.max(1, Math.ceil(reportRows.value.length / PDF_ROWS)));
+const pdfTotalPages = computed(() => {
+    const len = isEmployeeReport.value ? (props.chartData?.rows?.length || 0) : reportRows.value.length;
+    return Math.max(1, Math.ceil(len / PDF_ROWS));
+});
 const pdfPaginatedRows = computed(() => {
     const s = (pdfPage.value - 1) * PDF_ROWS;
+    if (isEmployeeReport.value) {
+        return (props.chartData?.rows || []).slice(s, s + PDF_ROWS);
+    }
     return reportRows.value.slice(s, s + PDF_ROWS);
 });
 const now = new Date();
 const pdfReportDate = `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+
+const reportTitle = computed(() => {
+    if (isEmployeeReport.value) return 'Báo cáo bán hàng theo nhân viên';
+    return props.chartData?.title || 'Báo cáo bán hàng';
+});
 </script>
 
 <template>
@@ -282,27 +304,113 @@ const pdfReportDate = `${String(now.getDate()).padStart(2,'0')}/${String(now.get
                         <div class="bg-white shadow-lg border border-gray-300 w-full p-10 print:shadow-none print:border-none print:p-0 print:max-w-full"
                             :style="{ maxWidth: (900 * pdfZoom / 100) + 'px', fontSize: (pdfZoom / 100) + 'em' }">
                             <p class="text-xs text-gray-400 mb-3" style="font-size:0.75em">Ngày lập: {{ pdfReportDate }}</p>
-                            <h1 class="text-lg font-bold text-center mb-1">{{ chartData?.title || 'Báo cáo bán hàng' }}</h1>
+                            <h1 class="text-lg font-bold text-center mb-1">{{ reportTitle }}</h1>
                             <p class="text-sm text-gray-500 text-center mb-5">{{ selectedPeriodLabel }} — Chi nhánh: {{ branchName }}</p>
-                            <table class="w-full border-collapse" style="font-size:0.85em">
-                                <thead>
-                                    <tr class="bg-blue-600 text-white">
-                                        <th class="px-3 py-2 text-left font-semibold border border-blue-700">Thời gian</th>
-                                        <th v-for="ds in (chartData?.datasets || [])" :key="ds.label" class="px-3 py-2 text-right font-semibold border border-blue-700">{{ ds.label }}</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr v-for="row in pdfPaginatedRows" :key="row.label" class="hover:bg-gray-50">
-                                        <td class="px-3 py-1.5 border border-gray-200">{{ row.label }}</td>
-                                        <td v-for="(val, i) in row.values" :key="i" class="px-3 py-1.5 border border-gray-200 text-right">{{ formatCurrency(val) }}</td>
-                                    </tr>
-                                    <tr v-if="reportRows.length === 0"><td :colspan="1 + (chartData?.datasets?.length || 0)" class="px-3 py-8 text-center text-gray-400 border border-gray-200">Không có dữ liệu</td></tr>
-                                    <tr v-if="reportRows.length > 0" class="bg-blue-50 font-bold">
-                                        <td class="px-3 py-2 border border-gray-200">Tổng cộng</td>
-                                        <td v-for="(ds, i) in (chartData?.datasets || [])" :key="'t-' + i" class="px-3 py-2 border border-gray-200 text-right text-blue-700">{{ formatCurrency(ds.data.reduce((a, b) => a + b, 0)) }}</td>
-                                    </tr>
-                                </tbody>
-                            </table>
+                            
+                            <!-- ═══ EMPLOYEE EXPANDABLE TABLE ═══ -->
+                            <template v-if="isEmployeeReport">
+                                <table class="w-full border-collapse" style="font-size:0.85em">
+                                    <thead>
+                                        <tr class="bg-blue-600 text-white">
+                                            <th class="px-3 py-2 text-left font-semibold border border-blue-700">Người bán</th>
+                                            <th class="px-3 py-2 text-right font-semibold border border-blue-700">Doanh thu</th>
+                                            <th class="px-3 py-2 text-right font-semibold border border-blue-700">Giá trị trả</th>
+                                            <th class="px-3 py-2 text-right font-semibold border border-blue-700">Doanh thu thuần</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <!-- Summary row -->
+                                        <tr class="bg-blue-50 font-bold">
+                                            <td class="px-3 py-2 border border-gray-200">
+                                                SL người bán: {{ chartData?.summary?.count || 0 }}
+                                            </td>
+                                            <td class="px-3 py-2 text-right border border-gray-200">
+                                                {{ formatCurrency(chartData?.summary?.revenue || 0) }}
+                                            </td>
+                                            <td class="px-3 py-2 text-right border border-gray-200 text-red-600">
+                                                {{ formatCurrency(chartData?.summary?.returns || 0) }}
+                                            </td>
+                                            <td class="px-3 py-2 text-right border border-gray-200 text-blue-700">
+                                                {{ formatCurrency(chartData?.summary?.net || 0) }}
+                                            </td>
+                                        </tr>
+                                        <template v-for="row in pdfPaginatedRows" :key="row.id">
+                                            <tr class="hover:bg-gray-50">
+                                                <td class="px-3 py-1.5 border border-gray-200 text-blue-600 font-medium">
+                                                    <div class="flex items-center gap-1.5">
+                                                        <button 
+                                                            v-if="hasChildren(row)" 
+                                                            @click.stop="toggleRow(row)" 
+                                                            class="text-gray-500 hover:text-blue-600 focus:outline-none w-4 h-4 flex items-center justify-center font-mono border border-gray-200 rounded bg-gray-50 shadow-sm text-[11px]"
+                                                        >
+                                                            {{ isExpanded(row) ? '−' : '+' }}
+                                                        </button>
+                                                        <span 
+                                                            :class="{'cursor-pointer hover:underline': hasChildren(row)}"
+                                                            @click="hasChildren(row) && toggleRow(row)"
+                                                        >
+                                                            {{ row.name }}
+                                                        </span>
+                                                    </div>
+                                                </td>
+                                                <td class="px-3 py-1.5 border border-gray-200 text-right">{{ formatCurrency(row.revenue) }}</td>
+                                                <td class="px-3 py-1.5 border border-gray-200 text-right text-red-600">{{ row.returns > 0 ? formatCurrency(row.returns) : '0' }}</td>
+                                                <td class="px-3 py-1.5 border border-gray-200 text-right font-semibold" :class="row.net < 0 ? 'text-red-600' : 'text-gray-700'">{{ formatCurrency(row.net) }}</td>
+                                            </tr>
+                                            <!-- Children daily rows -->
+                                            <tr 
+                                                v-if="isExpanded(row)" 
+                                                v-for="child in row.children" 
+                                                :key="row.id + '-' + child.date"
+                                                class="bg-blue-50/20 hover:bg-blue-50/40"
+                                            >
+                                                <td class="pl-8 pr-3 py-1.5 border border-gray-200 text-gray-700">
+                                                    <a 
+                                                        :href="child.invoice_url" 
+                                                        class="text-blue-600 hover:underline font-medium"
+                                                    >
+                                                        {{ child.date_display }}
+                                                    </a>
+                                                </td>
+                                                <td class="px-3 py-1.5 border border-gray-200 text-right text-gray-600">{{ formatCurrency(child.revenue) }}</td>
+                                                <td class="px-3 py-1.5 border border-gray-200 text-right text-red-600">{{ child.returns > 0 ? formatCurrency(child.returns) : '0' }}</td>
+                                                <td 
+                                                    class="px-3 py-1.5 border border-gray-200 text-right font-medium"
+                                                    :class="child.net < 0 ? 'text-red-600' : 'text-gray-700'"
+                                                >
+                                                    {{ formatCurrency(child.net) }}
+                                                </td>
+                                            </tr>
+                                        </template>
+                                        <tr v-if="!(chartData?.rows?.length)">
+                                            <td colspan="4" class="px-3 py-8 text-center text-gray-400 border border-gray-200">Không có dữ liệu</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </template>
+
+                            <!-- ═══ ORIGINAL FLAT TABLE ═══ -->
+                            <template v-else>
+                                <table class="w-full border-collapse" style="font-size:0.85em">
+                                    <thead>
+                                        <tr class="bg-blue-600 text-white">
+                                            <th class="px-3 py-2 text-left font-semibold border border-blue-700">Thời gian</th>
+                                            <th v-for="ds in (chartData?.datasets || [])" :key="ds.label" class="px-3 py-2 text-right font-semibold border border-blue-700">{{ ds.label }}</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr v-for="row in pdfPaginatedRows" :key="row.label" class="hover:bg-gray-50">
+                                            <td class="px-3 py-1.5 border border-gray-200">{{ row.label }}</td>
+                                            <td v-for="(val, i) in row.values" :key="i" class="px-3 py-1.5 border border-gray-200 text-right">{{ formatCurrency(val) }}</td>
+                                        </tr>
+                                        <tr v-if="reportRows.length === 0"><td :colspan="1 + (chartData?.datasets?.length || 0)" class="px-3 py-8 text-center text-gray-400 border border-gray-200">Không có dữ liệu</td></tr>
+                                        <tr v-if="reportRows.length > 0" class="bg-blue-50 font-bold">
+                                            <td class="px-3 py-2 border border-gray-200">Tổng cộng</td>
+                                            <td v-for="(ds, i) in (chartData?.datasets || [])" :key="'t-' + i" class="px-3 py-2 border border-gray-200 text-right text-blue-700">{{ formatCurrency(ds.data.reduce((a, b) => a + b, 0)) }}</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </template>
                         </div>
                     </div>
                 </template>
