@@ -3,6 +3,7 @@ import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, watch } from "vue";
 import { router } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
+import DatePicker from "@/Components/DatePicker.vue";
 import { Bar } from "vue-chartjs";
 import {
     Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend,
@@ -52,7 +53,7 @@ const applyFilter = () => {
         brand_id: brandId.value || undefined,
     };
     if (period.value === "custom") { params.date_from = dateFrom.value; params.date_to = dateTo.value; }
-    router.get("/reports/products-report", params, { preserveState: true });
+    router.get("/reports/products", params, { preserveState: true });
 };
 
 watch([concern, period, branchId, categoryId, brandId], () => applyFilter());
@@ -147,8 +148,8 @@ const pdfReportDate = `${String(now.getDate()).padStart(2,'0')}/${String(now.get
                             </label>
                         </div>
                         <div v-if="period === 'custom'" class="mt-2 space-y-1.5">
-                            <input type="date" v-model="dateFrom" class="w-full text-xs border border-gray-300 rounded px-2 py-1.5" />
-                            <input type="date" v-model="dateTo" class="w-full text-xs border border-gray-300 rounded px-2 py-1.5" />
+                            <DatePicker v-model="dateFrom" input-class="w-full text-xs px-2 py-1.5" placeholder="Từ ngày" />
+                            <DatePicker v-model="dateTo" input-class="w-full text-xs px-2 py-1.5" placeholder="Đến ngày" />
                             <button @click="applyFilter" class="w-full text-xs bg-blue-50 text-blue-600 border border-blue-200 rounded py-1.5 hover:bg-blue-100">Áp dụng</button>
                         </div>
                     </div>

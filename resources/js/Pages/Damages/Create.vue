@@ -564,35 +564,51 @@ const save = (status) => {
             </div>
 
             <!-- Right Panel: Info -->
-            <div class="w-[340px] flex-shrink-0 flex flex-col bg-white shadow-[-1px_0_0_rgba(0,0,0,0.05)] z-20">
+            <div class="w-[380px] max-w-[380px] flex-shrink-0 flex flex-col bg-white shadow-[-1px_0_0_rgba(0,0,0,0.05)] z-20 overflow-hidden">
                 <div class="flex-1 overflow-auto bg-gray-50 flex flex-col">
-                    
-                    <div class="p-4 flex items-start gap-2 border-b border-gray-200 bg-white justify-between">
-                        <div class="relative flex min-w-0 flex-1 items-start gap-2">
-                             <div class="mt-0.5 w-7 h-7 bg-gray-200 rounded-full flex items-center justify-center border border-gray-300 shadow-inner">
-                                <svg class="w-4 h-4 text-gray-500" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"></path></svg>
-                            </div>
-                            <select
-                                v-model="selectedActorKey"
-                                class="min-w-0 flex-1 rounded border border-gray-300 bg-white px-2.5 py-1.5 text-[13px] text-gray-800 shadow-sm hover:border-blue-400 focus:border-blue-500 focus:outline-none"
-                            >
-                                <option value="">Chọn người xuất hủy</option>
-                                <option
-                                    v-for="actor in actorOptions"
-                                    :key="actor.value"
-                                    :value="actor.value"
+
+                    <div class="border-b border-gray-200 bg-white p-4 space-y-3">
+                        <div class="space-y-1">
+                            <label class="block text-[13px] font-medium text-gray-700">
+                                Người xuất hủy
+                            </label>
+
+                            <div class="flex min-w-0 items-center gap-2">
+                                <div class="w-7 h-7 bg-gray-200 rounded-full flex items-center justify-center border border-gray-300 shadow-inner shrink-0">
+                                    <svg class="w-4 h-4 text-gray-500" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"></path>
+                                    </svg>
+                                </div>
+
+                                <select
+                                    v-model="selectedActorKey"
+                                    class="min-w-0 flex-1 rounded border border-gray-300 bg-white px-2.5 py-1.5 text-[13px] text-gray-800 shadow-sm hover:border-blue-400 focus:border-blue-500 focus:outline-none"
                                 >
-                                    {{ actor.label }}{{ actor.is_current_user ? ' (hiện tại)' : '' }}
-                                </option>
-                            </select>
+                                    <option value="">Chọn người xuất hủy</option>
+                                    <option
+                                        v-for="actor in actorOptions"
+                                        :key="actor.value"
+                                        :value="actor.value"
+                                    >
+                                        {{ actor.label }}{{ actor.is_current_user ? ' (hiện tại)' : '' }}
+                                    </option>
+                                </select>
+                            </div>
                         </div>
-                        <DateTimePicker
-                            v-model="transactionDate"
-                            compact
-                            class="w-[170px]"
-                            input-class="text-[12px] py-1.5"
-                            placeholder="dd/MM/yyyy HH:mm"
-                        />
+
+                        <div class="space-y-1">
+                            <label class="block text-[13px] font-medium text-gray-700">
+                                Ngày hủy
+                            </label>
+
+                            <DateTimePicker
+                                v-model="transactionDate"
+                                compact
+                                wrapper-class="w-[190px] shrink-0"
+                                input-class="text-[12px] py-1.5 px-2"
+                                placeholder="dd/MM/yyyy HH:mm"
+                            />
+                        </div>
                     </div>
 
                     <div class="p-4 flex flex-col gap-4 bg-white border-b border-gray-200 flex-1">

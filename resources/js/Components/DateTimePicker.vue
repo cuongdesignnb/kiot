@@ -28,6 +28,8 @@ const props = defineProps({
     label: { type: String, default: '' },
     /** Extra css class on the input. */
     inputClass: { type: String, default: '' },
+    /** Extra wrapper css class instead of default w-full. */
+    wrapperClass: { type: String, default: '' },
     /** When true, hide the inline "Hiện tại" shortcut button (saves space in tight UIs). */
     compact: { type: Boolean, default: false },
     /** When true, drop the default border/background so inputClass fully owns the look. */
@@ -111,7 +113,7 @@ const computedClass = computed(() => {
 </script>
 
 <template>
-    <div class="w-full">
+    <div :class="wrapperClass || 'w-full'">
         <label v-if="label" class="block text-sm font-medium text-gray-700 mb-1">{{ label }}</label>
         <div class="relative">
             <input

@@ -1,17 +1,19 @@
 <script setup>
 /**
- * DatePicker — locale-independent dd/MM/yyyy text input.
+ * DatePicker — locale-independent dd/MM/yyyy date text input.
  *
  * v-model contract:
- *   - Reads any reasonable canonical date form ("yyyy-MM-dd", ISO datetime, Date, epoch).
+ *   - Reads the canonical "yyyy-MM-dd" form.
  *   - Emits update:modelValue as canonical "yyyy-MM-dd" (or empty string when cleared).
+ *
+ * Display: dd/MM/yyyy. Never uses native <input type="date"> because that
+ * widget honours the browser locale.
+ *
+ * On blur / Enter, validates the typed text. If invalid, restores the last canonical value
+ * and shows the error message.
  */
 import { computed, ref, watch } from 'vue';
-import {
-    formatDateVN,
-    parseVNDate,
-    pad2,
-} from '@/utils/dateTime.js';
+import { formatDateVN, parseVNDate, pad2 } from '@/utils/dateTime.js';
 
 const props = defineProps({
     modelValue: { type: [String, Date, Number, null], default: '' },
@@ -20,6 +22,8 @@ const props = defineProps({
     required: { type: Boolean, default: false },
     label: { type: String, default: '' },
     inputClass: { type: String, default: '' },
+    wrapperClass: { type: String, default: '' },
+    naked: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(['update:modelValue', 'blur']);
@@ -73,24 +77,21 @@ const onKeydown = (e) => {
     }
 };
 
-const setToday = () => {
-    const d = new Date();
-    text.value = formatDateVN(d);
-    error.value = '';
-    const canonical = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-    emit('update:modelValue', canonical);
-};
-
-const computedClass = computed(() => [
-    'w-full border rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500',
-    error.value ? 'border-red-400' : 'border-gray-300',
-    props.disabled ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white',
-    props.inputClass,
-]);
+const computedClass = computed(() => {
+    if (props.naked) {
+        return ['focus:outline-none', error.value ? 'ring-1 ring-red-400 rounded' : '', props.inputClass];
+    }
+    return [
+        'w-full border rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500',
+        error.value ? 'border-red-400' : 'border-gray-300',
+        props.disabled ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white',
+        props.inputClass,
+    ];
+});
 </script>
 
 <template>
-    <div class="w-full">
+    <div :class="wrapperClass || 'w-full'">
         <label v-if="label" class="block text-sm font-medium text-gray-700 mb-1">{{ label }}</label>
         <div class="relative">
             <input
@@ -106,14 +107,6 @@ const computedClass = computed(() => [
                 :class="computedClass"
                 autocomplete="off"
             />
-            <button
-                v-if="!disabled"
-                type="button"
-                @click="setToday"
-                class="absolute inset-y-0 right-1 my-1 px-2 text-xs text-blue-600 hover:bg-blue-50 rounded"
-                tabindex="-1"
-                title="Hôm nay"
-            >Hôm nay</button>
         </div>
         <p v-if="error" class="mt-1 text-xs text-red-600">{{ error }}</p>
     </div>

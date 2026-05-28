@@ -165,6 +165,7 @@ class DamageController extends Controller
             'branch_id' => 'required|exists:branches,id',
             'employee_id' => 'nullable|exists:employees,id',
             'damage_actor_key' => 'nullable|string',
+            'action_date' => 'nullable|date',
             'note' => 'nullable|string'
         ]);
 
