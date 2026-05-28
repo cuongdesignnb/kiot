@@ -1,5 +1,5 @@
 <script setup>
-import { formatVND as formatCurrency } from '@/utils/money';
+import { formatVND as formatCurrency, parseMoneyModelValue } from '@/utils/money';
 import { ref, computed, onMounted, watch, onBeforeUnmount } from 'vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import DateTimePicker from '@/Components/DateTimePicker.vue';
@@ -94,26 +94,81 @@ const submitRef = ref(false);
 const paymentMethod = ref('cash');
 const bankAccountInfo = ref('');
 
+const moneyNumber = (value) => Number(parseMoneyModelValue(value) || 0);
+
 // Chi phí nhập khác
 const otherCosts = ref([]);
 const showOtherCosts = ref(false);
 const newCostName = ref('');
 const newCostAmount = ref(0);
 
+const pendingOtherCost = computed(() => {
+    const name = (newCostName.value || '').trim();
+    const amount = moneyNumber(newCostAmount.value);
+
+    if (!name && amount <= 0) return null;
+
+    return {
+        id: '__pending__',
+        name,
+        amount,
+        isPending: true,
+    };
+});
+
+const normalizedOtherCosts = computed(() => {
+    const existing = (otherCosts.value || [])
+        .map(c => ({
+            name: (c.name || '').trim(),
+            amount: moneyNumber(c.amount),
+        }))
+        .filter(c => c.name !== '' && c.amount > 0);
+
+    const pending = pendingOtherCost.value;
+
+    if (pending && pending.name && pending.amount > 0) {
+        existing.push({
+            name: pending.name,
+            amount: pending.amount,
+        });
+    }
+
+    return existing;
+});
+
+const totalOtherCosts = computed(() =>
+    normalizedOtherCosts.value.reduce((s, c) => s + moneyNumber(c.amount), 0)
+);
+
 const addOtherCost = () => {
-    if (!newCostName.value.trim()) return;
+    const name = (newCostName.value || '').trim();
+    const amount = moneyNumber(newCostAmount.value);
+
+    if (!name && amount <= 0) return;
+
+    if (!name) {
+        alert('Vui lòng nhập tên chi phí nhập khác.');
+        return;
+    }
+
+    if (amount <= 0) {
+        alert('Vui lòng nhập số tiền chi phí nhập khác lớn hơn 0.');
+        return;
+    }
+
     otherCosts.value.push({
         id: Date.now(),
-        name: newCostName.value.trim(),
-        amount: Number(newCostAmount.value) || 0,
+        name,
+        amount,
     });
+
     newCostName.value = '';
     newCostAmount.value = 0;
 };
+
 const removeOtherCost = (index) => {
     otherCosts.value.splice(index, 1);
 };
-const totalOtherCosts = computed(() => otherCosts.value.reduce((s, c) => s + (Number(c.amount) || 0), 0));
 
 const PURCHASE_DRAFT_KEY = 'kiot.purchase.create.draft.v1';
 
@@ -131,22 +186,22 @@ const buildDraftSnapshot = () => ({
     selectedEmployeeId: selectedEmployeeId.value || '',
     purchaseDate: purchaseDate.value || '',
     status: status.value || 'completed',
-    discount: Number(discount.value) || 0,
-    paidAmount: Number(paidAmount.value) || 0,
+    discount: moneyNumber(discount.value),
+    paidAmount: moneyNumber(paidAmount.value),
     note: note.value || '',
     paymentMethod: paymentMethod.value || 'cash',
     bankAccountInfo: bankAccountInfo.value || '',
-    otherCosts: Array.isArray(otherCosts.value) ? otherCosts.value : [],
+    otherCosts: normalizedOtherCosts.value,
     items: items.value.map((item) => ({
         product_id: item.product_id,
         sku: item.sku,
         name: item.name,
         has_serial: !!item.has_serial,
         quantity: Number(item.quantity) || 0,
-        price: Number(item.price) || 0,
-        retail_price: Number(item.retail_price) || 0,
-        technician_price: Number(item.technician_price) || 0,
-        discount: Number(item.discount) || 0,
+        price: moneyNumber(item.price),
+        retail_price: moneyNumber(item.retail_price),
+        technician_price: moneyNumber(item.technician_price),
+        discount: moneyNumber(item.discount),
         stock_quantity: Number(item.stock_quantity) || 0,
         serials: Array.isArray(item.serials) ? [...item.serials] : [],
         serialInput: item.serialInput || '',
@@ -159,9 +214,9 @@ const hasMeaningfulDraft = computed(() =>
     items.value.length > 0 ||
     !!selectedSupplierId.value ||
     !!note.value ||
-    Number(discount.value) > 0 ||
-    Number(paidAmount.value) > 0 ||
-    otherCosts.value.length > 0
+    moneyNumber(discount.value) > 0 ||
+    moneyNumber(paidAmount.value) > 0 ||
+    normalizedOtherCosts.value.length > 0
 );
 
 const saveBrowserDraft = (silent = false) => {
@@ -223,7 +278,7 @@ watch(
         note,
         paymentMethod,
         bankAccountInfo,
-        otherCosts,
+        normalizedOtherCosts,
     ],
     () => {
         if (isRestoringDraft.value) return;
@@ -347,7 +402,14 @@ const getItemTotal = (item) => {
 };
 
 const totalAmount = computed(() => items.value.reduce((sum, item) => sum + getItemTotal(item), 0));
-const totalPayment = computed(() => Math.max(0, totalAmount.value - Number(discount.value) + totalOtherCosts.value));
+const totalPayment = computed(() =>
+    Math.max(
+        0,
+        moneyNumber(totalAmount.value)
+            - moneyNumber(discount.value)
+            + moneyNumber(totalOtherCosts.value)
+    )
+);
 
 // HOTFIX 24.21 — surface supplier balance + overpayment instead of clamping at 0.
 // `currentPurchaseBalance` is `cần trả − đã trả`:
@@ -400,18 +462,21 @@ const save = () => {
         employee_id: selectedEmployeeId.value || null,
         purchase_date: purchaseDate.value || null,
         note: note.value,
-        discount: Number(discount.value) || 0,
-        other_costs: otherCosts.value.map(c => ({ name: c.name, amount: Number(c.amount) || 0 })),
-        paid_amount: Number(paidAmount.value) || 0,
+        discount: moneyNumber(discount.value),
+        other_costs: normalizedOtherCosts.value.map(c => ({
+            name: c.name,
+            amount: moneyNumber(c.amount),
+        })),
+        paid_amount: moneyNumber(paidAmount.value),
         payment_method: paymentMethod.value,
         bank_account_info: paymentMethod.value === 'transfer' ? bankAccountInfo.value : null,
         items: items.value.map(item => ({
             product_id: item.product_id,
             quantity: item.has_serial ? (item.serials?.length || 0) : (parseInt(item.quantity) || 0),
-            price: Number(item.price) || 0,
-            retail_price: Number(item.retail_price) || 0,
-            technician_price: Number(item.technician_price) || 0,
-            discount: Number(item.discount) || 0,
+            price: moneyNumber(item.price),
+            retail_price: moneyNumber(item.retail_price),
+            technician_price: moneyNumber(item.technician_price),
+            discount: moneyNumber(item.discount),
             serials: item.serials || [],
             warranty_months: item.warranty_months || 0,
         }))
@@ -721,6 +786,9 @@ const localBrands = ref([...(props.brands || [])]);
                                     <input type="text" v-model="newCostName" @keydown.enter="addOtherCost" class="flex-1 border border-gray-300 rounded px-2 py-1 text-[12px] outline-none focus:border-green-500" placeholder="Tên chi phí (VD: Ship hàng)" />
                                     <MoneyInput v-model="newCostAmount" :min="0" placeholder="Số tiền" input-class="w-[100px] border border-gray-300 rounded px-2 py-1 text-right text-[12px] outline-none focus:border-green-500" />
                                     <button @click="addOtherCost" class="text-green-600 hover:text-green-700 text-sm font-bold">+</button>
+                                </div>
+                                <div v-if="pendingOtherCost && pendingOtherCost.name && pendingOtherCost.amount > 0" class="text-[11px] text-gray-500 italic mt-1 pl-1">
+                                    * Đang tạm tính vào phiếu, bấm + để thêm cố định.
                                 </div>
                             </div>
 

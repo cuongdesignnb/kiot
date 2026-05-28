@@ -195,8 +195,10 @@ class PurchaseController extends Controller
             'note' => 'nullable|string',
             'payment_method' => 'nullable|string|in:cash,transfer',
             'bank_account_info' => 'nullable|string',
+            'other_costs' => 'nullable|array',
+            'other_costs.*.name' => 'required_with:other_costs|string|max:255',
+            'other_costs.*.amount' => 'required_with:other_costs|numeric|min:0',
         ]);
-
         // ── Step 23.3: Validate serial cho hàng has_serial khi nhập ──
         // BUG-1: count(serials) phải === quantity (không cho phiếu nhập 5 mà chỉ liệt 2 serial).
         // BUG-2: chống trùng serial trong cùng request (chống user dán nhầm 2 lần).
@@ -250,8 +252,16 @@ class PurchaseController extends Controller
             $discount = $request->discount ?? 0;
 
             // Chi phí nhập khác
-            $otherCosts = $request->other_costs ?? [];
-            $otherCostsTotal = collect($otherCosts)->sum(fn($c) => (float)($c['amount'] ?? 0));
+            $otherCosts = collect($request->other_costs ?? [])
+                ->map(fn($c) => [
+                    'name' => trim((string)($c['name'] ?? '')),
+                    'amount' => round((float)($c['amount'] ?? 0), 2),
+                ])
+                ->filter(fn($c) => $c['name'] !== '' && $c['amount'] > 0)
+                ->values()
+                ->all();
+
+            $otherCostsTotal = collect($otherCosts)->sum('amount');
 
             $pay_amount = $total_amount - $discount + $otherCostsTotal; // Total to pay
             $paid_amount = $request->paid_amount ?? 0;
@@ -501,6 +511,9 @@ class PurchaseController extends Controller
             'items.*.product_id' => 'required_with:items|exists:products,id',
             'items.*.quantity' => 'required_with:items|integer|min:0',
             'items.*.price' => 'required_with:items|numeric|min:0',
+            'other_costs' => 'nullable|array',
+            'other_costs.*.name' => 'required_with:other_costs|string|max:255',
+            'other_costs.*.amount' => 'required_with:other_costs|numeric|min:0',
         ]);
 
         $isDraftToComplete = $purchase->status === 'draft' && ($request->status ?? $purchase->status) === 'completed';
@@ -541,8 +554,16 @@ class PurchaseController extends Controller
             $paidAmount = $request->paid_amount ?? $purchase->paid_amount;
 
             // Chi phí nhập khác
-            $otherCosts = $request->other_costs ?? $purchase->other_costs ?? [];
-            $otherCostsTotal = collect($otherCosts)->sum(fn($c) => (float)($c['amount'] ?? 0));
+            $otherCosts = collect($request->other_costs ?? $purchase->other_costs ?? [])
+                ->map(fn($c) => [
+                    'name' => trim((string)($c['name'] ?? '')),
+                    'amount' => round((float)($c['amount'] ?? 0), 2),
+                ])
+                ->filter(fn($c) => $c['name'] !== '' && $c['amount'] > 0)
+                ->values()
+                ->all();
+
+            $otherCostsTotal = collect($otherCosts)->sum('amount');
 
             $payAmount = $purchase->total_amount - $discount + $otherCostsTotal;
             $debtAmount = $payAmount - $paidAmount;
