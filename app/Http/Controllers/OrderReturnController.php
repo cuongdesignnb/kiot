@@ -44,6 +44,12 @@ class OrderReturnController extends Controller
         $query = OrderReturn::with(['items.product', 'customer', 'invoice']);
         $this->applyFilters($query, $request);
 
+        $sellerKey = $request->input('seller_key');
+        if ($sellerKey) {
+            $resolver = app(\App\Support\Reports\SellerResolver::class);
+            $query = $resolver->filterReturnsBySeller($query, $sellerKey);
+        }
+
         $returns = $query->paginate(15)->withQueryString();
 
         // Step 22.1B (read-only): enrich items[].returned_serials cho UI hiển thị.
@@ -78,9 +84,12 @@ class OrderReturnController extends Controller
             }
         }
 
+        $filters = $this->currentFilters($request);
+        $filters['seller_key'] = $sellerKey ?? '';
+
         return Inertia::render('Returns/Index', [
             'returns' => $returns,
-            'filters' => $this->currentFilters($request),
+            'filters' => $filters,
             'filterOptions' => [
                 'branches' => \App\Models\Branch::select('id', 'name')->get(),
                 'statuses' => ReturnStatus::options(),

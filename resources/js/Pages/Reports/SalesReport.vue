@@ -366,14 +366,37 @@ const reportTitle = computed(() => {
                                             >
                                                 <td class="pl-8 pr-3 py-1.5 border border-gray-200 text-gray-700">
                                                     <a 
-                                                        :href="child.invoice_url" 
+                                                        v-if="child.drilldown_url"
+                                                        :href="child.drilldown_url" 
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
                                                         class="text-blue-600 hover:underline font-medium"
+                                                        :title="child.drilldown_label || 'Xem chi tiết'"
                                                     >
                                                         {{ child.date_display }}
                                                     </a>
+                                                    <span v-else class="font-medium text-gray-700">{{ child.date_display }}</span>
+                                                    <span
+                                                        v-if="child.drilldown_type === 'returns'"
+                                                        class="ml-1.5 px-1 py-0.5 text-[9px] font-semibold text-red-600 bg-red-50 rounded border border-red-200 inline-block align-middle"
+                                                    >
+                                                        Trả hàng
+                                                    </span>
                                                 </td>
                                                 <td class="px-3 py-1.5 border border-gray-200 text-right text-gray-600">{{ formatCurrency(child.revenue) }}</td>
-                                                <td class="px-3 py-1.5 border border-gray-200 text-right text-red-600">{{ child.returns > 0 ? formatCurrency(child.returns) : '0' }}</td>
+                                                <td class="px-3 py-1.5 border border-gray-200 text-right text-red-600">
+                                                    <a
+                                                        v-if="child.returns > 0 && child.return_url"
+                                                        :href="child.return_url"
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        class="text-red-600 hover:underline"
+                                                        title="Xem phiếu trả hàng"
+                                                    >
+                                                        {{ formatCurrency(child.returns) }}
+                                                    </a>
+                                                    <span v-else>0</span>
+                                                </td>
                                                 <td 
                                                     class="px-3 py-1.5 border border-gray-200 text-right font-medium"
                                                     :class="child.net < 0 ? 'text-red-600' : 'text-gray-700'"

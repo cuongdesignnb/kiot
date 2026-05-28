@@ -268,7 +268,24 @@ class EmployeeReportController extends Controller
                 $params['sort_direction'] = 'desc';
 
                 $dayData['invoice_url'] = '/invoices?' . http_build_query($params);
-                $dayData['return_url'] = '/returns?' . http_build_query(array_merge($params, ['date_filter' => 'custom', 'date_from' => $date, 'date_to' => $date]));
+                $dayData['return_url'] = '/returns?' . http_build_query($params);
+
+                $dayData['has_invoices'] = $dayData['invoice_count'] > 0;
+                $dayData['has_returns'] = $dayData['return_count'] > 0;
+
+                if ($dayData['has_invoices']) {
+                    $dayData['drilldown_type'] = 'invoices';
+                    $dayData['drilldown_url'] = $dayData['invoice_url'];
+                    $dayData['drilldown_label'] = 'Xem hóa đơn';
+                } elseif ($dayData['has_returns']) {
+                    $dayData['drilldown_type'] = 'returns';
+                    $dayData['drilldown_url'] = $dayData['return_url'];
+                    $dayData['drilldown_label'] = 'Xem phiếu trả hàng';
+                } else {
+                    $dayData['drilldown_type'] = null;
+                    $dayData['drilldown_url'] = null;
+                    $dayData['drilldown_label'] = null;
+                }
             }
             // Sort dates descending
             uksort($dates, fn($a, $b) => strcmp($b, $a));

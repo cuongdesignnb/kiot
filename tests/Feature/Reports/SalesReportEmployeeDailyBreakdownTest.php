@@ -332,4 +332,153 @@ class SalesReportEmployeeDailyBreakdownTest extends TestCase
             $this->assertArrayNotHasKey('rows', $chartData);
         }
     }
+
+    // Test 10 — Drilldown metadata when return only
+    public function test_drilldown_metadata_when_return_only(): void
+    {
+        $admin = $this->admin();
+        $empA  = $this->employee('Seller A');
+        $product = $this->product();
+
+        // Invoice is created on a different day (May 10)
+        $inv = $this->invoice($empA, $product, 4550000, 'Bán trực tiếp', '2026-05-10 10:00:00');
+        // Return is created on May 20
+        $this->returnFor($inv, 4550000, '2026-05-20 12:00:00');
+
+        $res = $this->actingAs($admin)->get('/reports/sales?concern=employee&view=report&period=custom&date_from=2026-05-01&date_to=2026-05-31');
+        $res->assertOk();
+        $chartData = $res->viewData('page')['props']['chartData'];
+
+        $rowA = collect($chartData['rows'])->firstWhere('id', "employee:{$empA->id}");
+        $this->assertNotNull($rowA);
+
+        $child20 = collect($rowA['children'])->firstWhere('date', '2026-05-20');
+        $this->assertNotNull($child20);
+
+        $this->assertEquals(0, $child20['revenue']);
+        $this->assertEquals(4550000, $child20['returns']);
+        $this->assertEquals(-4550000, $child20['net']);
+        $this->assertEquals(0, $child20['invoice_count']);
+        $this->assertEquals(1, $child20['return_count']);
+        $this->assertTrue($child20['has_returns']);
+        $this->assertFalse($child20['has_invoices']);
+        $this->assertEquals('returns', $child20['drilldown_type']);
+        
+        $this->assertStringStartsWith('/returns?', $child20['drilldown_url']);
+        $this->assertStringStartsWith('/returns?', $child20['return_url']);
+        $this->assertStringStartsWith('/invoices?', $child20['invoice_url']);
+    }
+
+    // Test 11 — Drilldown metadata when invoice only
+    public function test_drilldown_metadata_when_invoice_only(): void
+    {
+        $admin = $this->admin();
+        $empA  = $this->employee('Seller A');
+        $product = $this->product();
+
+        $this->invoice($empA, $product, 6580000, 'Bán trực tiếp', '2026-05-25 10:00:00');
+
+        $res = $this->actingAs($admin)->get('/reports/sales?concern=employee&view=report&period=custom&date_from=2026-05-01&date_to=2026-05-31');
+        $res->assertOk();
+        $chartData = $res->viewData('page')['props']['chartData'];
+
+        $rowA = collect($chartData['rows'])->firstWhere('id', "employee:{$empA->id}");
+        $child25 = collect($rowA['children'])->firstWhere('date', '2026-05-25');
+        $this->assertNotNull($child25);
+
+        $this->assertEquals(1, $child25['invoice_count']);
+        $this->assertEquals(0, $child25['return_count']);
+        $this->assertTrue($child25['has_invoices']);
+        $this->assertFalse($child25['has_returns']);
+        $this->assertEquals('invoices', $child25['drilldown_type']);
+        $this->assertStringStartsWith('/invoices?', $child25['drilldown_url']);
+    }
+
+    // Test 12 — Drilldown metadata when both invoice and return
+    public function test_drilldown_metadata_when_both_invoice_and_return(): void
+    {
+        $admin = $this->admin();
+        $empA  = $this->employee('Seller A');
+        $product = $this->product();
+
+        $inv = $this->invoice($empA, $product, 5000000, 'Bán trực tiếp', '2026-05-25 10:00:00');
+        $this->returnFor($inv, 2000000, '2026-05-25 11:00:00');
+
+        $res = $this->actingAs($admin)->get('/reports/sales?concern=employee&view=report&period=custom&date_from=2026-05-01&date_to=2026-05-31');
+        $res->assertOk();
+        $chartData = $res->viewData('page')['props']['chartData'];
+
+        $rowA = collect($chartData['rows'])->firstWhere('id', "employee:{$empA->id}");
+        $child25 = collect($rowA['children'])->firstWhere('date', '2026-05-25');
+        $this->assertNotNull($child25);
+
+        $this->assertEquals(1, $child25['invoice_count']);
+        $this->assertEquals(1, $child25['return_count']);
+        $this->assertTrue($child25['has_invoices']);
+        $this->assertTrue($child25['has_returns']);
+        $this->assertEquals('invoices', $child25['drilldown_type']);
+        $this->assertStringStartsWith('/invoices?', $child25['drilldown_url']);
+    }
+
+    // Test 13 — return_url has all filters
+    public function test_daily_child_return_url_has_all_filters(): void
+    {
+        $admin = $this->admin();
+        $empA  = $this->employee('Seller A');
+        $product = $this->product();
+        $branch = Branch::create(['name' => 'Chi nhánh A']);
+
+        $inv = $this->invoice($empA, $product, 5000000, 'Facebook', '2026-05-20 10:00:00', $branch->id);
+        $this->returnFor($inv, 3000000, '2026-05-20 11:00:00', $branch->id);
+
+        $res = $this->actingAs($admin)->get("/reports/sales?concern=employee&view=report&period=custom&date_from=2026-05-01&date_to=2026-05-31&branch_id={$branch->id}&sales_channel=Facebook");
+        $res->assertOk();
+        $chartData = $res->viewData('page')['props']['chartData'];
+
+        $rowA = collect($chartData['rows'])->firstWhere('id', "employee:{$empA->id}");
+        $child20 = collect($rowA['children'])->firstWhere('date', '2026-05-20');
+        $this->assertNotNull($child20);
+
+        $url = $child20['return_url'];
+        $query = parse_url($url, PHP_URL_QUERY);
+        parse_str($query, $params);
+
+        $this->assertEquals('custom', $params['date_filter'] ?? null);
+        $this->assertEquals('2026-05-20', $params['date_from'] ?? null);
+        $this->assertEquals('2026-05-20', $params['date_to'] ?? null);
+        $this->assertEquals("employee:{$empA->id}", $params['seller_key'] ?? null);
+        $this->assertEquals($branch->id, $params['branch_id'] ?? null);
+        $this->assertEquals('Facebook', $params['sales_channel'] ?? null);
+        $this->assertEquals('created_at', $params['sort_by'] ?? null);
+        $this->assertEquals('desc', $params['sort_direction'] ?? null);
+    }
+
+    // Test 14 — returns index filters by seller_key correctly
+    public function test_returns_index_filters_by_seller_key_correctly(): void
+    {
+        $admin = $this->admin();
+        $empA  = $this->employee('Seller A');
+        $empB  = $this->employee('Seller B');
+        $product = $this->product();
+
+        $invA = $this->invoice($empA, $product, 5000000, 'Bán trực tiếp', '2026-05-20 10:00:00');
+        $invB = $this->invoice($empB, $product, 6000000, 'Bán trực tiếp', '2026-05-20 11:00:00');
+
+        $retA = $this->returnFor($invA, 2000000, '2026-05-20 12:00:00');
+        $retB = $this->returnFor($invB, 3000000, '2026-05-20 13:00:00');
+
+        // Request with seller_key for A
+        $resA = $this->actingAs($admin)->get("/returns?seller_key=employee:{$empA->id}");
+        $resA->assertOk();
+        $returnsDataA = $resA->viewData('page')['props']['returns']['data'];
+        $this->assertCount(1, $returnsDataA);
+        $this->assertEquals($retA->id, $returnsDataA[0]['id']);
+
+        // Request with seller_key for B
+        $resB = $this->actingAs($admin)->get("/returns?seller_key=employee:{$empB->id}");
+        $resB->assertOk();
+        $returnsDataB = $resB->viewData('page')['props']['returns']['data'];
+        $this->assertCount(1, $returnsDataB);
+        $this->assertEquals($retB->id, $returnsDataB[0]['id']);
+    }
 }
