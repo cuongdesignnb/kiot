@@ -1,5 +1,5 @@
 <script setup>
-import { formatVND as formatCurrency } from '@/utils/money';
+import { formatVND as formatCurrency, parseMoneyModelValue } from '@/utils/money';
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import axios from 'axios';
@@ -14,6 +14,12 @@ const props = defineProps({
     invoice: Object,
     action: { type: String, default: 'edit' },
 });
+
+const moneyNumber = (value) => Number(parseMoneyModelValue(value) || 0);
+
+const safeBool = (value) => {
+    return value === true || value === 1 || value === '1' || value === 'true';
+};
 
 const currentTime = computed(() => {
     const now = new Date();
@@ -431,9 +437,35 @@ watch(
     { deep: true }
 );
 
-const totalAmount = computed(() => itemsComputed.value.reduce((sum, item) => sum + item.subtotal, 0));
-const totalPayment = computed(() => Math.max(0, totalAmount.value - Number(activeTab.value.discount) + Number(activeTab.value.otherFees)));
-const balance = computed(() => activeTab.value.amountPaid - (activeTab.value.isCod ? 0 : totalPayment.value));
+watch(
+    () => activeTab.value?.isDelivery,
+    (isDelivery) => {
+        if (!isDelivery && activeTab.value) {
+            activeTab.value.isCod = false;
+        }
+    }
+);
+
+const totalAmount = computed(() =>
+    itemsComputed.value.reduce((sum, item) => sum + moneyNumber(item.subtotal), 0)
+);
+
+const totalPayment = computed(() =>
+    Math.max(
+        0,
+        moneyNumber(totalAmount.value)
+            - moneyNumber(activeTab.value.discount)
+            + moneyNumber(activeTab.value.otherFees)
+    )
+);
+
+const effectiveCod = computed(() =>
+    !!activeTab.value?.isDelivery && !!activeTab.value?.isCod
+);
+
+const balance = computed(() =>
+    moneyNumber(activeTab.value.amountPaid) - (effectiveCod.value ? 0 : moneyNumber(totalPayment.value))
+);
 
 // Step 22.2G: BẮT BUỘC chọn đủ Serial/IMEI cho hàng has_serial trước khi lưu.
 // Trước đây tạo Order hàng serial mà bỏ qua tick serial vẫn luồn qua, để dồn lỗi
@@ -482,22 +514,22 @@ const save = async () => {
             customer_id: activeTab.value.selectedCustomer?.id || null,
             branch_id: activeTab.value.selectedBranchId || (props.branches?.[0]?.id || null),
             note: activeTab.value.note,
-            total_price: Number(totalAmount.value) || 0,
-            discount: Number(activeTab.value.discount) || 0,
-            total_payment: Number(totalPayment.value) || 0,
-            amount_paid: Number(activeTab.value.amountPaid) || 0,
+            total_price: moneyNumber(totalAmount.value),
+            discount: moneyNumber(activeTab.value.discount),
+            total_payment: moneyNumber(totalPayment.value),
+            amount_paid: moneyNumber(activeTab.value.amountPaid),
             price_book_id: activeTab.value.selectedPriceBookId,
             price_book_name: activeTab.value.selectedPriceBookName,
             items: itemsComputed.value.map(item => ({
                 ...item,
-                price: Number(item.price) || 0,
-                discount: Number(item.discount) || 0,
+                price: moneyNumber(item.price),
+                discount: moneyNumber(item.discount),
             })),
             invoice_id: activeTab.value.invoice_id,
-            subtotal: Number(totalAmount.value) || 0,
-            total: Number(totalPayment.value) || 0,
-            paid_to_customer: Number(activeTab.value.amountPaid) || 0,
-            other_fees: Number(activeTab.value.otherFees) || 0,
+            subtotal: moneyNumber(totalAmount.value),
+            total: moneyNumber(totalPayment.value),
+            paid_to_customer: moneyNumber(activeTab.value.amountPaid),
+            other_fees: moneyNumber(activeTab.value.otherFees),
             is_delivery: activeTab.value.isDelivery,
             receiver_name: activeTab.value.receiverName,
             receiver_phone: activeTab.value.receiverPhone,
@@ -506,9 +538,9 @@ const save = async () => {
             receiver_district: activeTab.value.receiverDistrict,
             receiver_city: activeTab.value.receiverCity,
             weight: activeTab.value.weight,
-            delivery_fee: Number(activeTab.value.deliveryFee) || 0,
+            delivery_fee: moneyNumber(activeTab.value.deliveryFee),
             delivery_note: activeTab.value.deliveryNote,
-            cod_amount: activeTab.value.isCod ? (Number(totalPayment.value) || 0) : 0,
+            cod_amount: effectiveCod.value ? moneyNumber(totalPayment.value) : 0,
             length: activeTab.value.sizeL,
             width: activeTab.value.sizeW,
             height: activeTab.value.sizeH,
@@ -519,13 +551,16 @@ const save = async () => {
             // Remap items fields for backend validation (qty → quantity)
             payload.items = payload.items.map(item => ({
                 product_id: item.product_id,
-                quantity: item.qty || item.quantity,
-                price: Number(item.price) || 0,
-                discount: Number(item.discount) || 0,
+                quantity: Number(item.qty || item.quantity || 0),
+                price: moneyNumber(item.price),
+                discount: moneyNumber(item.discount),
                 serial_ids: item.serial_ids || [],
             }));
-            payload.customer_paid = payload.amount_paid;
+            payload.customer_paid = moneyNumber(payload.amount_paid);
             payload.payment_method = activeTab.value.paymentMethod || 'Tiền mặt';
+            if (!payload.is_delivery) {
+                payload.cod_amount = 0;
+            }
             // Update existing invoice — use Inertia callbacks
             router.put(`/invoices/${activeTab.value.editing_invoice_id}`, payload, {
                 onSuccess: () => {
@@ -601,7 +636,9 @@ const selectInvoiceForEdit = (invoice) => {
     activeTab.value.selectedCustomer = invoice.customer;
     activeTab.value.searchCustomer = invoice.customer?.name || '';
     
-    const isDeliveryInvoice = !!invoice.is_delivery;
+    const isDeliveryInvoice = safeBool(invoice.is_delivery);
+    const codAmount = moneyNumber(invoice.cod_amount);
+
     activeTab.value.name = isDeliveryInvoice
         ? `Sửa giao hàng ${invoice.code}`
         : `Sửa HĐ ${invoice.code}`;
@@ -612,12 +649,13 @@ const selectInvoiceForEdit = (invoice) => {
     activeTab.value.invoice_id = invoice.id;
     activeTab.value.selectedPriceBookId = null;
     activeTab.value.selectedPriceBookName = invoice.price_book_name || 'Bảng giá chung';
-    activeTab.value.discount = invoice.discount || 0;
-    activeTab.value.amountPaid = invoice.customer_paid || 0;
+    activeTab.value.discount = moneyNumber(invoice.discount);
+    activeTab.value.amountPaid = moneyNumber(invoice.customer_paid);
     activeTab.value.note = invoice.note || '';
     activeTab.value.paymentMethod = invoice.payment_method || 'Tiền mặt';
     
-    activeTab.value.deliveryFee = invoice.delivery_fee || 0;
+    activeTab.value.deliveryFee = moneyNumber(invoice.delivery_fee);
+    activeTab.value.otherFees = moneyNumber(invoice.other_fees);
     activeTab.value.receiverName = invoice.receiver_name || '';
     activeTab.value.receiverPhone = invoice.receiver_phone || '';
     activeTab.value.receiverAddress = invoice.receiver_address || '';
@@ -625,7 +663,7 @@ const selectInvoiceForEdit = (invoice) => {
     activeTab.value.receiverDistrict = invoice.receiver_district || '';
     activeTab.value.receiverCity = invoice.receiver_city || '';
     activeTab.value.deliveryNote = invoice.delivery_note || '';
-    activeTab.value.isCod = !!invoice.cod_amount;
+    activeTab.value.isCod = isDeliveryInvoice && codAmount > 0;
     activeTab.value.weight = invoice.weight || 500;
     activeTab.value.sizeL = invoice.length || 10;
     activeTab.value.sizeW = invoice.width || 10;
@@ -636,10 +674,10 @@ const selectInvoiceForEdit = (invoice) => {
         sku: item.product?.sku || '',
         name: item.product?.name || 'Sản phẩm',
         qty: item.quantity,
-        price: item.price,
-        discount: item.discount || 0,
+        price: moneyNumber(item.price),
+        discount: moneyNumber(item.discount),
         stock_quantity: item.product?.stock_quantity || 0,
-        subtotal: (item.quantity * item.price) - (item.discount || 0)
+        subtotal: (Number(item.quantity || 0) * moneyNumber(item.price)) - moneyNumber(item.discount)
     }));
 };
 
@@ -657,22 +695,22 @@ const saveAndPrint = async () => {
             customer_id: activeTab.value.selectedCustomer?.id || null,
             branch_id: activeTab.value.selectedBranchId || (props.branches?.[0]?.id || null),
             note: activeTab.value.note,
-            total_price: Number(totalAmount.value) || 0,
-            discount: Number(activeTab.value.discount) || 0,
-            total_payment: Number(totalPayment.value) || 0,
-            amount_paid: Number(activeTab.value.amountPaid) || 0,
+            total_price: moneyNumber(totalAmount.value),
+            discount: moneyNumber(activeTab.value.discount),
+            total_payment: moneyNumber(totalPayment.value),
+            amount_paid: moneyNumber(activeTab.value.amountPaid),
             price_book_id: activeTab.value.selectedPriceBookId,
             price_book_name: activeTab.value.selectedPriceBookName,
             items: itemsComputed.value.map(item => ({
                 ...item,
-                price: Number(item.price) || 0,
-                discount: Number(item.discount) || 0,
+                price: moneyNumber(item.price),
+                discount: moneyNumber(item.discount),
             })),
             invoice_id: activeTab.value.invoice_id,
-            subtotal: Number(totalAmount.value) || 0,
-            total: Number(totalPayment.value) || 0,
-            paid_to_customer: Number(activeTab.value.amountPaid) || 0,
-            other_fees: Number(activeTab.value.otherFees) || 0,
+            subtotal: moneyNumber(totalAmount.value),
+            total: moneyNumber(totalPayment.value),
+            paid_to_customer: moneyNumber(activeTab.value.amountPaid),
+            other_fees: moneyNumber(activeTab.value.otherFees),
             is_delivery: activeTab.value.isDelivery,
             receiver_name: activeTab.value.receiverName,
             receiver_phone: activeTab.value.receiverPhone,
@@ -681,15 +719,19 @@ const saveAndPrint = async () => {
             receiver_district: activeTab.value.receiverDistrict,
             receiver_city: activeTab.value.receiverCity,
             weight: activeTab.value.weight,
-            delivery_fee: Number(activeTab.value.deliveryFee) || 0,
+            delivery_fee: moneyNumber(activeTab.value.deliveryFee),
             delivery_note: activeTab.value.deliveryNote,
-            cod_amount: activeTab.value.isCod ? (Number(totalPayment.value) || 0) : 0,
+            cod_amount: effectiveCod.value ? moneyNumber(totalPayment.value) : 0,
             length: activeTab.value.sizeL,
             width: activeTab.value.sizeW,
             height: activeTab.value.sizeH,
             order_date: activeTab.value.orderDate || null,
             _print: true,
         };
+
+        if (!payload.is_delivery) {
+            payload.cod_amount = 0;
+        }
         const res = await axios.post(endpoint, payload);
         if (res.data?.id) {
             window.open(`/orders/${res.data.id}/print`, '_blank');

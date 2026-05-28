@@ -17,7 +17,7 @@
  * Emit: update:modelValue (number), input (number), blur (number)
  */
 import { ref, watch } from 'vue';
-import { formatVndInput, parseVndInput, isMoneyInputEmpty } from '@/utils/money';
+import { formatVndInput, parseVndInput, isMoneyInputEmpty, parseMoneyModelValue } from '@/utils/money';
 
 const props = defineProps({
     modelValue: { type: [Number, String, null], default: '' },
@@ -35,7 +35,7 @@ const emit = defineEmits(['update:modelValue', 'input', 'blur']);
 // numeric model → formatted display. Skipping the "0 → 0" default lets
 // the user see the placeholder instead of having to delete a leading 0
 // before they type.
-const renderModel = (val) => (isMoneyInputEmpty(val) ? '' : formatVndInput(val));
+const renderModel = (val) => (isMoneyInputEmpty(val) ? '' : formatVndInput(parseMoneyModelValue(val)));
 
 const displayValue = ref(renderModel(props.modelValue));
 
@@ -44,7 +44,7 @@ watch(() => props.modelValue, (val) => {
     // Avoid clobbering the in-flight user input when v-model just echoes
     // back what we already typed (Vue re-emits the numeric round-trip).
     const currentRaw = parseVndInput(displayValue.value);
-    const valRaw = parseVndInput(val);
+    const valRaw = parseMoneyModelValue(val);
     if (currentRaw !== valRaw) {
         displayValue.value = incoming;
     }

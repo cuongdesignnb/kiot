@@ -146,3 +146,32 @@ export const parseVndInput = (value) => {
 export const isMoneyInputEmpty = (value) => {
     return value === null || value === undefined || String(value).trim() === '';
 };
+
+/**
+ * Parses modelValue from backend/app state to integer.
+ * Handles decimal strings ("6580000.00"), raw numbers, or formatted inputs.
+ */
+export const parseMoneyModelValue = (value) => {
+    if (value === null || value === undefined || value === '') return 0;
+    if (typeof value === 'number') {
+        return Number.isFinite(value) ? Math.round(value) : 0;
+    }
+
+    const s = String(value).trim();
+
+    // Backend/Laravel decimal string: "6580000.00"
+    if (/^-?\d+\.\d+$/.test(s)) {
+        const n = Number(s);
+        return Number.isFinite(n) ? Math.round(n) : 0;
+    }
+
+    // Raw numeric string: "6580000"
+    if (/^-?\d+$/.test(s)) {
+        const n = Number(s);
+        return Number.isFinite(n) ? n : 0;
+    }
+
+    // VN formatted string: "6.580.000đ", "6 580 000"
+    return parseVndInput(s);
+};
+
