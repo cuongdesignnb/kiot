@@ -38,6 +38,15 @@ const periodOptions = [
     { value: "custom", label: "Tùy chỉnh" },
 ];
 
+const expandedRows = ref({});
+const isExpanded = (row) => !!expandedRows.value[row.id];
+const toggleRow = (row) => {
+    expandedRows.value[row.id] = !expandedRows.value[row.id];
+};
+const hasChildren = (row) => {
+    return concern.value === 'sales' && Array.isArray(row.children) && row.children.length > 0;
+};
+
 const applyFilter = () => {
     const params = {
         concern: concern.value, period: period.value, view: viewMode.value,
@@ -46,6 +55,7 @@ const applyFilter = () => {
         sales_channel: salesChannel.value || undefined,
     };
     if (period.value === "custom") { params.date_from = dateFrom.value; params.date_to = dateTo.value; }
+    expandedRows.value = {};
     router.get("/reports/employees", params, { preserveState: true });
 };
 watch([concern, period, branchId, employeeId, salesChannel], () => applyFilter());
@@ -285,12 +295,54 @@ const summary = computed(() => props.summary || { count: 0, totalRevenue: 0, tot
                                             <td class="px-3 py-2 text-right border border-gray-200">{{ formatCurrency(summary.totalReturns) }}</td>
                                             <td class="px-3 py-2 text-right border border-gray-200 text-blue-700">{{ formatCurrency(summary.totalNet) }}</td>
                                         </tr>
-                                        <tr v-for="row in paginatedRows" :key="row.id" class="hover:bg-gray-50">
-                                            <td class="px-3 py-1.5 border border-gray-200 text-blue-600 font-medium">{{ row.name }}</td>
-                                            <td class="px-3 py-1.5 border border-gray-200 text-right">{{ formatCurrency(row.revenue) }}</td>
-                                            <td class="px-3 py-1.5 border border-gray-200 text-right">{{ formatCurrency(row.returns) }}</td>
-                                            <td class="px-3 py-1.5 border border-gray-200 text-right font-semibold">{{ formatCurrency(row.net) }}</td>
-                                        </tr>
+                                        <template v-for="row in paginatedRows" :key="row.id">
+                                            <tr class="hover:bg-gray-50">
+                                                <td class="px-3 py-1.5 border border-gray-200 text-blue-600 font-medium">
+                                                    <div class="flex items-center gap-1.5">
+                                                        <button 
+                                                            v-if="hasChildren(row)" 
+                                                            @click.stop="toggleRow(row)" 
+                                                            class="text-gray-500 hover:text-blue-600 focus:outline-none w-4 h-4 flex items-center justify-center font-mono border border-gray-200 rounded bg-gray-50 shadow-sm text-[11px]"
+                                                        >
+                                                            {{ isExpanded(row) ? '−' : '+' }}
+                                                        </button>
+                                                        <span 
+                                                            :class="{'cursor-pointer hover:underline': hasChildren(row)}"
+                                                            @click="hasChildren(row) && toggleRow(row)"
+                                                        >
+                                                            {{ row.name }}
+                                                        </span>
+                                                    </div>
+                                                </td>
+                                                <td class="px-3 py-1.5 border border-gray-200 text-right">{{ formatCurrency(row.revenue) }}</td>
+                                                <td class="px-3 py-1.5 border border-gray-200 text-right">{{ formatCurrency(row.returns) }}</td>
+                                                <td class="px-3 py-1.5 border border-gray-200 text-right font-semibold">{{ formatCurrency(row.net) }}</td>
+                                            </tr>
+                                            <!-- Children daily rows -->
+                                            <tr 
+                                                v-if="isExpanded(row)" 
+                                                v-for="child in row.children" 
+                                                :key="row.id + '-' + child.date"
+                                                class="bg-blue-50/20 hover:bg-blue-50/40"
+                                            >
+                                                <td class="pl-8 pr-3 py-1.5 border border-gray-200 text-gray-700">
+                                                    <a 
+                                                        :href="child.invoice_url" 
+                                                        class="text-blue-600 hover:underline"
+                                                    >
+                                                        {{ child.date_display }}
+                                                    </a>
+                                                </td>
+                                                <td class="px-3 py-1.5 border border-gray-200 text-right text-gray-600">{{ formatCurrency(child.revenue) }}</td>
+                                                <td class="px-3 py-1.5 border border-gray-200 text-right text-red-600">{{ child.returns > 0 ? '-' + formatCurrency(child.returns) : '0' }}</td>
+                                                <td 
+                                                    class="px-3 py-1.5 border border-gray-200 text-right font-medium"
+                                                    :class="child.net < 0 ? 'text-red-600' : 'text-gray-700'"
+                                                >
+                                                    {{ formatCurrency(child.net) }}
+                                                </td>
+                                            </tr>
+                                        </template>
                                         <tr v-if="!reportRows?.length">
                                             <td colspan="4" class="px-3 py-8 text-center text-gray-400 border border-gray-200">Báo cáo không có dữ liệu</td>
                                         </tr>

@@ -63,6 +63,13 @@ class EmployeeReportController extends Controller
             $returnQ = $this->sellers->filterReturnsByInvoiceSalesChannel($returnQ, $salesChannel);
         }
 
+        $filters = [
+            'branch_id'     => $branchId,
+            'sales_channel' => $salesChannel,
+            'date_from'     => $startDate->format('Y-m-d'),
+            'date_to'       => $endDate->format('Y-m-d'),
+        ];
+
         // Build data
         switch ($concern) {
             case 'profit':
@@ -75,7 +82,7 @@ class EmployeeReportController extends Controller
                 break;
             default: // sales
                 $chartData  = $this->buildSalesData($invoiceQ, $returnQ);
-                $reportRows = $this->buildSalesReportRows($invoiceQ, $returnQ);
+                $reportRows = $this->buildSalesReportRows($invoiceQ, $returnQ, $filters);
         }
 
         // Summary
@@ -144,7 +151,7 @@ class EmployeeReportController extends Controller
         ];
     }
 
-    private function buildSalesReportRows($invoiceQ, $returnQ)
+    private function buildSalesReportRows($invoiceQ, $returnQ, array $filters = [])
     {
         $empRevenue = $this->sellers->aggregateBySeller(clone $invoiceQ, 'SUM(total)');
         $empReturns = $this->sellers->aggregateReturnsBySeller(clone $returnQ, 'SUM(total)');
@@ -152,11 +159,13 @@ class EmployeeReportController extends Controller
         $allKeys   = array_unique(array_merge(array_keys($empRevenue), array_keys($empReturns)));
         $sellerMeta = $this->sellers->sellerMeta($allKeys);
 
+        $childrenBySeller = $this->buildSalesDailyChildren($invoiceQ, $returnQ, $filters);
+
         $rows = [];
         foreach ($allKeys as $key) {
             $meta = $sellerMeta[$key] ?? null;
-            $rev  = $empRevenue[$key] ?? 0;
-            $ret  = $empReturns[$key] ?? 0;
+            $rev  = round($empRevenue[$key] ?? 0, 2);
+            $ret  = round($empReturns[$key] ?? 0, 2);
             $rows[] = [
                 'id'           => $key,
                 'seller_key'   => $key,
@@ -168,10 +177,107 @@ class EmployeeReportController extends Controller
                 'revenue'      => $rev,
                 'returns'      => $ret,
                 'net'          => $rev - $ret,
+                'children'     => $childrenBySeller[$key] ?? [],
             ];
         }
         usort($rows, fn ($a, $b) => $b['net'] <=> $a['net']);
         return $rows;
+    }
+
+    private function buildSalesDailyChildren($invoiceQ, $returnQ, array $filters): array
+    {
+        $sellerMap = $this->sellers->invoiceSellerMap(clone $invoiceQ);
+        $children = [];
+
+        if (!empty($sellerMap)) {
+            $invoiceIds = array_keys($sellerMap);
+            $invoiceRows = \Illuminate\Support\Facades\DB::table('invoices')
+                ->whereIn('id', $invoiceIds)
+                ->selectRaw('id, DATE(created_at) as report_date, total')
+                ->get();
+
+            foreach ($invoiceRows as $row) {
+                $key = $sellerMap[$row->id] ?? 'unknown';
+                $date = $row->report_date;
+                if (!isset($children[$key][$date])) {
+                    $children[$key][$date] = [
+                        'date' => $date,
+                        'date_display' => Carbon::parse($date)->format('d/m/Y'),
+                        'revenue' => 0.0,
+                        'returns' => 0.0,
+                        'net' => 0.0,
+                        'invoice_count' => 0,
+                        'return_count' => 0,
+                    ];
+                }
+                $children[$key][$date]['revenue'] += (float) $row->total;
+                $children[$key][$date]['invoice_count'] += 1;
+            }
+        }
+
+        $returnRows = (clone $returnQ)
+            ->select('id', 'invoice_id', 'created_at', 'total')
+            ->get();
+
+        if ($returnRows->isNotEmpty()) {
+            $returnInvoiceIds = $returnRows->pluck('invoice_id')->filter()->unique()->values()->all();
+            
+            $returnInvoiceSellerMap = !empty($returnInvoiceIds)
+                ? $this->sellers->invoiceSellerMap(Invoice::whereIn('id', $returnInvoiceIds))
+                : [];
+
+            foreach ($returnRows as $ret) {
+                $sellerKey = $returnInvoiceSellerMap[$ret->invoice_id] ?? 'unknown';
+                $date = Carbon::parse($ret->created_at)->toDateString();
+
+                if (!isset($children[$sellerKey][$date])) {
+                    $children[$sellerKey][$date] = [
+                        'date' => $date,
+                        'date_display' => Carbon::parse($date)->format('d/m/Y'),
+                        'revenue' => 0.0,
+                        'returns' => 0.0,
+                        'net' => 0.0,
+                        'invoice_count' => 0,
+                        'return_count' => 0,
+                    ];
+                }
+                $children[$sellerKey][$date]['returns'] += (float) $ret->total;
+                $children[$sellerKey][$date]['return_count'] += 1;
+            }
+        }
+
+        foreach ($children as $sellerKey => &$dates) {
+            foreach ($dates as $date => &$dayData) {
+                $dayData['revenue'] = round($dayData['revenue'], 2);
+                $dayData['returns'] = round($dayData['returns'], 2);
+                $dayData['net'] = round($dayData['revenue'] - $dayData['returns'], 2);
+
+                $params = [
+                    'date_filter' => 'custom',
+                    'date_from' => $date,
+                    'date_to' => $date,
+                    'seller_key' => $sellerKey,
+                ];
+                if (!empty($filters['branch_id'])) {
+                    $params['branch_id'] = $filters['branch_id'];
+                }
+                if (!empty($filters['sales_channel'])) {
+                    $params['sales_channel'] = $filters['sales_channel'];
+                }
+                $params['sort_by'] = 'created_at';
+                $params['sort_direction'] = 'desc';
+
+                $dayData['invoice_url'] = '/invoices?' . http_build_query($params);
+                $dayData['return_url'] = '/returns?' . http_build_query(array_merge($params, ['date_filter' => 'custom', 'date_from' => $date, 'date_to' => $date]));
+            }
+            // Sort dates descending
+            uksort($dates, fn($a, $b) => strcmp($b, $a));
+            // Convert to sequential list
+            $dates = array_values($dates);
+        }
+        unset($dates);
+
+        return $children;
     }
 
     // ═══════════════════════════════════════
