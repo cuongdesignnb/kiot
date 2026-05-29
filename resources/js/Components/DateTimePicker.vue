@@ -16,6 +16,7 @@ import { computed, ref, watch } from 'vue';
 import {
     formatDateTimeVN,
     parseVNDateTime,
+    toDatetimeLocalValue,
     pad2,
 } from '@/utils/dateTime.js';
 
@@ -41,6 +42,7 @@ const emit = defineEmits(['update:modelValue', 'blur']);
 // Local text shown to the user (always in dd/MM/yyyy HH:mm form when valid).
 const text = ref(formatDateTimeVN(props.modelValue));
 const error = ref('');
+const nativeInputRef = ref(null);
 
 watch(
     () => props.modelValue,
@@ -53,6 +55,31 @@ watch(
         }
     }
 );
+
+const nativeModelValue = computed(() => {
+    return toDatetimeLocalValue(props.modelValue);
+});
+
+const openPicker = () => {
+    if (nativeInputRef.value) {
+        try {
+            nativeInputRef.value.showPicker();
+        } catch (e) {
+            nativeInputRef.value.click();
+        }
+    }
+};
+
+const onNativeInput = (e) => {
+    const val = e.target.value; // "yyyy-MM-ddTHH:mm"
+    if (!val) {
+        emit('update:modelValue', '');
+        return;
+    }
+    error.value = '';
+    text.value = formatDateTimeVN(val);
+    emit('update:modelValue', val);
+};
 
 const onInput = (e) => {
     text.value = e.target.value;
@@ -107,6 +134,7 @@ const computedClass = computed(() => {
         'w-full border rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500',
         error.value ? 'border-red-400' : 'border-gray-300',
         props.disabled ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white',
+        props.compact ? 'pr-10' : 'pr-24',
         props.inputClass,
     ];
 });
@@ -115,7 +143,7 @@ const computedClass = computed(() => {
 <template>
     <div :class="wrapperClass || 'w-full'">
         <label v-if="label" class="block text-sm font-medium text-gray-700 mb-1">{{ label }}</label>
-        <div class="relative">
+        <div class="relative flex items-center">
             <input
                 type="text"
                 inputmode="numeric"
@@ -129,14 +157,42 @@ const computedClass = computed(() => {
                 :class="computedClass"
                 autocomplete="off"
             />
-            <button
-                v-if="!disabled && !compact"
-                type="button"
-                @click="setNow"
-                class="absolute inset-y-0 right-1 my-1 px-2 text-xs text-blue-600 hover:bg-blue-50 rounded"
-                tabindex="-1"
-                title="Thời gian hiện tại"
-            >Hiện tại</button>
+            
+            <input
+                ref="nativeInputRef"
+                type="datetime-local"
+                :value="nativeModelValue"
+                @input="onNativeInput"
+                :disabled="disabled"
+                class="absolute invisible w-0 h-0 pointer-events-none"
+            />
+            
+            <div class="absolute right-0 flex items-center h-full pr-2 gap-1">
+                <button
+                    v-if="!disabled"
+                    type="button"
+                    @click="openPicker"
+                    class="p-1 text-gray-400 hover:text-blue-600 focus:outline-none transition-colors duration-150 rounded"
+                    tabindex="-1"
+                    title="Chọn ngày giờ"
+                >
+                    <svg class="w-4.5 h-4.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="16" y1="2" x2="16" y2="6"></line>
+                        <line x1="8" y1="2" x2="8" y2="6"></line>
+                        <line x1="3" y1="10" x2="21" y2="10"></line>
+                    </svg>
+                </button>
+                
+                <button
+                    v-if="!disabled && !compact"
+                    type="button"
+                    @click="setNow"
+                    class="px-2 py-0.5 text-xs text-blue-600 hover:bg-blue-50 rounded transition-colors duration-150"
+                    tabindex="-1"
+                    title="Thời gian hiện tại"
+                >Hiện tại</button>
+            </div>
         </div>
         <p v-if="error" class="mt-1 text-xs text-red-600">{{ error }}</p>
     </div>

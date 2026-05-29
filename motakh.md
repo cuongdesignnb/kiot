@@ -1,561 +1,908 @@
-# Đặc tả nghiệp vụ: Khách hàng đồng thời là nhà cung cấp
+# HOTFIX — Khách hàng: Chiết khấu thanh toán đúng logic, không làm sai công nợ/sổ quỹ
 
-## 1. Mục tiêu chức năng
+## Bối cảnh
+Repo: `cuongdesignnb/kiot`  
+Stack: Laravel + Vue 3/Inertia + MySQL.
 
-Chức năng này dùng cho **một đối tượng có thể đồng thời đóng 2 vai trò**:
+User muốn làm tính năng **Chiết khấu thanh toán** trong màn Khách hàng giống luồng KiotViet:
+- Mở khách hàng.
+- Vào tab **Công nợ**.
+- Bấm **Chiết khấu thanh toán**.
+- Nhập số tiền chiết khấu, thời gian, người thực hiện, ghi chú.
+- Có tùy chọn **Phân bổ vào hóa đơn**.
+- Nếu phân bổ vào hóa đơn, chiết khấu được chia vào các hóa đơn còn phải thu.
+- Tạo phiếu xong, công nợ khách giảm tương ứng.
 
-- **Khách hàng**: mua hàng của cửa hàng/doanh nghiệp
-- **Nhà cung cấp**: bán hàng cho cửa hàng/doanh nghiệp
+Tài liệu KiotViet tham khảo:
+`https://www.kiotviet.vn/huong-dan-su-dung-kiotviet/retail-khach-hang/khach-hang/#ii-cac-thao-tac-co-ban`
 
-Thay vì quản lý tách biệt hoàn toàn 2 sổ công nợ, hệ thống sẽ cho phép **bù trừ công nợ hai chiều** để tính ra **công nợ thuần cuối cùng**.
+Hiện trạng source đã audit:
+- `resources/js/Pages/Customers/Index.vue` đã có button **Chiết khấu thanh toán** trong tab Công nợ nhưng đang là button tĩnh, chưa có handler/modal.
+- `routes/web.php` hiện có:
+  - `POST /customers/{customer}/debt-payment`
+  - `POST /customers/{customer}/debt-adjust`
+  - `GET /customers/{customer}/outstanding-invoices`
+- `CustomerController@debtPayment()` hiện đang tăng `invoice.customer_paid` khi khách thanh toán.
+- Không được dùng `debtPayment()` cho chiết khấu, vì chiết khấu thanh toán không phải tiền khách trả.
+- `CustomerDebtService` hiện có `recordAdjustment()` có thể dùng để ghi ledger công nợ bằng amount âm/dương.
+- `customer_debts.type` đang dùng `adjustment`, `payment`, `sale`, `return`; phase này không đổi enum/type hiện có.
+- Bảng `customer_debts` không có `invoice_id`, nên để phân bổ chiết khấu theo hóa đơn cần thêm bảng riêng.
 
----
+## Mục tiêu
+Làm tính năng **Chiết khấu thanh toán** theo phương án an toàn đã chốt:
 
-## 2. Bản chất nghiệp vụ
+1. Thêm nghiệp vụ riêng cho chiết khấu thanh toán, không dùng nhầm thu nợ.
+2. Có phiếu chiết khấu riêng mã `CKTT...`.
+3. Có thể phân bổ chiết khấu vào hóa đơn còn nợ.
+4. Không sửa `invoice.customer_paid`.
+5. Không tạo `cash_flows`.
+6. Không làm sai sổ quỹ.
+7. Không sửa doanh thu hóa đơn.
+8. Không ảnh hưởng tồn kho, serial/IMEI, giá vốn.
+9. Có thể hủy phiếu chiết khấu để rollback công nợ.
+10. Không backfill dữ liệu cũ.
+11. Chỉ dữ liệu mới phát sinh khi user bấm **Tạo phiếu**.
 
-Một đối tượng có thể phát sinh đồng thời:
+## Có ảnh hưởng dữ liệu đang có không?
+- Có, vì có migration thêm bảng mới và khi user tạo/hủy phiếu sẽ thay đổi công nợ khách.
+- Cần xác nhận trước khi chạy migration trên production.
+- Phase này được phép tạo migration mới chỉ thêm bảng mới.
+- Không được sửa schema bảng cũ.
+- Không được backfill.
+- Không được update hàng loạt.
+- Không được sửa dữ liệu hóa đơn cũ.
+- Không được sửa `invoice.customer_paid`.
 
-- **Khoản phải thu**: đối tượng đang nợ doanh nghiệp
-- **Khoản phải trả**: doanh nghiệp đang nợ đối tượng
+Bảng mới được phép tạo:
+- `customer_payment_discounts`
+- `customer_payment_discount_allocations`
 
-Hệ thống sẽ không chỉ nhìn theo từng vai trò riêng lẻ, mà sẽ tính:
+Không được thêm/sửa/xóa cột trên bảng hiện có:
+- `customers`
+- `invoices`
+- `cash_flows`
+- `customer_debts`
 
-> **Công nợ thuần = Phải trả - Phải thu**
+## Không được làm
+- Không `migrate:fresh`.
+- Không backfill dữ liệu cũ.
+- Không update hàng loạt.
+- Không xóa dữ liệu.
+- Không sửa `invoice.customer_paid`.
+- Không dùng `debtPayment()` để ghi chiết khấu.
+- Không tăng `invoice.customer_paid` khi tạo chiết khấu.
+- Không tạo `CashFlow` cho chiết khấu thanh toán.
+- Không tạo phiếu thu.
+- Không tạo phiếu chi.
+- Không làm thay đổi sổ quỹ.
+- Không sửa doanh thu hóa đơn.
+- Không sửa tồn kho.
+- Không sửa serial/IMEI.
+- Không sửa giá vốn bình quân.
+- Không đổi `customer_debts.type` sang enum/type mới nếu chưa audit toàn bộ report/filter.
+- Không sửa logic hủy hóa đơn.
+- Không sửa logic trả hàng.
+- Không sửa logic cấn trừ công nợ NCC.
+- Không commit `.env`, logs, dump, `vendor`, `node_modules`, `public/build`.
 
-Từ đó xác định:
+## Discovery bắt buộc
+Đọc source trước khi sửa:
 
-- nếu kết quả **dương**: doanh nghiệp còn phải trả đối tượng
-- nếu kết quả **âm**: đối tượng còn phải trả doanh nghiệp
-- nếu bằng **0**: hai bên đã cân bằng công nợ
+- `routes/web.php`
+- `app/Http/Controllers/CustomerController.php`
+  - `debtHistory()`
+  - `debtPayment()`
+  - `debtAdjust()`
+  - `outstandingInvoices()`
+- `app/Services/CustomerDebtService.php`
+- `app/Models/CustomerDebt.php`
+- `app/Models/Customer.php`
+- `app/Models/Invoice.php`
+- `resources/js/Pages/Customers/Index.vue`
+- `resources/js/Components/MoneyInput.vue`
+- `resources/js/Components/DateTimePicker.vue`
 
----
+Phải xác nhận lại:
+- Button **Chiết khấu thanh toán** đang nằm trong tab Công nợ nhưng chưa có handler.
+- Modal thu nợ đang dùng `outstandingInvoices`.
+- `debtPayment()` đang tăng `invoice.customer_paid`, nên không dùng cho chiết khấu.
+- `CustomerDebtService::recordAdjustment()` có thể dùng để ghi ledger công nợ.
 
-## 3. Quy ước hiển thị theo từng vai trò
+## Database/Migration
 
-### 3.1. Ở màn hình Khách hàng
+### 1. Tạo bảng `customer_payment_discounts`
+Tạo migration mới, không sửa migration cũ.
 
-Màn hình khách hàng hiển thị theo tư duy **doanh nghiệp đang theo dõi khoản phải thu từ khách**.
+Schema đề xuất:
 
-Quy ước dấu:
+```php
+Schema::create('customer_payment_discounts', function (Blueprint $table) {
+    $table->id();
+    $table->string('code')->unique();
+    $table->foreignId('customer_id')->constrained()->restrictOnDelete();
+    $table->decimal('amount', 15, 2);
+    $table->dateTime('discount_at');
+    $table->foreignId('performed_by')->nullable()->constrained('users')->nullOnDelete();
+    $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
+    $table->boolean('allocate_to_invoices')->default(true);
+    $table->string('status')->default('active'); // active | cancelled
+    $table->text('note')->nullable();
+    $table->dateTime('cancelled_at')->nullable();
+    $table->foreignId('cancelled_by')->nullable()->constrained('users')->nullOnDelete();
+    $table->text('cancel_reason')->nullable();
+    $table->timestamps();
 
-- **Số dương**: khách đang nợ doanh nghiệp
-- **Số âm**: doanh nghiệp đang nợ lại khách
+    $table->index(['customer_id', 'status']);
+    $table->index('discount_at');
+});
+```
 
-Ví dụ:
+Ghi chú:
+- Đây là bảng mới, được phép có unique/index/FK trong bảng mới.
+- Không FK cascade delete dữ liệu nghiệp vụ.
+- Không xóa record khi hủy, chỉ đổi status.
 
-- `2.000.000` -> khách còn nợ doanh nghiệp 2 triệu
-- `-3.000.000` -> doanh nghiệp đang nợ khách 3 triệu
+### 2. Tạo bảng `customer_payment_discount_allocations`
+Schema đề xuất:
 
-### 3.2. Ở màn hình Nhà cung cấp
+```php
+Schema::create('customer_payment_discount_allocations', function (Blueprint $table) {
+    $table->id();
+    $table->foreignId('customer_payment_discount_id')
+        ->constrained('customer_payment_discounts')
+        ->restrictOnDelete();
+    $table->foreignId('customer_id')->constrained()->restrictOnDelete();
+    $table->foreignId('invoice_id')->constrained('invoices')->restrictOnDelete();
+    $table->decimal('amount', 15, 2);
+    $table->timestamps();
 
-Màn hình nhà cung cấp hiển thị theo tư duy **doanh nghiệp đang theo dõi khoản phải trả cho nhà cung cấp**.
+    $table->index(['customer_id', 'invoice_id']);
+    $table->index('customer_payment_discount_id');
+});
+```
 
-Quy ước dấu:
+Ghi chú:
+- Không sửa bảng `invoices`.
+- Không thêm cột `discount_paid` vào invoices.
+- Không sửa `invoice.customer_paid`.
 
-- **Số dương**: doanh nghiệp đang nợ nhà cung cấp
-- **Số âm**: nhà cung cấp đang nợ lại doanh nghiệp
+### 3. Rollback migration
+Trong `down()`:
+- Drop `customer_payment_discount_allocations` trước.
+- Drop `customer_payment_discounts` sau.
 
-Ví dụ:
+## Models
 
-- `3.000.000` -> doanh nghiệp đang nợ nhà cung cấp 3 triệu
-- `-2.000.000` -> nhà cung cấp đang nợ lại doanh nghiệp 2 triệu
+### 1. Tạo model `CustomerPaymentDiscount`
+File:
+`app/Models/CustomerPaymentDiscount.php`
 
-### 3.3. Quan hệ giữa hai màn hình
+Yêu cầu:
+- `$fillable` đầy đủ.
+- Cast:
+  - `amount` decimal:2
+  - `discount_at` datetime
+  - `allocate_to_invoices` boolean
+  - `cancelled_at` datetime
+- Relationships:
+  - `customer()`
+  - `allocations()`
+  - `creator()`
+  - `performer()`
+  - `canceller()`
+- Helper:
+  - `isActive()`
+  - `isCancelled()`
 
-Khi cùng một đối tượng vừa là khách hàng vừa là nhà cung cấp:
+### 2. Tạo model `CustomerPaymentDiscountAllocation`
+File:
+`app/Models/CustomerPaymentDiscountAllocation.php`
 
-> **Số dư công nợ ở màn hình khách hàng = âm của số dư công nợ ở màn hình nhà cung cấp**
+Yêu cầu:
+- `$fillable`:
+  - `customer_payment_discount_id`
+  - `customer_id`
+  - `invoice_id`
+  - `amount`
+- Cast `amount` decimal:2.
+- Relationships:
+  - `discount()`
+  - `customer()`
+  - `invoice()`
 
-Tức là:
+## Service
 
-- Khách hàng: `-3.000.000`
-- Nhà cung cấp: `3.000.000`
+Tạo service mới:
 
-Hai số này thực chất là **cùng một bản chất công nợ**, chỉ khác góc nhìn hiển thị.
+`app/Services/CustomerPaymentDiscountService.php`
 
----
+### 1. Method `getInvoiceDiscountAllocatedAmount($invoiceId)`
+Trả tổng chiết khấu còn hiệu lực đã phân bổ cho hóa đơn:
 
-## 4. Ánh xạ nghiệp vụ từng loại chứng từ
+```php
+CustomerPaymentDiscountAllocation::query()
+    ->where('invoice_id', $invoiceId)
+    ->whereHas('discount', fn ($q) => $q->where('status', 'active'))
+    ->sum('amount');
+```
 
-Để lập trình lại chức năng, cần chuẩn hóa cách mỗi loại giao dịch làm tăng/giảm công nợ.
-
-### 4.1. Theo góc nhìn màn hình Khách hàng
-
-| Loại chứng từ | Tác động công nợ | Giải thích |
-|---|---:|---|
-| Bán hàng | `+` | Khách mua hàng => khách nợ doanh nghiệp tăng |
-| Thu tiền / Thanh toán từ khách | `-` | Khách trả tiền => giảm khoản phải thu |
-| Nhập hàng từ chính đối tượng này | `-` | Doanh nghiệp mua của họ => phát sinh khoản phải trả, làm công nợ khách hàng chuyển âm |
-| Trả hàng bán / giảm doanh thu | `-` | Giảm số tiền khách phải trả |
-| Phiếu điều chỉnh tăng phải thu | `+` | Tăng khoản khách nợ |
-| Phiếu điều chỉnh giảm phải thu | `-` | Giảm khoản khách nợ |
-
-### 4.2. Theo góc nhìn màn hình Nhà cung cấp
-
-| Loại chứng từ | Tác động công nợ | Giải thích |
-|---|---:|---|
-| Nhập hàng | `+` | Doanh nghiệp nhận hàng => tăng khoản phải trả NCC |
-| Thanh toán cho NCC | `-` | Doanh nghiệp trả tiền => giảm khoản phải trả |
-| Bán hàng cho chính đối tượng này | `-` | Đối tượng trở thành khách hàng => phát sinh khoản phải thu, làm giảm công nợ phải trả |
-| Trả hàng nhập / giảm mua | `-` | Giảm nghĩa vụ phải trả NCC |
-| Phiếu điều chỉnh tăng phải trả | `+` | Tăng số nợ phải trả |
-| Phiếu điều chỉnh giảm phải trả | `-` | Giảm số nợ phải trả |
-
----
-
-## 5. Công thức chuẩn
-
-### 5.1. Công thức tổng quát
-
-Đặt:
-
-- `customer_receivable`: tổng phải thu từ vai trò khách hàng
-- `supplier_payable`: tổng phải trả ở vai trò nhà cung cấp
-
-Khi đó:
+### 2. Method `getInvoiceRemainingReceivable(Invoice $invoice)`
+Công thức:
 
 ```text
-net_balance = supplier_payable - customer_receivable
+remaining = invoice.total - invoice.customer_paid - active_discount_allocated
 ```
 
-Ý nghĩa:
+Yêu cầu:
+- Loại hóa đơn `Đã hủy`.
+- Clamp minimum 0.
+- Không sửa invoice.
 
-- `net_balance > 0`: doanh nghiệp đang nợ đối tượng
-- `net_balance < 0`: đối tượng đang nợ doanh nghiệp
-- `net_balance = 0`: đã cân bằng
+### 3. Method `getDiscountableInvoices(Customer $customer)`
+Lấy hóa đơn còn phải thu:
+- `customer_id = customer.id`
+- `status != Đã hủy`
+- `total > customer_paid`
+- tính thêm `discount_allocated`
+- tính `remaining_after_discount`
+- chỉ trả hóa đơn có `remaining_after_discount > 0`
+- order theo ngày cũ trước.
 
-### 5.2. Hiển thị ra từng màn hình
+Response item gồm:
+- `id`
+- `code`
+- `created_at`
+- `total`
+- `customer_paid`
+- `discount_allocated`
+- `remaining`
 
-```text
-supplier_screen_balance = net_balance
-customer_screen_balance = -net_balance
+### 4. Method `create(Customer $customer, array $payload)`
+Bắt buộc chạy trong `DB::transaction`.
+
+Validation business:
+- Lock customer bằng `Customer::lockForUpdate()`.
+- Chỉ dùng `customers.debt_amount`, không dùng net debt `debt_amount - supplier_debt_amount`.
+- Nếu `customer.debt_amount <= 0`: không cho tạo.
+- `amount > 0`.
+- `amount <= customer.debt_amount`.
+- Nếu `allocate_to_invoices = true`:
+  - `allocations` bắt buộc có ít nhất 1 dòng.
+  - Tổng allocations phải bằng `amount`.
+  - Mỗi allocation phải thuộc invoice của customer.
+  - Invoice không được `Đã hủy`.
+  - Allocation amount không vượt quá remaining receivable đã tính sau các discount active trước đó.
+- Nếu `allocate_to_invoices = false`:
+  - Không tạo allocation.
+  - Vẫn giảm công nợ tổng.
+
+Tạo mã phiếu:
+- Prefix `CKTT`
+- Dạng đề xuất: `CKTT` + `ymdHis` + random 2 số.
+- Đảm bảo không trùng `code`.
+
+Tạo `CustomerPaymentDiscount`:
+- `customer_id`
+- `amount`
+- `discount_at`
+- `performed_by`
+- `created_by`
+- `allocate_to_invoices`
+- `status = active`
+- `note`
+
+Nếu có allocations:
+- tạo từng dòng `CustomerPaymentDiscountAllocation`.
+
+Ghi ledger công nợ:
+- Dùng `CustomerDebtService::recordAdjustment()`.
+- Amount signed là âm:
+
+```php
+app(CustomerDebtService::class)->recordAdjustment(
+    $customer->id,
+    -abs($discount->amount),
+    'Chiết khấu thanh toán ' . $discount->code . ($discount->note ? ' - ' . $discount->note : ''),
+    ['ref_code' => $discount->code]
+);
 ```
 
-Hoặc viết trực tiếp:
+Yêu cầu:
+- Không tạo CashFlow.
+- Không sửa `invoice.customer_paid`.
+- Không sửa invoice total.
+- Không sửa doanh thu.
 
-```text
-customer_screen_balance = customer_receivable - supplier_payable
-supplier_screen_balance = supplier_payable - customer_receivable
+### 5. Method `cancel(CustomerPaymentDiscount $discount, ?string $reason)`
+Bắt buộc chạy trong `DB::transaction`.
+
+Validation:
+- Nếu `status = cancelled`: không hủy lại.
+- Lock discount và customer.
+- Set:
+  - `status = cancelled`
+  - `cancelled_at = now()`
+  - `cancelled_by = auth()->id()`
+  - `cancel_reason`
+- Không xóa allocations.
+- Allocations tự mất hiệu lực vì parent status cancelled.
+- Ghi ledger đảo lại công nợ bằng amount dương:
+
+```php
+app(CustomerDebtService::class)->recordAdjustment(
+    $customer->id,
+    abs($discount->amount),
+    'Hủy chiết khấu thanh toán ' . $discount->code . ($reason ? ' - ' . $reason : ''),
+    ['ref_code' => $discount->code]
+);
 ```
 
----
+Yêu cầu:
+- Không tạo CashFlow.
+- Không sửa invoice.
+- Không xóa discount.
 
-## 6. Phân tích đúng case trong ảnh
+## Backend
 
-Đối tượng: `KH002785 / Test`
+Có thể làm trong `CustomerController` hoặc tạo controller riêng `CustomerPaymentDiscountController`.  
+Khuyến nghị tạo controller riêng để không làm `CustomerController` quá dài:
 
-Phát sinh giao dịch:
+`app/Http/Controllers/CustomerPaymentDiscountController.php`
 
-1. **Nhập hàng**: `5.000.000`
-2. **Bán hàng**: `7.000.000`
-3. **Thanh toán**: `5.000.000`
-4. **Điều chỉnh**: `0`
+### Routes
+Thêm vào `routes/web.php`:
 
-### 6.1. Tính tách riêng theo 2 vai trò
+```php
+Route::middleware('permission:customers.view')->group(function () {
+    Route::get('/customers/{customer}/payment-discount-invoices', [CustomerPaymentDiscountController::class, 'discountableInvoices']);
+});
 
-#### Vai trò khách hàng
-
-- Bán hàng: `7.000.000`
-- Đã thanh toán: `5.000.000`
-
-=> **Khoản phải thu còn lại = 2.000.000**
-
-#### Vai trò nhà cung cấp
-
-- Nhập hàng: `5.000.000`
-
-=> **Khoản phải trả còn lại = 5.000.000**
-
-### 6.2. Bù trừ công nợ
-
-```text
-net_balance = 5.000.000 - 2.000.000 = 3.000.000
+Route::middleware('permission:customers.debt_adjust')->group(function () {
+    Route::post('/customers/{customer}/payment-discounts', [CustomerPaymentDiscountController::class, 'store']);
+    Route::post('/customers/{customer}/payment-discounts/{paymentDiscount}/cancel', [CustomerPaymentDiscountController::class, 'cancel']);
+});
 ```
 
-=> Doanh nghiệp **còn phải trả đối tượng 3.000.000**
+Ghi chú:
+- Nếu muốn tạo permission riêng `customers.payment_discount` thì phải audit permission/migration seed riêng. Phase này tạm dùng `customers.debt_adjust` để tránh thay đổi quyền.
+- Không đổi permission hệ thống nếu chưa audit.
 
-### 6.3. Suy ra hiển thị
-
-- Ở màn hình **Nhà cung cấp**: `3.000.000`
-- Ở màn hình **Khách hàng**: `-3.000.000`
-
-=> Hai số hoàn toàn khớp logic.
-
----
-
-## 7. Mô phỏng diễn biến từng dòng như ảnh
-
-### 7.1. Theo màn hình Khách hàng
-
-Bắt đầu từ `0`
-
-1. **Điều chỉnh**: `0`
-   - Số dư: `0`
-
-2. **Nhập hàng 5.000.000**
-   - Đây là nghiệp vụ làm phát sinh khoản doanh nghiệp phải trả đối tượng
-   - Số dư khách hàng: `0 - 5.000.000 = -5.000.000`
-
-3. **Bán hàng 7.000.000**
-   - Phát sinh khoản phải thu từ khách
-   - Số dư khách hàng: `-5.000.000 + 7.000.000 = 2.000.000`
-
-4. **Thanh toán 5.000.000**
-   - Khách trả thêm tiền cho giao dịch bán
-   - Số dư khách hàng: `2.000.000 - 5.000.000 = -3.000.000`
-
-Kết quả cuối cùng:
-
-```text
-Nợ hiện tại = -3.000.000
-```
-
-Ý nghĩa: **doanh nghiệp đang nợ lại khách 3 triệu**.
-
-### 7.2. Theo màn hình Nhà cung cấp
-
-Bắt đầu từ `0`
-
-1. **Điều chỉnh**: `0`
-   - Số dư: `0`
-
-2. **Nhập hàng 5.000.000**
-   - Tăng khoản phải trả NCC
-   - Số dư NCC: `0 + 5.000.000 = 5.000.000`
-
-3. **Bán hàng 7.000.000**
-   - Phát sinh khoản phải thu từ chính đối tượng này
-   - Số dư NCC: `5.000.000 - 7.000.000 = -2.000.000`
-
-4. **Thanh toán 5.000.000**
-   - Theo ảnh đang được phản ánh làm số dư NCC tăng về `3.000.000`
-   - Số dư NCC: `-2.000.000 + 5.000.000 = 3.000.000`
-
-Kết quả cuối cùng:
-
-```text
-Nợ cần trả = 3.000.000
-```
-
-Ý nghĩa: **doanh nghiệp đang nợ nhà cung cấp 3 triệu**.
-
----
-
-## 8. Mô hình dữ liệu gợi ý khi lập trình lại
-
-Không nên chỉ lưu một số dư cuối cùng. Nên tách rõ dữ liệu nền để dễ kiểm soát.
-
-## 8.1. Bảng đối tượng
-
-```text
-partners
-- id
-- code
-- name
-- phone
-- email
-- is_customer
-- is_supplier
-- ...
-```
-
-## 8.2. Bảng giao dịch công nợ thống nhất
-
-```text
-partner_ledger_entries
-- id
-- partner_id
-- document_type
-- document_code
-- document_date
-- amount
-- balance_effect_customer
-- balance_effect_supplier
-- reference_id
-- note
-- created_at
-- updated_at
-```
-
-Trong đó:
-
-- `balance_effect_customer`: giá trị cộng/trừ vào số dư màn hình khách hàng
-- `balance_effect_supplier`: giá trị cộng/trừ vào số dư màn hình nhà cung cấp
-
-Ví dụ:
-
-| document_type | amount | balance_effect_customer | balance_effect_supplier |
-|---|---:|---:|---:|
-| sales_invoice | 7.000.000 | +7.000.000 | -7.000.000 |
-| purchase_invoice | 5.000.000 | -5.000.000 | +5.000.000 |
-| customer_payment | 5.000.000 | -5.000.000 | +5.000.000 |
-| supplier_payment | 5.000.000 | +5.000.000 | -5.000.000 |
-| adjustment_up_receivable | 1.000.000 | +1.000.000 | -1.000.000 |
-| adjustment_up_payable | 1.000.000 | -1.000.000 | +1.000.000 |
-```
-
----
-
-## 9. Quy tắc lập trình khuyến nghị
-
-## 9.1. Nguyên tắc cốt lõi
-
-Luôn đảm bảo:
-
-```text
-customer_balance = -supplier_balance
-```
-
-Nếu không đảm bảo được điều này, dữ liệu đang lệch logic bù trừ.
-
-## 9.2. Không lưu số dư bằng cách nhập tay nhiều nơi
-
-Nên:
-
-- lưu **ledger entries** cho từng giao dịch
-- cộng dồn từ lịch sử để ra số dư
-- hoặc nếu cần tối ưu, lưu thêm bảng snapshot nhưng vẫn phải có ledger gốc để đối soát
-
-## 9.3. Mỗi chứng từ phải định nghĩa rõ tác động lên 2 chiều
-
-Ví dụ:
-
-```text
-sales_invoice:
-  customer_effect = +amount
-  supplier_effect = -amount
-
-purchase_invoice:
-  customer_effect = -amount
-  supplier_effect = +amount
-```
-
-Không nên xử lý cảm tính theo từng màn hình riêng rẽ vì rất dễ lệch dấu.
-
----
-
-## 10. Pseudocode tính số dư
-
-```pseudo
-function calculatePartnerBalance(partnerId):
-    entries = getLedgerEntriesByPartner(partnerId)
-
-    customerBalance = 0
-    supplierBalance = 0
-
-    for entry in entries:
-        customerBalance += entry.balance_effect_customer
-        supplierBalance += entry.balance_effect_supplier
-
-    return {
-        customer_balance: customerBalance,
-        supplier_balance: supplierBalance,
-        net_balance: supplierBalance,
+### 1. `discountableInvoices(Customer $customer)`
+Response JSON:
+```json
+{
+  "customer": {
+    "id": 1,
+    "name": "Nguyễn Văn A",
+    "debt_amount": 340000
+  },
+  "invoices": [
+    {
+      "id": 10,
+      "code": "HD000023",
+      "created_at": "2026-05-23T10:58:00",
+      "total": 440000,
+      "customer_paid": 100000,
+      "discount_allocated": 0,
+      "remaining": 340000
     }
+  ]
+}
 ```
 
-Hoặc nếu chỉ lưu phải thu và phải trả riêng:
-
-```pseudo
-function calculatePartnerBalance(partnerId):
-    receivable = sumCustomerReceivable(partnerId)
-    payable = sumSupplierPayable(partnerId)
-
-    supplierBalance = payable - receivable
-    customerBalance = receivable - payable
-
-    return {
-        receivable: receivable,
-        payable: payable,
-        customer_balance: customerBalance,
-        supplier_balance: supplierBalance,
-    }
+### 2. `store(Request $request, Customer $customer)`
+Validate:
+```php
+[
+    'amount' => ['required', 'numeric', 'min:1'],
+    'discount_at' => ['nullable', 'date'],
+    'performed_by' => ['nullable', 'integer', 'exists:users,id'],
+    'note' => ['nullable', 'string', 'max:500'],
+    'allocate_to_invoices' => ['boolean'],
+    'allocations' => ['array'],
+    'allocations.*.invoice_id' => ['required_with:allocations', 'integer', 'exists:invoices,id'],
+    'allocations.*.amount' => ['required_with:allocations', 'numeric', 'min:0'],
+]
 ```
 
----
+Normalize:
+- Nếu `discount_at` empty thì dùng `now()`.
+- Nếu `performed_by` empty thì dùng `auth()->id()`.
+- `amount` parse number.
+- `allocations` bỏ dòng amount <= 0.
 
-## 11. Các case biên cần xử lý
+Gọi service create.
 
-### Case 1: Chỉ là khách hàng, không có giao dịch NCC
+Response:
+- JSON nếu wantsJson:
+```json
+{
+  "success": true,
+  "message": "Đã tạo phiếu chiết khấu thanh toán CKTT..."
+}
+```
+- Back redirect nếu non-json.
 
-- `supplier_payable = 0`
-- `customer_balance = receivable`
-- `supplier_balance = -receivable`
+### 3. `cancel(Request $request, Customer $customer, CustomerPaymentDiscount $paymentDiscount)`
+Validate:
+```php
+[
+    'reason' => ['nullable', 'string', 'max:500'],
+]
+```
 
-Trong UI nhà cung cấp có thể ẩn vai trò hoặc không cho hiển thị nếu đối tượng không bật vai trò NCC.
+Guard:
+- Discount phải thuộc customer.
+- Nếu đã cancelled thì trả lỗi rõ.
 
-### Case 2: Chỉ là nhà cung cấp, không có giao dịch khách hàng
+Gọi service cancel.
 
-- `customer_receivable = 0`
-- `supplier_balance = payable`
-- `customer_balance = -payable`
+## Sửa `CustomerController@outstandingInvoices()`
+Hiện đang tính:
 
-Trong UI khách hàng có thể ẩn vai trò hoặc không cho hiển thị nếu chưa bật vai trò khách hàng.
+```php
+remaining = invoice.total - invoice.customer_paid
+```
 
-### Case 3: Thanh toán vượt quá phần phải thu
-
-Ví dụ:
-
-- bán hàng: `7.000.000`
-- khách trả: `10.000.000`
-
-=> phải thu bị âm `-3.000.000`
-
-Ý nghĩa: doanh nghiệp đang nợ lại khách 3 triệu hoặc giữ tiền dư của khách.
-
-### Case 4: Bù trừ hoàn toàn
-
-- phải thu: `5.000.000`
-- phải trả: `5.000.000`
-
-=> số dư thuần `0`
-
-### Case 5: Có trả hàng / hoàn hàng
-
-Cần tách rõ:
-
-- trả hàng bán -> giảm phải thu
-- trả hàng nhập -> giảm phải trả
-
-### Case 6: Có phiếu điều chỉnh
-
-Phiếu điều chỉnh phải chỉ rõ:
-
-- điều chỉnh tăng/giảm phải thu
-- điều chỉnh tăng/giảm phải trả
-
-Không nên chỉ lưu một con số adjustment chung chung.
-
----
-
-## 12. Đề xuất UI/UX để người dùng dễ hiểu hơn
-
-Vì kiểu bù trừ này rất dễ gây nhầm, nên UI nên hiển thị đồng thời 3 lớp thông tin:
-
-### 12.1. Lớp tổng quan
-
-- **Phải thu khách hàng**
-- **Phải trả nhà cung cấp**
-- **Công nợ thuần sau bù trừ**
-
-Ví dụ:
+Phải sửa để trừ chiết khấu đã phân bổ active:
 
 ```text
-Phải thu khách hàng: 2.000.000
-Phải trả nhà cung cấp: 5.000.000
-Công nợ thuần: phải trả 3.000.000
+remaining = invoice.total - invoice.customer_paid - active_payment_discount_allocated
 ```
 
-### 12.2. Lớp lịch sử giao dịch
+Yêu cầu:
+- Không sửa `invoice.customer_paid`.
+- Không trả hóa đơn `Đã hủy`.
+- Không trả hóa đơn `remaining <= 0`.
+- Response thêm:
+  - `discount_allocated`
+  - `remaining`
 
-Nên có cột:
+## Sửa `CustomerController@debtPayment()`
+Trong cả manual và auto mode, khi tính số tiền còn phải thu của hóa đơn, phải trừ chiết khấu active đã phân bổ.
 
-- Mã phiếu
-- Thời gian
-- Loại chứng từ
-- Giá trị chứng từ
-- Ảnh hưởng công nợ khách hàng
-- Ảnh hưởng công nợ nhà cung cấp
-- Số dư sau giao dịch
+### Manual mode
+Thay:
 
-### 12.3. Lớp diễn giải bằng chữ
-
-Ví dụ:
-
-- `Nợ hiện tại: -3.000.000` -> kèm chú thích: **Doanh nghiệp đang nợ đối tượng 3.000.000**
-- `Nợ cần trả: 3.000.000` -> kèm chú thích: **Sau bù trừ, doanh nghiệp còn phải trả 3.000.000**
-
----
-
-## 13. Rủi ro nếu lập trình không chặt
-
-1. **Lệch dấu giữa màn khách hàng và nhà cung cấp**
-2. **Thanh toán bị ghi sai chiều**
-3. **Một chứng từ tác động 1 chiều nhưng không phản ánh chiều đối ứng**
-4. **Số dư tổng hợp khác số dư chi tiết**
-5. **Không phân biệt thanh toán cho khách hay thanh toán cho NCC**
-6. **Case trả dư / ứng trước không được xử lý âm đúng cách**
-7. **Không có ledger chi tiết để kiểm tra lại khi sai số**
-
----
-
-## 14. Bộ rule thực thi đề xuất
-
-Có thể chuẩn hóa rule engine như sau:
-
-```text
-Rule 1:
-Nếu phát sinh bán hàng cho partner
-=> customer += amount
-=> supplier -= amount
-
-Rule 2:
-Nếu partner thanh toán tiền mua hàng cho doanh nghiệp
-=> customer -= amount
-=> supplier += amount
-
-Rule 3:
-Nếu phát sinh nhập hàng từ partner
-=> customer -= amount
-=> supplier += amount
-
-Rule 4:
-Nếu doanh nghiệp thanh toán tiền nhập hàng cho partner
-=> customer += amount
-=> supplier -= amount
-
-Rule 5:
-Luôn kiểm tra customer_balance + supplier_balance = 0
+```php
+$remaining = $invoice->total - $invoice->customer_paid;
 ```
 
-Lưu ý: rule thanh toán phải phân biệt rõ bản chất nghiệp vụ. Nếu một màn dùng từ “thanh toán” nhưng thực tế là thu tiền từ khách, cần map chính xác vào engine.
+Bằng:
 
----
-
-## 15. Kết luận nghiệp vụ
-
-Trong chức năng **khách hàng đồng thời là nhà cung cấp**, hệ thống đang hoạt động theo nguyên tắc:
-
-> **Gộp toàn bộ giao dịch mua, bán, thanh toán, điều chỉnh của cùng một đối tượng vào một quan hệ công nợ hai chiều, sau đó bù trừ để ra công nợ thuần.**
-
-Nói dễ hiểu hơn:
-
-- nếu doanh nghiệp bán cho họ thì họ nợ doanh nghiệp
-- nếu doanh nghiệp mua từ họ thì doanh nghiệp nợ họ
-- cuối cùng không nhìn tách rời từng vế mà **cấn trừ hai vế với nhau**
-
-Vì vậy:
-
-- màn **Khách hàng** và màn **Nhà cung cấp** sẽ luôn là 2 cách nhìn của cùng một số dư
-- chỉ khác nhau ở **quy ước dấu và ngôn ngữ hiển thị**
-
----
-
-## 16. Tóm tắt ngắn cho dev
-
-```text
-customer_balance = total_sales - total_customer_payments - total_purchases + other_customer_adjustments
-supplier_balance = -customer_balance
+```php
+$remaining = app(CustomerPaymentDiscountService::class)
+    ->getInvoiceRemainingReceivable($invoice);
 ```
 
-Hoặc chuẩn hơn:
+Khi increment `customer_paid`, chỉ increment tối đa `remaining`.
 
-```text
-receivable = tổng phải thu từ vai trò khách hàng
-payable = tổng phải trả từ vai trò nhà cung cấp
+### Auto mode
+Danh sách invoices còn nợ phải lấy bằng service hoặc query + filter remaining sau discount.
 
-customer_balance = receivable - payable
-supplier_balance = payable - receivable
+Yêu cầu:
+- Không allocate payment vào phần đã được chiết khấu.
+- Không làm `invoice.customer_paid` vượt `invoice.total - discount_allocated`.
+
+## Sửa `CustomerController@debtHistory()`
+Mục tiêu hiển thị ledger đẹp.
+
+Hiện `CustomerDebtService::recordAdjustment()` sẽ ghi type `adjustment`.
+
+Trong mapper debt history:
+- Nếu `ref_code` bắt đầu bằng `CKTT` và amount âm:
+  - `type = 'Chiết khấu thanh toán'`
+  - `type_raw = 'payment_discount'`
+- Nếu `ref_code` bắt đầu bằng `CKTT` và amount dương, note chứa `Hủy chiết khấu thanh toán`:
+  - `type = 'Hủy chiết khấu thanh toán'`
+  - `type_raw = 'payment_discount_cancel'`
+
+Bổ sung metadata nếu tìm thấy discount theo code:
+- `payment_discount_id`
+- `payment_discount_status`
+- `can_cancel`
+
+Chỉ `can_cancel = true` với dòng:
+- `type_raw = payment_discount`
+- discount status active
+- amount âm
+
+Không backfill.
+
+## Frontend
+
+File chính:
+`resources/js/Pages/Customers/Index.vue`
+
+### 1. Button Chiết khấu thanh toán
+Button hiện đang tĩnh:
+
+```vue
+<button>
+    Chiết khấu thanh toán
+</button>
 ```
 
-Case ảnh mẫu:
+Gắn handler:
 
-```text
-receivable = 7.000.000 - 5.000.000 = 2.000.000
-payable = 5.000.000
-
-customer_balance = 2.000.000 - 5.000.000 = -3.000.000
-supplier_balance = 5.000.000 - 2.000.000 = 3.000.000
+```vue
+<button
+    @click="openPaymentDiscountModal(customer)"
+    class="..."
+>
+    Chiết khấu thanh toán
+</button>
 ```
 
-=> Kết quả khớp đúng với ảnh.
+Disable hoặc báo lỗi nếu:
+- `Number(customer.debt_amount || 0) <= 0`
+
+Lưu ý:
+- Dùng `customer.debt_amount` để kiểm tra nợ khách phải thu.
+- Không dùng `customerNetDebt(customer)` vì khách có thể đồng thời là NCC.
+
+### 2. State modal
+Thêm state:
+
+```js
+const paymentDiscountModal = reactive({
+    show: false,
+    loadingInvoices: false,
+    submitting: false,
+    customer: null,
+    invoices: [],
+});
+
+const paymentDiscountForm = reactive({
+    amount: 0,
+    discount_at: '',
+    performed_by: '',
+    note: '',
+    allocate_to_invoices: true,
+});
+```
+
+Nếu chưa có danh sách user/người thực hiện trong props:
+- Mặc định backend dùng `auth()->id()`.
+- Frontend có thể ẩn field người thực hiện hoặc hiển thị text user hiện tại nếu có sẵn.
+- Không thêm query phức tạp nếu chưa có data.
+
+### 3. Open modal
+`openPaymentDiscountModal(customer)`:
+- Nếu `customer.debt_amount <= 0` thì alert:
+  `Khách hàng không còn nợ phải thu, không thể tạo chiết khấu thanh toán.`
+- Set customer.
+- Set amount = 0.
+- Set note = ''.
+- Set allocate_to_invoices = true.
+- Set discount_at = now theo format phù hợp `DateTimePicker`.
+- Load invoices từ:
+  `/customers/{customer.id}/payment-discount-invoices`
+- Mỗi invoice thêm `allocAmount = 0`.
+- Show modal.
+
+### 4. Auto allocate
+Khi nhập số tiền chiết khấu và `allocate_to_invoices = true`:
+- Tự phân bổ từ hóa đơn cũ trước.
+- Không vượt `invoice.remaining`.
+- Tổng phân bổ phải bằng amount nếu đủ hóa đơn.
+- Nếu amount lớn hơn tổng remaining thì báo lỗi/không cho submit.
+
+Thêm function:
+
+```js
+const allocatePaymentDiscount = () => {
+    let remaining = Number(paymentDiscountForm.amount || 0);
+    paymentDiscountModal.invoices = paymentDiscountModal.invoices.map((inv) => {
+        const max = Number(inv.remaining || 0);
+        const alloc = Math.min(max, Math.max(remaining, 0));
+        remaining -= alloc;
+        return { ...inv, allocAmount: alloc };
+    });
+};
+```
+
+Watch `paymentDiscountForm.amount` và `allocate_to_invoices`.
+
+### 5. Manual allocation
+Cho phép user sửa từng dòng `allocAmount` bằng `MoneyInput`.
+Validate frontend:
+- Tổng allocation <= amount.
+- Mỗi allocation <= invoice.remaining.
+- Nếu `allocate_to_invoices` true thì tổng allocation phải bằng amount.
+- Hiển thị:
+  - `Chiết khấu chưa phân bổ: xxxđ`
+  - Nếu khác 0 thì disable nút Tạo phiếu.
+
+### 6. Modal UI
+Modal giống KiotViet, gồm:
+- Title: `Chiết khấu thanh toán`
+- Khách hàng: tên khách
+- Nợ hiện tại: format VND
+- Thời gian: `DateTimePicker`
+- Người thực hiện: nếu có data thì select; nếu chưa có thì text `Tài khoản hiện tại`
+- Chiết khấu cho khách: `MoneyInput`
+- Nợ còn lại: `current debt - amount`
+- Ghi chú: input/textarea
+- Checkbox: `Phân bổ vào hóa đơn`
+- Table nếu phân bổ:
+  - Mã hóa đơn
+  - Thời gian
+  - Giá trị hóa đơn
+  - Còn phải thu
+  - Đã chiết khấu
+  - Chiết khấu phân bổ
+  - Công nợ sau CK
+- Footer:
+  - Bỏ qua
+  - Tạo phiếu
+
+Không dùng input text thường cho tiền, dùng `MoneyInput`.
+
+### 7. Submit
+`submitPaymentDiscount()`:
+Payload:
+
+```js
+{
+    amount: Number(paymentDiscountForm.amount || 0),
+    discount_at: paymentDiscountForm.discount_at,
+    performed_by: paymentDiscountForm.performed_by || null,
+    note: paymentDiscountForm.note,
+    allocate_to_invoices: paymentDiscountForm.allocate_to_invoices,
+    allocations: paymentDiscountForm.allocate_to_invoices
+        ? paymentDiscountModal.invoices
+            .filter(inv => Number(inv.allocAmount || 0) > 0)
+            .map(inv => ({ invoice_id: inv.id, amount: Number(inv.allocAmount || 0) }))
+        : [],
+}
+```
+
+POST:
+`/customers/{customer.id}/payment-discounts`
+
+On success:
+- Close modal.
+- Reload debt history:
+  - `await loadDebtHistory(customer.id)`
+- Reload customers list:
+  - `router.reload({ only: ['customers', 'summary'], preserveScroll: true })`
+- Alert/toast success.
+
+### 8. Hiển thị trong tab Công nợ
+Nếu backend trả `entry.type = Chiết khấu thanh toán`, UI hiện như các dòng khác.
+
+Với dòng có:
+- `entry.type_raw === 'payment_discount'`
+- `entry.can_cancel === true`
+
+Hiển thị nút nhỏ `Hủy` hoặc icon trong dòng.
+
+Click gọi:
+`cancelPaymentDiscount(customer.id, entry.payment_discount_id)`
+
+### 9. Hủy chiết khấu
+Frontend:
+- Confirm hoặc modal nhập lý do.
+- POST:
+`/customers/{customerId}/payment-discounts/{discountId}/cancel`
+Payload:
+```js
+{ reason }
+```
+
+On success:
+- Reload debt history.
+- Reload customers/summary.
+- Không reload full page nếu không cần.
+
+## Backend response trong `debtHistory()`
+Bổ sung map discount theo code:
+
+```php
+$discountCodes = $debts->pluck('ref_code')
+    ->filter(fn ($code) => str_starts_with((string) $code, 'CKTT'))
+    ->values();
+
+$discountsByCode = CustomerPaymentDiscount::whereIn('code', $discountCodes)
+    ->get()
+    ->keyBy('code');
+```
+
+Trong mapper ledger:
+```php
+$isPaymentDiscount = str_starts_with((string) $d->ref_code, 'CKTT');
+$isDiscountCancel = $isPaymentDiscount && (float) $d->amount > 0 && str_contains(mb_strtolower((string) $d->note), 'hủy chiết khấu');
+
+if ($isPaymentDiscount && !$isDiscountCancel && (float) $d->amount < 0) {
+    $label = 'Chiết khấu thanh toán';
+    $typeRaw = 'payment_discount';
+}
+
+if ($isDiscountCancel) {
+    $label = 'Hủy chiết khấu thanh toán';
+    $typeRaw = 'payment_discount_cancel';
+}
+```
+
+Thêm:
+```php
+$discount = $discountsByCode[$d->ref_code] ?? null;
+if ($discount) {
+    $entry['payment_discount_id'] = $discount->id;
+    $entry['payment_discount_status'] = $discount->status;
+    $entry['can_cancel'] = $typeRaw === 'payment_discount' && $discount->status === 'active';
+}
+```
+
+## Validation chi tiết
+
+### Store discount
+Không cho:
+- amount <= 0
+- amount > customer.debt_amount
+- customer.debt_amount <= 0
+- allocation vào invoice không thuộc customer
+- allocation vào invoice `Đã hủy`
+- allocation vượt remaining
+- total allocation khác amount nếu `allocate_to_invoices = true`
+- amount lớn hơn tổng remaining invoices nếu allocate true
+
+### Cancel discount
+Không cho:
+- hủy phiếu không thuộc customer
+- hủy phiếu đã cancelled
+- xóa record
+- sửa allocations
+
+## Tests bắt buộc
+
+### Feature tests
+Tạo test mới:
+
+`tests/Feature/Customers/CustomerPaymentDiscountTest.php`
+
+Cases:
+
+#### 1. Tạo chiết khấu không phân bổ
+- Customer debt_amount = 340000
+- POST amount = 100000, allocate_to_invoices = false
+- Assert:
+  - có row `customer_payment_discounts`
+  - status active
+  - amount 100000
+  - customer.debt_amount = 240000
+  - có `customer_debts` ref_code CKTT amount -100000
+  - không có `cash_flows`
+  - không đổi `invoice.customer_paid`
+
+#### 2. Tạo chiết khấu có phân bổ vào hóa đơn
+- Invoice total 440000, customer_paid 100000, remaining 340000
+- Chiết khấu 100000 phân bổ vào invoice
+- Assert:
+  - allocation amount 100000
+  - customer debt giảm 100000
+  - `outstandingInvoices()` còn lại 240000
+  - `invoice.customer_paid` vẫn 100000
+
+#### 3. Không cho chiết khấu vượt nợ hiện tại
+- customer debt 340000
+- request amount 500000
+- Assert 422/error
+- debt không đổi
+
+#### 4. Không cho phân bổ vượt còn phải thu
+- remaining invoice 340000
+- allocation 400000
+- Assert 422/error
+
+#### 5. Không cho phân bổ vào hóa đơn đã hủy
+- invoice status `Đã hủy`
+- allocation vào invoice đó
+- Assert 422/error
+
+#### 6. Debt payment không thu trùng phần đã chiết khấu
+- Invoice total 440000, customer_paid 100000
+- Discount allocation 100000
+- Outstanding còn 240000
+- Auto payment 300000
+- Assert chỉ increment customer_paid thêm 240000
+- Không vượt remaining
+- customer debt không âm sai
+
+#### 7. Hủy phiếu chiết khấu
+- Tạo CKTT 100000
+- Cancel
+- Assert:
+  - discount status cancelled
+  - cancelled_at not null
+  - customer debt tăng lại 100000
+  - có ledger amount +100000
+  - allocation không bị xóa
+  - outstanding invoice quay lại như trước discount
+  - không có cashflow
+
+### Regression tests
+Chạy thêm:
+```bash
+php artisan test --filter=CustomerDebt
+php artisan test --filter=CancelInvoicePaymentDebtFlowTest
+php artisan test tests/Feature/Damage/RR09DamageStockTest.php
+npm run build
+```
+
+Nếu test filter không tồn tại hoặc môi trường thiếu, ghi rõ trong report.
+
+## Manual QA bắt buộc
+1. Vào `/customers`.
+2. Mở khách hàng có `debt_amount > 0`.
+3. Vào tab **Công nợ**.
+4. Bấm **Chiết khấu thanh toán**.
+5. Modal mở đúng.
+6. Nhập chiết khấu 100.000đ.
+7. Nợ còn lại hiển thị đúng.
+8. Bật **Phân bổ vào hóa đơn**.
+9. Hệ thống tự phân bổ vào hóa đơn còn nợ cũ nhất.
+10. Sửa phân bổ thủ công, không cho vượt còn phải thu.
+11. Bấm **Tạo phiếu**.
+12. Tab công nợ có dòng `CKTT...` loại `Chiết khấu thanh toán`, giá trị âm.
+13. Nợ hiện tại giảm đúng.
+14. Mở lại modal thanh toán, hóa đơn đã chiết khấu chỉ còn số tiền phải thu sau chiết khấu.
+15. Kiểm tra hóa đơn:
+    - `customer_paid` không đổi.
+16. Kiểm tra sổ quỹ:
+    - không phát sinh phiếu thu/chi mới.
+17. Hủy phiếu chiết khấu.
+18. Nợ hiện tại tăng lại.
+19. Outstanding invoice quay về như trước.
+20. Không có record bị xóa vật lý.
+
+## Report
+Tạo file:
+
+`docs/audit/HOTFIX-CUSTOMER-PAYMENT-DISCOUNT.md`
+
+Report phải ghi:
+- Source đã kiểm tra.
+- Tài liệu KiotViet đã tham khảo.
+- Root cause: nút đang chưa có logic; không thể dùng `debtPayment()` vì sẽ làm sai `invoice.customer_paid`.
+- Files changed.
+- Migrations added.
+- Tables added:
+  - `customer_payment_discounts`
+  - `customer_payment_discount_allocations`
+- Có backfill không: Không.
+- Có update dữ liệu cũ không: Không.
+- Có sửa bảng cũ không: Không.
+- Có sửa `invoice.customer_paid` không: Không.
+- Có tạo CashFlow không: Không.
+- Có ảnh hưởng sổ quỹ không: Không.
+- Có hủy phiếu chiết khấu không: Có, bằng status cancelled.
+- Tests/build kết quả.
+- Manual QA đã chạy hay chưa.
+- Rủi ro còn lại.
+
+## Commit/Tag
+Commit message:
+
+```bash
+feat(customers): add payment discount debt flow
+```
+
+Không cần tag.
+
+## Output bắt buộc
+Sau khi hoàn thành, trả về:
+- Commit SHA.
+- Files changed.
+- Migration files.
+- Models/services/controllers/routes đã thêm/sửa.
+- Tests đã chạy + kết quả.
+- `npm run build` kết quả.
+- Manual QA đã chạy + kết quả.
+- Xác nhận không backfill/update dữ liệu cũ.
+- Xác nhận không sửa `invoice.customer_paid`.
+- Xác nhận không tạo CashFlow.
+- Xác nhận không sửa doanh thu hóa đơn.
+- Xác nhận không ảnh hưởng tồn kho/serial/giá vốn.
+- Nếu có bất kỳ chỗ nào cần đổi schema bảng cũ hoặc update dữ liệu cũ, phải dừng và hỏi xác nhận trước.

@@ -13,7 +13,7 @@
  * and shows the error message.
  */
 import { computed, ref, watch } from 'vue';
-import { formatDateVN, parseVNDate, pad2 } from '@/utils/dateTime.js';
+import { formatDateVN, parseVNDate, toDateInputValue, pad2 } from '@/utils/dateTime.js';
 
 const props = defineProps({
     modelValue: { type: [String, Date, Number, null], default: '' },
@@ -30,6 +30,7 @@ const emit = defineEmits(['update:modelValue', 'blur']);
 
 const text = ref(formatDateVN(props.modelValue));
 const error = ref('');
+const nativeInputRef = ref(null);
 
 watch(
     () => props.modelValue,
@@ -41,6 +42,31 @@ watch(
         }
     }
 );
+
+const nativeModelValue = computed(() => {
+    return toDateInputValue(props.modelValue);
+});
+
+const openPicker = () => {
+    if (nativeInputRef.value) {
+        try {
+            nativeInputRef.value.showPicker();
+        } catch (e) {
+            nativeInputRef.value.click();
+        }
+    }
+};
+
+const onNativeInput = (e) => {
+    const val = e.target.value; // "yyyy-MM-dd"
+    if (!val) {
+        emit('update:modelValue', '');
+        return;
+    }
+    error.value = '';
+    text.value = formatDateVN(val);
+    emit('update:modelValue', val);
+};
 
 const onInput = (e) => {
     text.value = e.target.value;
@@ -82,7 +108,7 @@ const computedClass = computed(() => {
         return ['focus:outline-none', error.value ? 'ring-1 ring-red-400 rounded' : '', props.inputClass];
     }
     return [
-        'w-full border rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500',
+        'w-full border rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 pr-10',
         error.value ? 'border-red-400' : 'border-gray-300',
         props.disabled ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white',
         props.inputClass,
@@ -93,7 +119,7 @@ const computedClass = computed(() => {
 <template>
     <div :class="wrapperClass || 'w-full'">
         <label v-if="label" class="block text-sm font-medium text-gray-700 mb-1">{{ label }}</label>
-        <div class="relative">
+        <div class="relative flex items-center">
             <input
                 type="text"
                 inputmode="numeric"
@@ -107,6 +133,33 @@ const computedClass = computed(() => {
                 :class="computedClass"
                 autocomplete="off"
             />
+            
+            <input
+                ref="nativeInputRef"
+                type="date"
+                :value="nativeModelValue"
+                @input="onNativeInput"
+                :disabled="disabled"
+                class="absolute invisible w-0 h-0 pointer-events-none"
+            />
+            
+            <div class="absolute right-0 flex items-center h-full pr-2">
+                <button
+                    v-if="!disabled"
+                    type="button"
+                    @click="openPicker"
+                    class="p-1 text-gray-400 hover:text-blue-600 focus:outline-none transition-colors duration-150 rounded"
+                    tabindex="-1"
+                    title="Chọn ngày"
+                >
+                    <svg class="w-4.5 h-4.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="16" y1="2" x2="16" y2="6"></line>
+                        <line x1="8" y1="2" x2="8" y2="6"></line>
+                        <line x1="3" y1="10" x2="21" y2="10"></line>
+                    </svg>
+                </button>
+            </div>
         </div>
         <p v-if="error" class="mt-1 text-xs text-red-600">{{ error }}</p>
     </div>
