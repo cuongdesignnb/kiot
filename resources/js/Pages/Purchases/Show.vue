@@ -55,7 +55,7 @@ const editForm = ref({
     paid_amount: Number(props.purchase.paid_amount) || 0,
     payment_method: props.purchase.payment_method || 'cash',
     bank_account_info: props.purchase.bank_account_info || '',
-    employee_id: props.purchase.employee_id || '',
+    employee_id: props.purchase.employee_id ? `employee:${props.purchase.employee_id}` : (props.purchase.user_id ? `admin_user:${props.purchase.user_id}` : ''),
 });
 
 const editPayAmount = computed(() => totalAmount - (Number(editForm.value.discount) || 0) + otherCostsTotal);
@@ -97,7 +97,7 @@ const openUpdateModal = () => {
         paid_amount: Number(props.purchase.paid_amount) || 0,
         payment_method: props.purchase.payment_method || 'cash',
         bank_account_info: props.purchase.bank_account_info || '',
-        employee_id: props.purchase.employee_id || '',
+        employee_id: props.purchase.employee_id ? `employee:${props.purchase.employee_id}` : (props.purchase.user_id ? `admin_user:${props.purchase.user_id}` : ''),
     };
     showUpdateModal.value = true;
 };

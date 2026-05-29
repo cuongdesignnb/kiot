@@ -311,8 +311,8 @@ const cancelPurchase = (order) => {
                                 <td v-if="isColVisible('supplier_code')" class="px-2 py-2">{{ order.supplier?.code || '' }}</td>
                                 <td v-if="isColVisible('supplier_name')" class="px-2 py-2">{{ order.supplier?.name || 'Khách lẻ' }}</td>
                                 <td v-if="isColVisible('branch')" class="px-2 py-2">Chi nhánh trung tâm</td>
-                                <td v-if="isColVisible('importer')" class="px-2 py-2">{{ order.employee?.name || '' }}</td>
-                                <td v-if="isColVisible('creator')" class="px-2 py-2">{{ order.employee?.name || '' }}</td>
+                                <td v-if="isColVisible('importer')" class="px-2 py-2">{{ order.employee?.name || order.user?.name || '' }}</td>
+                                <td v-if="isColVisible('creator')" class="px-2 py-2">{{ order.employee?.name || order.user?.name || '' }}</td>
                                 <td v-if="isColVisible('total_quantity')" class="px-4 py-2 text-right">{{ getTotalQty(order) }}</td>
                                 <td v-if="isColVisible('item_count')" class="px-4 py-2 text-right">{{ getItemCount(order) }}</td>
                                 <td v-if="isColVisible('total_amount')" class="px-4 py-2 text-right font-medium">{{ formatCurrency(order.total_amount) }}</td>

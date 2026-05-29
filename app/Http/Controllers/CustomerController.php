@@ -1626,6 +1626,53 @@ class CustomerController extends Controller
         // 3. PT / TTHD - Phiếu thu / thanh toán
         if (str_starts_with($code, 'PT') || str_starts_with($code, 'TTHD')) {
             $cashFlow = CashFlow::where('code', $code)->first();
+
+            if (!$cashFlow && str_starts_with($code, 'TTHD')) {
+                $invoiceCode = 'HD' . substr($code, 4);
+                $cashFlow = CashFlow::where('reference_type', 'Invoice')
+                    ->where('reference_code', $invoiceCode)
+                    ->where('type', 'receipt')
+                    ->first();
+            }
+
+            if (!$cashFlow && str_starts_with($code, 'TTHD')) {
+                $invoiceCode = 'HD' . substr($code, 4);
+                $invoice = Invoice::with('customer')->where('code', $invoiceCode)->first();
+                if ($invoice) {
+                    $belongsToCustomer = (int) $invoice->customer_id === (int) $customer->id
+                        || $this->customerHasDebtRef($customer, $invoice->code);
+
+                    if (!$belongsToCustomer) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.'
+                        ], 404);
+                    }
+
+                    return response()->json([
+                        'success' => true,
+                        'type' => 'cashflow',
+                        'title' => 'Phiếu thanh toán',
+                        'code' => $code,
+                        'data' => [
+                            'id' => null,
+                            'code' => $code,
+                            'type' => 'receipt', // Phiếu thu
+                            'amount' => (float) $invoice->customer_paid,
+                            'time' => $invoice->created_at ? $invoice->created_at->format('d/m/Y H:i') : '',
+                            'category' => 'Thu tiền khách hàng',
+                            'target_type' => 'Khách hàng',
+                            'target_name' => $invoice->customer->name ?? 'Khách lẻ',
+                            'payment_method' => $invoice->payment_method ?? 'Tiền mặt',
+                            'bank_account_name' => null,
+                            'reference_type' => 'Invoice',
+                            'reference_code' => $invoice->code,
+                            'description' => 'Thanh toán tự động khi tạo hóa đơn ' . $invoice->code,
+                        ]
+                    ]);
+                }
+            }
+
             if (!$cashFlow) {
                 return response()->json([
                     'success' => false,

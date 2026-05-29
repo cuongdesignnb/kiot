@@ -4082,7 +4082,7 @@ const createdDateRange = computed({
                             <div class="grid grid-cols-2 gap-x-8 gap-y-4 bg-gray-50 p-5 rounded border border-gray-100">
                                 <div>
                                     <span class="text-gray-500 block text-xs uppercase tracking-wider font-semibold">Loại phiếu</span>
-                                    <span class="font-bold text-gray-800 text-base">{{ debtVoucherDetailModal.data.type === 'thu' ? 'Phiếu thu' : 'Phiếu chi' }}</span>
+                                    <span class="font-bold text-gray-800 text-base">{{ ['thu', 'receipt'].includes(debtVoucherDetailModal.data.type) ? 'Phiếu thu' : 'Phiếu chi' }}</span>
                                 </div>
                                 <div>
                                     <span class="text-gray-500 block text-xs uppercase tracking-wider font-semibold">Giá trị</span>

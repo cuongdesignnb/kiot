@@ -44,7 +44,7 @@ class PurchaseController extends Controller
     {
         $this->configurePurchaseFilters();
 
-        $query = Purchase::with(['supplier:id,code,name', 'items'])
+        $query = Purchase::with(['supplier:id,code,name', 'items', 'employee:id,name', 'user:id,name'])
             ->when($request->filled('has_debt'), function ($q) use ($request) {
                 if ((string) $request->input('has_debt') === '1') {
                     $q->where('debt_amount', '>', 0);
@@ -160,10 +160,11 @@ class PurchaseController extends Controller
         $showRetailPrice = $priceBooks->contains('enable_retail_price', true);
         $showTechnicianPrice = $priceBooks->contains('enable_technician_price', true);
 
+        $sellerResolver = new \App\Support\Reports\SellerResolver();
         return Inertia::render('Purchases/Create', [
             'suppliers' => $suppliers,
             'products' => $products,
-            'employees' => \App\Models\Employee::where('is_active', true)->get(['id', 'name', 'code']),
+            'employees' => $sellerResolver->buildInvoiceSellerOptions(),
             'categories' => \App\Models\Category::with('children')->whereNull('parent_id')->orderBy('name')->get(),
             'brands' => \App\Models\Brand::all(),
             'purchaseCode' => 'PN' . date('YmdHis'),
@@ -178,7 +179,7 @@ class PurchaseController extends Controller
     {
         $request->validate([
             'supplier_id' => 'required|exists:customers,id',
-            'employee_id' => 'nullable|exists:employees,id',
+            'employee_id' => 'nullable|string',
             'purchase_date' => 'nullable|date',
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|exists:products,id',
@@ -241,6 +242,34 @@ class PurchaseController extends Controller
         try {
             DB::beginTransaction();
 
+            // Parse employee_id / virtual admin user
+            $employeeIdInput = $request->employee_id;
+            $dbEmployeeId = null;
+            $dbUserId = auth()->id();
+
+            if ($employeeIdInput) {
+                if (preg_match('/^employee:(\d+)$/', $employeeIdInput, $matches)) {
+                    $dbEmployeeId = (int) $matches[1];
+                    if (!\App\Models\Employee::where('is_active', true)->where('id', $dbEmployeeId)->exists()) {
+                        return back()->withErrors(['employee_id' => 'Nhân viên không hợp lệ hoặc đã ngưng hoạt động.']);
+                    }
+                } elseif (preg_match('/^admin_user:(\d+)$/', $employeeIdInput, $matches)) {
+                    $dbUserId = (int) $matches[1];
+                    $dbEmployeeId = null;
+                    $adminUser = \App\Models\User::find($dbUserId);
+                    if (!$adminUser || ($adminUser->status ?? 'active') !== 'active' || !$adminUser->isAdmin()) {
+                        return back()->withErrors(['employee_id' => 'Tài khoản admin không hợp lệ.']);
+                    }
+                } elseif (is_numeric($employeeIdInput)) {
+                    $dbEmployeeId = (int) $employeeIdInput;
+                    if (!\App\Models\Employee::where('is_active', true)->where('id', $dbEmployeeId)->exists()) {
+                        return back()->withErrors(['employee_id' => 'Nhân viên không hợp lệ hoặc đã ngưng hoạt động.']);
+                    }
+                } else {
+                    return back()->withErrors(['employee_id' => 'Người nhập không hợp lệ.']);
+                }
+            }
+
             // Lock period check
             $txDate = $request->purchase_date ? \Carbon\Carbon::parse($request->purchase_date) : now();
             app(LockPeriodService::class)->assertNotLocked($txDate, 'purchase_create');
@@ -270,8 +299,8 @@ class PurchaseController extends Controller
             $purchase = Purchase::create([
                 'code' => $request->code ?? 'PN' . time(),
                 'supplier_id' => $request->supplier_id,
-                'user_id' => auth()->id(),
-                'employee_id' => $request->employee_id,
+                'user_id' => $dbUserId,
+                'employee_id' => $dbEmployeeId,
                 'total_amount' => $total_amount,
                 'discount' => $discount,
                 'other_costs' => !empty($otherCosts) ? $otherCosts : null,
@@ -488,11 +517,12 @@ class PurchaseController extends Controller
             $item->returned_qty = $returnedQty[$item->product_id] ?? 0;
         }
 
+        $sellerResolver = new \App\Support\Reports\SellerResolver();
         return Inertia::render('Purchases/Show', [
             'purchase' => $purchase,
             'purchaseReturns' => $purchaseReturns,
             'bankAccounts' => \App\Models\BankAccount::where('status', 'active')->get(),
-            'employees' => \App\Models\Employee::where('is_active', true)->get(['id', 'name', 'code']),
+            'employees' => $sellerResolver->buildInvoiceSellerOptions(),
         ]);
     }
 
@@ -505,7 +535,7 @@ class PurchaseController extends Controller
             'paid_amount' => 'nullable|numeric|min:0',
             'payment_method' => 'nullable|string|in:cash,transfer',
             'bank_account_info' => 'nullable|string',
-            'employee_id' => 'nullable|exists:employees,id',
+            'employee_id' => 'nullable|string',
             'status' => 'nullable|string|in:draft,completed',
             'items' => 'nullable|array',
             'items.*.product_id' => 'required_with:items|exists:products,id',
@@ -520,6 +550,38 @@ class PurchaseController extends Controller
 
         try {
             DB::beginTransaction();
+
+            // Parse employee_id / virtual admin user
+            $employeeIdInput = $request->employee_id;
+            $dbEmployeeId = $purchase->employee_id;
+            $dbUserId = $purchase->user_id;
+
+            if ($request->has('employee_id')) {
+                if ($employeeIdInput) {
+                    if (preg_match('/^employee:(\d+)$/', $employeeIdInput, $matches)) {
+                        $dbEmployeeId = (int) $matches[1];
+                        if (!\App\Models\Employee::where('is_active', true)->where('id', $dbEmployeeId)->exists()) {
+                            return back()->withErrors(['employee_id' => 'Nhân viên không hợp lệ hoặc đã ngưng hoạt động.']);
+                        }
+                    } elseif (preg_match('/^admin_user:(\d+)$/', $employeeIdInput, $matches)) {
+                        $dbUserId = (int) $matches[1];
+                        $dbEmployeeId = null;
+                        $adminUser = \App\Models\User::find($dbUserId);
+                        if (!$adminUser || ($adminUser->status ?? 'active') !== 'active' || !$adminUser->isAdmin()) {
+                            return back()->withErrors(['employee_id' => 'Tài khoản admin không hợp lệ.']);
+                        }
+                    } elseif (is_numeric($employeeIdInput)) {
+                        $dbEmployeeId = (int) $employeeIdInput;
+                        if (!\App\Models\Employee::where('is_active', true)->where('id', $dbEmployeeId)->exists()) {
+                            return back()->withErrors(['employee_id' => 'Nhân viên không hợp lệ hoặc đã ngưng hoạt động.']);
+                        }
+                    } else {
+                        return back()->withErrors(['employee_id' => 'Người nhập không hợp lệ.']);
+                    }
+                } else {
+                    $dbEmployeeId = null;
+                }
+            }
 
             // Nếu draft → completed: cập nhật items trước khi tính tổng
             if ($isDraftToComplete && $request->has('items')) {
@@ -578,7 +640,8 @@ class PurchaseController extends Controller
                 'debt_amount' => $debtAmount,
                 'payment_method' => $request->payment_method ?? $purchase->payment_method,
                 'bank_account_info' => $request->bank_account_info,
-                'employee_id' => $request->employee_id ?? $purchase->employee_id,
+                'employee_id' => $dbEmployeeId,
+                'user_id' => $dbUserId,
                 'status' => $isDraftToComplete ? 'completed' : $purchase->status,
             ]);
 
