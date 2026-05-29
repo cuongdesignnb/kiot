@@ -662,6 +662,7 @@ class CustomerController extends Controller
                 'recorded_at'     => $recordedAt,
                 'created_at'      => $recordedAt,
                 'source'          => 'ledger',
+                'detail_available'=> true,
             ];
 
             if ($settlementMeta) {
@@ -706,6 +707,7 @@ class CustomerController extends Controller
                 'customer_effect' => (float) $inv->total,
                 'created_at' => $inv->created_at,
                 'source' => 'legacy',
+                'detail_available' => true,
             ]);
             if ($inv->customer_paid > 0) {
                 $legacyEntries->push([
@@ -716,6 +718,8 @@ class CustomerController extends Controller
                     'customer_effect' => -(float) $inv->customer_paid,
                     'created_at' => $inv->created_at,
                     'source' => 'legacy',
+                    'is_virtual_payment' => true,
+                    'detail_available' => true,
                 ]);
             }
         }
@@ -740,6 +744,7 @@ class CustomerController extends Controller
                 'customer_effect' => -(float) $cf->amount,
                 'created_at' => $cf->created_at,
                 'source' => 'legacy',
+                'detail_available' => true,
             ]);
         }
 
@@ -758,6 +763,7 @@ class CustomerController extends Controller
                     'customer_effect' => -(float) $p->total_amount,
                     'created_at' => $p->created_at,
                     'source' => 'legacy',
+                    'detail_available' => true,
                 ]);
                 if ($p->paid_amount > 0) {
                     $legacyEntries->push([
@@ -768,6 +774,7 @@ class CustomerController extends Controller
                         'customer_effect' => (float) $p->paid_amount,
                         'created_at' => $p->created_at,
                         'source' => 'legacy',
+                        'detail_available' => false,
                     ]);
                 }
             }
@@ -786,6 +793,7 @@ class CustomerController extends Controller
                     'customer_effect' => (float) $pr->total_amount,
                     'created_at' => $pr->created_at,
                     'source' => 'legacy',
+                    'detail_available' => false,
                 ]);
             }
 
@@ -803,6 +811,7 @@ class CustomerController extends Controller
                     'customer_effect' => -(float) $stx->amount,
                     'created_at' => $stx->created_at,
                     'source' => 'legacy',
+                    'detail_available' => false,
                 ]);
             }
         }
@@ -1652,7 +1661,7 @@ class CustomerController extends Controller
                     return response()->json([
                         'success' => true,
                         'type' => 'cashflow',
-                        'title' => 'Phiếu thanh toán',
+                        'title' => 'Thanh toán hóa đơn',
                         'code' => $code,
                         'data' => [
                             'id' => null,

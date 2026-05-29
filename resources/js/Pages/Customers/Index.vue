@@ -2279,9 +2279,15 @@ const createdDateRange = computed({
                                                                 class="px-3 py-2 font-medium text-blue-600"
                                                             >
                                                                 <span
-                                                                    v-if="entry.code"
+                                                                    v-if="entry.code && entry.detail_available !== false"
                                                                     class="cursor-pointer hover:underline text-blue-600 font-medium"
                                                                     @click="openDebtVoucherDetail(entry, customer.id)"
+                                                                >
+                                                                    {{ entry.code }}
+                                                                </span>
+                                                                <span
+                                                                    v-else-if="entry.code"
+                                                                    class="text-gray-700 font-medium"
                                                                 >
                                                                     {{ entry.code }}
                                                                 </span>
@@ -2310,7 +2316,12 @@ const createdDateRange = computed({
                                                             >
                                                                 <span>{{ entry.type }}</span>
                                                                 <span
-                                                                    v-if="entry.source === 'ledger'"
+                                                                    v-if="entry.is_virtual_payment"
+                                                                    class="ml-1 inline-block text-[10px] font-semibold bg-green-50 text-green-700 border border-green-200 px-1.5 py-0.5 rounded"
+                                                                    title="Thanh toán trực tiếp khi tạo hóa đơn"
+                                                                >Thanh toán HĐ</span>
+                                                                <span
+                                                                    v-else-if="entry.source === 'ledger'"
                                                                     class="ml-1 inline-block text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200 px-1.5 py-0.5 rounded"
                                                                     title="Ghi nhận qua ledger customer_debts"
                                                                 >Ledger</span>

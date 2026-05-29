@@ -347,4 +347,106 @@ class CustomerDebtVoucherDetailTest extends TestCase
         $this->assertEquals($originalCustomerPaid, $invoice->customer_paid, 'Invoice customer_paid should not change');
         $this->assertEquals($originalDebtCount, CustomerDebt::count(), 'No new customer_debts rows should be created');
     }
+
+    /**
+     * 11. Test fallback voucher detail for TTHD (title should be 'Thanh toán hóa đơn')
+     */
+    public function test_tthd_fallback_voucher_detail(): void
+    {
+        $invoice = Invoice::create([
+            'code' => 'HD' . rand(1000, 9999),
+            'customer_id' => $this->customer->id,
+            'total' => 500000,
+            'customer_paid' => 200000,
+            'status' => 'Hoàn thành',
+            'subtotal' => 500000,
+            'discount' => 0,
+            'payment_method' => 'Tiền mặt',
+        ]);
+
+        $tthdCode = 'TTHD' . substr($invoice->code, 2);
+
+        $resp = $this->actingAs($this->admin)
+            ->getJson("/customers/{$this->customer->id}/debt-voucher-detail?code={$tthdCode}");
+
+        $resp->assertOk();
+        $resp->assertJsonPath('success', true);
+        $resp->assertJsonPath('type', 'cashflow');
+        $resp->assertJsonPath('title', 'Thanh toán hóa đơn');
+        $resp->assertJsonPath('code', $tthdCode);
+        $resp->assertJsonPath('data.amount', 200000.0);
+    }
+
+    /**
+     * 12. Test debt history contains detail_available and is_virtual_payment flags
+     */
+    public function test_debt_history_contains_detail_available_and_virtual_payment_flags(): void
+    {
+        // 1. Ledger entry
+        CustomerDebt::create([
+            'customer_id' => $this->customer->id,
+            'ref_code' => 'HD_LEDGER_TEST',
+            'amount' => 100000,
+            'debt_total' => 100000,
+            'type' => 'sale',
+            'recorded_at' => now(),
+        ]);
+
+        // 2. Legacy Invoice & Legacy Virtual Payment TTHD
+        $invoice = Invoice::create([
+            'code' => 'HD_LEGACY_TEST',
+            'customer_id' => $this->customer->id,
+            'total' => 300000,
+            'customer_paid' => 150000,
+            'status' => 'Hoàn thành',
+            'created_at' => now()->subMinutes(5),
+        ]);
+
+        // Enable dual role to trigger purchase legacy entries
+        $this->customer->update([
+            'is_supplier' => true,
+        ]);
+
+        // 3. Purchase & Purchase payment (purpay)
+        $purchase = Purchase::create([
+            'code' => 'PN_LEGACY_TEST',
+            'supplier_id' => $this->customer->id,
+            'total_amount' => 400000,
+            'paid_amount' => 200000,
+            'status' => 'completed',
+            'created_at' => now()->subMinutes(10),
+        ]);
+
+        $resp = $this->actingAs($this->admin)
+            ->getJson("/customers/{$this->customer->id}/debt-history");
+
+        $resp->assertOk();
+        $entries = collect($resp->json('entries'));
+
+        // Check Ledger Entry
+        $ledgerEntry = $entries->firstWhere('code', 'HD_LEDGER_TEST');
+        $this->assertNotNull($ledgerEntry);
+        $this->assertTrue($ledgerEntry['detail_available']);
+
+        // Check Legacy Invoice
+        $invEntry = $entries->firstWhere('code', 'HD_LEGACY_TEST');
+        $this->assertNotNull($invEntry);
+        $this->assertTrue($invEntry['detail_available']);
+
+        // Check Legacy Virtual TTHD
+        $tthdEntry = $entries->firstWhere('code', 'TTHD_LEGACY_TEST');
+        $this->assertNotNull($tthdEntry);
+        $this->assertTrue($tthdEntry['detail_available']);
+        $this->assertTrue($tthdEntry['is_virtual_payment']);
+
+        // Check Legacy Purchase
+        $purEntry = $entries->firstWhere('code', 'PN_LEGACY_TEST');
+        $this->assertNotNull($purEntry);
+        $this->assertTrue($purEntry['detail_available']);
+
+        // Check Legacy Purchase Payment (purpay)
+        $purpayEntry = $entries->firstWhere('code', 'TTNH_LEGACY_TEST');
+        $this->assertNotNull($purpayEntry);
+        $this->assertFalse($purpayEntry['detail_available']);
+    }
 }
