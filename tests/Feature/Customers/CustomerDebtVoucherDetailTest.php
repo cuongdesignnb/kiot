@@ -375,6 +375,8 @@ class CustomerDebtVoucherDetailTest extends TestCase
         $resp->assertJsonPath('title', 'Thanh toán hóa đơn');
         $resp->assertJsonPath('code', $tthdCode);
         $resp->assertJsonPath('data.amount', 200000.0);
+        $resp->assertJsonPath('data.status', 'completed');
+        $resp->assertJsonPath('data.created_at', $invoice->created_at ? $invoice->created_at->format('d/m/Y H:i') : '');
     }
 
     /**

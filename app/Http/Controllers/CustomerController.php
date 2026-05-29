@@ -1667,6 +1667,7 @@ class CustomerController extends Controller
                             'id' => null,
                             'code' => $code,
                             'type' => 'receipt', // Phiếu thu
+                            'status' => 'completed',
                             'amount' => (float) $invoice->customer_paid,
                             'time' => $invoice->created_at ? $invoice->created_at->format('d/m/Y H:i') : '',
                             'category' => 'Thu tiền khách hàng',
@@ -1677,6 +1678,7 @@ class CustomerController extends Controller
                             'reference_type' => 'Invoice',
                             'reference_code' => $invoice->code,
                             'description' => 'Thanh toán tự động khi tạo hóa đơn ' . $invoice->code,
+                            'created_at' => $invoice->created_at ? $invoice->created_at->format('d/m/Y H:i') : '',
                         ]
                     ]);
                 }
@@ -1719,10 +1721,17 @@ class CustomerController extends Controller
                 'created_at' => $cashFlow->created_at ? $cashFlow->created_at->format('d/m/Y H:i') : '',
             ];
 
+            $title = 'Phiếu thu';
+            if (str_starts_with($code, 'TTHD')) {
+                $title = 'Thanh toán hóa đơn';
+            } elseif ($cashFlow->type === 'payment') {
+                $title = 'Phiếu chi';
+            }
+
             return response()->json([
                 'success' => true,
                 'type' => 'cashflow',
-                'title' => 'Phiếu thu/thanh toán',
+                'title' => $title,
                 'code' => $cashFlow->code,
                 'data' => $data,
             ]);

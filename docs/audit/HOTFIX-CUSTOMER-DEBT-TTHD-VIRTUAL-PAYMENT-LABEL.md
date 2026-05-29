@@ -33,6 +33,8 @@ Previously:
   - Attached `'detail_available' => false` to non-resolvable legacy items (e.g. `purpay-...`, `pret-...`, `stx-...`).
 - **`debtVoucherDetail` updates**:
   - Modified the fallback cashflow resolver for `TTHD` codes to return `'title' => 'Thanh toán hóa đơn'`.
+  - Added `'status' => 'completed'` and `'created_at'` to the fallback mock cashflow detail data schema to ensure status badges and timestamps display correctly and avoid blank sections in the UI.
+  - Dynamically resolved the cashflow title to `'Thanh toán hóa đơn'` if the requested code starts with `TTHD` (even when resolved from a database CashFlow record), or to `'Phiếu chi'` (for payment type) / `'Phiếu thu'` (for receipt type) to show exact classifications.
 
 ### 2. Frontend Layout & Navigation (`Index.vue`)
 - **Conditional Link Clickability**:
@@ -44,7 +46,7 @@ Previously:
 
 ## Verification & Tests
 We added two feature tests inside `tests/Feature/Customers/CustomerDebtVoucherDetailTest.php`:
-1. `test_tthd_fallback_voucher_detail`: Verifies that querying a `TTHD` code without matching cashflow database entry returns a successful mock representation with the title `'Thanh toán hóa đơn'`.
+1. `test_tthd_fallback_voucher_detail`: Verifies that querying a `TTHD` code without matching cashflow database entry returns a successful mock representation with the title `'Thanh toán hóa đơn'`, status `'completed'`, and formatted date.
 2. `test_debt_history_contains_detail_available_and_virtual_payment_flags`: Verifies that `/customers/{customer}/debt-history` correctly returns `detail_available` (boolean) and `is_virtual_payment` flags matching their respective sources.
 
 ### Syntax Check
