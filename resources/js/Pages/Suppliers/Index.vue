@@ -1147,7 +1147,7 @@ const submitActivate = (supplier) => {
                                                         </div>
                                                     </div>
                                                     <div class="bg-white p-3 rounded shadow-sm border-l-4" :class="supplierDebt[supplier.id].summary.net_debt_amount >= 0 ? 'border-red-500' : 'border-green-500'">
-                                                        <div class="text-xs text-gray-500 font-semibold uppercase">Nợ ròng sau đối trừ (Net Debt)</div>
+                                                        <div class="text-xs text-gray-500 font-semibold uppercase">Vị thế ròng (Net Position)</div>
                                                         <div class="text-lg font-bold mt-1" :class="supplierDebt[supplier.id].summary.net_debt_amount >= 0 ? 'text-red-600' : 'text-green-600'">
                                                             {{ formatCurrency(supplierDebt[supplier.id].summary.net_debt_amount) }}
                                                         </div>
