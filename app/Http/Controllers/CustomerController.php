@@ -76,18 +76,32 @@ class CustomerController extends Controller
 
         // Partner type: customer | customer_supplier
         if ($request->filled('partner_type')) {
+            $hasIsSupplierColumn = Schema::hasColumn('customers', 'is_supplier');
             if ($request->partner_type === 'customer') {
-                $query->where('is_customer', true)->where(function ($q) {
-                    $q->where('is_supplier', false)->orWhereNull('is_supplier');
-                });
+                $query->where('is_customer', true);
+                if ($hasIsSupplierColumn) {
+                    $query->where(function ($q) {
+                        $q->where('is_supplier', false)->orWhereNull('is_supplier');
+                    });
+                }
             } elseif ($request->partner_type === 'customer_supplier') {
-                $query->where('is_customer', true)->where('is_supplier', true);
+                $query->where('is_customer', true);
+                if ($hasIsSupplierColumn) {
+                    $query->where('is_supplier', true);
+                } else {
+                    $query->whereRaw('0 = 1');
+                }
             }
         }
 
         // Net debt range: debt_amount - supplier_debt_amount
+        $hasSupplierDebtColumn = Schema::hasColumn('customers', 'supplier_debt_amount');
+        $supplierDebtExprForFilter = $hasSupplierDebtColumn
+            ? 'COALESCE(customers.supplier_debt_amount, 0)'
+            : '0';
+        $netDebtExpr = DB::raw("(COALESCE(customers.debt_amount, 0) - $supplierDebtExprForFilter)");
+
         if ($request->filled('net_debt_from') || $request->filled('net_debt_to')) {
-            $netDebtExpr = DB::raw('(COALESCE(debt_amount, 0) - COALESCE(supplier_debt_amount, 0))');
             if ($request->filled('net_debt_from')) {
                 $query->where($netDebtExpr, '>=', (float) $request->net_debt_from);
             }
@@ -98,7 +112,6 @@ class CustomerController extends Controller
 
         // Legacy has_debt shortcut (uses net debt)
         if ($request->filled('has_debt')) {
-            $netDebtExpr = DB::raw('(COALESCE(debt_amount, 0) - COALESCE(supplier_debt_amount, 0))');
             if ($request->has_debt === 'yes') {
                 $query->where($netDebtExpr, '>', 0);
             } elseif ($request->has_debt === 'no') {
@@ -205,6 +218,19 @@ class CustomerController extends Controller
         $this->configureCustomerFilters();
 
         $query = Customer::with('branch');
+        
+        $hasSupplierDebtColumn = Schema::hasColumn('customers', 'supplier_debt_amount');
+
+        // If request sorts by debt_amount, intercept and sort by net debt expression if supplier_debt_amount column exists
+        if ($request->input('sort_by') === 'debt_amount') {
+            $direction = strtolower($request->input('sort_direction', 'desc')) === 'asc' ? 'asc' : 'desc';
+            $supplierDebtExprForSort = $hasSupplierDebtColumn
+                ? 'COALESCE(customers.supplier_debt_amount, 0)'
+                : '0';
+            $query->orderByRaw("(COALESCE(customers.debt_amount, 0) - {$supplierDebtExprForSort}) {$direction}");
+            $request->merge(['sort_by' => null]);
+        }
+
         $this->applyAdvancedCustomerFilters($query, $request);
 
         // Clone query BEFORE paginate for filtered summary
@@ -212,9 +238,11 @@ class CustomerController extends Controller
 
         $customers = $query->paginate(15)->withQueryString();
 
-        $customers->getCollection()->transform(function ($customer) {
+        $customers->getCollection()->transform(function ($customer) use ($hasSupplierDebtColumn) {
             $customerDebt = (float) ($customer->debt_amount ?? 0);
-            $supplierDebt = (float) ($customer->supplier_debt_amount ?? 0);
+            $supplierDebt = $hasSupplierDebtColumn
+                ? (float) ($customer->supplier_debt_amount ?? 0)
+                : 0.0;
             $netDebt = $customerDebt - $supplierDebt;
 
             $customer->net_debt_amount = $netDebt;
@@ -235,17 +263,23 @@ class CustomerController extends Controller
             'customer_manage_by_branch' => Setting::get('customer_manage_by_branch', false),
         ];
 
+        $customerDebtExpr = 'COALESCE(customers.debt_amount, 0)';
+        $supplierDebtExpr = $hasSupplierDebtColumn
+            ? 'COALESCE(customers.supplier_debt_amount, 0)'
+            : '0';
+        $netDebtExpr = "($customerDebtExpr - $supplierDebtExpr)";
+
         // Summary from filtered query (not global)
-        $summaryRows = $summaryQuery->clone()
-            ->selectRaw("COALESCE(SUM(CASE WHEN (COALESCE(debt_amount, 0) - COALESCE(supplier_debt_amount, 0)) > 0 THEN (COALESCE(debt_amount, 0) - COALESCE(supplier_debt_amount, 0)) ELSE 0 END), 0) as total_positive_net_debt")
-            ->selectRaw("COALESCE(SUM(CASE WHEN (COALESCE(debt_amount, 0) - COALESCE(supplier_debt_amount, 0)) < 0 THEN -(COALESCE(debt_amount, 0) - COALESCE(supplier_debt_amount, 0)) ELSE 0 END), 0) as total_negative_net_debt")
+        $summaryRows = (clone $summaryQuery)
+            ->selectRaw("COALESCE(SUM(CASE WHEN $netDebtExpr > 0 THEN $netDebtExpr ELSE 0 END), 0) as total_positive_net_debt")
+            ->selectRaw("COALESCE(SUM(CASE WHEN $netDebtExpr < 0 THEN -($netDebtExpr) ELSE 0 END), 0) as total_negative_net_debt")
             ->first();
 
         $summary = [
             'total_debt' => (float) ($summaryRows->total_positive_net_debt ?? 0),
             'total_store_owes' => (float) ($summaryRows->total_negative_net_debt ?? 0),
-            'total_spent' => (float) $summaryQuery->clone()->sum('total_spent'),
-            'total_returns' => (float) $summaryQuery->clone()->sum('total_returns'),
+            'total_spent' => (float) (clone $summaryQuery)->sum('total_spent'),
+            'total_returns' => (float) (clone $summaryQuery)->sum('total_returns'),
         ];
 
         $capabilities = $this->buildCapabilities();
@@ -539,7 +573,8 @@ class CustomerController extends Controller
      */
     public function debtHistory(Customer $customer)
     {
-        $isDualRole = (bool) ($customer->is_customer && $customer->is_supplier);
+        $hasIsSupplierColumn = Schema::hasColumn('customers', 'is_supplier');
+        $isDualRole = (bool) ($customer->is_customer && ($hasIsSupplierColumn ? $customer->is_supplier : false));
 
         $typeLabels = [
             'sale'           => 'Bán hàng',
@@ -861,7 +896,10 @@ class CustomerController extends Controller
 
         // Recalculate combined running balance chronologically
         $customerDebt = (float) ($customer->debt_amount ?? 0);
-        $supplierDebt = (float) ($customer->supplier_debt_amount ?? 0);
+        $hasSupplierDebtColumn = Schema::hasColumn('customers', 'supplier_debt_amount');
+        $supplierDebt = $hasSupplierDebtColumn
+            ? (float) ($customer->supplier_debt_amount ?? 0)
+            : 0.0;
         $netDebt = $customerDebt - $supplierDebt;
 
         if ($isDualRole) {

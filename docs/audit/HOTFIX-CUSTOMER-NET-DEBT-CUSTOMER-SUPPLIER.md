@@ -106,3 +106,19 @@ Dựa trên kết quả chạy tinker audit thực tế:
 
 - **Đạt/chưa đạt**: Đạt.
 - **Có thể deploy Phase 1 chưa**: Có.
+
+## Incident production 500 sau deploy
+
+- **Thời điểm**: 11:23:36 30/05/2026
+- **URL lỗi**: `/customers`
+- **Commit đang chạy khi lỗi**: `b07418e6dddda1222a479018eb04785de91a81d0`
+- **Log Laravel lỗi gốc**: `Column not found: 1054 Unknown column 'supplier_debt_amount' in 'field list'`
+- **Root cause**: Bảng `customers` trên production chưa có cột `supplier_debt_amount` và `is_supplier` vì chưa chạy migration (Phase 1 không đổi DB), dẫn đến query select raw và where select raw bị crash do query trực tiếp cột không tồn tại.
+- **Hotfix đã làm**: Dùng `Schema::hasColumn('customers', 'supplier_debt_amount')` và `Schema::hasColumn('customers', 'is_supplier')` để guard tất cả các câu query select raw, filters, và mapping trong `CustomerController` và CLI command. Fallback về `0` hoặc `false` nếu cột thiếu.
+- **Có rollback không**: Không, sửa nóng trực tiếp qua guard an toàn.
+- **Commit sau hotfix**: `238b33f`
+- **Tests đã chạy**: `php artisan test tests/Feature/Customers/CustomerNetDebtTest.php` & `php artisan test --filter=CustomerDebt`
+- **Production QA**: [Sẽ cập nhật sau deploy]
+- **Có ảnh hưởng dữ liệu không**: Không
+- **Có chạy recalculate không**: Không
+

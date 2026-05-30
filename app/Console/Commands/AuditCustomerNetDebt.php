@@ -70,7 +70,8 @@ class AuditCustomerNetDebt extends Command
             $expectedNet = $expectedCustomerDebt - $expectedSupplierDebt;
 
             $currentDebt = (float) $customer->debt_amount;
-            $currentSupplierDebt = (float) $customer->supplier_debt_amount;
+            $hasSupplierDebtColumn = \Illuminate\Support\Facades\Schema::hasColumn('customers', 'supplier_debt_amount');
+            $currentSupplierDebt = $hasSupplierDebtColumn ? (float) $customer->supplier_debt_amount : 0.0;
             $currentNet = $currentDebt - $currentSupplierDebt;
 
             $delta = $expectedNet - $currentNet;
