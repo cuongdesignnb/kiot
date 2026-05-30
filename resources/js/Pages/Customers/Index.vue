@@ -1414,6 +1414,7 @@ const createdDateRange = computed({
             <!-- Summary Bar -->
             <div class="flex items-center gap-6 px-4 py-2 bg-blue-50 border-b border-blue-200 text-sm">
                 <div>Tổng nợ phải thu: <span class="font-bold text-red-600">{{ formatCurrency(summary?.total_debt || 0) }}</span></div>
+                <div v-if="summary?.total_store_owes > 0">Tổng mình phải trả: <span class="font-bold text-green-600">{{ formatCurrency(summary?.total_store_owes || 0) }}</span></div>
                 <div>Tổng bán: <span class="font-bold text-gray-800">{{ formatCurrency(summary?.total_spent || 0) }}</span></div>
                 <div>Tổng bán trừ trả: <span class="font-bold text-gray-800">{{ formatCurrency((summary?.total_spent || 0) - (summary?.total_returns || 0)) }}</span></div>
             </div>
@@ -1429,7 +1430,7 @@ const createdDateRange = computed({
                             <SortableHeader label="Mã khách hàng" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3" @sort="handleSort" />
                             <SortableHeader label="Tên khách hàng" field="name" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3" @sort="handleSort" />
                             <SortableHeader label="Điện thoại" field="phone" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3" @sort="handleSort" />
-                            <SortableHeader label="Nợ hiện tại" field="debt_amount" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
+                            <SortableHeader label="Nợ hiện tại" field="debt_amount" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-3 text-right" title="Nợ ròng = Nợ khách hàng - Nợ NCC" @sort="handleSort" />
                             <th class="px-4 py-3 text-right">Số ngày nợ</th>
                             <SortableHeader label="Tổng bán" field="total_spent" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
                             <th class="px-4 py-3 text-right">
@@ -1444,7 +1445,12 @@ const createdDateRange = computed({
                             <td></td>
                             <td></td>
                             <td></td>
-                            <td class="px-4 py-3 text-right text-red-600">{{ formatCurrency(summary?.total_debt || 0) }}</td>
+                            <td class="px-4 py-3 text-right">
+                                <div class="text-red-600">{{ formatCurrency(summary?.total_debt || 0) }}</div>
+                                <div v-if="summary?.total_store_owes > 0" class="text-[11px] text-green-600 font-normal">
+                                    Nợ lại: {{ formatCurrency(summary?.total_store_owes || 0) }}
+                                </div>
+                            </td>
                             <td></td>
                             <td class="px-4 py-3 text-right text-gray-700">{{ formatCurrency(summary?.total_spent || 0) }}</td>
                             <td class="px-4 py-3 text-right text-gray-700">{{ formatCurrency((summary?.total_spent || 0) - (summary?.total_returns || 0)) }}</td>
@@ -1487,8 +1493,23 @@ const createdDateRange = computed({
                                 <td class="px-4 py-3">{{ customer.name }}</td>
                                 <td class="px-4 py-3">{{ customer.phone }}</td>
                                 <td class="px-4 py-3 text-right">
-                                    <div :class="customerNetDebt(customer) != 0 ? (customerNetDebt(customer) < 0 ? 'text-red-600 font-semibold' : '') : ''">
+                                    <div
+                                        :class="
+                                            customerNetDebt(customer) > 0
+                                                ? 'text-red-600 font-semibold'
+                                                : customerNetDebt(customer) < 0
+                                                    ? 'text-green-600 font-semibold'
+                                                    : 'text-gray-700'
+                                        "
+                                        title="Nợ ròng = Nợ khách hàng - Nợ NCC"
+                                    >
                                         {{ formatCurrency(customerNetDebt(customer)) }}
+                                        <span
+                                            v-if="customerNetDebt(customer) < 0"
+                                            class="block text-[11px] text-green-600"
+                                        >
+                                            Mình nợ lại
+                                        </span>
                                     </div>
                                 </td>
                                 <td class="px-4 py-3 text-right text-gray-400">
@@ -2186,7 +2207,14 @@ const createdDateRange = computed({
                                                     debtHistoryData[customer.id]
                                                 "
                                             >
-
+                                                <!-- Reconcile Warning -->
+                                                <div
+                                                    v-if="debtHistoryData[customer.id].reconcile?.has_mismatch"
+                                                    class="mb-3 p-3 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded text-xs flex items-center gap-2"
+                                                >
+                                                    <svg class="w-4 h-4 text-yellow-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                                                    <span>Lịch sử công nợ đang lệch với Nợ hiện tại. Cần chạy đối soát trước khi cập nhật dữ liệu.</span>
+                                                </div>
 
                                                 <!-- Filter dropdown -->
                                                 <div
@@ -2334,19 +2362,17 @@ const createdDateRange = computed({
                                                             <td
                                                                 class="px-3 py-2 text-right font-medium"
                                                                 :class="
-                                                                    entry.amount >
-                                                                    0
+                                                                    (entry.customer_effect ?? entry.amount) > 0
                                                                         ? 'text-red-600'
-                                                                        : entry.amount <
-                                                                            0
-                                                                          ? 'text-green-600'
-                                                                          : 'text-gray-500'
+                                                                        : (entry.customer_effect ?? entry.amount) < 0
+                                                                            ? 'text-green-600'
+                                                                            : 'text-gray-500'
                                                                 "
                                                             >
                                                                 {{
-                                                                    (entry.amount > 0 ? '+' : '') +
+                                                                    ((entry.customer_effect ?? entry.amount) > 0 ? '+' : '') +
                                                                     formatCurrency(
-                                                                        entry.amount,
+                                                                        entry.customer_effect ?? entry.amount
                                                                     )
                                                                 }}
                                                             </td>

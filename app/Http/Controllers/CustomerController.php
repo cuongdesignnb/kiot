@@ -212,6 +212,23 @@ class CustomerController extends Controller
 
         $customers = $query->paginate(15)->withQueryString();
 
+        $customers->getCollection()->transform(function ($customer) {
+            $customerDebt = (float) ($customer->debt_amount ?? 0);
+            $supplierDebt = (float) ($customer->supplier_debt_amount ?? 0);
+            $netDebt = $customerDebt - $supplierDebt;
+
+            $customer->net_debt_amount = $netDebt;
+            $customer->net_debt_direction = $netDebt > 0
+                ? 'customer_owes_store'
+                : ($netDebt < 0 ? 'store_owes_customer_supplier' : 'settled');
+
+            $customer->net_debt_label = $netDebt > 0
+                ? 'Khách còn nợ'
+                : ($netDebt < 0 ? 'Mình còn nợ lại' : 'Hết nợ');
+
+            return $customer;
+        });
+
         $customerSettings = [
             'customer_debt_warning' => Setting::get('customer_debt_warning', true),
             'customer_is_vendor' => Setting::get('customer_is_vendor', false),
@@ -219,8 +236,14 @@ class CustomerController extends Controller
         ];
 
         // Summary from filtered query (not global)
+        $summaryRows = $summaryQuery->clone()
+            ->selectRaw("COALESCE(SUM(CASE WHEN (COALESCE(debt_amount, 0) - COALESCE(supplier_debt_amount, 0)) > 0 THEN (COALESCE(debt_amount, 0) - COALESCE(supplier_debt_amount, 0)) ELSE 0 END), 0) as total_positive_net_debt")
+            ->selectRaw("COALESCE(SUM(CASE WHEN (COALESCE(debt_amount, 0) - COALESCE(supplier_debt_amount, 0)) < 0 THEN -(COALESCE(debt_amount, 0) - COALESCE(supplier_debt_amount, 0)) ELSE 0 END), 0) as total_negative_net_debt")
+            ->first();
+
         $summary = [
-            'total_debt' => (float) $summaryQuery->clone()->where('debt_amount', '>', 0)->sum('debt_amount'),
+            'total_debt' => (float) ($summaryRows->total_positive_net_debt ?? 0),
+            'total_store_owes' => (float) ($summaryRows->total_negative_net_debt ?? 0),
             'total_spent' => (float) $summaryQuery->clone()->sum('total_spent'),
             'total_returns' => (float) $summaryQuery->clone()->sum('total_returns'),
         ];
@@ -836,18 +859,56 @@ class CustomerController extends Controller
             ->sortByDesc(fn($e) => $e['recorded_at'] ?? $e['created_at'])
             ->values();
 
+        // Recalculate combined running balance chronologically
+        $customerDebt = (float) ($customer->debt_amount ?? 0);
+        $supplierDebt = (float) ($customer->supplier_debt_amount ?? 0);
+        $netDebt = $customerDebt - $supplierDebt;
+
+        if ($isDualRole) {
+            $combinedAsc = $combined->sortBy(function ($e) {
+                $date = $e['recorded_at'] ?? $e['created_at'];
+                return $date instanceof \Carbon\Carbon ? $date->timestamp : strtotime((string) $date);
+            })->values();
+
+            $runningBalance = 0.0;
+            $combinedMapped = $combinedAsc->map(function ($entry) use (&$runningBalance) {
+                $runningBalance += (float) ($entry['customer_effect'] ?? 0);
+                $entry['balance'] = $runningBalance;
+                return $entry;
+            });
+            $combined = $combinedMapped->reverse()->values();
+            $computedBalance = $runningBalance;
+        } else {
+            $computedBalance = $customerDebt;
+        }
+
+        $reconcile = [
+            'current_net_debt' => $netDebt,
+            'computed_balance' => $computedBalance,
+            'has_mismatch' => $isDualRole && abs($computedBalance - $netDebt) >= 0.01,
+            'message' => 'Computed history balance differs from materialized net debt. Run dry-run reconciliation before any data update.',
+        ];
+
         return response()->json([
             'entries'         => $combined,
             'ledger_entries'  => $ledgerEntriesRaw,
             'legacy_entries'  => $legacyEntries,
+            'reconcile'       => $reconcile,
             'summary' => [
-                'net'             => (float) $customer->debt_amount,
-                'is_dual_role'    => $isDualRole,
-                'source'          => 'hybrid',
-                'count'           => $combined->count(),
-                'ledger_count'    => $ledgerEntriesRaw->count(),
-                'legacy_count'    => $legacyEntries->count(),
-                'dedup_skipped'   => $legacyEntries->count() - $legacyFiltered->count(),
+                'net'                  => $netDebt,
+                'current_debt'         => $netDebt,
+                'customer_debt_amount' => $customerDebt,
+                'supplier_debt_amount' => $supplierDebt,
+                'net_debt_amount'      => $netDebt,
+                'net_debt_direction'   => $netDebt > 0
+                    ? 'customer_owes_store'
+                    : ($netDebt < 0 ? 'store_owes_customer_supplier' : 'settled'),
+                'is_dual_role'         => $isDualRole,
+                'source'               => 'hybrid',
+                'count'                => $combined->count(),
+                'ledger_count'         => $ledgerEntriesRaw->count(),
+                'legacy_count'         => $legacyEntries->count(),
+                'dedup_skipped'        => $legacyEntries->count() - $legacyFiltered->count(),
             ],
         ]);
     }
