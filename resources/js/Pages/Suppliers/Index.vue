@@ -1132,6 +1132,28 @@ const submitActivate = (supplier) => {
                                         <template v-if="getSupplierTab(supplier.id) === 'debt'">
                                             <div v-if="supplierDataLoading[supplier.id]" class="text-center py-8 text-gray-400">Đang tải...</div>
                                             <template v-else>
+                                                <!-- Dual-role partner summary cards -->
+                                                <div v-if="supplier.is_customer && supplierDebt[supplier.id]?.summary" class="grid grid-cols-3 gap-4 mb-4 bg-gray-50 p-4 rounded-lg border border-gray-200">
+                                                    <div class="bg-white p-3 rounded shadow-sm border-l-4 border-blue-500">
+                                                        <div class="text-xs text-gray-500 font-semibold uppercase">Nợ khách phải thu (Receivable)</div>
+                                                        <div class="text-lg font-bold text-gray-800 mt-1">
+                                                            {{ formatCurrency(supplierDebt[supplier.id].summary.customer_debt_amount) }}
+                                                        </div>
+                                                    </div>
+                                                    <div class="bg-white p-3 rounded shadow-sm border-l-4 border-orange-500">
+                                                        <div class="text-xs text-gray-500 font-semibold uppercase">Nợ cần trả NCC (Payable)</div>
+                                                        <div class="text-lg font-bold text-gray-800 mt-1">
+                                                            {{ formatCurrency(supplierDebt[supplier.id].summary.supplier_debt_amount) }}
+                                                        </div>
+                                                    </div>
+                                                    <div class="bg-white p-3 rounded shadow-sm border-l-4" :class="supplierDebt[supplier.id].summary.net_debt_amount >= 0 ? 'border-red-500' : 'border-green-500'">
+                                                        <div class="text-xs text-gray-500 font-semibold uppercase">Nợ ròng sau đối trừ (Net Debt)</div>
+                                                        <div class="text-lg font-bold mt-1" :class="supplierDebt[supplier.id].summary.net_debt_amount >= 0 ? 'text-red-600' : 'text-green-600'">
+                                                            {{ formatCurrency(supplierDebt[supplier.id].summary.net_debt_amount) }}
+                                                        </div>
+                                                    </div>
+                                                </div>
+
                                                 <div class="flex justify-end mb-3">
                                                     <select v-model="debtFilter" class="border border-gray-300 rounded px-3 py-1.5 text-sm outline-none">
                                                         <option value="all">Tất cả giao dịch</option>

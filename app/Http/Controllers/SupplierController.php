@@ -610,11 +610,19 @@ class SupplierController extends Controller
         $supplier = Customer::findOrFail($id);
         $ledger = app(\App\Services\PartnerDebtLedgerService::class)->buildSupplierPayableLedger($supplier);
 
+        $hasSupplierColumn = \Illuminate\Support\Facades\Schema::hasColumn('customers', 'supplier_debt_amount');
+        $customerDebt = (float) ($supplier->debt_amount ?? 0);
+        $supplierDebt = $hasSupplierColumn ? (float) ($supplier->supplier_debt_amount ?? 0) : 0.0;
+        $netDebt = $customerDebt - $supplierDebt;
+
         return response()->json([
             'entries' => $ledger['entries'],
             'summary' => [
                 'net' => $ledger['closing_balance'],
-                'is_dual_role' => (bool) ($supplier->is_customer && $supplier->is_supplier),
+                'is_dual_role' => (bool) ($supplier->is_customer && ($hasSupplierColumn ? $supplier->is_supplier : false)),
+                'customer_debt_amount' => $customerDebt,
+                'supplier_debt_amount' => $supplierDebt,
+                'net_debt_amount' => $netDebt,
             ],
         ]);
     }

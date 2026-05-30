@@ -69,20 +69,35 @@
 5. `tests/Feature/OrderReturn/*` -> **PASS**
 6. `tests/Feature/Purchase/*` -> **PASS**
 
+## Kết quả đối chiếu Case thực tế "Anh Thanh-Thiên Phú" (Simulated)
+Dưới đây là bảng đối chiếu chi tiết được tạo bởi command `customers:reconcile-partner-ledger` chạy giả lập với dữ liệu của Anh Thanh-Thiên Phú:
+
+### Bảng tóm tắt đối soát
+| Metric | Giá trị trong DB (Cached) | Giá trị tính toán (Ledger) | Trạng thái |
+| :--- | :--- | :--- | :--- |
+| Nợ khách phải thu (Receivable) | 47.400.000,00đ | 47.400.000,00đ | ✅ Khớp (OK) |
+| Nợ phải trả NCC (Payable) | 75.000.000,00đ | 75.000.000,00đ | ✅ Khớp (OK) |
+| Nợ ròng sau đối trừ (Net Debt) | -27.600.000,00đ | -27.600.000,00đ | ✅ Khớp (OK) |
+
+### Lịch sử Ledger Chronological
+- **Số dư đầu kỳ / Gộp công nợ (`MERGE-CUSTOMER-141`)**: `+47.420.000đ` (tính vào Nợ khách phải thu)
+- **Chiết khấu thanh toán (`CKTT26052510573737`)**: `-20.000đ` (giảm trừ Nợ khách phải thu -> Nợ khách phải thu ròng = `+47.400.000đ`)
+- **Nhập hàng (Mirror từ NCC `PN...`)**: Tổng `-75.000.000đ` (giảm trừ nợ phải thu ròng xuống nợ ròng `-27.600.000đ`)
+- **Nợ cần trả NCC tại màn Nhà cung cấp**: Thể hiện đúng gross payable = `75.000.000đ`.
+- **Nợ ròng tại màn Khách hàng**: Thể hiện đúng net balance = `-27.600.000đ` (Doanh nghiệp đang nợ ngược lại đối tác 27.600.000đ).
+
 ## Manual QA
 - **Màn Nhà cung cấp**:
   1. Chọn đối tác kiêm NCC.
-  2. Cột `Nợ cần trả hiện tại` hiển thị `supplier_debt_amount`.
+  2. Cột `Nợ cần trả hiện tại` hiển thị `supplier_debt_amount` (75.000.000đ).
   3. Mở tab `Công nợ` chỉ thấy các giao dịch Nhập hàng (+), Thanh toán (-).
+  4. Hiển thị card tóm tắt (Receivable = 47.400.000đ, Payable = 75.000.000đ, Net = -27.600.000đ).
 - **Màn Khách hàng**:
   1. Chọn đối tác kiêm NCC đó.
-  2. Cột `Nợ hiện tại` hiển thị `debt_amount - supplier_debt_amount` (có thể âm).
-  3. Mở tab `Công nợ` thấy gộp cả các giao dịch NCC mirror với dấu đảo ngược, running balance phản ánh đúng số công nợ ròng (net balance).
-
-## Rủi ro còn lại
-- Không có.
+  2. Cột `Nợ hiện tại` hiển thị net ròng `debt_amount - supplier_debt_amount` = -27.600.000đ.
+  3. Mở tab `Công nợ` thấy gộp cả các giao dịch NCC mirror với dấu đảo ngược, running balance phản ánh đúng số công nợ ròng (net balance) là -27.600.000đ.
+  4. Hiển thị card tóm tắt (Receivable = 47.400.000đ, Payable = 75.000.000đ, Net = -27.600.000đ).
 
 ## Kết luận
-- **Đạt**: Đã khớp 100% các tiêu chí từ ảnh chụp thật KiotViet.
-- **Có thể deploy chưa**: Có.
-- **Cần làm tiếp**: Tiến hành commit, push code và triển khai deploy lên môi trường Production.
+- **Trạng thái đối soát**: **ĐẠT** (Không còn mismatch giữa số dư cached và ledger tính toán cho case Anh Thanh-Thiên Phú).
+- **Trạng thái deploy**: **Chưa deploy production**. Cần deploy lên môi trường test/staging/production của dự án và chạy Manual QA thực tế trên màn hình để xác nhận giao diện hiển thị đúng 100% trước khi nghiệm thu.

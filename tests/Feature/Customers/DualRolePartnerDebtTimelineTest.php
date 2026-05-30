@@ -289,4 +289,101 @@ class DualRolePartnerDebtTimelineTest extends TestCase
         // we have BOTH the customer-side DebtOffset and the supplier-side mirror offset!
         // Let's verify what the signs are.
     }
+
+    /**
+     * Bổ sung test riêng case Anh Thanh Thiên Phú
+     */
+    public function test_thien_phu_reconciliation_case(): void
+    {
+        $partner = Customer::create([
+            'code' => 'KH177727496998',
+            'name' => 'Anh Thanh-Thiên Phú',
+            'debt_amount' => 47400000,
+            'supplier_debt_amount' => 75000000,
+            'is_customer' => true,
+            'is_supplier' => true,
+        ]);
+
+        // 1) MERGE-CUSTOMER-141 +47.420.000đ
+        CustomerDebt::create([
+            'customer_id' => $partner->id,
+            'ref_code' => 'MERGE-CUSTOMER-141',
+            'amount' => 47420000,
+            'debt_total' => 47420000,
+            'type' => 'adjustment',
+            'note' => 'Gộp công nợ',
+            'recorded_at' => Carbon::parse('2026-05-20 09:00:00'),
+        ]);
+
+        // 2) CKTT -20.000đ
+        CustomerDebt::create([
+            'customer_id' => $partner->id,
+            'ref_code' => 'CKTT26052510573737',
+            'amount' => -20000,
+            'debt_total' => 47400000,
+            'type' => 'payment',
+            'note' => 'Chiết khấu thanh toán',
+            'recorded_at' => Carbon::parse('2026-05-21 09:00:00'),
+        ]);
+
+        // 3) Purchases (supplier side) total 75.000.000đ
+        $purchases = [
+            ['PN20260523105400', 62100000, '2026-05-23 10:54:00'],
+            ['PN20260523143050', 2100000, '2026-05-23 14:30:50'],
+            ['PN20260527150940', 5400000, '2026-05-27 15:09:40'],
+            ['PN20260527163153', 2700000, '2026-05-27 16:31:53'],
+            ['PN20260528090703', 2700000, '2026-05-28 09:07:03'],
+        ];
+
+        foreach ($purchases as [$code, $total, $date]) {
+            Purchase::create([
+                'code' => $code,
+                'supplier_id' => $partner->id,
+                'total_amount' => $total,
+                'paid_amount' => 0,
+                'debt_amount' => $total,
+                'status' => 'completed',
+                'purchase_date' => Carbon::parse($date),
+            ]);
+        }
+
+        // Test customer net ledger history endpoint
+        $response = $this->actingAs($this->admin)->getJson("/customers/{$partner->id}/debt-history");
+        $response->assertOk();
+
+        $data = $response->json();
+        
+        // Assert summaries
+        $this->assertEquals(47400000, $data['summary']['customer_debt_amount']);
+        $this->assertEquals(75000000, $data['summary']['supplier_debt_amount']);
+        $this->assertEquals(-27600000, $data['summary']['net_debt_amount']);
+        $this->assertEquals(-27600000, $data['reconcile']['computed_balance']);
+        $this->assertFalse($data['reconcile']['has_mismatch']);
+
+        // Assert entries are correct
+        $entries = collect($data['entries']);
+        
+        $merge = $entries->firstWhere('code', 'MERGE-CUSTOMER-141');
+        $this->assertNotNull($merge);
+        $this->assertEquals('Số dư đầu kỳ / Gộp công nợ', $merge['display_type']);
+        $this->assertEquals(47420000, $merge['customer_effect']);
+        $this->assertTrue($merge['affects_debt_balance']);
+
+        $cktt = $entries->firstWhere('code', 'CKTT26052510573737');
+        $this->assertNotNull($cktt);
+        $this->assertEquals('Chiết khấu thanh toán', $cktt['display_type']);
+        $this->assertEquals(-20000, $cktt['customer_effect']);
+        $this->assertTrue($cktt['affects_debt_balance']);
+
+        // Test supplier ledger endpoint
+        $supResponse = $this->actingAs($this->admin)->getJson("/api/suppliers/{$partner->id}/debt-transactions");
+        $supResponse->assertOk();
+        $supData = $supResponse->json();
+        $this->assertEquals(75000000, $supData['summary']['net']);
+
+        // Run the console command dry-run for this customer to output the reconciliation table
+        $this->artisan('customers:reconcile-partner-ledger', ['customer_id' => $partner->id])
+            ->assertExitCode(0);
+    }
 }
+
