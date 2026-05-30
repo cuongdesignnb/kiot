@@ -607,6 +607,8 @@ class CustomerController extends Controller
             ->limit(200)
             ->get();
 
+        $hasCustomerLedger = $debts->isNotEmpty();
+
         $discountCodes = $debts->pluck('ref_code')
             ->filter(fn ($code) => str_starts_with((string) $code, 'CKTT'))
             ->values();
@@ -714,6 +716,8 @@ class CustomerController extends Controller
                 'type_raw'        => $typeRaw,
                 'amount'          => $amount,
                 'customer_effect' => $amount,
+                'affects_debt_balance' => true,
+                'badge_label'     => 'Ledger',
                 'debt_total'      => $balance,
                 'balance'         => $balance,
                 'note'            => $d->note,
@@ -763,9 +767,13 @@ class CustomerController extends Controller
                 'code' => $inv->code,
                 'type' => 'Bán hàng',
                 'amount' => (float) $inv->total,
-                'customer_effect' => (float) $inv->total,
+                'customer_effect' => $hasCustomerLedger ? 0.0 : (float) $inv->total,
+                'affects_debt_balance' => !$hasCustomerLedger,
+                'balance_note' => $hasCustomerLedger ? 'Không tính lại công nợ vì đã có ledger customer_debts.' : null,
+                'badge_label' => $hasCustomerLedger ? 'Tham khảo' : 'Chứng từ cũ',
+                'badge_title' => $hasCustomerLedger ? 'Đã được phản ánh trong ledger công nợ' : null,
                 'created_at' => $inv->created_at,
-                'source' => 'legacy',
+                'source' => $hasCustomerLedger ? 'reference' : 'legacy',
                 'detail_available' => true,
             ]);
             if ($inv->customer_paid > 0) {
@@ -774,9 +782,13 @@ class CustomerController extends Controller
                     'code' => 'TTHD' . preg_replace('/^HD/', '', $inv->code),
                     'type' => 'Thanh toán',
                     'amount' => (float) $inv->customer_paid,
-                    'customer_effect' => -(float) $inv->customer_paid,
+                    'customer_effect' => $hasCustomerLedger ? 0.0 : -(float) $inv->customer_paid,
+                    'affects_debt_balance' => !$hasCustomerLedger,
+                    'balance_note' => $hasCustomerLedger ? 'Thanh toán đã được phản ánh trong ledger công nợ.' : null,
+                    'badge_label' => $hasCustomerLedger ? 'Tham khảo' : 'Thanh toán HĐ',
+                    'badge_title' => $hasCustomerLedger ? 'Thanh toán đã được phản ánh trong ledger công nợ' : null,
                     'created_at' => $inv->created_at,
-                    'source' => 'legacy',
+                    'source' => $hasCustomerLedger ? 'reference' : 'legacy',
                     'is_virtual_payment' => true,
                     'detail_available' => true,
                 ]);
@@ -800,9 +812,13 @@ class CustomerController extends Controller
                 'code' => $cf->code,
                 'type' => $cf->reference_type === 'OrderReturn' ? 'Trả hàng' : 'Thanh toán',
                 'amount' => (float) $cf->amount,
-                'customer_effect' => -(float) $cf->amount,
+                'customer_effect' => $hasCustomerLedger ? 0.0 : -(float) $cf->amount,
+                'affects_debt_balance' => !$hasCustomerLedger,
+                'balance_note' => $hasCustomerLedger ? 'Giao dịch đã được phản ánh trong ledger công nợ.' : null,
+                'badge_label' => $hasCustomerLedger ? 'Tham khảo' : 'Chứng từ cũ',
+                'badge_title' => $hasCustomerLedger ? 'Đã được phản ánh trong ledger công nợ' : null,
                 'created_at' => $cf->created_at,
-                'source' => 'legacy',
+                'source' => $hasCustomerLedger ? 'reference' : 'legacy',
                 'detail_available' => true,
             ]);
         }
@@ -820,6 +836,9 @@ class CustomerController extends Controller
                     'type' => 'Nhập hàng',
                     'amount' => (float) $p->total_amount,
                     'customer_effect' => -(float) $p->total_amount,
+                    'affects_debt_balance' => true,
+                    'balance_note' => null,
+                    'badge_label' => 'Phiếu nhập',
                     'created_at' => $p->created_at,
                     'source' => 'legacy',
                     'detail_available' => true,
@@ -831,6 +850,9 @@ class CustomerController extends Controller
                         'type' => 'TT nhập hàng',
                         'amount' => (float) $p->paid_amount,
                         'customer_effect' => (float) $p->paid_amount,
+                        'affects_debt_balance' => true,
+                        'balance_note' => null,
+                        'badge_label' => 'Chứng từ cũ',
                         'created_at' => $p->created_at,
                         'source' => 'legacy',
                         'detail_available' => false,
@@ -850,6 +872,9 @@ class CustomerController extends Controller
                     'type' => 'Trả hàng nhập',
                     'amount' => (float) $pr->total_amount,
                     'customer_effect' => (float) $pr->total_amount,
+                    'affects_debt_balance' => true,
+                    'balance_note' => null,
+                    'badge_label' => 'Trả hàng',
                     'created_at' => $pr->created_at,
                     'source' => 'legacy',
                     'detail_available' => false,
@@ -867,9 +892,13 @@ class CustomerController extends Controller
                     'code' => $stx->code,
                     'type' => $stx->type === 'payment' ? 'TT công nợ NCC' : ($stx->type === 'adjustment' ? 'Điều chỉnh' : ($stx->type === 'discount' ? 'Chiết khấu TT' : $stx->type)),
                     'amount' => abs((float) $stx->amount),
-                    'customer_effect' => -(float) $stx->amount,
+                    'customer_effect' => 0.0,
+                    'affects_debt_balance' => false,
+                    'balance_note' => 'Không tính vào công nợ NCC vì đã sử dụng thông tin từ phiếu nhập.',
+                    'badge_label' => 'Tham khảo',
+                    'badge_title' => 'Đã được phản ánh trong chi tiết phiếu nhập/trả hàng',
                     'created_at' => $stx->created_at,
-                    'source' => 'legacy',
+                    'source' => 'reference',
                     'detail_available' => false,
                 ]);
             }
@@ -879,8 +908,12 @@ class CustomerController extends Controller
         $legacySorted = $legacyEntries->sortBy('created_at')->values();
         $bal = 0.0;
         $legacySorted = $legacySorted->map(function ($e) use (&$bal) {
-            $bal += (float) ($e['customer_effect'] ?? 0);
-            $e['balance'] = $bal;
+            if (($e['affects_debt_balance'] ?? true) === true) {
+                $bal += (float) ($e['customer_effect'] ?? 0);
+                $e['balance'] = $bal;
+            } else {
+                $e['balance'] = null;
+            }
             return $e;
         });
         $legacyEntries = $legacySorted->reverse()->values();
@@ -911,8 +944,12 @@ class CustomerController extends Controller
 
             $runningBalance = 0.0;
             $combinedMapped = $combinedAsc->map(function ($entry) use (&$runningBalance) {
-                $runningBalance += (float) ($entry['customer_effect'] ?? 0);
-                $entry['balance'] = $runningBalance;
+                if (($entry['affects_debt_balance'] ?? true) === true) {
+                    $runningBalance += (float) ($entry['customer_effect'] ?? 0);
+                    $entry['balance'] = $runningBalance;
+                } else {
+                    $entry['balance'] = null;
+                }
                 return $entry;
             });
             $combined = $combinedMapped->reverse()->values();
@@ -924,8 +961,10 @@ class CustomerController extends Controller
         $reconcile = [
             'current_net_debt' => $netDebt,
             'computed_balance' => $computedBalance,
-            'has_mismatch' => $isDualRole && abs($computedBalance - $netDebt) >= 0.01,
-            'message' => 'Computed history balance differs from materialized net debt. Run dry-run reconciliation before any data update.',
+            'has_mismatch' => abs($computedBalance - $netDebt) >= 0.01,
+            'message' => abs($computedBalance - $netDebt) >= 0.01
+                ? 'Lịch sử công nợ đang lệch với Nợ hiện tại. Cần chạy đối soát trước khi cập nhật dữ liệu.'
+                : null,
         ];
 
         return response()->json([

@@ -2344,7 +2344,12 @@ const createdDateRange = computed({
                                                             >
                                                                 <span>{{ entry.type }}</span>
                                                                 <span
-                                                                    v-if="entry.is_virtual_payment"
+                                                                    v-if="entry.badge_label === 'Tham khảo' || entry.affects_debt_balance === false"
+                                                                    class="ml-1 inline-block text-[10px] font-semibold bg-gray-100 text-gray-500 border border-gray-200 px-1.5 py-0.5 rounded"
+                                                                    :title="entry.badge_title || 'Đã được phản ánh trong ledger công nợ'"
+                                                                >Tham khảo</span>
+                                                                <span
+                                                                    v-else-if="entry.is_virtual_payment"
                                                                     class="ml-1 inline-block text-[10px] font-semibold bg-green-50 text-green-700 border border-green-200 px-1.5 py-0.5 rounded"
                                                                     title="Thanh toán trực tiếp khi tạo hóa đơn"
                                                                 >Thanh toán HĐ</span>
@@ -2362,37 +2367,44 @@ const createdDateRange = computed({
                                                             <td
                                                                 class="px-3 py-2 text-right font-medium"
                                                                 :class="
-                                                                    (entry.customer_effect ?? entry.amount) > 0
-                                                                        ? 'text-red-600'
-                                                                        : (entry.customer_effect ?? entry.amount) < 0
-                                                                            ? 'text-green-600'
-                                                                            : 'text-gray-500'
+                                                                    entry.affects_debt_balance === false
+                                                                        ? 'text-gray-400 font-normal'
+                                                                        : (entry.customer_effect ?? entry.amount) > 0
+                                                                            ? 'text-red-600'
+                                                                            : (entry.customer_effect ?? entry.amount) < 0
+                                                                                ? 'text-green-600'
+                                                                                : 'text-gray-500'
                                                                 "
+                                                                :title="entry.balance_note"
                                                             >
                                                                 {{
-                                                                    ((entry.customer_effect ?? entry.amount) > 0 ? '+' : '') +
+                                                                    (entry.affects_debt_balance === false ? '' : ((entry.customer_effect ?? entry.amount) > 0 ? '+' : '')) +
                                                                     formatCurrency(
-                                                                        entry.customer_effect ?? entry.amount
+                                                                        entry.affects_debt_balance === false ? entry.amount : (entry.customer_effect ?? entry.amount)
                                                                     )
                                                                 }}
                                                             </td>
                                                             <td
                                                                 class="px-3 py-2 text-right font-medium"
                                                                 :class="
-                                                                    entry.balance >
-                                                                    0
-                                                                        ? 'text-red-600'
-                                                                        : entry.balance <
-                                                                            0
-                                                                          ? 'text-green-600'
-                                                                          : 'text-gray-500'
+                                                                    entry.affects_debt_balance === false
+                                                                        ? 'text-gray-400 font-normal'
+                                                                        : entry.balance > 0
+                                                                            ? 'text-red-600'
+                                                                            : entry.balance < 0
+                                                                              ? 'text-green-600'
+                                                                              : 'text-gray-500'
                                                                 "
+                                                                :title="entry.affects_debt_balance === false ? 'Không tính vào Nợ hiện tại' : ''"
                                                             >
-                                                                {{
-                                                                    formatCurrency(
-                                                                        entry.balance,
-                                                                    )
-                                                                }}
+                                                                <span v-if="entry.affects_debt_balance === false">—</span>
+                                                                <span v-else>
+                                                                    {{
+                                                                        formatCurrency(
+                                                                            entry.balance,
+                                                                        )
+                                                                    }}
+                                                                </span>
                                                             </td>
                                                         </tr>
                                                     </tbody>
