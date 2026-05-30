@@ -116,7 +116,9 @@ class PartnerFinancialTimelineTest extends TestCase
 
         $legacyInvoice = $entries->firstWhere('code', 'HD177932991721');
         $this->assertFalse($legacyInvoice['affects_debt_balance']);
-        $this->assertEquals('Tham khảo', $legacyInvoice['badge_label']);
+        $this->assertEquals('Đã hạch toán', $legacyInvoice['badge_label']);
+        $this->assertStringContainsString('không cộng lại', $legacyInvoice['balance_note']);
+        $this->assertNotEmpty($legacyInvoice['time']);
         $this->assertEquals(0, $legacyInvoice['customer_effect']);
 
         $purchase = $entries->firstWhere('code', 'PN20260523105400');
@@ -231,8 +233,8 @@ class PartnerFinancialTimelineTest extends TestCase
         $payment = collect($this->getDebtHistory($customer)['entries'])->firstWhere('code', 'TTHD7200000');
 
         $this->assertFalse($payment['affects_debt_balance']);
-        $this->assertEquals('Tham khảo', $payment['badge_label']);
-        $this->assertStringContainsString('ledger', $payment['balance_note']);
+        $this->assertEquals('Đã hạch toán', $payment['badge_label']);
+        $this->assertStringContainsString('không cộng lại', $payment['balance_note']);
     }
 
     public function test_tthd_without_ledger_affects_balance(): void
@@ -254,6 +256,8 @@ class PartnerFinancialTimelineTest extends TestCase
 
         $this->assertEquals(7200000, $entries->firstWhere('code', 'HD7200001')['customer_effect']);
         $this->assertEquals(-7200000, $entries->firstWhere('code', 'TTHD7200001')['customer_effect']);
+        $this->assertEquals('Chứng từ cũ', $entries->firstWhere('code', 'HD7200001')['badge_label']);
+        $this->assertEquals('Thanh toán HĐ', $entries->firstWhere('code', 'TTHD7200001')['badge_label']);
         $this->assertEquals(0, $data['reconcile']['computed_balance']);
     }
 
@@ -280,6 +284,7 @@ class PartnerFinancialTimelineTest extends TestCase
 
         $this->assertEquals(-10000000, $entries->firstWhere('code', 'PN-PARTIAL-1')['customer_effect']);
         $this->assertEquals(4000000, $entries->firstWhere('display_type', 'Thanh toán NCC')['customer_effect']);
+        $this->assertNotEmpty($entries->firstWhere('code', 'PN-PARTIAL-1')['time']);
         $this->assertEquals(-6000000, $data['reconcile']['computed_balance']);
     }
 
@@ -428,6 +433,54 @@ class PartnerFinancialTimelineTest extends TestCase
         $this->assertEquals(1000000, $data['reconcile']['computed_balance']);
         $this->assertEquals(1000000, $entry['debt_total']);
         $this->assertEquals(1000000, $entry['ledger_debt_total']);
+    }
+
+    public function test_timeline_entries_expose_time_used_for_sorting(): void
+    {
+        $customer = $this->createCustomer([
+            'debt_amount' => 1000000,
+            'supplier_debt_amount' => 2000000,
+            'is_supplier' => true,
+        ]);
+
+        CustomerDebt::create([
+            'customer_id' => $customer->id,
+            'ref_code' => 'LEDGER-TIME-1',
+            'amount' => 1000000,
+            'debt_total' => 1000000,
+            'type' => 'adjustment',
+            'recorded_at' => Carbon::parse('2026-05-01 09:00:00'),
+        ]);
+
+        Invoice::create([
+            'code' => 'HD-TIME-1',
+            'customer_id' => $customer->id,
+            'subtotal' => 1000000,
+            'discount' => 0,
+            'total' => 1000000,
+            'customer_paid' => 500000,
+            'status' => 'Hoàn thành',
+            'transaction_date' => Carbon::parse('2026-05-02 10:00:00'),
+        ]);
+
+        Purchase::create([
+            'code' => 'PN-TIME-1',
+            'supplier_id' => $customer->id,
+            'total_amount' => 2000000,
+            'paid_amount' => 0,
+            'debt_amount' => 2000000,
+            'status' => 'completed',
+            'purchase_date' => Carbon::parse('2026-05-03 11:00:00'),
+        ]);
+
+        $entries = collect($this->getDebtHistory($customer)['entries']);
+
+        foreach (['LEDGER-TIME-1', 'HD-TIME-1', 'TTHD-TIME-1', 'PN-TIME-1'] as $code) {
+            $entry = $entries->firstWhere('code', $code);
+            $this->assertNotNull($entry, "Missing timeline entry {$code}");
+            $this->assertNotEmpty($entry['time'], "Timeline entry {$code} must expose time");
+            $this->assertArrayHasKey('created_at', $entry);
+        }
     }
 
     private function createCustomer(array $overrides = []): Customer

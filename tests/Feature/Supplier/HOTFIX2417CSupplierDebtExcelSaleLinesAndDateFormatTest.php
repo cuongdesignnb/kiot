@@ -15,9 +15,8 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 use Tests\TestCase;
 
 /**
- * HOTFIX 24.17C — Excel debt export must surface sale-line product
- * info, and the modal must speak Vietnamese dd/mm/yyyy without ever
- * letting the backend misread it as US M/D/Y.
+ * HOTFIX 24.17C / Kiot standard follow-up: supplier debt export keeps
+ * Vietnamese dd/mm/yyyy handling, but must not include customer-side sale lines.
  */
 class HOTFIX2417CSupplierDebtExcelSaleLinesAndDateFormatTest extends TestCase
 {
@@ -131,8 +130,8 @@ class HOTFIX2417CSupplierDebtExcelSaleLinesAndDateFormatTest extends TestCase
         }
     }
 
-    // ── TC-01 — sale detail rows show product code + name ──
-    public function test_invoice_sale_detail_lines_show_product_code_and_name(): void
+    // TC-01 - supplier debt export must not include customer-side sale details
+    public function test_invoice_sale_detail_lines_are_not_exported_in_supplier_debt(): void
     {
         $admin   = $this->admin();
         $partner = $this->dualRolePartner();
@@ -153,14 +152,13 @@ class HOTFIX2417CSupplierDebtExcelSaleLinesAndDateFormatTest extends TestCase
         foreach ($cells as $row) {
             foreach ($row as $val) $flat .= "\t" . (string) $val;
         }
-        $this->assertStringContainsString('SKU-WH1000XM5', $flat, 'product SKU must appear on the detail row');
-        $this->assertStringContainsString('Tai nghe Sony WH-1000XM5', $flat, 'product name must appear on the detail row');
-        // quantity, price, line_total should all show up
-        $this->assertStringContainsString('16000000', $flat, 'line_total (qty*price) must appear');
+        $this->assertStringNotContainsString('SKU-WH1000XM5', $flat, 'customer-side sale SKU must not appear in supplier debt export');
+        $this->assertStringNotContainsString('Tai nghe Sony WH-1000XM5', $flat, 'customer-side sale product must not appear in supplier debt export');
+        $this->assertStringNotContainsString('16000000', $flat, 'customer-side sale total must not appear in supplier debt export');
     }
 
-    // ── TC-02 — multi-item invoice exports every line ──
-    public function test_invoice_sale_multiple_items_are_all_exported(): void
+    // TC-02 - multi-item customer invoice is still excluded from supplier debt
+    public function test_invoice_sale_multiple_items_are_all_excluded_from_supplier_debt(): void
     {
         $admin   = $this->admin();
         $partner = $this->dualRolePartner();
@@ -182,8 +180,8 @@ class HOTFIX2417CSupplierDebtExcelSaleLinesAndDateFormatTest extends TestCase
         foreach ($cells as $row) {
             foreach ($row as $val) $flat .= "\t" . (string) $val;
         }
-        $this->assertStringContainsString('Bàn phím cơ Keychron K8', $flat);
-        $this->assertStringContainsString('Chuột Logitech MX Master 3S', $flat);
+        $this->assertStringNotContainsString('Bàn phím cơ Keychron K8', $flat);
+        $this->assertStringNotContainsString('Chuột Logitech MX Master 3S', $flat);
     }
 
     // ── TC-03 — backend accepts dd/mm/yyyy custom date ──

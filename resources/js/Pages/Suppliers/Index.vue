@@ -18,11 +18,12 @@ const formatDateTime = (val) => {
     return d.toLocaleDateString('vi-VN') + ' ' + d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 };
 
-// Unified NET supplier balance (dương = DN nợ NCC, âm = NCC nợ DN)
+const supplierEntryDisplayTime = (entry) =>
+    entry?.time || entry?.recorded_at || entry?.created_at || entry?.date || '';
+
+// Supplier screen shows pure payable debt: positive = company owes supplier.
 const supplierNetDebt = (supplier) => {
-    const supplierDebt = Number(supplier.supplier_debt_amount) || 0;
-    const customerDebt = Number(supplier.debt_amount) || 0;
-    return supplierDebt - customerDebt;
+    return Number(supplier.supplier_debt_amount) || 0;
 };
 
 const props = defineProps({
@@ -405,8 +406,8 @@ const sortedSupplierDebt = (supplierId) => {
     const data = filteredDebt(supplierId);
     const sort = getSupplierTabSort(supplierId, 'debt');
     return [...data].sort((a, b) => {
-        const av = parseSupplierTabTime(a.created_at || a.date);
-        const bv = parseSupplierTabTime(b.created_at || b.date);
+        const av = parseSupplierTabTime(supplierEntryDisplayTime(a));
+        const bv = parseSupplierTabTime(supplierEntryDisplayTime(b));
         return sort.direction === 'desc' ? bv - av : av - bv;
     });
 };
@@ -1165,9 +1166,14 @@ const submitActivate = (supplier) => {
                                                                 :class="(d.code && (d.code.startsWith('CB') || d.code.startsWith('DTCN'))) ? 'text-blue-600 cursor-pointer hover:underline' : 'text-blue-600'"
                                                                 @click="(d.code && (d.code.startsWith('CB') || d.code.startsWith('DTCN'))) && showCbToast()"
                                                             >{{ d.code }}</td>
-                                                            <td class="px-3 py-2">{{ formatDateTime(d.created_at) }}</td>
+                                                            <td class="px-3 py-2">{{ formatDateTime(supplierEntryDisplayTime(d)) }}</td>
                                                             <td class="px-3 py-2">{{ d.type_label }}</td>
-                                                            <td class="px-3 py-2 text-right font-semibold" :class="d.amount < 0 ? 'text-green-600' : ''">{{ formatCurrency(d.amount) }}</td>
+                                                            <td
+                                                                class="px-3 py-2 text-right font-semibold"
+                                                                :class="Number(d.supplier_effect ?? d.amount) < 0 ? 'text-green-600' : 'text-red-600'"
+                                                            >
+                                                                {{ Number(d.supplier_effect ?? d.amount) > 0 ? '+' : '' }}{{ formatCurrency(d.supplier_effect ?? d.amount) }}
+                                                            </td>
                                                             <td class="px-3 py-2 text-right font-semibold">{{ formatCurrency(d.debt_remain) }}</td>
                                                         </tr>
                                                     </tbody>

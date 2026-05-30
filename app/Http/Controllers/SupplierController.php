@@ -4,7 +4,6 @@ namespace App\Http\Controllers;
 
 use App\Models\Customer;
 use App\Models\Purchase;
-use App\Models\Invoice;
 use App\Models\OrderReturn;
 use App\Models\PurchaseReturn;
 use App\Models\CashFlow;
@@ -617,8 +616,9 @@ class SupplierController extends Controller
         $purchases = Purchase::where('supplier_id', $id)
             ->where('status', 'completed')
             ->orderBy('created_at', 'desc')
-            ->get(['id', 'code', 'total_amount', 'paid_amount', 'created_at']);
+            ->get(['id', 'code', 'total_amount', 'paid_amount', 'purchase_date', 'created_at']);
 
+        $purchasePaymentCodes = collect();
         foreach ($purchases as $p) {
             // Nhập hàng: +total (tăng phải trả NCC)
             $entries->push([
@@ -628,6 +628,7 @@ class SupplierController extends Controller
                 'type_label' => 'Nhập hàng',
                 'amount' => $p->total_amount,
                 'supplier_effect' => $p->total_amount, // NCC: +
+                'time' => $p->purchase_date ?? $p->created_at,
                 'created_at' => $p->created_at,
             ]);
             // TT khi nhập hàng: lấy từ CashFlow thật (code PC...) thay vì TTNH ảo
@@ -643,8 +644,10 @@ class SupplierController extends Controller
                     'type_label' => 'Thanh toán',
                     'amount' => $cf->amount,
                     'supplier_effect' => -$cf->amount, // NCC: -
+                    'time' => $cf->time ?? $cf->created_at,
                     'created_at' => $cf->created_at,
                 ]);
+                $purchasePaymentCodes->push((string) $cf->code);
             }
         }
 
@@ -652,7 +655,7 @@ class SupplierController extends Controller
         $purchaseReturns = PurchaseReturn::where('supplier_id', $id)
             ->where('status', 'completed')
             ->orderBy('created_at', 'desc')
-            ->get(['id', 'code', 'total_amount', 'created_at']);
+            ->get(['id', 'code', 'total_amount', 'return_date', 'created_at']);
 
         foreach ($purchaseReturns as $pr) {
             $entries->push([
@@ -662,6 +665,7 @@ class SupplierController extends Controller
                 'type_label' => 'Trả hàng',
                 'amount' => $pr->total_amount,
                 'supplier_effect' => -$pr->total_amount, // NCC: - (giảm phải trả)
+                'time' => $pr->return_date ?? $pr->created_at,
                 'created_at' => $pr->created_at,
             ]);
         }
@@ -679,6 +683,10 @@ class SupplierController extends Controller
         ];
 
         foreach ($supplierTxs as $stx) {
+            if ($stx->type === 'payment' && $purchasePaymentCodes->contains((string) $stx->code)) {
+                continue;
+            }
+
             $entries->push([
                 'id' => 'stx-' . $stx->id,
                 'code' => $stx->code,
@@ -686,68 +694,13 @@ class SupplierController extends Controller
                 'type_label' => $typeLabels[$stx->type] ?? $stx->type,
                 'amount' => abs($stx->amount),
                 'supplier_effect' => $stx->amount, // Already correct sign from source
+                'time' => $stx->created_at,
                 'created_at' => $stx->created_at,
             ]);
         }
 
-        // ═══ 4) Cross-role: Invoices from customer side (dual-role only) ═══
-        if ($isDualRole) {
-            $invoices = Invoice::active()->where('customer_id', $id)
-                ->orderBy('created_at', 'desc')
-                ->get(['id', 'code', 'total', 'customer_paid', 'created_at']);
-
-            foreach ($invoices as $inv) {
-                // Bán hàng cho họ: supplier -= total (phát sinh phải thu → giảm nợ NCC)
-                $entries->push([
-                    'id' => 'inv-' . $inv->id,
-                    'code' => $inv->code,
-                    'type' => 'sale',
-                    'type_label' => 'Bán hàng',
-                    'amount' => $inv->total,
-                    'supplier_effect' => -$inv->total, // NCC: -
-                    'created_at' => $inv->created_at,
-                ]);
-                // Thu tiền KH: supplier += paid (thu từ họ → tăng lại nợ NCC tương đối)
-                if ($inv->customer_paid > 0) {
-                    $entries->push([
-                        'id' => 'pay-' . $inv->id,
-                        'code' => 'TTHD' . preg_replace('/^HD/', '', $inv->code),
-                        'type' => 'customer_payment',
-                        'type_label' => 'Thanh toán',
-                        'amount' => $inv->customer_paid,
-                        'supplier_effect' => $inv->customer_paid, // NCC: +
-                        'created_at' => $inv->created_at,
-                    ]);
-                }
-            }
-
-            // Standalone CashFlow receipts (customer payments not linked to invoice)
-            $invoiceCodes = $invoices->pluck('code')->toArray();
-            $cashFlows = CashFlow::where('target_type', 'Khách hàng')
-                ->where('target_id', $id)
-                ->where('type', 'receipt')
-                ->whereNotIn('reference_type', ['DebtOffset', 'DebtOffsetCancel'])
-                ->orderBy('created_at', 'desc')
-                ->get();
-
-            foreach ($cashFlows as $cf) {
-                if ($cf->reference_type === 'Invoice' && in_array($cf->reference_code, $invoiceCodes)) {
-                    continue;
-                }
-                $entries->push([
-                    'id' => 'cf-' . $cf->id,
-                    'code' => $cf->code,
-                    'type' => 'customer_payment',
-                    'type_label' => $cf->reference_type === 'OrderReturn' ? 'Trả hàng bán' : 'Thanh toán',
-                    'amount' => $cf->amount,
-                    'supplier_effect' => $cf->amount, // NCC: + (thu từ KH → tương đối tăng nợ NCC)
-                    'created_at' => $cf->created_at,
-                ]);
-            }
-        }
-
-        // ═══ Sort by date asc → compute running balance (NET supplier position) ═══
-        $sorted = $entries->sortBy('created_at')->values();
+        // ═══ Sort by supplier-side date asc → compute payable balance ═══
+        $sorted = $entries->sortBy(fn ($entry) => $entry['time'] ?? $entry['created_at'])->values();
         $balance = 0;
         $ledger = $sorted->map(function ($entry) use (&$balance) {
             $balance += $entry['supplier_effect'];
@@ -1022,4 +975,3 @@ class SupplierController extends Controller
         }
     }
 }
-

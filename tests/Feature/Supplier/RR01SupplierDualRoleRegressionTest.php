@@ -107,13 +107,13 @@ class RR01SupplierDualRoleRegressionTest extends TestCase
         $saleEntries = collect($data['entries'] ?? $data)
             ->filter(fn($e) => ($e['type'] ?? '') === 'sale');
 
-        // Kỳ vọng: chỉ có 1 entry sale (HĐ hợp lệ)
+        // Kiot standard: tab công nợ NCC không trộn hóa đơn bán hàng phía khách.
         $this->assertCount(
-            1,
+            0,
             $saleEntries,
-            "Ledger NCC dual-role phải chỉ có 1 entry sale (HĐ hợp lệ), "
+            "Ledger NCC dual-role không được chứa entry sale phía khách, "
             . "thực tế: {$saleEntries->count()} entries. "
-            . "HĐ Đã hủy đang bị tính vào sổ cái."
+            . "Hóa đơn khách hàng đang bị trộn vào tab công nợ NCC."
         );
     }
 
@@ -159,14 +159,13 @@ class RR01SupplierDualRoleRegressionTest extends TestCase
 
         $totalSupplierEffect = $saleEntries->sum('supplier_effect');
 
-        // Kỳ vọng: chỉ -1.000.000 (từ HĐ hợp lệ)
-        // Nếu sai: -10.000.000 (tính cả HĐ hủy)
+        // Kiot standard: invoice/customer payment không ảnh hưởng Nợ cần trả NCC.
         $this->assertEquals(
-            -1000000.0,
+            0.0,
             (float) $totalSupplierEffect,
-            "supplier_effect tổng từ sale entries phải là -1.000.000, "
+            "supplier_effect tổng từ sale entries phải là 0, "
             . "thực tế: " . number_format($totalSupplierEffect)
-            . ". HĐ Đã hủy đang ảnh hưởng công nợ NCC."
+            . ". Hóa đơn khách hàng đang ảnh hưởng công nợ NCC."
         );
     }
 }

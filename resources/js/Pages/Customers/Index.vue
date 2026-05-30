@@ -294,6 +294,8 @@ const formatDateTime = (val) => {
         d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })
     );
 };
+const entryDisplayTime = (entry) =>
+    entry?.time || entry?.recorded_at || entry?.created_at || "";
 const formatGender = (val) => {
     if (val === "male") return "Nam";
     if (val === "female") return "Nữ";
@@ -2344,7 +2346,7 @@ const createdDateRange = computed({
                                                             >
                                                                 {{
                                                                     formatDateTime(
-                                                                        entry.created_at,
+                                                                        entryDisplayTime(entry),
                                                                     )
                                                                 }}
                                                             </td>
@@ -2360,7 +2362,8 @@ const createdDateRange = computed({
                                                                         'bg-purple-50 text-purple-700 border-purple-200': entry.badge_label === 'Phiếu nhập',
                                                                         'bg-green-50 text-green-700 border-green-200': entry.badge_label === 'Thanh toán NCC' || entry.badge_label === 'Thanh toán HĐ',
                                                                         'bg-amber-50 text-amber-700 border-amber-200': entry.badge_label === 'Cần đối soát',
-                                                                        'bg-gray-100 text-gray-600 border-gray-200': !['Ledger', 'Phiếu nhập', 'Thanh toán NCC', 'Thanh toán HĐ', 'Cần đối soát'].includes(entry.badge_label),
+                                                                        'bg-slate-50 text-slate-600 border-slate-200': entry.badge_label === 'Đã hạch toán',
+                                                                        'bg-gray-100 text-gray-600 border-gray-200': !['Ledger', 'Phiếu nhập', 'Thanh toán NCC', 'Thanh toán HĐ', 'Cần đối soát', 'Đã hạch toán'].includes(entry.badge_label),
                                                                     }"
                                                                     :title="entry.badge_title || entry.balance_note || ''"
                                                                 >{{ entry.badge_label }}</span>
@@ -2376,7 +2379,7 @@ const createdDateRange = computed({
                                                                                 ? 'text-green-600'
                                                                                 : 'text-gray-500'
                                                                 "
-                                                                :title="entry.balance_note || (entry.affects_debt_balance === false ? 'Không tính lại công nợ' : '')"
+                                                                :title="entry.balance_note || (entry.affects_debt_balance === false ? 'Đã hạch toán, không cộng lại công nợ' : '')"
                                                             >
                                                                 {{
                                                                     (entry.affects_debt_balance === false ? '' : ((entry.customer_effect ?? entry.amount) > 0 ? '+' : '')) +
@@ -2396,7 +2399,7 @@ const createdDateRange = computed({
                                                                               ? 'text-green-600'
                                                                               : 'text-gray-500'
                                                                 "
-                                                                :title="entry.affects_debt_balance === false ? (entry.balance_note || 'Không tính vào Nợ hiện tại') : ''"
+                                                                :title="entry.affects_debt_balance === false ? (entry.balance_note || 'Đã hạch toán, không cộng lại công nợ') : ''"
                                                             >
                                                                 <span v-if="entry.affects_debt_balance === false">—</span>
                                                                 <span v-else>
@@ -4243,7 +4246,7 @@ const createdDateRange = computed({
                                         </thead>
                                         <tbody class="divide-y text-gray-700 font-normal">
                                             <tr v-for="(entry, idx) in debtVoucherDetailModal.data.entries" :key="idx" class="hover:bg-gray-50">
-                                                <td class="px-3 py-2 text-gray-600">{{ entry.recorded_at || entry.created_at }}</td>
+                                                <td class="px-3 py-2 text-gray-600">{{ formatDateTime(entryDisplayTime(entry)) }}</td>
                                                 <td class="px-3 py-2 font-semibold text-blue-600">{{ entry.code }}</td>
                                                 <td class="px-3 py-2">{{ entry.display_type || entry.type }}</td>
                                                 <td class="px-3 py-2 text-right font-medium" :class="Number(entry.amount) < 0 ? 'text-red-500' : 'text-green-600'">
