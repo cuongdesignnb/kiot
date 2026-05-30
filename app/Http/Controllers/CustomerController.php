@@ -271,6 +271,7 @@ class CustomerController extends Controller
 
         // Summary from filtered query (not global)
         $summaryRows = (clone $summaryQuery)
+            ->reorder()
             ->selectRaw("COALESCE(SUM(CASE WHEN $netDebtExpr > 0 THEN $netDebtExpr ELSE 0 END), 0) as total_positive_net_debt")
             ->selectRaw("COALESCE(SUM(CASE WHEN $netDebtExpr < 0 THEN -($netDebtExpr) ELSE 0 END), 0) as total_negative_net_debt")
             ->first();

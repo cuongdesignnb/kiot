@@ -112,11 +112,17 @@ Dựa trên kết quả chạy tinker audit thực tế:
 - **Thời điểm**: 11:23:36 30/05/2026
 - **URL lỗi**: `/customers`
 - **Commit đang chạy khi lỗi**: `b07418e6dddda1222a479018eb04785de91a81d0`
-- **Log Laravel lỗi gốc**: `Column not found: 1054 Unknown column 'supplier_debt_amount' in 'field list'`
-- **Root cause**: Bảng `customers` trên production chưa có cột `supplier_debt_amount` và `is_supplier` vì chưa chạy migration (Phase 1 không đổi DB), dẫn đến query select raw và where select raw bị crash do query trực tiếp cột không tồn tại.
-- **Hotfix đã làm**: Dùng `Schema::hasColumn('customers', 'supplier_debt_amount')` và `Schema::hasColumn('customers', 'is_supplier')` để guard tất cả các câu query select raw, filters, và mapping trong `CustomerController` và CLI command. Fallback về `0` hoặc `false` nếu cột thiếu.
+- **Log Laravel lỗi gốc**: 
+  1. `Column not found: 1054 Unknown column 'supplier_debt_amount' in 'field list'`
+  2. `SQLSTATE[42000]: Syntax error or access violation: 1140 Mixing of GROUP columns (MIN(),MAX(),COUNT(),...) with no GROUP columns is illegal if there is no GROUP BY clause`
+- **Root cause**: 
+  1. Bảng `customers` trên production chưa có cột `supplier_debt_amount` và `is_supplier` vì chưa chạy migration (Phase 1 không đổi DB), dẫn đến query select raw và nơi select raw bị crash do query trực tiếp cột không tồn tại.
+  2. Query summary aggregate sử dụng `selectRaw` và `first()` thừa kế `orderBy` từ query gốc nên sinh ra mệnh đề `ORDER BY created_at desc` kết hợp với hàm `SUM(...)` mà không có `GROUP BY`, gây lỗi cú pháp SQL trên MySQL strict mode của production.
+- **Hotfix đã làm**: 
+  1. Dùng `Schema::hasColumn('customers', 'supplier_debt_amount')` và `Schema::hasColumn('customers', 'is_supplier')` để guard tất cả các câu query select raw, filters, và mapping trong `CustomerController` và CLI command. Fallback về `0` hoặc `false` nếu cột thiếu.
+  2. Bổ sung `->reorder()` trước `->first()` để xóa bỏ hoàn toàn mệnh đề `ORDER BY` trong query summary aggregate.
 - **Có rollback không**: Không, sửa nóng trực tiếp qua guard an toàn.
-- **Commit sau hotfix**: `238b33f`
+- **Commit sau hotfix**: `c50b4d7`
 - **Tests đã chạy**: `php artisan test tests/Feature/Customers/CustomerNetDebtTest.php` & `php artisan test --filter=CustomerDebt`
 - **Production QA**: [Sẽ cập nhật sau deploy]
 - **Có ảnh hưởng dữ liệu không**: Không
