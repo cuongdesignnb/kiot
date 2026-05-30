@@ -5,20 +5,22 @@ namespace App\Console\Commands;
 use Illuminate\Console\Command;
 use App\Models\Customer;
 use App\Services\PartnerDebtLedgerService;
+use Illuminate\Support\Facades\Schema;
 
 class ReconcilePartnerLedger extends Command
 {
     /**
      * The name and signature of the console command.
-     *
-     * @var string
      */
-    protected $signature = 'customers:reconcile-partner-ledger {customer_id : The ID of the customer/supplier}';
+    protected $signature = 'customers:reconcile-partner-ledger
+        {--customer-id= : Customer ID}
+        {--code= : Customer/Supplier code}
+        {--name= : Partner name keyword}
+        {--phone= : Partner phone}
+        {--json : Output JSON}';
 
     /**
      * The console command description.
-     *
-     * @var string
      */
     protected $description = 'Detailed reconciliation of customer receivable, supplier payable, and net debt timelines';
 
@@ -27,17 +29,78 @@ class ReconcilePartnerLedger extends Command
      */
     public function handle()
     {
-        $customerId = $this->argument('customer_id');
-        $customer = Customer::find($customerId);
+        $customerId = $this->option('customer-id');
+        $code = $this->option('code');
+        $name = $this->option('name');
+        $phone = $this->option('phone');
+        $json = $this->option('json');
 
-        if (!$customer) {
-            $this->error("Customer with ID {$customerId} not found.");
+        // Build query
+        $query = Customer::query();
+
+        if ($customerId) {
+            $query->where('id', $customerId);
+        }
+        if ($code) {
+            $query->where('code', $code);
+        }
+        if ($name) {
+            $query->where('name', 'like', '%' . $name . '%');
+        }
+        if ($phone) {
+            $query->where('phone', 'like', '%' . $phone . '%');
+        }
+
+        // If no filter is provided, demand at least one
+        if (!$customerId && !$code && !$name && !$phone) {
+            if ($json) {
+                $this->line(json_encode(['error' => 'Please provide at least one filter option: --customer-id, --code, --name, or --phone.'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            } else {
+                $this->error('Please provide at least one filter option: --customer-id, --code, --name, or --phone.');
+            }
             return 1;
         }
 
-        $this->info("=== RECONCILIATION REPORT FOR PARTNER: {$customer->name} (Code: {$customer->code}, ID: {$customer->id}) ===");
-        
-        $hasSupplierColumn = \Illuminate\Support\Facades\Schema::hasColumn('customers', 'supplier_debt_amount');
+        $partners = $query->get(['id', 'code', 'name', 'phone', 'debt_amount', 'supplier_debt_amount', 'is_customer', 'is_supplier']);
+
+        if ($partners->isEmpty()) {
+            if ($json) {
+                $this->line(json_encode(['error' => 'No partner found matching the criteria.'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            } else {
+                $this->error('No partner found matching the criteria.');
+            }
+            return 1;
+        }
+
+        if ($partners->count() > 1) {
+            if ($json) {
+                $this->line(json_encode([
+                    'error' => 'Multiple partners found. Please refine your search.',
+                    'matches' => $partners->map(fn($p) => [
+                        'id' => $p->id,
+                        'code' => $p->code,
+                        'name' => $p->name,
+                        'phone' => $p->phone ?? '',
+                    ])->toArray()
+                ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            } else {
+                $this->error('Multiple partners found. Please refine your search:');
+                $this->table(
+                    ['ID', 'Code', 'Name', 'Phone'],
+                    $partners->map(fn($p) => [
+                        $p->id,
+                        $p->code,
+                        $p->name,
+                        $p->phone ?? '—',
+                    ])->toArray()
+                );
+            }
+            return 1;
+        }
+
+        $customer = $partners->first();
+
+        $hasSupplierColumn = Schema::hasColumn('customers', 'supplier_debt_amount');
 
         $customer_receivable_cached = (float) $customer->debt_amount;
         $supplier_payable_cached = $hasSupplierColumn ? (float) $customer->supplier_debt_amount : 0.0;
@@ -64,6 +127,87 @@ class ReconcilePartnerLedger extends Command
         $payable_mismatch = abs($supplier_payable_cached - $supplier_ledger_computed) >= 0.01;
         $net_mismatch = abs($net_cached - $net_ledger_computed) >= 0.01;
 
+        // Chronological net ledger list
+        $entries = collect($netLedger['entries'])->reverse()->values();
+
+        $running_customer_receivable = 0.0;
+        $running_supplier_payable = 0.0;
+        $running_net = 0.0;
+
+        $detailEntries = [];
+        $tableRows = [];
+
+        foreach ($entries as $entry) {
+            $affects = $entry['affects_debt_balance'] ?? true;
+            $domain = $entry['domain'] ?? 'customer';
+
+            $c_effect = 0.0;
+            $s_effect = 0.0;
+
+            if ($affects) {
+                if ($domain === 'customer') {
+                    $c_effect = (float) $entry['customer_effect'];
+                    $running_customer_receivable += $c_effect;
+                } else {
+                    $s_effect = (float) ($entry['supplier_effect'] ?? 0.0);
+                    $c_effect = (float) $entry['customer_effect']; // customer_effect = -1 * supplier_effect
+                    $running_supplier_payable += $s_effect;
+                }
+                $running_net = $running_customer_receivable - $running_supplier_payable;
+            }
+
+            $detailEntries[] = [
+                'code' => $entry['code'] ?? null,
+                'source' => $entry['source'] ?? null,
+                'type' => $entry['display_type'] ?? $entry['type'] ?? null,
+                'customer_effect' => $c_effect,
+                'supplier_effect' => $s_effect,
+                'running_customer_receivable' => $running_customer_receivable,
+                'running_supplier_payable' => $running_supplier_payable,
+                'running_net' => $running_net,
+                'affects_debt_balance' => $affects,
+            ];
+
+            $tableRows[] = [
+                $entry['code'] ?? '—',
+                $entry['source'] ?? '—',
+                $entry['display_type'] ?? $entry['type'] ?? '—',
+                $affects ? number_format($c_effect, 2) . 'đ' : '0.00đ',
+                $affects ? number_format($s_effect, 2) . 'đ' : '0.00đ',
+                number_format($running_customer_receivable, 2) . 'đ',
+                number_format($running_supplier_payable, 2) . 'đ',
+                number_format($running_net, 2) . 'đ',
+                $affects ? 'YES' : 'NO',
+            ];
+        }
+
+        if ($json) {
+            $this->line(json_encode([
+                'partner' => [
+                    'id' => $customer->id,
+                    'code' => $customer->code,
+                    'name' => $customer->name,
+                    'phone' => $customer->phone ?? '',
+                ],
+                'reconciliation' => [
+                    'customer_receivable_cached' => $customer_receivable_cached,
+                    'customer_ledger_computed' => $customer_ledger_computed,
+                    'receivable_mismatch' => $receivable_mismatch,
+                    'supplier_payable_cached' => $supplier_payable_cached,
+                    'supplier_ledger_computed' => $supplier_ledger_computed,
+                    'payable_mismatch' => $payable_mismatch,
+                    'net_cached' => $net_cached,
+                    'net_ledger_computed' => $net_ledger_computed,
+                    'net_mismatch' => $net_mismatch,
+                ],
+                'entries' => $detailEntries,
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            return 0;
+        }
+
+        // Print pretty terminal table
+        $this->info("=== RECONCILIATION REPORT FOR PARTNER: {$customer->name} (Code: {$customer->code}, ID: {$customer->id}) ===");
+        
         $this->table(
             ['Metric', 'Cached Value (DB)', 'Computed Value (Ledger)', 'Mismatch?'],
             [
@@ -89,47 +233,6 @@ class ReconcilePartnerLedger extends Command
         );
 
         $this->info("\n=== DETAILED LEDGER ENTRIES CHRONOLOGICAL ===");
-
-        // We want chronological order (oldest first) to show the running balance progression
-        $entries = collect($netLedger['entries'])->reverse()->values();
-
-        $running_customer_receivable = 0.0;
-        $running_supplier_payable = 0.0;
-        $running_net = 0.0;
-
-        $tableRows = [];
-        foreach ($entries as $entry) {
-            $affects = $entry['affects_debt_balance'] ?? true;
-            $domain = $entry['domain'] ?? 'customer';
-
-            $c_effect = 0.0;
-            $s_effect = 0.0;
-
-            if ($affects) {
-                if ($domain === 'customer') {
-                    $c_effect = (float) $entry['customer_effect'];
-                    $running_customer_receivable += $c_effect;
-                } else {
-                    $s_effect = (float) ($entry['supplier_effect'] ?? 0.0);
-                    $c_effect = (float) $entry['customer_effect']; // customer_effect = -1 * supplier_effect
-                    $running_supplier_payable += $s_effect;
-                }
-                $running_net = $running_customer_receivable - $running_supplier_payable;
-            }
-
-            $tableRows[] = [
-                $entry['code'] ?? '—',
-                $entry['source'] ?? '—',
-                $entry['display_type'] ?? $entry['type'] ?? '—',
-                $affects ? number_format($c_effect, 2) . 'đ' : '0.00đ',
-                $affects ? number_format($s_effect, 2) . 'đ' : '0.00đ',
-                number_format($running_customer_receivable, 2) . 'đ',
-                number_format($running_supplier_payable, 2) . 'đ',
-                number_format($running_net, 2) . 'đ',
-                $affects ? 'YES' : 'NO',
-            ];
-        }
-
         $this->table(
             ['Code', 'Source', 'Type', 'Cust Effect', 'Sup Effect', 'Run Cust Rec', 'Run Sup Pay', 'Run Net', 'Affects?'],
             $tableRows

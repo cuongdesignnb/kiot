@@ -283,11 +283,22 @@ class DualRolePartnerDebtTimelineTest extends TestCase
         $entries = collect($data['entries']);
 
         // Check offset entries in customer history
-        $offsetEntry = $entries->firstWhere('code', 'CB000001');
-        $this->assertNotNull($offsetEntry);
-        // Customer effect: giảm phải thu => -5,000,000. Wait, but in buildCustomerNetLedger,
-        // we have BOTH the customer-side DebtOffset and the supplier-side mirror offset!
-        // Let's verify what the signs are.
+        $cbEntries = $entries->where('code', 'CB000001')->values();
+        
+        // Both the customer-side DebtOffset and the supplier-side mirror offset are present
+        // in the combined chronological net ledger to reflect the complete offset activity.
+        $this->assertCount(2, $cbEntries);
+
+        $customerSide = $cbEntries->firstWhere('source', 'debt_offset');
+        $this->assertNotNull($customerSide);
+        $this->assertEquals(-5000000, $customerSide['customer_effect']);
+        $this->assertTrue($customerSide['affects_debt_balance']);
+
+        $supplierSide = $cbEntries->firstWhere('source', 'supplier_ledger_mirror');
+        $this->assertNotNull($supplierSide);
+        $this->assertEquals(5000000, $supplierSide['customer_effect']); // -1 * -5M = +5M
+        $this->assertEquals(-5000000, $supplierSide['supplier_effect']);
+        $this->assertTrue($supplierSide['affects_debt_balance']);
     }
 
     /**
@@ -382,7 +393,7 @@ class DualRolePartnerDebtTimelineTest extends TestCase
         $this->assertEquals(75000000, $supData['summary']['net']);
 
         // Run the console command dry-run for this customer to output the reconciliation table
-        $this->artisan('customers:reconcile-partner-ledger', ['customer_id' => $partner->id])
+        $this->artisan('customers:reconcile-partner-ledger', ['--customer-id' => $partner->id])
             ->assertExitCode(0);
     }
 }
