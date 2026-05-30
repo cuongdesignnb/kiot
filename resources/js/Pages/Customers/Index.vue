@@ -2213,7 +2213,7 @@ const createdDateRange = computed({
                                                     class="mb-3 p-3 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded text-xs flex items-center gap-2"
                                                 >
                                                     <svg class="w-4 h-4 text-yellow-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-                                                    <span>Lịch sử công nợ đang lệch với Nợ hiện tại. Cần chạy đối soát trước khi cập nhật dữ liệu.</span>
+                                                    <span>{{ debtHistoryData[customer.id].reconcile?.message || 'Lịch sử công nợ đang lệch với Nợ hiện tại. Cần đối soát dữ liệu trước khi cập nhật.' }}</span>
                                                 </div>
 
                                                 <!-- Filter dropdown -->
@@ -2230,7 +2230,16 @@ const createdDateRange = computed({
                                                             Bán hàng
                                                         </option>
                                                         <option>
-                                                            Thanh toán
+                                                            Khách thanh toán
+                                                        </option>
+                                                        <option>
+                                                            Nhập hàng
+                                                        </option>
+                                                        <option>
+                                                            Thanh toán NCC
+                                                        </option>
+                                                        <option>
+                                                            Trả hàng
                                                         </option>
                                                     </select>
                                                 </div>
@@ -2342,27 +2351,19 @@ const createdDateRange = computed({
                                                             <td
                                                                 class="px-3 py-2"
                                                             >
-                                                                <span>{{ entry.type }}</span>
+                                                                <span>{{ entry.display_type || entry.type }}</span>
                                                                 <span
-                                                                    v-if="entry.badge_label === 'Tham khảo' || entry.affects_debt_balance === false"
-                                                                    class="ml-1 inline-block text-[10px] font-semibold bg-gray-100 text-gray-500 border border-gray-200 px-1.5 py-0.5 rounded"
-                                                                    :title="entry.badge_title || 'Đã được phản ánh trong ledger công nợ'"
-                                                                >Tham khảo</span>
-                                                                <span
-                                                                    v-else-if="entry.is_virtual_payment"
-                                                                    class="ml-1 inline-block text-[10px] font-semibold bg-green-50 text-green-700 border border-green-200 px-1.5 py-0.5 rounded"
-                                                                    title="Thanh toán trực tiếp khi tạo hóa đơn"
-                                                                >Thanh toán HĐ</span>
-                                                                <span
-                                                                    v-else-if="entry.source === 'ledger'"
-                                                                    class="ml-1 inline-block text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200 px-1.5 py-0.5 rounded"
-                                                                    title="Ghi nhận qua ledger customer_debts"
-                                                                >Ledger</span>
-                                                                <span
-                                                                    v-else-if="entry.source === 'legacy'"
-                                                                    class="ml-1 inline-block text-[10px] font-semibold bg-gray-100 text-gray-600 border border-gray-200 px-1.5 py-0.5 rounded"
-                                                                    title="Dựng từ chứng từ cũ (trước ledger)"
-                                                                >Chứng từ cũ</span>
+                                                                    v-if="entry.badge_label"
+                                                                    class="ml-1 inline-block text-[10px] font-semibold border px-1.5 py-0.5 rounded"
+                                                                    :class="{
+                                                                        'bg-blue-50 text-blue-700 border-blue-200': entry.badge_label === 'Ledger',
+                                                                        'bg-purple-50 text-purple-700 border-purple-200': entry.badge_label === 'Phiếu nhập',
+                                                                        'bg-green-50 text-green-700 border-green-200': entry.badge_label === 'Thanh toán NCC' || entry.badge_label === 'Thanh toán HĐ',
+                                                                        'bg-amber-50 text-amber-700 border-amber-200': entry.badge_label === 'Cần đối soát',
+                                                                        'bg-gray-100 text-gray-600 border-gray-200': !['Ledger', 'Phiếu nhập', 'Thanh toán NCC', 'Thanh toán HĐ', 'Cần đối soát'].includes(entry.badge_label),
+                                                                    }"
+                                                                    :title="entry.badge_title || entry.balance_note || ''"
+                                                                >{{ entry.badge_label }}</span>
                                                             </td>
                                                             <td
                                                                 class="px-3 py-2 text-right font-medium"
@@ -2375,7 +2376,7 @@ const createdDateRange = computed({
                                                                                 ? 'text-green-600'
                                                                                 : 'text-gray-500'
                                                                 "
-                                                                :title="entry.balance_note"
+                                                                :title="entry.balance_note || (entry.affects_debt_balance === false ? 'Không tính lại công nợ' : '')"
                                                             >
                                                                 {{
                                                                     (entry.affects_debt_balance === false ? '' : ((entry.customer_effect ?? entry.amount) > 0 ? '+' : '')) +
@@ -2395,7 +2396,7 @@ const createdDateRange = computed({
                                                                               ? 'text-green-600'
                                                                               : 'text-gray-500'
                                                                 "
-                                                                :title="entry.affects_debt_balance === false ? 'Không tính vào Nợ hiện tại' : ''"
+                                                                :title="entry.affects_debt_balance === false ? (entry.balance_note || 'Không tính vào Nợ hiện tại') : ''"
                                                             >
                                                                 <span v-if="entry.affects_debt_balance === false">—</span>
                                                                 <span v-else>
@@ -4244,7 +4245,7 @@ const createdDateRange = computed({
                                             <tr v-for="(entry, idx) in debtVoucherDetailModal.data.entries" :key="idx" class="hover:bg-gray-50">
                                                 <td class="px-3 py-2 text-gray-600">{{ entry.recorded_at || entry.created_at }}</td>
                                                 <td class="px-3 py-2 font-semibold text-blue-600">{{ entry.code }}</td>
-                                                <td class="px-3 py-2">{{ entry.type }}</td>
+                                                <td class="px-3 py-2">{{ entry.display_type || entry.type }}</td>
                                                 <td class="px-3 py-2 text-right font-medium" :class="Number(entry.amount) < 0 ? 'text-red-500' : 'text-green-600'">
                                                     {{ Number(entry.amount) > 0 ? '+' : '' }}{{ formatCurrency(entry.amount) }}
                                                 </td>

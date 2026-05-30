@@ -289,7 +289,7 @@ class CustomerDebtExcelExportTest extends TestCase
         }
 
         $this->assertCount(1, $returnRows);
-        $this->assertSame('Trả hàng', $returnRows[0]['C']);
+        $this->assertSame('Trả hàng bán', $returnRows[0]['C']);
         $this->assertEquals(3000000, (int) ($returnRows[0]['L'] ?? 0));
         $this->assertStringNotContainsString('Điều chỉnh', $this->flatWorkbookText($this->workbook($customer->id, 'format=xlsx&date_preset=all', $admin)));
     }
