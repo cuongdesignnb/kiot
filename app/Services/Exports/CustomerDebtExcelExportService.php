@@ -206,7 +206,7 @@ class CustomerDebtExcelExportService
     {
         $row = $startRow;
         foreach ($entries as $entry) {
-            $effect = $this->entryEffect($entry);
+            $effect = $this->entryDisplayEffect($entry);
             $created = $entry['recorded_at'] ?? $entry['created_at'] ?? $entry['date'] ?? null;
             $when = '';
             if ($created) {
@@ -448,6 +448,15 @@ class CustomerDebtExcelExportService
     private function entryEffect(array $entry): float
     {
         return (float) ($entry['customer_effect'] ?? $entry['amount'] ?? 0);
+    }
+
+    private function entryDisplayEffect(array $entry): float
+    {
+        if (($entry['display_merged_settlement'] ?? false) && ($entry['type_raw'] ?? null) === 'return') {
+            return (float) ($entry['amount'] ?? 0);
+        }
+
+        return $this->entryEffect($entry);
     }
 
     private function storeName(): string

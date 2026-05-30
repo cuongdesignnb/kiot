@@ -460,17 +460,11 @@ class PartnerFinancialTimelineService
             ->map(function ($entry) use (&$running) {
                 if (($entry['affects_debt_balance'] ?? true) === true) {
                     $running += (float) ($entry['customer_effect'] ?? 0);
-                    if (array_key_exists('_forced_balance', $entry) && $entry['_forced_balance'] !== null) {
-                        $entry['balance'] = (float) $entry['_forced_balance'];
-                        $running = (float) $entry['_forced_balance'];
-                    } else {
-                        $entry['balance'] = $running;
-                    }
+                    $entry['balance'] = $running;
                 } else {
                     $entry['balance'] = null;
                 }
 
-                unset($entry['_forced_balance']);
                 return $entry;
             });
     }
@@ -502,14 +496,15 @@ class PartnerFinancialTimelineService
             'reference_code' => $debt->ref_code,
             'note' => $debt->note,
             'debt_total' => (float) $debt->debt_total,
-            '_forced_balance' => (float) $debt->debt_total,
+            'ledger_debt_total' => (float) $debt->debt_total,
             'type_raw' => $debt->type,
             'detail_available' => true,
         ]);
 
         if ($settlementMeta) {
-            $entry['_forced_balance'] = (float) $settlementMeta['display_balance'];
+            $entry['customer_effect'] = $amount + (float) $settlementMeta['settlement_adjusted_amount'];
             $entry['debt_total'] = (float) $settlementMeta['display_balance'];
+            $entry['ledger_debt_total'] = (float) $settlementMeta['display_balance'];
             $entry['settlement_adjusted_amount'] = (float) $settlementMeta['settlement_adjusted_amount'];
             $entry['settlement_adjustment_ids'] = $settlementMeta['settlement_adjustment_ids'];
             $entry['display_merged_settlement'] = true;

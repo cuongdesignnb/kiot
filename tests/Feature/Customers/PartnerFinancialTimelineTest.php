@@ -319,6 +319,117 @@ class PartnerFinancialTimelineTest extends TestCase
         $this->assertEquals(-8000000, $data['reconcile']['computed_balance']);
     }
 
+    public function test_purchase_before_customer_ledger_does_not_reset_net_balance_with_debt_total(): void
+    {
+        $customer = $this->createCustomer([
+            'debt_amount' => 5000000,
+            'supplier_debt_amount' => 10000000,
+            'is_supplier' => true,
+        ]);
+
+        Purchase::create([
+            'code' => 'PN-BEFORE-LEDGER',
+            'supplier_id' => $customer->id,
+            'total_amount' => 10000000,
+            'paid_amount' => 0,
+            'debt_amount' => 10000000,
+            'status' => 'completed',
+            'purchase_date' => Carbon::parse('2026-05-01 09:00:00'),
+        ]);
+
+        CustomerDebt::create([
+            'customer_id' => $customer->id,
+            'ref_code' => 'MERGE-AFTER-PURCHASE',
+            'amount' => 5000000,
+            'debt_total' => 5000000,
+            'type' => 'adjustment',
+            'note' => 'Gộp công nợ',
+            'recorded_at' => Carbon::parse('2026-05-02 09:00:00'),
+        ]);
+
+        $data = $this->getDebtHistory($customer);
+        $entries = collect($data['entries']);
+
+        $purchase = $entries->firstWhere('code', 'PN-BEFORE-LEDGER');
+        $merge = $entries->firstWhere('code', 'MERGE-AFTER-PURCHASE');
+
+        $this->assertEquals(-10000000, $purchase['customer_effect']);
+        $this->assertEquals(-10000000, $purchase['balance']);
+        $this->assertEquals(5000000, $merge['customer_effect']);
+        $this->assertEquals(-5000000, $merge['balance']);
+        $this->assertEquals(-5000000, $data['reconcile']['computed_balance']);
+        $this->assertEquals(-5000000, $data['reconcile']['current_net_debt']);
+        $this->assertFalse($data['reconcile']['has_mismatch']);
+    }
+
+    public function test_supplier_entry_between_customer_ledgers_keeps_net_running_balance(): void
+    {
+        $customer = $this->createCustomer([
+            'debt_amount' => 8000000,
+            'supplier_debt_amount' => 3000000,
+            'is_supplier' => true,
+        ]);
+
+        CustomerDebt::create([
+            'customer_id' => $customer->id,
+            'ref_code' => 'OPENING-1',
+            'amount' => 10000000,
+            'debt_total' => 10000000,
+            'type' => 'adjustment',
+            'recorded_at' => Carbon::parse('2026-05-01 09:00:00'),
+        ]);
+
+        Purchase::create([
+            'code' => 'PN-MIDDLE-1',
+            'supplier_id' => $customer->id,
+            'total_amount' => 3000000,
+            'paid_amount' => 0,
+            'debt_amount' => 3000000,
+            'status' => 'completed',
+            'purchase_date' => Carbon::parse('2026-05-02 09:00:00'),
+        ]);
+
+        CustomerDebt::create([
+            'customer_id' => $customer->id,
+            'ref_code' => 'PAY-1',
+            'amount' => -2000000,
+            'debt_total' => 8000000,
+            'type' => 'payment',
+            'recorded_at' => Carbon::parse('2026-05-03 09:00:00'),
+        ]);
+
+        $data = $this->getDebtHistory($customer);
+        $entries = collect($data['entries']);
+
+        $this->assertEquals(10000000, $entries->firstWhere('code', 'OPENING-1')['balance']);
+        $this->assertEquals(7000000, $entries->firstWhere('code', 'PN-MIDDLE-1')['balance']);
+        $this->assertEquals(5000000, $entries->firstWhere('code', 'PAY-1')['balance']);
+        $this->assertEquals(5000000, $data['reconcile']['computed_balance']);
+        $this->assertEquals(5000000, $data['reconcile']['current_net_debt']);
+        $this->assertFalse($data['reconcile']['has_mismatch']);
+    }
+
+    public function test_ledger_only_customer_keeps_debt_total_metadata(): void
+    {
+        $customer = $this->createCustomer(['debt_amount' => 1000000]);
+
+        CustomerDebt::create([
+            'customer_id' => $customer->id,
+            'ref_code' => 'LEDGER-META-1',
+            'amount' => 1000000,
+            'debt_total' => 1000000,
+            'type' => 'adjustment',
+            'recorded_at' => Carbon::parse('2026-05-01 09:00:00'),
+        ]);
+
+        $data = $this->getDebtHistory($customer);
+        $entry = collect($data['entries'])->firstWhere('code', 'LEDGER-META-1');
+
+        $this->assertEquals(1000000, $data['reconcile']['computed_balance']);
+        $this->assertEquals(1000000, $entry['debt_total']);
+        $this->assertEquals(1000000, $entry['ledger_debt_total']);
+    }
+
     private function createCustomer(array $overrides = []): Customer
     {
         return Customer::create(array_merge([

@@ -95,6 +95,42 @@
 - Supplier payment độc lập cần đủ tín hiệu chứng từ/cashflow để được tính; nếu dữ liệu cũ thiếu liên kết thì nên xử lý ở Phase 2 bằng dry-run audit riêng.
 - Nếu muốn chuẩn hóa dữ liệu cũ, cần Phase 2 backfill/dry-run có xác nhận riêng.
 
+## Follow-up audit `_forced_balance`
+
+- Rủi ro phát hiện:
+  - `customer_debts.debt_total` là số dư công nợ khách, không phải net debt tổng hợp với supplier side.
+  - Nếu dùng `_forced_balance` trong combined timeline, CustomerDebt ledger có thể reset running balance và làm mất tác động của `Nhập hàng`, `Thanh toán NCC`, `Trả hàng nhập` xảy ra trước hoặc xen giữa ledger.
+- Test đã bổ sung:
+  - `test_purchase_before_customer_ledger_does_not_reset_net_balance_with_debt_total`
+  - `test_supplier_entry_between_customer_ledgers_keeps_net_running_balance`
+  - `test_ledger_only_customer_keeps_debt_total_metadata`
+- Thay đổi:
+  - Bỏ cơ chế `_forced_balance` khỏi combined net timeline.
+  - `computeRunningBalance()` chỉ cộng dồn `customer_effect` cho dòng `affects_debt_balance=true`.
+  - Giữ `debt_total` và bổ sung `ledger_debt_total` làm metadata audit của CustomerDebt.
+  - Với return settlement đã merge, `customer_effect` là net effect sau settlement để balance đúng, còn `amount` vẫn giữ giá trị chứng từ trả hàng gốc.
+  - Excel export dùng display effect riêng cho dòng return settlement để vẫn hiển thị giá trị trả hàng, trong khi tổng kết vẫn dùng net effect.
+- Kết quả:
+  - Purchase trước CustomerDebt ledger không còn reset sai net debt.
+  - Supplier entry xen giữa nhiều CustomerDebt ledger vẫn giữ running balance ròng.
+  - Thiên Phú vẫn computed balance = `-27.600.000`.
+  - `computed_balance` khớp `current_net_debt` trong các test follow-up.
+  - Không update DB.
+- Tests đã chạy:
+  - `php artisan test tests/Feature/Customers/PartnerFinancialTimelineTest.php` — PASS, 11 tests, 62 assertions.
+  - `php artisan test tests/Feature/Customers/CustomerDebtHistoryDoubleCountTest.php` — PASS, 4 tests, 40 assertions.
+  - `php artisan test tests/Feature/Customers/CustomerNetDebtTest.php` — PASS, 7 tests, 28 assertions.
+  - `php artisan test --filter=CustomerDebt` — PASS, 37 tests, 195 assertions.
+  - `php artisan test --filter=OrderReturn` — PASS, 53 tests, 213 assertions.
+  - `php artisan test --filter=Purchase` — PASS, 68 tests, 306 assertions.
+  - `npm run build` — PASS, Vite build completed.
+- Data safety:
+  - Migration: Không.
+  - Backfill: Không.
+  - Recalculate: Không.
+  - Update dữ liệu cũ: Không.
+  - Delete dữ liệu: Không.
+
 ## Kết luận
 
 - Đạt: Backend timeline khách hàng đã phản ánh công nợ ròng đối tác, tránh double count và phân biệt dòng hạch toán thật/dòng tham khảo.
