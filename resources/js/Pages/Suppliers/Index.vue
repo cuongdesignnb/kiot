@@ -316,7 +316,13 @@ const setSupplierTab = async (id, tab) => {
         } catch (e) { supplierHistory[id] = []; }
         supplierDataLoading[id] = false;
     }
-    if (tab === 'debt' && !supplierDebt[id]) {
+    if (
+        tab === 'debt' &&
+        (
+            !supplierDebt[id] ||
+            (isDualRoleSupplier(id) && supplierDebtSummary(id).display_mode !== 'partner_net_timeline')
+        )
+    ) {
         await loadSupplierDebt(id, 1);
         if (!offsetHistoryData[id]) loadOffsetHistory(id);
     }
@@ -336,9 +342,16 @@ const supplierRows = computed(() => {
 const findSupplierById = (id) =>
     supplierRows.value.find((supplier) => String(supplier.id) === String(id));
 
+const truthyFlag = (value) =>
+    value === true ||
+    value === 1 ||
+    value === '1' ||
+    value === 'true' ||
+    value === 'yes';
+
 const isDualRoleSupplier = (id) => {
     const supplier = findSupplierById(id);
-    return !!(supplier?.is_customer && supplier?.is_supplier);
+    return !!supplier && truthyFlag(supplier.is_customer);
 };
 
 const supplierDebtSummary = (id) => supplierDebt[id]?.summary || {};

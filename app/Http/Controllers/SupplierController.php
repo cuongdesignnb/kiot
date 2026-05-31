@@ -613,8 +613,12 @@ class SupplierController extends Controller
     public function debtTransactions($id, Request $request)
     {
         $supplier = Customer::findOrFail($id);
+        if (!$supplier->is_supplier) {
+            abort(404);
+        }
+
         $hasSupplierColumn = \Illuminate\Support\Facades\Schema::hasColumn('customers', 'supplier_debt_amount');
-        $isDualRole = (bool) ($supplier->is_customer && ($hasSupplierColumn ? $supplier->is_supplier : false));
+        $isDualRole = (bool) $supplier->is_customer;
         $usePartnerTimeline = $isDualRole && (string) $request->input('view', '') === 'partner';
 
         $ledgerService = app(\App\Services\PartnerDebtLedgerService::class);
