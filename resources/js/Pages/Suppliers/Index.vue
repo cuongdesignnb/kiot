@@ -327,13 +327,67 @@ const setSupplierTab = async (id, tab) => {
 const supplierDebtPage = reactive({});
 const supplierDebtPerPage = 10;
 
+const supplierRows = computed(() => {
+    if (Array.isArray(props.suppliers?.data)) return props.suppliers.data;
+    if (Array.isArray(props.suppliers)) return props.suppliers;
+    return [];
+});
+
+const findSupplierById = (id) =>
+    supplierRows.value.find((supplier) => String(supplier.id) === String(id));
+
+const isDualRoleSupplier = (id) => {
+    const supplier = findSupplierById(id);
+    return !!(supplier?.is_customer && supplier?.is_supplier);
+};
+
+const supplierDebtSummary = (id) => supplierDebt[id]?.summary || {};
+
+const isSupplierPartnerTimeline = (id) =>
+    supplierDebtSummary(id).display_mode === 'partner_net_timeline';
+
+const supplierSummaryAmount = (id, canonicalKey, fallbackKey) => {
+    const summary = supplierDebtSummary(id);
+    return Number(summary[canonicalKey] ?? summary[fallbackKey] ?? 0);
+};
+
+const supplierDebtFinalColumnLabel = (id) =>
+    isSupplierPartnerTimeline(id) ? 'Vị thế ròng' : 'Nợ cần trả nhà cung cấp';
+
+const supplierDebtEntryEffect = (entry, id) => {
+    if (isSupplierPartnerTimeline(id)) {
+        return Number(entry?.partner_effect ?? entry?.customer_effect ?? entry?.supplier_effect ?? entry?.amount ?? 0);
+    }
+    return Number(entry?.supplier_effect ?? entry?.amount ?? 0);
+};
+
+const supplierDebtEntryBalance = (entry, id) => {
+    if (isSupplierPartnerTimeline(id)) {
+        return Number(entry?.partner_running_balance ?? entry?.balance ?? entry?.debt_remain ?? 0);
+    }
+    return Number(entry?.debt_remain ?? entry?.supplier_balance ?? entry?.balance ?? 0);
+};
+
+const supplierDebtEntryBadge = (entry, id) => {
+    if (!isSupplierPartnerTimeline(id)) return '';
+    return entry?.badge_label || (
+        entry?.source_ledger === 'customer_receivable'
+            ? 'Phải thu KH'
+            : (entry?.source_ledger === 'supplier_payable' ? 'Phải trả NCC' : '')
+    );
+};
+
 const loadSupplierDebt = async (id, page = null) => {
     supplierDataLoading[id] = true;
     const targetPage = page ?? supplierDebtPage[id] ?? 1;
     supplierDebtPage[id] = targetPage;
     try {
+        const params = { page: targetPage, per_page: supplierDebtPerPage };
+        if (isDualRoleSupplier(id)) {
+            params.view = 'partner';
+        }
         const res = await axios.get(`/api/suppliers/${id}/debt-transactions`, {
-            params: { page: targetPage, per_page: supplierDebtPerPage },
+            params,
         });
         supplierDebt[id] = res.data;
     } catch (e) {
@@ -1160,19 +1214,19 @@ const submitActivate = (supplier) => {
                                                     <div class="bg-white p-3 rounded shadow-sm border-l-4 border-blue-500">
                                                         <div class="text-xs text-gray-500 font-semibold uppercase">Nợ khách phải thu (Receivable)</div>
                                                         <div class="text-lg font-bold text-gray-800 mt-1">
-                                                            {{ formatCurrency(supplierDebt[supplier.id].summary.customer_debt_amount) }}
+                                                            {{ formatCurrency(supplierSummaryAmount(supplier.id, 'customer_receivable_balance', 'customer_debt_amount')) }}
                                                         </div>
                                                     </div>
                                                     <div class="bg-white p-3 rounded shadow-sm border-l-4 border-orange-500">
                                                         <div class="text-xs text-gray-500 font-semibold uppercase">Nợ cần trả NCC (Payable)</div>
                                                         <div class="text-lg font-bold text-gray-800 mt-1">
-                                                            {{ formatCurrency(supplierDebt[supplier.id].summary.supplier_debt_amount) }}
+                                                            {{ formatCurrency(supplierSummaryAmount(supplier.id, 'supplier_payable_balance', 'supplier_debt_amount')) }}
                                                         </div>
                                                     </div>
-                                                    <div class="bg-white p-3 rounded shadow-sm border-l-4" :class="supplierDebt[supplier.id].summary.net_debt_amount >= 0 ? 'border-red-500' : 'border-green-500'">
+                                                    <div class="bg-white p-3 rounded shadow-sm border-l-4" :class="supplierSummaryAmount(supplier.id, 'partner_net_position', 'net_debt_amount') >= 0 ? 'border-red-500' : 'border-green-500'">
                                                         <div class="text-xs text-gray-500 font-semibold uppercase">Vị thế ròng (Net Position)</div>
-                                                        <div class="text-lg font-bold mt-1" :class="supplierDebt[supplier.id].summary.net_debt_amount >= 0 ? 'text-red-600' : 'text-green-600'">
-                                                            {{ formatCurrency(supplierDebt[supplier.id].summary.net_debt_amount) }}
+                                                        <div class="text-lg font-bold mt-1" :class="supplierSummaryAmount(supplier.id, 'partner_net_position', 'net_debt_amount') >= 0 ? 'text-red-600' : 'text-green-600'">
+                                                            {{ formatCurrency(supplierSummaryAmount(supplier.id, 'partner_net_position', 'net_debt_amount')) }}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -1201,7 +1255,7 @@ const submitActivate = (supplier) => {
                                                             </th>
                                                             <th class="px-3 py-2">Loại</th>
                                                             <th class="px-3 py-2 text-right">Giá trị</th>
-                                                            <th class="px-3 py-2 text-right">Nợ cần trả nhà cung cấp</th>
+                                                            <th class="px-3 py-2 text-right">{{ supplierDebtFinalColumnLabel(supplier.id) }}</th>
                                                         </tr>
                                                     </thead>
                                                     <tbody class="divide-y">
@@ -1212,14 +1266,24 @@ const submitActivate = (supplier) => {
                                                                 @click="(d.code && (d.code.startsWith('CB') || d.code.startsWith('DTCN'))) && showCbToast()"
                                                             >{{ d.code }}</td>
                                                             <td class="px-3 py-2">{{ formatDateTime(supplierEntryDisplayTime(d)) }}</td>
-                                                            <td class="px-3 py-2">{{ d.type_label }}</td>
+                                                            <td class="px-3 py-2">
+                                                                <div class="flex items-center gap-2">
+                                                                    <span>{{ d.type_label || d.display_type || d.type }}</span>
+                                                                    <span
+                                                                        v-if="supplierDebtEntryBadge(d, supplier.id)"
+                                                                        class="inline-flex items-center rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600"
+                                                                    >
+                                                                        {{ supplierDebtEntryBadge(d, supplier.id) }}
+                                                                    </span>
+                                                                </div>
+                                                            </td>
                                                             <td
                                                                 class="px-3 py-2 text-right font-semibold"
-                                                                :class="Number(d.supplier_effect ?? d.amount) < 0 ? 'text-green-600' : 'text-red-600'"
+                                                                :class="supplierDebtEntryEffect(d, supplier.id) < 0 ? 'text-green-600' : 'text-red-600'"
                                                             >
-                                                                {{ Number(d.supplier_effect ?? d.amount) > 0 ? '+' : '' }}{{ formatCurrency(d.supplier_effect ?? d.amount) }}
+                                                                {{ supplierDebtEntryEffect(d, supplier.id) > 0 ? '+' : '' }}{{ formatCurrency(supplierDebtEntryEffect(d, supplier.id)) }}
                                                             </td>
-                                                            <td class="px-3 py-2 text-right font-semibold">{{ formatCurrency(d.debt_remain) }}</td>
+                                                            <td class="px-3 py-2 text-right font-semibold">{{ formatCurrency(supplierDebtEntryBalance(d, supplier.id)) }}</td>
                                                         </tr>
                                                     </tbody>
                                                 </table>

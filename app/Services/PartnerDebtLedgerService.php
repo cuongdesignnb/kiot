@@ -542,6 +542,81 @@ class PartnerDebtLedgerService
         ];
     }
 
+    /**
+     * Supplier-screen opt-in partner timeline for dual-role partners.
+     *
+     * The default supplier tab/export must stay a pure payable ledger.
+     * This view reuses the customer net timeline so dual-role supplier tabs
+     * can show the partner financial story without changing payable totals.
+     */
+    public function buildSupplierDualRoleDebtTimeline(Customer $partner): array
+    {
+        $netLedger = $this->buildCustomerNetLedger($partner);
+        $summary = $netLedger['summary'] ?? [];
+
+        $entries = collect($netLedger['entries'] ?? [])
+            ->map(function ($entry) {
+                $entry = is_array($entry) ? $entry : (array) $entry;
+                $source = (string) ($entry['source'] ?? '');
+                $referenceType = (string) ($entry['reference_type'] ?? '');
+                $domain = (string) ($entry['domain'] ?? 'reference');
+                $affects = (bool) ($entry['affects_debt_balance'] ?? true);
+
+                $sourceLedger = 'customer_receivable';
+                if ($source === 'supplier_ledger_mirror' || $domain === 'supplier') {
+                    $sourceLedger = 'supplier_payable';
+                }
+                if (str_contains($source, 'debt_offset') || str_contains($referenceType, 'DebtOffset')) {
+                    $sourceLedger = 'debt_offset';
+                }
+
+                $partnerEffect = (float) ($entry['customer_effect'] ?? 0.0);
+                $partnerBalance = array_key_exists('balance', $entry) ? $entry['balance'] : null;
+
+                $entry['partner_effect'] = $partnerEffect;
+                $entry['partner_running_balance'] = $partnerBalance;
+                $entry['affects_partner_net'] = $affects;
+                $entry['source_ledger'] = $sourceLedger;
+                $entry['is_mirror'] = $source === 'supplier_ledger_mirror';
+                $entry['affects_customer_receivable'] = $sourceLedger === 'customer_receivable' && $affects;
+                $entry['affects_supplier_payable'] = $sourceLedger === 'supplier_payable' && $affects;
+                $entry['debt_remain'] = $partnerBalance;
+
+                if ($sourceLedger === 'debt_offset') {
+                    $entry['domain'] = 'offset';
+                    $entry['badge_label'] = 'Cấn trừ';
+                } elseif ($sourceLedger === 'supplier_payable') {
+                    $entry['domain'] = 'supplier';
+                    $entry['badge_label'] = 'Phải trả NCC';
+                } elseif ($sourceLedger === 'customer_receivable') {
+                    $entry['domain'] = 'customer';
+                    $entry['badge_label'] = 'Phải thu KH';
+                }
+
+                return $entry;
+            })
+            ->values();
+
+        $partnerNetPosition = (float) ($summary['partner_net_position'] ?? $summary['net'] ?? 0.0);
+        $summary = array_merge($summary, [
+            'display_mode' => 'partner_net_timeline',
+            'is_supplier_tab_partner_timeline' => true,
+            'is_net_view' => true,
+            'net' => $partnerNetPosition,
+            'current_debt' => $partnerNetPosition,
+            'net_debt_amount' => $partnerNetPosition,
+            'source' => 'supplier_partner_financial_timeline',
+            'count' => $entries->count(),
+        ]);
+
+        return [
+            'entries' => $entries,
+            'closing_balance' => $partnerNetPosition,
+            'summary' => $summary,
+            'reconcile' => $netLedger['reconcile'] ?? null,
+        ];
+    }
+
     // ==========================================
     // Customer timeline helper methods (copied from PartnerFinancialTimelineService)
     // ==========================================

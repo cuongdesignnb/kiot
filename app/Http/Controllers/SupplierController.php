@@ -613,7 +613,14 @@ class SupplierController extends Controller
     public function debtTransactions($id, Request $request)
     {
         $supplier = Customer::findOrFail($id);
-        $ledger = app(\App\Services\PartnerDebtLedgerService::class)->buildSupplierPayableLedger($supplier);
+        $hasSupplierColumn = \Illuminate\Support\Facades\Schema::hasColumn('customers', 'supplier_debt_amount');
+        $isDualRole = (bool) ($supplier->is_customer && ($hasSupplierColumn ? $supplier->is_supplier : false));
+        $usePartnerTimeline = $isDualRole && (string) $request->input('view', '') === 'partner';
+
+        $ledgerService = app(\App\Services\PartnerDebtLedgerService::class);
+        $ledger = $usePartnerTimeline
+            ? $ledgerService->buildSupplierDualRoleDebtTimeline($supplier)
+            : $ledgerService->buildSupplierPayableLedger($supplier);
 
         // HOTFIX FOLLOW-UP — opt-in server-side pagination matching
         // KiotViet (10 rows per page). Caller activates by sending
@@ -641,10 +648,10 @@ class SupplierController extends Controller
             ];
         }
 
-        $hasSupplierColumn = \Illuminate\Support\Facades\Schema::hasColumn('customers', 'supplier_debt_amount');
         $customerDebt = (float) ($supplier->debt_amount ?? 0);
         $supplierDebt = $hasSupplierColumn ? (float) ($supplier->supplier_debt_amount ?? 0) : 0.0;
         $netDebt = $customerDebt - $supplierDebt;
+        $ledgerSummary = $ledger['summary'] ?? [];
 
         $hasDebtOffsetVoucher = \App\Models\DebtOffset::query()
             ->where('customer_id', $supplier->id)
@@ -660,16 +667,23 @@ class SupplierController extends Controller
                 'partner_net_position'        => $netDebt,
                 'has_debt_offset_voucher'     => $hasDebtOffsetVoucher,
                 'is_actual_offset'            => false,
-                'is_net_view'                 => false,
+                'is_net_view'                 => $usePartnerTimeline,
+                'is_supplier_tab_partner_timeline' => $usePartnerTimeline,
+                'display_mode'                => $usePartnerTimeline ? 'partner_net_timeline' : 'supplier_payable',
 
                 // Backward-compatible keys (existing FE/tests still read these)
-                'net' => $ledger['closing_balance'],
-                'is_dual_role' => (bool) ($supplier->is_customer && ($hasSupplierColumn ? $supplier->is_supplier : false)),
+                'net' => $usePartnerTimeline
+                    ? (float) ($ledgerSummary['partner_net_position'] ?? $netDebt)
+                    : (float) ($ledger['closing_balance'] ?? 0.0),
+                'is_dual_role' => $isDualRole,
                 'customer_debt_amount' => $customerDebt,
                 'supplier_debt_amount' => $supplierDebt,
                 'net_debt_amount' => $netDebt,
             ],
         ];
+        if ($usePartnerTimeline && !empty($ledger['reconcile'])) {
+            $response['reconcile'] = $ledger['reconcile'];
+        }
         if ($pagination !== null) {
             $response['pagination'] = $pagination;
         }
