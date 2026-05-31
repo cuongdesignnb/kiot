@@ -283,7 +283,8 @@ class PartnerFinancialTimelineTest extends TestCase
         $entries = collect($data['entries']);
 
         $this->assertEquals(-10000000, $entries->firstWhere('code', 'PN-PARTIAL-1')['customer_effect']);
-        $this->assertEquals(4000000, $entries->firstWhere('display_type', 'Thanh toán NCC')['customer_effect']);
+        // HOTFIX FOLLOW-UP: display_type "Thanh toán NCC" → "Thanh toán" to match KiotViet.
+        $this->assertEquals(4000000, $entries->firstWhere('display_type', 'Thanh toán')['customer_effect']);
         $this->assertNotEmpty($entries->firstWhere('code', 'PN-PARTIAL-1')['time']);
         $this->assertEquals(-6000000, $data['reconcile']['computed_balance']);
     }

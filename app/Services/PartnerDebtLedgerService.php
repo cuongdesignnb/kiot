@@ -110,7 +110,7 @@ class PartnerDebtLedgerService
                 'code' => $cf->code,
                 'type' => 'payment',
                 'type_label' => 'Thanh toán',
-                'badge_label' => 'Thanh toán NCC',
+                'badge_label' => 'Thanh toán',
                 'amount' => (float) $cf->amount,
                 'supplier_effect' => -(float) $cf->amount,
                 'affects_debt_balance' => true,
@@ -153,7 +153,7 @@ class PartnerDebtLedgerService
                 'code' => $stx->code,
                 'type' => 'payment',
                 'type_label' => 'Thanh toán',
-                'badge_label' => $canAffect ? 'Thanh toán NCC' : 'Đã hạch toán',
+                'badge_label' => $canAffect ? 'Thanh toán' : 'Đã hạch toán',
                 'amount' => abs((float) $stx->amount),
                 'supplier_effect' => $canAffect ? (float) $stx->amount : 0.0,
                 'affects_debt_balance' => $canAffect,
@@ -205,7 +205,7 @@ class PartnerDebtLedgerService
                         'code' => 'TTNH' . preg_replace('/^PN/', '', (string) $p->code),
                         'type' => 'payment',
                         'type_label' => 'Thanh toán',
-                        'badge_label' => 'Thanh toán NCC',
+                        'badge_label' => 'Thanh toán',
                         'amount' => (float) $p->paid_amount,
                         'supplier_effect' => -(float) $p->paid_amount,
                         'affects_debt_balance' => true,
@@ -251,7 +251,68 @@ class PartnerDebtLedgerService
             ]);
         }
 
-        // 6) Sort by time asc and compute payable running balance
+        // 6) DebtOffset (CB/HCB) — HOTFIX FOLLOW-UP. KiotViet treats CB as
+        //    a one-sided payable reduction on the supplier screen; the
+        //    customer-net view picks it up via the mirror in
+        //    buildCustomerNetLedger() so both screens show the same
+        //    voucher with opposite signs. Active CB reduces payable
+        //    (supplier_effect = -amount); cancelled CB (HCB) restores it.
+        // CB always emitted as -amount at created_at (reduces payable as
+        // it actually happened). If cancelled, an additional HCB row at
+        // cancelled_at adds +amount back so the post-cancellation balance
+        // returns to the pre-CB state.
+        //
+        // Dedup: legacy data sometimes carries the same CB as a
+        // SupplierDebtTransaction type='offset' row AND as a DebtOffset
+        // row with the same code. We already emitted the SupplierDebt-
+        // Transaction in section 5; skip the DebtOffset row if a
+        // SupplierDebtTransaction with the same code already supplied it.
+        $existingCodes = $entries->pluck('code')->filter()->map(fn ($c) => (string) $c)->all();
+        $offsets = DebtOffset::where('customer_id', $supplier->id)
+            ->whereNotIn('code', $existingCodes)
+            ->get();
+        foreach ($offsets as $offset) {
+            $entries->push([
+                'id' => 'offset-' . $offset->id,
+                'code' => $offset->code,
+                'type' => 'offset',
+                'type_label' => 'Điều chỉnh',
+                'badge_label' => 'Điều chỉnh',
+                'amount' => (float) $offset->amount,
+                'supplier_effect' => -(float) $offset->amount,
+                'affects_debt_balance' => true,
+                'time' => $offset->created_at,
+                'created_at' => $offset->created_at,
+                'source' => 'debt_offset',
+                'reference_type' => 'DebtOffset',
+                'reference_id' => $offset->id,
+                'note' => $offset->note,
+                'detail_available' => false,
+            ]);
+
+            if ($offset->status === 'cancelled') {
+                $cancelCode = 'HCB' . str_pad((string) $offset->id, 6, '0', STR_PAD_LEFT);
+                $entries->push([
+                    'id' => 'offset-cancel-' . $offset->id,
+                    'code' => $cancelCode,
+                    'type' => 'offset_cancel',
+                    'type_label' => 'Hủy điều chỉnh',
+                    'badge_label' => 'Hủy điều chỉnh',
+                    'amount' => (float) $offset->amount,
+                    'supplier_effect' => +(float) $offset->amount,
+                    'affects_debt_balance' => true,
+                    'time' => $offset->cancelled_at ?? $offset->updated_at,
+                    'created_at' => $offset->cancelled_at ?? $offset->updated_at,
+                    'source' => 'debt_offset_cancel',
+                    'reference_type' => 'DebtOffsetCancel',
+                    'reference_id' => $offset->id,
+                    'note' => $offset->cancel_reason ?? 'Hủy điều chỉnh',
+                    'detail_available' => false,
+                ]);
+            }
+        }
+
+        // 7) Sort by time asc and compute payable running balance
         $sorted = $entries
             ->sortBy(fn ($entry) => $this->timestamp($entry) . '-' . ($entry['id'] ?? ''))
             ->values();
@@ -299,14 +360,20 @@ class PartnerDebtLedgerService
 
         $combined = $ledgerEntries->concat($legacyFiltered);
 
-        // Append customer-side DebtOffset and DebtOffsetCancel entries explicitly
-        // Since offsets are not written to CustomerDebt table, we must load them manually.
-        $offsets = DebtOffset::where('customer_id', $customer->id)->get();
+        // HOTFIX FOLLOW-UP — Append customer-side DebtOffset entries ONLY
+        // for pure-customer (non-dual-role) partners. For dual-role, CB is
+        // emitted on the supplier ledger and mirrored into the customer-net
+        // view (see buildSupplierPayableLedger section 6 + buildCustomerNetLedger
+        // mirror at line 389); emitting it here too would double-count.
+        $hasSupplierColumn = Schema::hasColumn('customers', 'supplier_debt_amount');
+        $isDualRole = (bool) ($customer->is_customer && ($hasSupplierColumn ? $customer->is_supplier : false));
+
+        $offsets = $isDualRole ? collect() : DebtOffset::where('customer_id', $customer->id)->get();
         foreach ($offsets as $offset) {
             $combined->push($this->entry([
                 'id' => 'offset-' . $offset->id,
                 'code' => $offset->code,
-                'display_type' => 'Cấn bằng công nợ',
+                'display_type' => 'Điều chỉnh',
                 'event_kind' => 'debt_offset',
                 'domain' => 'customer',
                 'document_amount' => (float) $offset->amount,
@@ -329,7 +396,7 @@ class PartnerDebtLedgerService
                 $combined->push($this->entry([
                     'id' => 'offset-cancel-' . $offset->id,
                     'code' => $cancelCode,
-                    'display_type' => 'Hủy cấn bằng công nợ',
+                    'display_type' => 'Hủy điều chỉnh',
                     'event_kind' => 'debt_offset_cancel',
                     'domain' => 'customer',
                     'document_amount' => (float) $offset->amount,
@@ -381,7 +448,7 @@ class PartnerDebtLedgerService
                 $supplierEntries->push($this->entry([
                     'id' => 'sup-mirror-' . ($supEntry['id'] ?? uniqid()),
                     'code' => $supEntry['code'],
-                    'display_type' => ($supEntry['type_label'] === 'Thanh toán') ? 'Thanh toán NCC' : ($supEntry['type_label'] ?? $supEntry['type']),
+                    'display_type' => $supEntry['type_label'] ?? $supEntry['type'],
                     'event_kind' => 'supplier_mirror_' . $supEntry['type'],
                     'domain' => 'supplier',
                     'document_amount' => (float) ($supEntry['amount'] ?? 0.0),

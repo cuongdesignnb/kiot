@@ -129,17 +129,32 @@ const getCustomerSalesReturnEntries = (customerId) => {
     });
 };
 
-const loadDebtHistory = async (customerId) => {
+// HOTFIX FOLLOW-UP — paginated debt-history (KiotViet 10/page).
+const debtHistoryPage = reactive({});       // { [customerId]: 1, ... }
+const debtHistoryPerPage = 10;
+
+const loadDebtHistory = async (customerId, page = null) => {
     tabLoading[customerId] = true;
+    const targetPage = page ?? debtHistoryPage[customerId] ?? 1;
+    debtHistoryPage[customerId] = targetPage;
     try {
         const { data } = await axios.get(
             `/customers/${customerId}/debt-history`,
+            { params: { page: targetPage, per_page: debtHistoryPerPage } },
         );
         debtHistoryData[customerId] = data;
     } catch (e) {
-        debtHistoryData[customerId] = { entries: [] };
+        debtHistoryData[customerId] = { entries: [], pagination: { total: 0, last_page: 1, current_page: 1, from: 0, to: 0 } };
     }
     tabLoading[customerId] = false;
+};
+
+const changeDebtHistoryPage = (customerId, newPage) => {
+    const meta = debtHistoryData[customerId]?.pagination;
+    if (!meta) return;
+    const clamped = Math.max(1, Math.min(meta.last_page, newPage));
+    if (clamped === meta.current_page) return;
+    loadDebtHistory(customerId, clamped);
 };
 
 const showCustomerDebtExportModal = ref(false);
@@ -2435,6 +2450,43 @@ const createdDateRange = computed({
                                                         </tr>
                                                     </tbody>
                                                 </table>
+
+                                                <!-- HOTFIX FOLLOW-UP — KiotViet-style pagination -->
+                                                <div
+                                                    v-if="debtHistoryData[customer.id]?.pagination && debtHistoryData[customer.id].pagination.last_page > 1"
+                                                    class="flex items-center justify-end gap-2 mt-3 text-[12px] text-gray-600"
+                                                >
+                                                    <button
+                                                        class="px-2 py-1 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                        :disabled="debtHistoryData[customer.id].pagination.current_page <= 1"
+                                                        @click="changeDebtHistoryPage(customer.id, 1)"
+                                                        title="Trang đầu"
+                                                    >|‹</button>
+                                                    <button
+                                                        class="px-2 py-1 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                        :disabled="debtHistoryData[customer.id].pagination.current_page <= 1"
+                                                        @click="changeDebtHistoryPage(customer.id, debtHistoryData[customer.id].pagination.current_page - 1)"
+                                                        title="Trang trước"
+                                                    >‹</button>
+                                                    <span class="px-2 font-medium text-gray-800">
+                                                        {{ debtHistoryData[customer.id].pagination.current_page }} / {{ debtHistoryData[customer.id].pagination.last_page }}
+                                                    </span>
+                                                    <button
+                                                        class="px-2 py-1 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                        :disabled="debtHistoryData[customer.id].pagination.current_page >= debtHistoryData[customer.id].pagination.last_page"
+                                                        @click="changeDebtHistoryPage(customer.id, debtHistoryData[customer.id].pagination.current_page + 1)"
+                                                        title="Trang sau"
+                                                    >›</button>
+                                                    <button
+                                                        class="px-2 py-1 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                        :disabled="debtHistoryData[customer.id].pagination.current_page >= debtHistoryData[customer.id].pagination.last_page"
+                                                        @click="changeDebtHistoryPage(customer.id, debtHistoryData[customer.id].pagination.last_page)"
+                                                        title="Trang cuối"
+                                                    >›|</button>
+                                                    <span class="ml-3 text-gray-500">
+                                                        {{ debtHistoryData[customer.id].pagination.from }} - {{ debtHistoryData[customer.id].pagination.to }} trong {{ debtHistoryData[customer.id].pagination.total }} dòng
+                                                    </span>
+                                                </div>
 
                                                 <!-- Bottom actions -->
                                                 <div

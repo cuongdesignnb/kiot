@@ -179,8 +179,8 @@ class HOTFIXFollowUpSupplierLedgerHardeningTest extends TestCase
         $this->assertNotNull($standalone, 'Standalone payment must appear in the ledger');
         $this->assertTrue($standalone['affects_debt_balance'],
             'Standalone payment must still affect debt balance even if another purchase has paid_amount > 0');
-        $this->assertSame('Thanh toán NCC', $standalone['badge_label'],
-            'Badge must not be "Đã hạch toán" anymore for a genuinely standalone payment');
+        $this->assertSame('Thanh toán', $standalone['badge_label'],
+            'Badge "Thanh toán" (KiotViet display; was "Thanh toán NCC" pre-FOLLOW-UP)');
         $this->assertEquals(-300_000.0, (float) $standalone['supplier_effect']);
     }
 

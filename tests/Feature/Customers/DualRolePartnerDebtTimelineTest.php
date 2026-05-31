@@ -282,23 +282,24 @@ class DualRolePartnerDebtTimelineTest extends TestCase
         $data = $response->json();
         $entries = collect($data['entries']);
 
-        // Check offset entries in customer history
+        // HOTFIX FOLLOW-UP contract: a CB voucher must appear EXACTLY ONCE
+        // on the dual-role customer-net view. The pre-fix behaviour emitted
+        // two rows for the same CB (one from customer-side debt_offset
+        // source and one from supplier_ledger_mirror) which gave the
+        // misleading impression of a double offset. KiotViet shows only one
+        // row per voucher with mirrored sign (+amount on customer screen,
+        // -amount on supplier screen).
         $cbEntries = $entries->where('code', 'CB000001')->values();
-        
-        // Both the customer-side DebtOffset and the supplier-side mirror offset are present
-        // in the combined chronological net ledger to reflect the complete offset activity.
-        $this->assertCount(2, $cbEntries);
+        $this->assertCount(1, $cbEntries,
+            'CB voucher must appear exactly once on customer-net view (KiotViet contract)');
 
-        $customerSide = $cbEntries->firstWhere('source', 'debt_offset');
-        $this->assertNotNull($customerSide);
-        $this->assertEquals(-5000000, $customerSide['customer_effect']);
-        $this->assertTrue($customerSide['affects_debt_balance']);
-
-        $supplierSide = $cbEntries->firstWhere('source', 'supplier_ledger_mirror');
-        $this->assertNotNull($supplierSide);
-        $this->assertEquals(5000000, $supplierSide['customer_effect']); // -1 * -5M = +5M
-        $this->assertEquals(-5000000, $supplierSide['supplier_effect']);
-        $this->assertTrue($supplierSide['affects_debt_balance']);
+        $cb = $cbEntries->first();
+        $this->assertSame('supplier_ledger_mirror', $cb['source'],
+            'CB reaches the customer-net view via the supplier mirror');
+        $this->assertEquals(+5_000_000, $cb['customer_effect'],
+            'Mirror inverts supplier_effect (-5M) → customer_effect (+5M) matching KiotViet sign');
+        $this->assertEquals(-5_000_000, $cb['supplier_effect']);
+        $this->assertTrue($cb['affects_debt_balance']);
     }
 
     /**

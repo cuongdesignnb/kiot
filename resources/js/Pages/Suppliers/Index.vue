@@ -317,14 +317,37 @@ const setSupplierTab = async (id, tab) => {
         supplierDataLoading[id] = false;
     }
     if (tab === 'debt' && !supplierDebt[id]) {
-        supplierDataLoading[id] = true;
-        try {
-            const res = await axios.get(`/api/suppliers/${id}/debt-transactions`);
-            supplierDebt[id] = res.data;
-        } catch (e) { supplierDebt[id] = { entries: [], summary: null }; }
-        supplierDataLoading[id] = false;
+        await loadSupplierDebt(id, 1);
         if (!offsetHistoryData[id]) loadOffsetHistory(id);
     }
+};
+
+// HOTFIX FOLLOW-UP — opt-in paginated supplier debt-transactions
+// (KiotViet 10/page). Caller passes ?page=N to activate.
+const supplierDebtPage = reactive({});
+const supplierDebtPerPage = 10;
+
+const loadSupplierDebt = async (id, page = null) => {
+    supplierDataLoading[id] = true;
+    const targetPage = page ?? supplierDebtPage[id] ?? 1;
+    supplierDebtPage[id] = targetPage;
+    try {
+        const res = await axios.get(`/api/suppliers/${id}/debt-transactions`, {
+            params: { page: targetPage, per_page: supplierDebtPerPage },
+        });
+        supplierDebt[id] = res.data;
+    } catch (e) {
+        supplierDebt[id] = { entries: [], summary: null, pagination: { total: 0, last_page: 1, current_page: 1, from: 0, to: 0 } };
+    }
+    supplierDataLoading[id] = false;
+};
+
+const changeSupplierDebtPage = (id, newPage) => {
+    const meta = supplierDebt[id]?.pagination;
+    if (!meta) return;
+    const clamped = Math.max(1, Math.min(meta.last_page, newPage));
+    if (clamped === meta.current_page) return;
+    loadSupplierDebt(id, clamped);
 };
 
 
@@ -1200,6 +1223,44 @@ const submitActivate = (supplier) => {
                                                         </tr>
                                                     </tbody>
                                                 </table>
+
+                                                <!-- HOTFIX FOLLOW-UP — KiotViet-style pagination -->
+                                                <div
+                                                    v-if="supplierDebt[supplier.id]?.pagination && supplierDebt[supplier.id].pagination.last_page > 1"
+                                                    class="flex items-center justify-end gap-2 mt-3 text-[12px] text-gray-600"
+                                                >
+                                                    <button
+                                                        class="px-2 py-1 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                        :disabled="supplierDebt[supplier.id].pagination.current_page <= 1"
+                                                        @click="changeSupplierDebtPage(supplier.id, 1)"
+                                                        title="Trang đầu"
+                                                    >|‹</button>
+                                                    <button
+                                                        class="px-2 py-1 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                        :disabled="supplierDebt[supplier.id].pagination.current_page <= 1"
+                                                        @click="changeSupplierDebtPage(supplier.id, supplierDebt[supplier.id].pagination.current_page - 1)"
+                                                        title="Trang trước"
+                                                    >‹</button>
+                                                    <span class="px-2 font-medium text-gray-800">
+                                                        {{ supplierDebt[supplier.id].pagination.current_page }} / {{ supplierDebt[supplier.id].pagination.last_page }}
+                                                    </span>
+                                                    <button
+                                                        class="px-2 py-1 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                        :disabled="supplierDebt[supplier.id].pagination.current_page >= supplierDebt[supplier.id].pagination.last_page"
+                                                        @click="changeSupplierDebtPage(supplier.id, supplierDebt[supplier.id].pagination.current_page + 1)"
+                                                        title="Trang sau"
+                                                    >›</button>
+                                                    <button
+                                                        class="px-2 py-1 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                        :disabled="supplierDebt[supplier.id].pagination.current_page >= supplierDebt[supplier.id].pagination.last_page"
+                                                        @click="changeSupplierDebtPage(supplier.id, supplierDebt[supplier.id].pagination.last_page)"
+                                                        title="Trang cuối"
+                                                    >›|</button>
+                                                    <span class="ml-3 text-gray-500">
+                                                        {{ supplierDebt[supplier.id].pagination.from }} - {{ supplierDebt[supplier.id].pagination.to }} trong {{ supplierDebt[supplier.id].pagination.total }} dòng
+                                                    </span>
+                                                </div>
+
                                                 <div class="flex items-center justify-between">
                                                     <div class="flex gap-2">
                                                         <button

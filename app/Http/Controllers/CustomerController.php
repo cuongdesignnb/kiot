@@ -581,11 +581,36 @@ class CustomerController extends Controller
      * Dedup: nếu legacy.code trùng ledger.ref_code thì ưu tiên ledger.
      * Không backfill, không cập nhật customers.debt_amount, không sửa CustomerDebtService.
      */
-    public function debtHistory(Customer $customer)
+    public function debtHistory(Request $request, Customer $customer)
     {
-        return response()->json(
-            app(\App\Services\PartnerDebtLedgerService::class)->buildCustomerNetLedger($customer)
-        );
+        $ledger = app(\App\Services\PartnerDebtLedgerService::class)->buildCustomerNetLedger($customer);
+
+        // HOTFIX FOLLOW-UP — opt-in server-side pagination to match KiotViet
+        // (10/page). Caller activates by sending ?page=N; without that
+        // param, the full ledger is returned for backward compat with
+        // existing tests/exports/scripts that iterate all entries.
+        if ($request->has('page')) {
+            $entries = collect($ledger['entries'] ?? []);
+            $perPage = max(1, min(100, (int) $request->input('per_page', 10)));
+            $total = $entries->count();
+            $lastPage = max(1, (int) ceil($total / $perPage));
+            $currentPage = max(1, min($lastPage, (int) $request->input('page', 1)));
+            $offset = ($currentPage - 1) * $perPage;
+
+            return response()->json(array_merge($ledger, [
+                'entries' => $entries->slice($offset, $perPage)->values(),
+                'pagination' => [
+                    'total'        => $total,
+                    'per_page'     => $perPage,
+                    'current_page' => $currentPage,
+                    'last_page'    => $lastPage,
+                    'from'         => $total === 0 ? 0 : $offset + 1,
+                    'to'           => min($offset + $perPage, $total),
+                ],
+            ]));
+        }
+
+        return response()->json($ledger);
     }
 
     /**
@@ -979,8 +1004,14 @@ class CustomerController extends Controller
 
     public function exportDebtHistory(Customer $customer, Request $request)
     {
-        $data = $this->debtHistory($customer)->getData(true);
-        $entries = $data['entries'] ?? [];
+        // HOTFIX FOLLOW-UP — export must include ALL entries; bypass the
+        // pagination layer added to debtHistory() for the UI tab.
+        $data = app(\App\Services\PartnerDebtLedgerService::class)->buildCustomerNetLedger($customer);
+        // Normalise to a plain array of associative arrays — historically
+        // the export pulled this via getData(true) which produced this shape.
+        $entries = collect($data['entries'] ?? [])
+            ->map(fn ($e) => is_array($e) ? $e : (array) $e)
+            ->all();
 
         $hasQuery = $request->hasAny(['date_preset', 'date_from', 'date_to', 'include_detail', 'columns', 'format']);
 

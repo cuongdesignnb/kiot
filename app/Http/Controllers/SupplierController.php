@@ -302,8 +302,13 @@ class SupplierController extends Controller
         // Nếu không có bất kỳ query nào → fast path legacy format.
         $hasQuery = $request->hasAny(['date_preset', 'date_from', 'date_to', 'include_detail', 'columns', 'format']);
 
-        $data    = $this->debtTransactions($id)->getData(true);
-        $entries = $data['entries'] ?? $data;
+        // HOTFIX FOLLOW-UP — export must pull ALL entries; bypass the
+        // pagination added to debtTransactions() for the UI.
+        $supplier = Customer::findOrFail($id);
+        $ledger = app(\App\Services\PartnerDebtLedgerService::class)->buildSupplierPayableLedger($supplier);
+        $entries = collect($ledger['entries'] ?? [])
+            ->map(fn ($e) => is_array($e) ? $e : (array) $e)
+            ->all();
 
         if (!$hasQuery) {
             return \App\Services\CsvService::export(
@@ -605,10 +610,36 @@ class SupplierController extends Controller
      * Nợ cần trả NCC - lịch sử công nợ (unified ledger, dual-role aware)
      * supplier_effect = -customer_effect (theo motakh.md spec)
      */
-    public function debtTransactions($id)
+    public function debtTransactions($id, Request $request)
     {
         $supplier = Customer::findOrFail($id);
         $ledger = app(\App\Services\PartnerDebtLedgerService::class)->buildSupplierPayableLedger($supplier);
+
+        // HOTFIX FOLLOW-UP — opt-in server-side pagination matching
+        // KiotViet (10 rows per page). Caller activates by sending
+        // ?page=N. Without that param, the full ledger is returned
+        // so existing tests / exports / scripts that iterate all
+        // entries continue to work.
+        $usePagination = $request->has('page');
+        $allEntries = collect($ledger['entries'] ?? []);
+        $pagination = null;
+        $pagedEntries = $allEntries;
+        if ($usePagination) {
+            $perPage = max(1, min(100, (int) $request->input('per_page', 10)));
+            $total = $allEntries->count();
+            $lastPage = max(1, (int) ceil($total / $perPage));
+            $currentPage = max(1, min($lastPage, (int) $request->input('page', 1)));
+            $offset = ($currentPage - 1) * $perPage;
+            $pagedEntries = $allEntries->slice($offset, $perPage)->values();
+            $pagination = [
+                'total'        => $total,
+                'per_page'     => $perPage,
+                'current_page' => $currentPage,
+                'last_page'    => $lastPage,
+                'from'         => $total === 0 ? 0 : $offset + 1,
+                'to'           => min($offset + $perPage, $total),
+            ];
+        }
 
         $hasSupplierColumn = \Illuminate\Support\Facades\Schema::hasColumn('customers', 'supplier_debt_amount');
         $customerDebt = (float) ($supplier->debt_amount ?? 0);
@@ -620,8 +651,8 @@ class SupplierController extends Controller
             ->where('status', '!=', 'cancelled')
             ->exists();
 
-        return response()->json([
-            'entries' => $ledger['entries'],
+        $response = [
+            'entries' => $pagedEntries,
             'summary' => [
                 // Canonical receivable/payable/net keys (HOTFIX FOLLOW-UP)
                 'customer_receivable_balance' => $customerDebt,
@@ -638,7 +669,11 @@ class SupplierController extends Controller
                 'supplier_debt_amount' => $supplierDebt,
                 'net_debt_amount' => $netDebt,
             ],
-        ]);
+        ];
+        if ($pagination !== null) {
+            $response['pagination'] = $pagination;
+        }
+        return response()->json($response);
     }
 
     /**
