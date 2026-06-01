@@ -72,3 +72,35 @@ PASS  Step233PurchaseReturnFlowTest (14 tests)
 ```
 npm run build → ✓ built in 9.63s (no errors)
 ```
+
+## 7. Follow-up permission fix (2026-06-01)
+
+### Vấn đề sau audit
+- Route `GET /purchase-returns/create` đang dùng middleware `permission:purchases.create`.
+- User chỉ có `purchases.return.create` lookup serial được, nhưng bấm "Mở phiếu nhập để trả serial này" bị 403.
+
+### Thay đổi
+- `routes/web.php`: đổi middleware route `/purchase-returns/create` từ `permission:purchases.create` → `permission:purchases.return.create`.
+- `tests/Feature/Purchase/HOTFIXPurchaseReturnPermissionTest.php` (NEW): 4 test cases role-based permission.
+
+### Data safety
+- Không migration, không backfill, không update dữ liệu cũ.
+- Không ảnh hưởng tồn kho / serial / công nợ / cashflow.
+
+### Tests
+
+```
+Tests:    35 passed (199 assertions)
+Duration: 4.15s
+
+PASS  HOTFIX246KPurchaseReturnQuickAndReturnerTest (4 tests)
+PASS  HOTFIXPurchaseReturnPermissionTest (4 tests)  ← NEW
+PASS  HOTFIXPurchaseReturnSerialLookupTest (7 tests)
+PASS  PurchaseOtherCostsTest (6 tests)
+PASS  Step233PurchaseReturnFlowTest (14 tests)
+```
+
+### Build
+```
+npm run build → pass
+```
