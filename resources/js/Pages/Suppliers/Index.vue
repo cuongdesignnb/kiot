@@ -400,32 +400,38 @@ const supplierDebtFinalColumnLabel = (id) =>
 const supplierDebtEntryEffect = (entry, id) => {
     if (isSupplierPartnerTimeline(id)) {
         return Number(
+            entry?.supplier_display_effect ??
             entry?.supplier_partner_effect ??
             entry?.partner_effect ??
+            entry?.display_effect ??
+            entry?.financial_effect ??
             entry?.supplier_effect ??
             entry?.amount ??
             0
         );
     }
-    return Number(entry?.supplier_effect ?? entry?.amount ?? 0);
+    return Number(entry?.supplier_display_effect ?? entry?.display_effect ?? entry?.financial_effect ?? entry?.supplier_effect ?? entry?.amount ?? 0);
 };
 
 const supplierDebtEntryBalance = (entry, id) => {
     if (isSupplierPartnerTimeline(id)) {
-        return Number(
-            entry?.supplier_partner_running_balance ??
-            entry?.partner_running_balance ??
-            entry?.debt_remain ??
-            entry?.balance ??
-            0
-        );
+        for (const key of ['supplier_partner_running_balance', 'partner_running_balance', 'debt_remain', 'balance']) {
+            const value = entry?.[key];
+            if (value !== undefined && value !== null && value !== '') return Number(value);
+        }
+        return null;
     }
-    return Number(entry?.debt_remain ?? entry?.supplier_balance ?? entry?.balance ?? 0);
+    for (const key of ['debt_remain', 'supplier_running_balance', 'supplier_balance', 'balance']) {
+        const value = entry?.[key];
+        if (value !== undefined && value !== null && value !== '') return Number(value);
+    }
+    return null;
 };
 
 const supplierDebtEntryBadge = (entry, id) => {
     if (!isSupplierPartnerTimeline(id)) return '';
-    if (entry?.affects_partner_net === false) return entry?.badge_label || 'Đã hạch toán';
+    if (entry?.badge_label === 'Đã hạch toán') return '';
+    if (entry?.affects_partner_net === false) return entry?.badge_label || '';
     return entry?.badge_label || (
         entry?.domain === 'customer' || entry?.source_ledger === 'customer_receivable'
             ? 'Phải thu KH'
@@ -1321,7 +1327,10 @@ const submitActivate = (supplier) => {
                                                             >
                                                                 {{ supplierDebtEntryEffect(d, supplier.id) > 0 ? '+' : '' }}{{ formatCurrency(supplierDebtEntryEffect(d, supplier.id)) }}
                                                             </td>
-                                                            <td class="px-3 py-2 text-right font-semibold">{{ formatCurrency(supplierDebtEntryBalance(d, supplier.id)) }}</td>
+                                                            <td class="px-3 py-2 text-right font-semibold">
+                                                                <span v-if="supplierDebtEntryBalance(d, supplier.id) === null">—</span>
+                                                                <span v-else>{{ formatCurrency(supplierDebtEntryBalance(d, supplier.id)) }}</span>
+                                                            </td>
                                                         </tr>
                                                     </tbody>
                                                 </table>

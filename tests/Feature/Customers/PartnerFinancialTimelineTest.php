@@ -116,10 +116,12 @@ class PartnerFinancialTimelineTest extends TestCase
 
         $legacyInvoice = $entries->firstWhere('code', 'HD177932991721');
         $this->assertFalse($legacyInvoice['affects_debt_balance']);
-        $this->assertEquals('Đã hạch toán', $legacyInvoice['badge_label']);
+        $this->assertEquals('Phải thu KH', $legacyInvoice['badge_label']);
         $this->assertStringContainsString('không cộng lại', $legacyInvoice['balance_note']);
         $this->assertNotEmpty($legacyInvoice['time']);
         $this->assertEquals(0, $legacyInvoice['customer_effect']);
+        $this->assertEquals(42320000, $legacyInvoice['customer_display_effect']);
+        $this->assertEquals(42320000, $legacyInvoice['display_effect']);
 
         $purchase = $entries->firstWhere('code', 'PN20260523105400');
         $this->assertEquals('Nhập hàng', $purchase['display_type']);
@@ -233,7 +235,9 @@ class PartnerFinancialTimelineTest extends TestCase
         $payment = collect($this->getDebtHistory($customer)['entries'])->firstWhere('code', 'TTHD7200000');
 
         $this->assertFalse($payment['affects_debt_balance']);
-        $this->assertEquals('Đã hạch toán', $payment['badge_label']);
+        $this->assertEquals('Thanh toán', $payment['badge_label']);
+        $this->assertEquals(-7200000, $payment['customer_display_effect']);
+        $this->assertEquals(-7200000, $payment['display_effect']);
         $this->assertStringContainsString('không cộng lại', $payment['balance_note']);
     }
 
@@ -257,7 +261,7 @@ class PartnerFinancialTimelineTest extends TestCase
         $this->assertEquals(7200000, $entries->firstWhere('code', 'HD7200001')['customer_effect']);
         $this->assertEquals(-7200000, $entries->firstWhere('code', 'TTHD7200001')['customer_effect']);
         $this->assertEquals('Chứng từ cũ', $entries->firstWhere('code', 'HD7200001')['badge_label']);
-        $this->assertEquals('Thanh toán HĐ', $entries->firstWhere('code', 'TTHD7200001')['badge_label']);
+        $this->assertEquals('Thanh toán', $entries->firstWhere('code', 'TTHD7200001')['badge_label']);
         $this->assertEquals(0, $data['reconcile']['computed_balance']);
     }
 

@@ -42,6 +42,11 @@ class PartnerDebtLedgerService
                 'badge_label' => 'Phiếu nhập',
                 'amount' => (float) $p->total_amount,
                 'supplier_effect' => (float) $p->total_amount,
+                'display_effect' => (float) $p->total_amount,
+                'financial_effect' => (float) $p->total_amount,
+                'balance_effect' => (float) $p->total_amount,
+                'supplier_display_effect' => (float) $p->total_amount,
+                'supplier_balance_effect' => (float) $p->total_amount,
                 'affects_debt_balance' => true,
                 'time' => $p->purchase_date ?? $p->created_at,
                 'created_at' => $p->created_at,
@@ -66,6 +71,11 @@ class PartnerDebtLedgerService
                 'badge_label' => 'Trả hàng nhập',
                 'amount' => (float) $pr->total_amount,
                 'supplier_effect' => -(float) $pr->total_amount,
+                'display_effect' => -(float) $pr->total_amount,
+                'financial_effect' => -(float) $pr->total_amount,
+                'balance_effect' => -(float) $pr->total_amount,
+                'supplier_display_effect' => -(float) $pr->total_amount,
+                'supplier_balance_effect' => -(float) $pr->total_amount,
                 'affects_debt_balance' => true,
                 'time' => $pr->return_date ?? $pr->created_at,
                 'created_at' => $pr->created_at,
@@ -113,6 +123,11 @@ class PartnerDebtLedgerService
                 'badge_label' => 'Thanh toán',
                 'amount' => (float) $cf->amount,
                 'supplier_effect' => -(float) $cf->amount,
+                'display_effect' => -(float) $cf->amount,
+                'financial_effect' => -(float) $cf->amount,
+                'balance_effect' => -(float) $cf->amount,
+                'supplier_display_effect' => -(float) $cf->amount,
+                'supplier_balance_effect' => -(float) $cf->amount,
                 'affects_debt_balance' => true,
                 'time' => $cf->time ?? $cf->created_at,
                 'created_at' => $cf->created_at,
@@ -153,9 +168,14 @@ class PartnerDebtLedgerService
                 'code' => $stx->code,
                 'type' => 'payment',
                 'type_label' => 'Thanh toán',
-                'badge_label' => $canAffect ? 'Thanh toán' : 'Đã hạch toán',
+                'badge_label' => 'Thanh toán',
                 'amount' => abs((float) $stx->amount),
                 'supplier_effect' => $canAffect ? (float) $stx->amount : 0.0,
+                'display_effect' => (float) $stx->amount,
+                'financial_effect' => (float) $stx->amount,
+                'balance_effect' => $canAffect ? (float) $stx->amount : 0.0,
+                'supplier_display_effect' => (float) $stx->amount,
+                'supplier_balance_effect' => $canAffect ? (float) $stx->amount : 0.0,
                 'affects_debt_balance' => $canAffect,
                 'time' => $stx->created_at,
                 'created_at' => $stx->created_at,
@@ -208,6 +228,11 @@ class PartnerDebtLedgerService
                         'badge_label' => 'Thanh toán',
                         'amount' => (float) $p->paid_amount,
                         'supplier_effect' => -(float) $p->paid_amount,
+                        'display_effect' => -(float) $p->paid_amount,
+                        'financial_effect' => -(float) $p->paid_amount,
+                        'balance_effect' => -(float) $p->paid_amount,
+                        'supplier_display_effect' => -(float) $p->paid_amount,
+                        'supplier_balance_effect' => -(float) $p->paid_amount,
                         'affects_debt_balance' => true,
                         'time' => $p->purchase_date ?? $p->created_at,
                         'created_at' => $p->created_at,
@@ -240,6 +265,11 @@ class PartnerDebtLedgerService
                 'badge_label' => $typeLabels[$stx->type] ?? $stx->type,
                 'amount' => abs((float) $stx->amount),
                 'supplier_effect' => (float) $stx->amount, // positive to increase payable, negative to decrease
+                'display_effect' => (float) $stx->amount,
+                'financial_effect' => (float) $stx->amount,
+                'balance_effect' => (float) $stx->amount,
+                'supplier_display_effect' => (float) $stx->amount,
+                'supplier_balance_effect' => (float) $stx->amount,
                 'affects_debt_balance' => true,
                 'time' => $stx->created_at,
                 'created_at' => $stx->created_at,
@@ -280,6 +310,11 @@ class PartnerDebtLedgerService
                 'badge_label' => 'Điều chỉnh',
                 'amount' => (float) $offset->amount,
                 'supplier_effect' => -(float) $offset->amount,
+                'display_effect' => -(float) $offset->amount,
+                'financial_effect' => -(float) $offset->amount,
+                'balance_effect' => -(float) $offset->amount,
+                'supplier_display_effect' => -(float) $offset->amount,
+                'supplier_balance_effect' => -(float) $offset->amount,
                 'affects_debt_balance' => true,
                 'time' => $offset->created_at,
                 'created_at' => $offset->created_at,
@@ -300,6 +335,11 @@ class PartnerDebtLedgerService
                     'badge_label' => 'Hủy điều chỉnh',
                     'amount' => (float) $offset->amount,
                     'supplier_effect' => +(float) $offset->amount,
+                    'display_effect' => (float) $offset->amount,
+                    'financial_effect' => (float) $offset->amount,
+                    'balance_effect' => (float) $offset->amount,
+                    'supplier_display_effect' => (float) $offset->amount,
+                    'supplier_balance_effect' => (float) $offset->amount,
                     'affects_debt_balance' => true,
                     'time' => $offset->cancelled_at ?? $offset->updated_at,
                     'created_at' => $offset->cancelled_at ?? $offset->updated_at,
@@ -319,7 +359,8 @@ class PartnerDebtLedgerService
 
         $balance = 0.0;
         $ledger = $sorted->map(function ($entry) use (&$balance) {
-            $balance += (float) ($entry['supplier_effect'] ?? 0.0);
+            $balance += $this->firstNumeric($entry, ['supplier_balance_effect', 'balance_effect', 'supplier_effect'], 0.0);
+            $entry['supplier_running_balance'] = $balance;
             $entry['supplier_balance'] = $balance;
             $entry['debt_remain'] = $balance;
             $entry['balance'] = $balance;
@@ -444,6 +485,17 @@ class PartnerDebtLedgerService
             foreach ($supplierLedger['entries'] as $supEntry) {
                 // Mirror sign: customer_effect = -1 * supplier_effect
                 $affects = (bool) ($supEntry['affects_debt_balance'] ?? true);
+                $supplierDisplayEffect = $this->firstNumeric($supEntry, [
+                    'supplier_display_effect',
+                    'display_effect',
+                    'financial_effect',
+                    'supplier_effect',
+                ], 0.0);
+                $supplierBalanceEffect = $this->firstNumeric($supEntry, [
+                    'supplier_balance_effect',
+                    'balance_effect',
+                    'supplier_effect',
+                ], 0.0);
 
                 $supplierEntries->push($this->entry([
                     'id' => 'sup-mirror-' . ($supEntry['id'] ?? uniqid()),
@@ -453,8 +505,15 @@ class PartnerDebtLedgerService
                     'domain' => 'supplier',
                     'document_amount' => (float) ($supEntry['amount'] ?? 0.0),
                     'amount' => (float) ($supEntry['amount'] ?? 0.0),
-                    'customer_effect' => -1 * (float) ($supEntry['supplier_effect'] ?? 0.0),
-                    'supplier_effect' => (float) ($supEntry['supplier_effect'] ?? 0.0),
+                    'display_effect' => -1 * $supplierDisplayEffect,
+                    'financial_effect' => -1 * $supplierDisplayEffect,
+                    'balance_effect' => -1 * $supplierBalanceEffect,
+                    'customer_display_effect' => -1 * $supplierDisplayEffect,
+                    'customer_balance_effect' => -1 * $supplierBalanceEffect,
+                    'customer_effect' => -1 * $supplierBalanceEffect,
+                    'supplier_display_effect' => $supplierDisplayEffect,
+                    'supplier_balance_effect' => $supplierBalanceEffect,
+                    'supplier_effect' => $supplierBalanceEffect,
                     'affects_debt_balance' => $affects,
                     'source' => 'supplier_ledger_mirror',
                     'time' => $supEntry['time'],
@@ -480,10 +539,12 @@ class PartnerDebtLedgerService
         $running = 0.0;
         $computedEntries = $sorted->map(function ($entry) use (&$running) {
             if (($entry['affects_debt_balance'] ?? true) === true) {
-                $running += (float) ($entry['customer_effect'] ?? 0.0);
+                $running += $this->firstNumeric($entry, ['customer_balance_effect', 'balance_effect', 'customer_effect'], 0.0);
                 $entry['balance'] = $running;
+                $entry['customer_running_balance'] = $running;
             } else {
                 $entry['balance'] = null;
+                $entry['customer_running_balance'] = null;
             }
             return $entry;
         });
@@ -571,11 +632,22 @@ class PartnerDebtLedgerService
                     $sourceLedger = 'debt_offset';
                 }
 
-                $partnerEffect = $this->resolveSupplierPartnerEffect($entry, $sourceLedger);
+                $customerDisplayEffect = $this->firstNumeric($entry, [
+                    'customer_display_effect',
+                    'display_effect',
+                    'financial_effect',
+                    'customer_effect',
+                ], 0.0);
+                [$partnerDisplayEffect, $partnerBalanceEffect] = $this->resolveSupplierPartnerEffects($entry, $sourceLedger);
 
                 $entry['orientation'] = 'supplier';
-                $entry['supplier_partner_effect'] = $partnerEffect;
-                $entry['partner_effect'] = $partnerEffect;
+                $entry['display_effect'] = $partnerDisplayEffect;
+                $entry['financial_effect'] = $partnerDisplayEffect;
+                $entry['balance_effect'] = $partnerBalanceEffect;
+                $entry['supplier_display_effect'] = $partnerDisplayEffect;
+                $entry['supplier_balance_effect'] = $partnerBalanceEffect;
+                $entry['supplier_partner_effect'] = $partnerDisplayEffect;
+                $entry['partner_effect'] = $partnerDisplayEffect;
                 $entry['affects_partner_net'] = $affects;
                 $entry['source_ledger'] = $sourceLedger;
                 $entry['is_mirror'] = $source === 'supplier_ledger_mirror';
@@ -583,8 +655,8 @@ class PartnerDebtLedgerService
                 $entry['affects_supplier_payable'] = $sourceLedger === 'supplier_payable' && $affects;
                 $entry['display_balance_label'] = 'Nợ cần trả nhà cung cấp';
                 $entry['view_effects'] = [
-                    'customer' => (float) ($entry['customer_effect'] ?? 0.0),
-                    'supplier' => $partnerEffect,
+                    'customer' => $customerDisplayEffect,
+                    'supplier' => $partnerDisplayEffect,
                 ];
 
                 if ($sourceLedger === 'debt_offset') {
@@ -606,7 +678,7 @@ class PartnerDebtLedgerService
         $entries = $entries
             ->map(function (array $entry) use (&$running) {
                 if (($entry['affects_partner_net'] ?? true) === true) {
-                    $running += (float) ($entry['partner_effect'] ?? 0.0);
+                    $running += $this->firstNumeric($entry, ['supplier_balance_effect', 'balance_effect', 'partner_effect'], 0.0);
                     $entry['partner_running_balance'] = $running;
                     $entry['supplier_partner_running_balance'] = $running;
                     $entry['balance'] = $running;
@@ -650,17 +722,38 @@ class PartnerDebtLedgerService
         ];
     }
 
-    private function resolveSupplierPartnerEffect(array $entry, string $sourceLedger): float
+    private function resolveSupplierPartnerEffects(array $entry, string $sourceLedger): array
     {
-        if ($sourceLedger === 'supplier_payable' && array_key_exists('supplier_effect', $entry)) {
-            return (float) $entry['supplier_effect'];
+        if ($sourceLedger === 'supplier_payable') {
+            $display = $this->firstNumeric($entry, [
+                'supplier_display_effect',
+                'display_effect',
+                'financial_effect',
+                'supplier_effect',
+            ], 0.0);
+            $balance = $this->firstNumeric($entry, [
+                'supplier_balance_effect',
+                'balance_effect',
+                'supplier_effect',
+            ], 0.0);
+
+            return [$display, $balance];
         }
 
-        if (array_key_exists('customer_effect', $entry)) {
-            return -1 * (float) $entry['customer_effect'];
-        }
+        $customerDisplay = $this->firstNumeric($entry, [
+            'customer_display_effect',
+            'display_effect',
+            'financial_effect',
+            'customer_effect',
+            'amount',
+        ], 0.0);
+        $customerBalance = $this->firstNumeric($entry, [
+            'customer_balance_effect',
+            'balance_effect',
+            'customer_effect',
+        ], 0.0);
 
-        return 0.0;
+        return [-1 * $customerDisplay, -1 * $customerBalance];
     }
 
     // ==========================================
@@ -720,11 +813,17 @@ class PartnerDebtLedgerService
                 'domain' => 'customer',
                 'document_amount' => (float) $invoice->total,
                 'amount' => (float) $invoice->total,
+                'display_effect' => (float) $invoice->total,
+                'financial_effect' => (float) $invoice->total,
+                'balance_effect' => $hasCustomerLedger ? 0.0 : (float) $invoice->total,
+                'customer_display_effect' => (float) $invoice->total,
+                'customer_balance_effect' => $hasCustomerLedger ? 0.0 : (float) $invoice->total,
                 'customer_effect' => $hasCustomerLedger ? 0.0 : (float) $invoice->total,
                 'affects_debt_balance' => !$hasCustomerLedger,
+                'is_reference_only' => $hasCustomerLedger,
                 'source' => $hasCustomerLedger ? 'reference' : 'legacy',
-                'badge_label' => $hasCustomerLedger ? 'Đã hạch toán' : 'Chứng từ cũ',
-                'badge_title' => $hasCustomerLedger ? 'Đã phản ánh trong Số dư đầu kỳ/Gộp công nợ hoặc ledger công nợ, không cộng lại công nợ.' : null,
+                'badge_label' => $hasCustomerLedger ? 'Phải thu KH' : 'Chứng từ cũ',
+                'badge_title' => $hasCustomerLedger ? 'Chứng từ tham chiếu, không cộng lại số dư công nợ.' : null,
                 'balance_note' => $hasCustomerLedger ? 'Đã phản ánh trong Số dư đầu kỳ/Gộp công nợ hoặc ledger công nợ, không cộng lại công nợ.' : null,
                 'time' => $invoice->transaction_date ?? $invoice->created_at,
                 'created_at' => $invoice->created_at,
@@ -743,11 +842,17 @@ class PartnerDebtLedgerService
                     'domain' => 'customer',
                     'document_amount' => (float) $invoice->customer_paid,
                     'amount' => (float) $invoice->customer_paid,
+                    'display_effect' => -(float) $invoice->customer_paid,
+                    'financial_effect' => -(float) $invoice->customer_paid,
+                    'balance_effect' => $hasCustomerLedger ? 0.0 : -(float) $invoice->customer_paid,
+                    'customer_display_effect' => -(float) $invoice->customer_paid,
+                    'customer_balance_effect' => $hasCustomerLedger ? 0.0 : -(float) $invoice->customer_paid,
                     'customer_effect' => $hasCustomerLedger ? 0.0 : -(float) $invoice->customer_paid,
                     'affects_debt_balance' => !$hasCustomerLedger,
+                    'is_reference_only' => $hasCustomerLedger,
                     'source' => $hasCustomerLedger ? 'reference' : 'legacy',
-                    'badge_label' => $hasCustomerLedger ? 'Đã hạch toán' : 'Thanh toán HĐ',
-                    'badge_title' => $hasCustomerLedger ? 'Đã phản ánh trong Số dư đầu kỳ/Gộp công nợ hoặc ledger công nợ, không cộng lại công nợ.' : null,
+                    'badge_label' => 'Thanh toán',
+                    'badge_title' => $hasCustomerLedger ? 'Chứng từ tham chiếu, không cộng lại số dư công nợ.' : null,
                     'balance_note' => $hasCustomerLedger ? 'Đã phản ánh trong Số dư đầu kỳ/Gộp công nợ hoặc ledger công nợ, không cộng lại công nợ.' : null,
                     'time' => $invoice->transaction_date ?? $invoice->created_at,
                     'created_at' => $invoice->created_at,
@@ -803,11 +908,17 @@ class PartnerDebtLedgerService
                     'domain' => 'reference',
                     'document_amount' => (float) $return->total,
                     'amount' => (float) $return->total,
+                    'display_effect' => -(float) $return->total,
+                    'financial_effect' => -(float) $return->total,
+                    'balance_effect' => 0.0,
+                    'customer_display_effect' => -(float) $return->total,
+                    'customer_balance_effect' => 0.0,
                     'customer_effect' => 0.0,
                     'affects_debt_balance' => false,
+                    'is_reference_only' => true,
                     'source' => 'reference',
-                    'badge_label' => 'Đã hạch toán',
-                    'badge_title' => 'Đã phản ánh trong Số dư đầu kỳ/Gộp công nợ hoặc ledger công nợ, không cộng lại công nợ.',
+                    'badge_label' => 'Trả hàng',
+                    'badge_title' => 'Chứng từ tham chiếu, không cộng lại số dư công nợ.',
                     'balance_note' => 'Đã phản ánh trong Số dư đầu kỳ/Gộp công nợ hoặc ledger công nợ, không cộng lại công nợ.',
                     'time' => $return->created_at,
                     'created_at' => $return->created_at,
@@ -828,8 +939,14 @@ class PartnerDebtLedgerService
                 'domain' => 'customer',
                 'document_amount' => (float) $return->total,
                 'amount' => (float) $return->total,
+                'display_effect' => -(float) $return->total,
+                'financial_effect' => -(float) $return->total,
+                'balance_effect' => $affects ? -(float) $return->total : 0.0,
+                'customer_display_effect' => -(float) $return->total,
+                'customer_balance_effect' => $affects ? -(float) $return->total : 0.0,
                 'customer_effect' => $affects ? -(float) $return->total : 0.0,
                 'affects_debt_balance' => $affects,
+                'is_reference_only' => !$affects,
                 'source' => $affects ? 'legacy' : 'reference',
                 'badge_label' => $affects ? 'Chứng từ cũ' : 'Cần đối soát',
                 'badge_title' => $affects ? null : 'Có phiếu trả hàng nhưng chưa thấy ledger công nợ tương ứng',
@@ -869,11 +986,17 @@ class PartnerDebtLedgerService
                     'domain' => 'customer',
                     'document_amount' => (float) $cashFlow->amount,
                     'amount' => (float) $cashFlow->amount,
+                    'display_effect' => -(float) $cashFlow->amount,
+                    'financial_effect' => -(float) $cashFlow->amount,
+                    'balance_effect' => $hasCustomerLedger ? 0.0 : -(float) $cashFlow->amount,
+                    'customer_display_effect' => -(float) $cashFlow->amount,
+                    'customer_balance_effect' => $hasCustomerLedger ? 0.0 : -(float) $cashFlow->amount,
                     'customer_effect' => $hasCustomerLedger ? 0.0 : -(float) $cashFlow->amount,
                     'affects_debt_balance' => !$hasCustomerLedger,
+                    'is_reference_only' => $hasCustomerLedger,
                     'source' => $hasCustomerLedger ? 'reference' : 'legacy',
-                    'badge_label' => $hasCustomerLedger ? 'Đã hạch toán' : 'Chứng từ cũ',
-                    'badge_title' => $hasCustomerLedger ? 'Đã phản ánh trong Số dư đầu kỳ/Gộp công nợ hoặc ledger công nợ, không cộng lại công nợ.' : null,
+                    'badge_label' => $cashFlow->reference_type === 'OrderReturn' ? 'Trả hàng' : 'Thanh toán',
+                    'badge_title' => $hasCustomerLedger ? 'Chứng từ tham chiếu, không cộng lại số dư công nợ.' : null,
                     'balance_note' => $hasCustomerLedger ? 'Đã phản ánh trong Số dư đầu kỳ/Gộp công nợ hoặc ledger công nợ, không cộng lại công nợ.' : null,
                     'time' => $cashFlow->time ?? $cashFlow->created_at,
                     'created_at' => $cashFlow->created_at,
@@ -901,6 +1024,11 @@ class PartnerDebtLedgerService
             'domain' => 'customer',
             'document_amount' => abs($amount),
             'amount' => $amount,
+            'display_effect' => $amount,
+            'financial_effect' => $amount,
+            'balance_effect' => $amount,
+            'customer_display_effect' => $amount,
+            'customer_balance_effect' => $amount,
             'customer_effect' => $amount,
             'affects_debt_balance' => true,
             'source' => 'ledger',
@@ -920,6 +1048,8 @@ class PartnerDebtLedgerService
 
         if ($settlementMeta) {
             $entry['customer_effect'] = $amount + (float) $settlementMeta['settlement_adjusted_amount'];
+            $entry['balance_effect'] = $entry['customer_effect'];
+            $entry['customer_balance_effect'] = $entry['customer_effect'];
             $entry['debt_total'] = (float) $settlementMeta['display_balance'];
             $entry['ledger_debt_total'] = (float) $settlementMeta['display_balance'];
             $entry['settlement_adjusted_amount'] = (float) $settlementMeta['settlement_adjusted_amount'];
@@ -1122,6 +1252,15 @@ class PartnerDebtLedgerService
             'event_kind' => 'reference',
             'document_amount' => 0.0,
             'amount' => 0.0,
+            'display_effect' => null,
+            'financial_effect' => null,
+            'balance_effect' => null,
+            'customer_display_effect' => null,
+            'customer_balance_effect' => null,
+            'customer_running_balance' => null,
+            'supplier_display_effect' => null,
+            'supplier_balance_effect' => null,
+            'supplier_running_balance' => null,
             'customer_effect' => 0.0,
             'supplier_effect' => null,
             'affects_debt_balance' => false,
@@ -1139,6 +1278,17 @@ class PartnerDebtLedgerService
             'type' => $displayType,
             'display_type' => $displayType,
         ]);
+    }
+
+    private function firstNumeric(array $entry, array $keys, float $default = 0.0): float
+    {
+        foreach ($keys as $key) {
+            if (array_key_exists($key, $entry) && $entry[$key] !== null && $entry[$key] !== '') {
+                return (float) $entry[$key];
+            }
+        }
+
+        return $default;
     }
 
     private function looksLikeStandaloneSupplierPayment(SupplierDebtTransaction $transaction): bool

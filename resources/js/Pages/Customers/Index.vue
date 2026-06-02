@@ -311,6 +311,35 @@ const formatDateTime = (val) => {
 };
 const entryDisplayTime = (entry) =>
     entry?.time || entry?.recorded_at || entry?.created_at || "";
+const firstPresentNumber = (entry, keys, fallback = 0) => {
+    for (const key of keys) {
+        const value = entry?.[key];
+        if (value !== undefined && value !== null && value !== '') {
+            return Number(value);
+        }
+    }
+    return fallback;
+};
+const customerDebtEntryDisplayEffect = (entry) => firstPresentNumber(entry, [
+    'customer_display_effect',
+    'display_effect',
+    'financial_effect',
+    'customer_effect',
+    'amount',
+]);
+const customerDebtEntryRunningBalance = (entry) => {
+    for (const key of ['customer_running_balance', 'balance', 'debt_remain']) {
+        const value = entry?.[key];
+        if (value !== undefined && value !== null && value !== '') {
+            return Number(value);
+        }
+    }
+    return null;
+};
+const customerDebtEntryBadge = (entry) => {
+    const label = entry?.badge_label || '';
+    return label === 'Đã hạch toán' ? '' : label;
+};
 const formatGender = (val) => {
     if (val === "male") return "Nam";
     if (val === "female") return "Nữ";
@@ -2370,57 +2399,52 @@ const createdDateRange = computed({
                                                             >
                                                                 <span>{{ entry.display_type || entry.type }}</span>
                                                                 <span
-                                                                    v-if="entry.badge_label"
+                                                                    v-if="customerDebtEntryBadge(entry)"
                                                                     class="ml-1 inline-block text-[10px] font-semibold border px-1.5 py-0.5 rounded"
                                                                     :class="{
-                                                                        'bg-blue-50 text-blue-700 border-blue-200': entry.badge_label === 'Ledger',
-                                                                        'bg-purple-50 text-purple-700 border-purple-200': entry.badge_label === 'Phiếu nhập',
-                                                                        'bg-green-50 text-green-700 border-green-200': entry.badge_label === 'Thanh toán NCC' || entry.badge_label === 'Thanh toán HĐ',
-                                                                        'bg-amber-50 text-amber-700 border-amber-200': entry.badge_label === 'Cần đối soát',
-                                                                        'bg-slate-50 text-slate-600 border-slate-200': entry.badge_label === 'Đã hạch toán',
-                                                                        'bg-gray-100 text-gray-600 border-gray-200': !['Ledger', 'Phiếu nhập', 'Thanh toán NCC', 'Thanh toán HĐ', 'Cần đối soát', 'Đã hạch toán'].includes(entry.badge_label),
+                                                                        'bg-blue-50 text-blue-700 border-blue-200': customerDebtEntryBadge(entry) === 'Ledger',
+                                                                        'bg-purple-50 text-purple-700 border-purple-200': customerDebtEntryBadge(entry) === 'Phiếu nhập',
+                                                                        'bg-green-50 text-green-700 border-green-200': customerDebtEntryBadge(entry) === 'Thanh toán NCC' || customerDebtEntryBadge(entry) === 'Thanh toán HĐ' || customerDebtEntryBadge(entry) === 'Thanh toán',
+                                                                        'bg-amber-50 text-amber-700 border-amber-200': customerDebtEntryBadge(entry) === 'Cần đối soát',
+                                                                        'bg-gray-100 text-gray-600 border-gray-200': !['Ledger', 'Phiếu nhập', 'Thanh toán NCC', 'Thanh toán HĐ', 'Thanh toán', 'Cần đối soát'].includes(customerDebtEntryBadge(entry)),
                                                                     }"
                                                                     :title="entry.badge_title || entry.balance_note || ''"
-                                                                >{{ entry.badge_label }}</span>
+                                                                >{{ customerDebtEntryBadge(entry) }}</span>
                                                             </td>
                                                             <td
                                                                 class="px-3 py-2 text-right font-medium"
                                                                 :class="
-                                                                    entry.affects_debt_balance === false
-                                                                        ? 'text-gray-400 font-normal'
-                                                                        : (entry.customer_effect ?? entry.amount) > 0
+                                                                    customerDebtEntryDisplayEffect(entry) > 0
                                                                             ? 'text-red-600'
-                                                                            : (entry.customer_effect ?? entry.amount) < 0
+                                                                            : customerDebtEntryDisplayEffect(entry) < 0
                                                                                 ? 'text-green-600'
                                                                                 : 'text-gray-500'
                                                                 "
-                                                                :title="entry.balance_note || (entry.affects_debt_balance === false ? 'Đã hạch toán, không cộng lại công nợ' : '')"
+                                                                :title="entry.balance_note || (entry.affects_debt_balance === false ? 'Chứng từ tham chiếu, không cộng lại số dư công nợ' : '')"
                                                             >
                                                                 {{
-                                                                    (entry.affects_debt_balance === false ? '' : ((entry.customer_effect ?? entry.amount) > 0 ? '+' : '')) +
-                                                                    formatCurrency(
-                                                                        entry.affects_debt_balance === false ? entry.amount : (entry.customer_effect ?? entry.amount)
-                                                                    )
+                                                                    (customerDebtEntryDisplayEffect(entry) > 0 ? '+' : '') +
+                                                                    formatCurrency(customerDebtEntryDisplayEffect(entry))
                                                                 }}
                                                             </td>
                                                             <td
                                                                 class="px-3 py-2 text-right font-medium"
                                                                 :class="
-                                                                    entry.affects_debt_balance === false
+                                                                    customerDebtEntryRunningBalance(entry) === null
                                                                         ? 'text-gray-400 font-normal'
-                                                                        : entry.balance > 0
+                                                                        : customerDebtEntryRunningBalance(entry) > 0
                                                                             ? 'text-red-600'
-                                                                            : entry.balance < 0
+                                                                            : customerDebtEntryRunningBalance(entry) < 0
                                                                               ? 'text-green-600'
                                                                               : 'text-gray-500'
                                                                 "
-                                                                :title="entry.affects_debt_balance === false ? (entry.balance_note || 'Đã hạch toán, không cộng lại công nợ') : ''"
+                                                                :title="customerDebtEntryRunningBalance(entry) === null ? (entry.balance_note || 'Chứng từ tham chiếu, không cộng lại số dư công nợ') : ''"
                                                             >
-                                                                <span v-if="entry.affects_debt_balance === false">—</span>
+                                                                <span v-if="customerDebtEntryRunningBalance(entry) === null">—</span>
                                                                 <span v-else>
                                                                     {{
                                                                         formatCurrency(
-                                                                            entry.balance,
+                                                                            customerDebtEntryRunningBalance(entry),
                                                                         )
                                                                     }}
                                                                 </span>
