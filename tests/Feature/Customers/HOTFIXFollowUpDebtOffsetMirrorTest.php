@@ -130,8 +130,10 @@ class HOTFIXFollowUpDebtOffsetMirrorTest extends TestCase
         $cb = $cbRows->first();
         $this->assertEquals(+10_000_000.0, (float) $cb['customer_effect'],
             'Mirror: customer_effect = -1 * supplier_effect = +10M');
-        $this->assertEquals(-6_845_000.0, (float) $cb['balance'],
-            'Customer running balance after CB = -16,845,000 + 10,000,000');
+        $this->assertEquals(-6_845_000.0, (float) $cb['ledger_running_balance'],
+            'Ledger running balance after CB = -16,845,000 + 10,000,000');
+        $this->assertEquals(0.0, (float) $cb['balance'],
+            'Display running balance includes read-only opening so final timeline matches current net debt');
         $this->assertSame('supplier_ledger_mirror', $cb['source']);
     }
 

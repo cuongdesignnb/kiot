@@ -703,6 +703,11 @@ class SupplierController extends Controller
                 'supplier_partner_balance'    => $usePartnerTimeline ? $supplierOrientedBalance : null,
                 'supplier_screen_balance'     => $usePartnerTimeline ? $supplierOrientedBalance : null,
                 'balance_label'               => 'Nợ cần trả nhà cung cấp',
+                'display_timeline_mode'       => (bool) ($ledgerSummary['display_timeline_mode'] ?? true),
+                'has_virtual_opening_balance' => (bool) ($ledgerSummary['has_virtual_opening_balance'] ?? false),
+                'virtual_opening_balance'     => (float) ($ledgerSummary['virtual_opening_balance'] ?? 0.0),
+                'display_balance_target'      => (float) ($ledgerSummary['display_balance_target'] ?? $supplierOrientedBalance),
+                'display_balance_final'       => (float) ($ledgerSummary['display_balance_final'] ?? $ledger['closing_balance'] ?? 0.0),
 
                 // Backward-compatible keys (existing FE/tests still read these)
                 'net' => $usePartnerTimeline

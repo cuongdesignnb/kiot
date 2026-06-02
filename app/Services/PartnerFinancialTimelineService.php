@@ -52,13 +52,14 @@ class PartnerFinancialTimelineService
             ->concat($supplierEntries)
             ->values();
 
-        $computedEntries = $this->computeRunningBalance($combined);
-
         $customerDebt = (float) ($customer->debt_amount ?? 0);
         $supplierDebt = $hasSupplierColumn ? (float) ($customer->supplier_debt_amount ?? 0) : 0.0;
         $netDebt = $customerDebt - $supplierDebt;
-        $computedBalance = (float) ($computedEntries->where('affects_debt_balance', true)->last()['balance'] ?? 0.0);
+        $combined = $this->injectCustomerVirtualOpeningBalance($combined, $customer, $netDebt);
+        [$computedEntries, $computedBalance] = $this->computeRunningBalance($combined);
         $hasMismatch = abs($computedBalance - $netDebt) >= 0.01;
+        $displayFinalBalance = (float) ($computedEntries->sortBy(fn ($entry) => $this->timestamp($entry))->last()['customer_display_running_balance'] ?? 0.0);
+        $virtualOpening = $computedEntries->firstWhere('is_virtual_opening', true);
 
         return [
             'entries' => $computedEntries->sortByDesc(fn ($entry) => $this->timestamp($entry))->values(),
@@ -80,6 +81,11 @@ class PartnerFinancialTimelineService
                 'has_debt_offset_voucher'     => $this->hasActiveDebtOffsetVoucher($customer),
                 'is_actual_offset'            => false,
                 'is_net_view'                 => true,
+                'display_timeline_mode'        => true,
+                'has_virtual_opening_balance'  => (bool) $virtualOpening,
+                'virtual_opening_balance'      => (float) ($virtualOpening['customer_display_effect'] ?? 0.0),
+                'display_balance_target'       => $netDebt,
+                'display_balance_final'        => $displayFinalBalance,
 
                 // Backward-compatible keys (FE + existing tests still read these)
                 'net' => $netDebt,
@@ -537,25 +543,34 @@ class PartnerFinancialTimelineService
             ->values();
     }
 
-    private function computeRunningBalance(Collection $entries): Collection
+    private function computeRunningBalance(Collection $entries): array
     {
-        $running = 0.0;
+        $ledgerRunning = 0.0;
+        $displayRunning = 0.0;
 
-        return $entries
+        $computed = $entries
             ->sortBy(fn ($entry) => $this->timestamp($entry) . '-' . ($entry['id'] ?? ''))
             ->values()
-            ->map(function ($entry) use (&$running) {
+            ->map(function ($entry) use (&$ledgerRunning, &$displayRunning) {
+                $displayBalanceEffect = $this->customerDisplayBalanceEffect($entry);
+                $ledgerEffect = $this->customerLedgerEffect($entry);
+
                 if (($entry['affects_debt_balance'] ?? true) === true) {
-                    $running += $this->firstNumeric($entry, ['customer_balance_effect', 'balance_effect', 'customer_effect'], 0.0);
-                    $entry['balance'] = $running;
-                    $entry['customer_running_balance'] = $running;
-                } else {
-                    $entry['balance'] = null;
-                    $entry['customer_running_balance'] = null;
+                    $ledgerRunning += $ledgerEffect;
                 }
+
+                $displayRunning += $displayBalanceEffect;
+
+                $entry['ledger_running_balance'] = $ledgerRunning;
+                $entry['customer_display_balance_effect'] = $displayBalanceEffect;
+                $entry['customer_display_running_balance'] = $displayRunning;
+                $entry['customer_running_balance'] = $displayRunning;
+                $entry['balance'] = $displayRunning;
 
                 return $entry;
             });
+
+        return [$computed, $ledgerRunning];
     }
 
     private function mapCustomerDebt(CustomerDebt $debt, array $settlementMetaByDebtId, Collection $discountsByCode): array
@@ -577,6 +592,7 @@ class PartnerFinancialTimelineService
             'financial_effect' => $amount,
             'balance_effect' => $amount,
             'customer_display_effect' => $amount,
+            'customer_display_balance_effect' => $amount,
             'customer_balance_effect' => $amount,
             'customer_effect' => $amount,
             'affects_debt_balance' => true,
@@ -598,6 +614,7 @@ class PartnerFinancialTimelineService
         if ($settlementMeta) {
             $entry['customer_effect'] = $amount + (float) $settlementMeta['settlement_adjusted_amount'];
             $entry['balance_effect'] = $entry['customer_effect'];
+            $entry['customer_display_balance_effect'] = $entry['customer_effect'];
             $entry['customer_balance_effect'] = $entry['customer_effect'];
             $entry['debt_total'] = (float) $settlementMeta['display_balance'];
             $entry['ledger_debt_total'] = (float) $settlementMeta['display_balance'];
@@ -723,9 +740,13 @@ class PartnerFinancialTimelineService
             'customer_display_effect' => null,
             'customer_balance_effect' => null,
             'customer_running_balance' => null,
+            'customer_display_balance_effect' => null,
+            'customer_display_running_balance' => null,
             'supplier_display_effect' => null,
             'supplier_balance_effect' => null,
             'supplier_running_balance' => null,
+            'supplier_display_balance_effect' => null,
+            'supplier_display_running_balance' => null,
             'customer_effect' => 0.0,
             'supplier_effect' => null,
             'affects_debt_balance' => false,
@@ -754,6 +775,119 @@ class PartnerFinancialTimelineService
         }
 
         return $default;
+    }
+
+    private function customerDisplayEffect(array $entry): float
+    {
+        return $this->firstNumeric($entry, [
+            'customer_display_effect',
+            'display_effect',
+            'financial_effect',
+            'customer_effect',
+            'amount',
+        ], 0.0);
+    }
+
+    private function customerDisplayBalanceEffect(array $entry): float
+    {
+        return $this->firstNumeric($entry, [
+            'customer_display_balance_effect',
+            'customer_display_effect',
+            'display_effect',
+            'financial_effect',
+            'customer_effect',
+            'amount',
+        ], 0.0);
+    }
+
+    private function customerLedgerEffect(array $entry): float
+    {
+        return $this->firstNumeric($entry, [
+            'customer_balance_effect',
+            'balance_effect',
+            'customer_effect',
+        ], 0.0);
+    }
+
+    private function injectCustomerVirtualOpeningBalance(Collection $entries, Customer $customer, float $targetBalance): Collection
+    {
+        $displayTotal = (float) $entries->sum(fn ($entry) => $this->customerDisplayEffect(is_array($entry) ? $entry : (array) $entry));
+        $openingBalance = $targetBalance - $displayTotal;
+        $hasReferenceOnlyFinancialEntry = $entries->contains(function ($entry) {
+            $entry = is_array($entry) ? $entry : (array) $entry;
+
+            return (bool) ($entry['is_reference_only'] ?? false)
+                && abs($this->customerDisplayEffect($entry)) >= 0.01;
+        });
+
+        if ($entries->isNotEmpty() && abs($targetBalance) < 0.01 && !$hasReferenceOnlyFinancialEntry) {
+            return $entries->values();
+        }
+
+        if (abs($openingBalance) < 0.01) {
+            return $entries->values();
+        }
+
+        $opening = $this->entry([
+            'id' => 'virtual-opening-customer-' . $customer->id,
+            'code' => 'OPENING-BALANCE-' . $customer->id,
+            'display_type' => 'Số dư đầu kỳ / Điều chỉnh hiển thị',
+            'event_kind' => 'virtual_opening_balance',
+            'domain' => 'adjustment',
+            'document_amount' => abs($openingBalance),
+            'amount' => abs($openingBalance),
+            'display_effect' => $openingBalance,
+            'financial_effect' => $openingBalance,
+            'balance_effect' => 0.0,
+            'customer_display_effect' => $openingBalance,
+            'customer_display_balance_effect' => $openingBalance,
+            'customer_balance_effect' => 0.0,
+            'customer_effect' => $openingBalance,
+            'affects_debt_balance' => false,
+            'is_reference_only' => false,
+            'is_virtual_opening' => true,
+            'source' => 'virtual_display_opening_balance',
+            'badge_label' => 'Số dư đầu kỳ',
+            'note' => 'Dòng hiển thị để timeline khớp Nợ hiện tại. Không phải chứng từ thật.',
+            'balance_note' => 'Dòng hiển thị read-only do thiếu lịch sử chi tiết, không ghi dữ liệu.',
+            'time' => $this->virtualOpeningTime($entries),
+            'created_at' => $this->virtualOpeningTime($entries),
+            'reference_type' => 'VirtualOpeningBalance',
+            'reference_id' => $customer->id,
+            'reference_code' => 'OPENING-BALANCE-' . $customer->id,
+            'detail_available' => false,
+        ]);
+
+        return collect([$opening])->concat($entries)->values();
+    }
+
+    private function virtualOpeningTime(Collection $entries): Carbon
+    {
+        $first = $entries
+            ->map(fn ($entry) => is_array($entry) ? $entry : (array) $entry)
+            ->filter(fn ($entry) => !empty($entry['time'] ?? $entry['created_at'] ?? null))
+            ->sortBy(fn ($entry) => $this->timestamp($entry))
+            ->first();
+
+        $value = $first['time'] ?? $first['created_at'] ?? null;
+
+        if ($value instanceof Carbon) {
+            return $value->copy()->subSecond();
+        }
+
+        if ($value instanceof \DateTimeInterface) {
+            return Carbon::instance($value)->subSecond();
+        }
+
+        if ($value) {
+            try {
+                return Carbon::parse($value)->subSecond();
+            } catch (\Throwable) {
+                // Fall through to a stable display timestamp.
+            }
+        }
+
+        return Carbon::now()->startOfDay();
     }
 
     private function isAutoReturnSettlement(CustomerDebt $debt): bool

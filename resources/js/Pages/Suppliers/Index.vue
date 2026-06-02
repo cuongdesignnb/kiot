@@ -415,13 +415,13 @@ const supplierDebtEntryEffect = (entry, id) => {
 
 const supplierDebtEntryBalance = (entry, id) => {
     if (isSupplierPartnerTimeline(id)) {
-        for (const key of ['supplier_partner_running_balance', 'partner_running_balance', 'debt_remain', 'balance']) {
+        for (const key of ['supplier_display_running_balance', 'supplier_partner_running_balance', 'partner_running_balance', 'debt_remain', 'balance']) {
             const value = entry?.[key];
             if (value !== undefined && value !== null && value !== '') return Number(value);
         }
         return null;
     }
-    for (const key of ['debt_remain', 'supplier_running_balance', 'supplier_balance', 'balance']) {
+    for (const key of ['supplier_display_running_balance', 'debt_remain', 'supplier_running_balance', 'supplier_balance', 'balance']) {
         const value = entry?.[key];
         if (value !== undefined && value !== null && value !== '') return Number(value);
     }

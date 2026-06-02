@@ -328,7 +328,7 @@ const customerDebtEntryDisplayEffect = (entry) => firstPresentNumber(entry, [
     'amount',
 ]);
 const customerDebtEntryRunningBalance = (entry) => {
-    for (const key of ['customer_running_balance', 'balance', 'debt_remain']) {
+    for (const key of ['customer_display_running_balance', 'customer_running_balance', 'balance', 'debt_remain']) {
         const value = entry?.[key];
         if (value !== undefined && value !== null && value !== '') {
             return Number(value);
@@ -2294,7 +2294,7 @@ const createdDateRange = computed({
                                                     v-if="
                                                         debtHistoryData[
                                                             customer.id
-                                                        ].entries.length === 0
+                                                        ].entries.length === 0 && customerNetDebt(customer) === 0
                                                     "
                                                     class="text-center py-12 text-gray-400"
                                                 >
