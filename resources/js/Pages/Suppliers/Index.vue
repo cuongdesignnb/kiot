@@ -21,9 +21,46 @@ const formatDateTime = (val) => {
 const supplierEntryDisplayTime = (entry) =>
     entry?.time || entry?.recorded_at || entry?.created_at || entry?.date || '';
 
-// Supplier screen shows pure payable debt: positive = company owes supplier.
+const truthyFlag = (value) =>
+    value === true ||
+    value === 1 ||
+    value === '1' ||
+    value === 'true' ||
+    value === 'yes';
+
+// Supplier list uses supplier-oriented debt for dual-role partners.
 const supplierNetDebt = (supplier) => {
-    return Number(supplier.supplier_debt_amount) || 0;
+    if (!supplier) return 0;
+
+    const supplierScreenDebt = Number(
+        supplier.supplier_screen_debt ??
+        supplier.supplier_list_debt_amount ??
+        supplier.supplier_oriented_balance ??
+        0
+    );
+
+    if (
+        supplier.supplier_screen_debt !== undefined ||
+        supplier.supplier_list_debt_amount !== undefined ||
+        supplier.supplier_oriented_balance !== undefined
+    ) {
+        return supplierScreenDebt;
+    }
+
+    const supplierPayable = Number(
+        supplier.supplier_payable_balance ??
+        supplier.supplier_debt_amount ??
+        0
+    );
+    const customerReceivable = Number(
+        supplier.customer_receivable_balance ??
+        supplier.debt_amount ??
+        0
+    );
+
+    return truthyFlag(supplier.is_customer)
+        ? supplierPayable - customerReceivable
+        : supplierPayable;
 };
 
 const props = defineProps({
@@ -341,13 +378,6 @@ const supplierRows = computed(() => {
 
 const findSupplierById = (id) =>
     supplierRows.value.find((supplier) => String(supplier.id) === String(id));
-
-const truthyFlag = (value) =>
-    value === true ||
-    value === 1 ||
-    value === '1' ||
-    value === 'true' ||
-    value === 'yes';
 
 const isDualRoleSupplier = (id) => {
     const supplier = findSupplierById(id);

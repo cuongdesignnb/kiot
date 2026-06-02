@@ -19,14 +19,14 @@
 ## User feedback
 - Remove the three summary cards in the debt tabs.
 - Prioritize correct list columns: customer current debt and supplier current payable.
-- Supplier list must use gross payable.
+- Supplier list must use supplier-oriented balance for dual-role partners.
 - Customer list must use customer-oriented net.
 
 ## Main list column rules
 | Screen | Column | Formula |
 |---|---|---|
 | Customers | Current debt | `debt_amount - supplier_debt_amount` for dual-role partners |
-| Suppliers | Current payable | `supplier_debt_amount` |
+| Suppliers | Current payable | `supplier_debt_amount - debt_amount` for dual-role partners; `supplier_debt_amount` for supplier-only partners |
 
 ## Detail table rules
 | Screen | Final column | Formula |
@@ -44,16 +44,16 @@
 
 ## Changes
 - Removed the dual-role receivable/payable/net summary cards from both debt tabs.
-- Kept supplier list display on `supplier.supplier_debt_amount`.
+- Updated follow-up: supplier list display uses supplier-oriented balance for dual-role partners.
 - Kept customer list display on `debt_amount - supplier_debt_amount`.
 - Added explicit supplier list props: `customer_receivable_balance`, `supplier_payable_balance`, `partner_net_position`.
 - Added list-column regression tests for both screens.
 
 ## Tests run
 - `php artisan test tests/Feature/Suppliers/SupplierDualRoleListDebtColumnTest.php tests/Feature/Customers/CustomerDualRoleListDebtColumnTest.php tests/Feature/Suppliers/SupplierDualRolePartnerTimelineTest.php tests/Feature/Suppliers/SupplierDualRoleOrientationKiotVietTest.php tests/Feature/Suppliers/SupplierPayableLedgerTest.php tests/Feature/Customers/DualRolePartnerDebtTimelineTest.php tests/Feature/Customers/AnhThanhThienPhuDebtReconcileTest.php`
-  - PASS: 19 tests, 197 assertions.
+  - PASS: 20 tests, 204 assertions.
 - `php artisan test --filter=Supplier`
-  - PASS: 110 tests, 548 assertions.
+  - PASS: 111 tests, 555 assertions.
 - `php artisan test --filter=CustomerDebt`
   - PASS: 37 tests, 195 assertions.
 - `php artisan test --filter=Purchase`
@@ -72,7 +72,8 @@
   - `customer_receivable`: `47,400,000`.
   - `supplier_payable`: `75,000,000`.
   - Customer screen current debt: `-27,600,000`.
-  - Supplier screen current payable: `75,000,000`.
+  - Supplier screen current payable: `27,600,000`.
+- Runtime Suppliers page asset includes `supplier_screen_debt`, `supplier_list_debt_amount`, and `supplier_oriented_balance`.
 - Supplier debt tab: no three-card summary block in source or built page asset.
 - Customer debt tab: no three-card summary block in source or built page asset.
 - Runtime container was patched by copying source files and running `npm run build`; no container recreate and no migration.

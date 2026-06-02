@@ -60,10 +60,17 @@ class SupplierController extends Controller
         $suppliers->getCollection()->transform(function ($supplier) {
             $customerDebt = (float) ($supplier->debt_amount ?? 0);
             $supplierDebt = (float) ($supplier->supplier_debt_amount ?? 0);
+            $isDualRole = (bool) ($supplier->is_customer && $supplier->is_supplier);
+            $supplierListDebt = $isDualRole
+                ? $supplierDebt - $customerDebt
+                : $supplierDebt;
 
             $supplier->customer_receivable_balance = $customerDebt;
             $supplier->supplier_payable_balance = $supplierDebt;
             $supplier->partner_net_position = $customerDebt - $supplierDebt;
+            $supplier->supplier_screen_debt = $supplierListDebt;
+            $supplier->supplier_oriented_balance = $supplierListDebt;
+            $supplier->supplier_list_debt_amount = $supplierListDebt;
 
             return $supplier;
         });
