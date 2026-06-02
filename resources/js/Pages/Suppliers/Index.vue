@@ -19,7 +19,15 @@ const formatDateTime = (val) => {
 };
 
 const supplierEntryDisplayTime = (entry) =>
-    entry?.time || entry?.recorded_at || entry?.created_at || entry?.date || '';
+    entry?.display_time ||
+    entry?.time ||
+    entry?.recorded_at ||
+    entry?.transaction_date ||
+    entry?.purchase_date ||
+    entry?.return_date ||
+    entry?.created_at ||
+    entry?.date ||
+    '';
 
 const truthyFlag = (value) =>
     value === true ||

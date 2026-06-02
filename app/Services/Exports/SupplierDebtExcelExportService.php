@@ -316,12 +316,7 @@ class SupplierDebtExcelExportService
     {
         $row = $startRow;
         foreach ($entries as $e) {
-            $created = $e['created_at'] ?? $e['date'] ?? null;
-            try {
-                $whenStr = $created ? Carbon::parse($created)->format('d/m/Y H:i') : '';
-            } catch (\Throwable $ex) {
-                $whenStr = (string) $created;
-            }
+            $whenStr = $this->formatEntryTime($e);
             // HOTFIX 24.17F — net effect for purchases (gross − doc discount).
             $eff       = $this->displayEffectFor($e);
             $debitVal  = $eff > 0 ? $eff : null;
@@ -437,13 +432,8 @@ class SupplierDebtExcelExportService
     private function isInWindow(array $e): bool
     {
         if (!$this->from && !$this->to) return true;
-        $created = $e['created_at'] ?? $e['date'] ?? null;
-        if (!$created) return false;
-        try {
-            $ts = Carbon::parse($created);
-        } catch (\Throwable $ex) {
-            return false;
-        }
+        $ts = $this->entryTime($e);
+        if (!$ts) return false;
         if ($this->from && $ts->lessThan($this->from)) return false;
         if ($this->to && $ts->greaterThan($this->to)) return false;
         return true;
@@ -462,13 +452,8 @@ class SupplierDebtExcelExportService
         if (!$this->from) return 0.0;
         $opening = 0.0;
         foreach ($this->entries as $e) {
-            $created = $e['created_at'] ?? $e['date'] ?? null;
-            if (!$created) continue;
-            try {
-                $ts = Carbon::parse($created);
-            } catch (\Throwable $ex) {
-                continue;
-            }
+            $ts = $this->entryTime($e);
+            if (!$ts) continue;
             if ($ts->lessThan($this->from)) {
                 // HOTFIX 24.17F — same display lens as in-window debit
                 // / credit so opening + period = closing internally.
@@ -476,6 +461,50 @@ class SupplierDebtExcelExportService
             }
         }
         return $opening;
+    }
+
+    private function entryTime(array $entry): ?Carbon
+    {
+        $raw = $entry['display_time']
+            ?? $entry['time']
+            ?? $entry['recorded_at']
+            ?? $entry['transaction_date']
+            ?? $entry['purchase_date']
+            ?? $entry['return_date']
+            ?? $entry['created_at']
+            ?? $entry['date']
+            ?? null;
+        if (!$raw) {
+            return null;
+        }
+
+        try {
+            return Carbon::parse($raw);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function formatEntryTime(array $entry): string
+    {
+        $raw = $entry['display_time']
+            ?? $entry['time']
+            ?? $entry['recorded_at']
+            ?? $entry['transaction_date']
+            ?? $entry['purchase_date']
+            ?? $entry['return_date']
+            ?? $entry['created_at']
+            ?? $entry['date']
+            ?? null;
+        if (!$raw) {
+            return '';
+        }
+
+        try {
+            return Carbon::parse($raw)->format('d/m/Y H:i');
+        } catch (\Throwable) {
+            return (string) $raw;
+        }
     }
 
     private function loadDetailLines(array $entry): array

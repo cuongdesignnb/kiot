@@ -34,6 +34,7 @@ class PartnerDebtLedgerService
             ->get(['id', 'code', 'total_amount', 'paid_amount', 'purchase_date', 'created_at']);
 
         foreach ($purchases as $p) {
+            $businessTime = $this->normalizeDisplayTime($p->purchase_date, $p->created_at);
             $entries->push([
                 'id' => 'pur-' . $p->id,
                 'code' => $p->code,
@@ -48,7 +49,9 @@ class PartnerDebtLedgerService
                 'supplier_display_effect' => (float) $p->total_amount,
                 'supplier_balance_effect' => (float) $p->total_amount,
                 'affects_debt_balance' => true,
-                'time' => $p->purchase_date ?? $p->created_at,
+                'display_time' => $businessTime,
+                'time' => $businessTime,
+                'purchase_date' => $p->purchase_date,
                 'created_at' => $p->created_at,
                 'source' => 'purchase',
                 'reference_type' => 'Purchase',
@@ -63,6 +66,7 @@ class PartnerDebtLedgerService
             ->get(['id', 'code', 'total_amount', 'return_date', 'created_at']);
 
         foreach ($purchaseReturns as $pr) {
+            $businessTime = $this->normalizeDisplayTime($pr->return_date, $pr->created_at);
             $entries->push([
                 'id' => 'pret-' . $pr->id,
                 'code' => $pr->code,
@@ -77,7 +81,9 @@ class PartnerDebtLedgerService
                 'supplier_display_effect' => -(float) $pr->total_amount,
                 'supplier_balance_effect' => -(float) $pr->total_amount,
                 'affects_debt_balance' => true,
-                'time' => $pr->return_date ?? $pr->created_at,
+                'display_time' => $businessTime,
+                'time' => $businessTime,
+                'return_date' => $pr->return_date,
                 'created_at' => $pr->created_at,
                 'source' => 'purchase_return',
                 'reference_type' => 'PurchaseReturn',
@@ -115,6 +121,7 @@ class PartnerDebtLedgerService
             if ($this->isCancelledStatus($cf->status ?? '')) {
                 continue;
             }
+            $businessTime = $this->normalizeDisplayTime($cf->time, $cf->created_at);
             $realPayments[(string) $cf->code] = [
                 'id' => 'cf-pay-' . $cf->id,
                 'code' => $cf->code,
@@ -129,7 +136,8 @@ class PartnerDebtLedgerService
                 'supplier_display_effect' => -(float) $cf->amount,
                 'supplier_balance_effect' => -(float) $cf->amount,
                 'affects_debt_balance' => true,
-                'time' => $cf->time ?? $cf->created_at,
+                'display_time' => $businessTime,
+                'time' => $businessTime,
                 'created_at' => $cf->created_at,
                 'source' => 'cashflow',
                 'reference_type' => 'CashFlow',
@@ -162,6 +170,7 @@ class PartnerDebtLedgerService
             $isStandalone = $this->looksLikeStandaloneSupplierPayment($stx);
             $alreadyAccounted = $this->supplierTransactionAlreadyAccountedFor($stx, $realPayments, $purchases);
             $canAffect = $isStandalone && !$alreadyAccounted;
+            $businessTime = $this->supplierDebtTransactionBusinessTime($stx);
 
             $realPayments[$code] = [
                 'id' => 'stx-pay-' . $stx->id,
@@ -177,7 +186,9 @@ class PartnerDebtLedgerService
                 'supplier_display_effect' => (float) $stx->amount,
                 'supplier_balance_effect' => $canAffect ? (float) $stx->amount : 0.0,
                 'affects_debt_balance' => $canAffect,
-                'time' => $stx->created_at,
+                'display_time' => $businessTime,
+                'time' => $businessTime,
+                'recorded_at' => Schema::hasColumn('supplier_debt_transactions', 'recorded_at') ? ($stx->recorded_at ?? null) : null,
                 'created_at' => $stx->created_at,
                 'source' => $canAffect ? 'supplier_debt_transaction' : 'reference',
                 'reference_type' => 'SupplierDebtTransaction',
@@ -220,6 +231,7 @@ class PartnerDebtLedgerService
                 )->exists();
 
                 if (!$hasRealPayment && !$hasLinkedCashFlow) {
+                    $businessTime = $this->normalizeDisplayTime($p->purchase_date, $p->created_at);
                     $entries->push([
                         'id' => 'purpay-' . $p->id,
                         'code' => 'TTNH' . preg_replace('/^PN/', '', (string) $p->code),
@@ -234,7 +246,9 @@ class PartnerDebtLedgerService
                         'supplier_display_effect' => -(float) $p->paid_amount,
                         'supplier_balance_effect' => -(float) $p->paid_amount,
                         'affects_debt_balance' => true,
-                        'time' => $p->purchase_date ?? $p->created_at,
+                        'display_time' => $businessTime,
+                        'time' => $businessTime,
+                        'purchase_date' => $p->purchase_date,
                         'created_at' => $p->created_at,
                         'source' => 'legacy_purchase_paid_amount',
                         'reference_type' => 'PurchasePayment',
@@ -257,6 +271,7 @@ class PartnerDebtLedgerService
         ];
 
         foreach ($otherTxs as $stx) {
+            $businessTime = $this->supplierDebtTransactionBusinessTime($stx);
             $entries->push([
                 'id' => 'stx-' . $stx->id,
                 'code' => $stx->code,
@@ -271,7 +286,9 @@ class PartnerDebtLedgerService
                 'supplier_display_effect' => (float) $stx->amount,
                 'supplier_balance_effect' => (float) $stx->amount,
                 'affects_debt_balance' => true,
-                'time' => $stx->created_at,
+                'display_time' => $businessTime,
+                'time' => $businessTime,
+                'recorded_at' => Schema::hasColumn('supplier_debt_transactions', 'recorded_at') ? ($stx->recorded_at ?? null) : null,
                 'created_at' => $stx->created_at,
                 'source' => 'supplier_debt_transaction',
                 'reference_type' => 'SupplierDebtTransaction',
@@ -870,6 +887,7 @@ class PartnerDebtLedgerService
             if ($this->isCancelledStatus($invoice->status)) {
                 continue;
             }
+            $businessTime = $this->normalizeDisplayTime($invoice->transaction_date, $invoice->created_at);
 
             $entries->push($this->entry([
                 'id' => 'inv-' . $invoice->id,
@@ -891,7 +909,9 @@ class PartnerDebtLedgerService
                 'badge_label' => $hasCustomerLedger ? 'Phải thu KH' : 'Chứng từ cũ',
                 'badge_title' => $hasCustomerLedger ? 'Chứng từ tham chiếu, không cộng lại số dư công nợ.' : null,
                 'balance_note' => $hasCustomerLedger ? 'Đã phản ánh trong Số dư đầu kỳ/Gộp công nợ hoặc ledger công nợ, không cộng lại công nợ.' : null,
-                'time' => $invoice->transaction_date ?? $invoice->created_at,
+                'display_time' => $businessTime,
+                'time' => $businessTime,
+                'transaction_date' => $invoice->transaction_date,
                 'created_at' => $invoice->created_at,
                 'reference_type' => 'Invoice',
                 'reference_id' => $invoice->id,
@@ -920,7 +940,9 @@ class PartnerDebtLedgerService
                     'badge_label' => 'Thanh toán',
                     'badge_title' => $hasCustomerLedger ? 'Chứng từ tham chiếu, không cộng lại số dư công nợ.' : null,
                     'balance_note' => $hasCustomerLedger ? 'Đã phản ánh trong Số dư đầu kỳ/Gộp công nợ hoặc ledger công nợ, không cộng lại công nợ.' : null,
-                    'time' => $invoice->transaction_date ?? $invoice->created_at,
+                    'display_time' => $businessTime,
+                    'time' => $businessTime,
+                    'transaction_date' => $invoice->transaction_date,
                     'created_at' => $invoice->created_at,
                     'reference_type' => 'InvoicePayment',
                     'reference_id' => $invoice->id,
@@ -952,15 +974,21 @@ class PartnerDebtLedgerService
             ->map(fn ($id) => (int) $id)
             ->all();
 
+        $returnColumns = ['id', 'code', 'total', 'paid_to_customer', 'status', 'created_at'];
+        if (Schema::hasColumn('returns', 'return_date')) {
+            $returnColumns[] = 'return_date';
+        }
+
         $returns = OrderReturn::query()
             ->where('customer_id', $customer->id)
             ->orderBy('created_at')
-            ->get(['id', 'code', 'total', 'paid_to_customer', 'status', 'created_at']);
+            ->get($returnColumns);
 
         foreach ($returns as $return) {
             if ($this->isCancelledStatus($return->status)) {
                 continue;
             }
+            $businessTime = $this->normalizeDisplayTime($return->return_date ?? null, $return->created_at);
 
             $hasLedgerReturn = in_array((string) $return->code, $ledgerReturnCodes, true)
                 || in_array((int) $return->id, $ledgerReturnIds, true);
@@ -986,7 +1014,9 @@ class PartnerDebtLedgerService
                     'badge_label' => 'Trả hàng',
                     'badge_title' => 'Chứng từ tham chiếu, không cộng lại số dư công nợ.',
                     'balance_note' => 'Đã phản ánh trong Số dư đầu kỳ/Gộp công nợ hoặc ledger công nợ, không cộng lại công nợ.',
-                    'time' => $return->created_at,
+                    'display_time' => $businessTime,
+                    'time' => $businessTime,
+                    'return_date' => $return->return_date ?? null,
                     'created_at' => $return->created_at,
                     'reference_type' => 'OrderReturn',
                     'reference_id' => $return->id,
@@ -1017,7 +1047,9 @@ class PartnerDebtLedgerService
                 'badge_label' => $affects ? 'Chứng từ cũ' : 'Cần đối soát',
                 'badge_title' => $affects ? null : 'Có phiếu trả hàng nhưng chưa thấy ledger công nợ tương ứng',
                 'balance_note' => $affects ? null : 'Cần đối soát: phiếu trả hàng chưa có dòng ledger tương ứng.',
-                'time' => $return->created_at,
+                'display_time' => $businessTime,
+                'time' => $businessTime,
+                'return_date' => $return->return_date ?? null,
                 'created_at' => $return->created_at,
                 'reference_type' => 'OrderReturn',
                 'reference_id' => $return->id,
@@ -1044,6 +1076,7 @@ class PartnerDebtLedgerService
                 return !($cashFlow->reference_type === 'Invoice' && in_array($cashFlow->reference_code, $invoiceCodes, true));
             })
             ->map(function ($cashFlow) use ($hasCustomerLedger) {
+                $businessTime = $this->normalizeDisplayTime($cashFlow->time, $cashFlow->created_at);
                 return $this->entry([
                     'id' => 'cf-' . $cashFlow->id,
                     'code' => $cashFlow->code,
@@ -1064,7 +1097,8 @@ class PartnerDebtLedgerService
                     'badge_label' => $cashFlow->reference_type === 'OrderReturn' ? 'Trả hàng' : 'Thanh toán',
                     'badge_title' => $hasCustomerLedger ? 'Chứng từ tham chiếu, không cộng lại số dư công nợ.' : null,
                     'balance_note' => $hasCustomerLedger ? 'Đã phản ánh trong Số dư đầu kỳ/Gộp công nợ hoặc ledger công nợ, không cộng lại công nợ.' : null,
-                    'time' => $cashFlow->time ?? $cashFlow->created_at,
+                    'display_time' => $businessTime,
+                    'time' => $businessTime,
                     'created_at' => $cashFlow->created_at,
                     'reference_type' => $cashFlow->reference_type,
                     'reference_id' => $cashFlow->id,
@@ -1100,9 +1134,10 @@ class PartnerDebtLedgerService
             'affects_debt_balance' => true,
             'source' => 'ledger',
             'badge_label' => 'Ledger',
+            'display_time' => $recordedAt,
             'time' => $recordedAt,
             'recorded_at' => $recordedAt,
-            'created_at' => $recordedAt,
+            'created_at' => $debt->created_at,
             'reference_type' => 'CustomerDebt',
             'reference_id' => $debt->id,
             'reference_code' => $debt->ref_code,
@@ -1291,7 +1326,7 @@ class PartnerDebtLedgerService
 
     private function timestamp(array $entry): string
     {
-        $value = $entry['time'] ?? $entry['recorded_at'] ?? $entry['created_at'] ?? null;
+        $value = $this->entryDisplayTime($entry);
 
         if ($value instanceof Carbon) {
             return $value->format('YmdHis.u');
@@ -1305,15 +1340,45 @@ class PartnerDebtLedgerService
         return $parsed ? date('YmdHis', $parsed) : '00000000000000';
     }
 
+    private function normalizeDisplayTime($businessTime, $fallback = null)
+    {
+        return $businessTime ?: $fallback;
+    }
+
+    private function entryDisplayTime(array $entry)
+    {
+        return $entry['display_time']
+            ?? $entry['time']
+            ?? $entry['recorded_at']
+            ?? $entry['transaction_date']
+            ?? $entry['purchase_date']
+            ?? $entry['return_date']
+            ?? $entry['created_at']
+            ?? null;
+    }
+
+    private function supplierDebtTransactionBusinessTime(SupplierDebtTransaction $transaction)
+    {
+        if (Schema::hasColumn('supplier_debt_transactions', 'recorded_at')) {
+            return $this->normalizeDisplayTime($transaction->recorded_at ?? null, $transaction->created_at);
+        }
+
+        return $transaction->created_at;
+    }
+
     private function entry(array $entry): array
     {
         $displayType = $entry['display_type'] ?? $entry['type'] ?? 'Chứng từ tham chiếu';
 
+        $displayTime = $this->entryDisplayTime($entry);
+        $createdAt = $entry['created_at'] ?? $displayTime;
+
         return array_merge([
             'id' => null,
             'code' => null,
-            'time' => $entry['created_at'] ?? null,
-            'created_at' => $entry['time'] ?? null,
+            'display_time' => $displayTime,
+            'time' => $displayTime,
+            'created_at' => $createdAt,
             'type' => $displayType,
             'display_type' => $displayType,
             'domain' => 'reference',
@@ -1451,6 +1516,8 @@ class PartnerDebtLedgerService
             return $entries->values();
         }
 
+        $businessTime = $this->virtualOpeningTime($entries);
+
         $opening = $this->entry([
             'id' => 'virtual-opening-customer-' . $customer->id,
             'code' => 'OPENING-BALANCE-' . $customer->id,
@@ -1473,8 +1540,9 @@ class PartnerDebtLedgerService
             'badge_label' => 'Số dư đầu kỳ',
             'note' => 'Dòng hiển thị để timeline khớp Nợ hiện tại. Không phải chứng từ thật.',
             'balance_note' => 'Dòng hiển thị read-only do thiếu lịch sử chi tiết, không ghi dữ liệu.',
-            'time' => $this->virtualOpeningTime($entries),
-            'created_at' => $this->virtualOpeningTime($entries),
+            'display_time' => $businessTime,
+            'time' => $businessTime,
+            'created_at' => $businessTime,
             'reference_type' => 'VirtualOpeningBalance',
             'reference_id' => $customer->id,
             'reference_code' => 'OPENING-BALANCE-' . $customer->id,
@@ -1502,6 +1570,7 @@ class PartnerDebtLedgerService
         }
 
         $code = ($isPartnerTimeline ? 'OPENING-BALANCE-SUPPLIER-' : 'OPENING-BALANCE-SUPPLIER-') . $partner->id;
+        $businessTime = $this->virtualOpeningTime($entries);
         $opening = $this->entry([
             'id' => 'virtual-opening-supplier-' . $partner->id,
             'code' => $code,
@@ -1529,8 +1598,9 @@ class PartnerDebtLedgerService
             'badge_label' => 'Số dư đầu kỳ',
             'note' => 'Dòng hiển thị để timeline khớp Nợ cần trả hiện tại. Không phải chứng từ thật.',
             'balance_note' => 'Dòng hiển thị read-only do thiếu lịch sử chi tiết, không ghi dữ liệu.',
-            'time' => $this->virtualOpeningTime($entries),
-            'created_at' => $this->virtualOpeningTime($entries),
+            'display_time' => $businessTime,
+            'time' => $businessTime,
+            'created_at' => $businessTime,
             'reference_type' => 'VirtualOpeningBalance',
             'reference_id' => $partner->id,
             'reference_code' => $code,
@@ -1612,11 +1682,11 @@ class PartnerDebtLedgerService
     {
         $first = $entries
             ->map(fn ($entry) => is_array($entry) ? $entry : (array) $entry)
-            ->filter(fn ($entry) => !empty($entry['time'] ?? $entry['created_at'] ?? null))
+            ->filter(fn ($entry) => !empty($this->entryDisplayTime($entry)))
             ->sortBy(fn ($entry) => $this->timestamp($entry))
             ->first();
 
-        $value = $first['time'] ?? $first['created_at'] ?? null;
+        $value = $first ? $this->entryDisplayTime($first) : null;
 
         if ($value instanceof Carbon) {
             return $value->copy()->subSecond();

@@ -207,15 +207,7 @@ class CustomerDebtExcelExportService
         $row = $startRow;
         foreach ($entries as $entry) {
             $effect = $this->entryDisplayEffect($entry);
-            $created = $entry['recorded_at'] ?? $entry['created_at'] ?? $entry['date'] ?? null;
-            $when = '';
-            if ($created) {
-                try {
-                    $when = Carbon::parse($created)->format('d/m/Y H:i');
-                } catch (\Throwable) {
-                    $when = (string) $created;
-                }
-            }
+            $when = $this->formatEntryTime($entry);
 
             $sheet->setCellValue('A' . $row, $when);
             $sheet->setCellValue('B' . $row, $entry['code'] ?? '');
@@ -433,7 +425,20 @@ class CustomerDebtExcelExportService
 
     private function entryDate(array $entry): ?Carbon
     {
-        $raw = $entry['recorded_at'] ?? $entry['created_at'] ?? $entry['date'] ?? null;
+        return $this->entryTime($entry);
+    }
+
+    private function entryTime(array $entry): ?Carbon
+    {
+        $raw = $entry['display_time']
+            ?? $entry['time']
+            ?? $entry['recorded_at']
+            ?? $entry['transaction_date']
+            ?? $entry['purchase_date']
+            ?? $entry['return_date']
+            ?? $entry['created_at']
+            ?? $entry['date']
+            ?? null;
         if (!$raw) {
             return null;
         }
@@ -442,6 +447,28 @@ class CustomerDebtExcelExportService
             return Carbon::parse($raw);
         } catch (\Throwable) {
             return null;
+        }
+    }
+
+    private function formatEntryTime(array $entry): string
+    {
+        $raw = $entry['display_time']
+            ?? $entry['time']
+            ?? $entry['recorded_at']
+            ?? $entry['transaction_date']
+            ?? $entry['purchase_date']
+            ?? $entry['return_date']
+            ?? $entry['created_at']
+            ?? $entry['date']
+            ?? null;
+        if (!$raw) {
+            return '';
+        }
+
+        try {
+            return Carbon::parse($raw)->format('d/m/Y H:i');
+        } catch (\Throwable) {
+            return (string) $raw;
         }
     }
 

@@ -1064,13 +1064,8 @@ class CustomerController extends Controller
 
             $entries = collect($entries)->filter(function ($entry) use ($from, $to) {
                 if (!$from && !$to) return true;
-                $raw = $entry['recorded_at'] ?? $entry['created_at'] ?? $entry['date'] ?? null;
-                if (!$raw) return false;
-                try {
-                    $ts = \Carbon\Carbon::parse($raw);
-                } catch (\Throwable) {
-                    return false;
-                }
+                $ts = $this->customerDebtEntryExportCarbon($entry);
+                if (!$ts) return false;
                 if ($from && $ts->lessThan($from)) return false;
                 return !($to && $ts->greaterThan($to));
             })->values()->all();
@@ -1078,9 +1073,50 @@ class CustomerController extends Controller
 
         return \App\Services\CsvService::export(
             ['Mã chứng từ', 'Loại', 'Giá trị', 'Dư nợ sau GD', 'Ngày'],
-            collect($entries)->map(fn($e) => [$e['code'], $e['type'], $e['amount'], $e['balance'], $e['created_at']]),
+            collect($entries)->map(fn($e) => [$e['code'], $e['type'], $e['amount'], $e['balance'], $this->customerDebtEntryExportTime($e)]),
             "cong_no_kh_{$customer->code}.csv"
         );
+    }
+
+    private function customerDebtEntryExportRawTime(array $entry)
+    {
+        return $entry['display_time']
+            ?? $entry['time']
+            ?? $entry['recorded_at']
+            ?? $entry['transaction_date']
+            ?? $entry['purchase_date']
+            ?? $entry['return_date']
+            ?? $entry['created_at']
+            ?? $entry['date']
+            ?? null;
+    }
+
+    private function customerDebtEntryExportCarbon(array $entry): ?\Carbon\Carbon
+    {
+        $raw = $this->customerDebtEntryExportRawTime($entry);
+        if (!$raw) {
+            return null;
+        }
+
+        try {
+            return \Carbon\Carbon::parse($raw);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function customerDebtEntryExportTime(array $entry): string
+    {
+        $raw = $this->customerDebtEntryExportRawTime($entry);
+        if (!$raw) {
+            return '';
+        }
+
+        try {
+            return \Carbon\Carbon::parse($raw)->format('d/m/Y H:i');
+        } catch (\Throwable) {
+            return (string) $raw;
+        }
     }
 
     private function resolveCustomerDebtExportRange(string $preset, ?string $from, ?string $to): array

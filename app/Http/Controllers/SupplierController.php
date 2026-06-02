@@ -336,7 +336,7 @@ class SupplierController extends Controller
                     $t['type_label'],
                     $t['amount'],
                     $t['debt_remain'],
-                    $t['date'] ?? ($t['created_at'] ?? ''),
+                    $this->supplierDebtEntryExportTime($t),
                     $t['note'] ?? '',
                 ]),
                 "cong_no_ncc_{$id}.csv"
@@ -400,16 +400,11 @@ class SupplierController extends Controller
             return $service->download("cong_no_ncc_{$id}.xlsx");
         }
 
-        // Filter theo created_at (đã được tính debt_remain ở full ledger).
+        // Filter theo business/display time (debt_remain đã được tính ở full ledger).
         $filtered = collect($entries)->filter(function ($t) use ($from, $to) {
             if (!$from && !$to) return true;
-            $raw = $t['created_at'] ?? $t['date'] ?? null;
-            if (!$raw) return false;
-            try {
-                $ts = \Carbon\Carbon::parse($raw);
-            } catch (\Throwable $e) {
-                return false;
-            }
+            $ts = $this->supplierDebtEntryExportCarbon($t);
+            if (!$ts) return false;
             if ($from && $ts->lessThan($from)) return false;
             if ($to && $ts->greaterThan($to)) return false;
             return true;
@@ -434,8 +429,7 @@ class SupplierController extends Controller
 
         $rows = collect();
         foreach ($filtered as $t) {
-            $createdRaw = $t['created_at'] ?? $t['date'] ?? '';
-            $when = $createdRaw ? \Carbon\Carbon::parse($createdRaw)->format('d/m/Y H:i') : '';
+            $when = $this->supplierDebtEntryExportTime($t);
             $base = [
                 $when,
                 $t['code'] ?? '',
@@ -462,6 +456,47 @@ class SupplierController extends Controller
         }
 
         return \App\Services\CsvService::export($headers, $rows, "cong_no_ncc_{$id}.csv");
+    }
+
+    private function supplierDebtEntryExportRawTime(array $entry)
+    {
+        return $entry['display_time']
+            ?? $entry['time']
+            ?? $entry['recorded_at']
+            ?? $entry['transaction_date']
+            ?? $entry['purchase_date']
+            ?? $entry['return_date']
+            ?? $entry['created_at']
+            ?? $entry['date']
+            ?? null;
+    }
+
+    private function supplierDebtEntryExportCarbon(array $entry): ?\Carbon\Carbon
+    {
+        $raw = $this->supplierDebtEntryExportRawTime($entry);
+        if (!$raw) {
+            return null;
+        }
+
+        try {
+            return \Carbon\Carbon::parse($raw);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function supplierDebtEntryExportTime(array $entry): string
+    {
+        $raw = $this->supplierDebtEntryExportRawTime($entry);
+        if (!$raw) {
+            return '';
+        }
+
+        try {
+            return \Carbon\Carbon::parse($raw)->format('d/m/Y H:i');
+        } catch (\Throwable) {
+            return (string) $raw;
+        }
     }
 
     private function resolveDebtExportRange(string $preset, ?string $from, ?string $to): array

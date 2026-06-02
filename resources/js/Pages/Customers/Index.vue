@@ -314,7 +314,14 @@ const formatDateTime = (val) => {
     );
 };
 const entryDisplayTime = (entry) =>
-    entry?.time || entry?.recorded_at || entry?.created_at || "";
+    entry?.display_time ||
+    entry?.time ||
+    entry?.recorded_at ||
+    entry?.transaction_date ||
+    entry?.purchase_date ||
+    entry?.return_date ||
+    entry?.created_at ||
+    "";
 const firstPresentNumber = (entry, keys, fallback = 0) => {
     for (const key of keys) {
         const value = entry?.[key];
