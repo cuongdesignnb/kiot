@@ -555,6 +555,7 @@ class PartnerDebtLedgerService
         $summary = $netLedger['summary'] ?? [];
 
         $entries = collect($netLedger['entries'] ?? [])
+            ->sortBy(fn ($entry) => $this->timestamp(is_array($entry) ? $entry : (array) $entry) . '-' . ((is_array($entry) ? $entry : (array) $entry)['id'] ?? ''))
             ->map(function ($entry) {
                 $entry = is_array($entry) ? $entry : (array) $entry;
                 $source = (string) ($entry['source'] ?? '');
@@ -570,17 +571,21 @@ class PartnerDebtLedgerService
                     $sourceLedger = 'debt_offset';
                 }
 
-                $partnerEffect = (float) ($entry['customer_effect'] ?? 0.0);
-                $partnerBalance = array_key_exists('balance', $entry) ? $entry['balance'] : null;
+                $partnerEffect = $this->resolveSupplierPartnerEffect($entry, $sourceLedger);
 
+                $entry['orientation'] = 'supplier';
+                $entry['supplier_partner_effect'] = $partnerEffect;
                 $entry['partner_effect'] = $partnerEffect;
-                $entry['partner_running_balance'] = $partnerBalance;
                 $entry['affects_partner_net'] = $affects;
                 $entry['source_ledger'] = $sourceLedger;
                 $entry['is_mirror'] = $source === 'supplier_ledger_mirror';
                 $entry['affects_customer_receivable'] = $sourceLedger === 'customer_receivable' && $affects;
                 $entry['affects_supplier_payable'] = $sourceLedger === 'supplier_payable' && $affects;
-                $entry['debt_remain'] = $partnerBalance;
+                $entry['display_balance_label'] = 'Nợ cần trả nhà cung cấp';
+                $entry['view_effects'] = [
+                    'customer' => (float) ($entry['customer_effect'] ?? 0.0),
+                    'supplier' => $partnerEffect,
+                ];
 
                 if ($sourceLedger === 'debt_offset') {
                     $entry['domain'] = 'offset';
@@ -597,24 +602,65 @@ class PartnerDebtLedgerService
             })
             ->values();
 
+        $running = 0.0;
+        $entries = $entries
+            ->map(function (array $entry) use (&$running) {
+                if (($entry['affects_partner_net'] ?? true) === true) {
+                    $running += (float) ($entry['partner_effect'] ?? 0.0);
+                    $entry['partner_running_balance'] = $running;
+                    $entry['supplier_partner_running_balance'] = $running;
+                    $entry['balance'] = $running;
+                    $entry['debt_remain'] = $running;
+                } else {
+                    $entry['partner_running_balance'] = null;
+                    $entry['supplier_partner_running_balance'] = null;
+                    $entry['balance'] = null;
+                    $entry['debt_remain'] = null;
+                }
+
+                return $entry;
+            })
+            ->sortByDesc(fn ($entry) => $this->timestamp($entry))
+            ->values();
+
         $partnerNetPosition = (float) ($summary['partner_net_position'] ?? $summary['net'] ?? 0.0);
+        $supplierOrientedBalance = -1 * $partnerNetPosition;
         $summary = array_merge($summary, [
-            'display_mode' => 'partner_net_timeline',
+            'display_mode' => 'supplier_partner_timeline',
+            'legacy_display_mode' => 'partner_net_timeline',
+            'orientation' => 'supplier',
             'is_supplier_tab_partner_timeline' => true,
             'is_net_view' => true,
-            'net' => $partnerNetPosition,
-            'current_debt' => $partnerNetPosition,
+            'supplier_oriented_balance' => $supplierOrientedBalance,
+            'supplier_partner_balance' => $supplierOrientedBalance,
+            'supplier_screen_balance' => $supplierOrientedBalance,
+            'net' => $supplierOrientedBalance,
+            'current_debt' => $supplierOrientedBalance,
             'net_debt_amount' => $partnerNetPosition,
+            'balance_label' => 'Nợ cần trả nhà cung cấp',
             'source' => 'supplier_partner_financial_timeline',
             'count' => $entries->count(),
         ]);
 
         return [
             'entries' => $entries,
-            'closing_balance' => $partnerNetPosition,
+            'closing_balance' => $supplierOrientedBalance,
             'summary' => $summary,
             'reconcile' => $netLedger['reconcile'] ?? null,
         ];
+    }
+
+    private function resolveSupplierPartnerEffect(array $entry, string $sourceLedger): float
+    {
+        if ($sourceLedger === 'supplier_payable' && array_key_exists('supplier_effect', $entry)) {
+            return (float) $entry['supplier_effect'];
+        }
+
+        if (array_key_exists('customer_effect', $entry)) {
+            return -1 * (float) $entry['customer_effect'];
+        }
+
+        return 0.0;
     }
 
     // ==========================================

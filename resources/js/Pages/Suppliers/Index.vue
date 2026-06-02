@@ -320,7 +320,7 @@ const setSupplierTab = async (id, tab) => {
         tab === 'debt' &&
         (
             !supplierDebt[id] ||
-            (isDualRoleSupplier(id) && supplierDebtSummary(id).display_mode !== 'partner_net_timeline')
+            (isDualRoleSupplier(id) && !isSupplierPartnerTimeline(id))
         )
     ) {
         await loadSupplierDebt(id, 1);
@@ -356,8 +356,13 @@ const isDualRoleSupplier = (id) => {
 
 const supplierDebtSummary = (id) => supplierDebt[id]?.summary || {};
 
-const isSupplierPartnerTimeline = (id) =>
-    supplierDebtSummary(id).display_mode === 'partner_net_timeline';
+const isSupplierPartnerTimeline = (id) => {
+    const summary = supplierDebtSummary(id);
+    return summary.display_mode === 'supplier_partner_timeline' ||
+        summary.display_mode === 'partner_net_timeline' ||
+        summary.legacy_display_mode === 'partner_net_timeline' ||
+        summary.is_supplier_tab_partner_timeline === true;
+};
 
 const supplierSummaryAmount = (id, canonicalKey, fallbackKey) => {
     const summary = supplierDebtSummary(id);
@@ -365,28 +370,41 @@ const supplierSummaryAmount = (id, canonicalKey, fallbackKey) => {
 };
 
 const supplierDebtFinalColumnLabel = (id) =>
-    isSupplierPartnerTimeline(id) ? 'Vị thế ròng' : 'Nợ cần trả nhà cung cấp';
+    supplierDebtSummary(id).balance_label || 'Nợ cần trả nhà cung cấp';
 
 const supplierDebtEntryEffect = (entry, id) => {
     if (isSupplierPartnerTimeline(id)) {
-        return Number(entry?.partner_effect ?? entry?.customer_effect ?? entry?.supplier_effect ?? entry?.amount ?? 0);
+        return Number(
+            entry?.supplier_partner_effect ??
+            entry?.partner_effect ??
+            entry?.supplier_effect ??
+            entry?.amount ??
+            0
+        );
     }
     return Number(entry?.supplier_effect ?? entry?.amount ?? 0);
 };
 
 const supplierDebtEntryBalance = (entry, id) => {
     if (isSupplierPartnerTimeline(id)) {
-        return Number(entry?.partner_running_balance ?? entry?.balance ?? entry?.debt_remain ?? 0);
+        return Number(
+            entry?.supplier_partner_running_balance ??
+            entry?.partner_running_balance ??
+            entry?.debt_remain ??
+            entry?.balance ??
+            0
+        );
     }
     return Number(entry?.debt_remain ?? entry?.supplier_balance ?? entry?.balance ?? 0);
 };
 
 const supplierDebtEntryBadge = (entry, id) => {
     if (!isSupplierPartnerTimeline(id)) return '';
+    if (entry?.affects_partner_net === false) return entry?.badge_label || 'Đã hạch toán';
     return entry?.badge_label || (
-        entry?.source_ledger === 'customer_receivable'
+        entry?.domain === 'customer' || entry?.source_ledger === 'customer_receivable'
             ? 'Phải thu KH'
-            : (entry?.source_ledger === 'supplier_payable' ? 'Phải trả NCC' : '')
+            : (entry?.domain === 'supplier' || entry?.source_ledger === 'supplier_payable' ? 'Phải trả NCC' : '')
     );
 };
 
@@ -436,7 +454,7 @@ const filteredDebt = (id) => {
     const raw = supplierDebt[id];
     const data = Array.isArray(raw) ? raw : (raw?.entries || []);
     if (debtFilter.value === 'all') return data;
-    return data.filter(d => d.type === debtFilter.value);
+    return data.filter(d => d.type === debtFilter.value || d.event_kind === debtFilter.value);
 };
 
 // HOTFIX 24.15 — per-supplier-tab sort state. Default = newest first.
@@ -1273,7 +1291,11 @@ const submitActivate = (supplier) => {
                                                     </thead>
                                                     <tbody class="divide-y">
                                                         <tr v-if="!filteredDebt(supplier.id)?.length"><td colspan="5" class="px-3 py-6 text-center text-gray-400">Chưa có giao dịch công nợ.</td></tr>
-                                                        <tr v-for="d in sortedSupplierDebt(supplier.id)" :key="d.id" class="hover:bg-gray-50">
+                                                        <tr
+                                                            v-for="d in sortedSupplierDebt(supplier.id)"
+                                                            :key="`${d.source_ledger || d.domain || d.source || 'debt'}-${d.type || d.event_kind || 'row'}-${d.id}-${d.code}-${d.time || d.created_at || d.date}`"
+                                                            class="hover:bg-gray-50"
+                                                        >
                                                             <td class="px-3 py-2 font-semibold"
                                                                 :class="(d.code && (d.code.startsWith('CB') || d.code.startsWith('DTCN'))) ? 'text-blue-600 cursor-pointer hover:underline' : 'text-blue-600'"
                                                                 @click="(d.code && (d.code.startsWith('CB') || d.code.startsWith('DTCN'))) && showCbToast()"

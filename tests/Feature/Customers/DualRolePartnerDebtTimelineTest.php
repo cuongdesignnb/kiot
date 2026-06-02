@@ -397,5 +397,85 @@ class DualRolePartnerDebtTimelineTest extends TestCase
         $this->artisan('customers:reconcile-partner-ledger', ['--customer-id' => $partner->id])
             ->assertExitCode(0);
     }
-}
 
+    public function test_customer_screen_keeps_customer_orientation_for_dual_role_partner_like_kiotviet(): void
+    {
+        $partner = Customer::create([
+            'code' => 'KH-NCC-CUSTOMER-ORIENTATION-' . uniqid(),
+            'name' => 'Customer Orientation Partner',
+            'debt_amount' => 2_000_000,
+            'supplier_debt_amount' => 2_000_000,
+            'is_customer' => true,
+            'is_supplier' => true,
+        ]);
+
+        CustomerDebt::create([
+            'customer_id' => $partner->id,
+            'ref_code' => 'CB000345',
+            'type' => 'adjustment',
+            'amount' => 0,
+            'debt_total' => 0,
+            'recorded_at' => Carbon::parse('2026-06-01 23:01:00'),
+        ]);
+
+        CustomerDebt::create([
+            'customer_id' => $partner->id,
+            'ref_code' => 'HD008236',
+            'type' => 'sale',
+            'amount' => 7_000_000,
+            'debt_total' => 7_000_000,
+            'recorded_at' => Carbon::parse('2026-06-01 23:31:00'),
+        ]);
+
+        CustomerDebt::create([
+            'customer_id' => $partner->id,
+            'ref_code' => 'TTHD008236',
+            'type' => 'payment',
+            'amount' => -5_000_000,
+            'debt_total' => 2_000_000,
+            'recorded_at' => Carbon::parse('2026-06-01 23:32:00'),
+        ]);
+
+        Purchase::create([
+            'code' => 'PN003806',
+            'supplier_id' => $partner->id,
+            'total_amount' => 5_000_000,
+            'paid_amount' => 0,
+            'debt_amount' => 5_000_000,
+            'status' => 'completed',
+            'purchase_date' => Carbon::parse('2026-06-01 23:41:00'),
+            'created_at' => Carbon::parse('2026-06-01 23:41:00'),
+        ]);
+
+        CashFlow::create([
+            'code' => 'PCPN003806',
+            'type' => 'payment',
+            'amount' => 3_000_000,
+            'time' => Carbon::parse('2026-06-01 23:42:00'),
+            'target_type' => 'Nhà cung cấp',
+            'target_id' => $partner->id,
+            'reference_type' => 'Purchase',
+            'reference_code' => 'PN003806',
+            'payment_method' => 'cash',
+            'status' => 'completed',
+            'created_at' => Carbon::parse('2026-06-01 23:42:00'),
+        ]);
+
+        $response = $this->actingAs($this->admin)->getJson("/customers/{$partner->id}/debt-history");
+        $response->assertOk();
+
+        $byCode = collect($response->json('entries'))->keyBy('code');
+
+        $this->assertEquals(0, $byCode['CB000345']['customer_effect']);
+        $this->assertEquals(7_000_000, $byCode['HD008236']['customer_effect']);
+        $this->assertEquals(-5_000_000, $byCode['TTHD008236']['customer_effect']);
+        $this->assertEquals(-5_000_000, $byCode['PN003806']['customer_effect']);
+        $this->assertEquals(3_000_000, $byCode['PCPN003806']['customer_effect']);
+
+        $this->assertEquals(0, $byCode['CB000345']['balance']);
+        $this->assertEquals(7_000_000, $byCode['HD008236']['balance']);
+        $this->assertEquals(2_000_000, $byCode['TTHD008236']['balance']);
+        $this->assertEquals(-3_000_000, $byCode['PN003806']['balance']);
+        $this->assertEquals(0, $byCode['PCPN003806']['balance']);
+    }
+}

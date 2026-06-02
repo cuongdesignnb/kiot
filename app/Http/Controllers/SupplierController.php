@@ -655,6 +655,7 @@ class SupplierController extends Controller
         $customerDebt = (float) ($supplier->debt_amount ?? 0);
         $supplierDebt = $hasSupplierColumn ? (float) ($supplier->supplier_debt_amount ?? 0) : 0.0;
         $netDebt = $customerDebt - $supplierDebt;
+        $supplierOrientedBalance = $supplierDebt - $customerDebt;
         $ledgerSummary = $ledger['summary'] ?? [];
 
         $hasDebtOffsetVoucher = \App\Models\DebtOffset::query()
@@ -669,15 +670,25 @@ class SupplierController extends Controller
                 'customer_receivable_balance' => $customerDebt,
                 'supplier_payable_balance'    => $supplierDebt,
                 'partner_net_position'        => $netDebt,
+                'supplier_oriented_balance'   => $supplierOrientedBalance,
                 'has_debt_offset_voucher'     => $hasDebtOffsetVoucher,
                 'is_actual_offset'            => false,
                 'is_net_view'                 => $usePartnerTimeline,
                 'is_supplier_tab_partner_timeline' => $usePartnerTimeline,
-                'display_mode'                => $usePartnerTimeline ? 'partner_net_timeline' : 'supplier_payable',
+                'display_mode'                => $usePartnerTimeline
+                    ? (string) ($ledgerSummary['display_mode'] ?? 'supplier_partner_timeline')
+                    : 'supplier_payable',
+                'legacy_display_mode'         => $usePartnerTimeline
+                    ? (string) ($ledgerSummary['legacy_display_mode'] ?? 'partner_net_timeline')
+                    : null,
+                'orientation'                 => $usePartnerTimeline ? 'supplier' : 'supplier',
+                'supplier_partner_balance'    => $usePartnerTimeline ? $supplierOrientedBalance : null,
+                'supplier_screen_balance'     => $usePartnerTimeline ? $supplierOrientedBalance : null,
+                'balance_label'               => 'Nợ cần trả nhà cung cấp',
 
                 // Backward-compatible keys (existing FE/tests still read these)
                 'net' => $usePartnerTimeline
-                    ? (float) ($ledgerSummary['partner_net_position'] ?? $netDebt)
+                    ? (float) ($ledgerSummary['supplier_oriented_balance'] ?? $ledger['closing_balance'] ?? $supplierOrientedBalance)
                     : (float) ($ledger['closing_balance'] ?? 0.0),
                 'is_dual_role' => $isDualRole,
                 'customer_debt_amount' => $customerDebt,

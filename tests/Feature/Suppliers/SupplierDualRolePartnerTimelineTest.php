@@ -46,12 +46,24 @@ class SupplierDualRolePartnerTimelineTest extends TestCase
         $data = $response->json();
         $entries = collect($data['entries']);
 
-        $this->assertEquals('partner_net_timeline', $data['summary']['display_mode']);
+        $this->assertEquals('supplier_partner_timeline', $data['summary']['display_mode']);
+        $this->assertEquals('partner_net_timeline', $data['summary']['legacy_display_mode']);
+        $this->assertEquals('supplier', $data['summary']['orientation']);
+        $this->assertEquals('Nợ cần trả nhà cung cấp', $data['summary']['balance_label']);
         $this->assertTrue($data['summary']['is_supplier_tab_partner_timeline']);
         $this->assertEquals(3_250_000, $data['summary']['customer_receivable_balance']);
         $this->assertEquals(22_850_000, $data['summary']['supplier_payable_balance']);
         $this->assertEquals(-19_600_000, $data['summary']['partner_net_position']);
-        $this->assertEquals(-19_600_000, $data['summary']['net']);
+        $this->assertEquals(19_600_000, $data['summary']['supplier_oriented_balance']);
+        $this->assertEquals(
+            $data['summary']['supplier_payable_balance'] - $data['summary']['customer_receivable_balance'],
+            $data['summary']['supplier_oriented_balance']
+        );
+        $this->assertEquals(
+            $data['summary']['customer_receivable_balance'] - $data['summary']['supplier_payable_balance'],
+            $data['summary']['partner_net_position']
+        );
+        $this->assertEquals(19_600_000, $data['summary']['net']);
 
         $this->assertNotNull($entries->firstWhere('code', 'HDTEST001'), 'Supplier dual-role partner timeline must include customer invoice HD...');
         $this->assertNotNull($entries->firstWhere('code', 'TTHDTEST001'), 'Supplier dual-role partner timeline must include customer payment TTHD...');
@@ -66,10 +78,25 @@ class SupplierDualRolePartnerTimelineTest extends TestCase
         $this->assertEquals('supplier', $pn['domain']);
         $this->assertEquals('supplier_payable', $pn['source_ledger']);
 
-        $this->assertEquals(4_000_000, $entries->firstWhere('code', 'HDTEST001')['partner_effect']);
-        $this->assertEquals(-750_000, $entries->firstWhere('code', 'TTHDTEST001')['partner_effect']);
-        $this->assertEquals(-25_000_000, $entries->firstWhere('code', 'PNTEST001')['partner_effect']);
-        $this->assertEquals(2_150_000, $entries->firstWhere('code', 'PCPNTEST001')['partner_effect']);
+        $this->assertEquals(-4_000_000, $entries->firstWhere('code', 'HDTEST001')['partner_effect']);
+        $this->assertEquals(750_000, $entries->firstWhere('code', 'TTHDTEST001')['partner_effect']);
+        $this->assertEquals(25_000_000, $entries->firstWhere('code', 'PNTEST001')['partner_effect']);
+        $this->assertEquals(-2_150_000, $entries->firstWhere('code', 'PCPNTEST001')['partner_effect']);
+
+        $this->assertEquals(-4_000_000, $entries->firstWhere('code', 'HDTEST001')['supplier_partner_effect']);
+        $this->assertEquals(750_000, $entries->firstWhere('code', 'TTHDTEST001')['supplier_partner_effect']);
+        $this->assertEquals(25_000_000, $entries->firstWhere('code', 'PNTEST001')['supplier_partner_effect']);
+        $this->assertEquals(-2_150_000, $entries->firstWhere('code', 'PCPNTEST001')['supplier_partner_effect']);
+
+        $this->assertEquals(-4_000_000, $entries->firstWhere('code', 'HDTEST001')['partner_running_balance']);
+        $this->assertEquals(-3_250_000, $entries->firstWhere('code', 'TTHDTEST001')['partner_running_balance']);
+        $this->assertEquals(21_750_000, $entries->firstWhere('code', 'PNTEST001')['partner_running_balance']);
+        $this->assertEquals(19_600_000, $entries->firstWhere('code', 'PCPNTEST001')['partner_running_balance']);
+
+        $this->assertEquals(-4_000_000, $entries->firstWhere('code', 'HDTEST001')['supplier_partner_running_balance']);
+        $this->assertEquals(-3_250_000, $entries->firstWhere('code', 'TTHDTEST001')['supplier_partner_running_balance']);
+        $this->assertEquals(21_750_000, $entries->firstWhere('code', 'PNTEST001')['supplier_partner_running_balance']);
+        $this->assertEquals(19_600_000, $entries->firstWhere('code', 'PCPNTEST001')['supplier_partner_running_balance']);
     }
 
     public function test_default_dual_role_supplier_endpoint_remains_pure_supplier_payable(): void
@@ -151,7 +178,8 @@ class SupplierDualRolePartnerTimelineTest extends TestCase
         $this->assertEquals(4, $data['pagination']['total']);
         $this->assertEquals(2, $data['pagination']['last_page']);
         $this->assertEquals(-19_600_000, $data['summary']['partner_net_position']);
-        $this->assertEquals(-19_600_000, $data['summary']['net']);
+        $this->assertEquals(19_600_000, $data['summary']['supplier_oriented_balance']);
+        $this->assertEquals(19_600_000, $data['summary']['net']);
     }
 
     private function createDualRolePartner(array $overrides = []): Customer
