@@ -2224,28 +2224,6 @@ const createdDateRange = computed({
                                                     debtHistoryData[customer.id]
                                                 "
                                             >
-                                                <!-- Dual-role partner summary cards -->
-                                                <div v-if="customer.is_supplier && debtHistoryData[customer.id]?.summary" class="grid grid-cols-3 gap-4 mb-4 bg-gray-50 p-4 rounded-lg border border-gray-200">
-                                                    <div class="bg-white p-3 rounded shadow-sm border-l-4 border-blue-500">
-                                                        <div class="text-xs text-gray-500 font-semibold uppercase">Nợ khách phải thu (Receivable)</div>
-                                                        <div class="text-lg font-bold text-gray-800 mt-1">
-                                                            {{ formatCurrency(debtHistoryData[customer.id].summary.customer_debt_amount) }}
-                                                        </div>
-                                                    </div>
-                                                    <div class="bg-white p-3 rounded shadow-sm border-l-4 border-orange-500">
-                                                        <div class="text-xs text-gray-500 font-semibold uppercase">Nợ cần trả NCC (Payable)</div>
-                                                        <div class="text-lg font-bold text-gray-800 mt-1">
-                                                            {{ formatCurrency(debtHistoryData[customer.id].summary.supplier_debt_amount) }}
-                                                        </div>
-                                                    </div>
-                                                    <div class="bg-white p-3 rounded shadow-sm border-l-4" :class="debtHistoryData[customer.id].summary.net_debt_amount >= 0 ? 'border-red-500' : 'border-green-500'">
-                                                        <div class="text-xs text-gray-500 font-semibold uppercase">Vị thế ròng (Net Position)</div>
-                                                        <div class="text-lg font-bold mt-1" :class="debtHistoryData[customer.id].summary.net_debt_amount >= 0 ? 'text-red-600' : 'text-green-600'">
-                                                            {{ formatCurrency(debtHistoryData[customer.id].summary.net_debt_amount) }}
-                                                        </div>
-                                                    </div>
-                                                </div>
-
                                                 <!-- Reconcile Warning -->
                                                 <div
                                                     v-if="debtHistoryData[customer.id].reconcile?.has_mismatch"

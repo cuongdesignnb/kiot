@@ -57,6 +57,17 @@ class SupplierController extends Controller
 
         $suppliers = $query->paginate(50)->withQueryString();
 
+        $suppliers->getCollection()->transform(function ($supplier) {
+            $customerDebt = (float) ($supplier->debt_amount ?? 0);
+            $supplierDebt = (float) ($supplier->supplier_debt_amount ?? 0);
+
+            $supplier->customer_receivable_balance = $customerDebt;
+            $supplier->supplier_payable_balance = $supplierDebt;
+            $supplier->partner_net_position = $customerDebt - $supplierDebt;
+
+            return $supplier;
+        });
+
         // Summary totals - use supplier_debt_amount which is maintained by purchase/return flows
         $summary = [
             'total_debt' => Customer::where('is_supplier', true)
