@@ -28,7 +28,7 @@
                 ref="importFile"
                 accept=".csv,.txt,.xlsx,.xls"
                 class="hidden"
-                @change="isProductExcel ? handleProductFile : handleLegacyImport"
+                @change="handleLegacyImport"
             />
         </template>
     </div>
@@ -127,10 +127,31 @@
                             </div>
 
                             <div class="flex items-center gap-3">
-                                <button class="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700" @click="importFile.click()">
+                                <button
+                                    type="button"
+                                    class="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                                    @click="openProductFilePicker"
+                                >
                                     Chọn file dữ liệu
                                 </button>
-                                <span class="truncate text-sm text-gray-600">{{ selectedImportFile?.name || 'Chưa chọn file' }}</span>
+                                <div class="min-w-0">
+                                    <span
+                                        class="block truncate text-sm"
+                                        :class="selectedImportFile ? 'font-semibold text-green-700' : 'text-gray-500'"
+                                    >
+                                        {{ selectedImportFile?.name || 'Chưa chọn file' }}
+                                    </span>
+                                    <span v-if="selectedImportFile" class="text-xs text-gray-500">
+                                        {{ Math.ceil(selectedImportFile.size / 1024) }} KB
+                                    </span>
+                                </div>
+                                <input
+                                    ref="productImportFile"
+                                    type="file"
+                                    accept=".csv,.txt,.xlsx,.xls"
+                                    class="hidden"
+                                    @change="handleProductFile"
+                                />
                             </div>
                         </div>
 
@@ -185,10 +206,10 @@
                 </div>
 
                 <div class="flex justify-end gap-2 border-t bg-gray-50 px-5 py-3">
-                    <button class="rounded border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50" @click="closeImportModal">
+                    <button type="button" class="rounded border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50" @click="closeImportModal">
                         Bỏ qua
                     </button>
-                    <button class="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50" :disabled="!selectedImportFile || importLoading" @click="previewImport">
+                    <button type="button" class="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50" :disabled="!selectedImportFile || importLoading" @click="previewImport">
                         {{ importLoading ? 'Đang kiểm tra...' : 'Kiểm tra file' }}
                     </button>
                     <button
@@ -221,6 +242,7 @@ const props = defineProps({
 });
 
 const importFile = ref(null);
+const productImportFile = ref(null);
 const showExportModal = ref(false);
 const showImportModal = ref(false);
 const selectedExportFields = ref([]);
@@ -239,6 +261,27 @@ const importOptions = ref({
 
 const isProductExcel = computed(() => Boolean(props.productExcel?.fields?.length));
 const storageKey = "products.excel.export.fields";
+
+function defaultImportOptions() {
+    return {
+        duplicate_name_strategy: "error",
+        duplicate_barcode_sku_strategy: "error",
+        update_stock: false,
+        update_cost_price: false,
+        update_description: false,
+    };
+}
+
+function resetProductImportState() {
+    selectedImportFile.value = null;
+    importPreview.value = null;
+    importError.value = "";
+    importOptions.value = defaultImportOptions();
+
+    if (productImportFile.value) {
+        productImportFile.value.value = "";
+    }
+}
 
 watch(
     () => props.productExcel,
@@ -280,10 +323,31 @@ function downloadProductExport() {
 
 function handleImportClick() {
     if (isProductExcel.value) {
-        showImportModal.value = true;
+        openImportModal();
         return;
     }
-    importFile.value.click();
+    if (importFile.value) {
+        importFile.value.value = "";
+        importFile.value.click();
+    }
+}
+
+function openImportModal() {
+    resetProductImportState();
+    showImportModal.value = true;
+}
+
+function openProductFilePicker() {
+    importError.value = "";
+    importPreview.value = null;
+
+    if (!productImportFile.value) {
+        importError.value = "Không mở được bộ chọn file. Vui lòng tải lại trang và thử lại.";
+        return;
+    }
+
+    productImportFile.value.value = "";
+    productImportFile.value.click();
 }
 
 function handleLegacyImport(e) {
@@ -300,10 +364,29 @@ function handleLegacyImport(e) {
     });
 }
 
-function handleProductFile(e) {
-    selectedImportFile.value = e.target.files[0] || null;
+function handleProductFile(event) {
+    const file = event.target.files?.[0] || null;
+
+    selectedImportFile.value = file;
     importPreview.value = null;
     importError.value = "";
+
+    if (!file) {
+        importError.value = "Chưa chọn file dữ liệu.";
+        return;
+    }
+
+    const allowedExtensions = [".xlsx", ".xls", ".csv", ".txt"];
+    const lowerName = (file.name || "").toLowerCase();
+    const isAllowed = allowedExtensions.some((extension) => lowerName.endsWith(extension));
+
+    if (!isAllowed) {
+        selectedImportFile.value = null;
+        importError.value = "File không đúng định dạng. Vui lòng chọn .xlsx, .xls, .csv hoặc .txt.";
+        if (productImportFile.value) {
+            productImportFile.value.value = "";
+        }
+    }
 }
 
 function appendImportForm(formData) {
@@ -355,9 +438,7 @@ async function commitImport() {
 
 function closeImportModal() {
     showImportModal.value = false;
-    selectedImportFile.value = null;
-    importPreview.value = null;
-    importError.value = "";
     if (importFile.value) importFile.value.value = "";
+    resetProductImportState();
 }
 </script>
