@@ -219,6 +219,8 @@ class ProductExcelImportService
             'will_update_description' => $willUpdateDescription,
             'warnings' => array_values(array_unique($warnings)),
             'errors' => array_values(array_unique($errors)),
+            'warning_details' => $this->buildRowWarningDetails($rowNumber, $data, $warnings),
+            'error_details' => $this->buildRowErrorDetails($rowNumber, $data, $errors),
         ];
     }
 
@@ -367,12 +369,211 @@ class ProductExcelImportService
             'will_update' => count(array_filter($valid, fn (array $item) => $item['action'] === 'update')),
             'will_skip' => count(array_filter($items, fn (array $item) => $item['action'] === 'skip')),
             'rows' => array_slice($items, 0, 20),
+            'error_logs' => $this->buildErrorLogs($items),
+            'warning_logs' => $this->buildWarningLogs($items),
+            'error_groups' => $this->groupErrors($items),
+            'warning_groups' => $this->groupWarnings($items),
             'phase_policy' => [
                 'updates_existing_stock' => false,
                 'updates_existing_cost_price' => false,
                 'creates_stock_movement' => false,
                 'creates_serials' => false,
             ],
+        ];
+    }
+
+    private function buildErrorLogs(array $items): array
+    {
+        $logs = [];
+
+        foreach ($items as $item) {
+            foreach (($item['error_details'] ?? []) as $detail) {
+                $logs[] = $detail;
+            }
+        }
+
+        return $logs;
+    }
+
+    private function buildWarningLogs(array $items): array
+    {
+        $logs = [];
+
+        foreach ($items as $item) {
+            foreach (($item['warning_details'] ?? []) as $detail) {
+                $logs[] = $detail;
+            }
+        }
+
+        return $logs;
+    }
+
+    private function groupErrors(array $items): array
+    {
+        return $this->groupMessages($this->buildErrorLogs($items));
+    }
+
+    private function groupWarnings(array $items): array
+    {
+        return $this->groupMessages($this->buildWarningLogs($items));
+    }
+
+    private function groupMessages(array $logs): array
+    {
+        $groups = [];
+
+        foreach ($logs as $log) {
+            $key = $log['message'] ?? 'Không xác định';
+
+            if (!isset($groups[$key])) {
+                $groups[$key] = [
+                    'message' => $key,
+                    'count' => 0,
+                    'field' => $log['field'] ?? null,
+                    'field_label' => $log['field_label'] ?? null,
+                    'suggestion' => $log['suggestion'] ?? '',
+                    'sample_rows' => [],
+                ];
+            }
+
+            $groups[$key]['count']++;
+
+            if (count($groups[$key]['sample_rows']) < 10) {
+                $groups[$key]['sample_rows'][] = $log['row'];
+            }
+        }
+
+        return array_values($groups);
+    }
+
+    private function buildRowErrorDetails(int $rowNumber, array $data, array $errors): array
+    {
+        $details = [];
+
+        foreach (array_values(array_unique($errors)) as $message) {
+            $details[] = $this->makeIssueDetail($rowNumber, $data, $message, 'error');
+        }
+
+        return $details;
+    }
+
+    private function buildRowWarningDetails(int $rowNumber, array $data, array $warnings): array
+    {
+        $details = [];
+
+        foreach (array_values(array_unique($warnings)) as $message) {
+            $details[] = $this->makeIssueDetail($rowNumber, $data, $message, 'warning');
+        }
+
+        return $details;
+    }
+
+    private function makeIssueDetail(int $rowNumber, array $data, string $message, string $level): array
+    {
+        [$field, $fieldLabel, $value, $suggestion] = $this->resolveIssueContext($data, $message);
+
+        return [
+            'level' => $level,
+            'row' => $rowNumber,
+            'sku' => $data['sku'] ?? '',
+            'barcode' => $data['barcode'] ?? '',
+            'name' => $data['name'] ?? '',
+            'field' => $field,
+            'field_label' => $fieldLabel,
+            'value' => $value,
+            'message' => $message,
+            'suggestion' => $suggestion,
+        ];
+    }
+
+    private function resolveIssueContext(array $data, string $message): array
+    {
+        if ($message === 'Thiếu Tên hàng.') {
+            return [
+                'name',
+                'Tên hàng',
+                $data['name'] ?? '',
+                'Bổ sung tên hàng hoặc xóa dòng này khỏi file import.',
+            ];
+        }
+
+        if ($message === 'Loại hàng không hợp lệ.') {
+            return [
+                'type',
+                'Loại',
+                $data['type'] ?? '',
+                'Cột Loại chỉ nhận standard/service/combo/manufactured. Nếu giá trị này là nhóm hàng, hãy chuyển sang cột Nhóm hàng và để Loại trống hoặc nhập standard.',
+            ];
+        }
+
+        if ($message === 'Trùng mã hàng/mã vạch nhưng khác tên hàng hóa.') {
+            return [
+                'sku',
+                'Mã hàng',
+                $data['sku'] ?? '',
+                'Kiểm tra lại mã hàng/mã vạch. Nếu muốn cập nhật tên hàng cũ, chọn tùy chọn thay thế tên hàng trước khi kiểm tra file.',
+            ];
+        }
+
+        if ($message === 'Trùng mã vạch nhưng khác mã hàng.') {
+            return [
+                'barcode',
+                'Mã vạch',
+                $data['barcode'] ?? '',
+                'Kiểm tra lại mã vạch. Nếu muốn thay mã hàng cũ bằng mã hàng mới, chọn tùy chọn thay thế mã hàng trước khi kiểm tra file.',
+            ];
+        }
+
+        if ($message === 'Mã hàng mới đã tồn tại.') {
+            return [
+                'sku',
+                'Mã hàng',
+                $data['sku'] ?? '',
+                'Đổi mã hàng mới hoặc kiểm tra lại dữ liệu trùng trong hệ thống.',
+            ];
+        }
+
+        if ($message === 'Hàng hóa đã tồn tại. Phase 1 mặc định không cập nhật hàng cũ.') {
+            return [
+                'sku',
+                'Mã hàng',
+                $data['sku'] ?? '',
+                'Nếu muốn cập nhật dữ liệu hàng cũ, chọn đúng tùy chọn thay thế tên/mã hoặc cập nhật mô tả. Tồn kho và giá vốn hàng cũ vẫn không cập nhật qua import này.',
+            ];
+        }
+
+        if (str_contains($message, 'Tồn kho')) {
+            return [
+                'stock_quantity',
+                'Tồn kho',
+                $data['stock_quantity'] ?? '',
+                'Tồn kho hàng cũ không cập nhật qua import hàng hóa. Hãy dùng phiếu nhập hoặc kiểm kho nếu cần điều chỉnh tồn.',
+            ];
+        }
+
+        if (str_contains($message, 'Giá vốn')) {
+            return [
+                'cost_price',
+                'Giá vốn',
+                $data['cost_price'] ?? '',
+                'Giá vốn hàng cũ không cập nhật qua import hàng hóa. Giá vốn chỉ áp dụng khi tạo hàng mới, nếu file có cột Giá vốn và user có quyền.',
+            ];
+        }
+
+        if (str_contains($message, 'serial') || str_contains($message, 'IMEI')) {
+            return [
+                'has_serial',
+                'Serial/IMEI',
+                $data['has_serial'] ?? '',
+                'Import này chỉ đánh dấu sản phẩm có quản lý serial, không tạo danh sách serial/IMEI.',
+            ];
+        }
+
+        return [
+            null,
+            null,
+            '',
+            'Kiểm tra lại dữ liệu dòng này theo file mẫu import.',
         ];
     }
 

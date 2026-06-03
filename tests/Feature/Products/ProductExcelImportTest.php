@@ -191,6 +191,57 @@ class ProductExcelImportTest extends TestCase
         ])->assertOk()->assertJsonPath('error_rows', 1);
     }
 
+    public function test_import_preview_returns_detailed_error_log_for_invalid_type(): void
+    {
+        $response = $this->actingAs($this->admin())->post('/products/import-preview', [
+            'file' => $this->upload(
+                ['Mã hàng', 'Tên hàng', 'Loại'],
+                [['APTET12', 'Appleton Estate Rare Blend 12Y', 'Single Malt Scotch Whisky']]
+            ),
+        ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('error_rows', 1);
+        $response->assertJsonPath('error_logs.0.field', 'type');
+        $response->assertJsonPath('error_logs.0.field_label', 'Loại');
+        $response->assertJsonPath('error_logs.0.value', 'Single Malt Scotch Whisky');
+        $response->assertJsonPath('error_logs.0.message', 'Loại hàng không hợp lệ.');
+        $response->assertJsonPath('error_groups.0.message', 'Loại hàng không hợp lệ.');
+        $response->assertJsonPath('error_groups.0.count', 1);
+    }
+
+    public function test_import_preview_returns_detailed_error_log_for_missing_name(): void
+    {
+        $response = $this->actingAs($this->admin())->post('/products/import-preview', [
+            'file' => $this->upload(
+                ['Mã hàng', 'Tên hàng'],
+                [['PVN200', '']]
+            ),
+        ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('error_rows', 1);
+        $response->assertJsonPath('error_logs.0.field', 'name');
+        $response->assertJsonPath('error_logs.0.field_label', 'Tên hàng');
+        $response->assertJsonPath('error_logs.0.message', 'Thiếu Tên hàng.');
+        $response->assertJsonPath('error_groups.0.message', 'Thiếu Tên hàng.');
+        $response->assertJsonPath('error_groups.0.count', 1);
+    }
+
+    public function test_import_preview_with_errors_does_not_write_database(): void
+    {
+        $this->actingAs($this->admin())->post('/products/import-preview', [
+            'file' => $this->upload(
+                ['Mã hàng', 'Tên hàng', 'Loại'],
+                [['APTET12', 'Appleton Estate Rare Blend 12Y', 'Single Malt Scotch Whisky']]
+            ),
+        ])->assertOk();
+
+        $this->assertDatabaseMissing('products', [
+            'sku' => 'APTET12',
+        ]);
+    }
+
     public function test_import_duplicate_sku_different_name_errors_by_default(): void
     {
         $this->product(['sku' => 'SP001', 'name' => 'Tên cũ']);

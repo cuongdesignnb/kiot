@@ -201,6 +201,110 @@
                                     </tbody>
                                 </table>
                             </div>
+
+                            <div v-if="importIssueLogs.length" class="mt-4 rounded border border-gray-200 bg-white">
+                                <div class="flex items-center justify-between gap-3 border-b px-3 py-2">
+                                    <div>
+                                        <div class="text-sm font-bold text-gray-800">Chi tiết lỗi cần sửa</div>
+                                        <div class="text-xs text-gray-500">
+                                            Xem dòng nào lỗi, cột nào lỗi, giá trị hiện tại và gợi ý sửa file.
+                                        </div>
+                                    </div>
+
+                                    <button
+                                        type="button"
+                                        class="rounded border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                                        @click="downloadImportIssueCsv"
+                                    >
+                                        Tải file lỗi
+                                    </button>
+                                </div>
+
+                                <div v-if="importPreview?.error_groups?.length" class="border-b bg-red-50 px-3 py-2">
+                                    <div class="mb-1 text-xs font-bold text-red-800">Nhóm lỗi</div>
+                                    <div class="space-y-1">
+                                        <div
+                                            v-for="group in importPreview.error_groups"
+                                            :key="group.message"
+                                            class="text-xs text-red-800"
+                                        >
+                                            <span class="font-semibold">{{ group.message }}</span>:
+                                            {{ group.count }} dòng
+                                            <span v-if="group.sample_rows?.length" class="text-red-600">
+                                                - ví dụ dòng {{ group.sample_rows.join(', ') }}
+                                            </span>
+                                            <div v-if="group.suggestion" class="text-red-700">
+                                                Gợi ý: {{ group.suggestion }}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div v-if="importPreview?.warning_groups?.length" class="border-b bg-amber-50 px-3 py-2">
+                                    <div class="mb-1 text-xs font-bold text-amber-800">Nhóm cảnh báo</div>
+                                    <div class="space-y-1">
+                                        <div
+                                            v-for="group in importPreview.warning_groups"
+                                            :key="group.message"
+                                            class="text-xs text-amber-800"
+                                        >
+                                            <span class="font-semibold">{{ group.message }}</span>:
+                                            {{ group.count }} dòng
+                                            <span v-if="group.sample_rows?.length" class="text-amber-700">
+                                                - ví dụ dòng {{ group.sample_rows.join(', ') }}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="max-h-80 overflow-auto">
+                                    <table class="min-w-full text-left text-xs">
+                                        <thead class="sticky top-0 bg-gray-100 text-gray-700">
+                                            <tr>
+                                                <th class="px-2 py-2">Dòng</th>
+                                                <th class="px-2 py-2">Mức</th>
+                                                <th class="px-2 py-2">Mã hàng</th>
+                                                <th class="px-2 py-2">Tên hàng</th>
+                                                <th class="px-2 py-2">Cột lỗi</th>
+                                                <th class="px-2 py-2">Giá trị hiện tại</th>
+                                                <th class="px-2 py-2">Lý do lỗi</th>
+                                                <th class="px-2 py-2">Gợi ý sửa</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr
+                                                v-for="log in visibleImportIssueLogs"
+                                                :key="`${log.level}-${log.row}-${log.field}-${log.message}`"
+                                                class="border-t"
+                                            >
+                                                <td class="px-2 py-2">{{ log.row }}</td>
+                                                <td class="px-2 py-2">
+                                                    <span
+                                                        class="rounded px-2 py-0.5 text-xs font-semibold"
+                                                        :class="log.level === 'error' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'"
+                                                    >
+                                                        {{ log.level === 'error' ? 'Lỗi' : 'Cảnh báo' }}
+                                                    </span>
+                                                </td>
+                                                <td class="px-2 py-2">{{ log.sku }}</td>
+                                                <td class="px-2 py-2">{{ log.name }}</td>
+                                                <td class="px-2 py-2 font-semibold">{{ log.field_label || log.field || '-' }}</td>
+                                                <td class="px-2 py-2">{{ log.value }}</td>
+                                                <td class="px-2 py-2 text-red-700">{{ log.message }}</td>
+                                                <td class="px-2 py-2 text-gray-700">{{ log.suggestion }}</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <div
+                                    v-if="importIssueLogs.length > visibleImportIssueLogs.length"
+                                    class="border-t bg-gray-50 px-3 py-2 text-xs text-gray-600"
+                                >
+                                    Đang hiển thị {{ visibleImportIssueLogs.length }} / {{ importIssueLogs.length }} lỗi/cảnh báo.
+                                    Vui lòng tải file lỗi để xem đầy đủ.
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -261,6 +365,13 @@ const importOptions = ref({
 
 const isProductExcel = computed(() => Boolean(props.productExcel?.fields?.length));
 const storageKey = "products.excel.export.fields";
+
+const importIssueLogs = computed(() => [
+    ...(importPreview.value?.error_logs || []),
+    ...(importPreview.value?.warning_logs || []),
+]);
+
+const visibleImportIssueLogs = computed(() => importIssueLogs.value.slice(0, 100));
 
 function defaultImportOptions() {
     return {
@@ -394,6 +505,54 @@ function appendImportForm(formData) {
     Object.entries(importOptions.value).forEach(([key, value]) => {
         formData.append(key, typeof value === "boolean" ? (value ? "1" : "0") : value);
     });
+}
+
+function csvEscape(value) {
+    const text = String(value ?? "");
+    return `"${text.replace(/"/g, '""')}"`;
+}
+
+function downloadImportIssueCsv() {
+    const logs = importIssueLogs.value;
+    if (!logs.length) return;
+
+    const headers = [
+        "Dòng Excel",
+        "Mức",
+        "Mã hàng",
+        "Mã vạch",
+        "Tên hàng",
+        "Cột lỗi",
+        "Giá trị hiện tại",
+        "Lý do lỗi",
+        "Gợi ý sửa",
+    ];
+
+    const rows = logs.map((log) => [
+        log.row,
+        log.level === "error" ? "Lỗi" : "Cảnh báo",
+        log.sku,
+        log.barcode,
+        log.name,
+        log.field_label || log.field || "",
+        log.value,
+        log.message,
+        log.suggestion,
+    ]);
+
+    const csv = [headers, ...rows]
+        .map((row) => row.map(csvEscape).join(","))
+        .join("\n");
+
+    const blob = new Blob(["\ufeff" + csv], {
+        type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "loi_import_hang_hoa.csv";
+    link.click();
+    URL.revokeObjectURL(url);
 }
 
 async function previewImport() {
