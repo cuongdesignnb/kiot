@@ -1112,6 +1112,18 @@ class ProductController extends Controller
 
         return redirect()->back()->with('success', 'Đã xoá hàng hóa!');
     }
+
+    public function bulkDestroy(Request $request)
+    {
+        $validated = $request->validate([
+            'product_ids' => 'required|array|min:1',
+            'product_ids.*' => 'exists:products,id',
+        ]);
+
+        Product::whereIn('id', $validated['product_ids'])->delete();
+
+        return redirect()->back()->with('success', 'Đã xoá các hàng hóa được chọn!');
+    }
     public function export(
         Request $request,
         ProductSearchService $productSearch,
