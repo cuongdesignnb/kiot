@@ -6,6 +6,7 @@ use App\Models\CashFlow;
 use App\Models\CustomerDebt;
 use App\Models\DebtOffset;
 use App\Models\SupplierDebtTransaction;
+use App\Services\DebtEvidenceMatcher;
 use App\Services\DebtPartnerInspectionService;
 use Illuminate\Console\Command;
 
@@ -27,10 +28,16 @@ class DiffDebtPartnerCommand extends Command
     private const REQUIRED_MATRIX_FIELDS = [
         'source_type',
         'source_code',
+        'source_base_code',
         'source_date',
         'source_status',
         'source_amount',
         'expected_effect',
+        'candidate_ledger_codes',
+        'candidate_cashflow_codes',
+        'best_match_type',
+        'best_match_score',
+        'best_match_confidence',
         'matched_ledger_id',
         'matched_ledger_code',
         'matched_ledger_amount',
@@ -39,9 +46,11 @@ class DiffDebtPartnerCommand extends Command
         'matched_cashflow_amount',
         'match_status',
         'issue',
+        'severity',
+        'can_auto_candidate',
     ];
 
-    public function handle(DebtPartnerInspectionService $service): int
+    public function handle(DebtPartnerInspectionService $service, DebtEvidenceMatcher $matcher): int
     {
         if (!$this->option('dry-run')) {
             $this->error('This command is read-only. Please pass --dry-run. No data was modified.');
@@ -63,24 +72,26 @@ class DiffDebtPartnerCommand extends Command
         $inspection = $this->normalizePayload($inspection);
         $planPayload = $this->loadPlanPayload((string) $this->option('plan-json'));
         $plan = $this->findPlan($planPayload, $inspection['partner'] ?? []);
-        $raw = $inspection['raw'] ?? $this->emptyRawSources();
-        $matrix = $this->matchingMatrix($raw);
-        $issues = $this->detectedIssues($matrix, $inspection, $plan);
-        $resolution = $this->proposedResolution($plan, $matrix, $issues, $inspection);
+        $match = $matcher->match($inspection, $plan);
+        $candidatePreview = $match['candidate_preview'];
 
         $payload = [
             'generated_at' => now()->toIso8601String(),
             'dry_run' => true,
+            'evidence_matching_version' => 'v2',
             'partner' => $inspection['partner'] ?? [],
             'plan' => $plan,
             'stored_balances' => $inspection['stored_balances'] ?? [],
-            'document_rows' => $this->documentRows($raw),
-            'ledger_rows' => $this->ledgerRows($raw),
-            'cashflow_rows' => array_values($raw['cash_flows'] ?? []),
+            'document_rows' => $match['document_rows'],
+            'ledger_rows' => $match['ledger_rows'],
+            'cashflow_rows' => $match['cashflow_rows'],
             'timeline_rows' => $this->timelineRows($inspection),
-            'matching_matrix' => $matrix,
-            'detected_issues' => $issues,
-            'proposed_resolution' => $resolution,
+            'matching_matrix' => $match['matching_matrix'],
+            'possible_matches' => $match['possible_matches'],
+            'detected_issues' => $match['detected_issues'],
+            'candidate_preview' => $candidatePreview,
+            'proposed_resolution' => $this->resolutionFromPreview($candidatePreview, $match['detected_issues']),
+            'matching_summary' => $match['summary'],
             'data_safety' => [
                 'migration' => false,
                 'backfill' => false,
@@ -169,6 +180,20 @@ class DiffDebtPartnerCommand extends Command
             'authority_candidate' => 'manual_review',
             'proposed_write_operations' => [],
             'blocked_reason' => 'Plan row not found for partner.',
+        ];
+    }
+
+    private function resolutionFromPreview(array $candidatePreview, array $issues): array
+    {
+        return [
+            'status' => ($candidatePreview['candidate_ready'] ?? false) ? 'candidate_ready' : 'manual_review',
+            'allowed_group' => $candidatePreview['allowed_group'] ?? null,
+            'write_operations_preview' => $candidatePreview['write_operations_preview'] ?? [],
+            'blocked_reason' => $candidatePreview['blocked_reason'] ?? null,
+            'requires_confirmation_before_fix' => true,
+            'requires_backup' => true,
+            'rollback_required' => true,
+            'issue_count' => count($issues),
         ];
     }
 
@@ -570,6 +595,8 @@ class DiffDebtPartnerCommand extends Command
         $partner = $payload['partner'];
         $plan = $payload['plan'];
         $resolution = $payload['proposed_resolution'];
+        $candidatePreview = $payload['candidate_preview'] ?? [];
+        $summary = $payload['matching_summary'] ?? [];
         $lines = [
             '# Debt manual diff - ' . ($partner['code'] ?? 'unknown'),
             '',
@@ -578,6 +605,7 @@ class DiffDebtPartnerCommand extends Command
             '- Partner: `' . ($partner['code'] ?? '') . ' - ' . $this->md($partner['name'] ?? '') . '`.',
             '- Generated at: `' . $payload['generated_at'] . '`.',
             '- Dry-run: `true`.',
+            '- Evidence matching version: `' . ($payload['evidence_matching_version'] ?? 'v1') . '`.',
             '- Plan JSON: `' . ($plan['plan_json'] ?? '') . '`.',
             '- Fix group: `' . ($plan['fix_group'] ?? '') . '`.',
             '- Diagnosis: `' . ($plan['diagnosis'] ?? '') . '`.',
@@ -601,29 +629,57 @@ class DiffDebtPartnerCommand extends Command
             '| Cashflow rows | ' . count($payload['cashflow_rows']) . ' |',
             '| Timeline rows | ' . count($payload['timeline_rows']) . ' |',
             '| Issues | ' . count($payload['detected_issues']) . ' |',
+            '| Possible matches | ' . count($payload['possible_matches'] ?? []) . ' |',
+            '| Critical issues | ' . ($summary['critical_issue_count'] ?? 0) . ' |',
+            '| Candidate ready | ' . (($candidatePreview['candidate_ready'] ?? false) ? 'yes' : 'no') . ' |',
+            '| Write preview ops | ' . count($candidatePreview['write_operations_preview'] ?? []) . ' |',
             '',
-            '## Proposed resolution',
+            '## Candidate preview',
             '',
-            '- Status: `' . $resolution['status'] . '`.',
-            '- Allowed group: `' . ($resolution['allowed_group'] ?? 'null') . '`.',
-            '- Candidate for apply: `' . ($resolution['status'] === 'candidate_ready' ? 'yes' : 'no') . '`.',
-            '- Write operations preview: `' . count($resolution['write_operations_preview']) . '`.',
+            '- Candidate ready: `' . (($candidatePreview['candidate_ready'] ?? false) ? 'yes' : 'no') . '`.',
+            '- Allowed group: `' . ($candidatePreview['allowed_group'] ?? 'null') . '`.',
+            '- Blocked reason: `' . ($candidatePreview['blocked_reason'] ?? 'null') . '`.',
+            '- Write operations preview: `' . count($candidatePreview['write_operations_preview'] ?? []) . '`.',
             '- Requires backup: `true`.',
             '- Rollback required: `true`.',
+            '- Legacy proposed status: `' . $resolution['status'] . '`.',
+            '',
+            '## Possible matches',
+            '',
+            '| Source | Candidate | Type | Strategy | Score | Confidence | Reason |',
+            '|---|---|---|---|---:|---|---|',
+        ];
+
+        foreach (array_slice($payload['possible_matches'] ?? [], 0, 30) as $match) {
+            $lines[] = '| ' . $this->md($match['source'] ?? '') . ' | '
+                . $this->md($match['candidate'] ?? '') . ' | '
+                . $this->md($match['candidate_type'] ?? '') . ' | '
+                . $this->md($match['strategy'] ?? '') . ' | '
+                . ($match['score'] ?? 0) . ' | '
+                . $this->md($match['confidence'] ?? '') . ' | '
+                . $this->md($match['reason'] ?? '') . ' |';
+        }
+
+        $lines = array_merge($lines, [
             '',
             '## Matching matrix',
             '',
-            '| Source type | Source code | Expected | Ledger | Cashflow | Match status | Issue |',
-            '|---|---|---:|---:|---:|---|---|',
-        ];
+            '| Source type | Source code | Base code | Expected | Ledger | Cashflow | Best match | Score | Match status | Severity | Auto candidate | Issue |',
+            '|---|---|---|---:|---:|---:|---|---:|---|---|---|---|',
+        ]);
 
         foreach ($payload['matching_matrix'] as $row) {
             $lines[] = '| ' . $this->md($row['source_type']) . ' | '
                 . $this->md($row['source_code']) . ' | '
+                . $this->md($row['source_base_code'] ?? '') . ' | '
                 . $row['expected_effect'] . ' | '
                 . ($row['matched_ledger_amount'] ?? '') . ' | '
                 . ($row['matched_cashflow_amount'] ?? '') . ' | '
+                . $this->md($row['best_match_type'] ?? '') . ' | '
+                . ($row['best_match_score'] ?? 0) . ' | '
                 . $row['match_status'] . ' | '
+                . $this->md($row['severity'] ?? '') . ' | '
+                . (($row['can_auto_candidate'] ?? false) ? 'yes' : 'no') . ' | '
                 . $this->md($row['issue']) . ' |';
         }
 

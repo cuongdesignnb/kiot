@@ -13,6 +13,7 @@ class PlanDebtFixCommand extends Command
         {--dry-run : Required. Build fix plan only, do not write DB}
         {--csv=storage/app/audits/debt-ledger-audit-mismatch.csv : Mismatch CSV from audit}
         {--inspect-dir=storage/app/audits/debt-inspections/top-20 : JSON inspection directory}
+        {--evidence-dir= : Optional debt diff evidence JSON directory}
         {--limit=20 : Max rows to plan}
         {--classification= : Optional classification filter}
         {--diagnosis= : Optional diagnosis filter}
@@ -185,11 +186,13 @@ class PlanDebtFixCommand extends Command
 
         $auditRows = $this->readCsv($csvPath);
         $inspectionIndex = $this->loadInspectionIndex((string) $this->option('inspect-dir'));
+        $evidenceIndex = $this->loadEvidenceIndex((string) ($this->option('evidence-dir') ?: ''));
         $plans = [];
 
         foreach ($this->topRows($auditRows) as $auditRow) {
             $inspection = $this->findInspection($inspectionIndex, $auditRow);
             $plan = $this->buildPlan($auditRow, $inspection);
+            $plan = $this->mergeEvidencePreview($plan, $evidenceIndex[$plan['code']] ?? null);
 
             if ($this->option('classification') && $plan['classification'] !== (string) $this->option('classification')) {
                 continue;
@@ -212,6 +215,7 @@ class PlanDebtFixCommand extends Command
                 'audit_csv' => $csvPath,
                 'audit_csv_hash' => hash_file('sha256', $csvPath),
                 'inspection_dir' => (string) $this->option('inspect-dir'),
+                'evidence_dir' => (string) ($this->option('evidence-dir') ?: ''),
                 'plan_json' => (string) $this->option('export-json'),
             ],
             'data_safety' => [
@@ -234,6 +238,7 @@ class PlanDebtFixCommand extends Command
             'csv' => $csvPath,
             'audit_csv_hash' => hash_file('sha256', $csvPath),
             'inspect_dir' => (string) $this->option('inspect-dir'),
+            'evidence_dir' => (string) ($this->option('evidence-dir') ?: ''),
             'snapshot_id' => $this->snapshotId($csvPath),
             'plan_json' => (string) $this->option('export-json'),
             'limit' => (string) $this->option('limit'),
@@ -571,6 +576,91 @@ class PlanDebtFixCommand extends Command
         return $index;
     }
 
+    private function loadEvidenceIndex(string $dir): array
+    {
+        $index = [];
+        if ($dir === '' || !is_dir($dir)) {
+            return $index;
+        }
+
+        $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, RecursiveDirectoryIterator::SKIP_DOTS));
+        foreach ($files as $file) {
+            if (!$file->isFile() || strtolower($file->getExtension()) !== 'json') {
+                continue;
+            }
+
+            $payload = json_decode((string) file_get_contents($file->getPathname()), true);
+            if (!is_array($payload)) {
+                continue;
+            }
+
+            $code = (string) ($payload['partner']['code'] ?? '');
+            if ($code === '') {
+                continue;
+            }
+
+            $payload['_evidence_path'] = $file->getPathname();
+            $index[$code] = $payload;
+        }
+
+        return $index;
+    }
+
+    private function mergeEvidencePreview(array $plan, ?array $evidence): array
+    {
+        if (!$evidence) {
+            return $plan;
+        }
+
+        $candidatePreview = $evidence['candidate_preview'] ?? [];
+        $allowedGroups = ['A_OPENING_BALANCE_REVIEW', 'B_DOCUMENTS_NO_LEDGER'];
+        $evidenceCode = (string) ($evidence['partner']['code'] ?? '');
+        $planCode = (string) ($plan['code'] ?? '');
+        $group = (string) ($plan['fix_group'] ?? '');
+
+        if ($evidenceCode !== $planCode
+            || !in_array($group, $allowedGroups, true)
+            || (string) ($candidatePreview['allowed_group'] ?? '') !== $group
+            || !($candidatePreview['candidate_ready'] ?? false)
+            || $this->hasCriticalEvidenceIssue($evidence)
+            || !$this->snapshotMatches($plan, $evidence)) {
+            return $plan;
+        }
+
+        $operations = $candidatePreview['write_operations_preview'] ?? [];
+        if (!is_array($operations) || $operations === []) {
+            return $plan;
+        }
+
+        $plan['proposed_write_operations'] = $operations;
+        $plan['blocked_reason'] = 'Preview operations from evidence v2 require confirmation before apply.';
+        $plan['manual_review_required'] = true;
+        $plan['requires_confirmation_before_fix'] = true;
+        $plan['rollback_plan_required'] = true;
+        $plan['notes'] = trim((string) ($plan['notes'] ?? '') . '; evidence_matching_version=v2; evidence_preview_merged=true; evidence_path=' . ($evidence['_evidence_path'] ?? ''), '; ');
+
+        return $plan;
+    }
+
+    private function hasCriticalEvidenceIssue(array $evidence): bool
+    {
+        foreach ($evidence['detected_issues'] ?? [] as $issue) {
+            if (($issue['severity'] ?? '') === 'critical') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function snapshotMatches(array $plan, array $evidence): bool
+    {
+        $planSnapshot = (string) ($plan['input_snapshot_id'] ?? $plan['snapshot_id'] ?? '');
+        $evidenceSnapshot = (string) ($evidence['input_snapshot_id'] ?? $evidence['snapshot_id'] ?? $evidence['plan']['input_snapshot_id'] ?? $evidence['plan']['snapshot_id'] ?? '');
+
+        return $planSnapshot === '' || $evidenceSnapshot === '' || $planSnapshot === $evidenceSnapshot;
+    }
+
     private function findInspection(array $index, array $row): ?array
     {
         $id = (string) ($row['id'] ?? '');
@@ -705,6 +795,7 @@ class PlanDebtFixCommand extends Command
             '',
             '- Mismatch CSV: `' . $input['csv'] . '`.',
             '- Inspect dir: `' . $input['inspect_dir'] . '`.',
+            '- Evidence dir: `' . ($input['evidence_dir'] ?: 'none') . '`.',
             '- Limit: `' . $input['limit'] . '`.',
             '- Classification filter: `' . ($input['classification'] ?: 'none') . '`.',
             '- Diagnosis filter: `' . ($input['diagnosis'] ?: 'none') . '`.',

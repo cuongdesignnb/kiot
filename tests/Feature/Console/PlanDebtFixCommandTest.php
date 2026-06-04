@@ -180,6 +180,56 @@ class PlanDebtFixCommandTest extends TestCase
         $this->assertSame("\xEF\xBB\xBF", file_get_contents($exports['csv'], false, null, 0, 3));
     }
 
+    public function test_evidence_dir_merges_candidate_preview_for_allowed_group_only(): void
+    {
+        [$csv, $dir, $exports] = $this->fixturePaths('evidence');
+        $case = $this->casePayload('701', 'NCC-PLAN-701', 'HAS_DOCUMENTS_NO_LEDGER', 'documents_exist_but_no_ledger');
+        $this->writeInputs($csv, $dir, [$case]);
+        $evidenceDir = dirname($csv) . DIRECTORY_SEPARATOR . 'evidence';
+        @mkdir($evidenceDir, 0755, true);
+        file_put_contents(
+            $evidenceDir . DIRECTORY_SEPARATOR . 'NCC-PLAN-701.json',
+            json_encode([
+                'evidence_matching_version' => 'v2',
+                'partner' => ['code' => 'NCC-PLAN-701'],
+                'detected_issues' => [[
+                    'severity' => 'high',
+                    'type' => 'MISSING_LEDGER',
+                ]],
+                'candidate_preview' => [
+                    'candidate_ready' => true,
+                    'allowed_group' => 'B_DOCUMENTS_NO_LEDGER',
+                    'write_operations_preview' => [[
+                        'operation' => 'insert_supplier_debt_transaction',
+                        'source_document_id' => 701,
+                        'reference_code' => 'PN-701',
+                        'amount' => 1000000,
+                        'fix_run_id' => 'PREVIEW_ONLY',
+                    ]],
+                ],
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+        );
+
+        $this->artisan('debt:plan-fix', [
+            '--dry-run' => true,
+            '--csv' => $csv,
+            '--inspect-dir' => $dir,
+            '--evidence-dir' => $evidenceDir,
+            '--limit' => 1,
+            '--export-csv' => $exports['csv'],
+            '--export-json' => $exports['json'],
+            '--export-md' => $exports['md'],
+        ])->assertExitCode(0);
+
+        $plan = json_decode(file_get_contents($exports['json']), true)['plans'][0];
+
+        $this->assertSame('B_DOCUMENTS_NO_LEDGER', $plan['fix_group']);
+        $this->assertCount(1, $plan['proposed_write_operations']);
+        $this->assertStringContainsString('evidence_preview_merged=true', $plan['notes']);
+        $this->assertTrue($plan['requires_confirmation_before_fix']);
+        $this->assertTrue($plan['rollback_plan_required']);
+    }
+
     private function fixturePaths(string $name): array
     {
         $base = storage_path('app/testing/debt-plan-' . $name . '-' . uniqid());
