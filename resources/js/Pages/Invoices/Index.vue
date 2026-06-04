@@ -119,6 +119,24 @@ const paymentLoading = reactive({});
 
 const getInvoiceTab = (id) => invoiceTabs[id] || "info";
 const isInvoiceCancelled = (invoice) => invoice?.status === 'Đã hủy';
+const invoiceDisplayTime = (invoice) =>
+    invoice?.transaction_date ||
+    invoice?.display_time ||
+    invoice?.time ||
+    invoice?.created_at ||
+    "";
+const formatInvoiceDisplayTime = (invoice) => {
+    const value = invoiceDisplayTime(invoice);
+    if (!value) return "";
+
+    return new Date(value).toLocaleString("vi-VN", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+    });
+};
 const effectiveCustomerPaid = (invoice) => {
     if (isInvoiceCancelled(invoice)) return 0;
     return Number(invoice?.customer_paid || 0);
@@ -364,7 +382,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                 />
                             </th>
                             <SortableHeader label="Mã hóa đơn" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-2 py-2" @sort="handleSort" />
-                            <SortableHeader label="Thời gian" field="created_at" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-2 py-2" @sort="handleSort" />
+                            <SortableHeader label="Thời gian" field="transaction_date" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-2 py-2" @sort="handleSort" />
                             <th class="px-2 py-2">Khách hàng</th>
                             <SortableHeader label="Tổng tiền hàng" field="subtotal" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
                             <SortableHeader label="Giảm giá" field="discount" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
@@ -440,17 +458,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                     <a :href="`/invoices/${invoice.id}/show`" class="hover:underline" @click.stop>{{ invoice.code }}</a>
                                 </td>
                                 <td class="px-2 py-2">
-                                    {{
-                                        new Date(
-                                            invoice.created_at,
-                                        ).toLocaleString("vi-VN", {
-                                            day: "2-digit",
-                                            month: "2-digit",
-                                            year: "numeric",
-                                            hour: "2-digit",
-                                            minute: "2-digit",
-                                        })
-                                    }}
+                                    {{ formatInvoiceDisplayTime(invoice) }}
                                 </td>
                                 <td class="px-2 py-2">
                                     {{ invoice.customer?.name || "Khách lẻ" }}
@@ -642,20 +650,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                         >
                                                             <span
                                                                 class="flex-1"
-                                                                >{{
-                                                                    new Date(
-                                                                        invoice.created_at,
-                                                                    ).toLocaleString(
-                                                                        "vi-VN",
-                                                                        {
-                                                                            day: "2-digit",
-                                                                            month: "2-digit",
-                                                                            year: "numeric",
-                                                                            hour: "2-digit",
-                                                                            minute: "2-digit",
-                                                                        },
-                                                                    )
-                                                                }}</span
+                                                                >{{ formatInvoiceDisplayTime(invoice) }}</span
                                                             >
                                                             <svg
                                                                 class="w-3.5 h-3.5 text-gray-400 ml-2"

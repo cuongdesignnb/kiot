@@ -46,10 +46,11 @@ class InvoiceUpdateService
         // 1. Date changed
         if (array_key_exists('transaction_date', $payload) && $payload['transaction_date'] !== null) {
             $oldTxDate = $invoice->transaction_date
-                ? Carbon::parse($invoice->transaction_date)->startOfDay()
-                : Carbon::parse($invoice->created_at)->startOfDay();
-            $newTxDate = Carbon::parse($payload['transaction_date'])->startOfDay();
-            if (!$oldTxDate->eq($newTxDate)) {
+                ? Carbon::parse($invoice->transaction_date)
+                : Carbon::parse($invoice->created_at);
+            $newTxDate = Carbon::parse($payload['transaction_date']);
+
+            if (!$oldTxDate->copy()->seconds(0)->equalTo($newTxDate->copy()->seconds(0))) {
                 $plan['date_changed'] = true;
             }
         }
@@ -210,18 +211,21 @@ class InvoiceUpdateService
             $newTxDate = Carbon::parse($payload['transaction_date']);
             $oldTxDate = $invoice->transaction_date ?? $invoice->created_at;
 
-            if (Schema::hasColumn('invoices', 'transaction_date')) {
-                $invoice->transaction_date = $newTxDate;
+            if (!Schema::hasColumn('invoices', 'transaction_date')) {
+                throw new \RuntimeException('Không thể đổi ngày bán vì thiếu cột transaction_date.');
             }
-            // Fallback: also update created_at for legacy queries
-            $invoice->created_at = $newTxDate;
+
+            $invoice->transaction_date = $newTxDate;
             $invoice->save();
 
             // Update related CashFlow time if policy
             CashFlow::where('reference_type', 'Invoice')
                 ->where('reference_code', $invoice->code)
                 ->whereNull('deleted_at')
-                ->where('status', '!=', 'cancelled')
+                ->where(function ($q) {
+                    $q->whereNull('status')
+                        ->orWhere('status', '!=', 'cancelled');
+                })
                 ->update(['time' => $newTxDate]);
 
             // Update warranty dates if not attached to repair/claim

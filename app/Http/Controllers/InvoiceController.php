@@ -40,7 +40,7 @@ class InvoiceController extends Controller
             'items.product' => ['name', 'code', 'barcode'],
             'order'         => ['code'],
         ];
-        $this->sortable = ['code', 'created_at', 'subtotal', 'discount', 'total', 'customer_paid', 'status'];
+        $this->sortable = ['code', 'created_at', 'transaction_date', 'subtotal', 'discount', 'total', 'customer_paid', 'status'];
         // Step 24.3: filtering/sorting by transaction_date, fallback created_at for legacy
         $this->dateColumn = \Illuminate\Support\Facades\Schema::hasColumn('invoices', 'transaction_date')
             ? \Illuminate\Support\Facades\DB::raw('COALESCE(invoices.transaction_date, invoices.created_at)')
@@ -155,6 +155,25 @@ class InvoiceController extends Controller
                 'invoiceSellerOptions' => $sellerResolver->buildInvoiceSellerOptions(),
             ],
         ]);
+    }
+
+    protected function applySort(\Illuminate\Database\Eloquent\Builder $query, Request $request): void
+    {
+        $sortBy = $request->input('sort_by');
+        $rawDir = $request->input('sort_dir') ?? $request->input('sort_direction');
+        $dir = $rawDir === 'asc' ? 'asc' : 'desc';
+
+        if (in_array($sortBy, ['created_at', 'transaction_date'], true)) {
+            $query->orderBy($this->dateColumn, $dir);
+            return;
+        }
+
+        if ($sortBy && in_array($sortBy, $this->sortable, true)) {
+            $query->orderBy($sortBy, $dir);
+            return;
+        }
+
+        $query->orderBy($this->dateColumn, 'desc');
     }
 
     public function apiSearch(Request $request)
@@ -544,7 +563,7 @@ class InvoiceController extends Controller
 
         return \App\Services\CsvService::export(
             ['Mã hóa đơn', 'Thời gian', 'Khách hàng', 'Tổng tiền hàng', 'Giảm giá', 'Tổng cộng', 'Khách đã trả', 'Ghi chú'],
-            $invoices->map(fn($i) => [$i->code, $i->created_at?->format('d/m/Y H:i'), $i->customer?->name, $i->subtotal, $i->discount, $i->total, $i->customer_paid, $i->note]),
+            $invoices->map(fn($i) => [$i->code, ($i->transaction_date ?? $i->created_at)?->format('d/m/Y H:i'), $i->customer?->name, $i->subtotal, $i->discount, $i->total, $i->customer_paid, $i->note]),
             'hoa_don.csv'
         );
     }
@@ -559,6 +578,7 @@ class InvoiceController extends Controller
                 'code' => $invoice->code,
                 'status' => $invoice->status,
                 'created_at' => $invoice->created_at?->format('d/m/Y H:i'),
+                'transaction_date' => $invoice->transaction_date?->format('d/m/Y H:i'),
                 'created_by_name' => $invoice->created_by_name ?? 'Admin',
                 'seller_name' => $invoice->seller_name,
                 'customer' => $invoice->customer ? [
@@ -599,6 +619,7 @@ class InvoiceController extends Controller
             'code' => $invoice->code,
             'status' => $invoice->status,
             'created_at' => $invoice->created_at ? $invoice->created_at->format('d/m/Y H:i') : '',
+            'transaction_date' => $invoice->transaction_date ? $invoice->transaction_date->format('d/m/Y H:i') : '',
             'created_by_name' => $invoice->created_by_name ?? 'Admin',
             'customer_name' => $invoice->customer->name ?? 'Khách lẻ',
             'customer_code' => $invoice->customer->code ?? '',
