@@ -16,7 +16,16 @@
 - PartnerDebtLedgerService: `buildCustomerNetLedger`, `buildSupplierPayableLedger`, `buildSupplierDualRolePartnerTimeline`.
 - Models: `Customer`, `CustomerDebt`, `SupplierDebtTransaction`, `CashFlow`, `Invoice`, `OrderReturn`, `Purchase`, `PurchaseReturn`, `DebtOffset`.
 - Tests: `tests/Feature/Console/InspectDebtPartnerCommandTest.php`, `tests/Feature/Console/AuditDebtLedgerCommandTest.php`.
-- Commit: pending in this report.
+- Commit: `39b60ee feat(debt): add read-only partner debt inspection command`.
+
+## Origin/main verification
+
+- PASS: commit `39b60ee feat(debt): add read-only partner debt inspection command` exists on `origin/main`.
+- PASS: `app/Console/Commands/InspectDebtPartnerCommand.php` exists on `origin/main`.
+- PASS: `app/Console/Commands/InspectTopDebtRisksCommand.php` exists on `origin/main`.
+- PASS: `app/Services/DebtPartnerInspectionService.php` exists on `origin/main`.
+- PASS: `tests/Feature/Console/InspectDebtPartnerCommandTest.php` exists on `origin/main`.
+- PASS: `docs/audit/STEP-DEBT-LEDGER-DRILLDOWN-TOP-RISKS.md` exists on `origin/main`.
 
 ## Data safety
 
