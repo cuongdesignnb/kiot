@@ -126,6 +126,36 @@ class DebtEvidenceMatcherTest extends TestCase
         $this->assertSame(60, $result['candidate_preview']['write_operations_preview'][0]['source_document_id']);
     }
 
+    public function test_debt_adjustment_cashflow_blocks_invoice_ledger_preview(): void
+    {
+        $result = $this->matcher()->match($this->inspection([
+            'invoices' => [[
+                'id' => 57,
+                'code' => 'HD177598589311',
+                'created_at' => '2026-03-27 15:09:00',
+                'status' => 'completed',
+                'total' => 15000000,
+                'customer_paid' => 0,
+                'outstanding' => 15000000,
+            ]],
+            'cash_flows' => [[
+                'id' => 290,
+                'code' => 'PT26042215161822',
+                'type' => 'receipt',
+                'amount' => 15000000,
+                'time' => '2026-04-22 15:16:00',
+                'reference_type' => 'DebtAdjustment',
+                'reference_code' => null,
+                'note' => 'Dieu chinh cong no | 15,000,000 -> 0',
+            ]],
+        ]), $this->plan('B_DOCUMENTS_NO_LEDGER'));
+
+        $this->assertSame('POSSIBLE_SETTLEMENT_PAIR', $result['matching_matrix'][0]['match_status']);
+        $this->assertFalse($result['candidate_preview']['candidate_ready']);
+        $this->assertSame('possible settlement cashflow exists; manual decision required', $result['candidate_preview']['blocked_reason']);
+        $this->assertSame([], $result['candidate_preview']['write_operations_preview']);
+    }
+
     private function matcher(): DebtEvidenceMatcher
     {
         return new DebtEvidenceMatcher();

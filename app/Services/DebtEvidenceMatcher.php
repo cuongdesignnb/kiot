@@ -185,6 +185,11 @@ class DebtEvidenceMatcher
             $strategies[] = 'payment_cashflow_pair';
             $reason = 'Cashflow/payment pair explains document settlement.';
         }
+        if ($targetType === 'cashflow' && $this->debtAdjustmentSettlementPair($document, $row)) {
+            $score = max($score, 85);
+            $strategies[] = 'debt_adjustment_settlement';
+            $reason = 'Cashflow debt adjustment may settle the document amount.';
+        }
 
         return [
             'target_type' => $targetType,
@@ -250,6 +255,9 @@ class DebtEvidenceMatcher
         }
         if ($cashflowCount > 1) {
             return $this->status('DUPLICATE_CASHFLOW', 'Multiple cashflow candidates remain ambiguous.', 'critical', false);
+        }
+        if (!$ledger && ($cashflow['strategy'] ?? null) === 'debt_adjustment_settlement') {
+            return $this->status('POSSIBLE_SETTLEMENT_PAIR', 'Possible settlement cashflow exists; manual ledger/linkage decision required.', 'medium', false);
         }
         if (!$ledger) {
             return $this->status('MISSING_LEDGER', 'No ledger candidate found after exact/FK/normalized/amount-date strategies.', 'high', true);
@@ -369,7 +377,7 @@ class DebtEvidenceMatcher
     {
         $group = (string) ($plan['fix_group'] ?? 'Z_NEEDS_MANUAL_REVIEW');
         $critical = count(array_filter($issues, fn (array $issue) => ($issue['severity'] ?? '') === 'critical')) > 0;
-        $ambiguous = count(array_filter($matrix, fn (array $row) => in_array($row['match_status'], ['DUPLICATE_LEDGER', 'DUPLICATE_CASHFLOW', 'SIGN_MISMATCH', 'STATUS_MISMATCH'], true))) > 0;
+        $ambiguous = count(array_filter($matrix, fn (array $row) => in_array($row['match_status'], ['DUPLICATE_LEDGER', 'DUPLICATE_CASHFLOW', 'SIGN_MISMATCH', 'STATUS_MISMATCH', 'POSSIBLE_SETTLEMENT_PAIR'], true))) > 0;
 
         if (in_array($group, self::BLOCKED_GROUPS, true)) {
             return $this->blockedPreview('group blocked by default', [
@@ -380,7 +388,11 @@ class DebtEvidenceMatcher
 
         if ($group === 'B_DOCUMENTS_NO_LEDGER') {
             if ($critical || $ambiguous) {
-                return $this->blockedPreview('critical or duplicate/sign/status ambiguity remains', ['Resolve ambiguity before candidate preview.']);
+                $reason = $this->hasStatus($matrix, 'POSSIBLE_SETTLEMENT_PAIR')
+                    ? 'possible settlement cashflow exists; manual decision required'
+                    : 'critical or duplicate/sign/status ambiguity remains';
+
+                return $this->blockedPreview($reason, ['Resolve ambiguity before candidate preview.']);
             }
 
             $operations = [];
@@ -575,6 +587,49 @@ class DebtEvidenceMatcher
         return false;
     }
 
+    private function debtAdjustmentSettlementPair(array $document, array $row): bool
+    {
+        if ((string) ($document['source_type'] ?? '') !== 'invoice') {
+            return false;
+        }
+        if (!$this->hasDebtAdjustmentSignal($row)) {
+            return false;
+        }
+
+        $docAmount = abs((float) ($document['expected_effect'] ?? 0));
+        $cashflowAmount = abs((float) ($row['amount'] ?? 0));
+        if ($docAmount < 0.01 || abs($docAmount - $cashflowAmount) >= 0.01) {
+            return false;
+        }
+
+        $docDate = $this->timestamp($document['source_date'] ?? null);
+        $cashflowDate = $this->timestamp($row['time'] ?? $row['created_at'] ?? null);
+        if (!$docDate || !$cashflowDate || $cashflowDate < $docDate) {
+            return false;
+        }
+
+        return abs($cashflowDate - $docDate) <= 120 * 86400;
+    }
+
+    private function hasDebtAdjustmentSignal(array $row): bool
+    {
+        $referenceType = strtoupper((string) ($row['reference_type'] ?? ''));
+        $note = $this->normalizeSignalText((string) (($row['note'] ?? '') . ' ' . ($row['description'] ?? '')));
+
+        return $referenceType === 'DEBTADJUSTMENT'
+            || str_contains($note, 'DIEUCHINHCONGNO')
+            || str_contains($note, 'CONGNO')
+            || (str_contains($note, '15000000') && str_contains($note, '0'));
+    }
+
+    private function normalizeSignalText(string $text): string
+    {
+        $text = strtoupper($text);
+        $text = str_replace([',', '.', ' ', '|', '-', '_', '→', '->'], '', $text);
+
+        return preg_replace('/[^A-Z0-9]/', '', $text) ?: '';
+    }
+
     private function possibleMatchRow(array $document, array $candidate): array
     {
         $row = $candidate['row'];
@@ -645,6 +700,7 @@ class DebtEvidenceMatcher
     private function suggestedAction(array $row): string
     {
         return match ($row['match_status']) {
+            'POSSIBLE_SETTLEMENT_PAIR' => 'Do not insert invoice ledger until settlement cashflow mapping/ledger strategy is manually confirmed.',
             'MANUAL_LEDGER_REQUIRES_AUTHORITY' => 'Manual/merge ledger must be reviewed by authority before any write.',
             'MISSING_LEDGER' => 'Review candidate preview only if group is B and no ambiguity remains.',
             'MISSING_DOCUMENT' => 'Find source document or keep as manual review; do not delete automatically.',
@@ -667,6 +723,17 @@ class DebtEvidenceMatcher
         }
 
         return 'none';
+    }
+
+    private function hasStatus(array $matrix, string $status): bool
+    {
+        foreach ($matrix as $row) {
+            if (($row['match_status'] ?? '') === $status) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function prefix(string $code): ?string
