@@ -1065,7 +1065,7 @@ class PartnerDebtLedgerService
     {
         $invoiceCodes = $invoices->pluck('code')->filter()->all();
 
-        return CashFlow::query()
+        $regularEntries = CashFlow::query()
             ->where('target_type', 'Khách hàng')
             ->where('target_id', $customer->id)
             ->where('type', 'receipt')
@@ -1073,6 +1073,10 @@ class PartnerDebtLedgerService
             ->orderBy('created_at')
             ->get()
             ->filter(function ($cashFlow) use ($invoiceCodes) {
+                if ($this->isDebtAdjustmentCashFlow($cashFlow)) {
+                    return false;
+                }
+
                 return !($cashFlow->reference_type === 'Invoice' && in_array($cashFlow->reference_code, $invoiceCodes, true));
             })
             ->map(function ($cashFlow) use ($hasCustomerLedger) {
@@ -1107,6 +1111,134 @@ class PartnerDebtLedgerService
                 ]);
             })
             ->values();
+
+        return $regularEntries
+            ->concat($this->buildDebtAdjustmentCashFlowDisplayEntries($customer))
+            ->values();
+    }
+
+    private function buildDebtAdjustmentCashFlowDisplayEntries(Customer $customer): Collection
+    {
+        return CashFlow::query()
+            ->where('type', 'receipt')
+            ->where(function ($query) use ($customer) {
+                $query->where('target_id', $customer->id);
+
+                if (Schema::hasColumn('cash_flows', 'customer_id')) {
+                    $query->orWhere('customer_id', $customer->id);
+                }
+            })
+            ->orderBy('created_at')
+            ->get()
+            ->filter(fn ($cashFlow) => $this->isDebtAdjustmentCashFlow($cashFlow))
+            ->filter(fn ($cashFlow) => $this->isSameCustomerCashFlow($customer, $cashFlow))
+            ->reject(fn ($cashFlow) => $this->hasCustomerDebtRepresentingCashFlow((int) $customer->id, $cashFlow))
+            ->map(fn ($cashFlow) => $this->mapDebtAdjustmentCashFlowEntry($cashFlow))
+            ->values();
+    }
+
+    private function mapDebtAdjustmentCashFlowEntry($cashFlow): array
+    {
+        $amount = abs((float) $cashFlow->amount);
+        $businessTime = $this->normalizeDisplayTime($cashFlow->time, $cashFlow->created_at);
+        $entry = $this->entry([
+            'id' => 'cf-debt-adjustment-' . $cashFlow->id,
+            'code' => $cashFlow->code,
+            'display_type' => 'Dieu chinh cong no',
+            'event_kind' => 'debt_adjustment',
+            'domain' => 'customer',
+            'document_amount' => $amount,
+            'amount' => -$amount,
+            'display_effect' => -$amount,
+            'financial_effect' => -$amount,
+            'balance_effect' => 0.0,
+            'customer_display_effect' => -$amount,
+            'customer_display_balance_effect' => -$amount,
+            'customer_balance_effect' => 0.0,
+            'customer_effect' => 0.0,
+            'affects_debt_balance' => false,
+            'is_reference_only' => true,
+            'is_virtual_display_adjustment' => true,
+            'is_debt_adjustment_cashflow' => true,
+            'source' => 'cash_flow',
+            'badge_label' => 'Dieu chinh',
+            'badge_title' => 'Hien thi tu phieu dieu chinh cong no, khong ghi ledger moi.',
+            'balance_note' => 'Display-only DebtAdjustment cashflow; khong ghi customer_debts va khong cap nhat so du.',
+            'note' => $cashFlow->description ?? $cashFlow->note,
+            'description' => $cashFlow->description ?? $cashFlow->note,
+            'display_time' => $businessTime,
+            'time' => $businessTime,
+            'created_at' => $cashFlow->created_at,
+            'reference_type' => $cashFlow->reference_type,
+            'reference_id' => $cashFlow->id,
+            'reference_code' => $cashFlow->reference_code,
+            'detail_available' => true,
+        ]);
+        $entry['type'] = 'debt_adjustment';
+
+        return $entry;
+    }
+
+    private function isDebtAdjustmentCashFlow($cashFlow): bool
+    {
+        if ($this->isCancelledStatus((string) ($cashFlow->status ?? ''))) {
+            return false;
+        }
+
+        if ((float) ($cashFlow->amount ?? 0) <= 0) {
+            return false;
+        }
+
+        $referenceType = strtoupper((string) ($cashFlow->reference_type ?? ''));
+        $text = $this->normalizeDebtAdjustmentSignalText((string) (($cashFlow->description ?? '') . ' ' . ($cashFlow->note ?? '')));
+
+        return $referenceType === 'DEBTADJUSTMENT'
+            || str_contains($text, 'DIEUCHINHCONGNO')
+            || str_contains($text, 'CONGNO');
+    }
+
+    private function hasCustomerDebtRepresentingCashFlow(int $customerId, $cashFlow): bool
+    {
+        $code = (string) ($cashFlow->code ?? '');
+        if ($code === '' && empty($cashFlow->id)) {
+            return false;
+        }
+
+        return CustomerDebt::query()
+            ->where('customer_id', $customerId)
+            ->where(function ($query) use ($cashFlow, $code) {
+                if (Schema::hasColumn('customer_debts', 'cash_flow_id') && !empty($cashFlow->id)) {
+                    $query->orWhere('cash_flow_id', $cashFlow->id);
+                }
+                if ($code !== '' && Schema::hasColumn('customer_debts', 'ref_code')) {
+                    $query->orWhere('ref_code', $code);
+                }
+                if ($code !== '' && Schema::hasColumn('customer_debts', 'reference_code')) {
+                    $query->orWhere('reference_code', $code);
+                }
+                if ($code !== '' && Schema::hasColumn('customer_debts', 'note')) {
+                    $query->orWhere('note', 'like', '%' . $code . '%');
+                }
+            })
+            ->exists();
+    }
+
+    private function isSameCustomerCashFlow(Customer $customer, $cashFlow): bool
+    {
+        if ((string) ($cashFlow->target_id ?? '') === (string) $customer->id) {
+            return true;
+        }
+
+        return Schema::hasColumn('cash_flows', 'customer_id')
+            && (string) ($cashFlow->customer_id ?? '') === (string) $customer->id;
+    }
+
+    private function normalizeDebtAdjustmentSignalText(string $text): string
+    {
+        $text = strtoupper($text);
+        $text = str_replace(['->', ',', '.', ' ', '|', '-', '_'], '', $text);
+
+        return preg_replace('/[^A-Z0-9]/', '', $text) ?: '';
     }
 
     private function mapCustomerDebt(CustomerDebt $debt, array $settlementMetaByDebtId, Collection $discountsByCode): array

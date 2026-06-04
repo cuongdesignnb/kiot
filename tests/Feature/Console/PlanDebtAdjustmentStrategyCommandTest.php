@@ -87,7 +87,7 @@ class PlanDebtAdjustmentStrategyCommandTest extends TestCase
         ]);
     }
 
-    public function test_mock_anh_bay_case_recommends_display_only_timeline_fix(): void
+    public function test_mock_anh_bay_case_reports_display_resolved_after_hotfix(): void
     {
         [$partner, $invoice, $cashflow, $base] = $this->fixtures('anh-bay');
         $json = $base . DIRECTORY_SEPARATOR . 'strategy.json';
@@ -102,18 +102,19 @@ class PlanDebtAdjustmentStrategyCommandTest extends TestCase
 
         $payload = json_decode((string) file_get_contents($json), true);
 
-        $this->assertSame('DISPLAY_ONLY_TIMELINE_FIX', $payload['recommended_strategy']['strategy']);
+        $this->assertSame('MANUAL_REVIEW_REQUIRED', $payload['recommended_strategy']['strategy']);
         $this->assertFalse($payload['recommended_strategy']['write_db']);
-        $this->assertTrue($payload['recommended_strategy']['code_only_change']);
+        $this->assertFalse($payload['recommended_strategy']['code_only_change']);
         $this->assertSame(0.0, (float) $payload['current_state']['stored_customer_debt']);
         $this->assertSame(15000000.0, (float) $payload['current_state']['invoice_outstanding']);
         $this->assertSame(15000000.0, (float) $payload['current_state']['cashflow_amount']);
         $this->assertSame(0, $payload['current_state']['invoice_customer_debt_rows']);
         $this->assertSame(0, $payload['current_state']['cashflow_customer_debt_rows']);
         $this->assertTrue($payload['current_state']['timeline_invoice_entry_found']);
-        $this->assertFalse($payload['current_state']['timeline_cashflow_entry_found']);
-        $this->assertSame(15000000.0, (float) $payload['current_state']['timeline_final_balance']);
-        $this->assertTrue($payload['current_state']['reconcile_mismatch']);
+        $this->assertTrue($payload['current_state']['timeline_cashflow_entry_found']);
+        $this->assertSame(-15000000.0, (float) $payload['current_state']['timeline_cashflow_effect']);
+        $this->assertSame(0.0, (float) $payload['current_state']['timeline_final_balance']);
+        $this->assertFalse($payload['current_state']['reconcile_mismatch']);
     }
 
     public function test_ledger_pair_preview_net_effect_is_zero(): void
