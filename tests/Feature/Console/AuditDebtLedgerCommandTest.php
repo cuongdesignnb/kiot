@@ -146,6 +146,7 @@ class AuditDebtLedgerCommandTest extends TestCase
         $handle = fopen($path, 'r');
         $headers = fgetcsv($handle);
         fclose($handle);
+        $headers[0] = ltrim((string) $headers[0], "\xEF\xBB\xBF");
 
         $this->assertSame([
             'id',

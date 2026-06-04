@@ -131,6 +131,55 @@ class PlanDebtFixCommandTest extends TestCase
         $this->assertTrue($plan['manual_review_required']);
     }
 
+    public function test_mismatched_audit_and_inspection_inputs_are_blocked(): void
+    {
+        [$csv, $dir, $exports] = $this->fixturePaths('mismatch');
+        $case = $this->casePayload('501', 'NCC-PLAN-501', 'DOCUMENT_LEDGER_MISMATCH', 'ledger_and_documents_mismatch');
+        $this->writeInputs($csv, $dir, [$case]);
+
+        $jsonPath = $dir . DIRECTORY_SEPARATOR . $case['code'] . '-' . $case['id'] . '.json';
+        $payload = json_decode(file_get_contents($jsonPath), true);
+        $payload['source_counts']['ledger_count'] = 999;
+        file_put_contents($jsonPath, json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+
+        $this->artisan('debt:plan-fix', [
+            '--dry-run' => true,
+            '--csv' => $csv,
+            '--inspect-dir' => $dir,
+            '--limit' => 1,
+            '--export-csv' => $exports['csv'],
+            '--export-json' => $exports['json'],
+            '--export-md' => $exports['md'],
+        ])->assertExitCode(0);
+
+        $plan = json_decode(file_get_contents($exports['json']), true)['plans'][0];
+
+        $this->assertSame('PLAN_INPUT_MISMATCH', $plan['classification']);
+        $this->assertSame('plan_input_mismatch', $plan['diagnosis']);
+        $this->assertSame('X_PLAN_INPUT_MISMATCH', $plan['fix_group']);
+        $this->assertSame([], $plan['proposed_write_operations']);
+    }
+
+    public function test_export_csv_has_utf8_bom(): void
+    {
+        [$csv, $dir, $exports] = $this->fixturePaths('bom');
+        $this->writeInputs($csv, $dir, [
+            $this->casePayload('601', 'NCC-PLAN-601', 'DOCUMENT_LEDGER_MISMATCH', 'ledger_and_documents_mismatch'),
+        ]);
+
+        $this->artisan('debt:plan-fix', [
+            '--dry-run' => true,
+            '--csv' => $csv,
+            '--inspect-dir' => $dir,
+            '--limit' => 1,
+            '--export-csv' => $exports['csv'],
+            '--export-json' => $exports['json'],
+            '--export-md' => $exports['md'],
+        ])->assertExitCode(0);
+
+        $this->assertSame("\xEF\xBB\xBF", file_get_contents($exports['csv'], false, null, 0, 3));
+    }
+
     private function fixturePaths(string $name): array
     {
         $base = storage_path('app/testing/debt-plan-' . $name . '-' . uniqid());

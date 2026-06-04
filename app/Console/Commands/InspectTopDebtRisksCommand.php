@@ -42,6 +42,7 @@ class InspectTopDebtRisksCommand extends Command
             }
 
             $payload = $service->inspect($partner, true, true);
+            $payload['audit_row'] = $row;
             $path = $exportDir . DIRECTORY_SEPARATOR . $this->fileName($partner->code, $partner->id);
             file_put_contents($path, json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL);
             $exported++;

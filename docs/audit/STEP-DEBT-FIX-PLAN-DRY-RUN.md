@@ -15,7 +15,13 @@
 - Service: `app/Services/DebtPartnerInspectionService.php`, `app/Services/PartnerDebtLedgerService.php`.
 - Models: `Customer`, `CustomerDebt`, `SupplierDebtTransaction`, `CashFlow`, `Invoice`, `OrderReturn`, `Purchase`, `PurchaseReturn`, `DebtOffset`.
 - Tests: `tests/Feature/Console/PlanDebtFixCommandTest.php`.
-- Commit: this commit, `feat(debt): add dry-run debt fix planning command`.
+- Commit: this commit, `fix(debt): add consistency checks and production debt fix runbook`.
+- input_snapshot_id: `20260604-113305`.
+- audit_csv: `storage/app/audits/20260604-113305/debt-ledger-audit-mismatch.csv`.
+- audit_csv_hash: `10ea28538b3d1264e9a3d4f9a5c6e33d6624c1db7c5601186c436704780344d2`.
+- inspection_dir: `storage/app/audits/20260604-113305/inspections`.
+- plan_json: `storage/app/audits/20260604-113305/debt-fix-plan.json`.
+- generated_at: `2026-06-04T11:40:19+07:00`.
 
 ## Data safety
 
@@ -31,11 +37,12 @@
 
 ## Input
 
-- Mismatch CSV: `storage/app/audits/debt-ledger-audit-mismatch.csv`.
-- Inspect dir: `storage/app/audits/debt-inspections/top-20`.
+- Mismatch CSV: `storage/app/audits/20260604-113305/debt-ledger-audit-mismatch.csv`.
+- Inspect dir: `storage/app/audits/20260604-113305/inspections`.
 - Limit: `20`.
 - Classification filter: `none`.
 - Diagnosis filter: `none`.
+- PLAN_INPUT_MISMATCH count: `0`.
 
 ## Summary
 
@@ -58,26 +65,26 @@
 
 | Code | Name | Classification | Diagnosis | Authority | Fix group | Proposed action |
 |---|---|---|---|---|---|---|
-| NCC177624592772 | TrÃ¡Â»Âng HÃƒÂ¹ng | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
-| NCC177354084249 | HÃ†Â°ng Hoa Mai | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
-| NCC177950763826 | Anh Thanh ThiÃƒÂªn PhÃƒÂº | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
-| NCC177379765843 | Laptop HÃ¡ÂºÂ£i Ã„ÂÃ„Æ’ng | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
-| NCC177466782297 | A TuÃ¡ÂºÂ¥n Anh - MÃ¡Â»â€¦ TrÃƒÂ¬ | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
+| NCC177624592772 | Trọng Hùng | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
+| NCC177354084249 | Hưng Hoa Mai | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
+| NCC177950763826 | Anh Thanh Thiên Phú | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
+| NCC177379765843 | Laptop Hải Đăng | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
+| NCC177466782297 | A Tuấn Anh - Mễ Trì | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
 | KH177598487429 | Test | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
-| NCC177365798441 | CÃƒÂ´ng ty cÃƒÂ´ng nghÃ¡Â»â€¡ thÃ†Â°Ã†Â¡ng mÃ¡ÂºÂ¡i SÃ†Â¡n Nam | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
-| NCC177459392941 | Anh NguyÃ¡Â»â€¦n 5S | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
-| NCC177466273054 | HÃ¡ÂºÂ£i RÃ„Æ’ng ThÃ†Â°a | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
-| NCC177492215790 | SiÃƒÂªu thÃ¡Â»â€¹ cÃƒÂ´ng nghÃ¡Â»â€¡ HLC | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
-| NCC177363196335 | VÃ…Â© KiÃƒÂªn | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
-| NCC177374148585 | TuÃ¡ÂºÂ¥n_HÃ¡ÂºÂ£i PhÃƒÂ²ng | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
-| NCC177425696675 | TrÃ¡ÂºÂ§n VÃ„Æ’n TiÃ¡ÂºÂ¿n | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
-| KH177460073148 | Anh BÃ¡ÂºÂ©y | HAS_DOCUMENTS_NO_LEDGER | documents_exist_but_no_ledger | document | B_DOCUMENTS_NO_LEDGER | Lap dry-run mapping tu chung tu sang ledger; chua backfill. |
-| NCC177494410390 | ThÃ¡ÂºÂ¯ng LV | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
-| NCC177518554078 | Gia HÃ¡Â»Â¯u | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
-| NCC177621742868 | NguyÃ¡Â»â€¦n Quang LuÃƒÂ¢n | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
-| KH177518347435 | An-LÃƒÂª Ã„ÂÃ¡Â»Â©c ThÃ¡Â»Â | CUSTOMER_ONLY_MISMATCH | needs_manual_review | manual_review | D_CUSTOMER_ONLY_REVIEW | Manual review customer ledger/documents/cashflows truoc khi fix. |
-| KH177561736414 | DÃ…Â©ng KiÃ¡Â»Âu Mai | VIRTUAL_OPENING_REQUIRED | virtual_opening_display_resolved | virtual_opening_readonly | A_OPENING_BALANCE_REVIEW | Giu virtual opening read-only. Neu can chung tu that, tao opening balance sau backup/xac nhan. |
-| KH177829769472 | NguyÃ¡Â»â€¦n Duy KhÃƒÂ¡nh | CUSTOMER_ONLY_MISMATCH | needs_manual_review | manual_review | D_CUSTOMER_ONLY_REVIEW | Manual review customer ledger/documents/cashflows truoc khi fix. |
+| NCC177365798441 | Công ty công nghệ thương mại Sơn Nam | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
+| NCC177459392941 | Anh Nguyễn 5S | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
+| NCC177466273054 | Hải Răng Thưa | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
+| NCC177492215790 | Siêu thị công nghệ HLC | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
+| NCC177363196335 | Vũ Kiên | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
+| NCC177374148585 | Tuấn_Hải Phòng | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
+| NCC177425696675 | Trần Văn Tiến | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
+| KH177460073148 | Anh Bẩy | HAS_DOCUMENTS_NO_LEDGER | documents_exist_but_no_ledger | document | B_DOCUMENTS_NO_LEDGER | Lap dry-run mapping tu chung tu sang ledger; chua backfill. |
+| NCC177494410390 | Thắng LV | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
+| NCC177518554078 | Gia Hữu | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
+| NCC177621742868 | Nguyễn Quang Luân | DOCUMENT_LEDGER_MISMATCH | ledger_and_documents_mismatch | manual_review | C_LEDGER_DOCUMENT_MISMATCH | So tung chung tu voi ledger/cashflow de xac dinh missing/duplicate/status sai. |
+| KH177518347435 | An-Lê Đức Thọ | CUSTOMER_ONLY_MISMATCH | needs_manual_review | manual_review | D_CUSTOMER_ONLY_REVIEW | Manual review customer ledger/documents/cashflows truoc khi fix. |
+| KH177561736414 | Dũng Kiều Mai | VIRTUAL_OPENING_REQUIRED | virtual_opening_display_resolved | virtual_opening_readonly | A_OPENING_BALANCE_REVIEW | Giu virtual opening read-only. Neu can chung tu that, tao opening balance sau backup/xac nhan. |
+| KH177829769472 | Nguyễn Duy Khánh | CUSTOMER_ONLY_MISMATCH | needs_manual_review | manual_review | D_CUSTOMER_ONLY_REVIEW | Manual review customer ledger/documents/cashflows truoc khi fix. |
 
 ## Fix group details
 
@@ -147,6 +154,17 @@
 - Can xac nhan: co.
 - Rollback plan: Required before opening balance materialization.
 
+### X_PLAN_INPUT_MISMATCH
+
+- Dieu kien: xem authority decision rules trong `PlanDebtFixCommand`.
+- Case: 0.
+- Action: `debt:audit-ledger --dry-run --only-mismatch && debt:inspect-top-risks --dry-run && debt:plan-fix --dry-run`.
+- Rui ro: CRITICAL.
+- Required checks: Rerun audit and inspect from the same DB snapshot.; Do not choose any authority while input files disagree..
+- Can backup: co.
+- Can xac nhan: co.
+- Rollback plan: Not applicable because no write is allowed.
+
 ### Z_NEEDS_MANUAL_REVIEW
 
 - Dieu kien: xem authority decision rules trong `PlanDebtFixCommand`.
@@ -160,6 +178,7 @@
 
 ## Forbidden without confirmation
 
+- all DB writes.
 - any DB write.
 - any backfill.
 - any recalculation.

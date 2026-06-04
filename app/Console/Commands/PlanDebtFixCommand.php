@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Models\Customer;
 use Illuminate\Console\Command;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
@@ -142,6 +143,18 @@ class PlanDebtFixCommand extends Command
             ],
             'rollback_requirement' => 'Required before opening balance materialization.',
         ],
+        'X_PLAN_INPUT_MISMATCH' => [
+            'risk' => 'CRITICAL',
+            'required_checks' => [
+                'Rerun audit and inspect from the same DB snapshot.',
+                'Do not choose any authority while input files disagree.',
+            ],
+            'next_dry_run_command' => 'debt:audit-ledger --dry-run --only-mismatch && debt:inspect-top-risks --dry-run && debt:plan-fix --dry-run',
+            'forbidden_without_confirmation' => [
+                'all DB writes',
+            ],
+            'rollback_requirement' => 'Not applicable because no write is allowed.',
+        ],
         'Z_NEEDS_MANUAL_REVIEW' => [
             'risk' => 'MEDIUM',
             'required_checks' => [
@@ -194,6 +207,13 @@ class PlanDebtFixCommand extends Command
         $payload = [
             'generated_at' => now()->toIso8601String(),
             'dry_run' => true,
+            'input_snapshot_id' => $this->snapshotId($csvPath),
+            'input' => [
+                'audit_csv' => $csvPath,
+                'audit_csv_hash' => hash_file('sha256', $csvPath),
+                'inspection_dir' => (string) $this->option('inspect-dir'),
+                'plan_json' => (string) $this->option('export-json'),
+            ],
             'data_safety' => [
                 'migration' => false,
                 'backfill' => false,
@@ -212,7 +232,10 @@ class PlanDebtFixCommand extends Command
         $this->exportJson((string) $this->option('export-json'), $payload);
         $this->exportMarkdown((string) $this->option('export-md'), $payload, [
             'csv' => $csvPath,
+            'audit_csv_hash' => hash_file('sha256', $csvPath),
             'inspect_dir' => (string) $this->option('inspect-dir'),
+            'snapshot_id' => $this->snapshotId($csvPath),
+            'plan_json' => (string) $this->option('export-json'),
             'limit' => (string) $this->option('limit'),
             'classification' => (string) ($this->option('classification') ?: ''),
             'diagnosis' => (string) ($this->option('diagnosis') ?: ''),
@@ -228,17 +251,50 @@ class PlanDebtFixCommand extends Command
 
     private function buildPlan(array $auditRow, ?array $inspection): array
     {
+        $partner = $inspection['partner'] ?? [];
+        $name = $this->partnerName($auditRow, $inspection);
+        $consistency = $this->consistencyCheck($auditRow, $inspection);
+
+        if (!$consistency['ok']) {
+            return [
+                'id' => (string) ($auditRow['id'] ?? $partner['id'] ?? ''),
+                'code' => (string) ($auditRow['code'] ?? $partner['code'] ?? ''),
+                'name' => $name['name'],
+                'phone' => (string) ($auditRow['phone'] ?? $partner['phone'] ?? ''),
+                'classification' => 'PLAN_INPUT_MISMATCH',
+                'diagnosis' => 'plan_input_mismatch',
+                'confidence' => 'high',
+                'risk_level' => 'CRITICAL',
+                'stored_customer_view' => $this->number($auditRow['stored_customer_view'] ?? 0),
+                'stored_supplier_view' => $this->number($auditRow['stored_supplier_view'] ?? 0),
+                'ledger_count' => $this->ledgerCount($auditRow),
+                'document_count' => $this->documentCount($auditRow),
+                'cash_flow_count' => (int) ($auditRow['cashflow_receipt_count'] ?? 0),
+                'customer_has_virtual_opening' => $this->bool($auditRow['customer_has_virtual_opening'] ?? false),
+                'supplier_has_virtual_opening' => $this->bool($auditRow['supplier_has_virtual_opening'] ?? false),
+                'authority_candidate' => 'manual_review',
+                'fix_group' => 'X_PLAN_INPUT_MISMATCH',
+                'proposed_action' => 'Rerun audit/inspect from the same snapshot before any fix.',
+                'proposed_write_operations' => [],
+                'requires_backup' => true,
+                'requires_confirmation_before_fix' => true,
+                'rollback_plan_required' => true,
+                'blocked_reason' => 'Audit CSV and inspection JSON disagree.',
+                'manual_review_required' => true,
+                'notes' => 'mismatches=' . implode(',', $consistency['mismatches']) . '; name_source=' . $name['source'],
+            ];
+        }
+
         $diagnosis = $this->diagnosis($auditRow, $inspection);
         $decision = $this->decideAuthority($auditRow, $inspection ?? []);
         $counts = $inspection['source_counts'] ?? [];
         $stored = $inspection['stored_balances'] ?? [];
         $computed = $inspection['computed'] ?? [];
-        $partner = $inspection['partner'] ?? [];
 
         return [
             'id' => (string) ($auditRow['id'] ?? $partner['id'] ?? ''),
             'code' => (string) ($auditRow['code'] ?? $partner['code'] ?? ''),
-            'name' => (string) ($auditRow['name'] ?? $partner['name'] ?? ''),
+            'name' => $name['name'],
             'phone' => (string) ($auditRow['phone'] ?? $partner['phone'] ?? ''),
             'classification' => (string) ($auditRow['classification'] ?? ''),
             'diagnosis' => $diagnosis,
@@ -260,8 +316,106 @@ class PlanDebtFixCommand extends Command
             'rollback_plan_required' => true,
             'blocked_reason' => 'Can xac nhan truoc khi trien khai. Dry-run only, no DB write.',
             'manual_review_required' => true,
-            'notes' => implode('; ', $decision['reason']),
+            'notes' => implode('; ', $decision['reason']) . '; name_source=' . $name['source'],
         ];
+    }
+
+    private function partnerName(array $auditRow, ?array $inspection): array
+    {
+        $name = $inspection['partner']['name'] ?? null;
+        if ($name !== null && $name !== '') {
+            return [
+                'name' => (string) ($this->normalizeText($name) ?? $name),
+                'source' => 'inspection.partner.name',
+            ];
+        }
+
+        $partner = $this->findPartnerFromAuditRow($auditRow);
+        if ($partner) {
+            return [
+                'name' => (string) ($this->normalizeText($partner->name) ?? $partner->name),
+                'source' => 'db.customers.name',
+            ];
+        }
+
+        return [
+            'name' => (string) ($this->normalizeText($auditRow['name'] ?? '') ?? ($auditRow['name'] ?? '')),
+            'source' => 'audit_csv.name',
+        ];
+    }
+
+    private function findPartnerFromAuditRow(array $auditRow): ?Customer
+    {
+        if (!empty($auditRow['id'])) {
+            $partner = Customer::query()->find($auditRow['id']);
+            if ($partner) {
+                return $partner;
+            }
+        }
+
+        if (!empty($auditRow['code'])) {
+            return Customer::query()->where('code', $auditRow['code'])->first();
+        }
+
+        return null;
+    }
+
+    private function consistencyCheck(array $auditRow, ?array $inspection): array
+    {
+        if (!$inspection) {
+            return [
+                'ok' => false,
+                'mismatches' => ['inspection_missing'],
+            ];
+        }
+
+        $mismatches = [];
+        $partner = $inspection['partner'] ?? [];
+        $counts = $inspection['source_counts'] ?? [];
+        $stored = $inspection['stored_balances'] ?? [];
+        $computed = $inspection['computed'] ?? [];
+        $auditContext = $inspection['audit_row'] ?? [];
+        $reference = $auditContext ?: [];
+
+        $this->compareString($mismatches, 'id', $auditRow['id'] ?? '', $partner['id'] ?? '');
+        $this->compareString($mismatches, 'code', $auditRow['code'] ?? '', $partner['code'] ?? '');
+        if ($reference) {
+            $this->compareString($mismatches, 'classification', $auditRow['classification'] ?? '', $reference['classification'] ?? '');
+        }
+        $this->compareString($mismatches, 'diagnosis', $this->diagnosis($auditRow, null), $inspection['diagnosis']['primary_cause'] ?? '');
+        $this->compareNumber($mismatches, 'stored_customer_view', $auditRow['stored_customer_view'] ?? 0, $reference['stored_customer_view'] ?? $stored['customer_view'] ?? 0);
+        $this->compareNumber($mismatches, 'stored_supplier_view', $auditRow['stored_supplier_view'] ?? 0, $reference['stored_supplier_view'] ?? $stored['supplier_view'] ?? 0);
+        $this->compareNumber($mismatches, 'ledger_count', $this->ledgerCount($auditRow), $this->ledgerCount($reference) ?: ($counts['ledger_count'] ?? 0));
+        $this->compareNumber($mismatches, 'document_count', $this->documentCount($auditRow), $this->documentCount($reference) ?: ($counts['document_count'] ?? 0));
+        $this->compareNumber($mismatches, 'cash_flow_count', $auditRow['cashflow_receipt_count'] ?? 0, $reference['cashflow_receipt_count'] ?? $counts['cash_flow_count'] ?? 0);
+        $this->compareBool($mismatches, 'customer_has_virtual_opening', $auditRow['customer_has_virtual_opening'] ?? false, $reference['customer_has_virtual_opening'] ?? $computed['customer_has_virtual_opening'] ?? false);
+        $this->compareBool($mismatches, 'supplier_has_virtual_opening', $auditRow['supplier_has_virtual_opening'] ?? false, $reference['supplier_has_virtual_opening'] ?? $computed['supplier_has_virtual_opening'] ?? false);
+
+        return [
+            'ok' => count($mismatches) === 0,
+            'mismatches' => $mismatches,
+        ];
+    }
+
+    private function compareString(array &$mismatches, string $field, mixed $auditValue, mixed $inspectionValue): void
+    {
+        if ((string) $auditValue !== (string) $inspectionValue) {
+            $mismatches[] = $field;
+        }
+    }
+
+    private function compareNumber(array &$mismatches, string $field, mixed $auditValue, mixed $inspectionValue): void
+    {
+        if (abs((float) $auditValue - (float) $inspectionValue) >= 0.01) {
+            $mismatches[] = $field;
+        }
+    }
+
+    private function compareBool(array &$mismatches, string $field, mixed $auditValue, mixed $inspectionValue): void
+    {
+        if ($this->bool($auditValue) !== $this->bool($inspectionValue)) {
+            $mismatches[] = $field;
+        }
     }
 
     private function decideAuthority(array $auditRow, array $inspection): array
@@ -483,6 +637,7 @@ class PlanDebtFixCommand extends Command
     {
         $this->prepareDirectory(dirname($path));
         $handle = fopen($path, 'w');
+        fwrite($handle, "\xEF\xBB\xBF");
         fputcsv($handle, self::CSV_HEADERS);
 
         foreach ($plans as $plan) {
@@ -527,6 +682,12 @@ class PlanDebtFixCommand extends Command
             '- Models: `Customer`, `CustomerDebt`, `SupplierDebtTransaction`, `CashFlow`, `Invoice`, `OrderReturn`, `Purchase`, `PurchaseReturn`, `DebtOffset`.',
             '- Tests: `tests/Feature/Console/PlanDebtFixCommandTest.php`.',
             '- Commit: pending in this report.',
+            '- input_snapshot_id: `' . $input['snapshot_id'] . '`.',
+            '- audit_csv: `' . $input['csv'] . '`.',
+            '- audit_csv_hash: `' . $input['audit_csv_hash'] . '`.',
+            '- inspection_dir: `' . $input['inspect_dir'] . '`.',
+            '- plan_json: `' . $input['plan_json'] . '`.',
+            '- generated_at: `' . ($payload['generated_at'] ?? 'unknown') . '`.',
             '',
             '## Data safety',
             '',
@@ -547,6 +708,7 @@ class PlanDebtFixCommand extends Command
             '- Limit: `' . $input['limit'] . '`.',
             '- Classification filter: `' . ($input['classification'] ?: 'none') . '`.',
             '- Diagnosis filter: `' . ($input['diagnosis'] ?: 'none') . '`.',
+            '- PLAN_INPUT_MISMATCH count: `' . ($summary['by_fix_group']['X_PLAN_INPUT_MISMATCH'] ?? 0) . '`.',
             '',
             '## Summary',
             '',
@@ -700,5 +862,52 @@ class PlanDebtFixCommand extends Command
     private function md(mixed $value): string
     {
         return str_replace('|', '\\|', (string) $value);
+    }
+
+    private function snapshotId(string $csvPath): string
+    {
+        $dir = basename(dirname($csvPath));
+
+        return preg_match('/^\d{8}-\d{6}$/', $dir) === 1 ? $dir : 'ad-hoc';
+    }
+
+    private function normalizeText(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $text = (string) $value;
+        if (preg_match('/(?:[ÃÂÆÄâ€\x{0080}-\x{009F}]|á[º»])/u', $text) !== 1) {
+            return $text;
+        }
+
+        $map = [
+            0x20AC => 0x80, 0x201A => 0x82, 0x0192 => 0x83, 0x201E => 0x84,
+            0x2026 => 0x85, 0x2020 => 0x86, 0x2021 => 0x87, 0x02C6 => 0x88,
+            0x2030 => 0x89, 0x0160 => 0x8A, 0x2039 => 0x8B, 0x0152 => 0x8C,
+            0x017D => 0x8E, 0x2018 => 0x91, 0x2019 => 0x92, 0x201C => 0x93,
+            0x201D => 0x94, 0x2022 => 0x95, 0x2013 => 0x96, 0x2014 => 0x97,
+            0x02DC => 0x98, 0x2122 => 0x99, 0x0161 => 0x9A, 0x203A => 0x9B,
+            0x0153 => 0x9C, 0x017E => 0x9E, 0x0178 => 0x9F,
+        ];
+
+        $bytes = '';
+        $length = mb_strlen($text, 'UTF-8');
+        for ($i = 0; $i < $length; $i++) {
+            $codepoint = mb_ord(mb_substr($text, $i, 1, 'UTF-8'), 'UTF-8');
+            if ($codepoint <= 0xFF) {
+                $bytes .= chr($codepoint);
+                continue;
+            }
+            if (isset($map[$codepoint])) {
+                $bytes .= chr($map[$codepoint]);
+                continue;
+            }
+
+            return $text;
+        }
+
+        return mb_check_encoding($bytes, 'UTF-8') ? $bytes : $text;
     }
 }
