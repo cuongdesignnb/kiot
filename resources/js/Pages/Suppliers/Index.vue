@@ -497,6 +497,11 @@ const showPurchaseDetail = async (purchaseId) => {
 const supplierVoucher = reactive({ show: false, loading: false, error: '', payload: null });
 const openSupplierVoucherDetail = async (entry, supplierId) => {
     if (!entry?.code) return;
+    // STEP 10B — fallback rows have no real voucher to open.
+    if (entry?.is_virtual_fallback) {
+        alert('Đây là dòng tạm tính từ phiếu nhập, chưa có phiếu chi/thu thật để mở.');
+        return;
+    }
     supplierVoucher.show = true;
     supplierVoucher.loading = true;
     supplierVoucher.error = '';
@@ -1349,7 +1354,9 @@ const submitActivate = (supplier) => {
                                                             :key="`${d.source_ledger || d.domain || d.source || 'debt'}-${d.type || d.event_kind || 'row'}-${d.id}-${d.code}-${d.time || d.created_at || d.date}`"
                                                             class="hover:bg-gray-50"
                                                         >
-                                                            <td class="px-3 py-2 font-semibold text-blue-600 cursor-pointer hover:underline"
+                                                            <td class="px-3 py-2 font-semibold"
+                                                                :class="d.is_virtual_fallback ? 'text-gray-700 cursor-help' : 'text-blue-600 cursor-pointer hover:underline'"
+                                                                :title="d.is_virtual_fallback ? (d.badge_title || 'Dòng tạm tính, chưa có chứng từ thu/chi thật để mở.') : ''"
                                                                 @click="openSupplierVoucherDetail(d, supplier.id)"
                                                             >{{ d.code }}</td>
                                                             <td class="px-3 py-2">{{ formatDateTime(supplierEntryDisplayTime(d)) }}</td>

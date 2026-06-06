@@ -845,6 +845,12 @@ const openDebtVoucherDetail = async (entry, customerId) => {
     const code = entry?.code || entry?.ref_code;
     if (!code) return;
 
+    // STEP 10B — fallback rows are not real vouchers; never open a fake modal.
+    if (entry?.is_virtual_fallback || entry?.detail_available === false || entry?.detail_modal_type === 'none') {
+        alert('Đây là dòng tạm tính từ hóa đơn, chưa có chứng từ thu/chi thật để mở.');
+        return;
+    }
+
     if (isCbCode(code)) {
         openCbDetail(code, customerId);
         return;
@@ -2380,7 +2386,7 @@ const createdDateRange = computed({
                                                                 class="px-3 py-2 font-medium text-blue-600"
                                                             >
                                                                 <span
-                                                                    v-if="entry.code && entry.detail_available !== false"
+                                                                    v-if="entry.code && entry.detail_available !== false && !entry.is_virtual_fallback && entry.detail_modal_type !== 'none'"
                                                                     class="cursor-pointer hover:underline text-blue-600 font-medium"
                                                                     @click="openDebtVoucherDetail(entry, customer.id)"
                                                                 >
@@ -2389,6 +2395,8 @@ const createdDateRange = computed({
                                                                 <span
                                                                     v-else-if="entry.code"
                                                                     class="text-gray-700 font-medium"
+                                                                    :class="{ 'cursor-help': entry.is_virtual_fallback }"
+                                                                    :title="entry.is_virtual_fallback ? (entry.badge_title || 'Dòng tạm tính từ hóa đơn, chưa có chứng từ thu thật để mở.') : ''"
                                                                 >
                                                                     {{ entry.code }}
                                                                 </span>

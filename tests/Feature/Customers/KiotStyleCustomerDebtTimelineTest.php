@@ -125,7 +125,10 @@ class KiotStyleCustomerDebtTimelineTest extends TestCase
         $this->assertSame('TTHD-KS-002', $pay['code'], 'synthesised TTHD fallback when no real receipt');
         $this->assertFalse($pay['is_real_voucher']);
         $this->assertTrue($pay['is_virtual_fallback']);
-        $this->assertStringContainsString('chưa có phiếu thu thật', (string) $pay['badge_title']);
+        $this->assertStringContainsString('phiếu thu thật', (string) $pay['badge_title']);
+        // STEP 10B — fallback must be non-clickable.
+        $this->assertFalse($pay['detail_available']);
+        $this->assertSame('none', $pay['detail_modal_type']);
     }
 
     // ── Test 3 — Partial paid invoice keeps the correct amount ──
@@ -174,6 +177,72 @@ class KiotStyleCustomerDebtTimelineTest extends TestCase
         $this->assertEquals(10, $inv['display_sequence']);
         $this->assertEquals(20, $pay['display_sequence'],
             'payment has higher display_sequence so frontend can place it above the invoice at the same timestamp');
+    }
+
+    // ── STEP 10B Test — multiple real receipts on one invoice ──
+    public function test_paid_invoice_with_multiple_real_receipts_shows_each_receipt_without_virtual_fallback(): void
+    {
+        $c = $this->customer('MULTI');
+        $base = Carbon::now()->subDays(2);
+        $this->invoice($c, 'HD-MULTI-001', 10_000_000, 10_000_000, $base);
+        $this->receipt($c, 'PT-MULTI-001', 'HD-MULTI-001', 3_000_000, $base->copy()->addMinutes(5));
+        $this->receipt($c, 'PT-MULTI-002', 'HD-MULTI-001', 7_000_000, $base->copy()->addMinutes(9));
+
+        $ledger = app(PartnerDebtLedgerService::class)->buildCustomerNetLedger($c);
+        $entries = collect($ledger['entries']);
+        $payments = $entries->where('event_kind', 'invoice_payment')->values();
+
+        $this->assertCount(2, $payments, 'one line per real receipt');
+        $pt1 = $payments->firstWhere('code', 'PT-MULTI-001');
+        $pt2 = $payments->firstWhere('code', 'PT-MULTI-002');
+        $this->assertNotNull($pt1);
+        $this->assertNotNull($pt2);
+        $this->assertEquals(3_000_000, (float) $pt1['amount']);
+        $this->assertEquals(7_000_000, (float) $pt2['amount']);
+        foreach ([$pt1, $pt2] as $p) {
+            $this->assertTrue($p['is_real_voucher']);
+            $this->assertFalse($p['is_virtual_fallback']);
+            $this->assertTrue($p['detail_available']);
+            $this->assertSame('cash_flow', $p['detail_modal_type']);
+        }
+        $this->assertNull($entries->firstWhere('code', 'TTHD-MULTI-001'),
+            'no synthesised TTHD when real receipts exist');
+    }
+
+    // ── STEP 10B Test — fallback is non-clickable ──
+    public function test_invoice_payment_fallback_is_non_clickable_when_no_real_receipt_exists(): void
+    {
+        $c = $this->customer('NOCLICK');
+        $this->invoice($c, 'HD-NC-001', 5_000_000, 5_000_000);
+
+        $pay = $this->paymentLine(app(PartnerDebtLedgerService::class)->buildCustomerNetLedger($c));
+        $this->assertNotNull($pay);
+        $this->assertStringStartsWith('TTHD', $pay['code']);
+        $this->assertTrue($pay['is_virtual_fallback']);
+        $this->assertFalse($pay['is_real_voucher']);
+        $this->assertFalse($pay['detail_available']);
+        $this->assertSame('none', $pay['detail_modal_type']);
+        $this->assertNotEmpty($pay['badge_title']);
+    }
+
+    // ── STEP 10B Test — receipt total mismatch flagged for manual review ──
+    public function test_invoice_receipt_total_mismatch_is_flagged_for_manual_review(): void
+    {
+        $c = $this->customer('MISMATCH');
+        $base = Carbon::now()->subDays(2);
+        $this->invoice($c, 'HD-MM-001', 10_000_000, 10_000_000, $base);
+        // Only 8M of receipts vs 10M customer_paid.
+        $this->receipt($c, 'PT-MM-001', 'HD-MM-001', 8_000_000, $base->copy()->addMinutes(5));
+
+        $payments = collect(app(PartnerDebtLedgerService::class)->buildCustomerNetLedger($c)['entries'])
+            ->where('event_kind', 'invoice_payment')->values();
+
+        $this->assertCount(1, $payments);
+        $pay = $payments->first();
+        $this->assertEquals(8_000_000, (float) $pay['amount'], 'shows the REAL receipt amount, not the invoice paid');
+        $this->assertTrue($pay['receipt_allocation_mismatch']);
+        $this->assertTrue($pay['needs_manual_review']);
+        $this->assertSame('Cần đối soát', $pay['badge_label']);
     }
 
     // ── Test 6 — API endpoint exposes the new metadata fields ──

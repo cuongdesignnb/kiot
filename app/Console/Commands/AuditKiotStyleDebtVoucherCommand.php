@@ -59,8 +59,14 @@ class AuditKiotStyleDebtVoucherCommand extends Command
             $modal = $e['detail_modal_type'] ?? null;
             $clickable = ($e['detail_available'] ?? false) && $modal && $modal !== 'none';
 
+            $mismatch = (bool) ($e['receipt_allocation_mismatch'] ?? false);
+
             $risk = 'ok';
-            if ($isFallback) {
+            if ($mismatch) {
+                $risk = 'receipt_allocation_mismatch';
+            } elseif ($isFallback && $clickable) {
+                $risk = 'clickable_fallback'; // STEP 10B — must never happen
+            } elseif ($isFallback) {
                 $risk = 'virtual_fallback';
             } elseif (($e['event_kind'] ?? '') === 'invoice_payment' && !$isReal) {
                 $risk = 'missing_real_voucher';
@@ -72,13 +78,34 @@ class AuditKiotStyleDebtVoucherCommand extends Command
                 'code' => $e['code'] ?? '—',
                 'type' => $e['display_type'] ?? $e['type'] ?? '—',
                 'amount' => (float) ($e['amount'] ?? 0),
+                'event_kind' => $e['event_kind'] ?? '',
+                'reference_code' => $e['reference_code'] ?? null,
                 'is_real_voucher' => $isReal,
                 'is_virtual_fallback' => $isFallback,
+                'clickable' => $clickable,
+                'receipt_allocation_mismatch' => $mismatch,
                 'click_modal' => $modal ?: 'none',
                 'click_ref' => $e['detail_reference_code'] ?? null,
                 'risk' => $risk,
             ];
         })->values();
+
+        // STEP 10B — invoice → real receipt groups (customer view).
+        $invoiceReceiptGroups = $rows
+            ->where('event_kind', 'invoice_payment')
+            ->where('is_real_voucher', true)
+            ->groupBy('reference_code')
+            ->map(function ($group, $invoiceCode) {
+                return [
+                    'invoice_code' => $invoiceCode,
+                    'real_receipt_count' => $group->count(),
+                    'real_receipt_total' => (float) $group->sum('amount'),
+                    'receipt_codes' => $group->pluck('code')->all(),
+                    'is_mismatch' => (bool) $group->contains('receipt_allocation_mismatch', true),
+                ];
+            })->values();
+
+        $fallbackRows = $rows->where('is_virtual_fallback', true);
 
         $summary = [
             'partner_code' => $partner->code,
@@ -87,6 +114,10 @@ class AuditKiotStyleDebtVoucherCommand extends Command
             'total_rows' => $rows->count(),
             'real_vouchers' => $rows->where('is_real_voucher', true)->count(),
             'virtual_fallbacks' => $rows->where('is_virtual_fallback', true)->count(),
+            'fallback_rows' => $fallbackRows->count(),
+            'non_clickable_fallback_rows' => $fallbackRows->where('clickable', false)->count(),
+            'clickable_fallback_rows' => $fallbackRows->where('clickable', true)->count(),
+            'receipt_allocation_mismatches' => $rows->where('receipt_allocation_mismatch', true)->count(),
             'missing_real_voucher' => $rows->where('risk', 'missing_real_voucher')->count(),
             'missing_click_target' => $rows->where('risk', 'missing_click_target')->count(),
         ];
@@ -104,7 +135,7 @@ class AuditKiotStyleDebtVoucherCommand extends Command
             $this->line(str_pad($k, 24) . ': ' . $v);
         }
 
-        $report = ['summary' => $summary, 'rows' => $rows->all()];
+        $report = ['summary' => $summary, 'invoice_receipt_groups' => $invoiceReceiptGroups->all(), 'rows' => $rows->all()];
 
         if ($path = $this->option('export-json')) {
             File::put($path, json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));

@@ -879,13 +879,13 @@ class PartnerDebtLedgerService
     }
 
     /**
-     * STEP 10 — Real (non-cancelled) receipt cashflows that reference an
-     * invoice, keyed by the invoice code. Used so the invoice-payment line
-     * can show the genuine phiếu thu voucher (code + click target) when one
-     * exists. If two receipts share an invoice code, keep the first. This is
-     * a read-only lookup; it does not change any balance.
+     * STEP 10B — Real (non-cancelled) receipt cashflows that reference an
+     * invoice, GROUPED by invoice code so an invoice with several phiếu thu
+     * keeps every receipt (not just the first). Each receipt becomes its own
+     * timeline line with its own code + amount. Read-only; never mutates
+     * balance.
      *
-     * @return Collection<string,\App\Models\CashFlow>
+     * @return Collection<string,\Illuminate\Support\Collection<int,\App\Models\CashFlow>>
      */
     private function realInvoiceReceiptsByCode(Customer $customer): Collection
     {
@@ -895,10 +895,138 @@ class PartnerDebtLedgerService
             ->where('type', 'receipt')
             ->where('reference_type', 'Invoice')
             ->whereNotNull('reference_code')
+            ->orderBy('time')
             ->orderBy('created_at')
+            ->orderBy('id')
             ->get()
             ->reject(fn ($cf) => $this->isDebtAdjustmentCashFlow($cf))
-            ->keyBy('reference_code');
+            ->groupBy(fn ($cf) => (string) $cf->reference_code);
+    }
+
+    /**
+     * STEP 10B — One real phiếu thu → one invoice-payment line. Uses the
+     * receipt's own code + amount, clickable to the real cashflow. Balance
+     * semantics depend only on $hasCustomerLedger (unchanged). When the sum
+     * of receipts disagrees with invoice.customer_paid the line is flagged
+     * for manual review instead of silently rewriting the balance.
+     */
+    private function mapInvoiceReceiptEntry(\App\Models\Invoice $invoice, \App\Models\CashFlow $receipt, bool $hasCustomerLedger, bool $mismatch = false): array
+    {
+        $amount = (float) $receipt->amount;
+        $paymentTime = $this->normalizeDisplayTime($receipt->time, $receipt->created_at);
+
+        return [
+            'id' => 'invpay-cf-' . $receipt->id,
+            'code' => $receipt->code,
+            'display_type' => 'Thanh toán hóa đơn',
+            'event_kind' => 'invoice_payment',
+            'domain' => 'customer',
+
+            'document_amount' => $amount,
+            'amount' => $amount,
+            'display_effect' => -$amount,
+            'financial_effect' => -$amount,
+            'balance_effect' => $hasCustomerLedger ? 0.0 : -$amount,
+            'customer_display_effect' => -$amount,
+            'customer_balance_effect' => $hasCustomerLedger ? 0.0 : -$amount,
+            'customer_effect' => $hasCustomerLedger ? 0.0 : -$amount,
+
+            'affects_debt_balance' => !$hasCustomerLedger,
+            'is_reference_only' => $hasCustomerLedger,
+            'source' => $hasCustomerLedger ? 'reference' : 'legacy',
+
+            'is_real_voucher' => true,
+            'is_virtual_fallback' => false,
+            'is_virtual_payment' => false,
+            'receipt_allocation_mismatch' => $mismatch,
+            'needs_manual_review' => $mismatch,
+
+            'badge_label' => $mismatch ? 'Cần đối soát' : 'Thanh toán',
+            'badge_title' => $mismatch
+                ? 'Tổng phiếu thu thật không khớp số đã thanh toán trên hóa đơn.'
+                : ($hasCustomerLedger ? 'Chứng từ tham chiếu, không cộng lại số dư công nợ.' : 'Phiếu thu thật của hóa đơn.'),
+            'balance_note' => $hasCustomerLedger ? 'Đã phản ánh trong Số dư đầu kỳ/Gộp công nợ hoặc ledger công nợ, không cộng lại công nợ.' : null,
+
+            'display_time' => $paymentTime,
+            'time' => $paymentTime,
+            'transaction_date' => $invoice->transaction_date,
+            'created_at' => $receipt->created_at,
+
+            'reference_type' => 'InvoicePayment',
+            'reference_id' => $invoice->id,
+            'reference_code' => $invoice->code,
+            'cash_flow_id' => $receipt->id,
+            'cash_flow_code' => $receipt->code,
+            'linked_invoice_code' => $invoice->code,
+
+            'detail_available' => true,
+            'detail_modal_type' => 'cash_flow',
+            'detail_reference_type' => 'CashFlow',
+            'detail_reference_id' => $receipt->id,
+            'detail_reference_code' => $receipt->code,
+
+            'ledger_sequence' => 20,
+            'display_sequence' => 20,
+        ];
+    }
+
+    /**
+     * STEP 10B — Synthesised invoice-payment line when NO real phiếu thu
+     * exists. Amount is correct (invoice.customer_paid) but there is no
+     * voucher to open → NON-CLICKABLE (detail_available=false,
+     * detail_modal_type='none'). Balance semantics unchanged.
+     */
+    private function mapVirtualInvoicePaymentFallbackEntry(\App\Models\Invoice $invoice, float $amount, bool $hasCustomerLedger, $businessTime): array
+    {
+        return [
+            'id' => 'invpay-' . $invoice->id,
+            'code' => 'TTHD' . preg_replace('/^HD/', '', (string) $invoice->code),
+            'display_type' => 'Thanh toán hóa đơn',
+            'event_kind' => 'invoice_payment',
+            'domain' => 'customer',
+
+            'document_amount' => $amount,
+            'amount' => $amount,
+            'display_effect' => -$amount,
+            'financial_effect' => -$amount,
+            'balance_effect' => $hasCustomerLedger ? 0.0 : -$amount,
+            'customer_display_effect' => -$amount,
+            'customer_balance_effect' => $hasCustomerLedger ? 0.0 : -$amount,
+            'customer_effect' => $hasCustomerLedger ? 0.0 : -$amount,
+
+            'affects_debt_balance' => !$hasCustomerLedger,
+            'is_reference_only' => $hasCustomerLedger,
+            'source' => $hasCustomerLedger ? 'reference' : 'legacy',
+
+            'is_real_voucher' => false,
+            'is_virtual_fallback' => true,
+            'is_virtual_payment' => true,
+
+            'badge_label' => 'Thanh toán',
+            'badge_title' => $hasCustomerLedger
+                ? 'Chứng từ tham chiếu — chưa có phiếu thu thật, không cộng lại công nợ.'
+                : 'Tạm tính từ hóa đơn — chưa tìm thấy phiếu thu thật.',
+            'balance_note' => $hasCustomerLedger ? 'Đã phản ánh trong Số dư đầu kỳ/Gộp công nợ hoặc ledger công nợ, không cộng lại công nợ.' : null,
+
+            'display_time' => $businessTime,
+            'time' => $businessTime,
+            'transaction_date' => $invoice->transaction_date,
+            'created_at' => $invoice->created_at,
+
+            'reference_type' => 'InvoicePayment',
+            'reference_id' => $invoice->id,
+            'reference_code' => $invoice->code,
+
+            // NON-CLICKABLE: no real voucher behind this line.
+            'detail_available' => false,
+            'detail_modal_type' => 'none',
+            'detail_reference_type' => 'Invoice',
+            'detail_reference_id' => $invoice->id,
+            'detail_reference_code' => $invoice->code,
+
+            'ledger_sequence' => 20,
+            'display_sequence' => 20,
+        ];
     }
 
     private function buildCustomerLegacyEntries(Customer $customer, bool $hasCustomerLedger, Collection $customerDebts): Collection
@@ -960,78 +1088,28 @@ class PartnerDebtLedgerService
             ]));
 
             if ((float) $invoice->customer_paid > 0) {
-                // STEP 10 — prefer the REAL phiếu thu when it exists.
-                // Balance semantics (the `$hasCustomerLedger ? 0.0 : ...`
-                // ternaries) stay IDENTICAL — only the displayed identity
-                // (code, badge, click target, time) changes.
-                $realReceipt = $receiptsByInvoiceCode[$invoice->code] ?? null;
+                // STEP 10B — prefer REAL phiếu thu(s). One invoice may have
+                // several receipts → render each as its own line. Fall back
+                // to a synthesised (non-clickable) TTHD line only when no
+                // real receipt exists. Balance semantics are UNCHANGED.
+                $realReceipts = collect($receiptsByInvoiceCode->get($invoice->code, collect()))->values();
+                $invoicePaid = (float) $invoice->customer_paid;
+                $realReceiptTotal = (float) $realReceipts->sum('amount');
 
-                if ($realReceipt) {
-                    $paymentTime = $this->normalizeDisplayTime($realReceipt->time, $realReceipt->created_at);
-                    $identity = [
-                        'id' => 'invpay-' . $invoice->id,
-                        'code' => $realReceipt->code,                 // mã PT thật
-                        'is_real_voucher' => true,
-                        'is_virtual_fallback' => false,
-                        'is_virtual_payment' => false,
-                        'badge_label' => 'Thanh toán',
-                        'badge_title' => $hasCustomerLedger ? 'Chứng từ tham chiếu, không cộng lại số dư công nợ.' : 'Phiếu thu thật của hóa đơn.',
-                        'display_time' => $paymentTime,
-                        'time' => $paymentTime,
-                        'detail_modal_type' => 'cash_flow',
-                        'detail_reference_type' => 'CashFlow',
-                        'detail_reference_id' => $realReceipt->id,
-                        'detail_reference_code' => $realReceipt->code,
-                    ];
+                if ($realReceipts->isNotEmpty()) {
+                    // Mismatch when the sum of real receipts ≠ the invoice's
+                    // own customer_paid — surface it instead of hiding it.
+                    $mismatch = abs($realReceiptTotal - $invoicePaid) > 0.01;
+                    foreach ($realReceipts as $receipt) {
+                        $entries->push($this->entry(
+                            $this->mapInvoiceReceiptEntry($invoice, $receipt, $hasCustomerLedger, $mismatch)
+                        ));
+                    }
                 } else {
-                    // badge_label stays 'Thanh toán' (no churn on existing
-                    // assertions). The fallback nature is carried by
-                    // is_virtual_fallback + badge_title, which the frontend
-                    // renders as a small "tạm tính" indicator.
-                    $identity = [
-                        'id' => 'invpay-' . $invoice->id,
-                        'code' => 'TTHD' . preg_replace('/^HD/', '', (string) $invoice->code),
-                        'is_real_voucher' => false,
-                        'is_virtual_fallback' => true,
-                        'is_virtual_payment' => true,
-                        'badge_label' => 'Thanh toán',
-                        'badge_title' => $hasCustomerLedger
-                            ? 'Chứng từ tham chiếu — chưa có phiếu thu thật, không cộng lại công nợ.'
-                            : 'Tạm tính từ hóa đơn — chưa có phiếu thu thật.',
-                        'display_time' => $businessTime,
-                        'time' => $businessTime,
-                        'detail_modal_type' => 'cash_flow',
-                        'detail_reference_type' => 'Invoice',
-                        'detail_reference_id' => $invoice->id,
-                        'detail_reference_code' => $invoice->code,
-                    ];
+                    $entries->push($this->entry(
+                        $this->mapVirtualInvoicePaymentFallbackEntry($invoice, $invoicePaid, $hasCustomerLedger, $businessTime)
+                    ));
                 }
-
-                $entries->push($this->entry(array_merge([
-                    'display_type' => 'Thanh toán hóa đơn',
-                    'event_kind' => 'invoice_payment',
-                    'domain' => 'customer',
-                    'document_amount' => (float) $invoice->customer_paid,
-                    'amount' => (float) $invoice->customer_paid,
-                    'display_effect' => -(float) $invoice->customer_paid,
-                    'financial_effect' => -(float) $invoice->customer_paid,
-                    'balance_effect' => $hasCustomerLedger ? 0.0 : -(float) $invoice->customer_paid,
-                    'customer_display_effect' => -(float) $invoice->customer_paid,
-                    'customer_balance_effect' => $hasCustomerLedger ? 0.0 : -(float) $invoice->customer_paid,
-                    'customer_effect' => $hasCustomerLedger ? 0.0 : -(float) $invoice->customer_paid,
-                    'affects_debt_balance' => !$hasCustomerLedger,
-                    'is_reference_only' => $hasCustomerLedger,
-                    'source' => $hasCustomerLedger ? 'reference' : 'legacy',
-                    'balance_note' => $hasCustomerLedger ? 'Đã phản ánh trong Số dư đầu kỳ/Gộp công nợ hoặc ledger công nợ, không cộng lại công nợ.' : null,
-                    'transaction_date' => $invoice->transaction_date,
-                    'created_at' => $invoice->created_at,
-                    'reference_type' => 'InvoicePayment',
-                    'reference_id' => $invoice->id,
-                    'reference_code' => $invoice->code,
-                    'detail_available' => true,
-                    'ledger_sequence' => 20,
-                    'display_sequence' => 20,
-                ], $identity)));
             }
         }
 
@@ -1643,6 +1721,8 @@ class PartnerDebtLedgerService
             // display-only; they NEVER affect balance computation.
             'is_real_voucher' => false,
             'is_virtual_fallback' => false,
+            'receipt_allocation_mismatch' => false,
+            'needs_manual_review' => false,
             'detail_modal_type' => null,        // 'invoice'|'cash_flow'|'purchase'|'purchase_return'|'offset'|'none'
             'detail_reference_type' => null,
             'detail_reference_id' => null,
