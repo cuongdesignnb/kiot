@@ -2360,8 +2360,9 @@ const createdDateRange = computed({
                                                             </th>
                                                             <th
                                                                 class="px-3 py-2 text-right"
+                                                                title="Số dư công nợ sau từng giao dịch theo thứ tự thời gian. Dòng trên cùng là trạng thái mới nhất."
                                                             >
-                                                                Công nợ
+                                                                Dư nợ khách hàng
                                                             </th>
                                                         </tr>
                                                     </thead>
@@ -2427,6 +2428,11 @@ const createdDateRange = computed({
                                                                     }"
                                                                     :title="entry.badge_title || entry.balance_note || ''"
                                                                 >{{ customerDebtEntryBadge(entry) }}</span>
+                                                                <span
+                                                                    v-if="entry.is_virtual_fallback"
+                                                                    class="ml-1 inline-block text-[10px] font-semibold border px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border-amber-200 cursor-help"
+                                                                    :title="entry.badge_title || 'Tạm tính từ hóa đơn — chưa có phiếu thu thật.'"
+                                                                >Tạm tính</span>
                                                             </td>
                                                             <td
                                                                 class="px-3 py-2 text-right font-medium"

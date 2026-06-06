@@ -493,6 +493,25 @@ const showPurchaseDetail = async (purchaseId) => {
     purchaseDetail.loading = false;
 };
 
+// STEP 10 — supplier debt voucher detail (click a code in the Công nợ tab).
+const supplierVoucher = reactive({ show: false, loading: false, error: '', payload: null });
+const openSupplierVoucherDetail = async (entry, supplierId) => {
+    if (!entry?.code) return;
+    supplierVoucher.show = true;
+    supplierVoucher.loading = true;
+    supplierVoucher.error = '';
+    supplierVoucher.payload = null;
+    try {
+        const { data } = await axios.get(`/api/suppliers/${supplierId}/debt-voucher-detail`, {
+            params: { code: entry.code },
+        });
+        supplierVoucher.payload = data;
+    } catch (e) {
+        supplierVoucher.error = e.response?.data?.message || 'Không mở được chứng từ.';
+    }
+    supplierVoucher.loading = false;
+};
+
 const filteredDebt = (id) => {
     const raw = supplierDebt[id];
     const data = Array.isArray(raw) ? raw : (raw?.entries || []);
@@ -1330,14 +1349,18 @@ const submitActivate = (supplier) => {
                                                             :key="`${d.source_ledger || d.domain || d.source || 'debt'}-${d.type || d.event_kind || 'row'}-${d.id}-${d.code}-${d.time || d.created_at || d.date}`"
                                                             class="hover:bg-gray-50"
                                                         >
-                                                            <td class="px-3 py-2 font-semibold"
-                                                                :class="(d.code && (d.code.startsWith('CB') || d.code.startsWith('DTCN'))) ? 'text-blue-600 cursor-pointer hover:underline' : 'text-blue-600'"
-                                                                @click="(d.code && (d.code.startsWith('CB') || d.code.startsWith('DTCN'))) && showCbToast()"
+                                                            <td class="px-3 py-2 font-semibold text-blue-600 cursor-pointer hover:underline"
+                                                                @click="openSupplierVoucherDetail(d, supplier.id)"
                                                             >{{ d.code }}</td>
                                                             <td class="px-3 py-2">{{ formatDateTime(supplierEntryDisplayTime(d)) }}</td>
                                                             <td class="px-3 py-2">
                                                                 <div class="flex items-center gap-2">
                                                                     <span>{{ d.type_label || d.display_type || d.type }}</span>
+                                                                    <span
+                                                                        v-if="d.is_virtual_fallback"
+                                                                        class="inline-flex items-center rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 cursor-help"
+                                                                        :title="d.badge_title || 'Tạm tính từ phiếu nhập — chưa có phiếu chi/thu thật.'"
+                                                                    >Tạm tính</span>
                                                                     <span
                                                                         v-if="supplierDebtEntryBadge(d, supplier.id)"
                                                                         class="inline-flex items-center rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600"
@@ -2258,6 +2281,50 @@ const submitActivate = (supplier) => {
         </div>
 
         <!-- Purchase Detail Modal -->
+        <!-- STEP 10 — Supplier debt voucher detail modal -->
+        <div v-if="supplierVoucher.show" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="supplierVoucher.show = false">
+            <div class="bg-white rounded-lg shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                <div v-if="supplierVoucher.loading" class="p-12 text-center text-gray-400">Đang tải...</div>
+                <div v-else-if="supplierVoucher.error" class="p-8">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="text-lg font-bold text-gray-800">Chứng từ</h3>
+                        <button @click="supplierVoucher.show = false" class="text-gray-400 hover:text-gray-600">✕</button>
+                    </div>
+                    <p class="text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 text-sm">{{ supplierVoucher.error }}</p>
+                </div>
+                <template v-else-if="supplierVoucher.payload">
+                    <div class="flex items-center justify-between px-6 py-4 border-b">
+                        <div>
+                            <h3 class="text-lg font-bold text-gray-800">{{ supplierVoucher.payload.title }}</h3>
+                            <div class="text-sm text-blue-600 font-semibold">{{ supplierVoucher.payload.code }}</div>
+                        </div>
+                        <button @click="supplierVoucher.show = false" class="text-gray-400 hover:text-gray-600">✕</button>
+                    </div>
+                    <div class="p-6 space-y-2 text-sm">
+                        <div v-for="(val, key) in supplierVoucher.payload.data" :key="key" class="flex justify-between gap-4" v-show="!Array.isArray(val) && val !== null && val !== ''">
+                            <span class="text-gray-500">{{ key }}</span>
+                            <span class="text-gray-800 font-medium text-right">{{ val }}</span>
+                        </div>
+                        <div v-if="Array.isArray(supplierVoucher.payload.data.items) && supplierVoucher.payload.data.items.length" class="mt-3">
+                            <table class="w-full text-left border-collapse text-[13px]">
+                                <thead class="bg-gray-100 text-gray-600 text-[11px] uppercase">
+                                    <tr><th class="p-2">Sản phẩm</th><th class="p-2 text-right">SL</th><th class="p-2 text-right">Đơn giá</th><th class="p-2 text-right">Thành tiền</th></tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-100">
+                                    <tr v-for="(it, i) in supplierVoucher.payload.data.items" :key="i">
+                                        <td class="p-2">{{ it.product_name }}</td>
+                                        <td class="p-2 text-right">{{ it.quantity }}</td>
+                                        <td class="p-2 text-right">{{ formatCurrency(it.price) }}</td>
+                                        <td class="p-2 text-right">{{ formatCurrency(it.subtotal) }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
         <div v-if="purchaseDetail.show" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="purchaseDetail.show = false">
             <div class="bg-white rounded-lg shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
                 <div v-if="purchaseDetail.loading" class="p-12 text-center text-gray-400">Đang tải...</div>

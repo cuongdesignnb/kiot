@@ -254,6 +254,10 @@ class PartnerDebtLedgerService
                         'reference_type' => 'PurchasePayment',
                         'reference_id' => $p->id,
                         'detail_available' => false,
+                        // STEP 10 — synthesised from Purchase.paid_amount; no real phiếu chi.
+                        'is_virtual_fallback' => true,
+                        'is_real_voucher' => false,
+                        'badge_title' => 'Tạm tính từ phiếu nhập — chưa có phiếu chi thật.',
                     ]);
                 }
             }
@@ -374,7 +378,7 @@ class PartnerDebtLedgerService
 
         // 7) Sort by time asc and compute payable running balance
         $sorted = $entries
-            ->sortBy(fn ($entry) => $this->timestamp($entry) . '-' . ($entry['id'] ?? ''))
+            ->sortBy(fn ($entry) => $this->ledgerSortKey($entry))
             ->values();
 
         $ledger = $this->computeSupplierDisplayRunningBalance($sorted);
@@ -570,7 +574,7 @@ class PartnerDebtLedgerService
 
         // 4) Sort by time asc and compute net running balance
         $sorted = $combined
-            ->sortBy(fn ($entry) => $this->timestamp($entry) . '-' . ($entry['id'] ?? ''))
+            ->sortBy(fn ($entry) => $this->ledgerSortKey($entry))
             ->values();
 
         [$computedEntries, $ledgerClosingBalance] = $this->computeCustomerDisplayRunningBalance($sorted);
@@ -647,7 +651,7 @@ class PartnerDebtLedgerService
         $summary = $netLedger['summary'] ?? [];
 
         $entries = collect($netLedger['entries'] ?? [])
-            ->sortBy(fn ($entry) => $this->timestamp(is_array($entry) ? $entry : (array) $entry) . '-' . ((is_array($entry) ? $entry : (array) $entry)['id'] ?? ''))
+            ->sortBy(fn ($entry) => $this->ledgerSortKey($entry))
             ->map(function ($entry) {
                 $entry = is_array($entry) ? $entry : (array) $entry;
                 $source = (string) ($entry['source'] ?? '');
@@ -874,9 +878,37 @@ class PartnerDebtLedgerService
         return $this->buildCustomerLegacyEntries($customer, false, collect());
     }
 
+    /**
+     * STEP 10 — Real (non-cancelled) receipt cashflows that reference an
+     * invoice, keyed by the invoice code. Used so the invoice-payment line
+     * can show the genuine phiếu thu voucher (code + click target) when one
+     * exists. If two receipts share an invoice code, keep the first. This is
+     * a read-only lookup; it does not change any balance.
+     *
+     * @return Collection<string,\App\Models\CashFlow>
+     */
+    private function realInvoiceReceiptsByCode(Customer $customer): Collection
+    {
+        return CashFlow::active()
+            ->where('target_type', 'Khách hàng')
+            ->where('target_id', $customer->id)
+            ->where('type', 'receipt')
+            ->where('reference_type', 'Invoice')
+            ->whereNotNull('reference_code')
+            ->orderBy('created_at')
+            ->get()
+            ->reject(fn ($cf) => $this->isDebtAdjustmentCashFlow($cf))
+            ->keyBy('reference_code');
+    }
+
     private function buildCustomerLegacyEntries(Customer $customer, bool $hasCustomerLedger, Collection $customerDebts): Collection
     {
         $entries = collect();
+
+        // STEP 10 — preload real invoice receipts so the payment line can
+        // show the REAL phiếu thu code/voucher when one exists, instead of
+        // always synthesising a virtual TTHD line. Keyed by invoice code.
+        $receiptsByInvoiceCode = $this->realInvoiceReceiptsByCode($customer);
 
         $invoices = Invoice::query()
             ->where('customer_id', $customer->id)
@@ -917,12 +949,65 @@ class PartnerDebtLedgerService
                 'reference_id' => $invoice->id,
                 'reference_code' => $invoice->code,
                 'detail_available' => true,
+                // STEP 10 — explicit click metadata + ordering sequence.
+                'detail_modal_type' => 'invoice',
+                'detail_reference_type' => 'Invoice',
+                'detail_reference_id' => $invoice->id,
+                'detail_reference_code' => $invoice->code,
+                'is_real_voucher' => true,
+                'ledger_sequence' => 10,
+                'display_sequence' => 10,
             ]));
 
             if ((float) $invoice->customer_paid > 0) {
-                $entries->push($this->entry([
-                    'id' => 'invpay-' . $invoice->id,
-                    'code' => 'TTHD' . preg_replace('/^HD/', '', (string) $invoice->code),
+                // STEP 10 — prefer the REAL phiếu thu when it exists.
+                // Balance semantics (the `$hasCustomerLedger ? 0.0 : ...`
+                // ternaries) stay IDENTICAL — only the displayed identity
+                // (code, badge, click target, time) changes.
+                $realReceipt = $receiptsByInvoiceCode[$invoice->code] ?? null;
+
+                if ($realReceipt) {
+                    $paymentTime = $this->normalizeDisplayTime($realReceipt->time, $realReceipt->created_at);
+                    $identity = [
+                        'id' => 'invpay-' . $invoice->id,
+                        'code' => $realReceipt->code,                 // mã PT thật
+                        'is_real_voucher' => true,
+                        'is_virtual_fallback' => false,
+                        'is_virtual_payment' => false,
+                        'badge_label' => 'Thanh toán',
+                        'badge_title' => $hasCustomerLedger ? 'Chứng từ tham chiếu, không cộng lại số dư công nợ.' : 'Phiếu thu thật của hóa đơn.',
+                        'display_time' => $paymentTime,
+                        'time' => $paymentTime,
+                        'detail_modal_type' => 'cash_flow',
+                        'detail_reference_type' => 'CashFlow',
+                        'detail_reference_id' => $realReceipt->id,
+                        'detail_reference_code' => $realReceipt->code,
+                    ];
+                } else {
+                    // badge_label stays 'Thanh toán' (no churn on existing
+                    // assertions). The fallback nature is carried by
+                    // is_virtual_fallback + badge_title, which the frontend
+                    // renders as a small "tạm tính" indicator.
+                    $identity = [
+                        'id' => 'invpay-' . $invoice->id,
+                        'code' => 'TTHD' . preg_replace('/^HD/', '', (string) $invoice->code),
+                        'is_real_voucher' => false,
+                        'is_virtual_fallback' => true,
+                        'is_virtual_payment' => true,
+                        'badge_label' => 'Thanh toán',
+                        'badge_title' => $hasCustomerLedger
+                            ? 'Chứng từ tham chiếu — chưa có phiếu thu thật, không cộng lại công nợ.'
+                            : 'Tạm tính từ hóa đơn — chưa có phiếu thu thật.',
+                        'display_time' => $businessTime,
+                        'time' => $businessTime,
+                        'detail_modal_type' => 'cash_flow',
+                        'detail_reference_type' => 'Invoice',
+                        'detail_reference_id' => $invoice->id,
+                        'detail_reference_code' => $invoice->code,
+                    ];
+                }
+
+                $entries->push($this->entry(array_merge([
                     'display_type' => 'Thanh toán hóa đơn',
                     'event_kind' => 'invoice_payment',
                     'domain' => 'customer',
@@ -937,19 +1022,16 @@ class PartnerDebtLedgerService
                     'affects_debt_balance' => !$hasCustomerLedger,
                     'is_reference_only' => $hasCustomerLedger,
                     'source' => $hasCustomerLedger ? 'reference' : 'legacy',
-                    'badge_label' => 'Thanh toán',
-                    'badge_title' => $hasCustomerLedger ? 'Chứng từ tham chiếu, không cộng lại số dư công nợ.' : null,
                     'balance_note' => $hasCustomerLedger ? 'Đã phản ánh trong Số dư đầu kỳ/Gộp công nợ hoặc ledger công nợ, không cộng lại công nợ.' : null,
-                    'display_time' => $businessTime,
-                    'time' => $businessTime,
                     'transaction_date' => $invoice->transaction_date,
                     'created_at' => $invoice->created_at,
                     'reference_type' => 'InvoicePayment',
                     'reference_id' => $invoice->id,
                     'reference_code' => $invoice->code,
-                    'is_virtual_payment' => true,
                     'detail_available' => true,
-                ]));
+                    'ledger_sequence' => 20,
+                    'display_sequence' => 20,
+                ], $identity)));
             }
         }
 
@@ -1472,6 +1554,20 @@ class PartnerDebtLedgerService
         return $parsed ? date('YmdHis', $parsed) : '00000000000000';
     }
 
+    /**
+     * STEP 10 — ASC sort key for running-balance computation. Kept
+     * BYTE-EQUIVALENT to the previous `timestamp . '-' . id` form so the
+     * balance machinery (virtual opening bridge, dual running balances)
+     * is unchanged. Sequence is intentionally NOT used here — reordering
+     * the balance pass would shift per-entry running balances. Display
+     * ordering uses displaySortKey() instead, which never affects balance.
+     */
+    private function ledgerSortKey($entry): string
+    {
+        $e = is_array($entry) ? $entry : (array) $entry;
+        return $this->timestamp($e) . '-' . ($e['id'] ?? '');
+    }
+
     private function normalizeDisplayTime($businessTime, $fallback = null)
     {
         return $businessTime ?: $fallback;
@@ -1543,6 +1639,16 @@ class PartnerDebtLedgerService
             'reference_id' => null,
             'reference_code' => null,
             'note' => null,
+            // STEP 10 — KiotViet-style voucher metadata. These are
+            // display-only; they NEVER affect balance computation.
+            'is_real_voucher' => false,
+            'is_virtual_fallback' => false,
+            'detail_modal_type' => null,        // 'invoice'|'cash_flow'|'purchase'|'purchase_return'|'offset'|'none'
+            'detail_reference_type' => null,
+            'detail_reference_id' => null,
+            'detail_reference_code' => null,
+            'ledger_sequence' => 50,            // balance ASC tiebreaker (same timestamp)
+            'display_sequence' => 50,           // display DESC tiebreaker (same timestamp)
         ], $entry, [
             'type' => $displayType,
             'display_type' => $displayType,
@@ -1748,7 +1854,7 @@ class PartnerDebtLedgerService
         $displayRunning = 0.0;
 
         $computed = $entries
-            ->sortBy(fn ($entry) => $this->timestamp(is_array($entry) ? $entry : (array) $entry) . '-' . ((is_array($entry) ? $entry : (array) $entry)['id'] ?? ''))
+            ->sortBy(fn ($entry) => $this->ledgerSortKey($entry))
             ->values()
             ->map(function ($entry) use (&$ledgerRunning, &$displayRunning) {
                 $entry = is_array($entry) ? $entry : (array) $entry;
@@ -1780,7 +1886,7 @@ class PartnerDebtLedgerService
         $displayRunning = 0.0;
 
         return $entries
-            ->sortBy(fn ($entry) => $this->timestamp(is_array($entry) ? $entry : (array) $entry) . '-' . ((is_array($entry) ? $entry : (array) $entry)['id'] ?? ''))
+            ->sortBy(fn ($entry) => $this->ledgerSortKey($entry))
             ->values()
             ->map(function ($entry) use (&$ledgerRunning, &$displayRunning, $isPartnerTimeline) {
                 $entry = is_array($entry) ? $entry : (array) $entry;

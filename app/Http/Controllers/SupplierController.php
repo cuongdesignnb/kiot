@@ -7,6 +7,8 @@ use App\Models\Purchase;
 use App\Models\OrderReturn;
 use App\Models\PurchaseReturn;
 use App\Models\CashFlow;
+use App\Models\Invoice;
+use App\Models\DebtOffset;
 use App\Models\SupplierDebtTransaction;
 use App\Support\Filters\FilterableIndex;
 use Illuminate\Http\Request;
@@ -761,6 +763,140 @@ class SupplierController extends Controller
             $response['pagination'] = $pagination;
         }
         return response()->json($response);
+    }
+
+    /**
+     * STEP 10 — Supplier debt voucher detail (click-to-open from the
+     * NCC Công nợ timeline). Mirrors CustomerController::debtVoucherDetail
+     * but for the supplier orientation. Read-only.
+     *
+     * Resolves the document by code across the relevant tables instead of
+     * relying on brittle prefix parsing:
+     *   Purchase (PN…) → phiếu nhập
+     *   PurchaseReturn → trả hàng nhập
+     *   CashFlow (PCPN…/PC…/PT…) → phiếu chi/thu
+     *   DebtOffset (CB…/HCB…) → cấn trừ công nợ
+     *   Invoice (HD…) → hóa đơn (dual-role)
+     * Virtual fallback rows (TTNH…) have no real voucher → 404 with a clear
+     * "tạm tính" message.
+     */
+    public function debtVoucherDetail($id, Request $request)
+    {
+        $supplier = Customer::findOrFail($id);
+        $code = trim((string) $request->query('code', ''));
+        if ($code === '') {
+            return response()->json(['success' => false, 'message' => 'Mã chứng từ không được để trống.'], 422);
+        }
+
+        $notFound = fn () => response()->json([
+            'success' => false,
+            'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc nhà cung cấp này.',
+        ], 404);
+
+        // 1) Phiếu nhập
+        if ($purchase = Purchase::where('code', $code)->first()) {
+            if ((int) $purchase->supplier_id !== (int) $supplier->id) return $notFound();
+            $purchase->load(['supplier', 'items.product', 'user', 'employee']);
+            return response()->json([
+                'success' => true, 'type' => 'purchase', 'title' => 'Phiếu nhập hàng', 'code' => $purchase->code,
+                'data' => [
+                    'id' => $purchase->id, 'code' => $purchase->code, 'status' => $purchase->status,
+                    'purchase_date' => optional($purchase->purchase_date ?? $purchase->created_at)->format('d/m/Y H:i'),
+                    'supplier_name' => $purchase->supplier->name ?? '', 'supplier_code' => $purchase->supplier->code ?? '',
+                    'user_name' => $purchase->user->name ?? 'Admin', 'note' => $purchase->note,
+                    'total_amount' => $purchase->total_amount, 'discount' => $purchase->discount,
+                    'paid_amount' => $purchase->paid_amount, 'debt_amount' => $purchase->debt_amount,
+                    'payment_method' => $purchase->payment_method,
+                    'items' => $purchase->items->map(fn ($it) => [
+                        'product_code' => $it->product->code ?? '', 'product_name' => $it->product->name ?? '',
+                        'quantity' => $it->quantity, 'price' => $it->price, 'discount' => $it->discount ?? 0, 'subtotal' => $it->subtotal,
+                    ]),
+                ],
+            ]);
+        }
+
+        // 2) Trả hàng nhập
+        if ($return = PurchaseReturn::where('code', $code)->first()) {
+            if ((int) $return->supplier_id !== (int) $supplier->id) return $notFound();
+            $return->loadMissing(['items.product']);
+            return response()->json([
+                'success' => true, 'type' => 'purchase_return', 'title' => 'Trả hàng nhập', 'code' => $return->code,
+                'data' => [
+                    'id' => $return->id, 'code' => $return->code, 'status' => $return->status,
+                    'return_date' => optional($return->return_date ?? $return->created_at)->format('d/m/Y H:i'),
+                    'total_amount' => $return->total_amount, 'note' => $return->note,
+                    'items' => $return->items->map(fn ($it) => [
+                        'product_code' => $it->product->code ?? '', 'product_name' => $it->product->name ?? '',
+                        'quantity' => $it->quantity, 'price' => $it->price, 'subtotal' => $it->subtotal ?? null,
+                    ]),
+                ],
+            ]);
+        }
+
+        // 3) DebtOffset (CB / HCB)
+        if (str_starts_with($code, 'CB') || str_starts_with($code, 'HCB')) {
+            $offsetCode = str_starts_with($code, 'HCB') ? substr($code, 1) : $code;
+            $offset = \App\Models\DebtOffset::where('code', $offsetCode)->first();
+            if ($offset && (int) $offset->customer_id === (int) $supplier->id) {
+                $isCancel = str_starts_with($code, 'HCB');
+                return response()->json([
+                    'success' => true, 'type' => 'offset', 'title' => $isCancel ? 'Hủy điều chỉnh công nợ' : 'Điều chỉnh công nợ', 'code' => $code,
+                    'data' => [
+                        'id' => $offset->id, 'code' => $code, 'amount' => (float) $offset->amount,
+                        'status' => $offset->status, 'note' => $offset->note,
+                        'created_at' => optional($offset->created_at)->format('d/m/Y H:i'),
+                    ],
+                ]);
+            }
+            return $notFound();
+        }
+
+        // 4) CashFlow (phiếu chi/thu thật: PCPN, PC, PT...). Virtual TTNH/TTHD has no row.
+        if ($cashFlow = CashFlow::where('code', $code)->first()) {
+            $belongs = ((int) $cashFlow->target_id === (int) $supplier->id)
+                || in_array($cashFlow->reference_code, Purchase::where('supplier_id', $supplier->id)->pluck('code')->all(), true);
+            if (!$belongs) return $notFound();
+            $cashFlow->load('bankAccount');
+            return response()->json([
+                'success' => true, 'type' => 'cashflow', 'title' => $cashFlow->type === 'payment' ? 'Phiếu chi' : 'Phiếu thu', 'code' => $cashFlow->code,
+                'data' => [
+                    'id' => $cashFlow->id, 'code' => $cashFlow->code, 'type' => $cashFlow->type, 'amount' => (float) $cashFlow->amount,
+                    'time' => $cashFlow->time ? \Carbon\Carbon::parse($cashFlow->time)->format('d/m/Y H:i') : '',
+                    'category' => $cashFlow->category, 'target_name' => $cashFlow->target_name, 'payment_method' => $cashFlow->payment_method,
+                    'bank_account_name' => $cashFlow->bankAccount ? ($cashFlow->bankAccount->bank_name . ' - ' . $cashFlow->bankAccount->account_number) : null,
+                    'reference_type' => $cashFlow->reference_type, 'reference_code' => $cashFlow->reference_code,
+                    'description' => $cashFlow->description, 'status' => $cashFlow->status,
+                ],
+            ]);
+        }
+
+        // 5) Invoice (dual-role HD)
+        if ($invoice = Invoice::where('code', $code)->first()) {
+            if ((int) $invoice->customer_id !== (int) $supplier->id) return $notFound();
+            $invoice->load(['items.product']);
+            return response()->json([
+                'success' => true, 'type' => 'invoice', 'title' => 'Hóa đơn', 'code' => $invoice->code,
+                'data' => [
+                    'id' => $invoice->id, 'code' => $invoice->code, 'status' => $invoice->status,
+                    'created_at' => optional($invoice->created_at)->format('d/m/Y H:i'),
+                    'total' => $invoice->total, 'discount' => $invoice->discount, 'customer_paid' => $invoice->customer_paid,
+                    'items' => $invoice->items->map(fn ($it) => [
+                        'product_code' => $it->product->code ?? '', 'product_name' => $it->product->name ?? '',
+                        'quantity' => $it->quantity, 'price' => $it->price, 'subtotal' => $it->subtotal,
+                    ]),
+                ],
+            ]);
+        }
+
+        // 6) Virtual fallback (TTNH/TTHD) — no real voucher exists.
+        if (str_starts_with($code, 'TTNH') || str_starts_with($code, 'TTHD')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Đây là dòng tạm tính từ phiếu nhập — chưa có phiếu chi/thu thật để mở.',
+            ], 404);
+        }
+
+        return $notFound();
     }
 
     /**
