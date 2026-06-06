@@ -72,4 +72,5 @@
 - Không ghi DB.
 - Có thể deploy sau pull/build/cache.
 - Dữ liệu chuẩn hóa reference_id/allocation/backfill phiếu thu cần bước riêng và phải xác nhận trước.
-- Commit SHA: pending.
+- Commit SHA: `b45d3c7` — `fix(debt): prefer real vouchers in Kiot-style debt timeline`.
+- Push status: chưa push (chờ user xác nhận push to origin/main).
