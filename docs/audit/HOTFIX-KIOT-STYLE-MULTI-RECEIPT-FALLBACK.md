@@ -68,4 +68,4 @@
 - Đạt cho STEP 10B code-only. Không ghi DB.
 - Có thể deploy sau khi Senior Auditor kiểm tra commit trên origin/main.
 - Cần bước riêng (xác nhận trước) nếu muốn: `cash_flows.reference_id`, bảng `cash_flow_allocations`, backfill phiếu thu cho data cũ.
-- Commit SHA: pending.
+- Commit SHA: `36672eb` — `fix(debt): support multi-receipt vouchers and non-clickable fallbacks`.
