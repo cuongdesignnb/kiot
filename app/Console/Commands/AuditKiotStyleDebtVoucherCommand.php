@@ -57,14 +57,25 @@ class AuditKiotStyleDebtVoucherCommand extends Command
             $isReal = (bool) ($e['is_real_voucher'] ?? false);
             $isFallback = (bool) ($e['is_virtual_fallback'] ?? false);
             $modal = $e['detail_modal_type'] ?? null;
-            $clickable = ($e['detail_available'] ?? false) && $modal && $modal !== 'none';
+
+            // STEP 10B — mirror the EXACT frontend click gate so the audit
+            // does not produce false "missing_click_target" noise:
+            //   customer cell: code && detail_available !== false
+            //                  && !is_virtual_fallback && detail_modal_type !== 'none'
+            //   supplier cell: prefix-routed, always clickable unless fallback
+            // detail_available defaults to "not false" (null/true both allow);
+            // a null modal is also allowed (!== 'none').
+            $rawClickable = !empty($e['code'])
+                && (($e['detail_available'] ?? null) !== false)
+                && ($modal !== 'none');
+            $clickable = $rawClickable && !$isFallback;
 
             $mismatch = (bool) ($e['receipt_allocation_mismatch'] ?? false);
 
             $risk = 'ok';
             if ($mismatch) {
                 $risk = 'receipt_allocation_mismatch';
-            } elseif ($isFallback && $clickable) {
+            } elseif ($isFallback && $rawClickable) {
                 $risk = 'clickable_fallback'; // STEP 10B — must never happen
             } elseif ($isFallback) {
                 $risk = 'virtual_fallback';
