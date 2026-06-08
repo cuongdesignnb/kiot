@@ -438,7 +438,7 @@ class CustomerDebtVoucherDetailTest extends TestCase
         // Check Legacy Virtual TTHD
         $tthdEntry = $entries->firstWhere('code', 'TTHD_LEGACY_TEST');
         $this->assertNotNull($tthdEntry);
-        $this->assertTrue($tthdEntry['detail_available']);
+        $this->assertFalse($tthdEntry['detail_available']);
         $this->assertTrue($tthdEntry['is_virtual_payment']);
 
         // Check Legacy Purchase

@@ -583,7 +583,13 @@ class CustomerController extends Controller
      */
     public function debtHistory(Request $request, Customer $customer)
     {
-        $ledger = app(\App\Services\PartnerDebtLedgerService::class)->buildCustomerNetLedger($customer);
+        $mode = $request->query('mode', 'document');
+
+        if ($mode === 'legacy') {
+            $ledger = app(\App\Services\PartnerDebtLedgerService::class)->buildCustomerNetLedger($customer);
+        } else {
+            $ledger = app(\App\Services\CustomerDebtDocumentTimelineService::class)->build($customer);
+        }
 
         // HOTFIX FOLLOW-UP — opt-in server-side pagination to match KiotViet
         // (10/page). Caller activates by sending ?page=N; without that
@@ -1006,7 +1012,13 @@ class CustomerController extends Controller
     {
         // HOTFIX FOLLOW-UP — export must include ALL entries; bypass the
         // pagination layer added to debtHistory() for the UI tab.
-        $data = app(\App\Services\PartnerDebtLedgerService::class)->buildCustomerNetLedger($customer);
+        $mode = $request->query('mode', 'document');
+
+        if ($mode === 'legacy') {
+            $data = app(\App\Services\PartnerDebtLedgerService::class)->buildCustomerNetLedger($customer);
+        } else {
+            $data = app(\App\Services\CustomerDebtDocumentTimelineService::class)->build($customer);
+        }
         // Normalise to a plain array of associative arrays — historically
         // the export pulled this via getData(true) which produced this shape.
         $entries = collect($data['entries'] ?? [])
