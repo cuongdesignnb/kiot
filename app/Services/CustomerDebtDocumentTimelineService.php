@@ -737,10 +737,21 @@ class CustomerDebtDocumentTimelineService
 
         // Calculate chronological running balance
         $running = 0.0;
-        foreach ($sorted as &$entry) {
-            $running += $entry['customer_display_effect'];
+        $sorted = $sorted->values()->map(function (array $entry) use (&$running) {
+            $effect = (float) ($entry['customer_display_effect']
+                ?? $entry['display_effect']
+                ?? $entry['amount']
+                ?? 0);
+
+            $running += $effect;
+
+            $entry['customer_display_effect'] = $effect;
+            $entry['display_effect'] = (float) ($entry['display_effect'] ?? $effect);
             $entry['customer_display_running_balance'] = $running;
-        }
+            $entry['running_balance'] = $running;
+
+            return $entry;
+        });
 
         $documentFinalBalance = $running;
 

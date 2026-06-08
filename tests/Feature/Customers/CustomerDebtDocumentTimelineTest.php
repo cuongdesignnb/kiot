@@ -503,4 +503,170 @@ class CustomerDebtDocumentTimelineTest extends TestCase
         $this->assertSame('document_first', $invEntry['source']);
         $this->assertNull($invEntry['badge_label']);
     }
+
+    public function test_document_timeline_entries_include_running_balance_even_when_reconcile_warns(): void
+    {
+        // Stored debt is 300000 but document final will be 800000 - 500000 - 1000000 = -700000
+        // This mismatch triggers reconcile warning
+        $customer = $this->createTestCustomer(['debt_amount' => 300000]);
+        
+        $invoice = Invoice::create([
+            'code' => 'HD-WARN-123',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 800000,
+            'customer_paid' => 500000,
+            'created_at' => Carbon::now()->subMinutes(10),
+        ]);
+        
+        CashFlow::create([
+            'code' => 'PT-WARN-123',
+            'type' => 'receipt',
+            'amount' => 500000,
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer->id,
+            'target_name' => $customer->name,
+            'reference_type' => 'Invoice',
+            'reference_code' => 'HD-WARN-123',
+            'status' => 'active',
+            'time' => Carbon::now()->subMinutes(5),
+            'created_at' => Carbon::now()->subMinutes(5),
+        ]);
+
+        OrderReturn::create([
+            'code' => 'TH-WARN-123',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 1000000,
+            'paid_to_customer' => 0,
+            'created_at' => Carbon::now(),
+        ]);
+
+        $response = $this->actingAs($this->admin)->get("/customers/{$customer->id}/debt-history");
+        $response->assertStatus(200);
+        
+        $this->assertSame('warning', $response->json('reconcile.severity'));
+        
+        $entries = $response->json('entries');
+        $this->assertNotEmpty($entries);
+        
+        foreach ($entries as $entry) {
+            $this->assertArrayHasKey('customer_display_running_balance', $entry);
+            $this->assertNotNull($entry['customer_display_running_balance']);
+            $this->assertTrue(is_numeric($entry['customer_display_running_balance']));
+            
+            $this->assertArrayHasKey('running_balance', $entry);
+            $this->assertNotNull($entry['running_balance']);
+            $this->assertTrue(is_numeric($entry['running_balance']));
+        }
+    }
+
+    public function test_zero_balance_displays_as_numeric_zero(): void
+    {
+        $customer = $this->createTestCustomer();
+        
+        $invoice = Invoice::create([
+            'code' => 'HD-ZERO-123',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 800000,
+            'customer_paid' => 800000,
+            'created_at' => Carbon::now()->subMinutes(10),
+        ]);
+        
+        CashFlow::create([
+            'code' => 'PT-ZERO-123',
+            'type' => 'receipt',
+            'amount' => 800000,
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer->id,
+            'target_name' => $customer->name,
+            'reference_type' => 'Invoice',
+            'reference_code' => 'HD-ZERO-123',
+            'status' => 'active',
+            'time' => Carbon::now()->subMinutes(5),
+            'created_at' => Carbon::now()->subMinutes(5),
+        ]);
+
+        $response = $this->actingAs($this->admin)->get("/customers/{$customer->id}/debt-history");
+        $entries = collect($response->json('entries'));
+        
+        $lastEntry = $entries->sortBy(function($e) {
+            return $e['display_time'] ?? $e['time'] ?? $e['created_at'];
+        })->last();
+
+        $this->assertNotNull($lastEntry);
+        $this->assertEquals(0.0, (float) $lastEntry['customer_display_running_balance']);
+        $this->assertEquals(0.0, (float) $lastEntry['running_balance']);
+    }
+
+    public function test_collection_map_persistence(): void
+    {
+        $customer = $this->createTestCustomer();
+        
+        Invoice::create([
+            'code' => 'HD-PERSIST-123',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 800000,
+            'customer_paid' => 500000,
+            'created_at' => Carbon::now(),
+        ]);
+
+        $response = $this->actingAs($this->admin)->get("/customers/{$customer->id}/debt-history");
+        $entries = collect($response->json('entries'));
+        
+        $invEntry = $entries->firstWhere('code', 'HD-PERSIST-123');
+        $this->assertNotNull($invEntry);
+        $this->assertNotNull($invEntry['customer_display_running_balance']);
+    }
+
+    public function test_does_not_regress_document_values(): void
+    {
+        $customer = $this->createTestCustomer();
+        
+        Invoice::create([
+            'code' => 'HD-REGRESS-123',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 800000,
+            'customer_paid' => 500000,
+            'created_at' => Carbon::now()->subMinutes(10),
+        ]);
+        
+        CashFlow::create([
+            'code' => 'PT-REGRESS-123',
+            'type' => 'receipt',
+            'amount' => 500000,
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer->id,
+            'target_name' => $customer->name,
+            'reference_type' => 'Invoice',
+            'reference_code' => 'HD-REGRESS-123',
+            'status' => 'active',
+            'time' => Carbon::now()->subMinutes(5),
+            'created_at' => Carbon::now()->subMinutes(5),
+        ]);
+
+        OrderReturn::create([
+            'code' => 'TH-REGRESS-123',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 1000000,
+            'paid_to_customer' => 0,
+            'created_at' => Carbon::now(),
+        ]);
+
+        $res = $this->service->build($customer);
+        $entries = collect($res['entries']);
+        
+        $inv = $entries->firstWhere('code', 'HD-REGRESS-123');
+        $this->assertSame(800000.0, (float) $inv['display_effect']);
+        
+        $pay = $entries->firstWhere('code', 'PT-REGRESS-123');
+        $this->assertSame(-500000.0, (float) $pay['display_effect']);
+        
+        $ret = $entries->firstWhere('code', 'TH-REGRESS-123');
+        $this->assertSame(-1000000.0, (float) $ret['display_effect']);
+    }
 }

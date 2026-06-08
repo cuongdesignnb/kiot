@@ -342,11 +342,11 @@ const customerDebtEntryDisplayEffect = (entry) => {
     }
     return Number(entry?.amount || 0);
 };
-const customerDebtEntryRunningBalance = (entry) => {
-    if (entry?.customer_display_running_balance !== undefined && entry?.customer_display_running_balance !== null && entry?.customer_display_running_balance !== '') {
+const getDebtEntryRunningBalance = (entry) => {
+    if (entry?.customer_display_running_balance !== undefined && entry.customer_display_running_balance !== null && entry.customer_display_running_balance !== '') {
         return Number(entry.customer_display_running_balance);
     }
-    if (entry?.running_balance !== undefined && entry?.running_balance !== null && entry?.running_balance !== '') {
+    if (entry?.running_balance !== undefined && entry.running_balance !== null && entry.running_balance !== '') {
         return Number(entry.running_balance);
     }
     return null;
@@ -2468,24 +2468,24 @@ const createdDateRange = computed({
                                                             <td
                                                                 class="px-3 py-2 text-right font-medium"
                                                                 :class="
-                                                                    customerDebtEntryRunningBalance(entry) === null
+                                                                    getDebtEntryRunningBalance(entry) === null
                                                                         ? 'text-gray-400 font-normal'
-                                                                        : customerDebtEntryRunningBalance(entry) > 0
-                                                                            ? 'text-red-600'
-                                                                            : customerDebtEntryRunningBalance(entry) < 0
-                                                                              ? 'text-green-600'
+                                                                        : getDebtEntryRunningBalance(entry) > 0
+                                                                            ? 'text-red-600 font-semibold'
+                                                                            : getDebtEntryRunningBalance(entry) < 0
+                                                                              ? 'text-green-600 font-semibold'
                                                                               : 'text-gray-500'
                                                                 "
-                                                                :title="customerDebtEntryRunningBalance(entry) === null ? (entry.balance_note || 'Chứng từ tham chiếu, không cộng lại số dư công nợ') : ''"
+                                                                :title="getDebtEntryRunningBalance(entry) === null ? (entry.balance_note || 'Chứng từ tham chiếu, không cộng lại số dư công nợ') : ''"
                                                             >
-                                                                <span v-if="customerDebtEntryRunningBalance(entry) === null">—</span>
-                                                                <span v-else>
-                                                                    {{
-                                                                        formatCurrency(
-                                                                            customerDebtEntryRunningBalance(entry),
-                                                                        )
-                                                                    }}
-                                                                </span>
+                                                                <template v-if="getDebtEntryRunningBalance(entry) !== null">
+                                                                    <span :class="getDebtEntryRunningBalance(entry) > 0 ? 'text-red-600 font-semibold' : getDebtEntryRunningBalance(entry) < 0 ? 'text-green-600 font-semibold' : 'text-gray-500'">
+                                                                        {{ formatCurrency(getDebtEntryRunningBalance(entry)) }}
+                                                                    </span>
+                                                                </template>
+                                                                <template v-else>
+                                                                    <span class="text-gray-400">—</span>
+                                                                </template>
                                                             </td>
                                                         </tr>
                                                     </tbody>

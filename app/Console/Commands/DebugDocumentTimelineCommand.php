@@ -61,6 +61,15 @@ class DebugDocumentTimelineCommand extends Command
         $isPass = abs($actualEffect - $expectedEffect) < 0.01 && $source === 'document_first';
         $statusStr = $isPass ? 'PASS' : 'FAIL';
 
+        $missingRunningBalanceCodes = [];
+        $allEntriesHaveRunningBalance = true;
+        foreach ($entries as $e) {
+            if (!isset($e['customer_display_running_balance']) || $e['customer_display_running_balance'] === null) {
+                $allEntriesHaveRunningBalance = false;
+                $missingRunningBalanceCodes[] = $e['code'] ?: ('id:' . $e['id']);
+            }
+        }
+
         $output = [
             'customer_code' => $customerCode,
             'document_code' => $documentCode,
@@ -73,6 +82,12 @@ class DebugDocumentTimelineCommand extends Command
             'cashflow_total' => $cashflowTotal,
             'expected_invoice_effect' => $expectedEffect,
             'pass_fail' => $statusStr,
+            'entry_count' => $entries->count(),
+            'all_entries_have_running_balance' => $allEntriesHaveRunningBalance,
+            'missing_running_balance_codes' => $missingRunningBalanceCodes,
+            'document_final_balance' => (float) ($timeline['summary']['document_final_balance'] ?? 0.0),
+            'stored_net' => (float) ($timeline['summary']['current_debt'] ?? 0.0),
+            'reconcile_severity' => $timeline['reconcile']['severity'] ?? 'none',
         ];
 
         if ($this->option('json')) {
@@ -90,10 +105,18 @@ class DebugDocumentTimelineCommand extends Command
         $this->line("invoice_customer_paid: " . $output['invoice_customer_paid']);
         $this->line("cashflow_total: " . $output['cashflow_total']);
         $this->line("expected_invoice_effect: " . $output['expected_invoice_effect']);
+        
+        $this->line("entry_count: " . $output['entry_count']);
+        $this->line("all_entries_have_running_balance: " . ($output['all_entries_have_running_balance'] ? 'true' : 'false'));
+        $this->line("missing_running_balance_codes: " . implode(', ', $output['missing_running_balance_codes']));
+        $this->line("document_final_balance: " . $output['document_final_balance']);
+        $this->line("stored_net: " . $output['stored_net']);
+        $this->line("reconcile_severity: " . $output['reconcile_severity']);
+
         $this->line("pass/fail: " . $output['pass_fail']);
 
         $this->line("{$documentCode} expected +{$expectedEffect} actual +{$actualEffect} {$statusStr}");
 
-        return $isPass ? 0 : 1;
+        return $isPass && $allEntriesHaveRunningBalance ? 0 : 1;
     }
 }
