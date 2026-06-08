@@ -3,6 +3,7 @@
 namespace Tests\Feature\Customers;
 
 use App\Models\Customer;
+use App\Models\User;
 use App\Models\Invoice;
 use App\Models\CashFlow;
 use App\Models\OrderReturn;
@@ -18,11 +19,18 @@ class CustomerDebtDocumentTimelineTest extends TestCase
     use DatabaseTransactions;
 
     private CustomerDebtDocumentTimelineService $service;
+    private User $admin;
 
     protected function setUp(): void
     {
         parent::setUp();
         $this->service = app(CustomerDebtDocumentTimelineService::class);
+        $this->admin = User::create([
+            'name' => 'Admin Test Timeline',
+            'email' => 'admin-timeline-' . uniqid() . '@test.local',
+            'password' => bcrypt('password'),
+            'role_id' => null,
+        ]);
     }
 
     private function createTestCustomer(array $attributes = []): Customer
@@ -352,5 +360,147 @@ class CustomerDebtDocumentTimelineTest extends TestCase
         ];
 
         $this->assertSame($countsBefore, $countsAfter);
+    }
+
+    public function test_invoice_partial_payment_displays_invoice_total_not_remaining_debt(): void
+    {
+        $customer = $this->createTestCustomer(['debt_amount' => 300000]);
+        $invoice = Invoice::create([
+            'code' => 'HD-PARTIAL-123',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 800000,
+            'customer_paid' => 500000,
+            'created_at' => Carbon::now()->subMinutes(10),
+        ]);
+        CustomerDebt::create([
+            'customer_id' => $customer->id,
+            'ref_code' => 'HD-PARTIAL-123',
+            'amount' => 300000,
+            'debt_total' => 300000,
+            'type' => 'sale',
+            'recorded_at' => Carbon::now()->subMinutes(10),
+        ]);
+        
+        $res = $this->service->build($customer);
+        $entries = collect($res['entries']);
+        
+        $invEntry = $entries->firstWhere('code', 'HD-PARTIAL-123');
+        $this->assertNotNull($invEntry);
+        $this->assertSame(800000.0, (float) $invEntry['display_effect']);
+        $this->assertSame(800000.0, (float) $invEntry['customer_display_effect']);
+        $this->assertSame('document_first', $invEntry['source']);
+        $this->assertNotEquals('Ledger', $invEntry['badge_label']);
+        
+        $fallbackEntry = $entries->firstWhere('code', 'TTHD-PARTIAL-123');
+        $this->assertNotNull($fallbackEntry);
+        $this->assertSame(-500000.0, (float) $fallbackEntry['display_effect']);
+    }
+
+    public function test_default_debt_history_uses_document_mode(): void
+    {
+        $customer = $this->createTestCustomer();
+        $invoice = Invoice::create([
+            'code' => 'HD-DEFAULT-123',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 800000,
+            'customer_paid' => 500000,
+            'created_at' => Carbon::now(),
+        ]);
+        
+        $response = $this->actingAs($this->admin)->get("/customers/{$customer->id}/debt-history");
+        $response->assertStatus(200);
+        $entries = collect($response->json('entries'));
+        
+        $invEntry = $entries->firstWhere('code', 'HD-DEFAULT-123');
+        $this->assertNotNull($invEntry);
+        $this->assertSame(800000.0, (float) $invEntry['display_effect']);
+        $this->assertSame('document_first', $invEntry['source']);
+        $this->assertNotEquals('Ledger', $invEntry['badge_label']);
+    }
+
+    public function test_legacy_mode_does_not_affect_default_document_mode(): void
+    {
+        $customer = $this->createTestCustomer();
+        $invoice = Invoice::create([
+            'code' => 'HD-COMPARE-123',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 800000,
+            'customer_paid' => 500000,
+            'created_at' => Carbon::now()->subMinutes(10),
+        ]);
+        CustomerDebt::create([
+            'customer_id' => $customer->id,
+            'ref_code' => 'HD-COMPARE-123',
+            'amount' => 300000,
+            'debt_total' => 300000,
+            'type' => 'sale',
+            'recorded_at' => Carbon::now()->subMinutes(10),
+        ]);
+
+        // Default / document mode
+        $resDoc = $this->actingAs($this->admin)->get("/customers/{$customer->id}/debt-history");
+        $entriesDoc = collect($resDoc->json('entries'));
+        $invDoc = $entriesDoc->firstWhere('code', 'HD-COMPARE-123');
+        $this->assertSame(800000.0, (float) $invDoc['display_effect']);
+        
+        // Legacy mode
+        $resLegacy = $this->actingAs($this->admin)->get("/customers/{$customer->id}/debt-history?mode=legacy");
+        $entriesLegacy = collect($resLegacy->json('entries'));
+        $invLegacy = $entriesLegacy->firstWhere('code', 'HD-COMPARE-123');
+        $this->assertSame(300000.0, (float) $invLegacy['display_effect']);
+    }
+
+    public function test_sales_return_document_reduces_debt_even_when_ledger_exists(): void
+    {
+        $customer = $this->createTestCustomer();
+        OrderReturn::create([
+            'code' => 'TH-RED-123',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 1000000,
+            'paid_to_customer' => 0,
+            'created_at' => Carbon::now(),
+        ]);
+        CustomerDebt::create([
+            'customer_id' => $customer->id,
+            'ref_code' => 'TH-RED-123',
+            'amount' => -1000000,
+            'debt_total' => -1000000,
+            'type' => 'return',
+            'recorded_at' => Carbon::now(),
+        ]);
+
+        $res = $this->service->build($customer);
+        $entries = collect($res['entries']);
+        
+        $retEntry = $entries->firstWhere('code', 'TH-RED-123');
+        $this->assertNotNull($retEntry);
+        $this->assertSame(-1000000.0, (float) $retEntry['display_effect']);
+        $this->assertSame('document_first', $retEntry['source']);
+        $this->assertNotEquals('Ledger', $retEntry['badge_label']);
+    }
+
+    public function test_frontend_payload_has_no_ledger_badge_for_invoice_document_entry(): void
+    {
+        $customer = $this->createTestCustomer();
+        $invoice = Invoice::create([
+            'code' => 'HD-FRONT-123',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 800000,
+            'customer_paid' => 500000,
+            'created_at' => Carbon::now(),
+        ]);
+
+        $response = $this->actingAs($this->admin)->get("/customers/{$customer->id}/debt-history");
+        $entries = collect($response->json('entries'));
+        
+        $invEntry = $entries->firstWhere('code', 'HD-FRONT-123');
+        $this->assertNotNull($invEntry);
+        $this->assertSame('document_first', $invEntry['source']);
+        $this->assertNull($invEntry['badge_label']);
     }
 }

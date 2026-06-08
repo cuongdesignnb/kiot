@@ -60,6 +60,12 @@ class CustomerDebtDocumentTimelineService
                 'is_real_voucher' => true,
                 'is_virtual_fallback' => false,
                 'source' => 'document_first',
+                'debug' => [
+                    'document_source' => 'invoices',
+                    'invoice_total' => (float) $invoice->total,
+                    'invoice_customer_paid' => (float) $invoice->customer_paid,
+                    'must_display_invoice_total' => true,
+                ],
             ]));
         }
 

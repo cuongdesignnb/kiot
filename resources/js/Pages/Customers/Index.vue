@@ -138,13 +138,15 @@ const shouldShowDebtReconcileInfo = (reconcile) =>
     reconcile?.severity === "info" && !!reconcile?.message;
 
 const loadDebtHistory = async (customerId, page = null) => {
+    // Clear cache to avoid rendering stale entries while loading
+    debtHistoryData[customerId] = { entries: [], pagination: { total: 0, last_page: 1, current_page: 1, from: 0, to: 0 } };
     tabLoading[customerId] = true;
     const targetPage = page ?? debtHistoryPage[customerId] ?? 1;
     debtHistoryPage[customerId] = targetPage;
     try {
         const { data } = await axios.get(
             `/customers/${customerId}/debt-history`,
-            { params: { page: targetPage, per_page: debtHistoryPerPage } },
+            { params: { page: targetPage, per_page: debtHistoryPerPage, mode: 'document' } },
         );
         debtHistoryData[customerId] = data;
     } catch (e) {
@@ -331,23 +333,28 @@ const firstPresentNumber = (entry, keys, fallback = 0) => {
     }
     return fallback;
 };
-const customerDebtEntryDisplayEffect = (entry) => firstPresentNumber(entry, [
-    'customer_display_effect',
-    'display_effect',
-    'financial_effect',
-    'customer_effect',
-    'amount',
-]);
+const customerDebtEntryDisplayEffect = (entry) => {
+    if (entry?.customer_display_effect !== undefined && entry?.customer_display_effect !== null && entry?.customer_display_effect !== '') {
+        return Number(entry.customer_display_effect);
+    }
+    if (entry?.display_effect !== undefined && entry?.display_effect !== null && entry?.display_effect !== '') {
+        return Number(entry.display_effect);
+    }
+    return Number(entry?.amount || 0);
+};
 const customerDebtEntryRunningBalance = (entry) => {
-    for (const key of ['customer_display_running_balance', 'customer_running_balance', 'balance', 'debt_remain']) {
-        const value = entry?.[key];
-        if (value !== undefined && value !== null && value !== '') {
-            return Number(value);
-        }
+    if (entry?.customer_display_running_balance !== undefined && entry?.customer_display_running_balance !== null && entry?.customer_display_running_balance !== '') {
+        return Number(entry.customer_display_running_balance);
+    }
+    if (entry?.running_balance !== undefined && entry?.running_balance !== null && entry?.running_balance !== '') {
+        return Number(entry.running_balance);
     }
     return null;
 };
 const customerDebtEntryBadge = (entry) => {
+    if (entry?.source === 'document_first') {
+        return entry?.badge_label || '';
+    }
     const label = entry?.badge_label || '';
     return label === 'Đã hạch toán' ? '' : label;
 };
