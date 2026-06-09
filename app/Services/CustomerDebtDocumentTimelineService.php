@@ -344,17 +344,12 @@ class CustomerDebtDocumentTimelineService
                 continue;
             }
 
-            $hasInvoices = Invoice::where('customer_id', $customer->id)
-                ->where(function($q) {
-                    $q->whereNull('status')->orWhere('status', '!=', 'Đã hủy');
-                })
-                ->exists();
-
-            if ($hasInvoices && $this->isTechnicalLedgerCode($refCode)) {
+            if ($this->isTechnicalLedgerCode($refCode) && !$includeTechnical) {
                 $excludedLedgerEntries[] = [
                     'code' => $refCode,
                     'amount' => (float) $debt->amount,
                     'reason' => 'technical_ledger_excluded_from_document_timeline',
+                    'source' => 'customer_debts',
                 ];
                 continue;
             }
@@ -813,28 +808,40 @@ class CustomerDebtDocumentTimelineService
             return $entry;
         });
 
+        $entries = $this->applyDocumentGroupLatestTime($entries);
+
         // Sort ASC for running balance calculation
         $sortedAsc = collect($entries)
             ->sort(function (array $a, array $b) {
-                $timeCompare = strcmp((string)($a['sort_group_time'] ?? $a['time'] ?? ''), (string)($b['sort_group_time'] ?? $b['time'] ?? ''));
+                $timeCompare = strcmp(
+                    (string) ($a['sort_group_latest_time'] ?? ''),
+                    (string) ($b['sort_group_latest_time'] ?? '')
+                );
 
                 if ($timeCompare !== 0) {
                     return $timeCompare;
                 }
 
-                $groupCompare = strcmp((string)($a['sort_group_key'] ?? $a['code'] ?? ''), (string)($b['sort_group_key'] ?? $b['code'] ?? ''));
+                $groupCompare = strcmp(
+                    (string) ($a['sort_group_key'] ?? $a['code'] ?? ''),
+                    (string) ($b['sort_group_key'] ?? $b['code'] ?? '')
+                );
 
                 if ($groupCompare !== 0) {
                     return $groupCompare;
                 }
 
-                $sequenceCompare = ((int)($a['sort_group_sequence'] ?? 999)) <=> ((int)($b['sort_group_sequence'] ?? 999));
+                $sequenceCompare = ((int) ($a['sort_group_sequence'] ?? 999))
+                    <=> ((int) ($b['sort_group_sequence'] ?? 999));
 
                 if ($sequenceCompare !== 0) {
                     return $sequenceCompare;
                 }
 
-                return strcmp((string)($a['time'] ?? ''), (string)($b['time'] ?? ''));
+                return strcmp(
+                    (string) ($a['time'] ?? ''),
+                    (string) ($b['time'] ?? '')
+                );
             })
             ->values();
 
@@ -864,19 +871,26 @@ class CustomerDebtDocumentTimelineService
         // Sort DESC for display
         $displayEntries = $sorted
             ->sort(function (array $a, array $b) {
-                $timeCompare = strcmp((string)($b['sort_group_time'] ?? $b['time'] ?? ''), (string)($a['sort_group_time'] ?? $a['time'] ?? ''));
+                $timeCompare = strcmp(
+                    (string) ($b['sort_group_latest_time'] ?? ''),
+                    (string) ($a['sort_group_latest_time'] ?? '')
+                );
 
                 if ($timeCompare !== 0) {
                     return $timeCompare;
                 }
 
-                $groupCompare = strcmp((string)($b['sort_group_key'] ?? $b['code'] ?? ''), (string)($a['sort_group_key'] ?? $a['code'] ?? ''));
+                $groupCompare = strcmp(
+                    (string) ($b['sort_group_key'] ?? $b['code'] ?? ''),
+                    (string) ($a['sort_group_key'] ?? $a['code'] ?? '')
+                );
 
                 if ($groupCompare !== 0) {
                     return $groupCompare;
                 }
 
-                return ((int)($a['sort_group_sequence'] ?? 999)) <=> ((int)($b['sort_group_sequence'] ?? 999));
+                return ((int) ($a['sort_group_sequence'] ?? 999))
+                    <=> ((int) ($b['sort_group_sequence'] ?? 999));
             })
             ->values();
 
@@ -1072,5 +1086,46 @@ class CustomerDebtDocumentTimelineService
             || str_starts_with($code, 'MERGE-SUPPLIER-')
             || str_starts_with($code, 'OPENING-BALANCE-')
             || str_starts_with($code, 'OPENING-BALANCE-SUPPLIER-');
+    }
+
+    private function applyDocumentGroupLatestTime(Collection $entries): Collection
+    {
+        $groupLatestTimes = $entries
+            ->filter(fn (array $entry) => !empty($entry['sort_group_key']))
+            ->groupBy(fn (array $entry) => (string) $entry['sort_group_key'])
+            ->map(function (Collection $group) {
+                return $group
+                    ->map(fn (array $entry) => $this->normalizeSortableTime(
+                        $entry['time'] ?? $entry['display_time'] ?? $entry['created_at'] ?? null
+                    ))
+                    ->filter()
+                    ->max();
+            });
+
+        return $entries->map(function (array $entry) use ($groupLatestTimes) {
+            $groupKey = (string) ($entry['sort_group_key'] ?? $entry['code'] ?? '');
+
+            $entry['sort_group_latest_time'] = $groupLatestTimes[$groupKey]
+                ?? $this->normalizeSortableTime($entry['time'] ?? $entry['display_time'] ?? $entry['created_at'] ?? null);
+
+            return $entry;
+        });
+    }
+
+    private function normalizeSortableTime($value): string
+    {
+        if (!$value) {
+            return '';
+        }
+
+        if ($value instanceof \Illuminate\Support\Carbon) {
+            return $value->format('Y-m-d H:i:s');
+        }
+
+        try {
+            return \Illuminate\Support\Carbon::parse($value)->format('Y-m-d H:i:s');
+        } catch (\Throwable $e) {
+            return (string) $value;
+        }
     }
 }

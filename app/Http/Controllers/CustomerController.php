@@ -588,7 +588,7 @@ class CustomerController extends Controller
         if ($mode === 'legacy') {
             $ledger = app(\App\Services\PartnerDebtLedgerService::class)->buildCustomerNetLedger($customer);
         } else {
-            $ledger = app(\App\Services\CustomerDebtDocumentTimelineService::class)->build($customer);
+            $ledger = app(\App\Services\CustomerDebtDocumentTimelineService::class)->build($customer, $request->all());
         }
 
         // HOTFIX FOLLOW-UP — opt-in server-side pagination to match KiotViet
@@ -1017,7 +1017,7 @@ class CustomerController extends Controller
         if ($mode === 'legacy') {
             $data = app(\App\Services\PartnerDebtLedgerService::class)->buildCustomerNetLedger($customer);
         } else {
-            $data = app(\App\Services\CustomerDebtDocumentTimelineService::class)->build($customer);
+            $data = app(\App\Services\CustomerDebtDocumentTimelineService::class)->build($customer, $request->all());
         }
         // Normalise to a plain array of associative arrays — historically
         // the export pulled this via getData(true) which produced this shape.

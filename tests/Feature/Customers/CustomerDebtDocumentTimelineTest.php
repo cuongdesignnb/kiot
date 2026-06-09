@@ -714,12 +714,12 @@ class CustomerDebtDocumentTimelineTest extends TestCase
         $entries = collect($res['entries']);
 
         // Assert they are in this exact display order:
-        // 1. TH-DOC-GRP1 (newer group)
-        // 2. HD-DOC-GRP1 (parent invoice)
-        // 3. PT-DOC-GRP1 (payment receipt grouped right after parent)
+        // 1. HD-DOC-GRP1 (parent invoice, since latest activity subHours(1) is newer than return subHours(3))
+        // 2. PT-DOC-GRP1 (payment receipt grouped right after parent)
+        // 3. TH-DOC-GRP1 (older return group)
         
         $codes = $entries->pluck('code')->toArray();
-        $this->assertEquals(['TH-DOC-GRP1', 'HD-DOC-GRP1', 'PT-DOC-GRP1'], $codes);
+        $this->assertEquals(['HD-DOC-GRP1', 'PT-DOC-GRP1', 'TH-DOC-GRP1'], $codes);
     }
 
     public function test_multiple_payments_stay_under_invoice(): void
@@ -896,5 +896,195 @@ class CustomerDebtDocumentTimelineTest extends TestCase
         $this->assertNotNull($invEntry);
         $this->assertSame(800000.0, (float) $invEntry['customer_display_running_balance']);
         $this->assertSame(800000.0, (float) $res['summary']['document_final_balance']);
+    }
+
+    public function test_invoice_group_is_sorted_by_latest_payment_time_but_invoice_row_stays_before_payment(): void
+    {
+        $customer = $this->createTestCustomer([
+            'is_supplier' => true,
+        ]);
+
+        $baseDate = Carbon::today();
+        
+        $invoice = Invoice::create([
+            'code' => 'HD-DOC-001',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 800000,
+            'customer_paid' => 500000,
+            'transaction_date' => $baseDate->copy()->setTime(8, 53, 0),
+            'created_at' => $baseDate->copy()->setTime(8, 53, 0),
+        ]);
+
+        $receipt = CashFlow::create([
+            'code' => 'PT-DOC-001',
+            'type' => 'receipt',
+            'amount' => 500000,
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer->id,
+            'target_name' => $customer->name,
+            'reference_type' => 'Invoice',
+            'reference_code' => 'HD-DOC-001',
+            'status' => 'active',
+            'time' => $baseDate->copy()->setTime(16, 12, 0),
+            'created_at' => $baseDate->copy()->setTime(16, 12, 0),
+        ]);
+
+        $purchase = Purchase::create([
+            'code' => 'PN-DOC-001',
+            'supplier_id' => $customer->id,
+            'total_amount' => 40000,
+            'paid_amount' => 0,
+            'debt_amount' => 40000,
+            'status' => 'completed',
+            'purchase_date' => $baseDate->copy()->setTime(15, 54, 0),
+            'created_at' => $baseDate->copy()->setTime(15, 54, 0),
+        ]);
+
+        $res = $this->service->build($customer);
+        $entries = collect($res['entries']);
+        $codes = $entries->pluck('code')->toArray();
+
+        // Expected display order (DESC): HD-DOC-001, PT-DOC-001, PN-DOC-001
+        $this->assertEquals(['HD-DOC-001', 'PT-DOC-001', 'PN-DOC-001'], $codes);
+    }
+
+    public function test_payment_immediately_after_invoice(): void
+    {
+        $customer = $this->createTestCustomer([
+            'is_supplier' => true,
+        ]);
+
+        $baseDate = Carbon::today();
+        
+        $invoice = Invoice::create([
+            'code' => 'HD-DOC-001',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 800000,
+            'customer_paid' => 500000,
+            'transaction_date' => $baseDate->copy()->setTime(8, 53, 0),
+            'created_at' => $baseDate->copy()->setTime(8, 53, 0),
+        ]);
+
+        $receipt = CashFlow::create([
+            'code' => 'PT-DOC-001',
+            'type' => 'receipt',
+            'amount' => 500000,
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer->id,
+            'target_name' => $customer->name,
+            'reference_type' => 'Invoice',
+            'reference_code' => 'HD-DOC-001',
+            'status' => 'active',
+            'time' => $baseDate->copy()->setTime(16, 12, 0),
+            'created_at' => $baseDate->copy()->setTime(16, 12, 0),
+        ]);
+
+        $res = $this->service->build($customer);
+        $codes = collect($res['entries'])->pluck('code')->toArray();
+
+        $this->assertTrue(array_search('PT-DOC-001', $codes) === array_search('HD-DOC-001', $codes) + 1);
+    }
+
+    public function test_multiple_payments_under_invoice_sorted_by_sequence(): void
+    {
+        $customer = $this->createTestCustomer();
+        $baseDate = Carbon::today();
+
+        $invoice = Invoice::create([
+            'code' => 'HD-DOC-001',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 2000000,
+            'customer_paid' => 2000000,
+            'transaction_date' => $baseDate->copy()->setTime(8, 0, 0),
+            'created_at' => $baseDate->copy()->setTime(8, 0, 0),
+        ]);
+
+        $pt1 = CashFlow::create([
+            'code' => 'PT1',
+            'type' => 'receipt',
+            'amount' => 500000,
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer->id,
+            'target_name' => $customer->name,
+            'reference_type' => 'Invoice',
+            'reference_code' => 'HD-DOC-001',
+            'status' => 'active',
+            'time' => $baseDate->copy()->setTime(9, 0, 0),
+            'created_at' => $baseDate->copy()->setTime(9, 0, 0),
+        ]);
+
+        $pt2 = CashFlow::create([
+            'code' => 'PT2',
+            'type' => 'receipt',
+            'amount' => 500000,
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer->id,
+            'target_name' => $customer->name,
+            'reference_type' => 'Invoice',
+            'reference_code' => 'HD-DOC-001',
+            'status' => 'active',
+            'time' => $baseDate->copy()->setTime(10, 0, 0),
+            'created_at' => $baseDate->copy()->setTime(10, 0, 0),
+        ]);
+
+        $pt3 = CashFlow::create([
+            'code' => 'PT3',
+            'type' => 'receipt',
+            'amount' => 1000000,
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer->id,
+            'target_name' => $customer->name,
+            'reference_type' => 'Invoice',
+            'reference_code' => 'HD-DOC-001',
+            'status' => 'active',
+            'time' => $baseDate->copy()->setTime(11, 0, 0),
+            'created_at' => $baseDate->copy()->setTime(11, 0, 0),
+        ]);
+
+        // Standalone receipt / other entry
+        $other = CashFlow::create([
+            'code' => 'OTHER',
+            'type' => 'receipt',
+            'amount' => 100000,
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer->id,
+            'target_name' => $customer->name,
+            'status' => 'active',
+            'time' => $baseDate->copy()->setTime(10, 30, 0),
+            'created_at' => $baseDate->copy()->setTime(10, 30, 0),
+        ]);
+
+        $res = $this->service->build($customer);
+        $codes = collect($res['entries'])->pluck('code')->toArray();
+
+        // Expected: group latest time for invoice group is 11:00, which is > other (10:30).
+        // So entire group is displayed before OTHER:
+        // HD-DOC-001, PT1, PT2, PT3, OTHER
+        $this->assertEquals(['HD-DOC-001', 'PT1', 'PT2', 'PT3', 'OTHER'], $codes);
+    }
+
+    public function test_include_technical_only_for_audit_debug(): void
+    {
+        $customer = $this->createTestCustomer();
+        
+        CustomerDebt::create([
+            'customer_id' => $customer->id,
+            'ref_code' => 'MERGE-CUSTOMER-239',
+            'amount' => 2000000,
+            'debt_total' => 2000000,
+            'type' => 'adjustment',
+            'recorded_at' => Carbon::now(),
+        ]);
+
+        // Default: excluded
+        $resDefault = $this->service->build($customer);
+        $this->assertNull(collect($resDefault['entries'])->firstWhere('code', 'MERGE-CUSTOMER-239'));
+
+        // Explicit: included
+        $resExplicit = $this->service->build($customer, ['include_technical' => true]);
+        $this->assertNotNull(collect($resExplicit['entries'])->firstWhere('code', 'MERGE-CUSTOMER-239'));
     }
 }

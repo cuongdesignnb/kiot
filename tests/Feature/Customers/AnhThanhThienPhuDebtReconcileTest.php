@@ -85,7 +85,7 @@ class AnhThanhThienPhuDebtReconcileTest extends TestCase
         }
 
         // 1) Test customer debt-history API
-        $response = $this->actingAs($this->admin)->getJson("/customers/{$partner->id}/debt-history");
+        $response = $this->actingAs($this->admin)->getJson("/customers/{$partner->id}/debt-history?include_technical=1");
         $response->assertOk();
         $data = $response->json();
 
