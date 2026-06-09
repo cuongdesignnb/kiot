@@ -341,16 +341,20 @@ class AuditDocumentDebtTimelineCommand extends Command
 
     private function auditPartner(Customer $partner, string $view): array
     {
-        $service = app(CustomerDebtDocumentTimelineService::class);
+        if ($view === 'supplier') {
+            $service = app(\App\Services\SupplierDebtDocumentTimelineService::class);
+        } else {
+            $service = app(\App\Services\CustomerDebtDocumentTimelineService::class);
+        }
         $timeline = $service->build($partner);
 
         $entries = collect($timeline['entries'] ?? []);
         $threshold = (float) $this->option('threshold');
 
-        $documentFinal = (float) ($timeline['summary']['document_final_balance'] ?? 0.0);
-        $storedNet = (float) (($partner->debt_amount ?? 0) - ($partner->supplier_debt_amount ?? 0));
-        $difference = $documentFinal - $storedNet;
-        $isMismatch = abs($difference) > $threshold;
+        $documentFinal = (float) ($timeline['reconcile']['document_balance'] ?? $timeline['summary']['document_final_balance'] ?? 0.0);
+        $storedNet = (float) ($timeline['reconcile']['stored_balance'] ?? 0.0);
+        $difference = (float) ($timeline['reconcile']['difference'] ?? ($documentFinal - $storedNet));
+        $isMismatch = (bool) ($timeline['reconcile']['has_mismatch'] ?? (abs($difference) > $threshold));
 
         $risks = [];
         $mergeRows = 0;
@@ -401,25 +405,7 @@ class AuditDocumentDebtTimelineCommand extends Command
             ];
         }
 
-        if ($view === 'supplier') {
-            $risks[] = [
-                'severity' => 'warning',
-                'risk' => 'supplier_document_timeline_not_implemented',
-                'view' => $view,
-                'partner_id' => $partner->id,
-                'partner_code' => $partner->code,
-                'partner_name' => $partner->name,
-                'document_code' => null,
-                'document_type' => 'supplier_timeline',
-                'amount' => 0.0,
-                'running_balance' => null,
-                'stored_balance' => null,
-                'document_final_balance' => $documentFinal,
-                'difference' => $difference,
-                'message' => "Supplier document timeline chưa có service riêng, đang chạy fallback.",
-                'suggested_action' => 'manual_review',
-            ];
-        }
+
 
         if ($entries->isEmpty()) {
             $risks[] = [

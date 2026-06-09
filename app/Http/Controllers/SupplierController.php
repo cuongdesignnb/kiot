@@ -676,10 +676,16 @@ class SupplierController extends Controller
         $isDualRole = (bool) $supplier->is_customer;
         $usePartnerTimeline = $isDualRole && (string) $request->input('view', '') === 'partner';
 
-        $ledgerService = app(\App\Services\PartnerDebtLedgerService::class);
-        $ledger = $usePartnerTimeline
-            ? $ledgerService->buildSupplierDualRolePartnerTimeline($supplier)
-            : $ledgerService->buildSupplierPayableLedger($supplier);
+        $mode = $request->query('mode', 'document');
+
+        if ($mode === 'legacy') {
+            $ledgerService = app(\App\Services\PartnerDebtLedgerService::class);
+            $ledger = $usePartnerTimeline
+                ? $ledgerService->buildSupplierDualRolePartnerTimeline($supplier)
+                : $ledgerService->buildSupplierPayableLedger($supplier);
+        } else {
+            $ledger = app(\App\Services\SupplierDebtDocumentTimelineService::class)->build($supplier, $request->all());
+        }
 
         // HOTFIX FOLLOW-UP — opt-in server-side pagination matching
         // KiotViet (10 rows per page). Caller activates by sending
