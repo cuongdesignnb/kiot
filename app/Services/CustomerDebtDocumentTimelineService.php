@@ -123,9 +123,13 @@ class CustomerDebtDocumentTimelineService
                     'time' => $businessTime,
                     'display_time' => $businessTime,
                     'created_at' => $cf->created_at,
-                    'reference_type' => 'InvoicePayment',
+                    'reference_type' => 'Invoice',
                     'reference_id' => $invoice ? $invoice->id : null,
                     'reference_code' => $refCode,
+                    'parent_document_code' => $refCode,
+                    'payment_for_code' => $refCode,
+                    'linked_document_code' => $refCode,
+                    'linked_document_label' => 'Thanh toán cho ' . $refCode,
                     'detail_available' => true,
                     'detail_modal_type' => 'cash_flow',
                     'detail_reference_id' => $cf->id,
@@ -171,6 +175,10 @@ class CustomerDebtDocumentTimelineService
                         'reference_type' => 'Invoice',
                         'reference_id' => $invoice->id,
                         'reference_code' => $invoice->code,
+                        'parent_document_code' => $invoice->code,
+                        'payment_for_code' => $invoice->code,
+                        'linked_document_code' => $invoice->code,
+                        'linked_document_label' => 'Thanh toán cho ' . $invoice->code,
                         'is_virtual_fallback' => true,
                         'is_virtual_payment' => true,
                         'is_real_voucher' => false,
@@ -753,95 +761,112 @@ class CustomerDebtDocumentTimelineService
 
         // Add sorting group metadata to all entries
         $entries = $entries->map(function (array $entry) use ($invoices, $purchases) {
-            if (isset($entry['sort_group_time']) && isset($entry['sort_group_key'])) {
+            $ownTime = $entry['display_time'] ?? $entry['time'] ?? $entry['created_at'] ?? null;
+            $ownTimeCarbon = $ownTime instanceof Carbon ? $ownTime : ($ownTime ? Carbon::parse($ownTime) : Carbon::now());
+
+            $entry['event_time'] = $ownTimeCarbon;
+            $entry['event_sort_time'] = $this->normalizeSortableTime($ownTimeCarbon);
+
+            $eventKind = $entry['event_kind'] ?? '';
+            $type = $entry['reference_type'] ?? '';
+
+            // Default orders
+            $balanceOrder = 10;
+            $displayOrder = 50;
+
+            if (str_contains($eventKind, 'opening') || str_contains($eventKind, 'virtual_opening') || $eventKind === 'opening_balance') {
+                $balanceOrder = 1;
+                $displayOrder = 40;
+            } elseif (in_array($eventKind, ['invoice', 'customer_sale'], true) || $type === 'Invoice') {
+                $balanceOrder = 10;
+                $displayOrder = 50;
+            } elseif (in_array($eventKind, ['purchase'], true) || $type === 'Purchase') {
+                $balanceOrder = 10;
+                $displayOrder = 50;
+            } elseif (in_array($eventKind, ['sales_return', 'purchase_return'], true) || $type === 'OrderReturn' || $type === 'PurchaseReturn') {
+                $balanceOrder = 20;
+                $displayOrder = 80;
+            } elseif (in_array($eventKind, ['invoice_payment', 'invoice_payment_fallback', 'supplier_payment', 'supplier_payment_fallback', 'customer_payment', 'refund'], true)) {
+                $balanceOrder = 30;
+                $displayOrder = 90;
+            } elseif (str_contains($eventKind, 'adjustment') || $type === 'CustomerDebt' || $type === 'SupplierDebtTransaction') {
+                $balanceOrder = 40;
+                $displayOrder = 40;
+            }
+
+            $entry['balance_order'] = $balanceOrder;
+            $entry['display_order'] = $displayOrder;
+
+            // Keep setting group metadata for backward compatibility (but not sorting)
+            if (!isset($entry['sort_group_time']) || !isset($entry['sort_group_key'])) {
+                $sortGroupTime = $ownTimeCarbon;
+                $sortGroupKey = $entry['code'] ?: $entry['id'];
+                $sortGroupSequence = (int) ($entry['display_sequence'] ?? 50);
+
+                $refCode = $entry['reference_code'] ?? null;
+
+                if (in_array($eventKind, ['invoice_payment', 'invoice_payment_fallback'], true) && $refCode) {
+                    $parentInvoice = $invoices->firstWhere('code', $refCode);
+                    if ($parentInvoice) {
+                        $parentTime = $parentInvoice->transaction_date ?: $parentInvoice->created_at;
+                        $sortGroupTime = $parentTime instanceof Carbon ? $parentTime : Carbon::parse($parentTime);
+                        $sortGroupKey = $parentInvoice->code;
+                    }
+                }
+
+                if (in_array($eventKind, ['supplier_payment', 'supplier_payment_fallback'], true) && $refCode) {
+                    $parentPurchase = $purchases->firstWhere('code', $refCode);
+                    if ($parentPurchase) {
+                        $parentTime = $parentPurchase->purchase_date ?: $parentPurchase->created_at;
+                        $sortGroupTime = $parentTime instanceof Carbon ? $parentTime : Carbon::parse($parentTime);
+                        $sortGroupKey = $parentPurchase->code;
+                    }
+                }
+
+                $groupTimeStr = $sortGroupTime->toIso8601String();
+                $entry['sort_group_time'] = $groupTimeStr;
+                $entry['sort_group_key'] = (string) $sortGroupKey;
+                $entry['sort_group_sequence'] = $sortGroupSequence;
+
+                // Group-first KiotViet metadata fields
+                $entry['document_group_key'] = (string) $sortGroupKey;
+                $entry['document_group_type'] = (in_array($eventKind, ['invoice_payment', 'invoice_payment_fallback', 'customer_sale'], true) || $entry['reference_type'] === 'Invoice') ? 'invoice' : ((in_array($eventKind, ['supplier_payment', 'supplier_payment_fallback', 'purchase'], true) || $entry['reference_type'] === 'Purchase') ? 'purchase' : 'other');
+                $entry['document_group_parent_code'] = (string) $sortGroupKey;
+                $entry['document_group_time'] = $groupTimeStr;
+                $entry['document_group_sequence'] = $sortGroupSequence;
+            } else {
                 if ($entry['sort_group_time'] instanceof Carbon) {
                     $entry['sort_group_time'] = $entry['sort_group_time']->toIso8601String();
                 }
                 if ($entry['document_group_time'] instanceof Carbon) {
                     $entry['document_group_time'] = $entry['document_group_time']->toIso8601String();
                 }
-                return $entry;
             }
 
-            $ownTime = $entry['display_time'] ?: $entry['time'] ?: $entry['created_at'];
-            $ownTimeCarbon = $ownTime instanceof Carbon ? $ownTime : Carbon::parse($ownTime);
-            
-            $sortGroupTime = $ownTimeCarbon;
-            $sortGroupKey = $entry['code'] ?: $entry['id'];
-            $sortGroupSequence = (int) ($entry['display_sequence'] ?? 50);
-
-            $refCode = $entry['reference_code'] ?? null;
-            $eventKind = $entry['event_kind'] ?? '';
-            
-            // If it's a payment receipt or virtual payment belonging to an invoice:
-            if (in_array($eventKind, ['invoice_payment', 'invoice_payment_fallback'], true) && $refCode) {
-                $parentInvoice = $invoices->firstWhere('code', $refCode);
-                if ($parentInvoice) {
-                    $parentTime = $parentInvoice->transaction_date ?: $parentInvoice->created_at;
-                    $sortGroupTime = $parentTime instanceof Carbon ? $parentTime : Carbon::parse($parentTime);
-                    $sortGroupKey = $parentInvoice->code;
-                }
-            }
-            
-            // If it's a supplier payment belonging to a purchase:
-            if (in_array($eventKind, ['supplier_payment', 'supplier_payment_fallback'], true) && $refCode) {
-                $parentPurchase = $purchases->firstWhere('code', $refCode);
-                if ($parentPurchase) {
-                    $parentTime = $parentPurchase->purchase_date ?: $parentPurchase->created_at;
-                    $sortGroupTime = $parentTime instanceof Carbon ? $parentTime : Carbon::parse($parentTime);
-                    $sortGroupKey = $parentPurchase->code;
-                }
-            }
-
-            $groupTimeStr = $sortGroupTime->toIso8601String();
-            $entry['sort_group_time'] = $groupTimeStr;
-            $entry['sort_group_key'] = (string) $sortGroupKey;
-            $entry['sort_group_sequence'] = $sortGroupSequence;
-
-            // Group-first KiotViet metadata fields
-            $entry['document_group_key'] = (string) $sortGroupKey;
-            $entry['document_group_type'] = (in_array($eventKind, ['invoice_payment', 'invoice_payment_fallback', 'customer_sale'], true) || $entry['reference_type'] === 'Invoice') ? 'invoice' : ((in_array($eventKind, ['supplier_payment', 'supplier_payment_fallback', 'purchase'], true) || $entry['reference_type'] === 'Purchase') ? 'purchase' : 'other');
-            $entry['document_group_parent_code'] = (string) $sortGroupKey;
-            $entry['document_group_time'] = $groupTimeStr;
-            $entry['document_group_sequence'] = $sortGroupSequence;
-            
             return $entry;
         });
-
-        $entries = $this->applyDocumentGroupLatestTime($entries);
 
         // Sort ASC for running balance calculation
         $sortedAsc = collect($entries)
             ->sort(function (array $a, array $b) {
                 $timeCompare = strcmp(
-                    (string) ($a['sort_group_latest_time'] ?? ''),
-                    (string) ($b['sort_group_latest_time'] ?? '')
+                    (string) ($a['event_sort_time'] ?? ''),
+                    (string) ($b['event_sort_time'] ?? '')
                 );
 
                 if ($timeCompare !== 0) {
                     return $timeCompare;
                 }
 
-                $groupCompare = strcmp(
-                    (string) ($a['sort_group_key'] ?? $a['code'] ?? ''),
-                    (string) ($b['sort_group_key'] ?? $b['code'] ?? '')
-                );
+                // Tie-breaker ASC để nếu cùng thời điểm, chứng từ phát sinh nợ đứng trước thanh toán.
+                $balanceOrderCompare = ((int) ($a['balance_order'] ?? $a['event_order'] ?? 999))
+                    <=> ((int) ($b['balance_order'] ?? $b['event_order'] ?? 999));
 
-                if ($groupCompare !== 0) {
-                    return $groupCompare;
+                if ($balanceOrderCompare !== 0) {
+                    return $balanceOrderCompare;
                 }
 
-                $sequenceCompare = ((int) ($a['sort_group_sequence'] ?? 999))
-                    <=> ((int) ($b['sort_group_sequence'] ?? 999));
-
-                if ($sequenceCompare !== 0) {
-                    return $sequenceCompare;
-                }
-
-                return strcmp(
-                    (string) ($a['time'] ?? ''),
-                    (string) ($b['time'] ?? '')
-                );
+                return strcmp((string) ($a['code'] ?? ''), (string) ($b['code'] ?? ''));
             })
             ->values();
 
@@ -872,25 +897,23 @@ class CustomerDebtDocumentTimelineService
         $displayEntries = $sorted
             ->sort(function (array $a, array $b) {
                 $timeCompare = strcmp(
-                    (string) ($b['sort_group_latest_time'] ?? ''),
-                    (string) ($a['sort_group_latest_time'] ?? '')
+                    (string) ($b['event_sort_time'] ?? ''),
+                    (string) ($a['event_sort_time'] ?? '')
                 );
 
                 if ($timeCompare !== 0) {
                     return $timeCompare;
                 }
 
-                $groupCompare = strcmp(
-                    (string) ($b['sort_group_key'] ?? $b['code'] ?? ''),
-                    (string) ($a['sort_group_key'] ?? $a['code'] ?? '')
-                );
+                // Display tie-breaker DESC để phiếu thanh toán cùng timestamp có thể nằm trên hóa đơn như Kiot.
+                $displayOrderCompare = ((int) ($b['display_order'] ?? $b['event_order'] ?? 0))
+                    <=> ((int) ($a['display_order'] ?? $a['event_order'] ?? 0));
 
-                if ($groupCompare !== 0) {
-                    return $groupCompare;
+                if ($displayOrderCompare !== 0) {
+                    return $displayOrderCompare;
                 }
 
-                return ((int) ($a['sort_group_sequence'] ?? 999))
-                    <=> ((int) ($b['sort_group_sequence'] ?? 999));
+                return strcmp((string) ($b['code'] ?? ''), (string) ($a['code'] ?? ''));
             })
             ->values();
 
@@ -1088,29 +1111,6 @@ class CustomerDebtDocumentTimelineService
             || str_starts_with($code, 'OPENING-BALANCE-SUPPLIER-');
     }
 
-    private function applyDocumentGroupLatestTime(Collection $entries): Collection
-    {
-        $groupLatestTimes = $entries
-            ->filter(fn (array $entry) => !empty($entry['sort_group_key']))
-            ->groupBy(fn (array $entry) => (string) $entry['sort_group_key'])
-            ->map(function (Collection $group) {
-                return $group
-                    ->map(fn (array $entry) => $this->normalizeSortableTime(
-                        $entry['time'] ?? $entry['display_time'] ?? $entry['created_at'] ?? null
-                    ))
-                    ->filter()
-                    ->max();
-            });
-
-        return $entries->map(function (array $entry) use ($groupLatestTimes) {
-            $groupKey = (string) ($entry['sort_group_key'] ?? $entry['code'] ?? '');
-
-            $entry['sort_group_latest_time'] = $groupLatestTimes[$groupKey]
-                ?? $this->normalizeSortableTime($entry['time'] ?? $entry['display_time'] ?? $entry['created_at'] ?? null);
-
-            return $entry;
-        });
-    }
 
     private function normalizeSortableTime($value): string
     {

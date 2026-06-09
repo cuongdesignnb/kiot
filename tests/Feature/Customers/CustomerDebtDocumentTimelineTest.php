@@ -713,13 +713,13 @@ class CustomerDebtDocumentTimelineTest extends TestCase
         $res = $this->service->build($customer);
         $entries = collect($res['entries']);
 
-        // Assert they are in this exact display order:
-        // 1. HD-DOC-GRP1 (parent invoice, since latest activity subHours(1) is newer than return subHours(3))
-        // 2. PT-DOC-GRP1 (payment receipt grouped right after parent)
-        // 3. TH-DOC-GRP1 (older return group)
+        // Assert they are in event time DESC display order:
+        // 1. PT-DOC-GRP1 (subHours(1))
+        // 2. TH-DOC-GRP1 (subHours(3))
+        // 3. HD-DOC-GRP1 (subHours(5))
         
         $codes = $entries->pluck('code')->toArray();
-        $this->assertEquals(['HD-DOC-GRP1', 'PT-DOC-GRP1', 'TH-DOC-GRP1'], $codes);
+        $this->assertEquals(['PT-DOC-GRP1', 'TH-DOC-GRP1', 'HD-DOC-GRP1'], $codes);
     }
 
     public function test_multiple_payments_stay_under_invoice(): void
@@ -782,9 +782,10 @@ class CustomerDebtDocumentTimelineTest extends TestCase
         $res = $this->service->build($customer);
         $entries = collect($res['entries']);
 
-        // Assert they are grouped and sorted: HD, then PT1, PT2, PT3
+        // Assert they are in event time DESC display order:
+        // PT-GRP2-3 (subHours(4)), PT-GRP2-2 (subHours(6)), PT-GRP2-1 (subHours(8)), HD-DOC-GRP2 (subHours(10))
         $codes = $entries->pluck('code')->toArray();
-        $this->assertEquals(['HD-DOC-GRP2', 'PT-GRP2-1', 'PT-GRP2-2', 'PT-GRP2-3'], $codes);
+        $this->assertEquals(['PT-GRP2-3', 'PT-GRP2-2', 'PT-GRP2-1', 'HD-DOC-GRP2'], $codes);
     }
 
     public function test_merge_customer_excluded_from_document_balance(): void
@@ -898,7 +899,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
         $this->assertSame(800000.0, (float) $res['summary']['document_final_balance']);
     }
 
-    public function test_invoice_group_is_sorted_by_latest_payment_time_but_invoice_row_stays_before_payment(): void
+    public function test_document_timeline_displays_by_event_time_desc_like_kiotviet(): void
     {
         $customer = $this->createTestCustomer([
             'is_supplier' => true,
@@ -906,7 +907,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
 
         $baseDate = Carbon::today();
         
-        $invoice = Invoice::create([
+        Invoice::create([
             'code' => 'HD-DOC-001',
             'customer_id' => $customer->id,
             'status' => 'Hoàn thành',
@@ -916,7 +917,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
             'created_at' => $baseDate->copy()->setTime(8, 53, 0),
         ]);
 
-        $receipt = CashFlow::create([
+        CashFlow::create([
             'code' => 'PT-DOC-001',
             'type' => 'receipt',
             'amount' => 500000,
@@ -930,7 +931,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
             'created_at' => $baseDate->copy()->setTime(16, 12, 0),
         ]);
 
-        $purchase = Purchase::create([
+        Purchase::create([
             'code' => 'PN-DOC-001',
             'supplier_id' => $customer->id,
             'total_amount' => 40000,
@@ -945,19 +946,19 @@ class CustomerDebtDocumentTimelineTest extends TestCase
         $entries = collect($res['entries']);
         $codes = $entries->pluck('code')->toArray();
 
-        // Expected display order (DESC): HD-DOC-001, PT-DOC-001, PN-DOC-001
-        $this->assertEquals(['HD-DOC-001', 'PT-DOC-001', 'PN-DOC-001'], $codes);
+        // Expected display order (DESC by event time):
+        // 1. PT-DOC-001 (16:12)
+        // 2. PN-DOC-001 (15:54)
+        // 3. HD-DOC-001 (08:53)
+        $this->assertEquals(['PT-DOC-001', 'PN-DOC-001', 'HD-DOC-001'], $codes);
     }
 
-    public function test_payment_immediately_after_invoice(): void
+    public function test_payment_keeps_parent_invoice_reference(): void
     {
-        $customer = $this->createTestCustomer([
-            'is_supplier' => true,
-        ]);
-
+        $customer = $this->createTestCustomer();
         $baseDate = Carbon::today();
         
-        $invoice = Invoice::create([
+        Invoice::create([
             'code' => 'HD-DOC-001',
             'customer_id' => $customer->id,
             'status' => 'Hoàn thành',
@@ -967,7 +968,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
             'created_at' => $baseDate->copy()->setTime(8, 53, 0),
         ]);
 
-        $receipt = CashFlow::create([
+        CashFlow::create([
             'code' => 'PT-DOC-001',
             'type' => 'receipt',
             'amount' => 500000,
@@ -982,28 +983,32 @@ class CustomerDebtDocumentTimelineTest extends TestCase
         ]);
 
         $res = $this->service->build($customer);
-        $codes = collect($res['entries'])->pluck('code')->toArray();
+        $entries = collect($res['entries']);
+        $ptEntry = $entries->firstWhere('code', 'PT-DOC-001');
 
-        $this->assertTrue(array_search('PT-DOC-001', $codes) === array_search('HD-DOC-001', $codes) + 1);
+        $this->assertNotNull($ptEntry);
+        $this->assertEquals('HD-DOC-001', $ptEntry['reference_code'] ?? null);
+        $this->assertEquals('HD-DOC-001', $ptEntry['payment_for_code'] ?? null);
+        $this->assertEquals('HD-DOC-001', $ptEntry['linked_document_code'] ?? null);
     }
 
-    public function test_multiple_payments_under_invoice_sorted_by_sequence(): void
+    public function test_running_balance_uses_chronological_asc(): void
     {
         $customer = $this->createTestCustomer();
         $baseDate = Carbon::today();
-
-        $invoice = Invoice::create([
+        
+        Invoice::create([
             'code' => 'HD-DOC-001',
             'customer_id' => $customer->id,
             'status' => 'Hoàn thành',
-            'total' => 2000000,
-            'customer_paid' => 2000000,
-            'transaction_date' => $baseDate->copy()->setTime(8, 0, 0),
-            'created_at' => $baseDate->copy()->setTime(8, 0, 0),
+            'total' => 800000,
+            'customer_paid' => 500000,
+            'transaction_date' => $baseDate->copy()->setTime(8, 53, 0),
+            'created_at' => $baseDate->copy()->setTime(8, 53, 0),
         ]);
 
-        $pt1 = CashFlow::create([
-            'code' => 'PT1',
+        CashFlow::create([
+            'code' => 'PT-DOC-001',
             'type' => 'receipt',
             'amount' => 500000,
             'target_type' => 'Khách hàng',
@@ -1012,58 +1017,71 @@ class CustomerDebtDocumentTimelineTest extends TestCase
             'reference_type' => 'Invoice',
             'reference_code' => 'HD-DOC-001',
             'status' => 'active',
-            'time' => $baseDate->copy()->setTime(9, 0, 0),
-            'created_at' => $baseDate->copy()->setTime(9, 0, 0),
-        ]);
-
-        $pt2 = CashFlow::create([
-            'code' => 'PT2',
-            'type' => 'receipt',
-            'amount' => 500000,
-            'target_type' => 'Khách hàng',
-            'target_id' => $customer->id,
-            'target_name' => $customer->name,
-            'reference_type' => 'Invoice',
-            'reference_code' => 'HD-DOC-001',
-            'status' => 'active',
-            'time' => $baseDate->copy()->setTime(10, 0, 0),
-            'created_at' => $baseDate->copy()->setTime(10, 0, 0),
-        ]);
-
-        $pt3 = CashFlow::create([
-            'code' => 'PT3',
-            'type' => 'receipt',
-            'amount' => 1000000,
-            'target_type' => 'Khách hàng',
-            'target_id' => $customer->id,
-            'target_name' => $customer->name,
-            'reference_type' => 'Invoice',
-            'reference_code' => 'HD-DOC-001',
-            'status' => 'active',
-            'time' => $baseDate->copy()->setTime(11, 0, 0),
-            'created_at' => $baseDate->copy()->setTime(11, 0, 0),
-        ]);
-
-        // Standalone receipt / other entry
-        $other = CashFlow::create([
-            'code' => 'OTHER',
-            'type' => 'receipt',
-            'amount' => 100000,
-            'target_type' => 'Khách hàng',
-            'target_id' => $customer->id,
-            'target_name' => $customer->name,
-            'status' => 'active',
-            'time' => $baseDate->copy()->setTime(10, 30, 0),
-            'created_at' => $baseDate->copy()->setTime(10, 30, 0),
+            'time' => $baseDate->copy()->setTime(16, 12, 0),
+            'created_at' => $baseDate->copy()->setTime(16, 12, 0),
         ]);
 
         $res = $this->service->build($customer);
-        $codes = collect($res['entries'])->pluck('code')->toArray();
+        $entries = collect($res['entries']);
 
-        // Expected: group latest time for invoice group is 11:00, which is > other (10:30).
-        // So entire group is displayed before OTHER:
-        // HD-DOC-001, PT1, PT2, PT3, OTHER
-        $this->assertEquals(['HD-DOC-001', 'PT1', 'PT2', 'PT3', 'OTHER'], $codes);
+        // Sorted DESC in display, so PT-DOC-001 is index 0, HD-DOC-001 is index 1
+        $ptEntry = $entries->firstWhere('code', 'PT-DOC-001');
+        $hdEntry = $entries->firstWhere('code', 'HD-DOC-001');
+
+        $this->assertNotNull($ptEntry);
+        $this->assertNotNull($hdEntry);
+
+        // HD happens first (ASC): balance = 800000
+        $this->assertEquals(800000.0, (float) $hdEntry['customer_display_running_balance']);
+        // PT happens second (ASC): balance = 800000 - 500000 = 300000
+        $this->assertEquals(300000.0, (float) $ptEntry['customer_display_running_balance']);
+    }
+
+    public function test_same_timestamp_tie_breaker_resembles_kiotviet(): void
+    {
+        $customer = $this->createTestCustomer();
+        $baseDate = Carbon::today();
+        $sameTime = $baseDate->copy()->setTime(14, 21, 0);
+
+        Invoice::create([
+            'code' => 'HD-DOC-001',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 800000,
+            'customer_paid' => 500000,
+            'transaction_date' => $sameTime,
+            'created_at' => $sameTime,
+        ]);
+
+        CashFlow::create([
+            'code' => 'PT-DOC-001',
+            'type' => 'receipt',
+            'amount' => 500000,
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer->id,
+            'target_name' => $customer->name,
+            'reference_type' => 'Invoice',
+            'reference_code' => 'HD-DOC-001',
+            'status' => 'active',
+            'time' => $sameTime,
+            'created_at' => $sameTime,
+        ]);
+
+        $res = $this->service->build($customer);
+        $entries = collect($res['entries']);
+        $codes = $entries->pluck('code')->toArray();
+
+        // Expected display (DESC) with same timestamp: PT-DOC-001 has display_order = 90, HD-DOC-001 has 50.
+        // So PT-DOC-001 is displayed above HD-DOC-001.
+        $this->assertEquals(['PT-DOC-001', 'HD-DOC-001'], $codes);
+
+        $ptEntry = $entries->firstWhere('code', 'PT-DOC-001');
+        $hdEntry = $entries->firstWhere('code', 'HD-DOC-001');
+
+        // Expected chronological balance (ASC): HD-DOC-001 has balance_order = 10, PT-DOC-001 has 30.
+        // HD is calculated first (+800k), PT second (-500k).
+        $this->assertEquals(800000.0, (float) $hdEntry['customer_display_running_balance']);
+        $this->assertEquals(300000.0, (float) $ptEntry['customer_display_running_balance']);
     }
 
     public function test_include_technical_only_for_audit_debug(): void

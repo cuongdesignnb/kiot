@@ -2431,6 +2431,9 @@ const createdDateRange = computed({
                                                                 class="px-3 py-2"
                                                             >
                                                                 <span>{{ entry.display_type || entry.type }}</span>
+                                                                <div class="text-xs text-gray-500 font-medium" v-if="entry.payment_for_code">
+                                                                    Cho {{ entry.payment_for_code }}
+                                                                </div>
                                                                 <span
                                                                     v-if="customerDebtEntryBadge(entry)"
                                                                     class="ml-1 inline-block text-[10px] font-semibold border px-1.5 py-0.5 rounded"
