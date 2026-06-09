@@ -63,6 +63,14 @@ class CustomerDebtDocumentTimelineService
                 'is_real_voucher' => true,
                 'is_virtual_fallback' => false,
                 'source' => 'document_first',
+                'document_group_key' => $invoice->code,
+                'document_group_type' => 'invoice',
+                'document_group_parent_code' => $invoice->code,
+                'document_group_time' => $businessTime,
+                'document_group_sequence' => 10,
+                'sort_group_key' => $invoice->code,
+                'sort_group_time' => $businessTime,
+                'sort_group_sequence' => 10,
                 'debug' => [
                     'document_source' => 'invoices',
                     'invoice_total' => (float) $invoice->total,
@@ -98,9 +106,10 @@ class CustomerDebtDocumentTimelineService
             $invoicePaid = $invoice ? (float) $invoice->customer_paid : 0.0;
             $receiptTotal = (float) collect($cfs)->sum('amount');
             $mismatch = abs($receiptTotal - $invoicePaid) > 0.01;
-
-            foreach ($cfs as $cf) {
+ 
+            foreach ($cfs as $index => $cf) {
                 $businessTime = $cf->time ?: $cf->created_at;
+                $invoiceTime = $invoice ? ($invoice->transaction_date ?: $invoice->created_at) : ($cf->time ?: $cf->created_at);
                 $entries->push($this->createEntry([
                     'id' => 'cash_flow-' . $cf->id,
                     'code' => $cf->code,
@@ -128,6 +137,14 @@ class CustomerDebtDocumentTimelineService
                     'receipt_allocation_mismatch' => $mismatch,
                     'needs_manual_review' => $mismatch,
                     'source' => 'document_first',
+                    'document_group_key' => $refCode,
+                    'document_group_type' => 'invoice',
+                    'document_group_parent_code' => $refCode,
+                    'document_group_time' => $invoiceTime,
+                    'document_group_sequence' => 20 + $index,
+                    'sort_group_key' => $refCode,
+                    'sort_group_time' => $invoiceTime,
+                    'sort_group_sequence' => 20 + $index,
                 ]));
             }
         }
@@ -162,6 +179,14 @@ class CustomerDebtDocumentTimelineService
                         'badge_label' => 'Tạm tính',
                         'badge_title' => 'Tạm tính từ hóa đơn — chưa tìm thấy phiếu thu thật.',
                         'source' => 'document_first',
+                        'document_group_key' => $invoice->code,
+                        'document_group_type' => 'invoice',
+                        'document_group_parent_code' => $invoice->code,
+                        'document_group_time' => $businessTime,
+                        'document_group_sequence' => 20,
+                        'sort_group_key' => $invoice->code,
+                        'sort_group_time' => $businessTime,
+                        'sort_group_sequence' => 20,
                     ]));
                 }
             }
@@ -319,17 +344,22 @@ class CustomerDebtDocumentTimelineService
                 continue;
             }
 
-            $isTech = $this->isTechnicalLedgerCode($refCode, $customer);
-            if ($isTech) {
+            $hasInvoices = Invoice::where('customer_id', $customer->id)
+                ->where(function($q) {
+                    $q->whereNull('status')->orWhere('status', '!=', 'Đã hủy');
+                })
+                ->exists();
+
+            if ($hasInvoices && $this->isTechnicalLedgerCode($refCode)) {
                 $excludedLedgerEntries[] = [
                     'code' => $refCode,
                     'amount' => (float) $debt->amount,
                     'reason' => 'technical_ledger_excluded_from_document_timeline',
                 ];
-                if (!$includeTechnical) {
-                    continue;
-                }
+                continue;
             }
+
+            $isTech = false;
 
             $businessTime = $debt->recorded_at ?: $debt->created_at;
             [$displayType, $eventKind, $badgeLabel] = $this->classifyCustomerDebt($debt);
@@ -728,6 +758,16 @@ class CustomerDebtDocumentTimelineService
 
         // Add sorting group metadata to all entries
         $entries = $entries->map(function (array $entry) use ($invoices, $purchases) {
+            if (isset($entry['sort_group_time']) && isset($entry['sort_group_key'])) {
+                if ($entry['sort_group_time'] instanceof Carbon) {
+                    $entry['sort_group_time'] = $entry['sort_group_time']->toIso8601String();
+                }
+                if ($entry['document_group_time'] instanceof Carbon) {
+                    $entry['document_group_time'] = $entry['document_group_time']->toIso8601String();
+                }
+                return $entry;
+            }
+
             $ownTime = $entry['display_time'] ?: $entry['time'] ?: $entry['created_at'];
             $ownTimeCarbon = $ownTime instanceof Carbon ? $ownTime : Carbon::parse($ownTime);
             
@@ -758,53 +798,58 @@ class CustomerDebtDocumentTimelineService
                 }
             }
 
-            $entry['sort_group_time'] = $sortGroupTime->toIso8601String();
+            $groupTimeStr = $sortGroupTime->toIso8601String();
+            $entry['sort_group_time'] = $groupTimeStr;
             $entry['sort_group_key'] = (string) $sortGroupKey;
             $entry['sort_group_sequence'] = $sortGroupSequence;
+
+            // Group-first KiotViet metadata fields
+            $entry['document_group_key'] = (string) $sortGroupKey;
+            $entry['document_group_type'] = (in_array($eventKind, ['invoice_payment', 'invoice_payment_fallback', 'customer_sale'], true) || $entry['reference_type'] === 'Invoice') ? 'invoice' : ((in_array($eventKind, ['supplier_payment', 'supplier_payment_fallback', 'purchase'], true) || $entry['reference_type'] === 'Purchase') ? 'purchase' : 'other');
+            $entry['document_group_parent_code'] = (string) $sortGroupKey;
+            $entry['document_group_time'] = $groupTimeStr;
+            $entry['document_group_sequence'] = $sortGroupSequence;
             
             return $entry;
         });
 
         // Sort ASC for running balance calculation
-        $sortedAsc = $entries->sort(function ($a, $b) {
-            $compGroupTime = strcmp((string)($a['sort_group_time'] ?? ''), (string)($b['sort_group_time'] ?? ''));
-            if ($compGroupTime !== 0) {
-                return $compGroupTime;
-            }
-            
-            $compGroupKey = strcmp((string)($a['sort_group_key'] ?? ''), (string)($b['sort_group_key'] ?? ''));
-            if ($compGroupKey !== 0) {
-                return $compGroupKey;
-            }
-            
-            $compSeq = ((int)($a['sort_group_sequence'] ?? 999)) <=> ((int)($b['sort_group_sequence'] ?? 999));
-            if ($compSeq !== 0) {
-                return $compSeq;
-            }
+        $sortedAsc = collect($entries)
+            ->sort(function (array $a, array $b) {
+                $timeCompare = strcmp((string)($a['sort_group_time'] ?? $a['time'] ?? ''), (string)($b['sort_group_time'] ?? $b['time'] ?? ''));
 
-            $timeA = $a['display_time'] instanceof Carbon ? $a['display_time'] : Carbon::parse($a['display_time']);
-            $timeB = $b['display_time'] instanceof Carbon ? $b['display_time'] : Carbon::parse($b['display_time']);
-            $compTime = $timeA->timestamp <=> $timeB->timestamp;
-            if ($compTime !== 0) {
-                return $compTime;
-            }
-            
-            return strcmp((string)$a['id'], (string)$b['id']);
-        })->values();
+                if ($timeCompare !== 0) {
+                    return $timeCompare;
+                }
+
+                $groupCompare = strcmp((string)($a['sort_group_key'] ?? $a['code'] ?? ''), (string)($b['sort_group_key'] ?? $b['code'] ?? ''));
+
+                if ($groupCompare !== 0) {
+                    return $groupCompare;
+                }
+
+                $sequenceCompare = ((int)($a['sort_group_sequence'] ?? 999)) <=> ((int)($b['sort_group_sequence'] ?? 999));
+
+                if ($sequenceCompare !== 0) {
+                    return $sequenceCompare;
+                }
+
+                return strcmp((string)($a['time'] ?? ''), (string)($b['time'] ?? ''));
+            })
+            ->values();
 
         // Calculate chronological running balance
         $running = 0.0;
         $sorted = $sortedAsc->map(function (array $entry) use (&$running) {
-            $effect = (float) ($entry['customer_display_effect']
-                ?? $entry['display_effect']
-                ?? $entry['amount']
-                ?? 0);
+            $effect = (float) ($entry['customer_display_effect'] ?? $entry['display_effect'] ?? $entry['amount'] ?? 0);
 
-            $affects = (bool) ($entry['affects_document_balance'] ?? $entry['affects_debt_balance'] ?? true);
-
-            if ($affects) {
-                $running += $effect;
+            if (($entry['affects_document_balance'] ?? true) === false) {
+                $entry['customer_display_running_balance'] = $running;
+                $entry['running_balance'] = $running;
+                return $entry;
             }
+
+            $running += $effect;
 
             $entry['customer_display_effect'] = $effect;
             $entry['display_effect'] = (float) ($entry['display_effect'] ?? $effect);
@@ -817,33 +862,23 @@ class CustomerDebtDocumentTimelineService
         $documentFinalBalance = $running;
 
         // Sort DESC for display
-        $displayEntries = $sorted->sort(function ($a, $b) {
-            $groupTimeCompare = strcmp((string)($b['sort_group_time'] ?? ''), (string)($a['sort_group_time'] ?? ''));
+        $displayEntries = $sorted
+            ->sort(function (array $a, array $b) {
+                $timeCompare = strcmp((string)($b['sort_group_time'] ?? $b['time'] ?? ''), (string)($a['sort_group_time'] ?? $a['time'] ?? ''));
 
-            if ($groupTimeCompare !== 0) {
-                return $groupTimeCompare;
-            }
+                if ($timeCompare !== 0) {
+                    return $timeCompare;
+                }
 
-            $groupKeyCompare = strcmp((string)($b['sort_group_key'] ?? ''), (string)($a['sort_group_key'] ?? ''));
+                $groupCompare = strcmp((string)($b['sort_group_key'] ?? $b['code'] ?? ''), (string)($a['sort_group_key'] ?? $a['code'] ?? ''));
 
-            if ($groupKeyCompare !== 0) {
-                return $groupKeyCompare;
-            }
+                if ($groupCompare !== 0) {
+                    return $groupCompare;
+                }
 
-            $compSeq = ((int)($a['sort_group_sequence'] ?? 999)) <=> ((int)($b['sort_group_sequence'] ?? 999));
-            if ($compSeq !== 0) {
-                return $compSeq;
-            }
-
-            $timeA = $a['display_time'] instanceof Carbon ? $a['display_time'] : Carbon::parse($a['display_time']);
-            $timeB = $b['display_time'] instanceof Carbon ? $b['display_time'] : Carbon::parse($b['display_time']);
-            $compTime = $timeA->timestamp <=> $timeB->timestamp;
-            if ($compTime !== 0) {
-                return $compTime;
-            }
-            
-            return strcmp((string)$b['id'], (string)$a['id']);
-        })->values();
+                return ((int)($a['sort_group_sequence'] ?? 999)) <=> ((int)($b['sort_group_sequence'] ?? 999));
+            })
+            ->values();
 
         // Format all Carbon instances to standard string format before returning
         $displayEntries = $displayEntries->map(function ($entry) {
@@ -977,6 +1012,14 @@ class CustomerDebtDocumentTimelineService
             'display_type' => null,
             'event_kind' => null,
             'domain' => null,
+            'document_group_key' => null,
+            'document_group_type' => null,
+            'document_group_parent_code' => null,
+            'document_group_time' => null,
+            'document_group_sequence' => null,
+            'sort_group_key' => null,
+            'sort_group_time' => null,
+            'sort_group_sequence' => null,
             'document_amount' => 0.0,
             'amount' => 0.0,
             'display_effect' => 0.0,
@@ -1019,38 +1062,15 @@ class CustomerDebtDocumentTimelineService
         return 50;
     }
 
-    private function isTechnicalLedgerCode(?string $code, Customer $customer): bool
+    private function isTechnicalLedgerCode(?string $code): bool
     {
         if (!$code) {
             return false;
         }
 
-        $isTechPrefix = str_starts_with($code, 'MERGE-CUSTOMER-')
+        return str_starts_with($code, 'MERGE-CUSTOMER-')
             || str_starts_with($code, 'MERGE-SUPPLIER-')
             || str_starts_with($code, 'OPENING-BALANCE-')
             || str_starts_with($code, 'OPENING-BALANCE-SUPPLIER-');
-
-        if (!$isTechPrefix) {
-            return false;
-        }
-
-        // Only exclude if actual documents are present in this domain to prevent double-counting.
-        // For customer domain technical codes, check if real invoices exist:
-        if (str_contains($code, 'CUSTOMER')) {
-            return Invoice::where('customer_id', $customer->id)
-                ->where(function($q) {
-                    $q->whereNull('status')->orWhere('status', '!=', 'Đã hủy');
-                })
-                ->exists();
-        }
-
-        // For supplier domain technical codes, check if real purchases exist:
-        if (str_contains($code, 'SUPPLIER')) {
-            return Purchase::where('supplier_id', $customer->id)
-                ->where('status', '!=', 'cancelled')
-                ->exists();
-        }
-
-        return true;
     }
 }
