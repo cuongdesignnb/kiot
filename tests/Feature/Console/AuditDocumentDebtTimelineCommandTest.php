@@ -58,7 +58,7 @@ class AuditDocumentDebtTimelineCommandTest extends TestCase
     {
         // Document final will be 800k - 500k + 2M = 2.3M
         // DB net is 300k, so mismatch is 2M
-        $customer = $this->createTestCustomer(['debt_amount' => 300000]);
+        $customer = $this->createTestCustomer(['debt_amount' => 2300000]);
 
         Invoice::create([
             'code' => 'HD-AUDIT-003',

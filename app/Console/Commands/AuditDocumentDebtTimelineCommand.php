@@ -441,6 +441,56 @@ class AuditDocumentDebtTimelineCommand extends Command
             ];
         }
 
+        // Process excluded ledger entries
+        $excludedEntries = $timeline['reconcile']['excluded_ledger_entries'] ?? [];
+        foreach ($excludedEntries as $ex) {
+            $code = $ex['code'] ?? '';
+            $amount = (float) ($ex['amount'] ?? 0.0);
+            if (str_starts_with($code, 'MERGE-CUSTOMER-') || str_starts_with($code, 'MERGE-SUPPLIER-')) {
+                $mergeRows++;
+                if (abs($amount) > 0.01) {
+                    $risks[] = [
+                        'severity' => 'warning',
+                        'risk' => 'merge_affects_balance',
+                        'view' => $view,
+                        'partner_id' => $partner->id,
+                        'partner_code' => $partner->code,
+                        'partner_name' => $partner->name,
+                        'document_code' => $code,
+                        'document_type' => 'merge',
+                        'amount' => $amount,
+                        'running_balance' => null,
+                        'stored_balance' => null,
+                        'document_final_balance' => $documentFinal,
+                        'difference' => $difference,
+                        'message' => "Dòng MERGE kỹ thuật {$code} đã bị loại bỏ khỏi timeline chính nhưng giá trị ảnh hưởng là " . number_format($amount) . "đ.",
+                        'suggested_action' => 'manual_review',
+                    ];
+                }
+            } elseif (str_starts_with($code, 'OPENING-BALANCE-') || str_starts_with($code, 'OPENING-BALANCE-SUPPLIER-')) {
+                $openingRows++;
+                if (abs($amount) > 0.01) {
+                    $risks[] = [
+                        'severity' => 'warning',
+                        'risk' => 'opening_affects_balance',
+                        'view' => $view,
+                        'partner_id' => $partner->id,
+                        'partner_code' => $partner->code,
+                        'partner_name' => $partner->name,
+                        'document_code' => $code,
+                        'document_type' => 'opening',
+                        'amount' => $amount,
+                        'running_balance' => null,
+                        'stored_balance' => null,
+                        'document_final_balance' => $documentFinal,
+                        'difference' => $difference,
+                        'message' => "Dòng OPENING kỹ thuật {$code} đã bị loại bỏ khỏi timeline chính nhưng giá trị ảnh hưởng là " . number_format($amount) . "đ.",
+                        'suggested_action' => 'manual_review',
+                    ];
+                }
+            }
+        }
+
         // Row-level checks
         foreach ($entries as $entry) {
             $code = (string) ($entry['code'] ?? '');
@@ -605,7 +655,7 @@ class AuditDocumentDebtTimelineCommand extends Command
             }
 
             // 5. Receipt invariants
-            if (in_array($eventKind, ['invoice_payment', 'customer_payment'], true) || str_starts_with($code, 'PT') || str_starts_with($code, 'TTHD')) {
+            if (in_array($eventKind, ['invoice_payment', 'customer_payment'], true) || (str_starts_with($code, 'PT') && !str_starts_with($code, 'PTN')) || str_starts_with($code, 'TTHD')) {
                 if ($effect >= -0.01) {
                     $risks[] = [
                         'severity' => 'critical',
