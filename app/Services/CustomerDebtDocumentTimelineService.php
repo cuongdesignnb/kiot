@@ -23,6 +23,9 @@ class CustomerDebtDocumentTimelineService
         $isDualRole = (bool) ($customer->is_customer && ($hasSupplierColumn ? $customer->is_supplier : false));
 
         $entries = collect();
+        $purchases = collect();
+        $excludedLedgerEntries = [];
+        $includeTechnical = (bool) ($options['include_technical'] ?? $options['audit'] ?? false);
 
         // 1. Invoices
         $invoices = Invoice::where('customer_id', $customer->id)
@@ -316,6 +319,18 @@ class CustomerDebtDocumentTimelineService
                 continue;
             }
 
+            $isTech = $this->isTechnicalLedgerCode($refCode, $customer);
+            if ($isTech) {
+                $excludedLedgerEntries[] = [
+                    'code' => $refCode,
+                    'amount' => (float) $debt->amount,
+                    'reason' => 'technical_ledger_excluded_from_document_timeline',
+                ];
+                if (!$includeTechnical) {
+                    continue;
+                }
+            }
+
             $businessTime = $debt->recorded_at ?: $debt->created_at;
             [$displayType, $eventKind, $badgeLabel] = $this->classifyCustomerDebt($debt);
 
@@ -328,7 +343,10 @@ class CustomerDebtDocumentTimelineService
                 'document_amount' => abs((float) $debt->amount),
                 'amount' => (float) $debt->amount,
                 'display_effect' => (float) $debt->amount,
-                'customer_display_effect' => (float) $debt->amount,
+                'customer_display_effect' => $isTech ? 0.0 : (float) $debt->amount,
+                'affects_document_balance' => !$isTech,
+                'excluded_from_document_balance' => $isTech,
+                'excluded_reason' => $isTech ? 'technical_ledger_merge_or_opening' : null,
                 'time' => $businessTime,
                 'display_time' => $businessTime,
                 'created_at' => $debt->created_at,
@@ -708,28 +726,67 @@ class CustomerDebtDocumentTimelineService
 
         $entries = collect(array_values($deduped));
 
+        // Add sorting group metadata to all entries
+        $entries = $entries->map(function (array $entry) use ($invoices, $purchases) {
+            $ownTime = $entry['display_time'] ?: $entry['time'] ?: $entry['created_at'];
+            $ownTimeCarbon = $ownTime instanceof Carbon ? $ownTime : Carbon::parse($ownTime);
+            
+            $sortGroupTime = $ownTimeCarbon;
+            $sortGroupKey = $entry['code'] ?: $entry['id'];
+            $sortGroupSequence = (int) ($entry['display_sequence'] ?? 50);
+
+            $refCode = $entry['reference_code'] ?? null;
+            $eventKind = $entry['event_kind'] ?? '';
+            
+            // If it's a payment receipt or virtual payment belonging to an invoice:
+            if (in_array($eventKind, ['invoice_payment', 'invoice_payment_fallback'], true) && $refCode) {
+                $parentInvoice = $invoices->firstWhere('code', $refCode);
+                if ($parentInvoice) {
+                    $parentTime = $parentInvoice->transaction_date ?: $parentInvoice->created_at;
+                    $sortGroupTime = $parentTime instanceof Carbon ? $parentTime : Carbon::parse($parentTime);
+                    $sortGroupKey = $parentInvoice->code;
+                }
+            }
+            
+            // If it's a supplier payment belonging to a purchase:
+            if (in_array($eventKind, ['supplier_payment', 'supplier_payment_fallback'], true) && $refCode) {
+                $parentPurchase = $purchases->firstWhere('code', $refCode);
+                if ($parentPurchase) {
+                    $parentTime = $parentPurchase->purchase_date ?: $parentPurchase->created_at;
+                    $sortGroupTime = $parentTime instanceof Carbon ? $parentTime : Carbon::parse($parentTime);
+                    $sortGroupKey = $parentPurchase->code;
+                }
+            }
+
+            $entry['sort_group_time'] = $sortGroupTime->toIso8601String();
+            $entry['sort_group_key'] = (string) $sortGroupKey;
+            $entry['sort_group_sequence'] = $sortGroupSequence;
+            
+            return $entry;
+        });
+
         // Sort ASC for running balance calculation
-        $sorted = $entries->sort(function ($a, $b) {
+        $sortedAsc = $entries->sort(function ($a, $b) {
+            $compGroupTime = strcmp((string)($a['sort_group_time'] ?? ''), (string)($b['sort_group_time'] ?? ''));
+            if ($compGroupTime !== 0) {
+                return $compGroupTime;
+            }
+            
+            $compGroupKey = strcmp((string)($a['sort_group_key'] ?? ''), (string)($b['sort_group_key'] ?? ''));
+            if ($compGroupKey !== 0) {
+                return $compGroupKey;
+            }
+            
+            $compSeq = ((int)($a['sort_group_sequence'] ?? 999)) <=> ((int)($b['sort_group_sequence'] ?? 999));
+            if ($compSeq !== 0) {
+                return $compSeq;
+            }
+
             $timeA = $a['display_time'] instanceof Carbon ? $a['display_time'] : Carbon::parse($a['display_time']);
             $timeB = $b['display_time'] instanceof Carbon ? $b['display_time'] : Carbon::parse($b['display_time']);
-            
             $compTime = $timeA->timestamp <=> $timeB->timestamp;
             if ($compTime !== 0) {
                 return $compTime;
-            }
-            
-            $prioA = $this->getDisplaySequence($a);
-            $prioB = $this->getDisplaySequence($b);
-            $compPrio = $prioA <=> $prioB;
-            if ($compPrio !== 0) {
-                return $compPrio;
-            }
-            
-            $createdAtA = $a['created_at'] instanceof Carbon ? $a['created_at'] : Carbon::parse($a['created_at']);
-            $createdAtB = $b['created_at'] instanceof Carbon ? $b['created_at'] : Carbon::parse($b['created_at']);
-            $compCreated = $createdAtA->timestamp <=> $createdAtB->timestamp;
-            if ($compCreated !== 0) {
-                return $compCreated;
             }
             
             return strcmp((string)$a['id'], (string)$b['id']);
@@ -737,13 +794,17 @@ class CustomerDebtDocumentTimelineService
 
         // Calculate chronological running balance
         $running = 0.0;
-        $sorted = $sorted->values()->map(function (array $entry) use (&$running) {
+        $sorted = $sortedAsc->map(function (array $entry) use (&$running) {
             $effect = (float) ($entry['customer_display_effect']
                 ?? $entry['display_effect']
                 ?? $entry['amount']
                 ?? 0);
 
-            $running += $effect;
+            $affects = (bool) ($entry['affects_document_balance'] ?? $entry['affects_debt_balance'] ?? true);
+
+            if ($affects) {
+                $running += $effect;
+            }
 
             $entry['customer_display_effect'] = $effect;
             $entry['display_effect'] = (float) ($entry['display_effect'] ?? $effect);
@@ -757,30 +818,45 @@ class CustomerDebtDocumentTimelineService
 
         // Sort DESC for display
         $displayEntries = $sorted->sort(function ($a, $b) {
+            $groupTimeCompare = strcmp((string)($b['sort_group_time'] ?? ''), (string)($a['sort_group_time'] ?? ''));
+
+            if ($groupTimeCompare !== 0) {
+                return $groupTimeCompare;
+            }
+
+            $groupKeyCompare = strcmp((string)($b['sort_group_key'] ?? ''), (string)($a['sort_group_key'] ?? ''));
+
+            if ($groupKeyCompare !== 0) {
+                return $groupKeyCompare;
+            }
+
+            $compSeq = ((int)($a['sort_group_sequence'] ?? 999)) <=> ((int)($b['sort_group_sequence'] ?? 999));
+            if ($compSeq !== 0) {
+                return $compSeq;
+            }
+
             $timeA = $a['display_time'] instanceof Carbon ? $a['display_time'] : Carbon::parse($a['display_time']);
             $timeB = $b['display_time'] instanceof Carbon ? $b['display_time'] : Carbon::parse($b['display_time']);
-            
-            $compTime = $timeB->timestamp <=> $timeA->timestamp;
+            $compTime = $timeA->timestamp <=> $timeB->timestamp;
             if ($compTime !== 0) {
                 return $compTime;
             }
             
-            $prioA = $this->getDisplaySequence($a);
-            $prioB = $this->getDisplaySequence($b);
-            $compPrio = $prioB <=> $prioA; // DESC display sequence
-            if ($compPrio !== 0) {
-                return $compPrio;
-            }
-            
-            $createdAtA = $a['created_at'] instanceof Carbon ? $a['created_at'] : Carbon::parse($a['created_at']);
-            $createdAtB = $b['created_at'] instanceof Carbon ? $b['created_at'] : Carbon::parse($b['created_at']);
-            $compCreated = $createdAtB->timestamp <=> $createdAtA->timestamp;
-            if ($compCreated !== 0) {
-                return $compCreated;
-            }
-            
             return strcmp((string)$b['id'], (string)$a['id']);
         })->values();
+
+        // Format all Carbon instances to standard string format before returning
+        $displayEntries = $displayEntries->map(function ($entry) {
+            $time = $entry['time'] ?? null;
+            $displayTime = $entry['display_time'] ?? null;
+            $createdAt = $entry['created_at'] ?? null;
+            
+            $entry['time'] = $time instanceof Carbon ? $time->toDateTimeString() : (string) $time;
+            $entry['display_time'] = $displayTime instanceof Carbon ? $displayTime->toDateTimeString() : (string) $displayTime;
+            $entry['created_at'] = $createdAt instanceof Carbon ? $createdAt->toDateTimeString() : (string) $createdAt;
+            
+            return $entry;
+        });
 
         // Stored balances & reconciliation
         $storedCustomerDebt = (float) ($customer->debt_amount ?? 0);
@@ -823,12 +899,13 @@ class CustomerDebtDocumentTimelineService
                 'document_balance' => $documentFinalBalance,
                 'difference' => $difference,
                 // Alignment keys
-                'computed_balance' => $storedNet, // wait, test expects computes_balance to be -27600000 which is storedNet! Let's supply storedNet for computed_balance
+                'computed_balance' => $storedNet,
                 'has_mismatch' => $isMismatch,
                 'ledger_mismatch' => false,
                 'display_resolved' => !$isMismatch,
                 'display_balance_target' => $storedNet,
                 'display_balance_final' => $documentFinalBalance,
+                'excluded_ledger_entries' => $excludedLedgerEntries,
             ]
         ];
     }
@@ -940,5 +1017,40 @@ class CustomerDebtDocumentTimelineService
             return 20;
         }
         return 50;
+    }
+
+    private function isTechnicalLedgerCode(?string $code, Customer $customer): bool
+    {
+        if (!$code) {
+            return false;
+        }
+
+        $isTechPrefix = str_starts_with($code, 'MERGE-CUSTOMER-')
+            || str_starts_with($code, 'MERGE-SUPPLIER-')
+            || str_starts_with($code, 'OPENING-BALANCE-')
+            || str_starts_with($code, 'OPENING-BALANCE-SUPPLIER-');
+
+        if (!$isTechPrefix) {
+            return false;
+        }
+
+        // Only exclude if actual documents are present in this domain to prevent double-counting.
+        // For customer domain technical codes, check if real invoices exist:
+        if (str_contains($code, 'CUSTOMER')) {
+            return Invoice::where('customer_id', $customer->id)
+                ->where(function($q) {
+                    $q->whereNull('status')->orWhere('status', '!=', 'Đã hủy');
+                })
+                ->exists();
+        }
+
+        // For supplier domain technical codes, check if real purchases exist:
+        if (str_contains($code, 'SUPPLIER')) {
+            return Purchase::where('supplier_id', $customer->id)
+                ->where('status', '!=', 'cancelled')
+                ->exists();
+        }
+
+        return true;
     }
 }

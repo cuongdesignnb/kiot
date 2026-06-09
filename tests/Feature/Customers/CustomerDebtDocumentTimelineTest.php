@@ -669,4 +669,232 @@ class CustomerDebtDocumentTimelineTest extends TestCase
         $ret = $entries->firstWhere('code', 'TH-REGRESS-123');
         $this->assertSame(-1000000.0, (float) $ret['display_effect']);
     }
+
+    public function test_invoice_payment_is_grouped_immediately_after_parent_invoice(): void
+    {
+        $customer = $this->createTestCustomer();
+
+        // Create parent invoice
+        $invoice = Invoice::create([
+            'code' => 'HD-DOC-GRP1',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 800000,
+            'customer_paid' => 500000,
+            'created_at' => Carbon::now()->subHours(5),
+            'transaction_date' => Carbon::now()->subHours(5),
+        ]);
+
+        // Create return (newer than invoice but older than payment)
+        $orderReturn = OrderReturn::create([
+            'code' => 'TH-DOC-GRP1',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 100000,
+            'created_at' => Carbon::now()->subHours(3),
+            'return_date' => Carbon::now()->subHours(3),
+        ]);
+
+        // Create cash flow payment (newer than both return and invoice)
+        $receipt = CashFlow::create([
+            'code' => 'PT-DOC-GRP1',
+            'type' => 'receipt',
+            'amount' => 500000,
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer->id,
+            'target_name' => $customer->name,
+            'reference_type' => 'Invoice',
+            'reference_code' => 'HD-DOC-GRP1',
+            'status' => 'active',
+            'time' => Carbon::now()->subHours(1),
+            'created_at' => Carbon::now()->subHours(1),
+        ]);
+
+        $res = $this->service->build($customer);
+        $entries = collect($res['entries']);
+
+        // Assert they are in this exact display order:
+        // 1. TH-DOC-GRP1 (newer group)
+        // 2. HD-DOC-GRP1 (parent invoice)
+        // 3. PT-DOC-GRP1 (payment receipt grouped right after parent)
+        
+        $codes = $entries->pluck('code')->toArray();
+        $this->assertEquals(['TH-DOC-GRP1', 'HD-DOC-GRP1', 'PT-DOC-GRP1'], $codes);
+    }
+
+    public function test_multiple_payments_stay_under_invoice(): void
+    {
+        $customer = $this->createTestCustomer();
+
+        $invoice = Invoice::create([
+            'code' => 'HD-DOC-GRP2',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 1000000,
+            'customer_paid' => 1000000,
+            'created_at' => Carbon::now()->subHours(10),
+            'transaction_date' => Carbon::now()->subHours(10),
+        ]);
+
+        // Create 3 payments at different times
+        $pt1 = CashFlow::create([
+            'code' => 'PT-GRP2-1',
+            'type' => 'receipt',
+            'amount' => 200000,
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer->id,
+            'target_name' => $customer->name,
+            'reference_type' => 'Invoice',
+            'reference_code' => 'HD-DOC-GRP2',
+            'status' => 'active',
+            'time' => Carbon::now()->subHours(8),
+            'created_at' => Carbon::now()->subHours(8),
+        ]);
+
+        $pt2 = CashFlow::create([
+            'code' => 'PT-GRP2-2',
+            'type' => 'receipt',
+            'amount' => 300000,
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer->id,
+            'target_name' => $customer->name,
+            'reference_type' => 'Invoice',
+            'reference_code' => 'HD-DOC-GRP2',
+            'status' => 'active',
+            'time' => Carbon::now()->subHours(6),
+            'created_at' => Carbon::now()->subHours(6),
+        ]);
+
+        $pt3 = CashFlow::create([
+            'code' => 'PT-GRP2-3',
+            'type' => 'receipt',
+            'amount' => 500000,
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer->id,
+            'target_name' => $customer->name,
+            'reference_type' => 'Invoice',
+            'reference_code' => 'HD-DOC-GRP2',
+            'status' => 'active',
+            'time' => Carbon::now()->subHours(4),
+            'created_at' => Carbon::now()->subHours(4),
+        ]);
+
+        $res = $this->service->build($customer);
+        $entries = collect($res['entries']);
+
+        // Assert they are grouped and sorted: HD, then PT1, PT2, PT3
+        $codes = $entries->pluck('code')->toArray();
+        $this->assertEquals(['HD-DOC-GRP2', 'PT-GRP2-1', 'PT-GRP2-2', 'PT-GRP2-3'], $codes);
+    }
+
+    public function test_merge_customer_excluded_from_document_balance(): void
+    {
+        $customer = $this->createTestCustomer([
+            'debt_amount' => 1300000,
+        ]);
+
+        // Seed documents summing to 1.3M
+        Invoice::create([
+            'code' => 'HD-MERGE-TEST',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 2800000,
+            'customer_paid' => 500000,
+            'created_at' => Carbon::now()->subHours(5),
+            'transaction_date' => Carbon::now()->subHours(5),
+        ]);
+
+        CashFlow::create([
+            'code' => 'PT-MERGE-TEST',
+            'type' => 'receipt',
+            'amount' => 500000,
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer->id,
+            'target_name' => $customer->name,
+            'reference_type' => 'Invoice',
+            'reference_code' => 'HD-MERGE-TEST',
+            'status' => 'active',
+            'time' => Carbon::now()->subHours(4),
+            'created_at' => Carbon::now()->subHours(4),
+        ]);
+
+        OrderReturn::create([
+            'code' => 'TH-MERGE-TEST',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 1000000,
+            'created_at' => Carbon::now()->subHours(3),
+            'return_date' => Carbon::now()->subHours(3),
+        ]);
+
+        // Create technical ledger entry MERGE-CUSTOMER-239 for 2M
+        CustomerDebt::create([
+            'customer_id' => $customer->id,
+            'ref_code' => 'MERGE-CUSTOMER-239',
+            'amount' => 2000000,
+            'debt_total' => 2000000,
+            'type' => 'adjustment',
+            'recorded_at' => Carbon::now()->subHours(2),
+            'created_at' => Carbon::now()->subHours(2),
+        ]);
+
+        $res = $this->service->build($customer);
+        $entries = collect($res['entries']);
+
+        // Expected: MERGE-CUSTOMER-239 is NOT in entries
+        $this->assertNull($entries->firstWhere('code', 'MERGE-CUSTOMER-239'));
+
+        // Expected: document_final_balance = 1.3M (2.8M - 500k - 1M)
+        $this->assertSame(1300000.0, (float) $res['summary']['document_final_balance']);
+
+        // Expected: reconcile severity is ok
+        $this->assertSame('ok', $res['reconcile']['severity']);
+
+        // Expected: excluded_ledger_entries contains MERGE-CUSTOMER-239
+        $excluded = collect($res['reconcile']['excluded_ledger_entries'] ?? []);
+        $mergeExcluded = $excluded->firstWhere('code', 'MERGE-CUSTOMER-239');
+        $this->assertNotNull($mergeExcluded);
+        $this->assertSame(2000000.0, (float) $mergeExcluded['amount']);
+    }
+
+    public function test_technical_opening_merge_does_not_affect_running_balance(): void
+    {
+        $customer = $this->createTestCustomer([
+            'debt_amount' => 800000,
+        ]);
+
+        // Technical Opening Balance
+        CustomerDebt::create([
+            'customer_id' => $customer->id,
+            'ref_code' => 'OPENING-BALANCE-123',
+            'amount' => 5000000,
+            'debt_total' => 5000000,
+            'type' => 'adjustment',
+            'recorded_at' => Carbon::now()->subHours(10),
+            'created_at' => Carbon::now()->subHours(10),
+        ]);
+
+        // Real Invoice
+        Invoice::create([
+            'code' => 'HD-TECH-TEST',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 800000,
+            'customer_paid' => 0,
+            'created_at' => Carbon::now()->subHours(5),
+            'transaction_date' => Carbon::now()->subHours(5),
+        ]);
+
+        $res = $this->service->build($customer);
+        $entries = collect($res['entries']);
+
+        // Since it is default build, opening balance technical entry should be hidden/excluded
+        $this->assertNull($entries->firstWhere('code', 'OPENING-BALANCE-123'));
+
+        // Running balance of invoice HD-TECH-TEST should be 800k (not affected by 5M)
+        $invEntry = $entries->firstWhere('code', 'HD-TECH-TEST');
+        $this->assertNotNull($invEntry);
+        $this->assertSame(800000.0, (float) $invEntry['customer_display_running_balance']);
+        $this->assertSame(800000.0, (float) $res['summary']['document_final_balance']);
+    }
 }
