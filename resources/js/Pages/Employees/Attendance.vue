@@ -169,12 +169,16 @@
 
         <!-- Monthly dot-based view -->
         <div v-else class="overflow-x-auto">
-          <table class="min-w-full border-collapse">
+          <table class="min-w-full border-collapse bg-white text-[12px]">
             <thead class="sticky top-0 z-10">
-              <tr class="bg-gray-50 border-b border-gray-200">
-                <th v-if="viewMode === 'shift'" class="px-3 py-2 text-left text-xs font-medium text-gray-500 sticky left-0 bg-gray-50 z-20 min-w-[110px] border-r border-gray-200">Ca làm việc</th>
-                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 sticky bg-gray-50 z-20 min-w-[140px] border-r border-gray-200" :class="viewMode === 'shift' ? 'left-[110px]' : 'left-0'">Nhân viên</th>
-                <th v-for="day in monthDays" :key="day.date" class="px-0 py-2 text-center border-r border-gray-100 min-w-[36px]">
+              <tr class="bg-white border-b border-gray-200">
+                <th v-if="viewMode === 'shift'" class="px-3 py-2 text-left text-xs font-medium text-gray-500 sticky left-0 bg-white z-20 min-w-[110px] border-r border-gray-200">
+                  Ca làm việc <span class="text-gray-400 font-bold ml-0.5 text-sm">+</span>
+                </th>
+                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 sticky bg-white z-20 min-w-[140px] border-r border-gray-200" :class="viewMode === 'shift' ? 'left-[110px]' : 'left-0'">
+                  Nhân viên <span class="text-gray-400 font-bold ml-0.5 text-sm">+</span>
+                </th>
+                <th v-for="day in monthDays" :key="day.date" class="px-0 py-1.5 text-center border-r border-gray-100 min-w-[36px]">
                   <div class="text-[10px] leading-tight" :class="[day.isWeekend ? 'text-red-400' : 'text-gray-400', day.date === todayStr ? 'text-blue-600 font-bold' : '']">{{ day.dayNameShort }}</div>
                   <div class="relative inline-flex items-center justify-center w-6 h-6">
                     <span v-if="day.date === todayStr" class="absolute inset-0 bg-blue-500 rounded-full"></span>
@@ -190,7 +194,7 @@
                   <tr><td :colspan="monthDays.length + 2" class="px-6 py-10 text-center text-gray-400">Chưa có dữ liệu chấm công.</td></tr>
                 </template>
                 <template v-for="shift in monthlyShiftEmployeeRows" :key="shift.shiftKey">
-                  <tr v-for="(empRow, empIdx) in shift.employees" :key="empRow.employee.id" class="border-b border-gray-100 hover:bg-gray-50/50">
+                  <tr v-for="(empRow, empIdx) in shift.employees" :key="empRow.employee.id" class="border-b border-gray-100 hover:bg-gray-50/40">
                     <td v-if="empIdx === 0" :rowspan="shift.employees.length" class="px-3 py-2 align-top sticky left-0 bg-white z-10 border-r border-gray-200 text-xs">
                       <div class="font-semibold text-gray-800">{{ shift.shiftName }}</div>
                       <div class="text-gray-400 text-[10px]">{{ shift.shiftTime }}</div>
@@ -201,7 +205,7 @@
                     <td v-for="day in monthDays" :key="day.date" class="text-center py-2 border-r border-gray-50">
                       <span v-if="empRow.schedules[day.date] && getDotColor(empRow.schedules[day.date], day.date)"
                         @click="openModal(empRow.schedules[day.date])"
-                        class="inline-block w-3 h-3 rounded-full cursor-pointer hover:scale-150 transition-transform"
+                        class="inline-block w-1.5 h-1.5 rounded-full cursor-pointer hover:scale-[1.8] transition-transform"
                         :class="dotCls(getDotColor(empRow.schedules[day.date], day.date))"
                       ></span>
                     </td>
@@ -213,7 +217,7 @@
                 <template v-if="monthlyEmployeeRows.length === 0">
                   <tr><td :colspan="monthDays.length + 2" class="px-6 py-10 text-center text-gray-400">Chưa có dữ liệu chấm công.</td></tr>
                 </template>
-                <tr v-for="empRow in monthlyEmployeeRows" :key="empRow.employee.id" class="border-b border-gray-100 hover:bg-gray-50/50">
+                <tr v-for="empRow in monthlyEmployeeRows" :key="empRow.employee.id" class="border-b border-gray-100 hover:bg-gray-50/40">
                   <td class="px-3 py-2 sticky left-0 bg-white z-10 border-r border-gray-200 text-xs">
                     <div class="font-semibold text-gray-800">{{ empRow.employee.name }}</div>
                     <div class="text-gray-400 text-[10px]">{{ empRow.employee.code }}</div>
@@ -221,7 +225,7 @@
                   <td v-for="day in monthDays" :key="day.date" class="text-center py-2 border-r border-gray-50">
                     <span v-if="empRow.schedules[day.date] && getDotColor(empRow.schedules[day.date], day.date)"
                       @click="openModal(empRow.schedules[day.date])"
-                      class="inline-block w-3 h-3 rounded-full cursor-pointer hover:scale-150 transition-transform"
+                      class="inline-block w-1.5 h-1.5 rounded-full cursor-pointer hover:scale-[1.8] transition-transform"
                       :class="dotCls(getDotColor(empRow.schedules[day.date], day.date))"
                     ></span>
                   </td>
@@ -232,12 +236,49 @@
         </div>
 
         <!-- Legend -->
-        <div class="flex items-center justify-center gap-6 px-6 py-3 border-t border-gray-200 bg-gray-50 text-xs text-gray-600">
-          <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-blue-500 inline-block"></span> Đúng giờ</span>
-          <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-orange-400 inline-block"></span> Đi muộn / Về sớm</span>
-          <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-red-500 inline-block"></span> Chấm công thiếu</span>
-          <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-yellow-400 inline-block"></span> Chưa chấm công</span>
-          <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-gray-400 inline-block"></span> Nghỉ làm</span>
+        <div class="flex items-center justify-center px-6 py-3 bg-gray-50 border-t border-gray-200">
+          <div class="inline-flex items-center gap-5 rounded-full border border-gray-200 bg-white px-4 py-2 text-xs text-gray-700 shadow-lg shadow-gray-200/70">
+            <span class="flex items-center gap-1.5">
+              <span class="inline-flex items-center justify-center h-4 w-4 rounded-full bg-blue-600 text-white">
+                <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="4">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </span>
+              Đúng giờ
+            </span>
+            <span class="flex items-center gap-1.5">
+              <span class="inline-flex items-center justify-center h-4 w-4 rounded-full bg-purple-500 text-white">
+                <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="4">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </span>
+              Đi muộn / Về sớm
+            </span>
+            <span class="flex items-center gap-1.5">
+              <span class="inline-flex items-center justify-center h-4 w-4 rounded-full bg-red-600 text-white">
+                <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="4">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </span>
+              Chấm công thiếu
+            </span>
+            <span class="flex items-center gap-1.5">
+              <span class="inline-flex items-center justify-center h-4 w-4 rounded-full bg-orange-500 text-white">
+                <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="4">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </span>
+              Chưa chấm công
+            </span>
+            <span class="flex items-center gap-1.5">
+              <span class="inline-flex items-center justify-center h-4 w-4 rounded-full bg-slate-400 text-white">
+                <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="4">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </span>
+              Nghỉ làm
+            </span>
+          </div>
         </div>
       </div>
     </main>
@@ -594,24 +635,39 @@ const monthlyEmployeeRows = computed(() => {
 
 const getDotColor = (schedule, dateStr) => {
     if (!schedule) return ''
+
     const record = schedule.timekeeping_record
+
     if (!record) {
         if (dateStr > todayStr.value) return ''
-        return 'green'
+        return 'orange'
     }
+
     const type = record.attendance_type
+
     if (type === 'leave_paid' || type === 'leave_unpaid') return 'gray'
+
     if (!record.check_in_at && !record.check_out_at) {
         if (dateStr > todayStr.value) return ''
-        return 'green'
+        return 'orange'
     }
+
     if (Boolean(record.check_in_at) !== Boolean(record.check_out_at)) return 'red'
-    if (record.late_minutes > 0 || record.early_minutes > 0) return 'orange'
+
+    if (record.late_minutes > 0 || record.early_minutes > 0) return 'purple'
+
     return 'blue'
 }
 
 const dotCls = (color) => {
-    const map = { blue: 'bg-blue-500', orange: 'bg-orange-400', red: 'bg-red-500', green: 'bg-yellow-400', gray: 'bg-gray-400' }
+    const map = {
+        blue: 'bg-blue-600',
+        purple: 'bg-purple-500',
+        red: 'bg-red-600',
+        orange: 'bg-orange-500',
+        gray: 'bg-slate-400',
+    }
+
     return map[color] || ''
 }
 
