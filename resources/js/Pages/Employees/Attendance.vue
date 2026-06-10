@@ -861,7 +861,8 @@ const estimatedWorkInfo = computed(() => {
             let t1 = h1 * 60 + m1
             let t2 = h2 * 60 + m2
             if (t2 <= t1) t2 += 1440
-            fullDayMinutes = t2 - t1
+            let scheduleMinutes = t2 - t1
+            fullDayMinutes = Math.min(480, scheduleMinutes)
         }
         if (fullDayMinutes <= 0) fullDayMinutes = 480
 
