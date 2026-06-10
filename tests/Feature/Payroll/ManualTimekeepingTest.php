@@ -67,6 +67,15 @@ class ManualTimekeepingTest extends TestCase
             'status' => 'approved',
         ]);
 
+        $device = \App\Models\AttendanceDevice::create([
+            'branch_id' => $branch->id,
+            'name' => 'Device Test',
+            'device_id' => 'DEV-' . uniqid(),
+            'status' => 'online',
+            'ip_address' => '127.0.0.1',
+            'tcp_port' => 4370,
+        ]);
+
         TimekeepingSetting::create([
             'branch_id' => $branch->id,
             'use_shift_allowances' => true,
@@ -76,7 +85,7 @@ class ManualTimekeepingTest extends TestCase
             'status' => 'active',
         ]);
 
-        return compact('branch', 'employee', 'shift', 'schedule');
+        return compact('branch', 'employee', 'shift', 'schedule', 'device');
     }
 
     public function test_manual_timekeeping_full_day_generates_one_work_unit(): void
@@ -431,5 +440,192 @@ class ManualTimekeepingTest extends TestCase
         // Let's recalculate/check the new total work units. It should be 15.0 and NOT downgrade any of the existing 480-minute days to 0.5.
         $totalUnits = TimekeepingRecord::where('employee_id', $employee->id)->sum('work_units');
         $this->assertEquals(15.0, (float)$totalUnits);
+    }
+
+    public function test_case_1_vu_hong_nhung_regression(): void
+    {
+        $env = $this->setupTimekeepingEnvironment(); // schedule is 08:30 - 18:30 (600 mins)
+        \App\Models\Setting::set('attendance_standard_work_minutes', 480);
+        \App\Models\Setting::set('attendance_half_work_enabled', true);
+        \App\Models\Setting::set('attendance_half_work_min_minutes', 0);
+        \App\Models\Setting::set('attendance_half_work_max_minutes', 480);
+
+        $service = app(TimekeepingService::class);
+        $attrs = $service->buildManualRecordAttributes($env['schedule'], 'work', '08:30', '16:30');
+
+        $this->assertEquals(480, $attrs['worked_minutes']);
+        $this->assertEquals(1.0, (float)$attrs['work_units']);
+    }
+
+    public function test_case_2_khuat_trung_hieu_regression(): void
+    {
+        $env = $this->setupTimekeepingEnvironment();
+        \App\Models\Setting::set('attendance_standard_work_minutes', 480);
+
+        $service = app(TimekeepingService::class);
+        $attrs = $service->buildManualRecordAttributes($env['schedule'], 'work', '08:30', '18:30');
+
+        $this->assertEquals(600, $attrs['worked_minutes']);
+        $this->assertEquals(1.0, (float)$attrs['work_units']);
+    }
+
+    public function test_case_3_nua_ngay_that(): void
+    {
+        $env = $this->setupTimekeepingEnvironment();
+        \App\Models\Setting::set('attendance_standard_work_minutes', 480);
+        \App\Models\Setting::set('attendance_half_work_enabled', true);
+        \App\Models\Setting::set('attendance_half_work_min_minutes', 0);
+        \App\Models\Setting::set('attendance_half_work_max_minutes', 480);
+
+        $service = app(TimekeepingService::class);
+        $attrs = $service->buildManualRecordAttributes($env['schedule'], 'work', '08:30', '12:30');
+
+        $this->assertEquals(240, $attrs['worked_minutes']);
+        $this->assertEquals(0.5, (float)$attrs['work_units']);
+    }
+
+    public function test_case_4_479_phut(): void
+    {
+        $env = $this->setupTimekeepingEnvironment();
+        \App\Models\Setting::set('attendance_standard_work_minutes', 480);
+        \App\Models\Setting::set('attendance_half_work_enabled', true);
+        \App\Models\Setting::set('attendance_half_work_min_minutes', 0);
+        \App\Models\Setting::set('attendance_half_work_max_minutes', 480);
+
+        $service = app(TimekeepingService::class);
+        $attrs = $service->buildManualRecordAttributes($env['schedule'], 'work', '08:30', '16:29'); // 479 minutes
+
+        $this->assertEquals(479, $attrs['worked_minutes']);
+        $this->assertEquals(0.5, (float)$attrs['work_units']);
+    }
+
+    public function test_case_5_device_recalculate(): void
+    {
+        $env = $this->setupTimekeepingEnvironment();
+        \App\Models\Setting::set('attendance_standard_work_minutes', 480);
+        \App\Models\Setting::set('attendance_half_work_enabled', true);
+        \App\Models\Setting::set('attendance_half_work_max_minutes', 480);
+
+        // Create attendance logs
+        \App\Models\AttendanceLog::create([
+            'employee_id' => $env['employee']->id,
+            'punched_at' => '2026-05-25 08:30:00',
+            'attendance_device_id' => $env['device']->id,
+            'device_user_id' => '123',
+        ]);
+
+        \App\Models\AttendanceLog::create([
+            'employee_id' => $env['employee']->id,
+            'punched_at' => '2026-05-25 16:30:00',
+            'attendance_device_id' => $env['device']->id,
+            'device_user_id' => '123',
+        ]);
+
+        $service = app(TimekeepingService::class);
+        $from = Carbon::parse('2026-05-25');
+        $to = Carbon::parse('2026-05-25');
+        $service->recalculateForRange($from, $to, $env['employee']->id);
+
+        $record = TimekeepingRecord::where('employee_work_schedule_id', $env['schedule']->id)->first();
+        $this->assertNotNull($record);
+        $this->assertEquals('device', $record->source);
+        $this->assertEquals(480, $record->worked_minutes);
+        $this->assertEquals(1.0, (float)$record->work_units);
+    }
+
+    public function test_case_6_manual_override_not_overwritten(): void
+    {
+        $env = $this->setupTimekeepingEnvironment();
+        
+        // Create manual override record
+        $record = TimekeepingRecord::create([
+            'employee_id' => $env['employee']->id,
+            'employee_work_schedule_id' => $env['schedule']->id,
+            'branch_id' => $env['branch']->id,
+            'shift_id' => $env['shift']->id,
+            'work_date' => '2026-05-25',
+            'check_in_at' => '2026-05-25 08:30:00',
+            'check_out_at' => '2026-05-25 12:30:00',
+            'worked_minutes' => 240,
+            'work_units' => 0.5,
+            'manual_override' => true,
+            'source' => 'manual',
+            'attendance_type' => 'work',
+        ]);
+
+        // Create some attendance logs (device punches)
+        \App\Models\AttendanceLog::create([
+            'employee_id' => $env['employee']->id,
+            'punched_at' => '2026-05-25 08:30:00',
+            'attendance_device_id' => $env['device']->id,
+            'device_user_id' => '123',
+        ]);
+
+        \App\Models\AttendanceLog::create([
+            'employee_id' => $env['employee']->id,
+            'punched_at' => '2026-05-25 18:30:00',
+            'attendance_device_id' => $env['device']->id,
+            'device_user_id' => '123',
+        ]);
+
+        $service = app(TimekeepingService::class);
+        $from = Carbon::parse('2026-05-25');
+        $to = Carbon::parse('2026-05-25');
+        $service->recalculateForRange($from, $to, $env['employee']->id);
+
+        $fresh = $record->fresh();
+        $this->assertEquals('manual', $fresh->source);
+        $this->assertTrue((bool)$fresh->manual_override);
+        $this->assertEquals(240, $fresh->worked_minutes);
+        $this->assertEquals(0.5, (float)$fresh->work_units);
+    }
+
+    public function test_case_7_audit_command(): void
+    {
+        $env = $this->setupTimekeepingEnvironment();
+        \App\Models\Setting::set('attendance_standard_work_minutes', 480);
+        \App\Models\Setting::set('attendance_half_work_enabled', true);
+        \App\Models\Setting::set('attendance_half_work_max_minutes', 480);
+
+        // Create a manual override record that has 480 minutes but 0.5 work units (simulating record 505 before fix)
+        $record = TimekeepingRecord::create([
+            'employee_id' => $env['employee']->id,
+            'employee_work_schedule_id' => $env['schedule']->id,
+            'branch_id' => $env['branch']->id,
+            'shift_id' => $env['shift']->id,
+            'work_date' => '2026-05-25',
+            'check_in_at' => '2026-05-25 08:30:00',
+            'check_out_at' => '2026-05-25 16:30:00',
+            'worked_minutes' => 480,
+            'work_units' => 0.5, // incorrect old logic
+            'manual_override' => true,
+            'source' => 'manual',
+            'attendance_type' => 'work',
+        ]);
+
+        // Run audit command in dry-run mode
+        $this->artisan('timekeeping:audit-manual-work-units', [
+            '--from' => '2026-05-25',
+            '--to' => '2026-05-25',
+            '--employee' => $env['employee']->name,
+        ])
+        ->expectsOutput('Chế độ DRY-RUN: Chạy lại với --apply để lưu thay đổi thực tế.')
+        ->assertExitCode(0);
+
+        // Verify that the record in the DB remains 0.5 (untouched)
+        $this->assertEquals(0.5, (float)$record->fresh()->work_units);
+
+        // Run audit command with --apply
+        $this->artisan('timekeeping:audit-manual-work-units', [
+            '--from' => '2026-05-25',
+            '--to' => '2026-05-25',
+            '--employee' => $env['employee']->name,
+            '--apply' => true,
+        ])
+        ->expectsOutput('Đã cập nhật thành công 1 bản ghi chấm công thủ công.')
+        ->assertExitCode(0);
+
+        // Verify that the record in the DB is updated to 1.0
+        $this->assertEquals(1.0, (float)$record->fresh()->work_units);
     }
 }

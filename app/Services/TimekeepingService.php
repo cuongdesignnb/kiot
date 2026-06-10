@@ -187,12 +187,7 @@ class TimekeepingService
             // work_units vẫn tính bình thường (1.0 / 0.5)
             // Hệ số nhân (2x, 3x) áp dụng trong SalaryCalculationService qua holiday_multiplier
 
-            $fullDayMinutes = 480;
-            if ($scheduleStart && $scheduleEnd && $scheduleEnd->greaterThan($scheduleStart)) {
-                $fullDayMinutes = abs($scheduleEnd->diffInMinutes($scheduleStart));
-            } else {
-                $fullDayMinutes = (int) Setting::get('attendance_standard_work_minutes', 480);
-            }
+            $fullDayMinutes = $this->resolveFullDayMinutes($scheduleStart, $scheduleEnd);
 
             $workUnits = $this->calculateWorkUnitsFromMinutes(
                 $workedMinutes,
@@ -363,12 +358,7 @@ class TimekeepingService
                 }
             }
 
-            $fullDayMinutesRest = 480;
-            if ($scheduleStart && $scheduleEnd && $scheduleEnd->greaterThan($scheduleStart)) {
-                $fullDayMinutesRest = abs($scheduleEnd->diffInMinutes($scheduleStart));
-            } else {
-                $fullDayMinutesRest = (int) Setting::get('attendance_standard_work_minutes', 480);
-            }
+            $fullDayMinutesRest = $this->resolveFullDayMinutes($scheduleStart, $scheduleEnd);
 
             $workUnitsRest = $this->calculateWorkUnitsFromMinutes(
                 $workedMinutes,
@@ -510,12 +500,7 @@ class TimekeepingService
         } elseif ($attendanceType === 'leave_unpaid') {
             $workUnits = 0.0;
         } else { // 'work'
-            $fullDayMinutes = 480;
-            if ($scheduleStart && $scheduleEnd && $scheduleEnd->greaterThan($scheduleStart)) {
-                $fullDayMinutes = abs($scheduleEnd->diffInMinutes($scheduleStart));
-            } else {
-                $fullDayMinutes = (int) Setting::get('attendance_standard_work_minutes', 480);
-            }
+            $fullDayMinutes = $this->resolveFullDayMinutes($scheduleStart, $scheduleEnd);
 
             $workUnits = $this->calculateWorkUnitsFromMinutes(
                 $workedMinutes,
@@ -607,5 +592,29 @@ class TimekeepingService
         }
 
         return $workUnits;
+    }
+
+    private function resolveFullDayMinutes(?Carbon $scheduleStart, ?Carbon $scheduleEnd): int
+    {
+        $standardWorkMinutes = (int) Setting::get('attendance_standard_work_minutes', 480);
+
+        $scheduleMinutes = null;
+        if ($scheduleStart && $scheduleEnd && $scheduleEnd->greaterThan($scheduleStart)) {
+            $scheduleMinutes = abs($scheduleEnd->diffInMinutes($scheduleStart));
+        }
+
+        if ($standardWorkMinutes > 0 && $scheduleMinutes && $scheduleMinutes > 0) {
+            return min($standardWorkMinutes, $scheduleMinutes);
+        }
+
+        if ($standardWorkMinutes > 0) {
+            return $standardWorkMinutes;
+        }
+
+        if ($scheduleMinutes && $scheduleMinutes > 0) {
+            return $scheduleMinutes;
+        }
+
+        return 480;
     }
 }
