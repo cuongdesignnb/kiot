@@ -431,6 +431,149 @@ class TimekeepingService
         return compact('created', 'updated');
     }
 
+    public function buildManualRecordAttributes(
+        EmployeeWorkSchedule $schedule,
+        string $attendanceType,
+        ?string $checkInTime,
+        ?string $checkOutTime,
+        int $otMinutes = 0,
+        ?string $notes = null
+    ): array {
+        // Load branch-specific or global settings
+        $setting = TimekeepingSetting::where('branch_id', $schedule->branch_id)->first()
+            ?? TimekeepingSetting::whereNull('branch_id')->first();
+
+        // Calculate scheduleStart / scheduleEnd
+        $scheduleStart = $this->buildScheduleDateTime($schedule->work_date, $schedule->start_time, $schedule->shift?->start_time);
+        $scheduleEnd = $this->buildScheduleDateTime($schedule->work_date, $schedule->end_time, $schedule->shift?->end_time);
+        if ($scheduleStart && $scheduleEnd && $scheduleEnd <= $scheduleStart) {
+            $scheduleEnd->addDay(); // ca đêm
+        }
+
+        // Calculate checkIn / checkOut
+        $checkInAt = null;
+        $checkOutAt = null;
+        if ($attendanceType === 'work') {
+            $dateStr = Carbon::parse($schedule->work_date)->toDateString();
+            $checkInAt = !empty($checkInTime) ? Carbon::parse($dateStr . ' ' . $checkInTime) : null;
+            $checkOutAt = !empty($checkOutTime) ? Carbon::parse($dateStr . ' ' . $checkOutTime) : null;
+            if ($checkOutAt && $checkInAt && $checkOutAt <= $checkInAt) {
+                $checkOutAt->addDay(); // ca đêm
+            }
+        }
+
+        $useShiftAllowances = (bool) ($setting?->use_shift_allowances ?? true);
+        $allowLate = $useShiftAllowances ? ($schedule->shift?->allow_late_minutes ?? 0) : ($setting?->late_grace_minutes ?? 0);
+        $allowEarly = $useShiftAllowances ? ($schedule->shift?->allow_early_minutes ?? 0) : ($setting?->early_grace_minutes ?? 0);
+
+        // Calculate late / early / worked minutes
+        $lateMinutes = 0;
+        $earlyMinutes = 0;
+        $workedMinutes = 0;
+
+        if ($attendanceType === 'work') {
+            if ($checkInAt && $checkOutAt) {
+                $workedMinutes = abs($checkOutAt->diffInMinutes($checkInAt));
+            } elseif ($checkInAt && !$checkOutAt && $scheduleEnd) {
+                $workedMinutes = abs($scheduleEnd->diffInMinutes($checkInAt));
+            } elseif (!$checkInAt && $checkOutAt && $scheduleStart) {
+                $workedMinutes = abs($checkOutAt->diffInMinutes($scheduleStart));
+            }
+
+            if ($scheduleStart && $checkInAt && $checkInAt->greaterThan($scheduleStart)) {
+                $lateMinutes = max(0, abs($checkInAt->diffInMinutes($scheduleStart)) - $allowLate);
+            }
+
+            if ($scheduleEnd && $checkOutAt && $checkOutAt->lessThan($scheduleEnd)) {
+                $earlyMinutes = max(0, abs($scheduleEnd->diffInMinutes($checkOutAt)) - $allowEarly);
+            }
+        }
+
+        // Holiday & Day Off logic
+        $holiday = Holiday::where('holiday_date', $schedule->work_date)
+            ->where('status', 'active')
+            ->first();
+
+        $isRestDay = false;
+        if (!$holiday) {
+            $dayOfWeek = Carbon::parse($schedule->work_date)->dayOfWeek;
+            $workdaySettings = WorkdaySetting::all();
+            $branchWorkday = $workdaySettings->firstWhere('branch_id', $schedule->branch_id);
+            $globalWorkday = $workdaySettings->firstWhere('branch_id', null);
+            $weekDays = ($branchWorkday ?? $globalWorkday)?->week_days ?? [1, 2, 3, 4, 5, 6];
+            $isRestDay = !in_array($dayOfWeek, $weekDays);
+        }
+
+        $isHoliday = (bool) $holiday || $isRestDay;
+        $holidayMultiplier = $holiday ? (float) $holiday->multiplier : ($isRestDay ? 2.0 : 1.0);
+
+        // Calculate work_units
+        $halfWorkEnabled = (bool) Setting::get('attendance_half_work_enabled', true);
+        $halfWorkMaxMinutes = (int) Setting::get('attendance_half_work_max_minutes', 480);
+        $halfWorkMinMinutes = (int) Setting::get('attendance_half_work_min_minutes', 0);
+        $payrollSetting = \App\Models\PayrollSetting::first();
+        $lateHalfDayEnabled = (bool) ($payrollSetting->late_half_day_enabled ?? false);
+        $lateHalfDayThreshold = (int) ($payrollSetting->late_half_day_threshold ?? 120);
+
+        $workUnits = 0.0;
+        if ($attendanceType === 'leave_paid') {
+            $workUnits = 1.0;
+        } elseif ($attendanceType === 'leave_unpaid') {
+            $workUnits = 0.0;
+        } else { // 'work'
+            if ($workedMinutes > 0) {
+                if ($halfWorkEnabled) {
+                    if ($workedMinutes < $halfWorkMinMinutes) {
+                        $workUnits = 0.0;
+                    } elseif ($workedMinutes <= $halfWorkMaxMinutes) {
+                        $workUnits = 0.5;
+                    } else {
+                        $workUnits = 1.0;
+                    }
+                } else {
+                    $standardHours = (float) ($setting?->standard_hours_per_day ?? 8);
+                    $workedHours = $workedMinutes / 60;
+                    if ($workedHours >= $standardHours / 2) {
+                        $workUnits = 1.0;
+                    } else {
+                        $workUnits = 0.5;
+                    }
+                }
+            }
+
+            if ($lateHalfDayEnabled && $lateMinutes >= $lateHalfDayThreshold && $workUnits > 0.5) {
+                $workUnits = 0.5;
+            }
+        }
+
+        return [
+            'employee_id' => $schedule->employee_id,
+            'employee_work_schedule_id' => $schedule->id,
+            'branch_id' => $schedule->branch_id,
+            'shift_id' => $schedule->shift_id,
+            'work_date' => $schedule->work_date,
+            'slot' => $schedule->slot ?? 1,
+            'scheduled_start_at' => $scheduleStart,
+            'scheduled_end_at' => $scheduleEnd,
+            'check_in_at' => $checkInAt,
+            'check_out_at' => $checkOutAt,
+            'source' => 'manual',
+            'attendance_type' => $attendanceType,
+            'manual_override' => true,
+            'late_minutes' => $lateMinutes,
+            'early_minutes' => $earlyMinutes,
+            'ot_minutes' => $otMinutes,
+            'worked_minutes' => $workedMinutes,
+            'work_units' => $workUnits,
+            'is_holiday' => $isHoliday,
+            'holiday_multiplier' => $holidayMultiplier,
+            'raw' => [
+                'source' => 'manual',
+            ],
+            'notes' => $notes,
+        ];
+    }
+
     private function buildScheduleDateTime($workDate, $scheduleTime, $fallbackShiftTime): ?Carbon
     {
         $time = $scheduleTime ?? $fallbackShiftTime;
