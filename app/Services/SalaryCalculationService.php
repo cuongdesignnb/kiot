@@ -9,6 +9,8 @@ use App\Models\SalaryTemplate;
 use App\Models\CommissionTable;
 use App\Models\Order;
 use App\Models\Invoice;
+use App\Models\OrderReturn;
+use App\Support\Reports\SellerResolver;
 use App\Models\WorkdaySetting;
 use App\Models\Setting;
 use Carbon\Carbon;
@@ -425,6 +427,7 @@ class SalaryCalculationService
                     'bonus_value' => $matchedTier->bonus_value,
                     'is_percentage' => $matchedTier->bonus_is_percentage,
                     'calculated' => round($tierAmount),
+                    'revenue' => $revenue,
                 ];
             }
         } else {
@@ -451,6 +454,7 @@ class SalaryCalculationService
                         'bonus_value' => $tier->bonus_value,
                         'is_percentage' => $tier->bonus_is_percentage,
                         'calculated' => round($tierAmount),
+                        'revenue' => $revenue,
                     ];
                     $remainingRevenue -= $tierRevenue;
                 }
@@ -623,6 +627,7 @@ class SalaryCalculationService
                     'bonus_value' => $val,
                     'is_percentage' => $isPct,
                     'calculated' => round($tierAmount),
+                    'revenue' => $revenue,
                 ];
             }
         } else {
@@ -649,6 +654,7 @@ class SalaryCalculationService
                         'bonus_value' => $val,
                         'is_percentage' => $isPct,
                         'calculated' => round($tierAmount),
+                        'revenue' => $revenue,
                     ];
                     $remainingRevenue -= $tierRevenue;
                 }
@@ -909,16 +915,24 @@ class SalaryCalculationService
     {
         $startDate = $from->copy()->startOfDay();
         $endDate = $to->copy()->endOfDay();
+        $sellerKey = "employee:{$employee->id}";
 
-        $orderRevenue = Order::where('created_by', $employee->id)
-            ->whereBetween('created_at', [$startDate, $endDate])
-            ->sum('total_payment');
+        $resolver = new SellerResolver();
 
-        $invoiceRevenue = Invoice::where('created_by', $employee->id)
-            ->whereBetween('created_at', [$startDate, $endDate])
-            ->sum('total');
+        $invoiceQ = Invoice::whereBetween('created_at', [$startDate, $endDate])
+            ->where('status', '!=', 'Đã hủy');
+        $invoiceQ = $resolver->filterBySeller($invoiceQ, $sellerKey);
 
-        return (float) ($orderRevenue + $invoiceRevenue);
+        $returnQ = OrderReturn::whereBetween('created_at', [$startDate, $endDate])
+            ->where('status', '!=', 'Đã hủy');
+        $returnQ = $resolver->filterReturnsBySeller($returnQ, $sellerKey);
+
+        $empRevenue = $resolver->aggregateBySeller(clone $invoiceQ, 'SUM(total)');
+        $empReturns = $resolver->aggregateReturnsBySeller(clone $returnQ, 'SUM(total)');
+
+        $revenue = ($empRevenue[$sellerKey] ?? 0) - ($empReturns[$sellerKey] ?? 0);
+
+        return (float) $revenue;
     }
 
     /**
@@ -944,27 +958,43 @@ class SalaryCalculationService
 
     /**
      * Lợi nhuận gộp cá nhân trong kỳ = Doanh thu - Giá vốn
-     * Tính từ đơn hàng: SUM(order_items.subtotal) - SUM(order_items.qty * products.cost_price)
+     * Tính từ Invoice và OrderReturn đồng bộ với báo cáo lợi nhuận nhân viên
      */
     private function getPersonalGrossProfit(Employee $employee, Carbon $from, Carbon $to): float
     {
         $startDate = $from->copy()->startOfDay();
         $endDate = $to->copy()->endOfDay();
+        $sellerKey = "employee:{$employee->id}";
 
-        $orders = Order::where('created_by', $employee->id)
-            ->whereBetween('created_at', [$startDate, $endDate])
-            ->with('items.product:id,cost_price')
-            ->get();
+        $resolver = new SellerResolver();
 
-        $grossProfit = 0;
-        foreach ($orders as $order) {
-            foreach ($order->items as $item) {
-                $costPrice = $item->product?->cost_price ?? 0;
-                $grossProfit += $item->subtotal - ($item->qty * $costPrice);
-            }
-        }
+        $invoiceQ = Invoice::whereBetween('created_at', [$startDate, $endDate])
+            ->where('status', '!=', 'Đã hủy');
+        $invoiceQ = $resolver->filterBySeller($invoiceQ, $sellerKey);
 
-        return max(0, (float) $grossProfit);
+        $returnQ = OrderReturn::whereBetween('created_at', [$startDate, $endDate])
+            ->where('status', '!=', 'Đã hủy');
+        $returnQ = $resolver->filterReturnsBySeller($returnQ, $sellerKey);
+
+        $empGrossRevenue     = $resolver->aggregateBySeller(clone $invoiceQ, 'SUM(subtotal)');
+        $empInvoiceDiscount  = $resolver->aggregateBySeller(clone $invoiceQ, 'SUM(discount)');
+        $empReturnSubtotal   = $resolver->aggregateReturnsBySeller(clone $returnQ, 'SUM(subtotal)');
+        $empCogsSold         = $resolver->cogsSoldBySeller(clone $invoiceQ);
+        $empCogsReturned     = $resolver->cogsReturnedBySeller(clone $returnQ);
+
+        $grossRevenue          = $empGrossRevenue[$sellerKey] ?? 0;
+        $invoiceDiscount       = $empInvoiceDiscount[$sellerKey] ?? 0;
+        $revenueAfterDiscount  = $grossRevenue - $invoiceDiscount;
+        $returnValue           = $empReturnSubtotal[$sellerKey] ?? 0;
+        $netRevenue            = $revenueAfterDiscount - $returnValue;
+
+        $cogsSold              = $empCogsSold[$sellerKey] ?? 0;
+        $cogsReturned          = $empCogsReturned[$sellerKey] ?? 0;
+        $totalCogs             = $cogsSold - $cogsReturned;
+
+        $grossProfit           = $netRevenue - $totalCogs;
+
+        return (float) $grossProfit;
     }
 
     private function emptyResult(): array

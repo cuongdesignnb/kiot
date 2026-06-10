@@ -12,6 +12,11 @@ use App\Models\EmployeeWorkSchedule;
 use App\Models\TimekeepingRecord;
 use App\Models\EmployeeSalarySetting;
 use App\Models\TimekeepingSetting;
+use App\Models\Invoice;
+use App\Models\InvoiceItem;
+use App\Models\OrderReturn;
+use App\Models\ReturnItem;
+use App\Models\Product;
 use App\Services\TimekeepingService;
 use App\Services\SalaryCalculationService;
 use Carbon\Carbon;
@@ -627,5 +632,422 @@ class ManualTimekeepingTest extends TestCase
 
         // Verify that the record in the DB is updated to 1.0
         $this->assertEquals(1.0, (float)$record->fresh()->work_units);
+    }
+
+    public function test_payroll_personal_gross_profit_bonus_invoice_source(): void
+    {
+        $env = $this->setupTimekeepingEnvironment();
+        $employee = $env['employee'];
+        $branch = $env['branch'];
+
+        // Create a product
+        $product = Product::create([
+            'sku' => 'SKU-' . uniqid(),
+            'name' => 'Test Product',
+            'cost_price' => 3471606,
+            'retail_price' => 6000000,
+            'stock_quantity' => 100,
+            'inventory_total_cost' => 347160600,
+            'has_serial' => false,
+        ]);
+
+        // Create setting
+        $setting = EmployeeSalarySetting::where('employee_id', $employee->id)->first();
+        $setting->update([
+            'has_bonus' => true,
+            'bonus_type' => 'personal_gross_profit',
+            'bonus_calculation' => 'total_revenue',
+            'custom_bonuses' => [
+                [
+                    'revenue_from' => 0,
+                    'bonus_value' => 20,
+                    'bonus_is_percentage' => true,
+                    'role_type' => 'personal_gross_profit',
+                ]
+            ],
+            'has_commission' => false,
+        ]);
+
+        // Create invoice of 5,200,000 with cost 3,471,606
+        $invoice = Invoice::create([
+            'code' => 'HD-' . uniqid(),
+            'branch_id' => $branch->id,
+            'created_by' => $employee->id,
+            'seller_name' => $employee->name,
+            'created_by_name' => 'Tester',
+            'subtotal' => 5200000,
+            'discount' => 0,
+            'total' => 5200000,
+            'customer_paid' => 5200000,
+            'status' => 'Hoàn thành',
+            'sales_channel' => 'Bán trực tiếp',
+        ]);
+        $invoice->created_at = Carbon::parse('2026-05-25 12:00:00');
+        $invoice->save();
+
+        InvoiceItem::create([
+            'invoice_id' => $invoice->id,
+            'product_id' => $product->id,
+            'quantity' => 1,
+            'price' => 5200000,
+            'cost_price' => 3471606,
+            'subtotal' => 5200000,
+        ]);
+
+        $service = app(SalaryCalculationService::class);
+        $from = Carbon::parse('2026-05-01');
+        $to = Carbon::parse('2026-05-31');
+        $result = $service->calculateForEmployee($employee, $from, $to, 26);
+
+        // Assert personal_revenue = 5.200.000
+        $this->assertEquals(5200000.0, (float)$result['personal_revenue']);
+        
+        // Assert personal_gross_profit = 1.728.394
+        // Calculate: 5,200,000 (net revenue) - 3,471,606 (total cogs) = 1,728,394
+        $personalGrossProfit = $service->calculateForEmployee($employee, $from, $to, 26)['details']['bonus'][0]['revenue'] ?? 0;
+        $this->assertEquals(1728394.0, (float)$personalGrossProfit);
+
+        // Assert bonus 20% = 345.679
+        $this->assertEquals(345679.0, (float)$result['bonus']);
+        $this->assertEquals(345679.0, (float)($result['details']['bonus'][0]['calculated'] ?? 0));
+    }
+
+    public function test_payroll_personal_gross_profit_bonus_with_returns(): void
+    {
+        $env = $this->setupTimekeepingEnvironment();
+        $employee = $env['employee'];
+        $branch = $env['branch'];
+
+        $product = Product::create([
+            'sku' => 'SKU-' . uniqid(),
+            'name' => 'Test Product',
+            'cost_price' => 1000000,
+            'retail_price' => 2000000,
+            'stock_quantity' => 100,
+            'inventory_total_cost' => 100000000,
+            'has_serial' => false,
+        ]);
+
+        $setting = EmployeeSalarySetting::where('employee_id', $employee->id)->first();
+        $setting->update([
+            'has_bonus' => true,
+            'bonus_type' => 'personal_gross_profit',
+            'bonus_calculation' => 'total_revenue',
+            'custom_bonuses' => [
+                [
+                    'revenue_from' => 0,
+                    'bonus_value' => 20,
+                    'bonus_is_percentage' => true,
+                    'role_type' => 'personal_gross_profit',
+                ]
+            ],
+        ]);
+
+        // Invoice: 5,000,000, cost: 3,000,000
+        $invoice = Invoice::create([
+            'code' => 'HD-' . uniqid(),
+            'branch_id' => $branch->id,
+            'created_by' => $employee->id,
+            'seller_name' => $employee->name,
+            'created_by_name' => 'Tester',
+            'subtotal' => 5000000,
+            'discount' => 0,
+            'total' => 5000000,
+            'customer_paid' => 5000000,
+            'status' => 'Hoàn thành',
+            'sales_channel' => 'Bán trực tiếp',
+        ]);
+        $invoice->created_at = Carbon::parse('2026-05-25 12:00:00');
+        $invoice->save();
+
+        InvoiceItem::create([
+            'invoice_id' => $invoice->id,
+            'product_id' => $product->id,
+            'quantity' => 2,
+            'price' => 2500000,
+            'cost_price' => 1500000, // 3,000,000 total cogs
+            'subtotal' => 5000000,
+        ]);
+
+        // Return: 2,500,000, cost: 1,500,000
+        $return = OrderReturn::create([
+            'code' => 'TR-' . uniqid(),
+            'invoice_id' => $invoice->id,
+            'branch_id' => $branch->id,
+            'subtotal' => 2500000,
+            'discount' => 0,
+            'fee' => 0,
+            'total' => 2500000,
+            'status' => 'Hoàn thành',
+            'seller_name' => $invoice->seller_name,
+        ]);
+        $return->created_at = Carbon::parse('2026-05-25 13:00:00');
+        $return->save();
+
+        ReturnItem::create([
+            'return_id' => $return->id,
+            'product_id' => $product->id,
+            'quantity' => 1,
+            'price' => 2500000,
+            'cost_price' => 1500000,
+            'import_price' => 1500000,
+        ]);
+
+        $service = app(SalaryCalculationService::class);
+        $from = Carbon::parse('2026-05-01');
+        $to = Carbon::parse('2026-05-31');
+        $result = $service->calculateForEmployee($employee, $from, $to, 26);
+
+        // Assert personal_revenue = 5,000,000 - 2,500,000 = 2,500,000
+        $this->assertEquals(2500000.0, (float)$result['personal_revenue']);
+
+        // Assert personal_gross_profit = Net Revenue (2,500,000) - Total COGS (3,000,000 - 1,500,000 = 1,500,000) = 1,000,000
+        $personalGrossProfit = $result['details']['bonus'][0]['revenue'] ?? 0;
+        $this->assertEquals(1000000.0, (float)$personalGrossProfit);
+
+        // Assert bonus 20% of 1,000,000 = 200,000
+        $this->assertEquals(200000.0, (float)$result['bonus']);
+    }
+
+    public function test_payroll_personal_gross_profit_bonus_no_orders_source(): void
+    {
+        $env = $this->setupTimekeepingEnvironment();
+        $employee = $env['employee'];
+        $branch = $env['branch'];
+
+        $product = Product::create([
+            'sku' => 'SKU-' . uniqid(),
+            'name' => 'Test Product',
+            'cost_price' => 1000000,
+            'retail_price' => 2000000,
+            'stock_quantity' => 100,
+            'inventory_total_cost' => 100000000,
+            'has_serial' => false,
+        ]);
+
+        $setting = EmployeeSalarySetting::where('employee_id', $employee->id)->first();
+        $setting->update([
+            'has_bonus' => true,
+            'bonus_type' => 'personal_gross_profit',
+            'bonus_calculation' => 'total_revenue',
+            'custom_bonuses' => [
+                [
+                    'revenue_from' => 0,
+                    'bonus_value' => 20,
+                    'bonus_is_percentage' => true,
+                    'role_type' => 'personal_gross_profit',
+                ]
+            ],
+        ]);
+
+        // Create invoice of 5,200,000 with cost 3,471,606. Orders total is 0.
+        $invoice = Invoice::create([
+            'code' => 'HD-' . uniqid(),
+            'branch_id' => $branch->id,
+            'created_by' => $employee->id,
+            'seller_name' => $employee->name,
+            'created_by_name' => 'Tester',
+            'subtotal' => 5200000,
+            'discount' => 0,
+            'total' => 5200000,
+            'customer_paid' => 5200000,
+            'status' => 'Hoàn thành',
+            'sales_channel' => 'Bán trực tiếp',
+        ]);
+        $invoice->created_at = Carbon::parse('2026-05-25 12:00:00');
+        $invoice->save();
+
+        InvoiceItem::create([
+            'invoice_id' => $invoice->id,
+            'product_id' => $product->id,
+            'quantity' => 1,
+            'price' => 5200000,
+            'cost_price' => 3471606,
+            'subtotal' => 5200000,
+        ]);
+
+        $service = app(SalaryCalculationService::class);
+        $from = Carbon::parse('2026-05-01');
+        $to = Carbon::parse('2026-05-31');
+        $result = $service->calculateForEmployee($employee, $from, $to, 26);
+
+        // Orders total = 0, but bonus is still calculated from Invoice
+        $this->assertEquals(345679.0, (float)$result['bonus']);
+    }
+
+    public function test_payroll_personal_gross_profit_bonus_has_commission_false(): void
+    {
+        $env = $this->setupTimekeepingEnvironment();
+        $employee = $env['employee'];
+        $branch = $env['branch'];
+
+        $product = Product::create([
+            'sku' => 'SKU-' . uniqid(),
+            'name' => 'Test Product',
+            'cost_price' => 3471606,
+            'retail_price' => 6000000,
+            'stock_quantity' => 100,
+            'inventory_total_cost' => 347160600,
+            'has_serial' => false,
+        ]);
+
+        $setting = EmployeeSalarySetting::where('employee_id', $employee->id)->first();
+        $setting->update([
+            'has_bonus' => true,
+            'bonus_type' => 'personal_gross_profit',
+            'bonus_calculation' => 'total_revenue',
+            'custom_bonuses' => [
+                [
+                    'revenue_from' => 0,
+                    'bonus_value' => 20,
+                    'bonus_is_percentage' => true,
+                    'role_type' => 'personal_gross_profit',
+                ]
+            ],
+            'has_commission' => false, // explicitly false
+        ]);
+
+        $invoice = Invoice::create([
+            'code' => 'HD-' . uniqid(),
+            'branch_id' => $branch->id,
+            'created_by' => $employee->id,
+            'seller_name' => $employee->name,
+            'created_by_name' => 'Tester',
+            'subtotal' => 5200000,
+            'discount' => 0,
+            'total' => 5200000,
+            'customer_paid' => 5200000,
+            'status' => 'Hoàn thành',
+            'sales_channel' => 'Bán trực tiếp',
+        ]);
+        $invoice->created_at = Carbon::parse('2026-05-25 12:00:00');
+        $invoice->save();
+
+        InvoiceItem::create([
+            'invoice_id' => $invoice->id,
+            'product_id' => $product->id,
+            'quantity' => 1,
+            'price' => 5200000,
+            'cost_price' => 3471606,
+            'subtotal' => 5200000,
+        ]);
+
+        $service = app(SalaryCalculationService::class);
+        $from = Carbon::parse('2026-05-01');
+        $to = Carbon::parse('2026-05-31');
+        $result = $service->calculateForEmployee($employee, $from, $to, 26);
+
+        $this->assertEquals(0.0, (float)$result['commission']);
+        $this->assertEquals(345679.0, (float)$result['bonus']);
+    }
+
+    public function test_payroll_report_and_employee_profit_report_match(): void
+    {
+        $env = $this->setupTimekeepingEnvironment();
+        $employee = $env['employee'];
+        $branch = $env['branch'];
+
+        $product = Product::create([
+            'sku' => 'SKU-' . uniqid(),
+            'name' => 'Test Product',
+            'cost_price' => 1000000,
+            'retail_price' => 2000000,
+            'stock_quantity' => 100,
+            'inventory_total_cost' => 100000000,
+            'has_serial' => false,
+        ]);
+
+        // Invoice: 5,000,000, cost: 3,000,000
+        $invoice = Invoice::create([
+            'code' => 'HD-' . uniqid(),
+            'branch_id' => $branch->id,
+            'created_by' => $employee->id,
+            'seller_name' => $employee->name,
+            'created_by_name' => 'Tester',
+            'subtotal' => 5000000,
+            'discount' => 500000, // 500,000 discount
+            'total' => 4500000, // total 4,500,000
+            'customer_paid' => 4500000,
+            'status' => 'Hoàn thành',
+            'sales_channel' => 'Bán trực tiếp',
+        ]);
+
+        InvoiceItem::create([
+            'invoice_id' => $invoice->id,
+            'product_id' => $product->id,
+            'quantity' => 2.5,
+            'price' => 2000000,
+            'cost_price' => 1200000, // 3,000,000 total cogs
+            'subtotal' => 5000000,
+        ]);
+
+        // Return: 2,000,000, cost: 1,200,000
+        $return = OrderReturn::create([
+            'code' => 'TR-' . uniqid(),
+            'invoice_id' => $invoice->id,
+            'branch_id' => $branch->id,
+            'subtotal' => 2000000,
+            'discount' => 0,
+            'fee' => 0,
+            'total' => 2000000,
+            'status' => 'Hoàn thành',
+            'seller_name' => $invoice->seller_name,
+        ]);
+
+        ReturnItem::create([
+            'return_id' => $return->id,
+            'product_id' => $product->id,
+            'quantity' => 1,
+            'price' => 2000000,
+            'cost_price' => 1200000,
+            'import_price' => 1200000,
+        ]);
+
+        // Setup dates matching the query
+        $from = Carbon::now()->startOfMonth();
+        $to = Carbon::now()->endOfDay();
+
+        $invoice->created_at = Carbon::now()->startOfDay()->addMinute();
+        $invoice->save();
+
+        $return->created_at = Carbon::now()->startOfDay()->addHour();
+        $return->save();
+
+        // 1. Get gross profit from SellerResolver directly (simulating EmployeeReportController)
+        $resolver = new \App\Support\Reports\SellerResolver();
+        $sellerKey = "employee:{$employee->id}";
+
+        $invoiceQ = Invoice::whereBetween('created_at', [$from, $to])->where('status', '!=', 'Đã hủy');
+        $invoiceQ = $resolver->filterBySeller($invoiceQ, $sellerKey);
+
+        $returnQ = OrderReturn::whereBetween('created_at', [$from, $to])->where('status', '!=', 'Đã hủy');
+        $returnQ = $resolver->filterReturnsBySeller($returnQ, $sellerKey);
+
+        $empGrossRevenue     = $resolver->aggregateBySeller(clone $invoiceQ, 'SUM(subtotal)');
+        $empInvoiceDiscount  = $resolver->aggregateBySeller(clone $invoiceQ, 'SUM(discount)');
+        $empReturnSubtotal   = $resolver->aggregateReturnsBySeller(clone $returnQ, 'SUM(subtotal)');
+        $empCogsSold         = $resolver->cogsSoldBySeller(clone $invoiceQ);
+        $empCogsReturned     = $resolver->cogsReturnedBySeller(clone $returnQ);
+
+        $grossRevenue          = $empGrossRevenue[$sellerKey] ?? 0;
+        $invoiceDiscount       = $empInvoiceDiscount[$sellerKey] ?? 0;
+        $revenueAfterDiscount  = $grossRevenue - $invoiceDiscount;
+        $returnValue           = $empReturnSubtotal[$sellerKey] ?? 0;
+        $netRevenue            = $revenueAfterDiscount - $returnValue;
+
+        $cogsSold              = $empCogsSold[$sellerKey] ?? 0;
+        $cogsReturned          = $empCogsReturned[$sellerKey] ?? 0;
+        $totalCogs             = $cogsSold - $cogsReturned;
+        $reportGrossProfit     = $netRevenue - $totalCogs;
+
+        // 2. Get gross profit from SalaryCalculationService
+        $service = app(SalaryCalculationService::class);
+        // We call the private method getPersonalGrossProfit using reflection
+        $method = new \ReflectionMethod(SalaryCalculationService::class, 'getPersonalGrossProfit');
+        $method->setAccessible(true);
+        $payrollGrossProfit = $method->invoke($service, $employee, $from, $to);
+
+        // Assert they match exactly
+        $this->assertEquals((float)$reportGrossProfit, (float)$payrollGrossProfit);
     }
 }
