@@ -45,5 +45,36 @@ Tuy nhiên, `SalaryCalculationService::calculateForEmployee()` tính toán ra:
 - **Vite build**: Chạy thành công `npm run build` không có lỗi.
 - **Data safety**: Không thay đổi cấu trúc DB (no migration), không backfill/update trực tiếp dữ liệu cũ. Việc cập nhật chỉ áp dụng khi tính lại bảng lương.
 
+## Localhost verification
+- **Local URL**: http://localhost:8081/employees/paysheets/8/edit
+- **Branch**: `hotfix/payroll-standard-work-minutes-full-day`
+- **Commit**: `e34af012b8d066f7a464cdd0c8dcffebc938da69`
+- **Service calculation before recalculation**:
+  - `personal_revenue` = 5.200.000
+  - `bonus` = 345.679
+  - `commission` = 0
+  - `details.bonus[0].revenue` = 1.728.394,49
+  - `details.bonus[0].calculated` = 345.679
+- **UI before recalculation**:
+  - `Thưởng` = 0đ
+  - `Tổng lương` = 8.446.761đ
+- **Action**: Clicked "Tính lại" on localhost (calling `POST /api/paysheets/8/recalculate`)
+- **Payslip DB after recalculation**:
+  - `bonus` = 345.679
+  - `commission` = 0
+  - `allowances` = 600.000
+  - `deductions` = 0
+  - `ot_pay` = 58.299
+  - `total_salary` = 8.792.440
+  - `remaining` = 8.792.440
+- **UI after recalculation**:
+  - `Thưởng` = 345.679đ (Khớp hoàn toàn với DB)
+  - `Tổng lương` = 8.792.440đ (Tăng chính xác thêm 345.679đ từ 8.446.761đ)
+  - `Hoa hồng` = 0đ
+  - `Phụ cấp` = 600.000đ
+- **Tests**: `php artisan test --filter=ManualTimekeepingTest` (All 21 PASS)
+- **Build**: `npm run build` (SUCCESS)
+- **Conclusion**: Local verification is fully successful. Recalculation logic updates UI/DB exactly as expected.
+
 ---
 *Báo cáo được thực hiện bởi Antigravity AI Agent.*
