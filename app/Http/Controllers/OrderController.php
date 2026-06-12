@@ -676,8 +676,8 @@ class OrderController extends Controller
             // RR-06: ghi ledger qua CustomerDebtService thay vì increment trực tiếp.
             $debtAmount = $order->total_payment - $totalPaid;
             if ($customer) {
-                if ($debtAmount != 0) {
-                    app(CustomerDebtService::class)->recordSale(
+                if (abs($debtAmount) >= 0.01) {
+                    app(CustomerDebtService::class)->recordInvoiceBalanceEffect(
                         $customer->id,
                         (float) $debtAmount,
                         $invoice,

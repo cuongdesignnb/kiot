@@ -435,11 +435,12 @@ class InvoiceController extends Controller
                     // RR-06: ghi ledger qua service thay vì decrement trực tiếp.
                     $debtAmount = $invoice->total - ($invoice->customer_paid ?? 0);
                     if ($debtAmount != 0) {
-                        app(CustomerDebtService::class)->recordSaleReversal(
+                        app(CustomerDebtService::class)->recordInvoiceBalanceReversal(
                             $customer->id,
                             (float) $debtAmount,
                             $invoice,
-                            "Đảo công nợ do hủy hóa đơn {$invoice->code}"
+                            "Đảo công nợ do hủy hóa đơn {$invoice->code}",
+                            ['ref_code' => $invoice->code, 'type' => 'adjustment']
                         );
                     }
                     $customer->decrement('total_spent', $invoice->total);

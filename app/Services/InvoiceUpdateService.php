@@ -288,8 +288,10 @@ class InvoiceUpdateService
                     if ((int) $oldCustomerId !== (int) $newCustomerId) {
                         // Customer changed — full reverse old
                         if (abs($oldDebt) >= 0.01) {
-                            app(CustomerDebtService::class)->recordAdjustment(
-                                $oldCustomer->id, -$oldDebt,
+                            app(CustomerDebtService::class)->recordInvoiceBalanceReversal(
+                                $oldCustomer->id,
+                                $oldDebt,
+                                $invoice,
                                 "Đảo công nợ do chuyển hóa đơn {$invoice->code} sang khách khác",
                                 ['ref_code' => $invoice->code]
                             );
@@ -388,8 +390,10 @@ class InvoiceUpdateService
                     $debtDiff = $newDebt - $oldDebt;
                     $totalDiff = $newTotal - $oldTotal;
                     if (abs($debtDiff) >= 0.01) {
-                        app(CustomerDebtService::class)->recordAdjustment(
-                            $newCustomer->id, $debtDiff,
+                        app(CustomerDebtService::class)->recordInvoiceBalanceEffect(
+                            $newCustomer->id,
+                            $debtDiff,
+                            $invoice,
                             "Điều chỉnh công nợ do cập nhật hóa đơn {$invoice->code}",
                             ['ref_code' => $invoice->code]
                         );
@@ -400,10 +404,13 @@ class InvoiceUpdateService
                 // New customer
                 $newCustomer = Customer::find($newCustomerId);
                 if ($newCustomer) {
-                    if ($newDebt > 0) {
-                        app(CustomerDebtService::class)->recordSale(
-                            $newCustomer->id, $newDebt, $invoice,
-                            "Ghi nợ do nhận hóa đơn {$invoice->code} từ khách khác"
+                    if (abs($newDebt) >= 0.01) {
+                        app(CustomerDebtService::class)->recordInvoiceBalanceEffect(
+                            $newCustomer->id,
+                            $newDebt,
+                            $invoice,
+                            "Ghi nợ do nhận hóa đơn {$invoice->code} từ khách khác",
+                            ['ref_code' => $invoice->code, 'type' => 'sale']
                         );
                     }
                     $newCustomer->increment('total_spent', $newTotal);

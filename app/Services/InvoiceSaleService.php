@@ -270,13 +270,14 @@ class InvoiceSaleService
         }
 
         $debtAmount = $total - $customerPaid;
-        if ($debtAmount != 0) {
+        if (abs($debtAmount) >= 0.01) {
             // RR-06: ledger ghi qua service. Service tự update customers.debt_amount + tạo customer_debts row.
-            app(CustomerDebtService::class)->recordSale(
+            app(CustomerDebtService::class)->recordInvoiceBalanceEffect(
                 $customer->id,
                 $debtAmount,
                 $invoice,
-                $invoice ? "Ghi nợ bán hàng hóa đơn {$invoice->code}" : null
+                $invoice ? "Ghi nợ bán hàng hóa đơn {$invoice->code}" : null,
+                ['ref_code' => $invoice?->code, 'type' => 'sale']
             );
         }
         $customer->increment('total_spent', $total);
