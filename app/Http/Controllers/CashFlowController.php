@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\ActivityLog;
 use App\Models\CashFlow;
 use App\Models\BankAccount;
+use App\Services\CustomerPaymentService;
 use App\Services\LockPeriodService;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -164,6 +165,10 @@ class CashFlowController extends Controller
 
     public function update(Request $request, CashFlow $cashFlow)
     {
+        if (app(CustomerPaymentService::class)->isFinanciallyLinked($cashFlow)) {
+            return back()->with('error', 'Phieu lien ket chung tu tai chinh khong duoc sua truc tiep. Hay huy va tao lai.');
+        }
+
         $request->validate([
             'time' => 'nullable|date',
             'category' => 'nullable|string|max:255',
@@ -204,15 +209,50 @@ class CashFlowController extends Controller
         return redirect()->back()->with('success', 'Cập nhật phiếu thành công');
     }
 
-    public function destroy(CashFlow $cashFlow)
+    public function destroy(Request $request, $cash_flow)
     {
+        $cashFlow = CashFlow::withTrashed()->findOrFail($cash_flow);
+
         // Lock period check
         app(LockPeriodService::class)->assertNotLocked($cashFlow->time, 'cashflow_cancel');
 
-        ActivityLog::log('cashflow_cancel', "Hủy phiếu {$cashFlow->code}, số tiền: " . number_format($cashFlow->amount), $cashFlow);
-        $cashFlow->update(['status' => 'cancelled']);
-        $cashFlow->delete(); // soft-delete
-        return redirect()->back()->with('success', 'Huỷ phiếu thành công');
+        $status = app(CustomerPaymentService::class)->cancel($cashFlow);
+        if ($status === CustomerPaymentService::ALREADY_CANCELLED) {
+            $message = 'Phieu thu nay da bi huy truoc do.';
+
+            return $request->wantsJson()
+                ? response()->json(['success' => false, 'status' => $status, 'message' => $message], 409)
+                : back()->with('error', $message);
+        }
+        if ($status === CustomerPaymentService::SOURCE_DOCUMENT_REQUIRED) {
+            $message = 'Phieu lien ket chung tu nguon phai duoc huy tu chung tu do.';
+
+            return $request->wantsJson()
+                ? response()->json(['success' => false, 'status' => $status, 'message' => $message], 422)
+                : back()->with('error', $message);
+        }
+
+        ActivityLog::log(
+            'cashflow_cancel',
+            "Huy phieu {$cashFlow->code}, so tien: " . number_format($cashFlow->amount),
+            $cashFlow,
+            [
+                'amount' => (float) $cashFlow->amount,
+                'reference_type' => $cashFlow->reference_type,
+                'reference_code' => $cashFlow->reference_code,
+                'cancel_reason' => $request->input('cancel_reason'),
+            ]
+        );
+
+        if ($request->wantsJson()) {
+            return response()->json([
+                'success' => true,
+                'status' => CustomerPaymentService::CANCELLED,
+                'message' => 'Huy phieu thanh cong.',
+            ]);
+        }
+
+        return redirect()->back()->with('success', 'Huy phieu thanh cong.');
     }
 
     public function print(CashFlow $cashFlow)

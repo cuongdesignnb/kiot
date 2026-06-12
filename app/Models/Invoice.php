@@ -63,4 +63,9 @@ class Invoice extends Model
     {
         return $this->hasOne(Waybill::class)->where('is_active', true);
     }
+
+    public function customerPaymentAllocations()
+    {
+        return $this->hasMany(CustomerPaymentAllocation::class);
+    }
 }

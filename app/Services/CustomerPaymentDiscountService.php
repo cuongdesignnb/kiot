@@ -6,7 +6,6 @@ use App\Models\Customer;
 use App\Models\Invoice;
 use App\Models\CustomerPaymentDiscount;
 use App\Models\CustomerPaymentDiscountAllocation;
-use App\Models\CustomerDebt;
 use App\Services\CustomerDebtService;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
@@ -33,80 +32,7 @@ class CustomerPaymentDiscountService
 
     public function getCustomerReceivableInvoices(Customer $customer): array
     {
-        // Source 1: Direct invoices
-        $directInvoices = Invoice::where('customer_id', $customer->id)
-            ->where('status', '!=', 'Đã hủy')
-            ->get();
-
-        // Source 2: Ledger invoices
-        $ledgerInvoiceCodes = CustomerDebt::where('customer_id', $customer->id)
-            ->where('type', 'sale')
-            ->where('amount', '>', 0)
-            ->whereNotNull('ref_code')
-            ->where('ref_code', 'like', 'HD%')
-            ->pluck('ref_code')
-            ->unique()
-            ->all();
-
-        $ledgerInvoices = [];
-        if (!empty($ledgerInvoiceCodes)) {
-            $ledgerInvoices = Invoice::whereIn('code', $ledgerInvoiceCodes)
-                ->where('status', '!=', 'Đã hủy')
-                ->get();
-        }
-
-        $merged = collect();
-        $addedIds = [];
-
-        foreach ($directInvoices as $invoice) {
-            $remaining = $this->getInvoiceRemainingReceivable($invoice);
-            if ($remaining > 0) {
-                $merged->push([
-                    'invoice' => $invoice,
-                    'source' => 'direct_invoice',
-                    'remaining' => $remaining,
-                ]);
-                $addedIds[$invoice->id] = true;
-            }
-        }
-
-        foreach ($ledgerInvoices as $invoice) {
-            if (isset($addedIds[$invoice->id])) {
-                continue;
-            }
-            $remaining = $this->getInvoiceRemainingReceivable($invoice);
-            if ($remaining > 0) {
-                $merged->push([
-                    'invoice' => $invoice,
-                    'source' => 'ledger_invoice',
-                    'remaining' => $remaining,
-                ]);
-                $addedIds[$invoice->id] = true;
-            }
-        }
-
-        // Sort by created_at ascending (oldest first)
-        $sorted = $merged->sortBy(function ($item) {
-            return $item['invoice']->created_at;
-        })->values();
-
-        $result = [];
-        foreach ($sorted as $item) {
-            $inv = $item['invoice'];
-            $allocated = $this->getInvoiceDiscountAllocatedAmount($inv->id);
-            $result[] = [
-                'id' => $inv->id,
-                'code' => $inv->code,
-                'created_at' => $inv->created_at,
-                'total' => (float) $inv->total,
-                'customer_paid' => (float) $inv->customer_paid,
-                'discount_allocated' => $allocated,
-                'remaining' => $item['remaining'],
-                'source' => $item['source'],
-            ];
-        }
-
-        return $result;
+        return app(CustomerReceivableInvoiceService::class)->summaries($customer);
     }
 
     public function getDiscountableInvoices(Customer $customer): array

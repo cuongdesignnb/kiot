@@ -85,4 +85,9 @@ class Customer extends Model
     {
         return $this->belongsTo(User::class, 'created_by');
     }
+
+    public function customerPaymentAllocations()
+    {
+        return $this->hasMany(CustomerPaymentAllocation::class);
+    }
 }

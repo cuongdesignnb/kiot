@@ -97,4 +97,9 @@ class CashFlow extends Model
     {
         return $this->belongsTo(BankAccount::class);
     }
+
+    public function customerPaymentAllocations()
+    {
+        return $this->hasMany(CustomerPaymentAllocation::class);
+    }
 }
