@@ -11,6 +11,7 @@ class Invoice extends Model
     protected $casts = [
         'transaction_date' => 'datetime',
         'lock_started_at'  => 'datetime',
+        'order_deposit_applied_amount' => 'decimal:2',
     ];
 
     /**

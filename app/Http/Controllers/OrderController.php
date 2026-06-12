@@ -19,6 +19,7 @@ use App\Support\Filters\FilterableIndex;
 use App\Services\CustomerDebtService;
 use App\Services\LockPeriodService;
 use App\Services\MovingAvgCostingService;
+use App\Services\OrderPaymentSummaryService;
 use App\Services\SerialAvailabilityService;
 use App\Services\StockMovementService;
 use Carbon\Carbon;
@@ -34,7 +35,7 @@ class OrderController extends Controller
             'customer'      => ['name', 'code', 'phone'],
             'items.product' => ['name', 'code', 'barcode'],
         ];
-        $this->sortable = ['code', 'created_at', 'total_payment', 'amount_paid', 'status'];
+        $this->sortable = ['code', 'created_at', 'total_payment', 'order_paid_total', 'order_remaining_debt', 'order_credit_total', 'status'];
         $this->dateColumn = 'created_at';
         $this->creatorColumn = 'created_by';
         $this->scalarFilters = [
@@ -47,15 +48,19 @@ class OrderController extends Controller
     public function index(Request $request)
     {
         $this->configureOrderFilters();
+        $paymentSummary = app(OrderPaymentSummaryService::class);
 
-        $query = Order::with(['customer', 'branch', 'items.product'])
+        $query = Order::query()
+            ->select('orders.*')
+            ->with(['customer', 'branch', 'items.product'])
             ->when($request->filled('has_debt'), function ($q) use ($request) {
-                if ((string) $request->input('has_debt') === '1') {
-                    $q->whereColumn('total_payment', '>', 'amount_paid');
-                } else {
-                    $q->whereColumn('total_payment', '<=', 'amount_paid');
-                }
+                app(OrderPaymentSummaryService::class)->applyHasDebtFilter(
+                    $q,
+                    (string) $request->input('has_debt') === '1'
+                );
             });
+        $paymentSummary->addSummarySelects($query);
+        $paymentSummary->applyPaymentStatusFilter($query, $request->input('payment_status'));
 
         $this->applyFilters($query, $request);
 
@@ -94,6 +99,7 @@ class OrderController extends Controller
 
         $filters = $this->currentFilters($request);
         $filters['has_debt'] = $request->input('has_debt', '');
+        $filters['payment_status'] = $request->input('payment_status', '');
 
         return Inertia::render('Orders/Index', [
             'orders' => $orders,
@@ -116,6 +122,12 @@ class OrderController extends Controller
                 'debtOptions' => [
                     ['value' => '1', 'label' => 'Còn nợ'],
                     ['value' => '0', 'label' => 'Đã trả đủ'],
+                ],
+                'paymentStatusOptions' => [
+                    ['value' => 'unpaid', 'label' => 'Chưa trả'],
+                    ['value' => 'partial', 'label' => 'Còn nợ'],
+                    ['value' => 'paid', 'label' => 'Đã trả đủ'],
+                    ['value' => 'overpaid', 'label' => 'Trả dư'],
                 ],
             ],
         ]);
@@ -419,20 +431,40 @@ class OrderController extends Controller
     public function print(Order $order)
     {
         $order->load(['items.product', 'customer', 'branch']);
+        app(OrderPaymentSummaryService::class)->hydrateOrder($order);
+
         return view('prints.order', compact('order'));
     }
 
     public function export(Request $request)
     {
         $this->configureOrderFilters();
+        $paymentSummary = app(OrderPaymentSummaryService::class);
 
-        $query = Order::with(['customer', 'branch']);
+        $query = Order::query()->select('orders.*')->with(['customer', 'branch']);
+        $paymentSummary->addSummarySelects($query);
+        $paymentSummary->applyPaymentStatusFilter($query, $request->input('payment_status'));
+        if ($request->filled('has_debt')) {
+            $paymentSummary->applyHasDebtFilter($query, (string) $request->input('has_debt') === '1');
+        }
         $this->applyFilters($query, $request);
         $orders = $query->get();
 
         return \App\Services\CsvService::export(
-            ['Mã đơn hàng', 'Thời gian', 'Khách hàng', 'Chi nhánh', 'Tổng cộng', 'Khách đã trả', 'Còn nợ', 'Trạng thái', 'Ghi chú'],
-            $orders->map(fn($o) => [$o->code, $o->created_at?->format('d/m/Y H:i'), $o->customer?->name, $o->branch?->name, $o->total_payment, $o->amount_paid, $o->total_payment - ($o->amount_paid ?? 0), $o->status, $o->note]),
+            ['Ma don hang', 'Thoi gian', 'Khach hang', 'Chi nhanh', 'Khach can tra', 'Khach da tra', 'Con no', 'Tien tra du', 'Trang thai thanh toan', 'Trang thai', 'Ghi chu'],
+            $orders->map(fn($o) => [
+                $o->code,
+                $o->created_at?->format('d/m/Y H:i'),
+                $o->customer?->name,
+                $o->branch?->name,
+                $o->order_total,
+                $o->order_paid_total,
+                $o->order_remaining_debt,
+                $o->order_credit_total,
+                $o->payment_status,
+                $o->status,
+                $o->note,
+            ]),
             'don_hang.csv'
         );
     }
@@ -523,8 +555,9 @@ class OrderController extends Controller
             $order->load('items.product', 'customer');
             $customer = $order->customer;
             $newPayment = $validated['amount_paid']; // Additional payment at conversion
-            $priorDeposit = $order->amount_paid ?? 0;
+            $priorDeposit = max(0.0, (float) ($order->amount_paid ?? 0));
             $totalPaid = $priorDeposit + $newPayment;
+            $depositAppliedThisInvoice = min($priorDeposit, (float) $order->total_payment);
             $paymentMethod = $validated['payment_method'] ?? 'cash';
 
             // 1) Create Invoice from Order — link via order_id
@@ -535,6 +568,7 @@ class OrderController extends Controller
                 'discount' => $order->discount,
                 'total' => $order->total_payment,
                 'customer_paid' => $totalPaid,
+                'order_deposit_applied_amount' => $depositAppliedThisInvoice,
                 'customer_id' => $customer?->id,
                 'created_by_name' => $order->created_by_name,
                 'seller_name' => $order->assigned_to_name,
@@ -711,7 +745,6 @@ class OrderController extends Controller
             // 6) Update Order status
             $orderUpdateData = [
                 'status' => 'completed',
-                'amount_paid' => $totalPaid,
             ];
 
             if ($request->input('from_pos') && $request->has('delivery')) {
@@ -978,6 +1011,7 @@ class OrderController extends Controller
                 'selected_serials' => $selectedSerials,
             ];
         });
+        $paymentSummary = app(OrderPaymentSummaryService::class)->summary($order);
 
         return response()->json([
             'success' => true,
@@ -1012,7 +1046,10 @@ class OrderController extends Controller
                     'other_fees' => (float) $order->other_fees,
                     'total_payment' => (float) $order->total_payment,
                     'amount_paid' => (float) ($order->amount_paid ?? 0),
-                    'remaining' => (float) ($order->total_payment - ($order->amount_paid ?? 0)),
+                    'remaining' => $paymentSummary['order_remaining_debt'],
+                    'order_deposit_original' => $paymentSummary['original_deposit'],
+                    'total_paid_for_order' => $paymentSummary['order_paid_total'],
+                    ...$paymentSummary,
                 ],
                 'delivery' => [
                     'is_delivery' => (bool) $order->is_delivery,
