@@ -81,6 +81,10 @@ class SapoDebtParityTest extends TestCase
             1_500_000.0,
             (float) CashFlow::findOrFail($result['cash_flow_id'])->amount
         );
+        $this->assertSame(
+            'Khách hàng',
+            CashFlow::findOrFail($result['cash_flow_id'])->target_type
+        );
     }
 
     public function test_existing_credit_offsets_the_next_invoice_without_becoming_deposit(): void

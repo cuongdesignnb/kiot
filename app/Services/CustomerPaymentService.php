@@ -56,7 +56,7 @@ class CustomerPaymentService
                 'amount' => $paymentAmount,
                 'time' => $paymentTime,
                 'category' => 'Thu no khach hang',
-                'target_type' => 'Khach hang',
+                'target_type' => 'Khách hàng',
                 'target_id' => $lockedCustomer->id,
                 'target_name' => $lockedCustomer->name,
                 'reference_type' => 'DebtPayment',
