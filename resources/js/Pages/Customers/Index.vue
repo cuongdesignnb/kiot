@@ -423,6 +423,7 @@ const debtModal = ref({
 const debtForm = reactive({ amount: 0, note: "", mode: "auto", date: "" });
 const outstandingInvoices = ref([]);
 const loadingInvoices = ref(false);
+const debtPaymentResult = ref(null);
 
 const openDebtModal = async (customer, type) => {
     debtModal.value = {
@@ -440,6 +441,7 @@ const openDebtModal = async (customer, type) => {
     _now.setMinutes(_now.getMinutes() - _now.getTimezoneOffset());
     debtForm.date = _now.toISOString().slice(0, 16);
     outstandingInvoices.value = [];
+    debtPaymentResult.value = null;
 
     // Load outstanding invoices if payment mode
     if (type === "payment") {
@@ -469,13 +471,19 @@ const submitDebtModal = async () => {
                 return;
             }
             try {
-                await axios.post(`/customers/${customerId}/debt-payment`, {
+                const paymentAmount = Number(debtForm.amount) || manualTotal();
+                if (paymentAmount < manualTotal()) {
+                    alert("Số tiền thực nhận không được nhỏ hơn tổng phân bổ");
+                    return;
+                }
+                const response = await axios.post(`/customers/${customerId}/debt-payment`, {
                     mode: "manual",
+                    amount: paymentAmount,
                     allocations,
                     note: debtForm.note,
                     date: debtForm.date,
                 });
-                debtModal.value.show = false;
+                debtPaymentResult.value = response.data.payment;
                 await loadDebtHistory(customerId);
                 router.reload({ only: ["customers"], preserveScroll: true });
             } catch (e) {
@@ -489,13 +497,13 @@ const submitDebtModal = async () => {
             return;
         }
         try {
-            await axios.post(`/customers/${customerId}/debt-payment`, {
+            const response = await axios.post(`/customers/${customerId}/debt-payment`, {
                 mode: "auto",
                 amount: Number(debtForm.amount) || 0,
                 note: debtForm.note,
                 date: debtForm.date,
             });
-            debtModal.value.show = false;
+            debtPaymentResult.value = response.data.payment;
             await loadDebtHistory(customerId);
             router.reload({ only: ["customers"], preserveScroll: true });
         } catch (e) {
@@ -682,6 +690,9 @@ const mergeModal = reactive({
     searching: false,
     selected: null, // the target entity to merge INTO
     submitting: false,
+    preview: null,
+    previewLoading: false,
+    previewError: '',
 });
 
 let mergeSearchTimeout;
@@ -692,11 +703,16 @@ const openMergeModal = (customer) => {
     mergeModal.searchResults = [];
     mergeModal.selected = null;
     mergeModal.submitting = false;
+    mergeModal.preview = null;
+    mergeModal.previewLoading = false;
+    mergeModal.previewError = '';
 };
 
 const searchMergeTarget = () => {
     clearTimeout(mergeSearchTimeout);
     mergeModal.selected = null;
+    mergeModal.preview = null;
+    mergeModal.previewError = '';
     if (!mergeModal.searchQuery || mergeModal.searchQuery.length < 1) {
         mergeModal.searchResults = [];
         return;
@@ -719,13 +735,26 @@ const searchMergeTarget = () => {
     }, 300);
 };
 
-const selectMergeTarget = (target) => {
+const selectMergeTarget = async (target) => {
     mergeModal.selected = target;
     mergeModal.searchResults = [];
+    mergeModal.preview = null;
+    mergeModal.previewError = '';
+    mergeModal.previewLoading = true;
+    try {
+        const { data } = await axios.get(`/customers/${mergeModal.source.id}/merge-preview`, {
+            params: { target_id: target.id },
+        });
+        mergeModal.preview = data;
+    } catch (e) {
+        mergeModal.previewError = e.response?.data?.message || 'Không thể tải dữ liệu xem trước.';
+    } finally {
+        mergeModal.previewLoading = false;
+    }
 };
 
 const submitMerge = () => {
-    if (!mergeModal.selected || mergeModal.submitting) return;
+    if (!mergeModal.selected || !mergeModal.preview || mergeModal.submitting) return;
     mergeModal.submitting = true;
     router.post(`/customers/${mergeModal.source.id}/merge`, {
         merge_with_id: mergeModal.selected.id,
@@ -1578,7 +1607,7 @@ const createdDateRange = computed({
                                             v-if="customerNetDebt(customer) < 0"
                                             class="block text-[11px] text-green-600"
                                         >
-                                            Mình nợ lại
+                                            Khách đang dư tiền
                                         </span>
                                     </div>
                                 </td>
@@ -3490,6 +3519,8 @@ const createdDateRange = computed({
 
                         <!-- MANUAL mode -->
                         <div v-if="debtForm.mode === 'manual'">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Số tiền thực nhận</label>
+                            <MoneyInput v-model="debtForm.amount" placeholder="Bằng tổng phân bổ nếu để 0" input-class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500 mb-3" />
                             <label class="block text-sm font-medium text-gray-700 mb-2">Hóa đơn còn nợ</label>
                             <div v-if="loadingInvoices" class="text-sm text-gray-400 py-2">Đang tải...</div>
                             <div v-else-if="outstandingInvoices.length === 0" class="text-sm text-gray-400 py-2">Không có hóa đơn còn nợ</div>
@@ -3537,6 +3568,17 @@ const createdDateRange = computed({
                         </div>
                     </template>
 
+                    <div v-if="debtPaymentResult" class="rounded-lg border border-green-200 bg-green-50 p-4">
+                        <div class="mb-3 font-semibold text-green-800">Kết quả thu nợ</div>
+                        <div class="grid grid-cols-2 gap-2 text-sm">
+                            <span>Tiền thực nhận</span><strong class="text-right">{{ formatCurrency(debtPaymentResult.payment_amount) }}</strong>
+                            <span>Đã phân bổ</span><strong class="text-right">{{ formatCurrency(debtPaymentResult.allocated_amount) }}</strong>
+                            <span>Chưa phân bổ</span><strong class="text-right text-green-700">{{ formatCurrency(debtPaymentResult.unallocated_amount) }}</strong>
+                            <span>Công nợ trước</span><strong class="text-right">{{ formatCurrency(debtPaymentResult.debt_before) }}</strong>
+                            <span>Công nợ sau</span><strong class="text-right">{{ formatCurrency(debtPaymentResult.debt_after) }}</strong>
+                        </div>
+                    </div>
+
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">
                             {{ debtModal.type === 'payment' ? 'Ngày thanh toán' : 'Ngày điều chỉnh' }}
@@ -3564,9 +3606,10 @@ const createdDateRange = computed({
                         @click="debtModal.show = false"
                         class="px-5 py-2 border border-gray-300 rounded text-gray-700 bg-white font-medium hover:bg-gray-50"
                     >
-                        Bỏ qua
+                        {{ debtPaymentResult ? 'Đóng' : 'Bỏ qua' }}
                     </button>
                     <button
+                        v-if="!debtPaymentResult"
                         @click="submitDebtModal"
                         class="px-5 py-2 rounded text-white font-medium"
                         :class="
@@ -3851,22 +3894,26 @@ const createdDateRange = computed({
                     </div>
 
                     <!-- Preview after merge -->
-                    <div v-if="mergeModal.selected" class="bg-gray-50 border border-gray-300 rounded-lg p-4">
+                    <div v-if="mergeModal.previewLoading" class="text-sm text-gray-500">Đang tải dữ liệu xem trước...</div>
+                    <div v-if="mergeModal.previewError" class="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">{{ mergeModal.previewError }}</div>
+                    <div v-if="mergeModal.preview" class="bg-gray-50 border border-gray-300 rounded-lg p-4">
                         <div class="text-sm font-bold text-gray-700 mb-2">Thông tin sau khi gộp</div>
                         <div class="grid grid-cols-2 gap-2 text-sm">
                             <div>Nợ cần thu (KH):</div>
-                            <div class="font-bold text-right">{{ formatCurrency((mergeModal.selected.debt_amount || 0) + (mergeModal.source?.debt_amount || 0)) }}</div>
+                            <div class="font-bold text-right">{{ formatCurrency(mergeModal.preview.after.debt_amount) }}</div>
                             <div>Nợ cần trả (NCC):</div>
-                            <div class="font-bold text-right">{{ formatCurrency((mergeModal.selected.supplier_debt_amount || 0) + (mergeModal.source?.supplier_debt_amount || 0)) }}</div>
+                            <div class="font-bold text-right">{{ formatCurrency(mergeModal.preview.after.supplier_debt_amount) }}</div>
+                            <div>Marker tham chiếu:</div>
+                            <div class="font-bold text-right">{{ formatCurrency(mergeModal.preview.marker.amount) }}</div>
                         </div>
-                        <div class="text-xs text-gray-500 mt-2">Khách hàng <strong>{{ mergeModal.source?.name }}</strong> sẽ bị xóa, mọi giao dịch sẽ chuyển sang <strong>{{ mergeModal.selected.name }}</strong>.</div>
+                        <div class="text-xs text-gray-500 mt-2">Khách hàng <strong>{{ mergeModal.source?.name }}</strong> sẽ được ngừng hoạt động và giữ lại để audit; giao dịch được chuyển sang <strong>{{ mergeModal.selected.name }}</strong>.</div>
                     </div>
                 </div>
                 <div class="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
                     <button @click="mergeModal.show = false" class="px-5 py-2 border border-gray-300 rounded text-gray-700 font-medium hover:bg-gray-50">Bỏ qua</button>
                     <button
                         @click="submitMerge"
-                        :disabled="!mergeModal.selected || mergeModal.submitting"
+                        :disabled="!mergeModal.preview || mergeModal.previewLoading || mergeModal.submitting"
                         class="px-5 py-2 rounded text-white font-medium bg-orange-500 hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         {{ mergeModal.submitting ? 'Đang gộp...' : 'Xác nhận gộp' }}

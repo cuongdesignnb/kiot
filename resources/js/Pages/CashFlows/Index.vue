@@ -130,6 +130,7 @@ const form = useForm({
     time: new Date().toISOString().slice(0, 16),
     category: "",
     target_type: "Khác",
+    target_id: null,
     target_name: "",
     amount: "",
     description: "",
@@ -223,6 +224,32 @@ const getTargetLabel = () => {
         default:
             return modalType.value === "receipt" ? "người nộp" : "người nhận";
     }
+};
+
+const partnerTargetOptions = computed(() => {
+    if (form.target_type === "Khách hàng") {
+        return props.subjects?.customers || [];
+    }
+    if (form.target_type === "Nhà cung cấp") {
+        return props.subjects?.suppliers || [];
+    }
+    return [];
+});
+
+const requiresPartnerTarget = computed(() =>
+    form.target_type === "Khách hàng" || form.target_type === "Nhà cung cấp"
+);
+
+const onTargetTypeChange = () => {
+    form.target_id = null;
+    form.target_name = "";
+};
+
+const onPartnerTargetChange = () => {
+    const partner = partnerTargetOptions.value.find(
+        (item) => Number(item.id) === Number(form.target_id)
+    );
+    form.target_name = partner?.name || "";
 };
 
 const expandedRow = ref(null);
@@ -321,6 +348,7 @@ const openModal = (type, flow = null) => {
             : new Date(flow.created_at).toISOString().slice(0, 16);
         form.category = flow.category || "";
         form.target_type = flow.target_type || "Khác";
+        form.target_id = flow.target_id || null;
         form.target_name = flow.target_name || "";
         form.amount = flow.amount || "";
         form.description = flow.description || "";
@@ -337,6 +365,7 @@ const openModal = (type, flow = null) => {
         form.time = new Date().toISOString().slice(0, 16);
         form.category = "";
         form.target_type = "Khác";
+        form.target_id = null;
         form.target_name = "";
         form.amount = "";
         form.description = "";
@@ -1142,6 +1171,7 @@ const printFlow = (flow) => {
                             <div class="relative">
                                 <select
                                     v-model="form.target_type"
+                                    @change="onTargetTypeChange"
                                     class="w-full border-b border-gray-300 py-1.5 focus:outline-none focus:border-blue-500 bg-white text-[13px] appearance-none cursor-pointer pr-6 text-gray-800"
                                 >
                                     <option
@@ -1186,37 +1216,28 @@ const printFlow = (flow) => {
                                     Tạo mới
                                 </button>
                             </div>
+                            <select
+                                v-if="requiresPartnerTarget"
+                                v-model="form.target_id"
+                                @change="onPartnerTargetChange"
+                                class="w-full border-b border-gray-300 py-1.5 focus:outline-none focus:border-blue-500 bg-white text-[13px]"
+                            >
+                                <option :value="null">-- Chọn {{ getTargetLabel() }} --</option>
+                                <option
+                                    v-for="partner in partnerTargetOptions"
+                                    :key="partner.id"
+                                    :value="partner.id"
+                                >
+                                    {{ partner.name }}{{ partner.phone ? ` - ${partner.phone}` : '' }}
+                                </option>
+                            </select>
                             <input
+                                v-else
                                 type="text"
                                 v-model="form.target_name"
-                                :list="
-                                    form.target_type === 'Khách hàng'
-                                        ? 'customers-list'
-                                        : form.target_type === 'Nhà cung cấp'
-                                          ? 'suppliers-list'
-                                          : null
-                                "
                                 class="w-full border-b border-gray-300 py-1.5 focus:outline-none focus:border-blue-500 text-[13px] placeholder-gray-400"
                                 :placeholder="'Tìm ' + getTargetLabel()"
                             />
-                            <datalist id="customers-list">
-                                <option
-                                    v-for="c in subjects?.customers"
-                                    :key="'c' + c.id"
-                                    :value="c.name"
-                                >
-                                    {{ c.phone }}
-                                </option>
-                            </datalist>
-                            <datalist id="suppliers-list">
-                                <option
-                                    v-for="s in subjects?.suppliers"
-                                    :key="'s' + s.id"
-                                    :value="s.name"
-                                >
-                                    {{ s.phone }}
-                                </option>
-                            </datalist>
                         </div>
                     </div>
 

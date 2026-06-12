@@ -657,6 +657,9 @@ const mergeModal = reactive({
     searching: false,
     selected: null,
     submitting: false,
+    preview: null,
+    previewLoading: false,
+    previewError: '',
 });
 
 let mergeSearchTimeout;
@@ -667,11 +670,16 @@ const openMergeModal = (supplier) => {
     mergeModal.searchResults = [];
     mergeModal.selected = null;
     mergeModal.submitting = false;
+    mergeModal.preview = null;
+    mergeModal.previewLoading = false;
+    mergeModal.previewError = '';
 };
 
 const searchMergeTarget = () => {
     clearTimeout(mergeSearchTimeout);
     mergeModal.selected = null;
+    mergeModal.preview = null;
+    mergeModal.previewError = '';
     if (!mergeModal.searchQuery || mergeModal.searchQuery.length < 1) {
         mergeModal.searchResults = [];
         return;
@@ -694,13 +702,26 @@ const searchMergeTarget = () => {
     }, 300);
 };
 
-const selectMergeTarget = (target) => {
+const selectMergeTarget = async (target) => {
     mergeModal.selected = target;
     mergeModal.searchResults = [];
+    mergeModal.preview = null;
+    mergeModal.previewError = '';
+    mergeModal.previewLoading = true;
+    try {
+        const { data } = await axios.get(`/customers/${mergeModal.source.id}/merge-preview`, {
+            params: { target_id: target.id },
+        });
+        mergeModal.preview = data;
+    } catch (e) {
+        mergeModal.previewError = e.response?.data?.message || 'Không thể tải dữ liệu xem trước.';
+    } finally {
+        mergeModal.previewLoading = false;
+    }
 };
 
 const submitMerge = () => {
-    if (!mergeModal.selected || mergeModal.submitting) return;
+    if (!mergeModal.selected || !mergeModal.preview || mergeModal.submitting) return;
     mergeModal.submitting = true;
     router.post(`/customers/${mergeModal.source.id}/merge`, {
         merge_with_id: mergeModal.selected.id,
@@ -2202,22 +2223,26 @@ const submitActivate = (supplier) => {
                     </div>
 
                     <!-- Preview after merge -->
-                    <div v-if="mergeModal.selected" class="bg-gray-50 border border-gray-300 rounded-lg p-4">
+                    <div v-if="mergeModal.previewLoading" class="text-sm text-gray-500">Đang tải dữ liệu xem trước...</div>
+                    <div v-if="mergeModal.previewError" class="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">{{ mergeModal.previewError }}</div>
+                    <div v-if="mergeModal.preview" class="bg-gray-50 border border-gray-300 rounded-lg p-4">
                         <div class="text-sm font-bold text-gray-700 mb-2">Thông tin sau khi gộp</div>
                         <div class="grid grid-cols-2 gap-2 text-sm">
                             <div>Nợ cần thu (KH):</div>
-                            <div class="font-bold text-right">{{ formatCurrency((mergeModal.selected.debt_amount || 0) + (mergeModal.source?.debt_amount || 0)) }}</div>
+                            <div class="font-bold text-right">{{ formatCurrency(mergeModal.preview.after.debt_amount) }}</div>
                             <div>Nợ cần trả (NCC):</div>
-                            <div class="font-bold text-right">{{ formatCurrency((mergeModal.selected.supplier_debt_amount || 0) + (mergeModal.source?.supplier_debt_amount || 0)) }}</div>
+                            <div class="font-bold text-right">{{ formatCurrency(mergeModal.preview.after.supplier_debt_amount) }}</div>
+                            <div>Marker tham chiếu:</div>
+                            <div class="font-bold text-right">{{ formatCurrency(mergeModal.preview.marker.amount) }}</div>
                         </div>
-                        <div class="text-xs text-gray-500 mt-2">NCC <strong>{{ mergeModal.source?.name }}</strong> sẽ bị xóa, mọi giao dịch sẽ chuyển sang <strong>{{ mergeModal.selected.name }}</strong>.</div>
+                        <div class="text-xs text-gray-500 mt-2">NCC <strong>{{ mergeModal.source?.name }}</strong> sẽ được ngừng hoạt động và giữ lại để audit; giao dịch được chuyển sang <strong>{{ mergeModal.selected.name }}</strong>.</div>
                     </div>
                 </div>
                 <div class="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
                     <button @click="mergeModal.show = false" class="px-5 py-2 border border-gray-300 rounded text-gray-700 font-medium hover:bg-gray-50">Bỏ qua</button>
                     <button
                         @click="submitMerge"
-                        :disabled="!mergeModal.selected || mergeModal.submitting"
+                        :disabled="!mergeModal.preview || mergeModal.previewLoading || mergeModal.submitting"
                         class="px-5 py-2 rounded text-white font-medium bg-orange-500 hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         {{ mergeModal.submitting ? 'Đang gộp...' : 'Xác nhận gộp' }}
