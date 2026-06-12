@@ -1459,6 +1459,23 @@ class PartnerDebtLedgerService
             $entry['can_cancel'] = $eventKind === 'payment_discount' && $discount->status === 'active';
         }
 
+        if (
+            (string) $debt->type === 'merge_marker'
+            || str_starts_with((string) $debt->ref_code, 'MERGE-PARTNER-')
+        ) {
+            $entry['display_effect'] = 0.0;
+            $entry['financial_effect'] = 0.0;
+            $entry['balance_effect'] = 0.0;
+            $entry['customer_display_effect'] = 0.0;
+            $entry['customer_display_balance_effect'] = 0.0;
+            $entry['customer_balance_effect'] = 0.0;
+            $entry['customer_effect'] = 0.0;
+            $entry['affects_debt_balance'] = false;
+            $entry['is_reference_only'] = true;
+            $entry['source'] = 'reference';
+            $entry['source_layer'] = 'reference';
+        }
+
         return $entry;
     }
 
@@ -1482,6 +1499,9 @@ class PartnerDebtLedgerService
         }
         if ($type === 'sale_reversal' || $this->isInvoiceCancelDebt($debt)) {
             return ['Hủy hóa đơn', 'invoice_cancel'];
+        }
+        if ($type === 'merge_marker' || str_starts_with($refCode, 'MERGE-PARTNER-')) {
+            return ['Gộp hồ sơ đối tác', 'merge_marker'];
         }
         if ($type === 'adjustment') {
             if (str_starts_with($refCode, 'MERGE') || str_contains($note, 'gộp công nợ') || str_contains($note, 'gop cong no')) {

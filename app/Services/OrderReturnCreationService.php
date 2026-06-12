@@ -20,6 +20,11 @@ class OrderReturnCreationService
 {
     public function create(array $payload, array $context = []): OrderReturn
     {
+        app(PartnerTransactionGuard::class)->assertCanTransact(
+            isset($payload['customer_id']) ? (int) $payload['customer_id'] : null,
+            'customer_id'
+        );
+
         $payload = $this->canonicalizeTotals($payload);
         $this->validateReturnable($payload);
         $this->validateSerials($payload);

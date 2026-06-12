@@ -1111,6 +1111,7 @@ class SupplierDebtDocumentTimelineService
 
         return str_starts_with($code, 'MERGE-CUSTOMER-')
             || str_starts_with($code, 'MERGE-SUPPLIER-')
+            || str_starts_with($code, 'MERGE-PARTNER-')
             || str_starts_with($code, 'OPENING-BALANCE-')
             || str_starts_with($code, 'OPENING-BALANCE-SUPPLIER-');
     }

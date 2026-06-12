@@ -183,6 +183,13 @@ class InvoiceUpdateService
      */
     public function updateInvoice(Invoice $invoice, array $payload, array $context = []): Invoice
     {
+        app(PartnerTransactionGuard::class)->assertCanTransact(
+            isset($payload['customer_id'])
+                ? (int) $payload['customer_id']
+                : ($invoice->customer_id ? (int) $invoice->customer_id : null),
+            'customer_id'
+        );
+
         $lockError = $this->validateLockAndPermissions($invoice, $payload, $context);
         if ($lockError) {
             throw new \Exception($lockError);

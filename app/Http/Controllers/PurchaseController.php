@@ -92,7 +92,10 @@ class PurchaseController extends Controller
             'total_items' => (clone $summaryQuery)->join('purchase_items', 'purchases.id', '=', 'purchase_items.purchase_id')->sum('purchase_items.quantity'),
         ];
 
-        $suppliers = Customer::where('is_supplier', true)->orderBy('name')->get(['id', 'code', 'name']);
+        $suppliers = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
+            ->where('is_supplier', true)
+            ->orderBy('name')
+            ->get(['id', 'code', 'name']);
         $employees = \App\Models\Employee::where('is_active', true)->orderBy('name')->get(['id', 'code', 'name']);
 
         return Inertia::render('Purchases/Index', [
@@ -126,10 +129,8 @@ class PurchaseController extends Controller
         // Customer.status defaults to 'active' (migration
         // 2026_02_28_063352_add_supplier_fields_to_customers_table);
         // we also accept NULL to be tolerant of any pre-default rows.
-        $suppliers = Customer::where('is_supplier', true)
-            ->where(function ($q) {
-                $q->where('status', 'active')->orWhereNull('status');
-            })
+        $suppliers = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
+            ->where('is_supplier', true)
             ->get();
         $products = Product::where('is_active', true)->get();
 
@@ -200,6 +201,11 @@ class PurchaseController extends Controller
             'other_costs.*.name' => 'required_with:other_costs|string|max:255',
             'other_costs.*.amount' => 'required_with:other_costs|numeric|min:0',
         ]);
+        app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
+            (int) $request->supplier_id,
+            'supplier_id'
+        );
+
         // ── Step 23.3: Validate serial cho hàng has_serial khi nhập ──
         // BUG-1: count(serials) phải === quantity (không cho phiếu nhập 5 mà chỉ liệt 2 serial).
         // BUG-2: chống trùng serial trong cùng request (chống user dán nhầm 2 lần).
@@ -241,6 +247,10 @@ class PurchaseController extends Controller
 
         try {
             DB::beginTransaction();
+            app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
+                (int) $request->supplier_id,
+                'supplier_id'
+            );
 
             // Parse employee_id / virtual admin user
             $employeeIdInput = $request->employee_id;
@@ -545,11 +555,19 @@ class PurchaseController extends Controller
             'other_costs.*.name' => 'required_with:other_costs|string|max:255',
             'other_costs.*.amount' => 'required_with:other_costs|numeric|min:0',
         ]);
+        app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
+            $purchase->supplier_id ? (int) $purchase->supplier_id : null,
+            'supplier_id'
+        );
 
         $isDraftToComplete = $purchase->status === 'draft' && ($request->status ?? $purchase->status) === 'completed';
 
         try {
             DB::beginTransaction();
+            app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
+                $purchase->supplier_id ? (int) $purchase->supplier_id : null,
+                'supplier_id'
+            );
 
             // Parse employee_id / virtual admin user
             $employeeIdInput = $request->employee_id;

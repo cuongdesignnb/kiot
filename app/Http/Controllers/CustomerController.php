@@ -16,6 +16,7 @@ use Inertia\Inertia;
 use App\Services\CustomerDebtService;
 use App\Services\CustomerPaymentDiscountService;
 use App\Services\CustomerPaymentService;
+use App\Services\PartnerMergeService;
 use App\Services\PartnerFinancialTimelineService;
 use App\Models\CustomerPaymentDiscount;
 use App\Services\DebtOffsetService;
@@ -489,45 +490,16 @@ class CustomerController extends Controller
 
         if (($linkMode === 'link_existing' || $linkId) && $linkId && $linkId != $customer->id) {
             $existing = Customer::findOrFail($linkId);
-            
-            // Merge relations
-            Invoice::where('customer_id', $customer->id)->update(['customer_id' => $existing->id]);
-            OrderReturn::where('customer_id', $customer->id)->update(['customer_id' => $existing->id]);
-            
-            CashFlow::where('target_id', $customer->id)->whereIn('target_type', ['Khách hàng', 'Nhà cung cấp'])->update([
-                'target_id' => $existing->id,
-                'target_name' => collect([$existing->name])->implode(''),
-            ]);
+            app(PartnerMergeService::class)->merge($customer, $existing);
+            $existing->refresh();
+            $existing->fill([
+                'name' => $validated['name'] ?? $existing->name,
+                'phone' => $validated['phone'] ?? $existing->phone,
+                'address' => $validated['address'] ?? $existing->address,
+                'is_customer' => true,
+                'is_supplier' => true,
+            ])->save();
 
-            // RR-06: ghi ledger trước khi merge debt từ source sang target.
-            $sourceDebt = (float) $customer->debt_amount;
-            if (abs($sourceDebt) >= 0.01) {
-                app(CustomerDebtService::class)->recordAdjustment(
-                    $existing->id,
-                    $sourceDebt, // signed: cộng vào target theo dấu của source
-                    "Gộp công nợ từ khách hàng {$customer->name} (id {$customer->id})",
-                    ['ref_code' => 'MERGE-IMPORT-' . $customer->id]
-                );
-            }
-
-            // Merge financial figures (debt_amount đã được service xử lý ở trên)
-            $existing->total_spent += $customer->total_spent;
-            $existing->total_returns += $customer->total_returns;
-            $existing->supplier_debt_amount += $customer->supplier_debt_amount;
-            $existing->total_bought += $customer->total_bought;
-
-            $existing->is_customer = true;
-            $existing->is_supplier = true;
-            $existing->name = $validated['name'];
-            if (!empty($validated['phone'])) {
-                $existing->phone = $validated['phone'];
-            }
-            if (!empty($validated['address'])) {
-                $existing->address = $validated['address'];
-            }
-            $existing->save();
-
-            $customer->delete();
             return back()->with('success', 'Cập nhật và gộp vào nhà cung cấp thành công.');
         } else {
             $customer->update($validated);
@@ -538,6 +510,13 @@ class CustomerController extends Controller
 
     public function destroy(Customer $customer)
     {
+        if ($customer->merged_into_id !== null || $customer->mergedSources()->exists()) {
+            return back()->with(
+                'error',
+                'Không thể xóa hồ sơ đối tác đã tham gia gộp. Hãy giữ hồ sơ để bảo toàn dấu vết kiểm toán.'
+            );
+        }
+
         // Guard: không cho xóa nếu đã có giao dịch — buộc dùng "Ngừng hoạt động"
         $hasInvoices = Invoice::where('customer_id', $customer->id)->exists();
         $hasPurchases = \App\Models\Purchase::where('supplier_id', $customer->id)->exists();
@@ -740,7 +719,7 @@ class CustomerController extends Controller
         $type = $request->input('type'); // 'customer' or 'supplier'
         $exclude = $request->input('exclude');
 
-        $results = Customer::query()
+        $results = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
             ->when($q, function ($query, $q) {
                 $query->where(function ($qb) use ($q) {
                     $qb->where('name', 'LIKE', "%{$q}%")
@@ -749,6 +728,8 @@ class CustomerController extends Controller
                 });
             })
             ->when($exclude, fn($qb, $id) => $qb->where('id', '!=', $id))
+            ->when($type === 'supplier', fn ($qb) => $qb->where('is_supplier', true))
+            ->when($type === 'customer', fn ($qb) => $qb->where('is_customer', true))
             ->limit(20)
             ->get(['id', 'code', 'name', 'phone', 'debt_amount', 'supplier_debt_amount', 'is_customer', 'is_supplier']);
 
@@ -767,7 +748,7 @@ class CustomerController extends Controller
             return response()->json([]);
         }
 
-        $query = Customer::query();
+        $query = app(\App\Services\PartnerTransactionGuard::class)->availablePartners();
 
         if (Schema::hasColumn('customers', 'is_customer')) {
             $query->where('is_customer', true);
@@ -819,52 +800,27 @@ class CustomerController extends Controller
         ]);
 
         $target = Customer::findOrFail($validated['merge_with_id']);
+        $preview = app(PartnerMergeService::class)->merge($customer, $target);
 
-        if ($target->id === $customer->id) {
-            return back()->with('error', 'Không thể gộp với chính mình.');
+        if ($request->wantsJson()) {
+            return response()->json(['success' => true, 'merge' => $preview]);
         }
-
-        // Transfer all relations from $customer (source) into $target
-        Invoice::where('customer_id', $customer->id)->update(['customer_id' => $target->id]);
-        OrderReturn::where('customer_id', $customer->id)->update(['customer_id' => $target->id]);
-        Purchase::where('supplier_id', $customer->id)->update(['supplier_id' => $target->id]);
-        PurchaseReturn::where('supplier_id', $customer->id)->update(['supplier_id' => $target->id]);
-        SupplierDebtTransaction::where('supplier_id', $customer->id)->update(['supplier_id' => $target->id]);
-
-        CashFlow::where('target_id', $customer->id)->whereIn('target_type', ['Khách hàng', 'Nhà cung cấp'])->update([
-            'target_id' => $target->id,
-            'target_name' => $target->name,
-        ]);
-
-        // RR-06: ghi ledger trước khi merge debt từ source sang target.
-        $sourceDebt = (float) $customer->debt_amount;
-        if (abs($sourceDebt) >= 0.01) {
-            app(CustomerDebtService::class)->recordAdjustment(
-                $target->id,
-                $sourceDebt, // signed: cộng vào target theo dấu của source
-                "Gộp công nợ từ khách hàng {$customer->name} (id {$customer->id})",
-                ['ref_code' => 'MERGE-CUSTOMER-' . $customer->id]
-            );
-        }
-
-        // Merge financial figures (debt_amount đã được service xử lý ở trên)
-        $target->total_spent += $customer->total_spent;
-        $target->total_returns += $customer->total_returns;
-        $target->supplier_debt_amount += $customer->supplier_debt_amount;
-        $target->total_bought += $customer->total_bought;
-
-        // Set both flags
-        $target->is_customer = $target->is_customer || $customer->is_customer;
-        $target->is_supplier = $target->is_supplier || $customer->is_supplier;
-
-        $target->save();
-
-
-
-        // Delete source
-        $customer->delete();
 
         return back()->with('success', "Đã gộp thành công vào {$target->name} ({$target->code}).");
+    }
+
+    public function mergePreview(Request $request, Customer $customer)
+    {
+        $validated = $request->validate([
+            'target_id' => 'required|integer|exists:customers,id',
+        ]);
+
+        return response()->json(
+            app(PartnerMergeService::class)->preview(
+                $customer,
+                Customer::findOrFail($validated['target_id'])
+            )
+        );
     }
 
     public function export(Request $request)

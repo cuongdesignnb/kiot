@@ -283,6 +283,8 @@ class InvoiceController extends Controller
             );
 
             return redirect()->route('invoices.index')->with('success', 'Hóa đơn đã được tạo thành công.');
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
         } catch (\Exception $e) {
             return back()->with('error', 'Có lỗi xảy ra: ' . $e->getMessage())->withInput();
         }
@@ -338,6 +340,8 @@ class InvoiceController extends Controller
             $invoice = app(InvoiceUpdateService::class)->updateInvoice($invoice, $payload, $context);
 
             return redirect()->route('invoices.index')->with('success', 'Hóa đơn đã được cập nhật thành công.');
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
         } catch (\Exception $e) {
             return back()->with('error', 'Có lỗi xảy ra: ' . $e->getMessage())->withInput();
         }

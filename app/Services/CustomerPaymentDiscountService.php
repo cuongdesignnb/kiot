@@ -43,6 +43,10 @@ class CustomerPaymentDiscountService
     public function create(Customer $customer, array $payload): CustomerPaymentDiscount
     {
         return DB::transaction(function () use ($customer, $payload) {
+            app(PartnerTransactionGuard::class)->assertCanTransact(
+                (int) $customer->id,
+                'customer_id'
+            );
             $customer = Customer::lockForUpdate()->findOrFail($customer->id);
 
             $currentDebt = (float) $customer->debt_amount;

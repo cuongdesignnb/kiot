@@ -206,6 +206,11 @@ class OrderController extends Controller
             'cod_amount' => 'numeric|nullable',
         ]);
 
+        app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
+            isset($validated['customer_id']) ? (int) $validated['customer_id'] : null,
+            'customer_id'
+        );
+
         // Lock period check
         $txDate = $request->order_date ? Carbon::parse($request->order_date) : now();
         app(LockPeriodService::class)->assertNotLocked($txDate, 'order_create');
@@ -349,6 +354,11 @@ class OrderController extends Controller
             'amount_paid' => 'nullable|numeric',
             'note' => 'nullable|string',
         ]);
+
+        app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
+            $order->customer_id ? (int) $order->customer_id : null,
+            'customer_id'
+        );
 
         // Update items if provided
         if ($request->has('items')) {
@@ -515,6 +525,11 @@ class OrderController extends Controller
             'delivery.delivery_note' => 'nullable|string',
         ]);
 
+        app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
+            $order->customer_id ? (int) $order->customer_id : null,
+            'customer_id'
+        );
+
         if ($request->input('from_pos') && $request->has('items')) {
             $posItems = $request->input('items', []);
             $orderItems = $order->items;
@@ -551,6 +566,10 @@ class OrderController extends Controller
 
         try {
             \Illuminate\Support\Facades\DB::beginTransaction();
+            app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
+                $order->customer_id ? (int) $order->customer_id : null,
+                'customer_id'
+            );
 
             $order->load('items.product', 'customer');
             $customer = $order->customer;

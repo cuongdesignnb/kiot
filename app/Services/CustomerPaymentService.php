@@ -37,6 +37,10 @@ class CustomerPaymentService
             $note,
             $paidAt
         ) {
+            app(PartnerTransactionGuard::class)->assertCanTransact(
+                (int) $customer->id,
+                'customer_id'
+            );
             $lockedCustomer = Customer::query()->lockForUpdate()->findOrFail($customer->id);
             $debtBefore = (float) $lockedCustomer->debt_amount;
             $allocations = $mode === 'manual'

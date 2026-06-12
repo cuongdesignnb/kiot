@@ -242,6 +242,8 @@ class PosController extends Controller
                 'invoice_code' => $invoice->code,
                 'message'      => 'Thanh toán thành công!',
             ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
         } catch (\Exception $e) {
             \Illuminate\Support\Facades\Log::error('POS Checkout Error', [
                 'message' => $e->getMessage(),
@@ -375,7 +377,16 @@ class PosController extends Controller
             'items.*.price' => 'required|numeric',
         ]);
 
+        app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
+            isset($validated['customer_id']) ? (int) $validated['customer_id'] : null,
+            'customer_id'
+        );
+
         try {
+            app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
+                isset($validated['customer_id']) ? (int) $validated['customer_id'] : null,
+                'customer_id'
+            );
             $customer = $validated['customer_id'] ? \App\Models\Customer::find($validated['customer_id']) : null;
 
             // HOTFIX 24.33 — resolve seller_key (admin_user:<id> or employee:<id>),
@@ -446,7 +457,8 @@ class PosController extends Controller
             return response()->json([]);
         }
 
-        $customers = \App\Models\Customer::where(function ($q) use ($search) {
+        $customers = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
+            ->where(function ($q) use ($search) {
                 $q->where('name', 'LIKE', "%{$search}%")
                   ->orWhere('phone', 'LIKE', "%{$search}%")
                   ->orWhere('code', 'LIKE', "%{$search}%");

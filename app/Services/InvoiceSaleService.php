@@ -39,6 +39,11 @@ class InvoiceSaleService
     public function createSale(array $payload, array $context = []): Invoice
     {
         return DB::transaction(function () use ($payload, $context) {
+            app(PartnerTransactionGuard::class)->assertCanTransact(
+                isset($payload['customer_id']) ? (int) $payload['customer_id'] : null,
+                'customer_id'
+            );
+
             // ─── 1. Pre-flight validations ───
             // Step 23.1: enforce serial selection cho has_serial item (count===qty + in_stock)
             // chạy TRƯỚC khi tạo bất kỳ record nào để tránh orphan Invoice/InvoiceItem.

@@ -43,12 +43,15 @@ class Customer extends Model
         'supplier_debt_amount',
         'total_bought',
         'status',
+        'merged_into_id',
+        'merged_at',
         'branch_id',
         'created_by',
     ];
 
     protected $casts = [
         'birthday' => 'date',
+        'merged_at' => 'datetime',
     ];
 
     public function branch()
@@ -89,5 +92,15 @@ class Customer extends Model
     public function customerPaymentAllocations()
     {
         return $this->hasMany(CustomerPaymentAllocation::class);
+    }
+
+    public function mergedInto()
+    {
+        return $this->belongsTo(Customer::class, 'merged_into_id');
+    }
+
+    public function mergedSources()
+    {
+        return $this->hasMany(Customer::class, 'merged_into_id');
     }
 }

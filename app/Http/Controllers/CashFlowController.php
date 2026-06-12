@@ -37,8 +37,12 @@ class CashFlowController extends Controller
         $totalPayments = CashFlow::where('type', 'payment')->where('status', '!=', 'cancelled')->sum('amount');
         $fundBalance = $totalReceipts - $totalPayments;
 
-        $customers = \App\Models\Customer::where('is_supplier', false)->get(['id', 'name', 'phone']);
-        $suppliers = \App\Models\Customer::where('is_supplier', true)->get(['id', 'name', 'phone']);
+        $customers = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
+            ->where('is_customer', true)
+            ->get(['id', 'name', 'phone']);
+        $suppliers = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
+            ->where('is_supplier', true)
+            ->get(['id', 'name', 'phone']);
 
         $savedReceiptCategories = CashFlow::where('type', 'receipt')
             ->whereNotNull('category')->where('category', '!=', '')
@@ -108,12 +112,25 @@ class CashFlowController extends Controller
             'time' => 'nullable|date',
             'category' => 'nullable|string',
             'target_type' => 'nullable|string',
+            'target_id' => 'nullable|integer|exists:customers,id',
             'target_name' => 'nullable|string',
             'accounting_result' => 'boolean',
             'description' => 'nullable|string',
             'payment_method' => 'nullable|in:cash,bank,ewallet',
             'bank_account_id' => 'nullable|exists:bank_accounts,id',
         ]);
+        $targetPartner = null;
+        if (in_array($request->target_type, ['Khách hàng', 'Nhà cung cấp', 'customer', 'supplier'], true)) {
+            if (!$request->filled('target_id')) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'target_id' => 'Vui lòng chọn đối tác từ danh sách.',
+                ]);
+            }
+            $targetPartner = app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
+                (int) $request->target_id,
+                'target_id'
+            );
+        }
 
         $prefix = $request->type === 'receipt' ? 'PT' : 'PC';
 
@@ -128,7 +145,8 @@ class CashFlowController extends Controller
             'time' => $request->time ? \Carbon\Carbon::parse($request->time) : now(),
             'category' => $request->category,
             'target_type' => $request->target_type,
-            'target_name' => $request->target_name,
+            'target_id' => $request->target_id,
+            'target_name' => $targetPartner?->name ?? $request->target_name,
             'accounting_result' => $request->has('accounting_result') ? $request->accounting_result : true,
             'payment_method' => $request->payment_method ?? 'cash',
             'bank_account_id' => $request->payment_method !== 'cash' ? $request->bank_account_id : null,
@@ -173,6 +191,7 @@ class CashFlowController extends Controller
             'time' => 'nullable|date',
             'category' => 'nullable|string|max:255',
             'target_type' => 'nullable|string',
+            'target_id' => 'nullable|integer|exists:customers,id',
             'target_name' => 'nullable|string',
             'amount' => 'required|numeric|min:0',
             'description' => 'nullable|string',
@@ -180,6 +199,18 @@ class CashFlowController extends Controller
             'payment_method' => 'nullable|in:cash,bank,ewallet',
             'bank_account_id' => 'nullable|exists:bank_accounts,id',
         ]);
+        $targetPartner = null;
+        if (in_array($request->target_type, ['Khách hàng', 'Nhà cung cấp', 'customer', 'supplier'], true)) {
+            if (!$request->filled('target_id')) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'target_id' => 'Vui lòng chọn đối tác từ danh sách.',
+                ]);
+            }
+            $targetPartner = app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
+                (int) $request->target_id,
+                'target_id'
+            );
+        }
 
         $txDate = $request->time ? \Carbon\Carbon::parse($request->time) : $cashFlow->time;
         app(LockPeriodService::class)->assertNotLocked($txDate, 'cashflow_update');
@@ -190,7 +221,8 @@ class CashFlowController extends Controller
             'time' => $request->time ? \Carbon\Carbon::parse($request->time) : $cashFlow->time,
             'category' => $request->category,
             'target_type' => $request->target_type,
-            'target_name' => $request->target_name,
+            'target_id' => $request->target_id,
+            'target_name' => $targetPartner?->name ?? $request->target_name,
             'amount' => $request->amount,
             'description' => $request->description,
             'accounting_result' => $request->has('accounting_result') ? $request->accounting_result : $cashFlow->accounting_result,
