@@ -25,7 +25,7 @@ Tuy nhiên, `SalaryCalculationService::calculateForEmployee()` tính toán ra:
 1. **Đồng bộ hóa nguồn dữ liệu và logic**:
    - Sử dụng `Invoice` và `OrderReturn` làm nguồn chính thay cho `Order`.
    - Sử dụng `SellerResolver` để thực hiện query và tính toán doanh thu, giảm trừ trả hàng, giá vốn hàng bán và giá vốn hàng trả lại.
-   
+
 2. **Cập nhật `SalaryCalculationService.php`**:
    - Viết lại `getPersonalRevenue()` sử dụng `SellerResolver` để tính toán doanh thu thuần từ hóa đơn trừ đi giá trị trả hàng trong kỳ.
    - Viết lại `getPersonalGrossProfit()` sử dụng các hàm của `SellerResolver` như `aggregateBySeller`, `aggregateReturnsBySeller`, `cogsSoldBySeller`, và `cogsReturnedBySeller` nhằm đảm bảo đồng bộ 100% công thức tính toán với báo cáo lợi nhuận:

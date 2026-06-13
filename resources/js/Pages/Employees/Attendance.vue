@@ -971,7 +971,7 @@ const saveRecord = async () => {
                 confirmMsg += `- Số phút làm: ${errData.diff.old_worked_minutes} -> ${errData.diff.new_worked_minutes}\n`
             }
             confirmMsg += "\nBạn có chắc chắn muốn lưu thay đổi này không?"
-            
+
             if (confirm(confirmMsg)) {
                 isSaving.value = true
                 try {

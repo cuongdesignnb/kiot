@@ -61,7 +61,7 @@
    }
    ```
    Vì `worked_minutes` của Vũ Hồng Nhung ngày 2026-05-04 đúng bằng `480` phút, và `halfWorkMaxMinutes` cũng là `480` phút, điều kiện `$workedMinutes <= $halfWorkMaxMinutes` (480 <= 480) bị thỏa mãn. Dẫn đến việc ngày công bị tính thành `0.5` công.
-   
+
 2. **Kích hoạt do lưu chấm công tay**:
    Khi người dùng lưu chấm công tay ở bất kỳ ngày nào khác hoặc cập nhật chấm công của Vũ Hồng Nhung, hệ thống chạy lại logic tính toán và silent overwrite (ghi đè âm thầm) ngày `2026-05-04` từ `1.0` xuống `0.5` công do hàm `updateOrCreate` hoặc quy trình recalculate.
 

@@ -541,7 +541,7 @@ class ManualTimekeepingTest extends TestCase
     public function test_case_6_manual_override_not_overwritten(): void
     {
         $env = $this->setupTimekeepingEnvironment();
-        
+
         // Create manual override record
         $record = TimekeepingRecord::create([
             'employee_id' => $env['employee']->id,
@@ -701,7 +701,7 @@ class ManualTimekeepingTest extends TestCase
 
         // Assert personal_revenue = 5.200.000
         $this->assertEquals(5200000.0, (float)$result['personal_revenue']);
-        
+
         // Assert personal_gross_profit = 1.728.394
         // Calculate: 5,200,000 (net revenue) - 3,471,606 (total cogs) = 1,728,394
         $personalGrossProfit = $service->calculateForEmployee($employee, $from, $to, 26)['details']['bonus'][0]['revenue'] ?? 0;

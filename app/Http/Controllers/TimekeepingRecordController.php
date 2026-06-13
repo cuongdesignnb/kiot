@@ -75,7 +75,7 @@ class TimekeepingRecordController extends Controller
             $oldRecord = TimekeepingRecord::where('employee_work_schedule_id', $schedule->id)->first();
             if ($oldRecord) {
                 $isDowngrade = (float)$oldRecord->work_units > (float)$attributes['work_units'];
-                $isClearTime = ($oldRecord->check_in_at && !$attributes['check_in_at']) || 
+                $isClearTime = ($oldRecord->check_in_at && !$attributes['check_in_at']) ||
                                ($oldRecord->check_out_at && !$attributes['check_out_at']);
 
                 if ($isDowngrade && !$request->boolean('confirm_downgrade')) {
