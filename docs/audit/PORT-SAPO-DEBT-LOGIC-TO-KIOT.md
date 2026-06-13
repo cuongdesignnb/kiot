@@ -155,98 +155,366 @@ Chi co unique index tren bang moi:
 Khong them unique index vao bang legacy. Khong backfill, update, cleanup hoac xoa
 du lieu cu.
 
-## Verification
+## Remote review
 
-Database test rieng: `storage/testing.sqlite` (local, khong commit).
+- Branch: `codex/port-sapo-debt-logic-to-kiot`
+- Remote branch:
+  `https://github.com/cuongdesignnb/kiot/tree/codex/port-sapo-debt-logic-to-kiot`
+- Draft PR: `https://github.com/cuongdesignnb/kiot/pull/1`
+- Base: `main`
+- Review snapshot SHA truoc commit report cuoi: `25d5023`
+- PR van de Draft; khong mark ready va khong merge main trong task nay.
 
-- Full migration: pass sau khi dang ky runtime compatibility cho hai migration
-  legacy dung MySQL `NOW()` va `information_schema`.
-- Rollback ba migration moi bang `migrate:rollback --step=3`: pass.
-- Migrate lai ba migration moi: pass.
-- `tests/Feature/CustomerDebt/SapoDebtParityTest.php`: 12 passed,
-  41 assertions.
-- `npm run build`: pass, 915 modules transformed.
-- `php artisan route:clear`: pass.
-- `php artisan optimize:clear`: pass voi SQLite testing va `CACHE_STORE=array`.
-  Lan chay dau theo cau hinh local mac dinh that bai vi MySQL
-  `127.0.0.1` khong san sang; day la loi moi truong, khong phai loi ung dung.
-- `git diff --check`: pass.
+## File changed thuc te
 
-Regression rong da thu:
+Snapshot `origin/main...25d5023`: 44 file, 2,321 insertions, 473 deletions.
+Commit report/evidence cuoi khong them file ung dung.
+
+Backend service:
+
+- `app/Services/CustomerDebtDocumentTimelineService.php`
+- `app/Services/CustomerDebtService.php`
+- `app/Services/CustomerPaymentDiscountService.php`
+- `app/Services/CustomerPaymentService.php`
+- `app/Services/CustomerReceivableInvoiceService.php`
+- `app/Services/InvoiceSaleService.php`
+- `app/Services/InvoiceUpdateService.php`
+- `app/Services/OrderPaymentSummaryService.php`
+- `app/Services/OrderReturnCreationService.php`
+- `app/Services/PartnerDebtLedgerService.php`
+- `app/Services/PartnerMergeService.php`
+- `app/Services/PartnerTransactionGuard.php`
+- `app/Services/SupplierDebtDocumentTimelineService.php`
+- `app/Support/Status/BusinessStatus.php`
+
+Controller:
+
+- `app/Http/Controllers/CashFlowController.php`
+- `app/Http/Controllers/CustomerController.php`
+- `app/Http/Controllers/InvoiceController.php`
+- `app/Http/Controllers/OrderController.php`
+- `app/Http/Controllers/PosController.php`
+- `app/Http/Controllers/PurchaseController.php`
+- `app/Http/Controllers/PurchaseOrderController.php`
+- `app/Http/Controllers/PurchaseReturnController.php`
+- `app/Http/Controllers/SupplierController.php`
+
+Model:
+
+- `app/Models/CashFlow.php`
+- `app/Models/Customer.php`
+- `app/Models/CustomerPaymentAllocation.php`
+- `app/Models/Invoice.php`
+- `app/Models/PartnerMerge.php`
+
+Migration:
+
+- `database/migrations/2026_06_12_120000_create_customer_payment_allocations_table.php`
+- `database/migrations/2026_06_12_120100_add_order_deposit_applied_amount_to_invoices.php`
+- `database/migrations/2026_06_12_120200_add_partner_merge_provenance.php`
+
+Frontend:
+
+- `resources/js/Pages/CashFlows/Index.vue`
+- `resources/js/Pages/Customers/Index.vue`
+- `resources/js/Pages/Orders/Index.vue`
+- `resources/js/Pages/POS/Index.vue`
+- `resources/js/Pages/Suppliers/Index.vue`
+- `resources/views/prints/order.blade.php`
+- `routes/web.php`
+
+Tests:
+
+- `tests/Feature/CustomerDebt/SapoDebtParityTest.php`
+- `tests/Feature/Customers/CustomerPaymentDiscountTest.php`
+- `tests/Feature/Orders/ProcessOrderViaPosTest.php`
+- `tests/Feature/POS/Hotfix246CPosQuickCreateCustomerGroupDropdownTest.php`
+- `tests/Feature/POS/Step246CPosNoteAndDateFormatTest.php`
+
+Docs:
+
+- `docs/audit/PORT-SAPO-DEBT-LOGIC-TO-KIOT.md`
+- `docs/audit/evidence/PORT-SAPO-DEBT-LOGIC-TO-KIOT/*.png`
+
+Khong co file stock movement, costing, serial/IMEI, payroll, warranty hay repair
+duoc sua.
+
+## Migration diff summary
+
+### 1. Customer payment allocations
+
+- File: `2026_06_12_120000_create_customer_payment_allocations_table.php`
+- Bang moi: `customer_payment_allocations`.
+- Cot: `id`, `cash_flow_id`, `customer_id`, `invoice_id`, `amount(15,2)`,
+  timestamps.
+- Nullable/default: cac FK va `amount` bat buoc; khong co default tai chinh.
+- FK: CashFlow, Customer, Invoice; `restrictOnDelete`.
+- Index: `(customer_id, invoice_id)`.
+- Unique: `(cash_flow_id, invoice_id)` tren bang moi.
+- Backfill/update du lieu cu: khong.
+- `down()`: drop bang moi.
+- Contract: CashFlow giu full payment; Invoice chi tang allocated amount; phan
+  credit unallocated khong tao allocation.
+
+### 2. Order deposit provenance
+
+- File: `2026_06_12_120100_add_order_deposit_applied_amount_to_invoices.php`
+- Cot moi tren bang legacy `invoices`:
+  `order_deposit_applied_amount decimal(15,2) nullable`.
+- Default: `NULL`; khong ep invoice legacy co provenance gia.
+- Backfill/update du lieu cu: khong.
+- `down()`: drop cot.
+
+### 3. Partner merge provenance
+
+- File: `2026_06_12_120200_add_partner_merge_provenance.php`
+- Bang moi `partner_merges`: ref code, source/target partner, balance snapshot,
+  aggregate snapshot, actor va merged timestamp.
+- Unique: chi co `partner_merges.ref_code` tren bang moi.
+- Cot moi tren `customers`: `merged_into_id nullable`, `merged_at nullable`.
+- Cac balance snapshot bat buoc co default `0`; aggregate snapshot nullable;
+  `merged_by` nullable va `nullOnDelete`.
+- Backfill/update/xoa du lieu cu: khong.
+- `down()`: drop FK/cot moi tren customers, sau do drop bang `partner_merges`.
+- Marker `amount = 0` la contract cua `PartnerMergeService`; migration khong tao
+  adjustment tai chinh va khong hard-delete source.
+
+## Acceptance test
+
+Environment:
 
 ```text
-Orders, POS, CustomerDebt, Customers, Supplier, Suppliers,
-CashFlow, CashFlows, Report, Reports
+APP_ENV=testing
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3319
+DB_DATABASE=sales_test_port_migration_review
+CACHE_STORE=array
+SESSION_DRIVER=array
 ```
 
-Ket qua: 18 pass, 1 skip, 457 fail do test legacy thay doi/rollback schema SQLite
-dung chung va de lai schema thieu cac cot da migrate, vi du
-`products.inventory_total_cost`, `customer_debts.order_return_id`. Acceptance suite
-duoc tao lai DB sach va chay lai thanh cong. Khong sua migration ton kho/payroll/
-serial legacy trong task nay.
+Command:
 
-Repo khong co Node test script; chi co `dev` va `build`, nen khong co Node unit test
-de chay.
+```bash
+php artisan test tests/Feature/CustomerDebt/SapoDebtParityTest.php
+```
 
-Canh bao moi truong:
+Result: `12 passed (41 assertions)`.
 
-- PHP CLI thieu `oci8_12c`, `oci8_19`, `pdo_firebird`, `pdo_oci`.
-- Node `20.15.1` thap hon engine khuyen nghi cua `@vitejs/plugin-vue@6.0.4`,
-  nhung build van pass.
-- `npm audit` bao 8 dependency issue: 5 moderate va 3 high; khong nang dependency
-  trong task cong no nay.
+## Migration testing
 
-## Manual QA
+Database rieng: MySQL `sales_test_port_migration_review`.
 
-Chua thuc hien UAT UI vi worktree khong co database seed/tai khoan QA trinh duyet.
-Sau deploy staging can chay du 6 luong:
+```text
+php artisan migrate --env=testing                         PASS
+php artisan migrate:rollback --step=3 --env=testing      PASS
+php artisan migrate --env=testing                         PASS
+```
 
-1. Don 1.500.000, tra 1.200.000.
-2. No 1.300.000, thu 1.500.000.
-3. Credit -200.000 mua tiep 1.500.000.
-4. Merge debt 300.000, marker 0.
-5. Dual-role 200.000/200.000, hai man deu 0.
-6. Source merged bi chan o cac luong giao dich.
+Rollback step 3 go dung:
+
+1. Partner merge provenance.
+2. Invoice order-deposit provenance.
+3. Customer payment allocations.
+
+Khong co loi migration legacy tren MySQL va khong can runtime compatibility
+workaround. Khong dung `migrate:fresh`.
+
+## Regression classification
+
+Tat ca suite duoc chay tren cac MySQL database testing rieng. Hai nhom con fail
+duoc chay lai tren detached worktree `origin/main` tai `1822437` voi cung DB/env.
+
+| Nhom test | Pass | Fail | Skip | Nguyen nhan chinh | Lien quan code moi | Can sua scope nay |
+|---|---:|---:|---:|---|---|---|
+| Orders | 19 | 0 | 0 | Option A va POS order regression pass | Co, da pass | Khong |
+| POS | 65 | 0 | 0 | POS regression pass; test khong goi `migrate:fresh` noi bo | Co, da pass | Khong |
+| CustomerDebt | 17 | 0 | 0 | Gom 12 parity case | Co, da pass | Khong |
+| SupplierDebt | - | - | - | Folder `tests/Feature/SupplierDebt` khong ton tai | Khong xac dinh | Khong |
+| Customers | 118 | 30 | 1 | Timeline/export legacy contract; `origin/main` cung 118/30/1, 644 assertions | Khong phat sinh them | Khong |
+| Suppliers | 31 | 13 | 0 | Timeline/virtual opening legacy contract; `origin/main` cung 31/13, 200 assertions | Khong phat sinh them | Khong |
+| CashFlow + CashFlows | 14 | 0 | 0 | Allocation/cancellation regression pass | Co, da pass | Khong |
+| Report + Reports | 109 | 0 | 0 | Report regression pass | Co, da pass | Khong |
+
+Bon fail moi phat hien luc review da duoc xu ly:
+
+- Hai test order cu coi `orders.amount_paid` la cumulative paid; cap nhat assertion
+  theo Option A va xac minh cumulative qua `OrderPaymentSummaryService`.
+- Ba contract trong `CustomerPaymentDiscountTest` cu coi legacy debt `ref_code`
+  la quyen so huu invoice; cap nhat de reject cross-customer allocation.
+- Auto payment khong co invoice receivable nay ghi full CashFlow va unallocated
+  credit theo contract moi, thay vi reject.
+- Hai POS test dung `RefreshDatabase` noi bo co the goi `migrate:fresh`; chuyen
+  sang transaction-only.
+
+Ba fail mau Customers, cung tai `origin/main`:
+
+1. `AnhThanhThienPhuDebtReconcileTest`: expected `75,000,000`, actual `0`;
+   mismatch timeline/reconciliation legacy, khong do migration moi.
+2. `CustomerDebtExcelExportTest`: expected return label `Tra hang ban`, actual
+   `null`; export timeline legacy, khong do code payment/order moi.
+3. `CustomerDebtVirtualOpeningTimelineTest`: expected virtual opening `true`,
+   actual `null`; virtual opening contract cu, cung fail tren main.
+
+Ba fail mau Suppliers, cung tai `origin/main`:
+
+1. `HOTFIXFollowUpSupplierDebtPaginationTest`: expected summary `32,500,000`,
+   actual `0`; full-ledger summary legacy.
+2. `SupplierDebtVirtualOpeningTimelineTest`: expected virtual opening `true`,
+   actual `false`; virtual opening legacy.
+3. `SupplierDualRoleOrientationKiotVietTest`: thieu key
+   `supplier_partner_effect`; response contract legacy.
+
+Ket luan regression: khong con fail moi lien quan signed debt, payment allocation,
+order summary, POS, CashFlow hoac Reports. 43 fail con lai la baseline debt
+timeline/export legacy va duoc chung minh bang ket qua trung khop tren
+`origin/main`.
+
+## Frontend build va cache
+
+```text
+Node: v20.15.1
+npm: 10.7.0
+npm run build: PASS
+Vite: 5.4.21
+Modules transformed: 918
+Vite/Vue error: khong
+```
+
+Warning: Node thap hon engine khuyen nghi cua
+`@vitejs/plugin-vue@6.0.4`; build van pass. Khong nang dependency trong task.
+PHP CLI canh bao thieu `oci8_12c`, `oci8_19`, `pdo_firebird`, `pdo_oci`; MySQL
+test khong dung cac extension nay.
+`npm ci` audit bao 8 issue hien huu (4 moderate, 4 high); khong nang dependency
+ngoai scope.
+
+```text
+php artisan route:clear      PASS
+php artisan optimize:clear   PASS
+php artisan config:clear     PASS
+php artisan view:clear       PASS
+git diff --check             PASS
+```
+
+Repo khong co Node unit-test script; `package.json` chi co `dev` va `build`.
+
+## UAT UI
+
+Environment:
+
+```text
+URL: http://127.0.0.1:8092
+DB: MySQL sales_test_port_uat
+Account: uat-admin@kiot.local
+Role: admin compatibility (role_id NULL)
+Runner: Playwright 1.60.0, Chrome, headless
+Result: 6 business cases PASS; extended guard entry points PASS
+```
+
+1. Order partial payment:
+   `UAT-DH-1500`, total `1,500,000`, `orders.amount_paid=0`, invoice paid
+   `1,200,000`. UI hien paid `1,200,000`, remaining `300,000`.
+   Evidence: `evidence/PORT-SAPO-DEBT-LOGIC-TO-KIOT/01-order-partial-payment.png`.
+2. Debt overpayment:
+   `UAT-OVERPAY` thu `1,500,000` cho invoice no `1,300,000`. UI hien payment,
+   allocated, unallocated va debt after lan luot `1,500,000`, `1,300,000`,
+   `200,000`, `-200,000`; label credit am hien dung.
+   Evidence: `evidence/PORT-SAPO-DEBT-LOGIC-TO-KIOT/02-overpayment-summary.png`.
+3. Future credit offset:
+   `UAT-CREDIT-NEXT` co ledger credit `-200,000`, invoice moi `1,500,000`;
+   UI hien current debt `1,300,000`.
+   Evidence: `evidence/PORT-SAPO-DEBT-LOGIC-TO-KIOT/03-credit-used-next-sale.png`.
+4. Merge marker zero:
+   merge `UAT-MERGE-SOURCE` debt `300,000` vao `UAT-MERGE-TARGET`.
+   Preview backend hien target debt `300,000`, marker `0`; SQL sau merge xac
+   nhan `MERGE-PARTNER-18-TO-19`, source inactive, marker `merge_marker=0`,
+   target debt `300,000`, khong double.
+   Evidence: `evidence/PORT-SAPO-DEBT-LOGIC-TO-KIOT/04-merge-preview-marker-zero.png`.
+5. Dual-role net zero:
+   `UAT-DUAL` co receivable/payable cung `200,000`; man Customer va Supplier
+   deu hien `0`.
+   Evidence:
+   `evidence/PORT-SAPO-DEBT-LOGIC-TO-KIOT/05-dual-role-customer-zero.png` va
+   `05-dual-role-supplier-zero.png`.
+6. Merged-source guard:
+   POS lookup khong tra source. Browser POST bang source merged cho invoice,
+   order, customer payment, purchase, supplier payment va CashFlow deu tra
+   `422` voi message chua `UAT-MERGE-TARGET`. SQL xac nhan khong co order,
+   invoice, purchase, supplier transaction hay CashFlow ngoai du lieu seed va
+   phieu thu hop le cua case 2.
+   Evidence: `evidence/PORT-SAPO-DEBT-LOGIC-TO-KIOT/06-merged-source-guard.png`.
+
+SQL hau kiem case 2:
+
+```text
+CashFlow.amount=1,500,000
+allocated_amount=1,300,000
+unallocated_amount=200,000
+invoice.customer_paid=1,300,000
+customer.debt_amount=-200,000
+```
 
 ## Legacy MERGE findings
 
-Source code va test hien co co cac ref legacy `MERGE-CUSTOMER-*` va
-`MERGE-SUPPLIER-*`. Task khong doc hay sua du lieu production, nen khong ket luan
-so dong legacy sai. Khong tao command audit/apply/remediate. Neu can dry-run,
-lap proposal rieng de BA duyet.
+Source code/test co ref legacy `MERGE-CUSTOMER-*` va `MERGE-SUPPLIER-*`.
+Khong doc/sua production data, khong cleanup, khong backfill, khong tao command
+apply/remediate. Neu can dry-run phai lap proposal rieng de BA duyet.
 
-## Rui ro con lai
+## Production migration checklist
 
-1. Don legacy co the da tung ghi de `orders.amount_paid` thanh tong da tra.
-   Task khong backfill nen Option A se coi gia tri hien tai la coc goc.
-2. Invoice legacy khong co provenance coc; cot moi nullable va khong backfill.
-3. Guard da phu cac entry point hien tai duoc audit; module giao dich moi trong
-   tuong lai phai goi `PartnerTransactionGuard`.
-4. UAT browser va regression day du tren MySQL staging van con pending.
+Khong chay cac lenh production trong task. Truoc production migration:
 
-## Rollback va deploy de xuat
+```bash
+cd /www/wwwroot/kiot.cuongdesign.net
+git status
+git rev-parse HEAD
+git fetch origin main
+git log --oneline -5
+php artisan migrate:status
+php artisan migrate --pretend
+```
 
-Backup DB production truoc deploy. Khong chay migration khi chua co BA phe duyet.
+Chi sau khi backup DB va BA xac nhan rieng:
 
 ```bash
 composer install --no-dev --prefer-dist --optimize-autoloader
 npm ci
-npm run build
-php artisan migrate --pretend
 php artisan migrate --force
+rm -rf public/build
+npm run build
 php artisan optimize:clear
-php artisan route:clear
+php artisan config:cache
+php artisan route:cache
+php artisan view:cache
+php artisan queue:restart
+# Restart PHP-FPM qua aaPanel neu can.
 ```
 
-Rollback migration `--step=3` chi phu hop truoc khi co giao dich moi ghi vao schema
-nay, hoac sau khi restore backup da xac nhan. Sau khi da co allocation/merge moi,
-uu tien forward fix thay vi drop bang/cot.
+Rollback `--step=3` chi an toan truoc khi co giao dich moi ghi vao schema nay
+hoac sau khi restore backup da xac nhan. Sau khi co allocation/merge moi, uu tien
+forward fix thay vi drop bang/cot.
 
-## Data safety ket luan
+## Rui ro con lai
 
-- Co dung du lieu cu: Khong.
-- Co cleanup legacy: Khong.
+1. Don legacy co the da tung ghi de `orders.amount_paid` thanh cumulative paid.
+   Khong backfill; Option A se coi gia tri hien tai la original deposit.
+2. Invoice legacy khong co provenance coc; cot moi nullable va khong backfill.
+3. 43 fail baseline Customers/Suppliers van ton tai trong debt timeline/export
+   legacy. Chung khong phat sinh tu branch nay, nhung nen co task rieng.
+4. Node local thap hon engine khuyen nghi; build pass nhung CI/staging nen dung
+   Node phu hop engine.
+5. Can UAT lai tren staging voi du lieu clone/fixture gan production truoc deploy.
+
+## Data safety va quyet dinh
+
 - Co backfill: Khong.
-- Co xoa du lieu: Khong.
-- Co can production migration: Co, ba migration additive neu BA phe duyet deploy.
-- Co chay production migration trong task: Khong.
+- Co cleanup legacy: Khong.
+- Co update/xoa du lieu cu: Khong.
+- Co chay production migration: Khong.
+- Co dung stock/costing/serial/payroll/warranty/repair: Khong.
+- Co can production migration: Co, 3 migration additive.
+- Co can BA xac nhan rieng truoc production migration: Co.
+- Ready for BA review: Co.
+- Ready for merge main: Khong; cho BA review/approve.
+- Ready for production deploy: Khong; cho merge approval, backup va migration
+  approval rieng.
