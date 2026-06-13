@@ -56,6 +56,8 @@ class TimekeepingRecordController extends Controller
             'check_out_time' => 'nullable|date_format:H:i',
             'ot_minutes' => 'nullable|integer|min:0|max:1440',
             'notes' => 'nullable|string',
+            'confirm_downgrade' => 'nullable|boolean',
+            'confirm_clear_time' => 'nullable|boolean',
         ]);
 
         try {
@@ -69,6 +71,50 @@ class TimekeepingRecordController extends Controller
                 (int) ($data['ot_minutes'] ?? 0),
                 $data['notes'] ?? null
             );
+
+            $oldRecord = TimekeepingRecord::where('employee_work_schedule_id', $schedule->id)->first();
+            if ($oldRecord) {
+                $isDowngrade = (float)$oldRecord->work_units > (float)$attributes['work_units'];
+                $isClearTime = ($oldRecord->check_in_at && !$attributes['check_in_at']) ||
+                               ($oldRecord->check_out_at && !$attributes['check_out_at']);
+
+                if ($isDowngrade && !$request->boolean('confirm_downgrade')) {
+                    return response()->json([
+                        'success' => false,
+                        'requires_confirmation' => true,
+                        'confirm_type' => 'downgrade',
+                        'message' => "Lưu chấm công sẽ làm ngày công giảm từ " . (float)$oldRecord->work_units . " xuống " . (float)$attributes['work_units'] . ". Vui lòng xác nhận.",
+                        'diff' => [
+                            'old_work_units' => (float)$oldRecord->work_units,
+                            'new_work_units' => (float)$attributes['work_units'],
+                            'old_worked_minutes' => $oldRecord->worked_minutes,
+                            'new_worked_minutes' => $attributes['worked_minutes'],
+                        ]
+                    ], 422);
+                }
+
+                if ($isClearTime && !$request->boolean('confirm_clear_time')) {
+                    return response()->json([
+                        'success' => false,
+                        'requires_confirmation' => true,
+                        'confirm_type' => 'clear_time',
+                        'message' => "Bạn đang bỏ giờ vào/ra đã có sẵn. Việc này có thể làm giảm công. Vui lòng xác nhận.",
+                        'diff' => [
+                            'old_work_units' => (float)$oldRecord->work_units,
+                            'new_work_units' => (float)$attributes['work_units'],
+                            'old_worked_minutes' => $oldRecord->worked_minutes,
+                            'new_worked_minutes' => $attributes['worked_minutes'],
+                        ]
+                    ], 422);
+                }
+
+                if ($isDowngrade) {
+                    \Illuminate\Support\Facades\Log::info("Manual attendance downgrade confirmed by user for employee schedule {$schedule->id}");
+                }
+                if ($isClearTime) {
+                    \Illuminate\Support\Facades\Log::info("Manual attendance clear time confirmed by user for employee schedule {$schedule->id}");
+                }
+            }
 
             $record = TimekeepingRecord::updateOrCreate(
                 ['employee_work_schedule_id' => $schedule->id],

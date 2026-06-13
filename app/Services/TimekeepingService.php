@@ -187,33 +187,18 @@ class TimekeepingService
             // work_units vẫn tính bình thường (1.0 / 0.5)
             // Hệ số nhân (2x, 3x) áp dụng trong SalaryCalculationService qua holiday_multiplier
 
-            // Tính work_units: 0 (vắng), 0.5 (nửa ngày), 1 (đủ ngày)
-            $standardHours = (float) ($setting?->standard_hours_per_day ?? 8);
-            $halfDayThreshold = $standardHours / 2;
-            $workUnits = 0;
-            if ($workedMinutes > 0) {
-                if ($halfWorkEnabled) {
-                    if ($workedMinutes < $halfWorkMinMinutes) {
-                        $workUnits = 0;
-                    } elseif ($workedMinutes <= $halfWorkMaxMinutes) {
-                        $workUnits = 0.5;
-                    } else {
-                        $workUnits = 1.0;
-                    }
-                } else {
-                    $workedHours = $workedMinutes / 60;
-                    if ($workedHours >= $halfDayThreshold) {
-                        $workUnits = 1.0;
-                    } else {
-                        $workUnits = 0.5;
-                    }
-                }
-            }
+            $fullDayMinutes = $this->resolveFullDayMinutes($scheduleStart, $scheduleEnd);
 
-            // Đi muộn quá ngưỡng → tính nửa ngày công
-            if ($lateHalfDayEnabled && $lateMinutes >= $lateHalfDayThreshold && $workUnits > 0.5) {
-                $workUnits = 0.5;
-            }
+            $workUnits = $this->calculateWorkUnitsFromMinutes(
+                $workedMinutes,
+                $fullDayMinutes,
+                $halfWorkEnabled,
+                $halfWorkMinMinutes,
+                $halfWorkMaxMinutes,
+                $lateHalfDayEnabled,
+                $lateMinutes,
+                $lateHalfDayThreshold
+            );
 
             // Ngày nghỉ/lễ: work_units GIỮ NGUYÊN (1.0 hoặc 0.5)
             // Hệ số nhân (2x, 3x) sẽ được áp dụng trong SalaryCalculationService
@@ -373,24 +358,18 @@ class TimekeepingService
                 }
             }
 
-            // Tính work_units
-            $standardHoursRestDay = (float) ($setting?->standard_hours_per_day ?? 8);
-            $halfDayThresholdRest = $standardHoursRestDay / 2;
-            $workUnitsRest = 0;
-            if ($workedMinutes > 0) {
-                if ($halfWorkEnabled) {
-                    if ($workedMinutes < $halfWorkMinMinutes) {
-                        $workUnitsRest = 0;
-                    } elseif ($workedMinutes <= $halfWorkMaxMinutes) {
-                        $workUnitsRest = 0.5;
-                    } else {
-                        $workUnitsRest = 1.0;
-                    }
-                } else {
-                    $workedHoursRest = $workedMinutes / 60;
-                    $workUnitsRest = ($workedHoursRest >= $halfDayThresholdRest) ? 1.0 : 0.5;
-                }
-            }
+            $fullDayMinutesRest = $this->resolveFullDayMinutes($scheduleStart, $scheduleEnd);
+
+            $workUnitsRest = $this->calculateWorkUnitsFromMinutes(
+                $workedMinutes,
+                $fullDayMinutesRest,
+                $halfWorkEnabled,
+                $halfWorkMinMinutes,
+                $halfWorkMaxMinutes,
+                false,
+                0,
+                null
+            );
 
             $attributes = [
                 'employee_id' => $empId,
@@ -521,29 +500,18 @@ class TimekeepingService
         } elseif ($attendanceType === 'leave_unpaid') {
             $workUnits = 0.0;
         } else { // 'work'
-            if ($workedMinutes > 0) {
-                if ($halfWorkEnabled) {
-                    if ($workedMinutes < $halfWorkMinMinutes) {
-                        $workUnits = 0.0;
-                    } elseif ($workedMinutes <= $halfWorkMaxMinutes) {
-                        $workUnits = 0.5;
-                    } else {
-                        $workUnits = 1.0;
-                    }
-                } else {
-                    $standardHours = (float) ($setting?->standard_hours_per_day ?? 8);
-                    $workedHours = $workedMinutes / 60;
-                    if ($workedHours >= $standardHours / 2) {
-                        $workUnits = 1.0;
-                    } else {
-                        $workUnits = 0.5;
-                    }
-                }
-            }
+            $fullDayMinutes = $this->resolveFullDayMinutes($scheduleStart, $scheduleEnd);
 
-            if ($lateHalfDayEnabled && $lateMinutes >= $lateHalfDayThreshold && $workUnits > 0.5) {
-                $workUnits = 0.5;
-            }
+            $workUnits = $this->calculateWorkUnitsFromMinutes(
+                $workedMinutes,
+                $fullDayMinutes,
+                $halfWorkEnabled,
+                $halfWorkMinMinutes,
+                $halfWorkMaxMinutes,
+                $lateHalfDayEnabled,
+                $lateMinutes,
+                $lateHalfDayThreshold
+            );
         }
 
         return [
@@ -580,5 +548,73 @@ class TimekeepingService
         if (!$time)
             return null;
         return Carbon::parse($workDate)->startOfDay()->setTimeFromTimeString((string) $time);
+    }
+
+    private function calculateWorkUnitsFromMinutes(
+        int $workedMinutes,
+        int $fullDayMinutes,
+        bool $halfWorkEnabled,
+        int $halfWorkMinMinutes,
+        int $halfWorkMaxMinutes,
+        bool $lateHalfDayEnabled = false,
+        int $lateMinutes = 0,
+        ?int $lateHalfDayThreshold = null
+    ): float {
+        if ($workedMinutes <= 0) {
+            return 0.0;
+        }
+
+        if ($workedMinutes >= $fullDayMinutes) {
+            return 1.0;
+        }
+
+        $workUnits = 0.0;
+        if ($halfWorkEnabled) {
+            if ($workedMinutes >= $halfWorkMinMinutes) {
+                if ($workedMinutes <= $halfWorkMaxMinutes) {
+                    $workUnits = 0.5;
+                } else {
+                    $workUnits = 1.0;
+                }
+            } else {
+                $workUnits = 0.0;
+            }
+        } else {
+            if ($workedMinutes >= ($fullDayMinutes / 2)) {
+                $workUnits = 1.0;
+            } else {
+                $workUnits = 0.5;
+            }
+        }
+
+        if ($lateHalfDayEnabled && $lateMinutes >= $lateHalfDayThreshold && $workUnits > 0.5) {
+            $workUnits = 0.5;
+        }
+
+        return $workUnits;
+    }
+
+    private function resolveFullDayMinutes(?Carbon $scheduleStart, ?Carbon $scheduleEnd): int
+    {
+        $standardWorkMinutes = (int) Setting::get('attendance_standard_work_minutes', 480);
+
+        $scheduleMinutes = null;
+        if ($scheduleStart && $scheduleEnd && $scheduleEnd->greaterThan($scheduleStart)) {
+            $scheduleMinutes = abs($scheduleEnd->diffInMinutes($scheduleStart));
+        }
+
+        if ($standardWorkMinutes > 0 && $scheduleMinutes && $scheduleMinutes > 0) {
+            return min($standardWorkMinutes, $scheduleMinutes);
+        }
+
+        if ($standardWorkMinutes > 0) {
+            return $standardWorkMinutes;
+        }
+
+        if ($scheduleMinutes && $scheduleMinutes > 0) {
+            return $scheduleMinutes;
+        }
+
+        return 480;
     }
 }

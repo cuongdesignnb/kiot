@@ -360,6 +360,21 @@
               </label>
               <input type="time" v-model="form.check_out_time" :disabled="!hasCheckOut" class="px-3 py-1.5 border border-gray-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400 w-28">
             </div>
+
+            <!-- Estimated Work Info -->
+            <div class="mt-4 p-3 bg-blue-50/50 rounded border border-blue-100 text-xs text-blue-800">
+              <div class="flex items-center justify-between mb-1">
+                <span>Thời gian làm:</span>
+                <span class="font-semibold">{{ estimatedWorkInfo.workedMinutes }} phút</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span>Công dự kiến:</span>
+                <span class="font-semibold text-sm text-blue-900">{{ estimatedWorkInfo.workUnits }} công</span>
+              </div>
+              <div v-if="estimatedWorkInfo.reason" class="mt-1 text-[10px] text-orange-600 font-medium">
+                Lý do: {{ estimatedWorkInfo.reason }}
+              </div>
+            </div>
           </div>
 
           <!-- Tab: Lịch sử -->
@@ -790,7 +805,91 @@ const statusBadge = computed(() => {
     return { text: 'Đúng giờ', cls: 'bg-blue-100 text-blue-600' }
 })
 
+const isPrefilling = ref(false)
+
+const estimatedWorkInfo = computed(() => {
+    if (form.attendance_type === 'leave_paid') {
+        return { workedMinutes: 0, workUnits: 1.0, reason: 'Nghỉ có phép' }
+    }
+    if (form.attendance_type === 'leave_unpaid') {
+        return { workedMinutes: 0, workUnits: 0.0, reason: 'Nghỉ không lương' }
+    }
+
+    let checkInVal = hasCheckIn.value ? form.check_in_time : null
+    let checkOutVal = hasCheckOut.value ? form.check_out_time : null
+
+    let schedStartStr = activeSchedule.value?.shift?.start_time || activeSchedule.value?.start_time || '08:30'
+    let schedEndStr = activeSchedule.value?.shift?.end_time || activeSchedule.value?.end_time || '17:30'
+
+    if (schedStartStr && schedStartStr.length > 5) schedStartStr = schedStartStr.substring(0, 5)
+    if (schedEndStr && schedEndStr.length > 5) schedEndStr = schedEndStr.substring(0, 5)
+
+    let inTime = checkInVal
+    let outTime = checkOutVal
+
+    let workedMinutes = 0
+    if (inTime && outTime) {
+        let [h1, m1] = inTime.split(':').map(Number)
+        let [h2, m2] = outTime.split(':').map(Number)
+        let t1 = h1 * 60 + m1
+        let t2 = h2 * 60 + m2
+        if (t2 <= t1) t2 += 1440
+        workedMinutes = t2 - t1
+    } else if (inTime && !outTime && schedEndStr) {
+        let [h1, m1] = inTime.split(':').map(Number)
+        let [h2, m2] = schedEndStr.split(':').map(Number)
+        let t1 = h1 * 60 + m1
+        let t2 = h2 * 60 + m2
+        if (t2 <= t1) t2 += 1440
+        workedMinutes = t2 - t1
+    } else if (!inTime && outTime && schedStartStr) {
+        let [h1, m1] = schedStartStr.split(':').map(Number)
+        let [h2, m2] = outTime.split(':').map(Number)
+        let t1 = h1 * 60 + m1
+        let t2 = h2 * 60 + m2
+        if (t2 <= t1) t2 += 1440
+        workedMinutes = t2 - t1
+    }
+
+    let workUnits = 0.0
+    let reason = ''
+    if (workedMinutes > 0) {
+        let fullDayMinutes = 480
+        if (schedStartStr && schedEndStr) {
+            let [h1, m1] = schedStartStr.split(':').map(Number)
+            let [h2, m2] = schedEndStr.split(':').map(Number)
+            let t1 = h1 * 60 + m1
+            let t2 = h2 * 60 + m2
+            if (t2 <= t1) t2 += 1440
+            let scheduleMinutes = t2 - t1
+            fullDayMinutes = Math.min(480, scheduleMinutes)
+        }
+        if (fullDayMinutes <= 0) fullDayMinutes = 480
+
+        if (workedMinutes >= fullDayMinutes) {
+            workUnits = 1.0
+        } else {
+            if (workedMinutes <= 480) {
+                workUnits = 0.5
+                reason = 'Chưa đủ giờ làm cả ngày'
+            } else {
+                workUnits = 1.0
+            }
+        }
+    } else {
+        workUnits = 0.0
+        reason = 'Chưa chấm công'
+    }
+
+    return {
+        workedMinutes,
+        workUnits,
+        reason
+    }
+})
+
 const openModal = (schedule) => {
+    isPrefilling.value = true
     activeSchedule.value = schedule
     const rec = schedule.timekeeping_record
     form.employee_work_schedule_id = schedule.id
@@ -807,6 +906,9 @@ const openModal = (schedule) => {
     otHours.value = Math.floor(form.ot_minutes / 60)
     otMinutes.value = form.ot_minutes % 60
     isModalOpen.value = true
+    setTimeout(() => {
+        isPrefilling.value = false
+    }, 50)
 }
 
 // Auto-fill shift start time when Vào checkbox is checked
@@ -814,6 +916,8 @@ watch(hasCheckIn, (checked) => {
     if (checked && !form.check_in_time && activeSchedule.value?.shift) {
         const st = activeSchedule.value.shift.start_time
         form.check_in_time = st ? st.substring(0, 5) : '08:30'
+    } else if (!checked && !isPrefilling.value && activeSchedule.value?.timekeeping_record?.check_in_at) {
+        alert("Bạn đang bỏ giờ vào/ra đã có sẵn. Việc này có thể làm giảm công.")
     }
 })
 
@@ -822,6 +926,8 @@ watch(hasCheckOut, (checked) => {
     if (checked && !form.check_out_time && activeSchedule.value?.shift) {
         const et = activeSchedule.value.shift.end_time
         form.check_out_time = et ? et.substring(0, 5) : '17:30'
+    } else if (!checked && !isPrefilling.value && activeSchedule.value?.timekeeping_record?.check_out_at) {
+        alert("Bạn đang bỏ giờ vào/ra đã có sẵn. Việc này có thể làm giảm công.")
     }
 })
 
@@ -857,11 +963,43 @@ const saveRecord = async () => {
         closeModal()
     } catch(e) {
         const errData = e.response?.data
-        const msg = (errData?.errors ? Object.values(errData.errors).flat().join('\n') : null)
-            || errData?.message
-            || 'Không thể lưu thay đổi!'
-        alert(msg)
-        console.error(e)
+        if (errData?.requires_confirmation) {
+            let confirmMsg = errData.message + "\n\n"
+            if (errData.diff) {
+                confirmMsg += `Chi tiết thay đổi:\n`
+                confirmMsg += `- Ngày công: ${errData.diff.old_work_units} -> ${errData.diff.new_work_units}\n`
+                confirmMsg += `- Số phút làm: ${errData.diff.old_worked_minutes} -> ${errData.diff.new_worked_minutes}\n`
+            }
+            confirmMsg += "\nBạn có chắc chắn muốn lưu thay đổi này không?"
+
+            if (confirm(confirmMsg)) {
+                isSaving.value = true
+                try {
+                    await axios.post('/api/timekeeping-records', {
+                        ...form,
+                        confirm_downgrade: true,
+                        confirm_clear_time: true
+                    })
+                    await fetchSchedules()
+                    closeModal()
+                } catch (retryErr) {
+                    const retryErrData = retryErr.response?.data
+                    const retryMsg = (retryErrData?.errors ? Object.values(retryErrData.errors).flat().join('\n') : null)
+                        || retryErrData?.message
+                        || 'Không thể lưu thay đổi sau khi xác nhận!'
+                    alert(retryMsg)
+                    console.error(retryErr)
+                } finally {
+                    isSaving.value = false
+                }
+            }
+        } else {
+            const msg = (errData?.errors ? Object.values(errData.errors).flat().join('\n') : null)
+                || errData?.message
+                || 'Không thể lưu thay đổi!'
+            alert(msg)
+            console.error(e)
+        }
     }
     finally { isSaving.value = false }
 }
