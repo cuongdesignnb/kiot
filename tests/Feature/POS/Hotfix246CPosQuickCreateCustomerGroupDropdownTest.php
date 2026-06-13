@@ -6,12 +6,12 @@ use App\Models\Customer;
 use App\Models\CustomerGroup;
 use App\Models\Role;
 use App\Models\User;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
 
 class Hotfix246CPosQuickCreateCustomerGroupDropdownTest extends TestCase
 {
-    use RefreshDatabase;
+    use DatabaseTransactions;
 
     private function userWith(array $permissions): User
     {

@@ -3,7 +3,7 @@
 namespace Tests\Feature\POS;
 
 use Tests\TestCase;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Foundation\Testing\DatabaseTransactions;
 use App\Models\User;
 use App\Models\Product;
 use App\Models\Invoice;
@@ -11,7 +11,7 @@ use App\Models\Order;
 
 class Step246CPosNoteAndDateFormatTest extends TestCase
 {
-    use RefreshDatabase;
+    use DatabaseTransactions;
 
     private User $user;
     private Product $product;

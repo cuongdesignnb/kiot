@@ -306,7 +306,7 @@ class CustomerPaymentDiscountTest extends TestCase
         ]);
     }
 
-    public function test_payment_discount_invoices_ledger_source(): void
+    public function test_payment_discount_invoices_does_not_use_ledger_ref_as_ownership(): void
     {
         $otherCustomer = Customer::create([
             'code' => 'KH-OTHER-' . uniqid(),
@@ -337,14 +337,7 @@ class CustomerPaymentDiscountTest extends TestCase
             ->getJson("/customers/{$this->customer->id}/payment-discount-invoices");
 
         $resp->assertOk();
-        $resp->assertJsonFragment([
-            'id' => $invoice->id,
-            'code' => $invoice->code,
-            'total' => 300000.0,
-            'customer_paid' => 50000.0,
-            'remaining' => 250000.0,
-            'source' => 'ledger_invoice',
-        ]);
+        $resp->assertJsonMissing(['id' => $invoice->id]);
     }
 
     public function test_payment_discount_invoices_excludes_purchase_from_ledger(): void
@@ -432,7 +425,7 @@ class CustomerPaymentDiscountTest extends TestCase
         $this->assertEquals('direct_invoice', $first['source']);
     }
 
-    public function test_payment_discount_allocation_to_ledger_invoice(): void
+    public function test_payment_discount_rejects_allocation_owned_by_another_customer(): void
     {
         $otherCustomer = Customer::create([
             'code' => 'KH-OTHER-' . uniqid(),
@@ -477,18 +470,15 @@ class CustomerPaymentDiscountTest extends TestCase
         $resp = $this->actingAs($this->admin)
             ->postJson("/customers/{$this->customer->id}/payment-discounts", $payload);
 
-        $resp->assertOk();
-        $resp->assertJsonPath('success', true);
+        $resp->assertStatus(422);
 
-        // Assert allocation table has record
-        $this->assertDatabaseHas('customer_payment_discount_allocations', [
+        $this->assertDatabaseMissing('customer_payment_discount_allocations', [
             'invoice_id' => $invoice->id,
             'amount' => 100000,
         ]);
 
-        // Assert customer debt decreased
         $this->customer->refresh();
-        $this->assertEquals(150000, (float) $this->customer->debt_amount);
+        $this->assertEquals(250000, (float) $this->customer->debt_amount);
 
         // Assert invoice customer_paid unchanged
         $invoice->refresh();
@@ -501,7 +491,7 @@ class CustomerPaymentDiscountTest extends TestCase
         ]);
     }
 
-    public function test_manual_debt_payment_allocation_to_ledger_invoice_after_cktt(): void
+    public function test_manual_debt_payment_rejects_invoice_owned_by_another_customer(): void
     {
         $otherCustomer = Customer::create([
             'code' => 'KH-OTHER-' . uniqid(),
@@ -530,19 +520,7 @@ class CustomerPaymentDiscountTest extends TestCase
 
         $this->customer->update(['debt_amount' => 250000]);
 
-        // Phân bổ CKTT 100000
-        app(CustomerPaymentDiscountService::class)->create($this->customer, [
-            'amount' => 100000,
-            'allocate_to_invoices' => true,
-            'allocations' => [
-                [
-                    'invoice_id' => $invoice->id,
-                    'amount' => 100000,
-                ]
-            ],
-        ]);
-
-        // Thu nợ manual 200000. Do remaining là 150000, chỉ được thu 150000
+        // Legacy ref_code does not transfer invoice ownership to this customer.
         $resp = $this->actingAs($this->admin)
             ->postJson("/customers/{$this->customer->id}/debt-payment", [
                 'mode' => 'manual',
@@ -554,14 +532,16 @@ class CustomerPaymentDiscountTest extends TestCase
                 ],
             ]);
 
-        $resp->assertOk();
+        $resp->assertStatus(422);
 
-        // Invoice customer_paid tăng thêm 150000 (từ 50000 thành 200000)
+        // Rejected allocation must not mutate either invoice or customer debt.
         $invoice->refresh();
-        $this->assertEquals(200000, (float) $invoice->customer_paid);
+        $this->assertEquals(50000, (float) $invoice->customer_paid);
+        $this->customer->refresh();
+        $this->assertEquals(250000, (float) $this->customer->debt_amount);
     }
 
-    public function test_auto_debt_payment_rejection_when_no_receivable_invoices(): void
+    public function test_auto_debt_payment_without_receivable_invoice_keeps_cash_unallocated(): void
     {
         // Khách hàng có nợ nhưng không có hóa đơn nào (direct hoặc ledger)
         $this->customer->update(['debt_amount' => 100000]);
@@ -572,16 +552,22 @@ class CustomerPaymentDiscountTest extends TestCase
                 'amount' => 50000,
             ]);
 
-        $resp->assertStatus(422);
+        $resp->assertOk()
+            ->assertJsonPath('payment.payment_amount', 50000)
+            ->assertJsonPath('payment.allocated_amount', 0)
+            ->assertJsonPath('payment.unallocated_amount', 50000)
+            ->assertJsonPath('payment.debt_before', 100000)
+            ->assertJsonPath('payment.debt_after', 50000);
 
-        // Verify no cash flow created
-        $this->assertDatabaseMissing('cash_flows', [
+        // The full receipt is kept even when no invoice can be allocated.
+        $this->assertDatabaseHas('cash_flows', [
             'target_id' => $this->customer->id,
-            'category' => 'Thu nợ khách hàng',
+            'reference_type' => 'DebtPayment',
+            'amount' => 50000,
         ]);
 
-        // Verify debt unchanged
+        // Signed payment still reduces the customer's current debt.
         $this->customer->refresh();
-        $this->assertEquals(100000, (float) $this->customer->debt_amount);
+        $this->assertEquals(50000, (float) $this->customer->debt_amount);
     }
 }

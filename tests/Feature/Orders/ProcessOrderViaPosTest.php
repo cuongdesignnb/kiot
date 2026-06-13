@@ -13,6 +13,7 @@ use App\Models\SerialImei;
 use App\Models\StockMovement;
 use App\Models\CashFlow;
 use App\Models\User;
+use App\Services\OrderPaymentSummaryService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Http\Request;
 use Tests\TestCase;
@@ -189,7 +190,11 @@ class ProcessOrderViaPosTest extends TestCase
 
         $order->refresh();
         $this->assertSame('completed', $order->status);
-        $this->assertSame(400000.0, (float) $order->amount_paid);
+        $this->assertSame(0.0, (float) $order->amount_paid);
+        $this->assertSame(
+            400000.0,
+            app(OrderPaymentSummaryService::class)->summary($order)['order_paid_total']
+        );
         $this->assertTrue((bool)$order->is_delivery);
         $this->assertSame('GHN', $order->delivery_partner);
         $this->assertSame('John Doe', $order->receiver_name);
@@ -304,7 +309,11 @@ class ProcessOrderViaPosTest extends TestCase
         $response->assertStatus(200);
 
         $order->refresh();
-        $this->assertSame(400000.0, (float) $order->amount_paid);
+        $this->assertSame(150000.0, (float) $order->amount_paid);
+        $this->assertSame(
+            400000.0,
+            app(OrderPaymentSummaryService::class)->summary($order)['order_paid_total']
+        );
 
         $invoice = Invoice::where('order_id', $order->id)->first();
         $this->assertSame(400000.0, (float) $invoice->customer_paid);
