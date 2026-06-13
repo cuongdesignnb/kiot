@@ -327,7 +327,7 @@ duoc chay lai tren detached worktree `origin/main` tai `1822437` voi cung DB/env
 
 | Nhom test | Pass | Fail | Skip | Nguyen nhan chinh | Lien quan code moi | Can sua scope nay |
 |---|---:|---:|---:|---|---|---|
-| Orders | 19 | 0 | 0 | Option A va POS order regression pass | Co, da pass | Khong |
+| Orders | 23 | 0 | 0 | Option A, legacy audit command va POS order regression pass | Co, da pass | Khong |
 | POS | 65 | 0 | 0 | POS regression pass; test khong goi `migrate:fresh` noi bo | Co, da pass | Khong |
 | CustomerDebt | 17 | 0 | 0 | Gom 12 parity case | Co, da pass | Khong |
 | SupplierDebt | - | - | - | Folder `tests/Feature/SupplierDebt` khong ton tai | Khong xac dinh | Khong |
@@ -377,7 +377,7 @@ Node: v20.15.1
 npm: 10.7.0
 npm run build: PASS
 Vite: 5.4.21
-Modules transformed: 918
+Modules transformed: 917
 Vite/Vue error: khong
 ```
 
@@ -454,6 +454,56 @@ invoice.customer_paid=1,300,000
 customer.debt_amount=-200,000
 ```
 
+## Legacy order amount_paid audit
+
+Da them command read-only:
+
+```bash
+php artisan orders:audit-legacy-amount-paid
+php artisan orders:audit-legacy-amount-paid --json
+php artisan orders:audit-legacy-amount-paid --limit=100
+```
+
+Command chi dung truy van SELECT de phan loai order theo Option A. Command
+khong update, insert, delete, write lock, backfill hay tu dong sua
+`orders.amount_paid`/`invoices.order_deposit_applied_amount`.
+
+Ket qua tren MySQL testing/UAT `sales_test_port_legacy_order_audit`:
+
+```text
+Total orders checked: 3
+Orders amount_paid > 0: 3
+Orders with invoices: 2
+Orders with paid invoices: 2
+Deposit only or no invoice: 1
+Suspected legacy cumulative amount_paid: 1
+Suggested action: manual_review_before_production_migration
+```
+
+Fixture gom mot order co coc/provenance dung, mot order nghi cumulative paid va
+mot order chua co invoice. Text output va JSON output deu chay thanh cong.
+Snapshot truoc/sau command khong doi:
+
+```text
+orders: count=3, sum(amount_paid)=1,600,000
+invoices: count=2, sum(customer_paid)=1,700,000
+```
+
+Test command: `4 passed (17 assertions)`. Follow-up regression ngay
+`2026-06-13`: `223 passed (1119 assertions)` cho Sapo parity, Orders, POS,
+CashFlow(s), Report(s). `git diff --check`, route clear, optimize clear va
+frontend build deu pass.
+
+Production chua chay command audit. Production co the co order legacy da ghi
+`orders.amount_paid` nhu cumulative paid; cac order bi flag chi duoc manual
+review. Neu can remediation/backfill phai mo task rieng va BA duyet, khong nam
+trong PR nay.
+
+- Co backfill: Khong.
+- Co sua du lieu cu: Khong.
+- Co cleanup legacy: Khong.
+- Co can BA xac nhan truoc production migration: Co.
+
 ## Legacy MERGE findings
 
 Source code/test co ref legacy `MERGE-CUSTOMER-*` va `MERGE-SUPPLIER-*`.
@@ -472,6 +522,8 @@ git fetch origin main
 git log --oneline -5
 php artisan migrate:status
 php artisan migrate --pretend
+php artisan orders:audit-legacy-amount-paid
+php artisan orders:audit-legacy-amount-paid --json
 ```
 
 Chi sau khi backup DB va BA xac nhan rieng:
