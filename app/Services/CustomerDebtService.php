@@ -9,6 +9,7 @@ use App\Models\Order;
 use App\Models\OrderReturn;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
 
 /**
  * RR-06: Service ghi ledger công nợ khách hàng.
@@ -33,7 +34,7 @@ class CustomerDebtService
      * Bán hàng nợ — increase debt_amount + ghi ledger type='sale'.
      *
      * @param int $customerId
-     * @param float $amount Always treated as |amount|; service ensures signedAmount = +abs($amount).
+     * @param float $amount Positive sale receivable amount.
      * @param Model|null $reference Invoice | Order | OrderReturn | null
      * @param string|null $note
      * @param array $meta Có thể chứa 'ref_code', 'order_id', 'order_return_id'
@@ -41,7 +42,9 @@ class CustomerDebtService
      */
     public function recordSale(int $customerId, float $amount, ?Model $reference = null, ?string $note = null, array $meta = []): ?CustomerDebt
     {
-        return $this->record($customerId, abs($amount), 'sale', $reference, $note, $meta);
+        $this->assertNonNegative($amount, 'recordSale');
+
+        return $this->record($customerId, $amount, 'sale', $reference, $note, $meta);
     }
 
     /**
@@ -65,7 +68,36 @@ class CustomerDebtService
      */
     public function recordSaleReversal(int $customerId, float $amount, ?Model $reference = null, ?string $note = null, array $meta = []): ?CustomerDebt
     {
-        return $this->record($customerId, -abs($amount), 'adjustment', $reference, $note, $meta);
+        $this->assertNonNegative($amount, 'recordSaleReversal');
+
+        return $this->record($customerId, -$amount, 'adjustment', $reference, $note, $meta);
+    }
+
+    public function recordInvoiceBalanceEffect(
+        int $customerId,
+        float $signedAmount,
+        ?Model $reference = null,
+        ?string $note = null,
+        array $meta = []
+    ): ?CustomerDebt {
+        return $this->record($customerId, $signedAmount, 'sale', $reference, $note, $meta);
+    }
+
+    public function recordInvoiceBalanceReversal(
+        int $customerId,
+        float $originalSignedAmount,
+        ?Model $reference = null,
+        ?string $note = null,
+        array $meta = []
+    ): ?CustomerDebt {
+        return $this->record(
+            $customerId,
+            -$originalSignedAmount,
+            'adjustment',
+            $reference,
+            $note,
+            $meta
+        );
     }
 
     /**
@@ -73,7 +105,14 @@ class CustomerDebtService
      */
     public function recordAdjustment(int $customerId, float $signedAmount, ?string $note = null, array $meta = []): ?CustomerDebt
     {
-        return $this->record($customerId, $signedAmount, 'adjustment', null, $note, $meta);
+        return $this->record(
+            $customerId,
+            $signedAmount,
+            $meta['type'] ?? 'adjustment',
+            null,
+            $note,
+            $meta
+        );
     }
 
     /**
@@ -128,5 +167,14 @@ class CustomerDebtService
                 'recorded_at'     => now(),
             ]);
         });
+    }
+
+    private function assertNonNegative(float $amount, string $method): void
+    {
+        if ($amount < 0) {
+            throw new InvalidArgumentException(
+                "{$method} does not accept negative amounts. Use the signed invoice balance method."
+            );
+        }
     }
 }

@@ -130,13 +130,23 @@
             </div>
             <div class="sum-row">
                 <span>Đã thanh toán:</span>
-                <span>{{ format_vnd($order->amount_paid ?? 0) }}</span>
+                <span>{{ format_vnd($order->order_paid_total ?? $order->amount_paid ?? 0) }}</span>
             </div>
-            @php $debt = $order->total_payment - ($order->amount_paid ?? 0); @endphp
+            @php
+                $debt = $order->order_remaining_debt
+                    ?? max(($order->total_payment ?? 0) - ($order->order_paid_total ?? $order->amount_paid ?? 0), 0);
+                $credit = $order->order_credit_total ?? 0;
+            @endphp
             @if($debt > 0)
             <div class="sum-row" style="color: #d00; font-weight: 500;">
                 <span>Còn cần thu:</span>
                 <span>{{ format_vnd($debt) }}</span>
+            </div>
+            @endif
+            @if($credit > 0)
+            <div class="sum-row" style="color: #047857; font-weight: 500;">
+                <span>Khach tra du:</span>
+                <span>{{ format_vnd($credit) }}</span>
             </div>
             @endif
         </div>

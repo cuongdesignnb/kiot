@@ -283,6 +283,8 @@ class InvoiceController extends Controller
             );
 
             return redirect()->route('invoices.index')->with('success', 'Hóa đơn đã được tạo thành công.');
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
         } catch (\Exception $e) {
             return back()->with('error', 'Có lỗi xảy ra: ' . $e->getMessage())->withInput();
         }
@@ -338,6 +340,8 @@ class InvoiceController extends Controller
             $invoice = app(InvoiceUpdateService::class)->updateInvoice($invoice, $payload, $context);
 
             return redirect()->route('invoices.index')->with('success', 'Hóa đơn đã được cập nhật thành công.');
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
         } catch (\Exception $e) {
             return back()->with('error', 'Có lỗi xảy ra: ' . $e->getMessage())->withInput();
         }
@@ -435,11 +439,12 @@ class InvoiceController extends Controller
                     // RR-06: ghi ledger qua service thay vì decrement trực tiếp.
                     $debtAmount = $invoice->total - ($invoice->customer_paid ?? 0);
                     if ($debtAmount != 0) {
-                        app(CustomerDebtService::class)->recordSaleReversal(
+                        app(CustomerDebtService::class)->recordInvoiceBalanceReversal(
                             $customer->id,
                             (float) $debtAmount,
                             $invoice,
-                            "Đảo công nợ do hủy hóa đơn {$invoice->code}"
+                            "Đảo công nợ do hủy hóa đơn {$invoice->code}",
+                            ['ref_code' => $invoice->code, 'type' => 'adjustment']
                         );
                     }
                     $customer->decrement('total_spent', $invoice->total);

@@ -11,6 +11,7 @@ class Invoice extends Model
     protected $casts = [
         'transaction_date' => 'datetime',
         'lock_started_at'  => 'datetime',
+        'order_deposit_applied_amount' => 'decimal:2',
     ];
 
     /**
@@ -62,5 +63,10 @@ class Invoice extends Model
     public function activeWaybill()
     {
         return $this->hasOne(Waybill::class)->where('is_active', true);
+    }
+
+    public function customerPaymentAllocations()
+    {
+        return $this->hasMany(CustomerPaymentAllocation::class);
     }
 }

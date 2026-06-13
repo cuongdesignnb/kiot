@@ -233,10 +233,8 @@ class SupplierController extends Controller
     {
         $q = trim((string) $request->input('search', $request->input('q', '')));
 
-        $query = Customer::where('is_supplier', true)
-            ->where(function ($w) {
-                $w->where('status', 'active')->orWhereNull('status');
-            });
+        $query = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
+            ->where('is_supplier', true);
 
         if ($q !== '') {
             $query->where(function ($w) use ($q) {
@@ -922,12 +920,20 @@ class SupplierController extends Controller
         ]);
 
         $supplier = Customer::findOrFail($id);
+        app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
+            (int) $supplier->id,
+            'supplier_id'
+        );
         $currentDebt = $this->calculateDebt($id);
         $totalPay = abs($data['amount']);
         $mode = $data['mode'] ?? 'auto';
         $paidAt = !empty($data['date']) ? \Carbon\Carbon::parse($data['date']) : now();
 
         DB::transaction(function () use ($id, $supplier, $currentDebt, $totalPay, $mode, $data, $paidAt) {
+            app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
+                (int) $id,
+                'supplier_id'
+            );
             $code = 'PCPN' . date('ymd') . rand(100, 999);
 
             // Create SupplierDebtTransaction

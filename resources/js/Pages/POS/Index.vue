@@ -72,6 +72,7 @@ const createNewTab = (type = 'sale') => ({
     source_order_id: null,
     source_order_code: '',
     orderDepositAmount: 0,
+    orderPaymentSummary: null,
     delivery: {
         is_delivery: false,
         delivery_mode: 'none',       // 'none' | 'self' | 'partner'
@@ -276,6 +277,13 @@ const checkAndHydrateOrderFromUrl = async () => {
                 tabToUse.selectedCustomer = orderData.customer;
                 tabToUse.discount = orderData.totals.discount;
                 tabToUse.orderDepositAmount = orderData.totals.amount_paid;
+                tabToUse.orderPaymentSummary = {
+                    original_deposit: Number(orderData.totals.original_deposit || orderData.totals.amount_paid || 0),
+                    paid_after_deposit: Number(orderData.totals.paid_after_deposit || 0),
+                    order_paid_total: Number(orderData.totals.order_paid_total || orderData.totals.total_paid_for_order || orderData.totals.amount_paid || 0),
+                    order_remaining_debt: Number(orderData.totals.order_remaining_debt || orderData.totals.remaining || 0),
+                    order_credit_total: Number(orderData.totals.order_credit_total || 0),
+                };
                 tabToUse.note = orderData.note;
                 tabToUse.saleMode = orderData.delivery.is_delivery ? 'delivery' : 'normal';
                 
@@ -328,7 +336,7 @@ const checkAndHydrateOrderFromUrl = async () => {
                 });
 
                 // Default pay additional: remaining debt (or 0 if negative)
-                tabToUse.customerPaid = Math.max(0, orderData.totals.remaining);
+                tabToUse.customerPaid = Math.max(0, Number(orderData.totals.order_remaining_debt ?? orderData.totals.remaining ?? 0));
 
                 saveDraft();
                 hydrated = true;
@@ -715,11 +723,25 @@ const totalAmount = computed(() => {
 });
 
 const priorDeposit = computed(() => {
-    return activeTab.value ? (activeTab.value.orderDepositAmount || 0) : 0;
+    return activeTab.value
+        ? Number(activeTab.value.orderPaymentSummary?.original_deposit ?? activeTab.value.orderDepositAmount ?? 0)
+        : 0;
+});
+
+const paidAfterDepositBeforeCurrent = computed(() => {
+    return activeTab.value
+        ? Number(activeTab.value.orderPaymentSummary?.paid_after_deposit || 0)
+        : 0;
+});
+
+const orderPaidBeforeCurrent = computed(() => {
+    return activeTab.value
+        ? Number(activeTab.value.orderPaymentSummary?.order_paid_total ?? activeTab.value.orderDepositAmount ?? 0)
+        : 0;
 });
 
 const totalPaidOverall = computed(() => {
-    return priorDeposit.value + (Number(customerPaid.value) || 0);
+    return orderPaidBeforeCurrent.value + (Number(customerPaid.value) || 0);
 });
 
 const remainingDebt = computed(() => {
@@ -1902,15 +1924,19 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
 
                     <template v-if="activeTab.mode === 'process_order'">
                         <div class="flex justify-between items-center text-gray-700 font-medium pt-2">
-                            <span>Khách đã đặt cọc</span>
+                            <span>Cọc gốc</span>
                             <span class="font-bold text-gray-800">{{ formatCurrency(priorDeposit || 0) }}</span>
                         </div>
+                        <div class="flex justify-between items-center text-gray-700 font-medium pt-2">
+                            <span>Đã thu sau cọc</span>
+                            <span class="font-bold text-gray-800">{{ formatCurrency(paidAfterDepositBeforeCurrent || 0) }}</span>
+                        </div>
                         <div class="flex justify-between items-center pt-2 text-gray-700 font-medium">
-                            <span>Khách trả thêm</span>
-                            <MoneyInput v-model="customerPaid" :min="0" :placeholder="String(Math.max(0, totalAmount - priorDeposit))" input-class="w-32 text-right border-b border-gray-300 focus:border-blue-500 outline-none font-bold text-gray-900" />
+                            <span>Khách trả lần này</span>
+                            <MoneyInput v-model="customerPaid" :min="0" :placeholder="String(Math.max(0, totalAmount - orderPaidBeforeCurrent))" input-class="w-32 text-right border-b border-gray-300 focus:border-blue-500 outline-none font-bold text-gray-900" />
                         </div>
                         <div class="flex justify-between items-center pb-2 text-gray-500 text-sm font-medium">
-                            <span :class="remainingDebt > 0 ? 'text-red-500 font-semibold' : ''">{{ remainingDebt > 0 ? 'Còn nợ' : 'Tiền thừa trả khách' }}</span>
+                            <span :class="remainingDebt > 0 ? 'text-red-500 font-semibold' : 'text-green-600 font-semibold'">{{ remainingDebt > 0 ? 'Còn nợ' : 'Trả dư' }}</span>
                             <span :class="remainingDebt > 0 ? 'text-red-500 font-semibold' : ''">{{ formatCurrency(Math.abs(remainingDebt) || 0) }}</span>
                         </div>
                     </template>

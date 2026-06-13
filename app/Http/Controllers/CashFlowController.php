@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\ActivityLog;
 use App\Models\CashFlow;
 use App\Models\BankAccount;
+use App\Services\CustomerPaymentService;
 use App\Services\LockPeriodService;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -36,8 +37,12 @@ class CashFlowController extends Controller
         $totalPayments = CashFlow::where('type', 'payment')->where('status', '!=', 'cancelled')->sum('amount');
         $fundBalance = $totalReceipts - $totalPayments;
 
-        $customers = \App\Models\Customer::where('is_supplier', false)->get(['id', 'name', 'phone']);
-        $suppliers = \App\Models\Customer::where('is_supplier', true)->get(['id', 'name', 'phone']);
+        $customers = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
+            ->where('is_customer', true)
+            ->get(['id', 'name', 'phone']);
+        $suppliers = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
+            ->where('is_supplier', true)
+            ->get(['id', 'name', 'phone']);
 
         $savedReceiptCategories = CashFlow::where('type', 'receipt')
             ->whereNotNull('category')->where('category', '!=', '')
@@ -107,12 +112,25 @@ class CashFlowController extends Controller
             'time' => 'nullable|date',
             'category' => 'nullable|string',
             'target_type' => 'nullable|string',
+            'target_id' => 'nullable|integer|exists:customers,id',
             'target_name' => 'nullable|string',
             'accounting_result' => 'boolean',
             'description' => 'nullable|string',
             'payment_method' => 'nullable|in:cash,bank,ewallet',
             'bank_account_id' => 'nullable|exists:bank_accounts,id',
         ]);
+        $targetPartner = null;
+        if (in_array($request->target_type, ['Khách hàng', 'Nhà cung cấp', 'customer', 'supplier'], true)) {
+            if (!$request->filled('target_id')) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'target_id' => 'Vui lòng chọn đối tác từ danh sách.',
+                ]);
+            }
+            $targetPartner = app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
+                (int) $request->target_id,
+                'target_id'
+            );
+        }
 
         $prefix = $request->type === 'receipt' ? 'PT' : 'PC';
 
@@ -127,7 +145,8 @@ class CashFlowController extends Controller
             'time' => $request->time ? \Carbon\Carbon::parse($request->time) : now(),
             'category' => $request->category,
             'target_type' => $request->target_type,
-            'target_name' => $request->target_name,
+            'target_id' => $request->target_id,
+            'target_name' => $targetPartner?->name ?? $request->target_name,
             'accounting_result' => $request->has('accounting_result') ? $request->accounting_result : true,
             'payment_method' => $request->payment_method ?? 'cash',
             'bank_account_id' => $request->payment_method !== 'cash' ? $request->bank_account_id : null,
@@ -164,10 +183,15 @@ class CashFlowController extends Controller
 
     public function update(Request $request, CashFlow $cashFlow)
     {
+        if (app(CustomerPaymentService::class)->isFinanciallyLinked($cashFlow)) {
+            return back()->with('error', 'Phieu lien ket chung tu tai chinh khong duoc sua truc tiep. Hay huy va tao lai.');
+        }
+
         $request->validate([
             'time' => 'nullable|date',
             'category' => 'nullable|string|max:255',
             'target_type' => 'nullable|string',
+            'target_id' => 'nullable|integer|exists:customers,id',
             'target_name' => 'nullable|string',
             'amount' => 'required|numeric|min:0',
             'description' => 'nullable|string',
@@ -175,6 +199,18 @@ class CashFlowController extends Controller
             'payment_method' => 'nullable|in:cash,bank,ewallet',
             'bank_account_id' => 'nullable|exists:bank_accounts,id',
         ]);
+        $targetPartner = null;
+        if (in_array($request->target_type, ['Khách hàng', 'Nhà cung cấp', 'customer', 'supplier'], true)) {
+            if (!$request->filled('target_id')) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'target_id' => 'Vui lòng chọn đối tác từ danh sách.',
+                ]);
+            }
+            $targetPartner = app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
+                (int) $request->target_id,
+                'target_id'
+            );
+        }
 
         $txDate = $request->time ? \Carbon\Carbon::parse($request->time) : $cashFlow->time;
         app(LockPeriodService::class)->assertNotLocked($txDate, 'cashflow_update');
@@ -185,7 +221,8 @@ class CashFlowController extends Controller
             'time' => $request->time ? \Carbon\Carbon::parse($request->time) : $cashFlow->time,
             'category' => $request->category,
             'target_type' => $request->target_type,
-            'target_name' => $request->target_name,
+            'target_id' => $request->target_id,
+            'target_name' => $targetPartner?->name ?? $request->target_name,
             'amount' => $request->amount,
             'description' => $request->description,
             'accounting_result' => $request->has('accounting_result') ? $request->accounting_result : $cashFlow->accounting_result,
@@ -204,15 +241,50 @@ class CashFlowController extends Controller
         return redirect()->back()->with('success', 'Cập nhật phiếu thành công');
     }
 
-    public function destroy(CashFlow $cashFlow)
+    public function destroy(Request $request, $cash_flow)
     {
+        $cashFlow = CashFlow::withTrashed()->findOrFail($cash_flow);
+
         // Lock period check
         app(LockPeriodService::class)->assertNotLocked($cashFlow->time, 'cashflow_cancel');
 
-        ActivityLog::log('cashflow_cancel', "Hủy phiếu {$cashFlow->code}, số tiền: " . number_format($cashFlow->amount), $cashFlow);
-        $cashFlow->update(['status' => 'cancelled']);
-        $cashFlow->delete(); // soft-delete
-        return redirect()->back()->with('success', 'Huỷ phiếu thành công');
+        $status = app(CustomerPaymentService::class)->cancel($cashFlow);
+        if ($status === CustomerPaymentService::ALREADY_CANCELLED) {
+            $message = 'Phieu thu nay da bi huy truoc do.';
+
+            return $request->wantsJson()
+                ? response()->json(['success' => false, 'status' => $status, 'message' => $message], 409)
+                : back()->with('error', $message);
+        }
+        if ($status === CustomerPaymentService::SOURCE_DOCUMENT_REQUIRED) {
+            $message = 'Phieu lien ket chung tu nguon phai duoc huy tu chung tu do.';
+
+            return $request->wantsJson()
+                ? response()->json(['success' => false, 'status' => $status, 'message' => $message], 422)
+                : back()->with('error', $message);
+        }
+
+        ActivityLog::log(
+            'cashflow_cancel',
+            "Huy phieu {$cashFlow->code}, so tien: " . number_format($cashFlow->amount),
+            $cashFlow,
+            [
+                'amount' => (float) $cashFlow->amount,
+                'reference_type' => $cashFlow->reference_type,
+                'reference_code' => $cashFlow->reference_code,
+                'cancel_reason' => $request->input('cancel_reason'),
+            ]
+        );
+
+        if ($request->wantsJson()) {
+            return response()->json([
+                'success' => true,
+                'status' => CustomerPaymentService::CANCELLED,
+                'message' => 'Huy phieu thanh cong.',
+            ]);
+        }
+
+        return redirect()->back()->with('success', 'Huy phieu thanh cong.');
     }
 
     public function print(CashFlow $cashFlow)

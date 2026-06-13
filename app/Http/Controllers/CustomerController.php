@@ -15,6 +15,8 @@ use Illuminate\Http\Request;
 use Inertia\Inertia;
 use App\Services\CustomerDebtService;
 use App\Services\CustomerPaymentDiscountService;
+use App\Services\CustomerPaymentService;
+use App\Services\PartnerMergeService;
 use App\Services\PartnerFinancialTimelineService;
 use App\Models\CustomerPaymentDiscount;
 use App\Services\DebtOffsetService;
@@ -488,45 +490,16 @@ class CustomerController extends Controller
 
         if (($linkMode === 'link_existing' || $linkId) && $linkId && $linkId != $customer->id) {
             $existing = Customer::findOrFail($linkId);
-            
-            // Merge relations
-            Invoice::where('customer_id', $customer->id)->update(['customer_id' => $existing->id]);
-            OrderReturn::where('customer_id', $customer->id)->update(['customer_id' => $existing->id]);
-            
-            CashFlow::where('target_id', $customer->id)->whereIn('target_type', ['Khách hàng', 'Nhà cung cấp'])->update([
-                'target_id' => $existing->id,
-                'target_name' => collect([$existing->name])->implode(''),
-            ]);
+            app(PartnerMergeService::class)->merge($customer, $existing);
+            $existing->refresh();
+            $existing->fill([
+                'name' => $validated['name'] ?? $existing->name,
+                'phone' => $validated['phone'] ?? $existing->phone,
+                'address' => $validated['address'] ?? $existing->address,
+                'is_customer' => true,
+                'is_supplier' => true,
+            ])->save();
 
-            // RR-06: ghi ledger trước khi merge debt từ source sang target.
-            $sourceDebt = (float) $customer->debt_amount;
-            if (abs($sourceDebt) >= 0.01) {
-                app(CustomerDebtService::class)->recordAdjustment(
-                    $existing->id,
-                    $sourceDebt, // signed: cộng vào target theo dấu của source
-                    "Gộp công nợ từ khách hàng {$customer->name} (id {$customer->id})",
-                    ['ref_code' => 'MERGE-IMPORT-' . $customer->id]
-                );
-            }
-
-            // Merge financial figures (debt_amount đã được service xử lý ở trên)
-            $existing->total_spent += $customer->total_spent;
-            $existing->total_returns += $customer->total_returns;
-            $existing->supplier_debt_amount += $customer->supplier_debt_amount;
-            $existing->total_bought += $customer->total_bought;
-
-            $existing->is_customer = true;
-            $existing->is_supplier = true;
-            $existing->name = $validated['name'];
-            if (!empty($validated['phone'])) {
-                $existing->phone = $validated['phone'];
-            }
-            if (!empty($validated['address'])) {
-                $existing->address = $validated['address'];
-            }
-            $existing->save();
-
-            $customer->delete();
             return back()->with('success', 'Cập nhật và gộp vào nhà cung cấp thành công.');
         } else {
             $customer->update($validated);
@@ -537,6 +510,13 @@ class CustomerController extends Controller
 
     public function destroy(Customer $customer)
     {
+        if ($customer->merged_into_id !== null || $customer->mergedSources()->exists()) {
+            return back()->with(
+                'error',
+                'Không thể xóa hồ sơ đối tác đã tham gia gộp. Hãy giữ hồ sơ để bảo toàn dấu vết kiểm toán.'
+            );
+        }
+
         // Guard: không cho xóa nếu đã có giao dịch — buộc dùng "Ngừng hoạt động"
         $hasInvoices = Invoice::where('customer_id', $customer->id)->exists();
         $hasPurchases = \App\Models\Purchase::where('supplier_id', $customer->id)->exists();
@@ -628,169 +608,42 @@ class CustomerController extends Controller
     public function debtPayment(Request $request, Customer $customer)
     {
         $mode = $request->input('mode', 'auto');
+        $rules = [
+            'amount' => ($mode === 'manual' ? 'nullable' : 'required') . '|numeric|min:1',
+            'allocations' => $mode === 'manual' ? 'required|array|min:1' : 'nullable|array',
+            'allocations.*.invoice_id' => 'required_with:allocations|integer|exists:invoices,id',
+            'allocations.*.amount' => 'required_with:allocations|numeric|min:1',
+            'note' => 'nullable|string|max:500',
+            'date' => 'nullable|date',
+        ];
+        $validated = $request->validate($rules);
+        $allocations = $validated['allocations'] ?? [];
+        $paymentAmount = (float) (
+            $validated['amount']
+            ?? collect($allocations)->sum(fn (array $allocation) => (float) $allocation['amount'])
+        );
 
-        if ($mode === 'manual') {
-            $validated = $request->validate([
-                'allocations' => 'required|array|min:1',
-                'allocations.*.invoice_id' => 'required|integer|exists:invoices,id',
-                'allocations.*.amount' => 'required|numeric|min:1',
-                'note' => 'nullable|string|max:500',
-                'date' => 'nullable|date',
-            ]);
-
-            // Guard: Check if all allocated invoices are cancelled
-            $requestedInvoiceIds = collect($validated['allocations'])->pluck('invoice_id')->toArray();
-            $cancelledCount = Invoice::whereIn('id', $requestedInvoiceIds)
-                ->where('status', 'Đã hủy')
-                ->count();
-            if ($cancelledCount > 0 && $cancelledCount === count($requestedInvoiceIds)) {
-                $msg = 'Không thể thu nợ cho hóa đơn đã hủy.';
-                return $request->wantsJson()
-                    ? response()->json(['success' => false, 'message' => $msg], 422)
-                    : back()->with('error', $msg);
-            }
-
-            $paidAt = !empty($validated['date']) ? \Carbon\Carbon::parse($validated['date']) : now();
-
-            $totalAmount = 0;
-            $allocationCodes = [];
-
-            $receivableInvoices = collect(app(CustomerPaymentDiscountService::class)
-                ->getCustomerReceivableInvoices($customer))
-                ->keyBy('id');
-
-            foreach ($validated['allocations'] as $alloc) {
-                $resolved = $receivableInvoices->get((int) $alloc['invoice_id']);
-                if (!$resolved) {
-                    continue;
-                }
-
-                $invoice = Invoice::find($resolved['id']);
-                if (!$invoice || $invoice->status === 'Đã hủy') {
-                    continue;
-                }
-
-                $remaining = (float) $resolved['remaining'];
-                $payAmount = min((float) $alloc['amount'], $remaining);
-
-                if ($payAmount <= 0) {
-                    continue;
-                }
-
-                $invoice->increment('customer_paid', $payAmount);
-                $totalAmount += $payAmount;
-                $allocationCodes[] = $invoice->code . ':' . number_format($payAmount);
-            }
-
-            if ($totalAmount <= 0) {
-                $msg = 'Không có khoản nào hợp lệ để thu.';
-                return $request->wantsJson()
-                    ? response()->json(['success' => false, 'message' => $msg], 422)
-                    : back()->with('error', $msg);
-            }
-
-            $cf = CashFlow::create([
-                'code' => 'PT' . date('ymdHis') . rand(10, 99),
-                'type' => 'receipt',
-                'amount' => $totalAmount,
-                'time' => $paidAt,
-                'category' => 'Thu nợ khách hàng',
-                'target_type' => 'Khách hàng',
-                'target_id' => $customer->id,
-                'target_name' => $customer->name,
-                'reference_type' => 'DebtPayment',
-                'reference_code' => implode('; ', $allocationCodes),
-                'description' => $validated['note'] ?? 'Thu nợ khách hàng ' . $customer->name,
-            ]);
-            if (!empty($validated['date'])) {
-                $cf->created_at = $paidAt;
-                $cf->save();
-            }
-
-            // RR-06: ghi ledger payment qua service.
-            app(CustomerDebtService::class)->recordPayment(
-                $customer->id,
-                (float) $totalAmount,
-                null,
-                $validated['note'] ?? "Thu nợ khách hàng {$customer->name}",
-                ['ref_code' => $cf->code]
-            );
-
-        } else {
-            // AUTO mode — allocate to oldest invoices first
-            $validated = $request->validate([
-                'amount' => 'required|numeric|min:1',
-                'note' => 'nullable|string|max:500',
-                'date' => 'nullable|date',
-            ]);
-            $paidAt = !empty($validated['date']) ? \Carbon\Carbon::parse($validated['date']) : now();
-
-            $remaining = $validated['amount'];
-            $allocationCodes = [];
-
-            $receivableInvoices = collect(app(CustomerPaymentDiscountService::class)
-                ->getCustomerReceivableInvoices($customer));
-
-            foreach ($receivableInvoices as $resolved) {
-                if ($remaining <= 0) break;
-
-                $invoice = Invoice::find($resolved['id']);
-                if (!$invoice || $invoice->status === 'Đã hủy') {
-                    continue;
-                }
-
-                $invoiceDebt = (float) $resolved['remaining'];
-                if ($invoiceDebt <= 0) continue;
-
-                $payAmount = min($remaining, $invoiceDebt);
-
-                $invoice->increment('customer_paid', $payAmount);
-                $remaining -= $payAmount;
-                $allocationCodes[] = $invoice->code . ':' . number_format($payAmount);
-            }
-
-            $actualPaid = $validated['amount'] - $remaining;
-
-            if ($actualPaid <= 0) {
-                $msg = 'Không có hóa đơn còn phải thu hợp lệ để thanh toán.';
-                return $request->wantsJson()
-                    ? response()->json(['success' => false, 'message' => $msg], 422)
-                    : back()->with('error', $msg);
-            }
-
-            $cf = CashFlow::create([
-                'code' => 'PT' . date('ymdHis') . rand(10, 99),
-                'type' => 'receipt',
-                'amount' => $actualPaid,
-                'time' => $paidAt,
-                'category' => 'Thu nợ khách hàng',
-                'target_type' => 'Khách hàng',
-                'target_id' => $customer->id,
-                'target_name' => $customer->name,
-                'reference_type' => 'DebtPayment',
-                'reference_code' => !empty($allocationCodes) ? implode('; ', $allocationCodes) : null,
-                'description' => $validated['note'] ?? 'Thu nợ khách hàng ' . $customer->name,
-            ]);
-            if (!empty($validated['date'])) {
-                $cf->created_at = $paidAt;
-                $cf->save();
-            }
-
-            // RR-06: ghi ledger payment qua service.
-            app(CustomerDebtService::class)->recordPayment(
-                $customer->id,
-                (float) $actualPaid,
-                null,
-                $validated['note'] ?? "Thu nợ khách hàng {$customer->name}",
-                ['ref_code' => $cf->code]
-            );
-        }
+        $result = app(CustomerPaymentService::class)->collect(
+            $customer,
+            $paymentAmount,
+            $mode,
+            $allocations,
+            $validated['note'] ?? null,
+            $validated['date'] ?? null
+        );
 
         if ($request->wantsJson()) {
-            return response()->json(['success' => true, 'message' => 'Đã thu nợ ' . number_format($cf->amount) . ' từ khách hàng.']);
+            return response()->json([
+                'success' => true,
+                'message' => 'Da thu ' . number_format($result['payment_amount']) . ' tu khach hang.',
+                'payment' => $result,
+            ]);
         }
 
-        return back()->with('success', 'Đã thu nợ ' . number_format($cf->amount) . ' từ khách hàng.');
+        return back()->with(
+            'success',
+            'Da thu ' . number_format($result['payment_amount']) . ' tu khach hang.'
+        );
     }
 
     /**
@@ -866,7 +719,7 @@ class CustomerController extends Controller
         $type = $request->input('type'); // 'customer' or 'supplier'
         $exclude = $request->input('exclude');
 
-        $results = Customer::query()
+        $results = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
             ->when($q, function ($query, $q) {
                 $query->where(function ($qb) use ($q) {
                     $qb->where('name', 'LIKE', "%{$q}%")
@@ -875,6 +728,8 @@ class CustomerController extends Controller
                 });
             })
             ->when($exclude, fn($qb, $id) => $qb->where('id', '!=', $id))
+            ->when($type === 'supplier', fn ($qb) => $qb->where('is_supplier', true))
+            ->when($type === 'customer', fn ($qb) => $qb->where('is_customer', true))
             ->limit(20)
             ->get(['id', 'code', 'name', 'phone', 'debt_amount', 'supplier_debt_amount', 'is_customer', 'is_supplier']);
 
@@ -893,7 +748,7 @@ class CustomerController extends Controller
             return response()->json([]);
         }
 
-        $query = Customer::query();
+        $query = app(\App\Services\PartnerTransactionGuard::class)->availablePartners();
 
         if (Schema::hasColumn('customers', 'is_customer')) {
             $query->where('is_customer', true);
@@ -945,52 +800,27 @@ class CustomerController extends Controller
         ]);
 
         $target = Customer::findOrFail($validated['merge_with_id']);
+        $preview = app(PartnerMergeService::class)->merge($customer, $target);
 
-        if ($target->id === $customer->id) {
-            return back()->with('error', 'Không thể gộp với chính mình.');
+        if ($request->wantsJson()) {
+            return response()->json(['success' => true, 'merge' => $preview]);
         }
-
-        // Transfer all relations from $customer (source) into $target
-        Invoice::where('customer_id', $customer->id)->update(['customer_id' => $target->id]);
-        OrderReturn::where('customer_id', $customer->id)->update(['customer_id' => $target->id]);
-        Purchase::where('supplier_id', $customer->id)->update(['supplier_id' => $target->id]);
-        PurchaseReturn::where('supplier_id', $customer->id)->update(['supplier_id' => $target->id]);
-        SupplierDebtTransaction::where('supplier_id', $customer->id)->update(['supplier_id' => $target->id]);
-
-        CashFlow::where('target_id', $customer->id)->whereIn('target_type', ['Khách hàng', 'Nhà cung cấp'])->update([
-            'target_id' => $target->id,
-            'target_name' => $target->name,
-        ]);
-
-        // RR-06: ghi ledger trước khi merge debt từ source sang target.
-        $sourceDebt = (float) $customer->debt_amount;
-        if (abs($sourceDebt) >= 0.01) {
-            app(CustomerDebtService::class)->recordAdjustment(
-                $target->id,
-                $sourceDebt, // signed: cộng vào target theo dấu của source
-                "Gộp công nợ từ khách hàng {$customer->name} (id {$customer->id})",
-                ['ref_code' => 'MERGE-CUSTOMER-' . $customer->id]
-            );
-        }
-
-        // Merge financial figures (debt_amount đã được service xử lý ở trên)
-        $target->total_spent += $customer->total_spent;
-        $target->total_returns += $customer->total_returns;
-        $target->supplier_debt_amount += $customer->supplier_debt_amount;
-        $target->total_bought += $customer->total_bought;
-
-        // Set both flags
-        $target->is_customer = $target->is_customer || $customer->is_customer;
-        $target->is_supplier = $target->is_supplier || $customer->is_supplier;
-
-        $target->save();
-
-
-
-        // Delete source
-        $customer->delete();
 
         return back()->with('success', "Đã gộp thành công vào {$target->name} ({$target->code}).");
+    }
+
+    public function mergePreview(Request $request, Customer $customer)
+    {
+        $validated = $request->validate([
+            'target_id' => 'required|integer|exists:customers,id',
+        ]);
+
+        return response()->json(
+            app(PartnerMergeService::class)->preview(
+                $customer,
+                Customer::findOrFail($validated['target_id'])
+            )
+        );
     }
 
     public function export(Request $request)
