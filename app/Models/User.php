@@ -71,6 +71,7 @@ class User extends Authenticatable
         if ($this->role_id === null) {
             return true;
         }
+
         return $this->role && $this->role->hasPermission('*');
     }
 
@@ -79,7 +80,23 @@ class User extends Authenticatable
         if ($this->isAdmin()) {
             return true;
         }
-        return $this->role && $this->role->hasPermission($permission);
+        if ($this->role && $this->role->hasPermission($permission)) {
+            return true;
+        }
+
+        $legacyAliases = [
+            'payroll.view' => 'paysheets.view',
+            'payroll.create' => 'paysheets.create',
+            'payroll.edit' => 'paysheets.manage',
+            'payroll.lock' => 'paysheets.manage',
+            'payroll.cancel' => 'paysheets.manage',
+            'payroll.pay' => 'paysheets.manage',
+            'payroll.pay.cancel' => 'paysheets.manage',
+        ];
+
+        return $this->role
+            && isset($legacyAliases[$permission])
+            && $this->role->hasPermission($legacyAliases[$permission]);
     }
 
     public function hasAnyPermission(array $permissions): bool
@@ -89,6 +106,7 @@ class User extends Authenticatable
                 return true;
             }
         }
+
         return false;
     }
 
@@ -113,9 +131,10 @@ class User extends Authenticatable
     public function getAccessibleBranchIds(): array
     {
         $ids = $this->branchAccess()->pluck('branches.id')->toArray();
-        if ($this->branch_id && !in_array($this->branch_id, $ids)) {
+        if ($this->branch_id && ! in_array($this->branch_id, $ids)) {
             $ids[] = $this->branch_id;
         }
+
         return $ids;
     }
 
@@ -127,6 +146,7 @@ class User extends Authenticatable
         if ($this->isAdmin()) {
             return ['*'];
         }
+
         return $this->role ? ($this->role->permissions ?? []) : [];
     }
 }

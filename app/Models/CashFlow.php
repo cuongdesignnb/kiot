@@ -45,15 +45,17 @@ class CashFlow extends Model
      */
     public function newEloquentBuilder($query)
     {
-        return new class($query) extends Builder {
+        return new class($query) extends Builder
+        {
             public function delete()
             {
                 if ($this->model && method_exists($this->model, 'getDeletedAtColumn')) {
                     // Mass soft-delete: cập nhật status='cancelled' cùng lúc với deleted_at
                     $column = $this->model->getDeletedAtColumn();
+
                     return $this->toBase()->update([
-                        $column   => $this->model->freshTimestampString(),
-                        'status'  => 'cancelled',
+                        $column => $this->model->freshTimestampString(),
+                        'status' => 'cancelled',
                     ]);
                 }
 
@@ -71,8 +73,21 @@ class CashFlow extends Model
      */
     public function scopeActive($query)
     {
-        return $query->where('status', '!=', 'cancelled')
-                     ->whereNull('deleted_at');
+        return $query->where(function ($statusQuery) {
+            $statusQuery->whereNull('status')
+                ->orWhere('status', '!=', 'cancelled');
+        })
+            ->whereNull('deleted_at');
+    }
+
+    public function scopePayrollRelated($query)
+    {
+        return app(\App\Services\PayrollCashFlowClassifier::class)->applyPayrollRelated($query);
+    }
+
+    public function scopeNonPayrollForExpense($query)
+    {
+        return app(\App\Services\PayrollCashFlowClassifier::class)->applyNonPayrollForExpense($query);
     }
 
     protected $fillable = [
@@ -91,6 +106,14 @@ class CashFlow extends Model
         'reference_code',
         'description',
         'status',
+        'cancelled_by',
+        'cancelled_at',
+        'cancel_reason',
+    ];
+
+    protected $casts = [
+        'time' => 'datetime',
+        'cancelled_at' => 'datetime',
     ];
 
     public function bankAccount()
