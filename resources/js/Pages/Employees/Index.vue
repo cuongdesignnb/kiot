@@ -1,11 +1,12 @@
 <script setup>
 import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, watch, reactive, computed } from "vue";
-import { Head, router, Link, useForm, usePage } from "@inertiajs/vue3";
+import { Head, router, Link, useForm } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
 import MoneyInput from "@/Components/MoneyInput.vue";
+import { usePermission } from "@/composables/usePermission";
 import axios from "axios";
 
 const props = defineProps({
@@ -16,6 +17,7 @@ const props = defineProps({
     salaryTemplates: { type: Array, default: () => [] },
     filters: Object,
 });
+const { can } = usePermission();
 
 const search = ref(props.filters?.search || "");
 const sortBy = ref(props.filters?.sort_by || "");
@@ -62,7 +64,7 @@ const isExpanded = (employeeId) => {
 
 // Modal form state
 const showCreateModal = ref(false);
-const activeTab = ref("info"); // info | salary
+const activeTab = ref("info"); // info | salary | ledger
 
 const form = useForm({
     id: null,
@@ -142,6 +144,174 @@ const deleteEmployee = () => {
         },
     });
 };
+
+// Employee salary debt/advance ledger
+const ledgerLoading = ref(false);
+const ledgerData = ref({ data: [], current_page: 1, last_page: 1 });
+const ledgerSummary = ref({
+    opening_balance: 0,
+    total_increase: 0,
+    total_decrease: 0,
+    net_change: 0,
+    current_balance: 0,
+});
+const filteredLedgerSummary = ref({ filtered_increase: 0, filtered_decrease: 0, filtered_net_change: 0 });
+const ledgerFilters = reactive({ from_date: "", to_date: "", type: "", status: "", branch_id: "", keyword: "" });
+const ledgerDetail = ref(null);
+const showLedgerDetail = ref(false);
+const advances = ref({ data: [], current_page: 1, last_page: 1 });
+const showAdjustmentModal = ref(false);
+const adjustmentSaving = ref(false);
+const adjustmentForm = reactive({
+    type: "adjustment_increase",
+    amount: 0,
+    event_at: new Date().toISOString().slice(0, 16),
+    reason: "",
+    note: "",
+    override_reason: "",
+});
+const advanceCancel = reactive({ show: false, target: null, reason: "", saving: false });
+const advanceForm = reactive({
+    amount: 0,
+    advance_date: new Date().toISOString().slice(0, 16),
+    payment_method: "cash",
+    branch_id: null,
+    note: "",
+});
+const advanceSaving = ref(false);
+
+const ledgerRows = computed(() => ledgerData.value?.data || []);
+const ledgerStatusLabel = (entry) => {
+    if (entry.type === "cancel_reverse") return "Dòng đảo";
+    if (entry.status === "reversed") return "Đã đảo";
+    return "Hợp lệ";
+};
+
+const loadLedger = async (page = 1) => {
+    if (!form.id || !can("payroll.ledger.view")) return;
+    ledgerLoading.value = true;
+    try {
+        const response = await axios.get(`/api/employees/${form.id}/salary-ledger`, {
+            params: {
+                page,
+                from_date: ledgerFilters.from_date || undefined,
+                to_date: ledgerFilters.to_date || undefined,
+                type: ledgerFilters.type || undefined,
+                status: ledgerFilters.status || undefined,
+                branch_id: ledgerFilters.branch_id || undefined,
+                keyword: ledgerFilters.keyword || undefined,
+            },
+        });
+        ledgerData.value = response.data.data;
+        ledgerSummary.value = response.data.summary;
+        filteredLedgerSummary.value = response.data.filtered_summary;
+    } finally {
+        ledgerLoading.value = false;
+    }
+};
+
+const loadAdvances = async (page = 1) => {
+    if (!form.id || !can("payroll.ledger.view")) return;
+    const response = await axios.get(`/api/employees/${form.id}/salary-advances`, { params: { page } });
+    advances.value = response.data;
+};
+
+const openLedgerEntry = async (entry) => {
+    if (entry.type === "payroll_accrual" && entry.paysheet_id) {
+        window.open(`/employees/paysheets/${entry.paysheet_id}/edit?payslip_id=${entry.payslip_id || ""}`, "_blank");
+        return;
+    }
+    const response = await axios.get(`/api/employee-salary-ledger-entries/${entry.id}`);
+    ledgerDetail.value = response.data;
+    showLedgerDetail.value = true;
+};
+
+const exportLedger = () => {
+    const params = new URLSearchParams(Object.fromEntries(
+        Object.entries(ledgerFilters).filter(([, value]) => value !== "")
+    ));
+    window.location.href = `/api/employees/${form.id}/salary-ledger/export?${params}`;
+};
+
+const submitAdjustment = async () => {
+    if (adjustmentSaving.value) return;
+    adjustmentSaving.value = true;
+    try {
+        await axios.post(`/api/employees/${form.id}/salary-ledger/adjust`, {
+            type: adjustmentForm.type,
+            amount: Number(adjustmentForm.amount),
+            event_at: adjustmentForm.event_at,
+            reason: adjustmentForm.reason.trim(),
+            note: adjustmentForm.note,
+            override_reason: adjustmentForm.override_reason || undefined,
+        }, { headers: { "Idempotency-Key": `adjustment-ui:${form.id}:${Date.now()}` } });
+        showAdjustmentModal.value = false;
+        adjustmentForm.amount = 0;
+        adjustmentForm.reason = "";
+        adjustmentForm.note = "";
+        await loadLedger();
+        router.reload({ only: ["employees"] });
+    } catch (error) {
+        alert(error.response?.data?.message || "Không thể tạo điều chỉnh.");
+    } finally {
+        adjustmentSaving.value = false;
+    }
+};
+
+const openAdvanceCancel = (advance) => {
+    advanceCancel.target = advance;
+    advanceCancel.reason = "";
+    advanceCancel.show = true;
+};
+
+const cancelAdvance = async () => {
+    if (advanceCancel.reason.trim().length < 10) return;
+    advanceCancel.saving = true;
+    try {
+        await axios.post(`/api/salary-advances/${advanceCancel.target.id}/cancel`, {
+            reason: advanceCancel.reason.trim(),
+            cancel_date: new Date().toISOString().slice(0, 16),
+        });
+        advanceCancel.show = false;
+        await Promise.all([loadLedger(), loadAdvances()]);
+        router.reload({ only: ["employees"] });
+    } catch (error) {
+        alert(error.response?.data?.message || "Không thể hủy tạm ứng.");
+    } finally {
+        advanceCancel.saving = false;
+    }
+};
+
+const createAdvance = async () => {
+    if (!form.id || advanceSaving.value) return;
+    advanceSaving.value = true;
+    try {
+        await axios.post(`/api/employees/${form.id}/salary-advances`, {
+            ...advanceForm,
+            amount: Number(advanceForm.amount),
+            branch_id: Number(advanceForm.branch_id || form.branch_id),
+        }, {
+            headers: { "Idempotency-Key": `advance-ui:${form.id}:${Date.now()}` },
+        });
+        advanceForm.amount = 0;
+        advanceForm.note = "";
+        await loadLedger();
+        await loadAdvances();
+        router.reload({ only: ["employees"] });
+    } catch (error) {
+        alert(error.response?.data?.message || "Không thể tạo tạm ứng.");
+    } finally {
+        advanceSaving.value = false;
+    }
+};
+
+watch(activeTab, (tab) => {
+    if (tab === "ledger") {
+        advanceForm.branch_id = form.branch_id;
+        loadLedger();
+        loadAdvances();
+    }
+});
 
 // ─── Salary tab state ───
 const salaryForm = reactive({
@@ -623,7 +793,7 @@ const bonusCalcLabel = (calc) => {
                             <SortableHeader label="Tên nhân viên" field="name" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
                             <SortableHeader label="Số điện thoại" field="phone" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
                             <SortableHeader label="Số CMND/CCCD" field="cccd" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3" @sort="handleSort" />
-                            <th class="px-4 py-3 text-right">Nợ và tạm ứng</th>
+                            <th v-if="can('employee.view_salary_balance')" class="px-4 py-3 text-right">Nợ và tạm ứng</th>
                             <th class="px-4 py-3">Ghi chú</th>
                         </tr>
                     </thead>
@@ -680,8 +850,8 @@ const bonusCalcLabel = (calc) => {
                                 </td>
                                 <td class="px-4 py-3">{{ employee.phone }}</td>
                                 <td class="px-4 py-3">{{ employee.cccd }}</td>
-                                <td class="px-4 py-3 text-right">
-                                    {{ formatCurrency(employee.balance) }}
+                                <td v-if="can('employee.view_salary_balance')" class="px-4 py-3 text-right">
+                                    {{ formatCurrency(employee.salary_balance_cache || 0) }}
                                 </td>
                                 <td class="px-4 py-3 text-gray-500">
                                     {{ employee.notes || "" }}
@@ -797,6 +967,17 @@ const bonusCalcLabel = (calc) => {
                         "
                     >
                         Thiết lập lương
+                    </button>
+                    <button
+                        v-if="form.id && can('payroll.ledger.view')"
+                        type="button"
+                        @click="activeTab = 'ledger'"
+                        class="px-4 py-2 font-bold text-[14px]"
+                        :class="activeTab === 'ledger'
+                            ? 'text-blue-600 border-b-2 border-blue-600'
+                            : 'text-gray-500 hover:text-gray-700'"
+                    >
+                        Nợ và tạm ứng
                     </button>
                 </div>
 
@@ -1302,6 +1483,177 @@ const bonusCalcLabel = (calc) => {
                             </div>
                             </template>
                         </div>
+
+                        <!-- TAB NỢ VÀ TẠM ỨNG -->
+                        <div v-show="activeTab === 'ledger'" class="space-y-4">
+                            <div class="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+                                Số dư dương: công ty còn phải trả nhân viên. Số dư 0: đã tất toán. Số dư âm: nhân viên đã tạm ứng vượt hoặc công ty còn phải thu.
+                            </div>
+                            <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                                <div class="bg-white border rounded-lg p-3">
+                                    <div class="text-xs text-gray-500">Số dư đầu kỳ</div>
+                                    <div class="font-bold mt-1">{{ formatCurrency(ledgerSummary.opening_balance) }}</div>
+                                </div>
+                                <div class="bg-white border rounded-lg p-3">
+                                    <div class="text-xs text-gray-500">Tăng phải trả</div>
+                                    <div class="font-bold text-blue-600 mt-1">{{ formatCurrency(ledgerSummary.total_increase) }}</div>
+                                </div>
+                                <div class="bg-white border rounded-lg p-3">
+                                    <div class="text-xs text-gray-500">Giảm phải trả</div>
+                                    <div class="font-bold text-red-600 mt-1">-{{ formatCurrency(ledgerSummary.total_decrease) }}</div>
+                                </div>
+                                <div class="bg-white border rounded-lg p-3">
+                                    <div class="text-xs text-gray-500">Biến động ròng</div>
+                                    <div class="font-bold mt-1">{{ formatCurrency(ledgerSummary.net_change) }}</div>
+                                </div>
+                                <div class="bg-white border rounded-lg p-3">
+                                    <div class="text-xs text-gray-500">Số dư hiện tại</div>
+                                    <div class="font-bold text-lg mt-1">{{ formatCurrency(ledgerSummary.current_balance) }}</div>
+                                </div>
+                            </div>
+
+                            <div class="flex justify-end gap-2">
+                                <button v-if="can('payroll.adjust')" type="button" @click="showAdjustmentModal = true" class="rounded bg-amber-600 px-4 py-2 font-bold text-white">+ Điều chỉnh</button>
+                                <button v-if="can('payroll.ledger.export')" type="button" @click="exportLedger" class="rounded bg-green-600 px-4 py-2 font-bold text-white">Xuất Excel/CSV</button>
+                            </div>
+
+                            <div v-if="can('payroll.advance.create')" class="bg-white border rounded-lg p-4">
+                                <div class="font-bold text-gray-800 mb-3">Tạo tạm ứng</div>
+                                <div class="grid grid-cols-2 lg:grid-cols-5 gap-3 items-end">
+                                    <div>
+                                        <label class="block text-xs text-gray-500 mb-1">Số tiền</label>
+                                        <MoneyInput v-model="advanceForm.amount" :min="1" input-class="w-full border rounded px-3 py-2" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-gray-500 mb-1">Ngày tạm ứng</label>
+                                        <input v-model="advanceForm.advance_date" type="datetime-local" class="w-full border rounded px-3 py-2" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-gray-500 mb-1">Phương thức</label>
+                                        <select v-model="advanceForm.payment_method" class="w-full border rounded px-3 py-2">
+                                            <option value="cash">Tiền mặt</option>
+                                            <option value="bank_transfer">Chuyển khoản</option>
+                                            <option value="ewallet">Ví điện tử</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-gray-500 mb-1">Lý do</label>
+                                        <input v-model="advanceForm.note" type="text" class="w-full border rounded px-3 py-2" placeholder="Tạm ứng lương..." />
+                                    </div>
+                                    <button type="button" :disabled="advanceSaving" @click="createAdvance" class="bg-blue-600 text-white font-bold rounded px-4 py-2 disabled:opacity-50">
+                                        Tạo tạm ứng
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="bg-white border rounded-lg overflow-hidden">
+                                <div class="p-3 border-b flex flex-wrap gap-2 items-end">
+                                    <input v-model="ledgerFilters.from_date" type="date" class="border rounded px-3 py-2" />
+                                    <input v-model="ledgerFilters.to_date" type="date" class="border rounded px-3 py-2" />
+                                    <select v-model="ledgerFilters.type" class="border rounded px-3 py-2">
+                                        <option value="">Tất cả loại phiếu</option>
+                                        <option value="opening_balance">Số dư đầu kỳ</option>
+                                        <option value="payroll_accrual">Phiếu lương</option>
+                                        <option value="salary_payment">Thanh toán lương</option>
+                                        <option value="salary_advance">Tạm ứng</option>
+                                        <option value="adjustment_increase">Điều chỉnh tăng</option>
+                                        <option value="adjustment_decrease">Điều chỉnh giảm</option>
+                                        <option value="cancel_reverse">Dòng đảo</option>
+                                    </select>
+                                    <select v-model="ledgerFilters.status" class="border rounded px-3 py-2">
+                                        <option value="">Tất cả trạng thái</option>
+                                        <option value="valid">Hợp lệ</option>
+                                        <option value="reversed">Đã đảo</option>
+                                        <option value="cancelled">Đã hủy</option>
+                                    </select>
+                                    <select v-model="ledgerFilters.branch_id" class="border rounded px-3 py-2">
+                                        <option value="">Tất cả chi nhánh</option>
+                                        <option v-for="branch in branches" :key="branch.id" :value="branch.id">{{ branch.name }}</option>
+                                    </select>
+                                    <input v-model="ledgerFilters.keyword" class="border rounded px-3 py-2" placeholder="Mã phiếu, ghi chú, người tạo" />
+                                    <button type="button" @click="loadLedger()" class="bg-gray-800 text-white rounded px-4 py-2">Lọc</button>
+                                </div>
+                                <div class="border-b bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                                    Tổng hợp số dư tính theo khoảng ngày và chi nhánh, không phụ thuộc loại, trạng thái hoặc từ khóa.
+                                    Kết quả đang lọc: tăng {{ formatCurrency(filteredLedgerSummary.filtered_increase) }},
+                                    giảm {{ formatCurrency(filteredLedgerSummary.filtered_decrease) }}.
+                                </div>
+                                <div v-if="ledgerLoading" class="p-8 text-center text-gray-400">Đang tải...</div>
+                                <div v-else class="overflow-x-auto">
+                                    <table class="w-full text-sm">
+                                        <thead class="bg-gray-50">
+                                            <tr>
+                                                <th class="text-left px-3 py-2">Mã phiếu</th>
+                                                <th class="text-left px-3 py-2">Thời gian</th>
+                                                <th class="text-left px-3 py-2">Loại phiếu</th>
+                                                <th class="text-right px-3 py-2">Giá trị</th>
+                                                <th class="text-right px-3 py-2">Nợ và tạm ứng</th>
+                                                <th class="text-left px-3 py-2">Ghi chú</th>
+                                                <th class="text-left px-3 py-2">Người tạo</th>
+                                                <th class="text-left px-3 py-2">Trạng thái</th>
+                                                <th class="text-left px-3 py-2">Thao tác</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr v-for="entry in ledgerRows" :key="entry.id" class="border-t">
+                                                <td class="px-3 py-2 font-medium text-blue-600">
+                                                    <button type="button" class="hover:underline" @click="openLedgerEntry(entry)">{{ entry.code || "-" }}</button>
+                                                </td>
+                                                <td class="px-3 py-2">{{ new Date(entry.event_at).toLocaleString("vi-VN") }}</td>
+                                                <td class="px-3 py-2">{{ entry.type }}</td>
+                                                <td class="px-3 py-2 text-right" :class="entry.amount < 0 ? 'text-red-600' : 'text-blue-600'">{{ formatCurrency(entry.amount) }}</td>
+                                                <td class="px-3 py-2 text-right font-semibold">{{ formatCurrency(entry.balance_after) }}</td>
+                                                <td class="px-3 py-2">{{ entry.note || "-" }}</td>
+                                                <td class="px-3 py-2">{{ entry.creator?.name || "-" }}</td>
+                                                <td class="px-3 py-2">{{ ledgerStatusLabel(entry) }}</td>
+                                                <td class="px-3 py-2"><button type="button" class="text-blue-600 hover:underline" @click="openLedgerEntry(entry)">Chi tiết</button></td>
+                                            </tr>
+                                            <tr v-if="!ledgerRows.length">
+                                                <td colspan="9" class="px-3 py-8 text-center text-gray-400">Chưa có phát sinh.</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="flex items-center justify-between border-t p-3 text-sm">
+                                    <span>Trang {{ ledgerData.current_page || 1 }} / {{ ledgerData.last_page || 1 }}</span>
+                                    <div class="flex gap-2">
+                                        <button type="button" class="rounded border px-3 py-1 disabled:opacity-40" :disabled="ledgerData.current_page <= 1" @click="loadLedger(ledgerData.current_page - 1)">Trước</button>
+                                        <button type="button" class="rounded border px-3 py-1 disabled:opacity-40" :disabled="ledgerData.current_page >= ledgerData.last_page" @click="loadLedger(ledgerData.current_page + 1)">Sau</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="overflow-hidden rounded-lg border bg-white">
+                                <div class="border-b p-3 font-bold">Danh sách tạm ứng</div>
+                                <table class="w-full text-sm">
+                                    <thead class="bg-gray-50"><tr>
+                                        <th class="p-2 text-left">Mã</th><th class="p-2 text-left">Ngày</th>
+                                        <th class="p-2 text-right">Số tiền</th><th class="p-2 text-right">Đã phân bổ</th>
+                                        <th class="p-2 text-right">Còn lại</th><th class="p-2 text-left">Phương thức</th>
+                                        <th class="p-2 text-left">Trạng thái</th><th class="p-2 text-left">Người tạo</th><th class="p-2"></th>
+                                    </tr></thead>
+                                    <tbody>
+                                        <tr v-for="advance in advances.data" :key="advance.id" class="border-t">
+                                            <td class="p-2 font-medium">{{ advance.code }}</td>
+                                            <td class="p-2">{{ new Date(advance.advance_date).toLocaleString('vi-VN') }}</td>
+                                            <td class="p-2 text-right">{{ formatCurrency(advance.amount) }}</td>
+                                            <td class="p-2 text-right">{{ formatCurrency(advance.applied_amount) }}</td>
+                                            <td class="p-2 text-right">{{ formatCurrency(advance.remaining_amount) }}</td>
+                                            <td class="p-2">{{ advance.payment_method }}</td>
+                                            <td class="p-2">{{ advance.status }}</td>
+                                            <td class="p-2">{{ advance.creator?.name || '-' }}</td>
+                                            <td class="p-2 text-right">
+                                                <button v-if="can('payroll.advance.cancel') && advance.status !== 'cancelled'" type="button"
+                                                    class="text-red-600 disabled:text-gray-400" :disabled="Number(advance.applied_amount) > 0"
+                                                    :title="Number(advance.applied_amount) > 0 ? 'Khoản tạm ứng đã được cấn trừ vào phiếu lương.' : 'Hủy tạm ứng'"
+                                                    @click="openAdvanceCancel(advance)">Hủy</button>
+                                            </td>
+                                        </tr>
+                                        <tr v-if="!advances.data?.length"><td colspan="9" class="p-6 text-center text-gray-400">Chưa có tạm ứng.</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     </form>
                 </div>
 
@@ -1332,6 +1684,7 @@ const bonusCalcLabel = (calc) => {
                         Lưu và tạo mẫu lương mới
                     </button>
                     <button
+                        v-show="activeTab !== 'ledger'"
                         @click="submit"
                         class="px-8 py-2 border border-transparent rounded text-white bg-blue-600 font-bold hover:bg-blue-700 transition shadow-sm"
                         :class="{
@@ -1344,6 +1697,71 @@ const bonusCalcLabel = (calc) => {
                 </div>
             </div>
         </div>
+
+        <Teleport to="body">
+            <div v-if="showAdjustmentModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40" @click.self="showAdjustmentModal = false">
+                <div class="w-full max-w-xl rounded-lg bg-white shadow-xl">
+                    <div class="border-b p-4 text-lg font-bold">Điều chỉnh nợ và tạm ứng</div>
+                    <div class="grid grid-cols-2 gap-4 p-5">
+                        <select v-model="adjustmentForm.type" class="col-span-2 rounded border px-3 py-2">
+                            <option value="adjustment_increase">Tăng số công ty phải trả nhân viên</option>
+                            <option value="adjustment_decrease">Giảm số công ty phải trả nhân viên</option>
+                        </select>
+                        <MoneyInput v-model="adjustmentForm.amount" :min="1" input-class="w-full border rounded px-3 py-2" />
+                        <input v-model="adjustmentForm.event_at" type="datetime-local" class="rounded border px-3 py-2" />
+                        <input :value="branches.find(b => b.id === form.branch_id)?.name || 'Không xác định chi nhánh'" disabled class="rounded border bg-gray-100 px-3 py-2" />
+                        <input v-model="adjustmentForm.reason" class="rounded border px-3 py-2" placeholder="Lý do, tối thiểu 10 ký tự" />
+                        <textarea v-model="adjustmentForm.note" class="col-span-2 rounded border px-3 py-2" placeholder="Ghi chú"></textarea>
+                        <input v-model="adjustmentForm.override_reason" class="col-span-2 rounded border px-3 py-2" placeholder="Lý do override kỳ khóa/backdate nếu được yêu cầu" />
+                    </div>
+                    <div class="flex justify-end gap-3 border-t p-4">
+                        <button type="button" class="rounded border px-4 py-2" @click="showAdjustmentModal = false">Bỏ qua</button>
+                        <button type="button" class="rounded bg-amber-600 px-4 py-2 text-white disabled:opacity-50"
+                            :disabled="adjustmentSaving || Number(adjustmentForm.amount) <= 0 || adjustmentForm.reason.trim().length < 10"
+                            @click="submitAdjustment">Ghi điều chỉnh</button>
+                    </div>
+                </div>
+            </div>
+
+            <div v-if="advanceCancel.show" class="fixed inset-0 z-[101] flex items-center justify-center bg-black/40" @click.self="advanceCancel.show = false">
+                <div class="w-full max-w-lg rounded-lg bg-white shadow-xl">
+                    <div class="border-b p-4 text-lg font-bold">Hủy tạm ứng {{ advanceCancel.target?.code }}</div>
+                    <div class="space-y-3 p-5">
+                        <div class="rounded bg-amber-50 p-3 text-sm text-amber-800">CashFlow liên quan sẽ bị hủy và ledger sẽ tạo dòng đảo. Lịch sử không bị xóa.</div>
+                        <textarea v-model="advanceCancel.reason" rows="4" class="w-full rounded border px-3 py-2" placeholder="Lý do hủy, tối thiểu 10 ký tự"></textarea>
+                    </div>
+                    <div class="flex justify-end gap-3 border-t p-4">
+                        <button type="button" class="rounded border px-4 py-2" @click="advanceCancel.show = false">Bỏ qua</button>
+                        <button type="button" class="rounded bg-red-600 px-4 py-2 text-white disabled:opacity-50"
+                            :disabled="advanceCancel.saving || advanceCancel.reason.trim().length < 10" @click="cancelAdvance">Xác nhận hủy</button>
+                    </div>
+                </div>
+            </div>
+
+            <div v-if="showLedgerDetail" class="fixed inset-0 z-[102] flex items-center justify-center bg-black/40" @click.self="showLedgerDetail = false">
+                <div class="max-h-[85vh] w-full max-w-3xl overflow-auto rounded-lg bg-white shadow-xl">
+                    <div class="flex justify-between border-b p-4">
+                        <div class="text-lg font-bold">Chi tiết {{ ledgerDetail?.ledger_entry?.code }}</div>
+                        <button type="button" @click="showLedgerDetail = false">&times;</button>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3 p-5 text-sm">
+                        <div><b>Loại:</b> {{ ledgerDetail?.ledger_entry?.type }}</div>
+                        <div><b>Trạng thái:</b> {{ ledgerStatusLabel(ledgerDetail?.ledger_entry || {}) }}</div>
+                        <div><b>Nhân viên:</b> {{ ledgerDetail?.employee?.name }}</div>
+                        <div><b>Chi nhánh:</b> {{ ledgerDetail?.branch?.name || 'Không xác định' }}</div>
+                        <div><b>Số tiền:</b> {{ formatCurrency(ledgerDetail?.ledger_entry?.amount) }}</div>
+                        <div><b>Số dư sau:</b> {{ formatCurrency(ledgerDetail?.ledger_entry?.balance_after) }}</div>
+                        <div><b>Ngày nghiệp vụ:</b> {{ ledgerDetail?.ledger_entry?.event_at }}</div>
+                        <div><b>Ngày tạo:</b> {{ ledgerDetail?.ledger_entry?.created_at }}</div>
+                        <div class="col-span-2"><b>Ghi chú:</b> {{ ledgerDetail?.ledger_entry?.note || '-' }}</div>
+                        <div class="col-span-2"><b>Lý do:</b> {{ ledgerDetail?.ledger_entry?.reason || ledgerDetail?.ledger_entry?.cancel_reason || '-' }}</div>
+                        <div><b>CashFlow:</b> {{ ledgerDetail?.cash_flow?.code || '-' }}</div>
+                        <div><b>Payment/Advance:</b> {{ ledgerDetail?.payment?.code || ledgerDetail?.advance?.code || '-' }}</div>
+                        <div class="col-span-2" v-if="ledgerDetail?.original_entry"><b>Chứng từ gốc:</b> {{ ledgerDetail.original_entry.code }}</div>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
     </AppLayout>
 </template>
 

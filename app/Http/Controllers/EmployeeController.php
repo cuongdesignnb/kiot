@@ -326,6 +326,9 @@ class EmployeeController extends Controller
         $this->applyFilters($query, $request);
 
         $employees = $query->paginate(20)->withQueryString();
+        if (!auth()->user()?->hasPermission('employee.view_salary_balance')) {
+            $employees->getCollection()->each->makeHidden(['balance', 'salary_balance_cache']);
+        }
 
         $branches = Branch::select('id', 'name')->get();
         $departments = Department::select('id', 'name')->get();
@@ -398,13 +401,31 @@ class EmployeeController extends Controller
             'is_active' => 'boolean',
         ]);
 
+        $becameInactive = $employee->is_active
+            && array_key_exists('is_active', $validated)
+            && !$validated['is_active'];
         $employee->update($validated);
+        if ($becameInactive && (int) $employee->salary_balance_cache !== 0) {
+            \App\Models\ActivityLog::log(
+                'employee_deactivate_with_salary_balance',
+                "Ngừng hoạt động nhân viên {$employee->code} còn số dư lương",
+                $employee,
+                ['salary_balance' => (int) $employee->salary_balance_cache]
+            );
+            return redirect()->back()->with('success', 'Đã ngừng hoạt động. Nhân viên vẫn còn số dư nợ/tạm ứng cần xử lý.');
+        }
 
         return redirect()->back()->with('success', 'Cập nhật nhân viên thành công.');
     }
 
     public function destroy(Employee $employee)
     {
+        if ($employee->salaryLedgerEntries()->exists()
+            || $employee->salaryAdvances()->exists()
+            || \App\Models\Payslip::where('employee_id', $employee->id)->exists()
+            || \App\Models\PaysheetPayment::where('employee_id', $employee->id)->exists()) {
+            return redirect()->back()->with('error', 'Không thể xóa nhân viên đã có dữ liệu lương. Hãy chuyển sang trạng thái nghỉ việc.');
+        }
         $employee->delete();
         return redirect()->back()->with('success', 'Xóa nhân viên thành công.');
     }

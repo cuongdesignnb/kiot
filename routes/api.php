@@ -154,26 +154,56 @@ Route::prefix('attendance-logs')->group(function () {
 // =======================
 
 Route::prefix('paysheets')->group(function () {
-    Route::get('/', [PaysheetController::class, 'index']);
-    Route::post('/', [PaysheetController::class, 'store']);
-    Route::get('/{id}', [PaysheetController::class, 'show']);
-    Route::post('/{id}/recalculate', [PaysheetController::class, 'recalculate']);
-    Route::put('/{id}/lock', [PaysheetController::class, 'lock']);
-    Route::put('/{id}/cancel', [PaysheetController::class, 'cancel']);
-    Route::post('/{id}/pay', [PaysheetController::class, 'pay']);
-    Route::put('/{id}/notes', [PaysheetController::class, 'updateNotes']);
+    Route::get('/', [PaysheetController::class, 'index'])->middleware('permission:payroll.view');
+    Route::post('/', [PaysheetController::class, 'store'])->middleware('permission:payroll.create');
+    Route::get('/{id}', [PaysheetController::class, 'show'])->middleware('permission:payroll.view');
+    Route::post('/{id}/recalculate', [PaysheetController::class, 'recalculate'])->middleware('permission:payroll.edit');
+    Route::put('/{id}/lock', [PaysheetController::class, 'lock'])->middleware('permission:payroll.lock');
+    Route::put('/{id}/cancel', [PaysheetController::class, 'cancel'])->middleware('permission:payroll.cancel');
+    Route::post('/{id}/pay', [PaysheetController::class, 'pay'])->middleware('permission:payroll.pay');
+    Route::put('/{id}/notes', [PaysheetController::class, 'updateNotes'])->middleware('permission:payroll.edit');
     // Step 24.12 — update standard_working_days + auto-recalc payslips
-    Route::put('/{id}/standard-working-days', [PaysheetController::class, 'updateStandardWorkingDays']);
+    Route::put('/{id}/standard-working-days', [PaysheetController::class, 'updateStandardWorkingDays'])->middleware('permission:payroll.edit');
     // HOTFIX 24.12B — bulk replace + reset-default for popup adjustments
-    Route::put('/{id}/payslips/{slipId}/adjustments/{type}/bulk', [PaysheetController::class, 'bulkSaveAdjustments']);
-    Route::post('/{id}/payslips/{slipId}/adjustments/{type}/reset-default', [PaysheetController::class, 'resetDefaultAdjustments']);
-    Route::put('/{id}/payslips/{slipId}', [PaysheetController::class, 'updatePayslip']);
-    Route::get('/{id}/payslips/{slipId}/adjustments', [PaysheetController::class, 'listAdjustments']);
-    Route::post('/{id}/payslips/{slipId}/adjustments', [PaysheetController::class, 'storeAdjustment']);
-    Route::put('/{id}/payslips/{slipId}/adjustments/{adjId}', [PaysheetController::class, 'updateAdjustment']);
-    Route::delete('/{id}/payslips/{slipId}/adjustments/{adjId}', [PaysheetController::class, 'deleteAdjustment']);
-    Route::delete('/{id}', [PaysheetController::class, 'destroy']);
+    Route::put('/{id}/payslips/{slipId}/adjustments/{type}/bulk', [PaysheetController::class, 'bulkSaveAdjustments'])->middleware('permission:payroll.edit');
+    Route::post('/{id}/payslips/{slipId}/adjustments/{type}/reset-default', [PaysheetController::class, 'resetDefaultAdjustments'])->middleware('permission:payroll.edit');
+    Route::put('/{id}/payslips/{slipId}', [PaysheetController::class, 'updatePayslip'])->middleware('permission:payroll.edit');
+    Route::get('/{id}/payslips/{slipId}/adjustments', [PaysheetController::class, 'listAdjustments'])->middleware('permission:payroll.view');
+    Route::post('/{id}/payslips/{slipId}/adjustments', [PaysheetController::class, 'storeAdjustment'])->middleware('permission:payroll.edit');
+    Route::put('/{id}/payslips/{slipId}/adjustments/{adjId}', [PaysheetController::class, 'updateAdjustment'])->middleware('permission:payroll.edit');
+    Route::delete('/{id}/payslips/{slipId}/adjustments/{adjId}', [PaysheetController::class, 'deleteAdjustment'])->middleware('permission:payroll.edit');
+    Route::delete('/{id}', [PaysheetController::class, 'destroy'])->middleware('permission:payroll.cancel');
 });
+
+Route::post('/paysheet-payments/{payment}/cancel', [PaysheetController::class, 'cancelPayment'])
+    ->middleware('permission:payroll.pay.cancel');
+
+Route::prefix('employees/{employee}')->group(function () {
+    Route::get('/salary-ledger', [\App\Http\Controllers\EmployeeSalaryLedgerController::class, 'index'])
+        ->middleware('permission:payroll.ledger.view');
+    Route::post('/salary-ledger/adjust', [\App\Http\Controllers\EmployeeSalaryLedgerController::class, 'adjust'])
+        ->middleware('permission:payroll.adjust');
+    Route::get('/salary-ledger/export', [\App\Http\Controllers\EmployeeSalaryLedgerController::class, 'export'])
+        ->middleware('permission:payroll.ledger.export');
+    Route::get('/salary-advances', [\App\Http\Controllers\SalaryAdvanceController::class, 'index'])
+        ->middleware('permission:payroll.ledger.view');
+    Route::post('/salary-advances', [\App\Http\Controllers\SalaryAdvanceController::class, 'store'])
+        ->middleware('permission:payroll.advance.create');
+    Route::post('/rebuild-salary-balance', [\App\Http\Controllers\EmployeeSalaryLedgerController::class, 'rebuild'])
+        ->middleware('permission:payroll.rebuild_balance');
+});
+Route::post('/salary-advances/{advance}/cancel', [\App\Http\Controllers\SalaryAdvanceController::class, 'cancel'])
+    ->middleware('permission:payroll.advance.cancel');
+Route::get('/employee-salary-ledger-entries/{entry}', [\App\Http\Controllers\EmployeeSalaryLedgerController::class, 'show'])
+    ->middleware('permission:payroll.ledger.view');
+Route::get('/payroll/date-policy', [\App\Http\Controllers\PayrollMetaController::class, 'datePolicy'])
+    ->middleware('permission:payroll.view');
+Route::get('/payroll/reconciliation', [\App\Http\Controllers\PayrollReconciliationController::class, 'index'])
+    ->middleware('permission:payroll.reconciliation.view');
+Route::get('/payroll/reconciliation/export', [\App\Http\Controllers\PayrollReconciliationController::class, 'export'])
+    ->middleware('permission:payroll.reconciliation.export');
+Route::post('/payroll/rebuild-salary-balances', [\App\Http\Controllers\EmployeeSalaryLedgerController::class, 'rebuildAll'])
+    ->middleware('permission:payroll.rebuild_balance');
 
 // =======================
 // 🔧 DEVICE REPAIR

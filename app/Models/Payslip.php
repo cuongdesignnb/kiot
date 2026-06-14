@@ -21,7 +21,9 @@ class Payslip extends Model
         'ot_pay',
         'total_salary',
         'paid_amount',
+        'applied_advance',
         'remaining',
+        'payment_status',
         'work_units',
         'paid_leave_units',
         'ot_minutes',
@@ -38,6 +40,7 @@ class Payslip extends Model
         'ot_pay' => 'integer',
         'total_salary' => 'integer',
         'paid_amount' => 'integer',
+        'applied_advance' => 'integer',
         'remaining' => 'integer',
         'details' => 'array',
     ];
@@ -62,6 +65,11 @@ class Payslip extends Model
         return $this->hasMany(PayslipAdjustment::class);
     }
 
+    public function advanceApplications()
+    {
+        return $this->hasMany(SalaryAdvanceApplication::class);
+    }
+
     /**
      * Auto-generate next code: PL000001
      */
@@ -69,6 +77,7 @@ class Payslip extends Model
     {
         $last = static::orderByDesc('id')->value('code');
         $num = $last ? ((int) substr($last, 2)) + 1 : 1;
-        return 'PL' . str_pad($num, 6, '0', STR_PAD_LEFT);
+
+        return 'PL'.str_pad($num, 6, '0', STR_PAD_LEFT);
     }
 }
