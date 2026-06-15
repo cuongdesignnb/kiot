@@ -11,6 +11,10 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__ . '/../routes/console.php',
         health: '/up',
     )
+    ->withCommands([
+        \App\Console\Commands\MigrateSalaryLedger::class,
+        \App\Console\Commands\RebuildSalaryBalances::class,
+    ])
     ->withMiddleware(function (Middleware $middleware) {
         // Enable Sanctum cookie/session auth for API routes (required for /api/my-tasks, /api/notifications)
         $middleware->statefulApi();
