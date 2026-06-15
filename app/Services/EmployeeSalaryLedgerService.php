@@ -153,6 +153,7 @@ class EmployeeSalaryLedgerService
             });
 
         $summaryQuery = clone $summaryPeriod;
+        $entryCount = (clone $summaryQuery)->count();
         $increase = (int) (clone $summaryQuery)->where('amount', '>', 0)->sum('amount');
         $decreaseSigned = (int) (clone $summaryQuery)->where('amount', '<', 0)->sum('amount');
         $netChange = (int) (clone $summaryQuery)->sum('amount');
@@ -173,6 +174,7 @@ class EmployeeSalaryLedgerService
                 'total_decrease' => abs($decreaseSigned),
                 'net_change' => $netChange,
                 'current_balance' => $openingBalance + $netChange,
+                'entry_count' => $entryCount,
             ],
             'filtered_summary' => [
                 'filtered_increase' => $filteredIncrease,

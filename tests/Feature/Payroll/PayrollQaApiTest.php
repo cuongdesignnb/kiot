@@ -3,9 +3,12 @@
 namespace Tests\Feature\Payroll;
 
 use App\Models\Branch;
+use App\Models\CashFlow;
 use App\Models\Employee;
 use App\Models\EmployeeSalaryLedgerEntry;
+use App\Models\PaysheetPayment;
 use App\Models\SalaryAdvance;
+use App\Models\SalaryAdvanceApplication;
 use App\Models\User;
 use App\Services\EmployeeSalaryLedgerService;
 use App\Services\PayrollReconciliationService;
@@ -55,6 +58,57 @@ class PayrollQaApiTest extends TestCase
             ->assertJsonPath('summary.net_change', 1_500_000)
             ->assertJsonPath('filtered_summary.filtered_net_change', 2_000_000);
 
+        $this->assertCount(1, $response->json('data.data'));
+    }
+
+    public function test_employee_ledger_expand_endpoint_is_read_only_and_uses_effective_entries(): void
+    {
+        $ledger = app(EmployeeSalaryLedgerService::class);
+        $effective = $ledger->append($this->employee, [
+            'code' => 'SDDK-NV-QA-20260615',
+            'type' => 'opening_balance',
+            'amount' => 50_000_000,
+            'event_at' => '2026-06-15 00:00:00',
+            'note' => 'Số dư lương chuyển đổi từ hệ thống KiotViet',
+            'idempotency_key' => 'expand-ui-read-only-test',
+        ]);
+        EmployeeSalaryLedgerEntry::create([
+            'employee_id' => $this->employee->id,
+            'branch_id' => $this->employee->branch_id,
+            'code' => 'IGNORED-001',
+            'type' => 'manual_adjustment',
+            'amount' => 99_000_000,
+            'balance_after' => 149_000_000,
+            'is_effective' => false,
+            'status' => 'valid',
+            'event_at' => '2026-06-15 01:00:00',
+        ]);
+
+        $before = [
+            'ledger' => EmployeeSalaryLedgerEntry::count(),
+            'cash_flows' => CashFlow::count(),
+            'payments' => PaysheetPayment::count(),
+            'advances' => SalaryAdvance::count(),
+            'applications' => SalaryAdvanceApplication::count(),
+        ];
+
+        $response = $this->getJson("/api/employees/{$this->employee->id}/salary-ledger")
+            ->assertOk()
+            ->assertJsonPath('employee.code', 'NV-QA')
+            ->assertJsonPath('summary.current_balance', 50_000_000)
+            ->assertJsonPath('summary.total_increase', 50_000_000)
+            ->assertJsonPath('summary.total_decrease', 0)
+            ->assertJsonPath('summary.entry_count', 1)
+            ->assertJsonPath('data.total', 1)
+            ->assertJsonPath('data.data.0.id', $effective->id);
+
+        $this->assertSame($before, [
+            'ledger' => EmployeeSalaryLedgerEntry::count(),
+            'cash_flows' => CashFlow::count(),
+            'payments' => PaysheetPayment::count(),
+            'advances' => SalaryAdvance::count(),
+            'applications' => SalaryAdvanceApplication::count(),
+        ]);
         $this->assertCount(1, $response->json('data.data'));
     }
 

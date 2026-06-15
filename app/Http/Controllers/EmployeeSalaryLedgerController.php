@@ -24,7 +24,10 @@ class EmployeeSalaryLedgerController extends Controller
             $access->assertBranch((int) $data['branch_id']);
         }
 
-        return response()->json($ledger->timeline($employee, $data));
+        return response()->json([
+            'employee' => $employee->only(['id', 'code', 'name', 'phone']),
+            ...$ledger->timeline($employee, $data),
+        ]);
     }
 
     public function adjust(Request $request, Employee $employee, EmployeeSalaryLedgerService $ledger, PayrollDateGuard $dateGuard)

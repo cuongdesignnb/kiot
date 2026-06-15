@@ -6,6 +6,7 @@ import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
 import MoneyInput from "@/Components/MoneyInput.vue";
+import EmployeeSalaryLedgerPanel from "@/Components/EmployeeSalaryLedgerPanel.vue";
 import { usePermission } from "@/composables/usePermission";
 import axios from "axios";
 
@@ -23,6 +24,7 @@ const search = ref(props.filters?.search || "");
 const sortBy = ref(props.filters?.sort_by || "");
 const sortDirection = ref(props.filters?.sort_direction || "");
 const expandedRows = ref([]);
+const expandedLedgers = reactive({});
 
 let searchTimeout;
 watch(search, (value) => {
@@ -49,17 +51,65 @@ const handleSort = (field, direction) => {
     );
 };
 
-const toggleExpand = (employeeId) => {
+const loadExpandedLedger = async (employee, force = false, page = 1) => {
+    if (!can("payroll.ledger.view")) return;
+
+    const current = expandedLedgers[employee.id];
+    if (current?.loading || (current?.loaded && !force)) return;
+
+    expandedLedgers[employee.id] = {
+        data: current?.data || { data: [] },
+        summary: current?.summary || {
+            current_balance: Number(employee.salary_balance_cache || 0),
+            total_increase: 0,
+            total_decrease: 0,
+            entry_count: 0,
+        },
+        loading: true,
+        loaded: false,
+        error: false,
+    };
+
+    try {
+        const response = await axios.get(`/api/employees/${employee.id}/salary-ledger`, {
+            params: { per_page: 20, page },
+        });
+        expandedLedgers[employee.id] = {
+            data: response.data.data,
+            summary: response.data.summary,
+            loading: false,
+            loaded: true,
+            error: false,
+        };
+    } catch {
+        expandedLedgers[employee.id] = {
+            ...expandedLedgers[employee.id],
+            loading: false,
+            loaded: false,
+            error: true,
+        };
+    }
+};
+
+const toggleExpand = (employee) => {
+    const employeeId = employee.id;
     const index = expandedRows.value.indexOf(employeeId);
     if (index > -1) {
         expandedRows.value.splice(index, 1);
     } else {
         expandedRows.value.push(employeeId);
+        loadExpandedLedger(employee);
     }
 };
 
 const isExpanded = (employeeId) => {
     return expandedRows.value.includes(employeeId);
+};
+
+const retryExpandedLedger = (employee) => loadExpandedLedger(employee, true);
+const changeExpandedLedgerPage = (employee, page) => loadExpandedLedger(employee, true, page);
+const exportExpandedLedger = (employee) => {
+    window.location.href = `/api/employees/${employee.id}/salary-ledger/export`;
 };
 
 // Modal form state
@@ -181,6 +231,18 @@ const advanceForm = reactive({
 const advanceSaving = ref(false);
 
 const ledgerRows = computed(() => ledgerData.value?.data || []);
+const ledgerTypeLabels = {
+    opening_balance: "Số dư đầu kỳ",
+    payroll_accrual: "Ghi nhận lương phải trả",
+    salary_payment: "Thanh toán lương",
+    salary_advance: "Tạm ứng lương",
+    advance_application: "Cấn trừ tạm ứng",
+    manual_adjustment: "Điều chỉnh thủ công",
+    adjustment_increase: "Điều chỉnh tăng",
+    adjustment_decrease: "Điều chỉnh giảm",
+    cancel_reverse: "Đảo/hủy phát sinh",
+};
+const ledgerTypeLabel = (entry) => ledgerTypeLabels[entry.type] || "Khác";
 const ledgerStatusLabel = (entry) => {
     if (entry.type === "cancel_reverse") return "Dòng đảo";
     if (entry.status === "reversed") return "Đã đảo";
@@ -781,6 +843,7 @@ const bonusCalcLabel = (calc) => {
                         class="text-[13px] font-bold text-gray-700 bg-[#eef1f8] border-b border-gray-200 sticky top-0 z-10 shadow-sm"
                     >
                         <tr>
+                            <th v-if="can('payroll.ledger.view')" class="w-10 px-2 py-3"></th>
                             <th class="px-4 py-3 w-10 text-center">
                                 <input
                                     type="checkbox"
@@ -800,7 +863,7 @@ const bonusCalcLabel = (calc) => {
                     <tbody class="divide-y divide-gray-200 text-gray-800">
                         <tr v-if="employees.data.length === 0">
                             <td
-                                colspan="9"
+                                :colspan="8 + (can('payroll.ledger.view') ? 1 : 0) + (can('employee.view_salary_balance') ? 1 : 0)"
                                 class="px-6 py-12 text-center text-gray-500"
                             >
                                 Không tìm thấy nhân viên nào.
@@ -815,6 +878,25 @@ const bonusCalcLabel = (calc) => {
                                 @click="openEditModal(employee)"
                                 class="hover:bg-blue-50/50 transition-colors cursor-pointer bg-white"
                             >
+                                <td v-if="can('payroll.ledger.view')" class="px-2 py-3 text-center" @click.stop>
+                                    <button
+                                        type="button"
+                                        class="inline-flex h-7 w-7 items-center justify-center rounded text-gray-500 hover:bg-blue-50 hover:text-blue-700"
+                                        :aria-expanded="isExpanded(employee.id)"
+                                        :aria-label="isExpanded(employee.id) ? 'Thu gọn lịch sử nợ và tạm ứng' : 'Mở lịch sử nợ và tạm ứng'"
+                                        @click="toggleExpand(employee)"
+                                    >
+                                        <svg
+                                            class="h-4 w-4 transition-transform"
+                                            :class="{ 'rotate-90': isExpanded(employee.id) }"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            viewBox="0 0 24 24"
+                                        >
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                                        </svg>
+                                    </button>
+                                </td>
                                 <td class="px-4 py-3 text-center" @click.stop>
                                     <input
                                         type="checkbox"
@@ -851,10 +933,32 @@ const bonusCalcLabel = (calc) => {
                                 <td class="px-4 py-3">{{ employee.phone }}</td>
                                 <td class="px-4 py-3">{{ employee.cccd }}</td>
                                 <td v-if="can('employee.view_salary_balance')" class="px-4 py-3 text-right">
-                                    {{ formatCurrency(employee.salary_balance_cache || 0) }}
+                                    <button
+                                        v-if="can('payroll.ledger.view')"
+                                        type="button"
+                                        class="font-semibold text-blue-700 hover:underline"
+                                        @click.stop="toggleExpand(employee)"
+                                    >
+                                        {{ formatCurrency(employee.salary_balance_cache || 0) }}
+                                    </button>
+                                    <span v-else :class="Number(employee.salary_balance_cache || 0) !== 0 ? 'font-semibold text-gray-800' : 'text-gray-500'">
+                                        {{ formatCurrency(employee.salary_balance_cache || 0) }}
+                                    </span>
                                 </td>
                                 <td class="px-4 py-3 text-gray-500">
                                     {{ employee.notes || "" }}
+                                </td>
+                            </tr>
+                            <tr v-if="isExpanded(employee.id)" class="bg-slate-50">
+                                <td :colspan="can('employee.view_salary_balance') ? 10 : 9" class="p-0">
+                                    <EmployeeSalaryLedgerPanel
+                                        :employee="employee"
+                                        :ledger="expandedLedgers[employee.id] || { loading: true, data: { data: [] }, summary: {} }"
+                                        :can-export="can('payroll.ledger.export')"
+                                        @retry="retryExpandedLedger(employee)"
+                                        @page="changeExpandedLedgerPage(employee, $event)"
+                                        @export="exportExpandedLedger(employee)"
+                                    />
                                 </td>
                             </tr>
                         </template>
@@ -977,7 +1081,7 @@ const bonusCalcLabel = (calc) => {
                             ? 'text-blue-600 border-b-2 border-blue-600'
                             : 'text-gray-500 hover:text-gray-700'"
                     >
-                        Nợ và tạm ứng
+                        Nợ & Tạm ứng
                     </button>
                 </div>
 
@@ -1586,7 +1690,8 @@ const bonusCalcLabel = (calc) => {
                                                 <th class="text-left px-3 py-2">Mã phiếu</th>
                                                 <th class="text-left px-3 py-2">Thời gian</th>
                                                 <th class="text-left px-3 py-2">Loại phiếu</th>
-                                                <th class="text-right px-3 py-2">Giá trị</th>
+                                                <th class="text-right px-3 py-2">Phát sinh tăng</th>
+                                                <th class="text-right px-3 py-2">Phát sinh giảm</th>
                                                 <th class="text-right px-3 py-2">Nợ và tạm ứng</th>
                                                 <th class="text-left px-3 py-2">Ghi chú</th>
                                                 <th class="text-left px-3 py-2">Người tạo</th>
@@ -1600,8 +1705,12 @@ const bonusCalcLabel = (calc) => {
                                                     <button type="button" class="hover:underline" @click="openLedgerEntry(entry)">{{ entry.code || "-" }}</button>
                                                 </td>
                                                 <td class="px-3 py-2">{{ new Date(entry.event_at).toLocaleString("vi-VN") }}</td>
-                                                <td class="px-3 py-2">{{ entry.type }}</td>
-                                                <td class="px-3 py-2 text-right" :class="entry.amount < 0 ? 'text-red-600' : 'text-blue-600'">{{ formatCurrency(entry.amount) }}</td>
+                                                <td class="px-3 py-2">
+                                                    <div>{{ ledgerTypeLabel(entry) }}</div>
+                                                    <div v-if="!ledgerTypeLabels[entry.type]" class="text-[11px] text-gray-400">{{ entry.type }}</div>
+                                                </td>
+                                                <td class="px-3 py-2 text-right font-semibold text-emerald-600">{{ Number(entry.amount) > 0 ? `+${formatCurrency(entry.amount)}` : "0đ" }}</td>
+                                                <td class="px-3 py-2 text-right font-semibold text-orange-600">{{ Number(entry.amount) < 0 ? formatCurrency(entry.amount) : "0đ" }}</td>
                                                 <td class="px-3 py-2 text-right font-semibold">{{ formatCurrency(entry.balance_after) }}</td>
                                                 <td class="px-3 py-2">{{ entry.note || "-" }}</td>
                                                 <td class="px-3 py-2">{{ entry.creator?.name || "-" }}</td>
@@ -1609,7 +1718,7 @@ const bonusCalcLabel = (calc) => {
                                                 <td class="px-3 py-2"><button type="button" class="text-blue-600 hover:underline" @click="openLedgerEntry(entry)">Chi tiết</button></td>
                                             </tr>
                                             <tr v-if="!ledgerRows.length">
-                                                <td colspan="9" class="px-3 py-8 text-center text-gray-400">Chưa có phát sinh.</td>
+                                                <td colspan="10" class="px-3 py-8 text-center text-gray-400">Chưa có phát sinh nợ & tạm ứng.</td>
                                             </tr>
                                         </tbody>
                                     </table>
