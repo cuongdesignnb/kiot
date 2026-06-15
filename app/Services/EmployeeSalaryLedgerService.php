@@ -165,9 +165,11 @@ class EmployeeSalaryLedgerService
             ->orderBy('event_at')
             ->orderBy('id')
             ->paginate(min((int) ($filters['per_page'] ?? 20), 100));
+        $rows->through(fn (EmployeeSalaryLedgerEntry $entry) => $this->presentTimelineEntry($entry));
 
         return [
             'data' => $rows,
+            'entries' => $rows->items(),
             'summary' => [
                 'opening_balance' => $openingBalance,
                 'total_increase' => $increase,
@@ -230,5 +232,30 @@ class EmployeeSalaryLedgerService
         ]);
 
         return $balance;
+    }
+
+    private function presentTimelineEntry(EmployeeSalaryLedgerEntry $entry): EmployeeSalaryLedgerEntry
+    {
+        $amount = (int) $entry->amount;
+        $entry->setAttribute('type_label', match ($entry->type) {
+            EmployeeSalaryLedgerEntry::TYPE_PAYROLL_ACCRUAL => 'Phiếu lương',
+            EmployeeSalaryLedgerEntry::TYPE_SALARY_PAYMENT => 'Thanh toán lương',
+            EmployeeSalaryLedgerEntry::TYPE_SALARY_ADVANCE => 'Tạm ứng lương',
+            EmployeeSalaryLedgerEntry::TYPE_ADJUSTMENT_INCREASE => 'Điều chỉnh tăng',
+            EmployeeSalaryLedgerEntry::TYPE_ADJUSTMENT_DECREASE => 'Điều chỉnh giảm',
+            EmployeeSalaryLedgerEntry::TYPE_OPENING_BALANCE => 'Số dư đầu kỳ',
+            EmployeeSalaryLedgerEntry::TYPE_CANCEL_REVERSE => 'Dòng đảo',
+            default => $entry->type,
+        });
+        $entry->setAttribute('increase_amount', $amount > 0 ? $amount : 0);
+        $entry->setAttribute('decrease_amount', $amount < 0 ? abs($amount) : 0);
+        $entry->setAttribute('status_label', match (true) {
+            $entry->type === EmployeeSalaryLedgerEntry::TYPE_CANCEL_REVERSE => 'Dòng đảo',
+            $entry->status === 'reversed' => 'Đã đảo',
+            $entry->status === 'cancelled' => 'Đã hủy',
+            default => 'Hợp lệ',
+        });
+
+        return $entry;
     }
 }
