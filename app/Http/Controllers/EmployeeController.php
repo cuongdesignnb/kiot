@@ -326,8 +326,21 @@ class EmployeeController extends Controller
         $this->applyFilters($query, $request);
 
         $employees = $query->paginate(20)->withQueryString();
+        $employees->getCollection()->transform(function (Employee $employee) {
+            $salaryBalance = (int) $employee->salary_balance_cache;
+            $employee->setAttribute('salary_balance', $salaryBalance);
+            $employee->setAttribute('salary_debt_amount', $salaryBalance);
+
+            return $employee;
+        });
         if (!auth()->user()?->hasPermission('employee.view_salary_balance')) {
-            $employees->getCollection()->each->makeHidden(['balance', 'salary_balance_cache']);
+            $employees->getCollection()->each->makeHidden([
+                'balance',
+                'salary_balance_cache',
+                'salary_balance',
+                'salary_debt_amount',
+                'salary_balance_calculated_at',
+            ]);
         }
 
         $branches = Branch::select('id', 'name')->get();
