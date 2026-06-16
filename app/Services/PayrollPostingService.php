@@ -23,7 +23,7 @@ class PayrollPostingService
                 return $sheet;
             }
             if ($sheet->status !== 'calculated') {
-                throw ValidationException::withMessages(['status' => 'Chỉ bảng lương tạm tính mới được chốt.']);
+                throw ValidationException::withMessages(['status' => 'Chi bang luong tam tinh moi duoc chot.']);
             }
 
             foreach ($sheet->payslips as $slip) {
@@ -50,36 +50,54 @@ class PayrollPostingService
             ]);
             $sheet->recalculateTotals();
 
-            ActivityLog::log('paysheet_lock', "Chốt bảng lương {$sheet->code}", $sheet);
+            ActivityLog::log('paysheet_lock', "Chot bang luong {$sheet->code}", $sheet);
 
             return $sheet->fresh('payslips');
         });
     }
 
-    public function cancel(Paysheet $paysheet, string $reason, $eventAt): Paysheet
+    public function cancel(Paysheet $paysheet, string $reason, $eventAt): array
     {
         return DB::transaction(function () use ($paysheet, $reason, $eventAt) {
             $sheet = Paysheet::with('payslips')->lockForUpdate()->findOrFail($paysheet->id);
             if ($sheet->status === 'cancelled') {
-                return $sheet;
+                return [
+                    'paysheet' => $sheet->fresh(),
+                    'reversed_entries_count' => $this->payrollAccrualReversalCount($sheet),
+                ];
             }
-            if ($sheet->payments()->where('status', 'active')->exists()) {
+            if ($sheet->status !== 'locked') {
                 throw ValidationException::withMessages([
-                    'payments' => 'Phải hủy toàn bộ thanh toán hợp lệ trước khi hủy bảng lương.',
+                    'status' => 'Chi bang luong da chot moi duoc huy bang dong dao.',
+                ]);
+            }
+            if ($sheet->payments()->where('status', 'active')->where('amount', '>', 0)->exists()) {
+                throw ValidationException::withMessages([
+                    'payments' => 'Bang luong nay da co phieu thanh toan. Vui long huy cac phieu thanh toan truoc khi huy bang luong.',
+                ]);
+            }
+
+            $accruals = EmployeeSalaryLedgerEntry::query()
+                ->where('paysheet_id', $sheet->id)
+                ->where('type', EmployeeSalaryLedgerEntry::TYPE_PAYROLL_ACCRUAL)
+                ->where('is_effective', true)
+                ->orderBy('id')
+                ->get();
+
+            if ($accruals->isEmpty()) {
+                throw ValidationException::withMessages([
+                    'ledger' => 'Khong tim thay payroll_accrual de dao. Can doi soat ledger truoc khi huy bang luong.',
                 ]);
             }
 
             foreach ($sheet->payslips as $slip) {
-                $accrual = EmployeeSalaryLedgerEntry::where('payslip_id', $slip->id)
-                    ->where('type', EmployeeSalaryLedgerEntry::TYPE_PAYROLL_ACCRUAL)
-                    ->first();
-                if ($accrual) {
+                foreach ($accruals->where('payslip_id', $slip->id) as $accrual) {
                     $this->ledger->reverse(
                         $accrual,
                         "H{$slip->code}",
                         $eventAt,
                         $reason,
-                        "cancel_payroll_accrual:{$accrual->id}"
+                        "cancel:paysheet:{$sheet->id}:payroll_accrual:{$accrual->id}"
                     );
                 }
 
@@ -97,19 +115,95 @@ class PayrollPostingService
                         'cancelled_at' => now(),
                     ]);
                 }
+
                 $slip->update([
                     'applied_advance' => 0,
                     'paid_amount' => 0,
-                    'remaining' => (int) $slip->total_salary,
+                    'remaining' => 0,
                     'payment_status' => 'unpaid',
                 ]);
             }
 
             $sheet->update(['status' => 'cancelled', 'payment_status' => 'unpaid']);
-            ActivityLog::log('paysheet_cancel', "Hủy bảng lương {$sheet->code}", $sheet, ['reason' => $reason]);
+            $sheet->recalculateTotals();
+            ActivityLog::log('paysheet_cancel', "Huy bang luong {$sheet->code}", $sheet, ['reason' => $reason]);
 
-            return $sheet->fresh();
+            return [
+                'paysheet' => $sheet->fresh('payslips'),
+                'reversed_entries_count' => $this->payrollAccrualReversalCount($sheet),
+            ];
         });
+    }
+
+    public function canCancel(Paysheet $paysheet): array
+    {
+        $sheet = Paysheet::withCount([
+            'payslips',
+            'payments as active_payment_count' => fn ($query) => $query->where('status', 'active')->where('amount', '>', 0),
+        ])->findOrFail($paysheet->id);
+
+        $payrollAccrualCount = EmployeeSalaryLedgerEntry::query()
+            ->where('paysheet_id', $sheet->id)
+            ->where('type', EmployeeSalaryLedgerEntry::TYPE_PAYROLL_ACCRUAL)
+            ->where('is_effective', true)
+            ->count();
+        $salaryPaymentCount = EmployeeSalaryLedgerEntry::query()
+            ->where('paysheet_id', $sheet->id)
+            ->where('type', EmployeeSalaryLedgerEntry::TYPE_SALARY_PAYMENT)
+            ->where('is_effective', true)
+            ->count();
+        $cancelReverseCount = $this->payrollAccrualReversalCount($sheet);
+        $employeeCount = $sheet->payslips()->distinct('employee_id')->count('employee_id');
+
+        $canCancel = true;
+        $reason = 'ok';
+        if ($sheet->status === 'cancelled') {
+            $canCancel = false;
+            $reason = 'already_cancelled';
+        } elseif ($sheet->status !== 'locked') {
+            $canCancel = false;
+            $reason = 'not_locked';
+        } elseif ((int) $sheet->active_payment_count > 0) {
+            $canCancel = false;
+            $reason = 'has_active_payment';
+        } elseif ($payrollAccrualCount === 0) {
+            $canCancel = false;
+            $reason = 'missing_payroll_accrual';
+        }
+
+        return [
+            'paysheet_code' => $sheet->code,
+            'paysheet_status' => $sheet->status,
+            'total_salary' => (int) $sheet->total_salary,
+            'paid_amount' => (int) $sheet->total_paid,
+            'remaining_amount' => (int) $sheet->total_remaining,
+            'payslip_count' => (int) $sheet->payslips_count,
+            'active_payment_count' => (int) $sheet->active_payment_count,
+            'payroll_accrual_count' => $payrollAccrualCount,
+            'salary_payment_count' => $salaryPaymentCount,
+            'cancel_reverse_count' => $cancelReverseCount,
+            'employee_count' => $employeeCount,
+            'can_cancel' => $canCancel ? 'yes' : 'no',
+            'reason' => $reason,
+        ];
+    }
+
+    private function payrollAccrualReversalCount(Paysheet $sheet): int
+    {
+        $accrualIds = EmployeeSalaryLedgerEntry::query()
+            ->where('paysheet_id', $sheet->id)
+            ->where('type', EmployeeSalaryLedgerEntry::TYPE_PAYROLL_ACCRUAL)
+            ->pluck('id');
+
+        if ($accrualIds->isEmpty()) {
+            return 0;
+        }
+
+        return EmployeeSalaryLedgerEntry::query()
+            ->whereIn('original_entry_id', $accrualIds)
+            ->where('type', EmployeeSalaryLedgerEntry::TYPE_CANCEL_REVERSE)
+            ->where('is_effective', true)
+            ->count();
     }
 
     private function applyAdvancesFifo(Paysheet $sheet, $slip): void

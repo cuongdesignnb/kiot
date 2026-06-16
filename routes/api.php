@@ -160,6 +160,7 @@ Route::prefix('paysheets')->group(function () {
     Route::post('/{id}/recalculate', [PaysheetController::class, 'recalculate'])->middleware('permission:payroll.edit');
     Route::put('/{id}/lock', [PaysheetController::class, 'lock'])->middleware('permission:payroll.lock');
     Route::put('/{id}/cancel', [PaysheetController::class, 'cancel'])->middleware('permission:payroll.cancel');
+    Route::post('/{id}/cancel', [PaysheetController::class, 'cancel'])->middleware('permission:payroll.cancel');
     Route::post('/{id}/pay', [PaysheetController::class, 'pay'])->middleware('permission:payroll.pay');
     Route::put('/{id}/notes', [PaysheetController::class, 'updateNotes'])->middleware('permission:payroll.edit');
     // Step 24.12 — update standard_working_days + auto-recalc payslips

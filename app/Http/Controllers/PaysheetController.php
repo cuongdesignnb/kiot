@@ -396,13 +396,20 @@ class PaysheetController extends Controller
     {
         $data = $request->validate([
             'reason' => 'required|string|min:10|max:1000',
-            'cancel_date' => 'required|date',
+            'cancel_date' => 'nullable|date',
             'override_reason' => 'nullable|string|min:10|max:1000',
         ]);
         $paysheet = Paysheet::findOrFail($id);
-        $eventAt = $dateGuard->assertAllowed($data['cancel_date'], $data['override_reason'] ?? null, 'paysheet_cancel');
+        $eventAt = $dateGuard->assertAllowed($data['cancel_date'] ?? now(), $data['override_reason'] ?? null, 'paysheet_cancel');
+        $result = $service->cancel($paysheet, $data['reason'], $eventAt);
 
-        return response()->json(['success' => true, 'data' => $service->cancel($paysheet, $data['reason'], $eventAt)]);
+        return response()->json([
+            'success' => true,
+            'message' => 'Da huy bang luong',
+            'data' => $result['paysheet'],
+            'paysheet' => $result['paysheet'],
+            'reversed_entries_count' => $result['reversed_entries_count'],
+        ]);
     }
 
     /**

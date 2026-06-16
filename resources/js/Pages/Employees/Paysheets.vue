@@ -633,10 +633,8 @@
                                                     >
                                                         <button
                                                             v-if="
-                                                                ps.status !==
-                                                                    'locked' &&
-                                                                ps.status !==
-                                                                    'cancelled'
+                                                                ps.status ===
+                                                                    'locked'
                                                             "
                                                             @click="
                                                                 cancelPaysheet(
