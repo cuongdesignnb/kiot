@@ -210,6 +210,20 @@ const ledgerFilters = reactive({ from_date: "", to_date: "", type: "", status: "
 const ledgerDetail = ref(null);
 const showLedgerDetail = ref(false);
 const advances = ref({ data: [], current_page: 1, last_page: 1 });
+const salaryPaymentFlow = reactive({
+    show: false,
+    loading: false,
+    submitting: false,
+    mode: "salary_payment",
+    preview: null,
+    rows: [],
+    amount: 0,
+    paid_at: new Date().toISOString().slice(0, 16),
+    advanced_at: new Date().toISOString().slice(0, 16),
+    payment_method: "cash",
+    note: "",
+    idempotency_key: "",
+});
 const showAdjustmentModal = ref(false);
 const adjustmentSaving = ref(false);
 const adjustmentForm = reactive({
@@ -276,6 +290,83 @@ const loadAdvances = async (page = 1) => {
     if (!form.id || !can("payroll.ledger.view")) return;
     const response = await axios.get(`/api/employees/${form.id}/salary-advances`, { params: { page } });
     advances.value = response.data;
+};
+
+const newIdempotencyKey = (prefix) => `${prefix}:${form.id}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+
+const openSalaryPaymentFlow = async () => {
+    if (!form.id || salaryPaymentFlow.loading || salaryPaymentFlow.submitting) return;
+    salaryPaymentFlow.loading = true;
+    try {
+        const response = await axios.get(`/api/employees/${form.id}/salary-payment-preview`);
+        const preview = response.data;
+        salaryPaymentFlow.preview = preview;
+        salaryPaymentFlow.mode = preview.mode;
+        salaryPaymentFlow.payment_method = "cash";
+        salaryPaymentFlow.paid_at = new Date().toISOString().slice(0, 16);
+        salaryPaymentFlow.advanced_at = new Date().toISOString().slice(0, 16);
+        salaryPaymentFlow.note = preview.mode === "salary_payment"
+            ? "Thanh toán từ chi tiết nhân viên"
+            : "Tạm ứng từ chi tiết nhân viên";
+        salaryPaymentFlow.idempotency_key = newIdempotencyKey(preview.mode === "salary_payment" ? "employee-payment-ui" : "employee-advance-ui");
+        salaryPaymentFlow.rows = (preview.payslips || []).map((slip) => ({
+            ...slip,
+            selected: true,
+            amount: Number(slip.remaining_amount || 0),
+        }));
+        salaryPaymentFlow.amount = 0;
+        salaryPaymentFlow.show = true;
+    } catch (error) {
+        alert(error.response?.data?.message || "Không thể tải thông tin thanh toán lương.");
+    } finally {
+        salaryPaymentFlow.loading = false;
+    }
+};
+
+const selectedSalaryPaymentRows = computed(() => salaryPaymentFlow.rows.filter((row) => row.selected));
+const salaryPaymentTotal = computed(() => selectedSalaryPaymentRows.value.reduce((sum, row) => sum + Number(row.amount || 0), 0));
+const salaryPaymentInvalid = computed(() => {
+    if (salaryPaymentFlow.mode === "salary_advance") {
+        return Number(salaryPaymentFlow.amount) <= 0;
+    }
+    return selectedSalaryPaymentRows.value.length === 0
+        || selectedSalaryPaymentRows.value.some((row) => Number(row.amount) <= 0 || Number(row.amount) > Number(row.remaining_amount))
+        || salaryPaymentTotal.value <= 0;
+});
+
+const submitSalaryPaymentFlow = async () => {
+    if (!form.id || salaryPaymentFlow.submitting || salaryPaymentInvalid.value) return;
+    salaryPaymentFlow.submitting = true;
+    try {
+        const payload = salaryPaymentFlow.mode === "salary_payment"
+            ? {
+                mode: "salary_payment",
+                payment_method: salaryPaymentFlow.payment_method,
+                paid_at: salaryPaymentFlow.paid_at,
+                note: salaryPaymentFlow.note,
+                items: selectedSalaryPaymentRows.value.map((row) => ({
+                    payslip_id: row.id,
+                    amount: Number(row.amount),
+                })),
+            }
+            : {
+                mode: "salary_advance",
+                payment_method: salaryPaymentFlow.payment_method,
+                advanced_at: salaryPaymentFlow.advanced_at,
+                note: salaryPaymentFlow.note,
+                amount: Number(salaryPaymentFlow.amount),
+            };
+        await axios.post(`/api/employees/${form.id}/salary-payments`, payload, {
+            headers: { "Idempotency-Key": salaryPaymentFlow.idempotency_key },
+        });
+        salaryPaymentFlow.show = false;
+        await Promise.all([loadLedger(), loadAdvances()]);
+        router.reload({ only: ["employees"] });
+    } catch (error) {
+        alert(error.response?.data?.message || "Không thể tạo phiếu chi.");
+    } finally {
+        salaryPaymentFlow.submitting = false;
+    }
 };
 
 const openLedgerEntry = async (entry) => {
@@ -1617,6 +1708,9 @@ const bonusCalcLabel = (calc) => {
                             </div>
 
                             <div class="flex justify-end gap-2">
+                                <button v-if="can('payroll.pay')" type="button" :disabled="salaryPaymentFlow.loading" @click="openSalaryPaymentFlow" class="rounded bg-blue-600 px-4 py-2 font-bold text-white disabled:opacity-50">
+                                    Thanh toán lương
+                                </button>
                                 <button v-if="can('payroll.adjust')" type="button" @click="showAdjustmentModal = true" class="rounded bg-amber-600 px-4 py-2 font-bold text-white">+ Điều chỉnh</button>
                                 <button v-if="can('payroll.ledger.export')" type="button" @click="exportLedger" class="rounded bg-green-600 px-4 py-2 font-bold text-white">Xuất Excel/CSV</button>
                             </div>
@@ -1808,6 +1902,114 @@ const bonusCalcLabel = (calc) => {
         </div>
 
         <Teleport to="body">
+            <div v-if="salaryPaymentFlow.show" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40" @click.self="salaryPaymentFlow.show = false">
+                <div class="max-h-[90vh] w-full max-w-5xl overflow-auto rounded-lg bg-white shadow-xl">
+                    <div class="flex items-start justify-between border-b p-4">
+                        <div>
+                            <div class="text-lg font-bold">
+                                {{ salaryPaymentFlow.mode === 'salary_payment' ? 'Thanh toán lương' : 'Tạo tạm ứng lương' }}
+                            </div>
+                            <div class="text-sm text-gray-500">
+                                {{ form.code }} - {{ form.name }}
+                            </div>
+                        </div>
+                        <button type="button" class="text-2xl text-gray-400" @click="salaryPaymentFlow.show = false">&times;</button>
+                    </div>
+
+                    <div class="space-y-4 p-5">
+                        <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+                            <div class="rounded border bg-gray-50 p-3">
+                                <div class="text-xs text-gray-500">Số dư Nợ & Tạm ứng</div>
+                                <div class="mt-1 font-bold">{{ formatCurrency(salaryPaymentFlow.preview?.current_balance || 0) }}</div>
+                            </div>
+                            <div class="rounded border bg-gray-50 p-3">
+                                <div class="text-xs text-gray-500">Tổng còn cần trả</div>
+                                <div class="mt-1 font-bold text-orange-600">{{ formatCurrency(salaryPaymentFlow.preview?.total_remaining || 0) }}</div>
+                            </div>
+                            <div class="rounded border bg-gray-50 p-3">
+                                <div class="text-xs text-gray-500">Chế độ</div>
+                                <div class="mt-1 font-bold">{{ salaryPaymentFlow.mode === 'salary_payment' ? 'Thanh toán lương' : 'Tạm ứng lương' }}</div>
+                            </div>
+                            <div class="rounded border bg-gray-50 p-3">
+                                <div class="text-xs text-gray-500">Tổng tiền chi</div>
+                                <div class="mt-1 font-bold text-blue-600">{{ formatCurrency(salaryPaymentFlow.mode === 'salary_payment' ? salaryPaymentTotal : salaryPaymentFlow.amount) }}</div>
+                            </div>
+                        </div>
+
+                        <div v-if="salaryPaymentFlow.mode === 'salary_advance'" class="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                            Nhân viên không còn phiếu lương cần thanh toán. Khoản chi này sẽ được ghi nhận là tạm ứng lương và tự cấn trừ vào kỳ lương tiếp theo.
+                        </div>
+
+                        <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+                            <div>
+                                <label class="mb-1 block text-sm text-gray-600">Thời gian</label>
+                                <input v-if="salaryPaymentFlow.mode === 'salary_payment'" v-model="salaryPaymentFlow.paid_at" type="datetime-local" class="w-full rounded border px-3 py-2" />
+                                <input v-else v-model="salaryPaymentFlow.advanced_at" type="datetime-local" class="w-full rounded border px-3 py-2" />
+                            </div>
+                            <div>
+                                <label class="mb-1 block text-sm text-gray-600">Phương thức</label>
+                                <select v-model="salaryPaymentFlow.payment_method" class="w-full rounded border px-3 py-2">
+                                    <option value="cash">Tiền mặt</option>
+                                    <option value="bank_transfer">Chuyển khoản</option>
+                                    <option value="ewallet">Ví điện tử</option>
+                                </select>
+                            </div>
+                            <div v-if="salaryPaymentFlow.mode === 'salary_advance'">
+                                <label class="mb-1 block text-sm text-gray-600">Số tiền tạm ứng</label>
+                                <MoneyInput v-model="salaryPaymentFlow.amount" :min="1" input-class="w-full border rounded px-3 py-2" />
+                            </div>
+                        </div>
+
+                        <div v-if="salaryPaymentFlow.mode === 'salary_payment'" class="overflow-hidden rounded border">
+                            <table class="w-full text-sm">
+                                <thead class="bg-gray-50">
+                                    <tr>
+                                        <th class="px-3 py-2 text-left">Chọn</th>
+                                        <th class="px-3 py-2 text-left">Mã phiếu lương</th>
+                                        <th class="px-3 py-2 text-left">Bảng lương / Kỳ lương</th>
+                                        <th class="px-3 py-2 text-right">Thành tiền</th>
+                                        <th class="px-3 py-2 text-right">Đã trả</th>
+                                        <th class="px-3 py-2 text-right">Còn cần trả</th>
+                                        <th class="px-3 py-2 text-right">Tiền trả</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="row in salaryPaymentFlow.rows" :key="row.id" class="border-t">
+                                        <td class="px-3 py-2">
+                                            <input v-model="row.selected" type="checkbox" class="rounded border-gray-300 text-blue-600" />
+                                        </td>
+                                        <td class="px-3 py-2 font-medium text-blue-600">{{ row.code }}</td>
+                                        <td class="px-3 py-2">
+                                            <div>{{ row.paysheet_name || row.paysheet_code }}</div>
+                                            <div class="text-xs text-gray-500">{{ row.period_label }}</div>
+                                        </td>
+                                        <td class="px-3 py-2 text-right">{{ formatCurrency(row.total_salary) }}</td>
+                                        <td class="px-3 py-2 text-right">{{ formatCurrency(row.paid_amount) }}</td>
+                                        <td class="px-3 py-2 text-right font-semibold text-orange-600">{{ formatCurrency(row.remaining_amount) }}</td>
+                                        <td class="px-3 py-2">
+                                            <MoneyInput v-model="row.amount" :min="1" :max="row.remaining_amount" input-class="w-full border rounded px-2 py-1 text-right" />
+                                            <div v-if="Number(row.amount) > Number(row.remaining_amount)" class="mt-1 text-xs text-red-600">Không được vượt còn cần trả.</div>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div>
+                            <label class="mb-1 block text-sm text-gray-600">Ghi chú</label>
+                            <textarea v-model="salaryPaymentFlow.note" rows="2" class="w-full rounded border px-3 py-2"></textarea>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-end gap-3 border-t bg-gray-50 p-4">
+                        <button type="button" class="rounded border px-4 py-2" @click="salaryPaymentFlow.show = false">Bỏ qua</button>
+                        <button type="button" :disabled="salaryPaymentFlow.submitting || salaryPaymentInvalid" class="rounded bg-blue-600 px-4 py-2 font-bold text-white disabled:opacity-50" @click="submitSalaryPaymentFlow">
+                            {{ salaryPaymentFlow.mode === 'salary_payment' ? 'Tạo phiếu chi' : 'Tạo phiếu chi tạm ứng' }}
+                        </button>
+                    </div>
+                </div>
+            </div>
+
             <div v-if="showAdjustmentModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40" @click.self="showAdjustmentModal = false">
                 <div class="w-full max-w-xl rounded-lg bg-white shadow-xl">
                     <div class="border-b p-4 text-lg font-bold">Điều chỉnh nợ và tạm ứng</div>

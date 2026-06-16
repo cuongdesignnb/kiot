@@ -14,6 +14,7 @@ use App\Http\Controllers\TimekeepingSettingController;
 use App\Http\Controllers\PayrollSettingController;
 use App\Http\Controllers\AttendanceDeviceController;
 use App\Http\Controllers\AttendanceLogController;
+use App\Http\Controllers\EmployeeSalaryPaymentController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -189,6 +190,10 @@ Route::prefix('employees/{employee}')->group(function () {
         ->middleware('permission:payroll.ledger.view');
     Route::post('/salary-advances', [\App\Http\Controllers\SalaryAdvanceController::class, 'store'])
         ->middleware('permission:payroll.advance.create');
+    Route::get('/salary-payment-preview', [EmployeeSalaryPaymentController::class, 'preview'])
+        ->middleware('permission:payroll.ledger.view');
+    Route::post('/salary-payments', [EmployeeSalaryPaymentController::class, 'store'])
+        ->middleware('permission:payroll.pay');
     Route::post('/rebuild-salary-balance', [\App\Http\Controllers\EmployeeSalaryLedgerController::class, 'rebuild'])
         ->middleware('permission:payroll.rebuild_balance');
 });
