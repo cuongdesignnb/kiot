@@ -77,6 +77,7 @@ const form = useForm({
     branch_id: null,
     department_id: null,
     job_title_id: null,
+    salary_balance_cache: 0,
     notes: "",
     is_active: true,
 });
@@ -102,6 +103,8 @@ const openEditModal = (employee) => {
     form.branch_id = employee.branch_id;
     form.department_id = employee.department_id;
     form.job_title_id = employee.job_title_id;
+    form.salary_balance_cache = Number(employee.salary_balance_cache || 0);
+    ledgerSummary.value.current_balance = Number(employee.salary_balance_cache || 0);
     form.notes = employee.notes;
     form.is_active = employee.is_active;
 
@@ -179,8 +182,153 @@ const advanceForm = reactive({
     note: "",
 });
 const advanceSaving = ref(false);
+const showAdvanceModal = ref(false);
+const showReconciliationDetail = ref(false);
+const salaryPayment = reactive({
+    show: false,
+    loading: false,
+    saving: false,
+    employee: null,
+    balance: 0,
+    amount: 0,
+    payment_date: new Date().toISOString().slice(0, 16),
+    payment_method: "cash",
+    note: "",
+    open_payslips: [],
+    allocations: {},
+    error: "",
+});
 
 const ledgerRows = computed(() => ledgerData.value?.data || []);
+const currentSalaryBalance = computed(() => Number(ledgerSummary.value?.current_balance ?? form.salary_balance_cache ?? 0));
+const balanceTitle = computed(() => {
+    if (currentSalaryBalance.value > 0) return "Nợ hiện tại";
+    if (currentSalaryBalance.value < 0) return "Tạm ứng vượt";
+    return "Đã tất toán";
+});
+const balanceDescription = computed(() => {
+    if (currentSalaryBalance.value > 0) return "Công ty còn phải trả nhân viên";
+    if (currentSalaryBalance.value < 0) return "Nhân viên còn phải hoàn/cấn trừ kỳ sau";
+    return "Không còn nợ hoặc tạm ứng";
+});
+const ledgerTypeLabel = (type) => ({
+    opening_balance: "Số dư đầu kỳ",
+    payroll_accrual: "Phiếu lương",
+    salary_payment: "Thanh toán lương",
+    salary_advance: "Tạm ứng",
+    advance_repay: "Hoàn ứng",
+    adjustment_increase: "Điều chỉnh tăng",
+    adjustment_decrease: "Điều chỉnh giảm",
+    cancel_reverse: "Phiếu đảo/hủy",
+    manual_adjustment: "Điều chỉnh",
+}[type] || type || "-");
+const paymentMethodLabel = (method) => ({
+    cash: "Tiền mặt",
+    bank: "Chuyển khoản",
+    bank_transfer: "Chuyển khoản",
+    ewallet: "Ví điện tử",
+    other: "Khác",
+}[method] || method || "-");
+const formatDateTime = (value) => value ? new Date(value).toLocaleString("vi-VN") : "-";
+const resetAdvanceForm = () => {
+    advanceForm.amount = 0;
+    advanceForm.advance_date = new Date().toISOString().slice(0, 16);
+    advanceForm.payment_method = "cash";
+    advanceForm.branch_id = form.branch_id;
+    advanceForm.note = "";
+};
+const openAdvanceCreateModal = () => {
+    resetAdvanceForm();
+    showAdvanceModal.value = true;
+};
+const resetSalaryPayment = () => {
+    salaryPayment.employee = null;
+    salaryPayment.balance = Number(form.salary_balance_cache || ledgerSummary.value?.current_balance || 0);
+    salaryPayment.amount = 0;
+    salaryPayment.payment_date = new Date().toISOString().slice(0, 16);
+    salaryPayment.payment_method = "cash";
+    salaryPayment.note = "";
+    salaryPayment.open_payslips = [];
+    salaryPayment.allocations = {};
+    salaryPayment.error = "";
+};
+const allocateSalaryPayment = (amount) => {
+    let remaining = Math.max(0, Number(amount || 0));
+    const next = {};
+    salaryPayment.open_payslips.forEach((slip) => {
+        const pay = Math.min(remaining, Number(slip.remaining || 0));
+        next[slip.id] = pay;
+        remaining -= pay;
+    });
+    salaryPayment.allocations = next;
+};
+const onSalaryPaymentAmountInput = (amount) => {
+    const maxPayable = Math.max(0, Number(salaryPayment.balance || 0));
+    salaryPayment.amount = Math.min(Math.max(0, Number(amount || 0)), maxPayable);
+    allocateSalaryPayment(salaryPayment.amount);
+};
+const onPayslipAllocationInput = (slip, amount) => {
+    salaryPayment.allocations = {
+        ...salaryPayment.allocations,
+        [slip.id]: Math.min(Math.max(0, Number(amount || 0)), Number(slip.remaining || 0)),
+    };
+    salaryPayment.amount = Object.values(salaryPayment.allocations).reduce((sum, value) => sum + Number(value || 0), 0);
+};
+const salaryPaymentAllocatedTotal = computed(() => Object.values(salaryPayment.allocations).reduce((sum, value) => sum + Number(value || 0), 0));
+const salaryPaymentDebtAfter = computed(() => Math.max(0, Number(salaryPayment.balance || 0) - Number(salaryPayment.amount || 0)));
+const canSubmitSalaryPayment = computed(() => {
+    const amount = Number(salaryPayment.amount || 0);
+    return amount > 0
+        && amount <= Number(salaryPayment.balance || 0)
+        && salaryPaymentAllocatedTotal.value === amount
+        && salaryPayment.open_payslips.length > 0;
+});
+const openSalaryPaymentModal = async () => {
+    if (!form.id || !can("payroll.pay") || currentSalaryBalance.value <= 0) return;
+    resetSalaryPayment();
+    salaryPayment.show = true;
+    salaryPayment.loading = true;
+    try {
+        const response = await axios.get(`/api/employees/${form.id}/salary-payment-preview`);
+        salaryPayment.employee = response.data.employee;
+        salaryPayment.balance = Number(response.data.salary_balance || currentSalaryBalance.value || 0);
+        salaryPayment.open_payslips = response.data.open_payslips || [];
+        salaryPayment.amount = 0;
+        allocateSalaryPayment(salaryPayment.amount);
+    } catch (error) {
+        salaryPayment.error = error.response?.data?.message || "Không thể tải dữ liệu thanh toán lương.";
+    } finally {
+        salaryPayment.loading = false;
+    }
+};
+const submitSalaryPayment = async (printAfter = false) => {
+    if (!canSubmitSalaryPayment.value || salaryPayment.saving) return;
+    salaryPayment.saving = true;
+    salaryPayment.error = "";
+    try {
+        const payments = salaryPayment.open_payslips
+            .map((slip) => ({ payslip_id: slip.id, amount: Number(salaryPayment.allocations[slip.id] || 0) }))
+            .filter((item) => item.amount > 0);
+        await axios.post(`/api/employees/${form.id}/salary-payments`, {
+            payment_date: salaryPayment.payment_date,
+            payment_method: salaryPayment.payment_method,
+            note: salaryPayment.note,
+            payments,
+        }, {
+            headers: { "Idempotency-Key": `employee-payment-ui:${form.id}:${Date.now()}` },
+        });
+        salaryPayment.show = false;
+        await Promise.all([loadLedger(), loadAdvances()]);
+        router.reload({ only: ["employees"] });
+        if (printAfter) {
+            alert("Đã tạo phiếu chi. Chức năng in chứng từ sẽ mở theo route in khi hệ thống bổ sung.");
+        }
+    } catch (error) {
+        salaryPayment.error = error.response?.data?.message || "Không thể tạo phiếu chi lương.";
+    } finally {
+        salaryPayment.saving = false;
+    }
+};
 const ledgerStatusLabel = (entry) => {
     if (entry.type === "cancel_reverse") return "Dòng đảo";
     if (entry.status === "reversed") return "Đã đảo";
@@ -295,6 +443,7 @@ const createAdvance = async () => {
         });
         advanceForm.amount = 0;
         advanceForm.note = "";
+        showAdvanceModal.value = false;
         await loadLedger();
         await loadAdvances();
         router.reload({ only: ["employees"] });
@@ -1486,10 +1635,63 @@ const bonusCalcLabel = (calc) => {
 
                         <!-- TAB NỢ VÀ TẠM ỨNG -->
                         <div v-show="activeTab === 'ledger'" class="space-y-4">
-                            <div class="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+                            <div class="rounded-lg border border-blue-200 bg-white p-4">
+                                <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                                    <div>
+                                        <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">{{ balanceTitle }}</div>
+                                        <div class="mt-1 text-3xl font-bold" :class="currentSalaryBalance < 0 ? 'text-red-600' : 'text-gray-900'">
+                                            {{ formatCurrency(currentSalaryBalance) }}
+                                        </div>
+                                        <div class="mt-1 text-sm text-gray-600">{{ balanceDescription }}</div>
+                                        <div class="mt-2 text-xs text-gray-500">
+                                            Số dương: công ty còn phải trả. Số 0: đã tất toán. Số âm: nhân viên tạm ứng vượt/còn phải hoàn.
+                                        </div>
+                                    </div>
+                                    <div class="flex flex-wrap justify-end gap-2">
+                                        <button v-if="can('payroll.pay')" type="button" :disabled="currentSalaryBalance <= 0"
+                                            @click="openSalaryPaymentModal"
+                                            class="rounded bg-blue-600 px-4 py-2 font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">
+                                            Thanh toán lương
+                                        </button>
+                                        <button v-if="can('payroll.advance.create')" type="button" @click="openAdvanceCreateModal" class="rounded border border-amber-500 px-4 py-2 font-bold text-amber-700 hover:bg-amber-50">
+                                            Tạo tạm ứng
+                                        </button>
+                                        <button v-if="can('payroll.adjust')" type="button" @click="showAdjustmentModal = true" class="rounded border px-4 py-2 font-bold text-gray-700 hover:bg-gray-50">
+                                            + Điều chỉnh
+                                        </button>
+                                        <button v-if="can('payroll.ledger.export')" type="button" @click="exportLedger" class="rounded border px-4 py-2 font-bold text-gray-700 hover:bg-gray-50">
+                                            Xuất file nợ lương
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="mt-3 border-t pt-3">
+                                    <button type="button" class="text-sm font-semibold text-blue-600 hover:underline" @click="showReconciliationDetail = !showReconciliationDetail">
+                                        {{ showReconciliationDetail ? 'Ẩn chi tiết đối soát' : 'Chi tiết đối soát' }}
+                                    </button>
+                                    <div v-show="showReconciliationDetail" class="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                                        <div class="rounded border bg-gray-50 p-3">
+                                            <div class="text-xs text-gray-500">Số dư đầu kỳ</div>
+                                            <div class="font-bold">{{ formatCurrency(ledgerSummary.opening_balance) }}</div>
+                                        </div>
+                                        <div class="rounded border bg-gray-50 p-3">
+                                            <div class="text-xs text-gray-500">Tổng phát sinh tăng</div>
+                                            <div class="font-bold text-blue-600">{{ formatCurrency(ledgerSummary.total_increase) }}</div>
+                                        </div>
+                                        <div class="rounded border bg-gray-50 p-3">
+                                            <div class="text-xs text-gray-500">Tổng phát sinh giảm</div>
+                                            <div class="font-bold text-red-600">-{{ formatCurrency(ledgerSummary.total_decrease) }}</div>
+                                        </div>
+                                        <div class="rounded border bg-gray-50 p-3">
+                                            <div class="text-xs text-gray-500">Biến động ròng</div>
+                                            <div class="font-bold">{{ formatCurrency(ledgerSummary.net_change) }}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div v-if="false" class="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
                                 Số dư dương: công ty còn phải trả nhân viên. Số dư 0: đã tất toán. Số dư âm: nhân viên đã tạm ứng vượt hoặc công ty còn phải thu.
                             </div>
-                            <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                            <div v-if="false" class="grid grid-cols-2 lg:grid-cols-5 gap-3">
                                 <div class="bg-white border rounded-lg p-3">
                                     <div class="text-xs text-gray-500">Số dư đầu kỳ</div>
                                     <div class="font-bold mt-1">{{ formatCurrency(ledgerSummary.opening_balance) }}</div>
@@ -1512,12 +1714,12 @@ const bonusCalcLabel = (calc) => {
                                 </div>
                             </div>
 
-                            <div class="flex justify-end gap-2">
+                            <div v-if="false" class="flex justify-end gap-2">
                                 <button v-if="can('payroll.adjust')" type="button" @click="showAdjustmentModal = true" class="rounded bg-amber-600 px-4 py-2 font-bold text-white">+ Điều chỉnh</button>
                                 <button v-if="can('payroll.ledger.export')" type="button" @click="exportLedger" class="rounded bg-green-600 px-4 py-2 font-bold text-white">Xuất Excel/CSV</button>
                             </div>
 
-                            <div v-if="can('payroll.advance.create')" class="bg-white border rounded-lg p-4">
+                            <div v-if="false && can('payroll.advance.create')" class="bg-white border rounded-lg p-4">
                                 <div class="font-bold text-gray-800 mb-3">Tạo tạm ứng</div>
                                 <div class="grid grid-cols-2 lg:grid-cols-5 gap-3 items-end">
                                     <div>
@@ -1599,13 +1801,18 @@ const bonusCalcLabel = (calc) => {
                                                 <td class="px-3 py-2 font-medium text-blue-600">
                                                     <button type="button" class="hover:underline" @click="openLedgerEntry(entry)">{{ entry.code || "-" }}</button>
                                                 </td>
-                                                <td class="px-3 py-2">{{ new Date(entry.event_at).toLocaleString("vi-VN") }}</td>
-                                                <td class="px-3 py-2">{{ entry.type }}</td>
+                                                <td class="px-3 py-2">{{ formatDateTime(entry.event_at) }}</td>
+                                                <td class="px-3 py-2">{{ ledgerTypeLabel(entry.type) }}</td>
                                                 <td class="px-3 py-2 text-right" :class="entry.amount < 0 ? 'text-red-600' : 'text-blue-600'">{{ formatCurrency(entry.amount) }}</td>
                                                 <td class="px-3 py-2 text-right font-semibold">{{ formatCurrency(entry.balance_after) }}</td>
                                                 <td class="px-3 py-2">{{ entry.note || "-" }}</td>
                                                 <td class="px-3 py-2">{{ entry.creator?.name || "-" }}</td>
-                                                <td class="px-3 py-2">{{ ledgerStatusLabel(entry) }}</td>
+                                                <td class="px-3 py-2">
+                                                    <span class="rounded-full px-2 py-0.5 text-xs font-semibold"
+                                                        :class="entry.type === 'cancel_reverse' || entry.status === 'reversed' ? 'bg-gray-100 text-gray-700' : 'bg-green-50 text-green-700'">
+                                                        {{ ledgerStatusLabel(entry) }}
+                                                    </span>
+                                                </td>
                                                 <td class="px-3 py-2"><button type="button" class="text-blue-600 hover:underline" @click="openLedgerEntry(entry)">Chi tiết</button></td>
                                             </tr>
                                             <tr v-if="!ledgerRows.length">
@@ -1699,6 +1906,164 @@ const bonusCalcLabel = (calc) => {
         </div>
 
         <Teleport to="body">
+            <div v-if="salaryPayment.show" class="fixed inset-0 z-[103] flex items-center justify-center bg-black/50 px-4" @click.self="salaryPayment.show = false">
+                <div class="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-lg bg-white shadow-2xl">
+                    <div class="flex items-center justify-between border-b px-5 py-4">
+                        <div>
+                            <div class="text-lg font-bold">
+                                Thanh toán lương cho {{ salaryPayment.employee?.name || form.name }} ({{ salaryPayment.employee?.code || form.code }})
+                            </div>
+                            <div class="mt-2 text-sm text-gray-600">
+                                <span class="font-semibold text-blue-600">{{ salaryPayment.employee?.name || form.name }}</span>
+                                <span> | Phòng ban: {{ salaryPayment.employee?.department || '-' }}</span>
+                                <span> | Chức danh: {{ salaryPayment.employee?.position || '-' }}</span>
+                            </div>
+                        </div>
+                        <button type="button" class="text-2xl leading-none text-gray-600 hover:text-gray-900" @click="salaryPayment.show = false">&times;</button>
+                    </div>
+
+                    <div v-if="salaryPayment.loading" class="p-10 text-center text-gray-500">Đang tải dữ liệu thanh toán...</div>
+                    <div v-else class="space-y-5 p-5">
+                        <div v-if="salaryPayment.error" class="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">{{ salaryPayment.error }}</div>
+                        <div class="grid gap-5 lg:grid-cols-[1fr_1fr_1.1fr]">
+                            <div class="space-y-4 text-sm">
+                                <div class="grid grid-cols-[110px_1fr] items-center gap-3">
+                                    <div class="text-gray-600">Nợ hiện tại:</div>
+                                    <div class="text-right font-semibold">{{ formatCurrency(salaryPayment.balance) }}</div>
+                                </div>
+                                <div class="grid grid-cols-[110px_1fr] items-center gap-3">
+                                    <div class="text-gray-600">Số tiền:</div>
+                                    <MoneyInput
+                                        :model-value="salaryPayment.amount"
+                                        :min="1"
+                                        input-class="w-full rounded border px-3 py-2 text-right"
+                                        @input="onSalaryPaymentAmountInput"
+                                    />
+                                </div>
+                                <div class="grid grid-cols-[110px_1fr] items-center gap-3">
+                                    <div class="text-gray-600">Nợ sau:</div>
+                                    <div class="text-right font-semibold">{{ formatCurrency(salaryPaymentDebtAfter) }}</div>
+                                </div>
+                            </div>
+                            <div class="space-y-4 text-sm">
+                                <div class="grid grid-cols-[105px_1fr] items-center gap-3">
+                                    <div class="text-gray-600">Thời gian:</div>
+                                    <input v-model="salaryPayment.payment_date" type="datetime-local" class="rounded border px-3 py-2" />
+                                </div>
+                                <div class="grid grid-cols-[105px_1fr] items-center gap-3">
+                                    <div class="text-gray-600">Phương thức:</div>
+                                    <select v-model="salaryPayment.payment_method" class="rounded border px-3 py-2">
+                                        <option value="cash">Tiền mặt</option>
+                                        <option value="bank_transfer">Chuyển khoản</option>
+                                        <option value="other">Khác</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <textarea v-model="salaryPayment.note" rows="4" class="min-h-[92px] rounded border px-3 py-2 text-sm" placeholder="Ghi chú..."></textarea>
+                        </div>
+
+                        <div>
+                            <div class="mb-3 flex items-center gap-2 font-bold text-gray-800">
+                                Chi tiết phiếu lương
+                                <span class="text-xs text-gray-500">Ưu tiên thanh toán phiếu cũ trước</span>
+                            </div>
+                            <div class="overflow-x-auto rounded border">
+                                <table class="w-full text-sm">
+                                    <thead class="bg-gray-100 text-gray-700">
+                                        <tr>
+                                            <th class="px-3 py-2 text-left">Mã phiếu lương</th>
+                                            <th class="px-3 py-2 text-right">Tổng lương</th>
+                                            <th class="px-3 py-2 text-right">Đã trả</th>
+                                            <th class="px-3 py-2 text-right">Còn cần trả</th>
+                                            <th class="px-3 py-2 text-right">Tiền trả nhân viên</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr v-for="slip in salaryPayment.open_payslips" :key="slip.id" class="border-t">
+                                            <td class="px-3 py-2 font-medium">{{ slip.code }}</td>
+                                            <td class="px-3 py-2 text-right">{{ formatCurrency(slip.total_salary) }}</td>
+                                            <td class="px-3 py-2 text-right">{{ formatCurrency(slip.paid_amount) }}</td>
+                                            <td class="px-3 py-2 text-right">{{ formatCurrency(slip.remaining) }}</td>
+                                            <td class="px-3 py-2">
+                                                <MoneyInput
+                                                    :model-value="salaryPayment.allocations[slip.id] || 0"
+                                                    :min="0"
+                                                    input-class="w-full rounded border px-3 py-1.5 text-right"
+                                                    @input="(amount) => onPayslipAllocationInput(slip, amount)"
+                                                />
+                                            </td>
+                                        </tr>
+                                        <tr v-if="!salaryPayment.open_payslips.length">
+                                            <td colspan="5" class="px-3 py-8 text-center text-gray-500">Không có phiếu lương cần thanh toán.</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="mt-3 grid gap-2 text-sm lg:grid-cols-2">
+                                <div class="text-gray-600">Tổng thanh toán phiếu lương: <b>{{ formatCurrency(salaryPaymentAllocatedTotal) }}</b></div>
+                                <div class="text-gray-600">Cộng vào tài khoản tạm ứng: <b>0</b></div>
+                            </div>
+                            <div v-if="salaryPaymentAllocatedTotal !== Number(salaryPayment.amount || 0)" class="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-sm text-amber-700">
+                                Tổng tiền phân bổ chưa khớp số tiền thanh toán.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-end gap-2 border-t px-5 py-3">
+                        <button type="button" class="rounded border px-4 py-2" @click="salaryPayment.show = false">Bỏ qua</button>
+                        <button type="button" class="rounded bg-blue-600 px-4 py-2 font-bold text-white disabled:opacity-50"
+                            :disabled="!canSubmitSalaryPayment || salaryPayment.saving" @click="submitSalaryPayment(true)">
+                            Tạo phiếu chi & in
+                        </button>
+                        <button type="button" class="rounded bg-blue-600 px-4 py-2 font-bold text-white disabled:opacity-50"
+                            :disabled="!canSubmitSalaryPayment || salaryPayment.saving" @click="submitSalaryPayment(false)">
+                            Tạo phiếu chi
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div v-if="showAdvanceModal" class="fixed inset-0 z-[103] flex items-center justify-center bg-black/50 px-4" @click.self="showAdvanceModal = false">
+                <div class="w-full max-w-xl rounded-lg bg-white shadow-2xl">
+                    <div class="flex items-center justify-between border-b px-5 py-4">
+                        <div class="text-lg font-bold">Tạo tạm ứng cho {{ form.name }}</div>
+                        <button type="button" class="text-2xl leading-none text-gray-600 hover:text-gray-900" @click="showAdvanceModal = false">&times;</button>
+                    </div>
+                    <div class="grid gap-4 p-5">
+                        <div>
+                            <label class="mb-1 block text-xs text-gray-500">Số tiền tạm ứng</label>
+                            <MoneyInput v-model="advanceForm.amount" :min="1" input-class="w-full rounded border px-3 py-2 text-right" />
+                        </div>
+                        <div class="grid gap-4 md:grid-cols-2">
+                            <div>
+                                <label class="mb-1 block text-xs text-gray-500">Ngày tạm ứng</label>
+                                <input v-model="advanceForm.advance_date" type="datetime-local" class="w-full rounded border px-3 py-2" />
+                            </div>
+                            <div>
+                                <label class="mb-1 block text-xs text-gray-500">Phương thức</label>
+                                <select v-model="advanceForm.payment_method" class="w-full rounded border px-3 py-2">
+                                    <option value="cash">Tiền mặt</option>
+                                    <option value="bank_transfer">Chuyển khoản</option>
+                                    <option value="ewallet">Ví điện tử</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-xs text-gray-500">Ghi chú/lý do</label>
+                            <textarea v-model="advanceForm.note" rows="3" class="w-full rounded border px-3 py-2" placeholder="Lý do tạm ứng, tối thiểu 10 ký tự"></textarea>
+                        </div>
+                    </div>
+                    <div class="flex justify-end gap-3 border-t p-4">
+                        <button type="button" class="rounded border px-4 py-2" @click="showAdvanceModal = false">Bỏ qua</button>
+                        <button type="button" class="rounded bg-amber-600 px-4 py-2 font-bold text-white disabled:opacity-50"
+                            :disabled="advanceSaving || Number(advanceForm.amount) <= 0 || advanceForm.note.trim().length < 10"
+                            @click="createAdvance">
+                            Tạo tạm ứng
+                        </button>
+                    </div>
+                </div>
+            </div>
+
             <div v-if="showAdjustmentModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40" @click.self="showAdjustmentModal = false">
                 <div class="w-full max-w-xl rounded-lg bg-white shadow-xl">
                     <div class="border-b p-4 text-lg font-bold">Điều chỉnh nợ và tạm ứng</div>

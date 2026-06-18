@@ -190,6 +190,10 @@ Route::prefix('employees/{employee}')->group(function () {
         ->middleware('permission:payroll.ledger.view');
     Route::post('/salary-advances', [\App\Http\Controllers\SalaryAdvanceController::class, 'store'])
         ->middleware('permission:payroll.advance.create');
+    Route::get('/salary-payment-preview', [\App\Http\Controllers\EmployeeSalaryPaymentController::class, 'preview'])
+        ->middleware('permission:payroll.pay');
+    Route::post('/salary-payments', [\App\Http\Controllers\EmployeeSalaryPaymentController::class, 'store'])
+        ->middleware('permission:payroll.pay');
     Route::post('/rebuild-salary-balance', [\App\Http\Controllers\EmployeeSalaryLedgerController::class, 'rebuild'])
         ->middleware('permission:payroll.rebuild_balance');
 });
