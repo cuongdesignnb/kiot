@@ -633,7 +633,7 @@
                                                     >
                                                         <button
                                                             v-if="
-                                                                ps.status ===
+                                                                ps.can_cancel ?? ps.status ===
                                                                     'locked'
                                                             "
                                                             @click="
@@ -1148,7 +1148,7 @@
                                                     v-if="
                                                         detailPayslips.length >
                                                             0 &&
-                                                        ps.status === 'locked'
+                                                        (ps.can_pay ?? ps.status === 'locked')
                                                     "
                                                     class="flex justify-end px-6 py-3 border-t border-gray-200"
                                                 >
@@ -1903,7 +1903,7 @@ const paymentForm = reactive({
 });
 
 const openPaymentModal = (ps) => {
-    if (ps.status !== "locked") {
+    if (!(ps.can_pay ?? ps.status === "locked")) {
         alert("Chỉ bảng lương đã chốt mới được thanh toán.");
         return;
     }

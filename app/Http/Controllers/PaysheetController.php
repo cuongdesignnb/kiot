@@ -25,44 +25,31 @@ class PaysheetController extends Controller
     public function index(Request $request)
     {
         $query = Paysheet::with('branch:id,name')
+            ->withCount(['payments as active_payments_count' => fn ($payment) => $payment->where('status', 'active')])
             ->withCount('payslips')
             ->orderByDesc('id');
 
-        if ($request->filled('branch_id')) {
-            $query->where('branch_id', $request->integer('branch_id'));
-        }
+        $this->applyPaysheetIndexFilters($query, $request);
 
-        if ($request->filled('status')) {
-            $statuses = is_array($request->status) ? $request->status : explode(',', $request->status);
-            $query->whereIn('status', $statuses);
-        }
-
-        if ($request->filled('search')) {
-            $s = $request->search;
-            $query->where(function ($q) use ($s) {
-                $q->where('code', 'like', "%$s%")
-                    ->orWhere('name', 'like', "%$s%");
-            });
-        }
-
-        if ($request->filled('pay_period')) {
-            $query->where('pay_period', $request->pay_period);
-        }
-
+        $summaryQuery = (clone $query)->reorder();
         $paysheets = $query->paginate(50);
+        $items = collect($paysheets->items())
+            ->map(fn (Paysheet $paysheet) => $this->decoratePaysheetForActions($paysheet))
+            ->values()
+            ->all();
 
         return response()->json([
             'success' => true,
-            'data' => $paysheets->items(),
+            'data' => $items,
             'meta' => [
                 'total' => $paysheets->total(),
                 'current_page' => $paysheets->currentPage(),
                 'last_page' => $paysheets->lastPage(),
             ],
             'summary' => [
-                'total_salary' => Paysheet::when($request->filled('branch_id'), fn ($q) => $q->where('branch_id', $request->branch_id))->sum('total_salary'),
-                'total_paid' => Paysheet::when($request->filled('branch_id'), fn ($q) => $q->where('branch_id', $request->branch_id))->sum('total_paid'),
-                'total_remaining' => Paysheet::when($request->filled('branch_id'), fn ($q) => $q->where('branch_id', $request->branch_id))->sum('total_remaining'),
+                'total_salary' => (int) (clone $summaryQuery)->sum('total_salary'),
+                'total_paid' => (int) (clone $summaryQuery)->sum('total_paid'),
+                'total_remaining' => (int) (clone $summaryQuery)->sum('total_remaining'),
             ],
         ]);
     }
@@ -100,9 +87,61 @@ class PaysheetController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $this->withEffectiveStandard($paysheet),
+            'data' => $this->decoratePaysheetForActions($this->withEffectiveStandard($paysheet)),
             'auto_recalculated' => $autoRecalculated,
         ]);
+    }
+
+    private function applyPaysheetIndexFilters($query, Request $request): void
+    {
+        if ($request->filled('branch_id')) {
+            $query->where('branch_id', $request->integer('branch_id'));
+        }
+
+        if ($request->filled('status')) {
+            $statuses = array_values(array_filter(is_array($request->status) ? $request->status : explode(',', $request->status)));
+            $query->whereIn('status', $statuses);
+        } else {
+            $query->where('status', '!=', 'cancelled');
+        }
+
+        if ($request->filled('search')) {
+            $s = $request->search;
+            $query->where(function ($q) use ($s) {
+                $q->where('code', 'like', "%$s%")
+                    ->orWhere('name', 'like', "%$s%");
+            });
+        }
+
+        if ($request->filled('pay_period')) {
+            $query->where('pay_period', $request->pay_period);
+        }
+    }
+
+    private function decoratePaysheetForActions(Paysheet $paysheet): Paysheet
+    {
+        $activePayments = $paysheet->active_payments_count
+            ?? ($paysheet->relationLoaded('payments')
+                ? $paysheet->payments->where('status', 'active')->count()
+                : $paysheet->payments()->where('status', 'active')->count());
+
+        $paysheet->setAttribute('can_pay', $paysheet->status === 'locked');
+        $paysheet->setAttribute('can_cancel', $paysheet->status === 'locked' && $activePayments === 0);
+        $paysheet->setAttribute('can_recalculate', ! in_array($paysheet->status, ['locked', 'cancelled'], true));
+        $paysheet->setAttribute('status_label', $this->paysheetStatusLabel($paysheet->status));
+
+        return $paysheet;
+    }
+
+    private function paysheetStatusLabel(?string $status): string
+    {
+        return [
+            'draft' => 'Dang tao',
+            'calculating' => 'Dang tinh',
+            'calculated' => 'Tam tinh',
+            'locked' => 'Da chot luong',
+            'cancelled' => 'Da huy',
+        ][$status] ?? (string) $status;
     }
 
     /**

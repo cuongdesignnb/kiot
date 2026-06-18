@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use App\Models\ActivityLog;
-use App\Models\CashFlow;
 use App\Models\Employee;
 use App\Models\EmployeeSalaryLedgerEntry;
 use App\Models\Paysheet;
@@ -14,14 +13,17 @@ use Illuminate\Validation\ValidationException;
 
 class SalaryPaymentService
 {
-    public function __construct(private EmployeeSalaryLedgerService $ledger) {}
+    public function __construct(
+        private EmployeeSalaryLedgerService $ledger,
+        private PayrollPaymentCashFlowService $cashFlows,
+    ) {}
 
     public function pay(Paysheet $paysheet, array $items, array $meta, string $idempotencyKey): array
     {
         return DB::transaction(function () use ($paysheet, $items, $meta, $idempotencyKey) {
             $sheet = Paysheet::query()->lockForUpdate()->findOrFail($paysheet->id);
             if ($sheet->status !== 'locked') {
-                throw ValidationException::withMessages(['paysheet' => 'Chỉ bảng lương đã chốt mới được thanh toán.']);
+                throw ValidationException::withMessages(['paysheet' => 'Chi bang luong da chot moi duoc thanh toan.']);
             }
 
             $created = [];
@@ -32,7 +34,8 @@ class SalaryPaymentService
                 $paymentKey = "{$idempotencyKey}:{$slip->id}";
                 $existing = PaysheetPayment::where('idempotency_key', $paymentKey)->first();
                 if ($existing) {
-                    $created[] = $existing;
+                    $this->cashFlows->ensureForPayment($existing);
+                    $created[] = $existing->fresh('cashFlow');
 
                     continue;
                 }
@@ -41,7 +44,7 @@ class SalaryPaymentService
                 $amount = (int) $item['amount'];
                 if ($slip->payment_status === 'paid' || $amount > (int) $slip->remaining) {
                     throw ValidationException::withMessages([
-                        "payments.{$slip->id}.amount" => 'Số tiền trả vượt số còn phải trả.',
+                        "payments.{$slip->id}.amount" => 'So tien tra vuot so con phai tra.',
                     ]);
                 }
 
@@ -63,23 +66,7 @@ class SalaryPaymentService
                     'code' => 'TTPL'.str_pad((string) $payment->id, 6, '0', STR_PAD_LEFT),
                 ]);
 
-                $cashFlow = CashFlow::create([
-                    'code' => "PCPL{$payment->id}",
-                    'type' => 'payment',
-                    'amount' => $amount,
-                    'time' => $meta['payment_date'],
-                    'branch_id' => $sheet->branch_id,
-                    'category' => 'Chi lương nhân viên',
-                    'target_type' => 'employee',
-                    'target_id' => $employee->id,
-                    'target_name' => $employee->name,
-                    'reference_type' => 'PaysheetPayment',
-                    'reference_code' => $payment->code,
-                    'payment_method' => $meta['payment_method'],
-                    'description' => $meta['note'] ?? "Thanh toán {$slip->code}",
-                    'status' => 'active',
-                ]);
-                $payment->update(['cash_flow_id' => $cashFlow->id]);
+                $this->cashFlows->ensureForPayment($payment);
 
                 $this->ledger->append($employee, [
                     'paysheet_id' => $sheet->id,
@@ -100,7 +87,7 @@ class SalaryPaymentService
             }
 
             $sheet->recalculateTotals();
-            ActivityLog::log('salary_payment_create', "Thanh toán bảng lương {$sheet->code}", $sheet, [
+            ActivityLog::log('salary_payment_create', "Thanh toan bang luong {$sheet->code}", $sheet, [
                 'payment_ids' => collect($created)->pluck('id')->all(),
             ]);
 
@@ -130,15 +117,7 @@ class SalaryPaymentService
                 "cancel_salary_payment:{$locked->id}"
             );
 
-            if ($locked->cash_flow_id) {
-                CashFlow::withTrashed()->whereKey($locked->cash_flow_id)->update([
-                    'status' => 'cancelled',
-                    'cancelled_by' => auth()->id(),
-                    'cancelled_at' => now(),
-                    'cancel_reason' => $reason,
-                    'deleted_at' => now(),
-                ]);
-            }
+            $this->cashFlows->cancelForPayment($locked, $reason);
 
             $locked->update([
                 'status' => 'cancelled',
@@ -149,7 +128,7 @@ class SalaryPaymentService
             $this->syncSlip($slip);
             $slip->paysheet->recalculateTotals();
 
-            ActivityLog::log('salary_payment_cancel', "Hủy thanh toán {$locked->code}", $locked, ['reason' => $reason]);
+            ActivityLog::log('salary_payment_cancel', "Huy thanh toan {$locked->code}", $locked, ['reason' => $reason]);
 
             return $locked->fresh();
         });

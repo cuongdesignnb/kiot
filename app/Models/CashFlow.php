@@ -102,6 +102,7 @@ class CashFlow extends Model
         'accounting_result',
         'payment_method',
         'bank_account_id',
+        'branch_id',
         'reference_type',
         'reference_code',
         'description',
@@ -109,6 +110,7 @@ class CashFlow extends Model
         'cancelled_by',
         'cancelled_at',
         'cancel_reason',
+        'idempotency_key',
     ];
 
     protected $casts = [
