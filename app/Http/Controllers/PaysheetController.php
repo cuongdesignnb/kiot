@@ -448,6 +448,7 @@ class PaysheetController extends Controller
             'data' => $result['paysheet'],
             'paysheet' => $result['paysheet'],
             'reversed_entries_count' => $result['reversed_entries_count'],
+            'mode' => $result['mode'] ?? 'standard',
         ]);
     }
 

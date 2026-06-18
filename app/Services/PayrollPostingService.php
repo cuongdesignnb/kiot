@@ -85,9 +85,25 @@ class PayrollPostingService
                 ->get();
 
             if ($accruals->isEmpty()) {
-                throw ValidationException::withMessages([
-                    'ledger' => 'Khong tim thay payroll_accrual de dao. Can doi soat ledger truoc khi huy bang luong.',
+                if (! $this->canUseLegacyMissingAccrualCancel($sheet)) {
+                    throw ValidationException::withMessages([
+                        'ledger' => 'Bang luong thieu payroll_accrual va khong du dieu kien huy tu dong. Vui long chay audit doi soat.',
+                    ]);
+                }
+
+                $reversedEntries = $this->cancelLegacyMissingAccrualPaysheet($sheet, $reason, $eventAt);
+
+                ActivityLog::log('paysheet_cancel', "Huy bang luong legacy thieu accrual {$sheet->code}", $sheet, [
+                    'reason' => $reason,
+                    'mode' => 'legacy_missing_payroll_accrual',
+                    'reversed_entries_count' => $reversedEntries,
                 ]);
+
+                return [
+                    'paysheet' => $sheet->fresh('payslips'),
+                    'reversed_entries_count' => $reversedEntries,
+                    'mode' => 'legacy_missing_payroll_accrual',
+                ];
             }
 
             foreach ($sheet->payslips as $slip) {
@@ -131,6 +147,7 @@ class PayrollPostingService
             return [
                 'paysheet' => $sheet->fresh('payslips'),
                 'reversed_entries_count' => $this->payrollAccrualReversalCount($sheet),
+                'mode' => 'standard',
             ];
         });
     }
@@ -157,18 +174,31 @@ class PayrollPostingService
 
         $canCancel = true;
         $reason = 'ok';
+        $mode = 'standard';
+        $requiresLegacyZeroNetReversal = false;
         if ($sheet->status === 'cancelled') {
             $canCancel = false;
             $reason = 'already_cancelled';
+            $mode = 'already_cancelled';
         } elseif ($sheet->status !== 'locked') {
             $canCancel = false;
             $reason = 'not_locked';
+            $mode = 'blocked';
         } elseif ((int) $sheet->active_payment_count > 0) {
             $canCancel = false;
             $reason = 'has_active_payment';
+            $mode = 'blocked';
         } elseif ($payrollAccrualCount === 0) {
-            $canCancel = false;
-            $reason = 'missing_payroll_accrual';
+            if ((int) $sheet->payslips_count > 0 && $cancelReverseCount === 0) {
+                $canCancel = true;
+                $reason = 'legacy_can_cancel_no_active_payment';
+                $mode = 'legacy_missing_payroll_accrual';
+                $requiresLegacyZeroNetReversal = true;
+            } else {
+                $canCancel = false;
+                $reason = 'legacy_missing_accrual_requires_manual_audit';
+                $mode = 'manual_audit_required';
+            }
         }
 
         return [
@@ -184,8 +214,85 @@ class PayrollPostingService
             'cancel_reverse_count' => $cancelReverseCount,
             'employee_count' => $employeeCount,
             'can_cancel' => $canCancel ? 'yes' : 'no',
+            'mode' => $mode,
             'reason' => $reason,
+            'requires_legacy_zero_net_reversal' => $requiresLegacyZeroNetReversal,
         ];
+    }
+
+    private function canUseLegacyMissingAccrualCancel(Paysheet $sheet): bool
+    {
+        if ($sheet->status !== 'locked') {
+            return false;
+        }
+        if ($sheet->payslips->isEmpty()) {
+            return false;
+        }
+        if ($sheet->payments()->where('status', 'active')->where('amount', '>', 0)->exists()) {
+            return false;
+        }
+
+        $payrollAccrualCount = EmployeeSalaryLedgerEntry::query()
+            ->where('paysheet_id', $sheet->id)
+            ->where('type', EmployeeSalaryLedgerEntry::TYPE_PAYROLL_ACCRUAL)
+            ->where('is_effective', true)
+            ->count();
+        if ($payrollAccrualCount > 0) {
+            return false;
+        }
+
+        return ! EmployeeSalaryLedgerEntry::query()
+            ->where('paysheet_id', $sheet->id)
+            ->where('type', EmployeeSalaryLedgerEntry::TYPE_PAYROLL_ACCRUAL)
+            ->where('idempotency_key', 'like', "legacy:paysheet_cancel:accrual:{$sheet->id}:%")
+            ->exists();
+    }
+
+    private function cancelLegacyMissingAccrualPaysheet(Paysheet $sheet, string $reason, $eventAt): int
+    {
+        $reversedEntries = 0;
+
+        foreach ($sheet->payslips as $slip) {
+            $amount = (int) $slip->total_salary;
+            if ($amount <= 0) {
+                continue;
+            }
+
+            $employee = Employee::query()->lockForUpdate()->findOrFail($slip->employee_id);
+            $accrual = $this->ledger->append($employee, [
+                'paysheet_id' => $sheet->id,
+                'payslip_id' => $slip->id,
+                'code' => "LEGACY-{$slip->code}",
+                'type' => EmployeeSalaryLedgerEntry::TYPE_PAYROLL_ACCRUAL,
+                'reference_type' => 'payslip',
+                'reference_id' => $slip->id,
+                'amount' => $amount,
+                'event_at' => $eventAt,
+                'note' => "Legacy backfill payroll accrual before cancel paysheet {$sheet->code}: {$reason}",
+                'idempotency_key' => "legacy:paysheet_cancel:accrual:{$sheet->id}:{$slip->id}",
+            ]);
+
+            $this->ledger->reverse(
+                $accrual,
+                "HLEGACY-{$slip->code}",
+                $eventAt,
+                $reason,
+                "legacy:paysheet_cancel:reverse:{$sheet->id}:{$slip->id}"
+            );
+            $reversedEntries++;
+
+            $slip->update([
+                'applied_advance' => 0,
+                'paid_amount' => 0,
+                'remaining' => 0,
+                'payment_status' => 'unpaid',
+            ]);
+        }
+
+        $sheet->update(['status' => 'cancelled', 'payment_status' => 'unpaid']);
+        $sheet->recalculateTotals();
+
+        return $reversedEntries;
     }
 
     private function payrollAccrualReversalCount(Paysheet $sheet): int

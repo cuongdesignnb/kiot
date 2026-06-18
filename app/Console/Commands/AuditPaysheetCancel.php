@@ -45,7 +45,9 @@ class AuditPaysheetCancel extends Command
                 'cancel_reverse_count',
                 'employee_count',
                 'can_cancel',
+                'mode',
                 'reason',
+                'requires_legacy_zero_net_reversal',
             ],
             [[
                 $row['paysheet_code'],
@@ -60,7 +62,9 @@ class AuditPaysheetCancel extends Command
                 $row['cancel_reverse_count'],
                 $row['employee_count'],
                 $row['can_cancel'],
+                $row['mode'] ?? null,
                 $row['reason'],
+                $row['requires_legacy_zero_net_reversal'] ?? false,
             ]]
         );
 
