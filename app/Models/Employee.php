@@ -22,6 +22,8 @@ class Employee extends Model
         'job_title_id',
         'is_active',
         'balance',
+        'salary_balance_cache',
+        'salary_balance_calculated_at',
         'notes',
         'avatar',
     ];
@@ -29,6 +31,8 @@ class Employee extends Model
     protected $casts = [
         'is_active' => 'boolean',
         'balance' => 'decimal:2',
+        'salary_balance_cache' => 'integer',
+        'salary_balance_calculated_at' => 'datetime',
     ];
 
     public function branch()
@@ -55,6 +59,7 @@ class Employee extends Model
     {
         return $this->hasMany(AttendanceLog::class);
     }
+
     public function timekeepingRecords()
     {
         return $this->hasMany(TimekeepingRecord::class);
@@ -63,6 +68,16 @@ class Employee extends Model
     public function salarySetting()
     {
         return $this->hasOne(EmployeeSalarySetting::class);
+    }
+
+    public function salaryLedgerEntries()
+    {
+        return $this->hasMany(EmployeeSalaryLedgerEntry::class);
+    }
+
+    public function salaryAdvances()
+    {
+        return $this->hasMany(SalaryAdvance::class);
     }
 
     public function user()
@@ -104,7 +119,8 @@ class Employee extends Model
      */
     public function calculateSalaryForRange($from, $to): array
     {
-        $service = new \App\Services\SalaryCalculationService();
+        $service = new \App\Services\SalaryCalculationService;
+
         return $service->calculateForEmployee($this, \Carbon\Carbon::parse($from), \Carbon\Carbon::parse($to));
     }
 }

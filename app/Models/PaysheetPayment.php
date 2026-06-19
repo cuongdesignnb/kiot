@@ -10,18 +10,27 @@ class PaysheetPayment extends Model
     use HasFactory;
 
     protected $fillable = [
+        'code',
         'paysheet_id',
         'payslip_id',
         'employee_id',
         'amount',
+        'status',
+        'cash_flow_id',
         'method',
         'notes',
         'paid_at',
+        'created_by',
+        'cancelled_by',
+        'cancelled_at',
+        'cancel_reason',
+        'idempotency_key',
     ];
 
     protected $casts = [
         'amount' => 'integer',
         'paid_at' => 'datetime',
+        'cancelled_at' => 'datetime',
     ];
 
     public function paysheet()
@@ -37,5 +46,10 @@ class PaysheetPayment extends Model
     public function employee()
     {
         return $this->belongsTo(Employee::class);
+    }
+
+    public function cashFlow()
+    {
+        return $this->belongsTo(CashFlow::class);
     }
 }

@@ -633,10 +633,8 @@
                                                     >
                                                         <button
                                                             v-if="
-                                                                ps.status !==
-                                                                    'locked' &&
-                                                                ps.status !==
-                                                                    'cancelled'
+                                                                ps.can_cancel ?? ps.status ===
+                                                                    'locked'
                                                             "
                                                             @click="
                                                                 cancelPaysheet(
@@ -842,6 +840,7 @@
                                                             <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[110px]">Thưởng</th>
                                                             <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[110px]">Giảm trừ</th>
                                                             <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[120px]">Tổng lương</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[110px]">Tạm ứng đã cấn</th>
                                                             <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[100px]">Đã trả NV</th>
                                                             <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[110px]">Còn cần trả</th>
                                                         </tr>
@@ -859,6 +858,7 @@
                                                             <td class="px-3 py-2 text-right">{{ formatMoney(editSummary.bonus) }}</td>
                                                             <td class="px-3 py-2 text-right">{{ formatMoney(editSummary.deductions) }}</td>
                                                             <td class="px-3 py-2 text-right text-blue-700">{{ formatMoney(editSummary.total_salary) }}</td>
+                                                            <td class="px-3 py-2 text-right text-purple-700">{{ formatMoney(editSummary.applied_advance) }}</td>
                                                             <td class="px-3 py-2 text-right">{{ formatMoney(editSummary.paid_amount) }}</td>
                                                             <td class="px-3 py-2 text-right text-orange-600">{{ formatMoney(editSummary.remaining) }}</td>
                                                         </tr>
@@ -946,6 +946,9 @@
                                                             <td class="px-3 py-1.5 text-right font-semibold text-blue-700">
                                                                 {{ formatMoney(slip.total_salary) }}
                                                             </td>
+                                                            <td class="px-3 py-1.5 text-right text-purple-700">
+                                                                {{ formatMoney(slip.applied_advance) }}
+                                                            </td>
                                                             <td class="px-3 py-1.5 text-right text-gray-600">
                                                                 {{ formatMoney(slip.paid_amount) }}
                                                             </td>
@@ -956,7 +959,17 @@
 
                                                         <!-- Chi tiết phiếu lương (expandable) -->
                                                         <tr v-if="expandedSlipId === slip.id">
-                                                            <td colspan="12" class="bg-gray-50 px-6 py-4">
+                                                            <td colspan="13" class="bg-gray-50 px-6 py-4">
+                                                                <div v-if="slip.advance_applications?.length" class="mb-4 rounded-lg border border-purple-200 bg-purple-50 p-3">
+                                                                    <div class="mb-2 font-semibold text-purple-900">Phân bổ tạm ứng</div>
+                                                                    <div v-for="application in slip.advance_applications" :key="application.id" class="grid grid-cols-5 gap-3 border-t border-purple-100 py-2 text-sm">
+                                                                        <span>{{ application.advance?.code }}</span>
+                                                                        <span>{{ formatDate(application.advance?.advance_date) }}</span>
+                                                                        <span class="text-right">{{ formatMoney(application.advance?.amount) }}</span>
+                                                                        <span class="text-right font-medium">{{ formatMoney(application.amount) }}</span>
+                                                                        <span>{{ application.status }}</span>
+                                                                    </div>
+                                                                </div>
                                                                 <div class="grid grid-cols-2 gap-6 text-sm">
                                                                     <!-- Cột trái: Thông tin lương -->
                                                                     <div>
@@ -1135,8 +1148,7 @@
                                                     v-if="
                                                         detailPayslips.length >
                                                             0 &&
-                                                        ps.status !==
-                                                            'cancelled'
+                                                        (ps.can_pay ?? ps.status === 'locked')
                                                     "
                                                     class="flex justify-end px-6 py-3 border-t border-gray-200"
                                                 >
@@ -1215,6 +1227,10 @@
                                                             >
                                                                 Ghi chú
                                                             </th>
+                                                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500">
+                                                                Trạng thái
+                                                            </th>
+                                                            <th class="px-4 py-2"></th>
                                                         </tr>
                                                     </thead>
                                                     <tbody>
@@ -1225,7 +1241,7 @@
                                                             "
                                                         >
                                                             <td
-                                                                colspan="6"
+                                                                colspan="8"
                                                                 class="px-6 py-8 text-center text-gray-400"
                                                             >
                                                                 Chưa có lịch sử
@@ -1288,6 +1304,21 @@
                                                                     p.notes ||
                                                                     "-"
                                                                 }}
+                                                            </td>
+                                                            <td class="px-4 py-2.5">
+                                                                <span :class="p.status === 'cancelled' ? 'text-red-600' : 'text-green-600'">
+                                                                    {{ p.status === "cancelled" ? "Đã hủy" : "Hợp lệ" }}
+                                                                </span>
+                                                            </td>
+                                                            <td class="px-4 py-2.5 text-right">
+                                                                <button
+                                                                    v-if="p.status !== 'cancelled'"
+                                                                    type="button"
+                                                                    @click="cancelPayment(p)"
+                                                                    class="text-red-600 hover:underline"
+                                                                >
+                                                                    Hủy
+                                                                </button>
                                                             </td>
                                                         </tr>
                                                     </tbody>
@@ -1483,6 +1514,69 @@
         </div>
     </AppLayout>
 
+    <Teleport to="body">
+        <div v-if="showPaymentModal" class="fixed inset-0 z-50 flex items-center justify-center">
+            <div class="fixed inset-0 bg-black/40" @click="showPaymentModal = false"></div>
+            <div class="relative bg-white rounded-lg shadow-xl w-[720px] max-w-[95vw] overflow-hidden">
+                <div class="flex items-center justify-between px-6 py-4 border-b">
+                    <div>
+                        <h3 class="text-lg font-semibold text-gray-800">Thanh toán lương</h3>
+                        <p class="text-sm text-gray-500">{{ paymentPaysheet?.name || paymentPaysheet?.code }}</p>
+                    </div>
+                    <button type="button" @click="showPaymentModal = false" class="text-2xl text-gray-400">&times;</button>
+                </div>
+                <div class="p-6 space-y-4">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm text-gray-600 mb-1">Ngày thanh toán</label>
+                            <input v-model="paymentForm.payment_date" type="datetime-local" class="w-full border rounded px-3 py-2" />
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-600 mb-1">Phương thức</label>
+                            <select v-model="paymentForm.payment_method" class="w-full border rounded px-3 py-2">
+                                <option value="cash">Tiền mặt</option>
+                                <option value="bank_transfer">Chuyển khoản</option>
+                                <option value="ewallet">Ví điện tử</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="border rounded overflow-hidden">
+                        <table class="w-full text-sm">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="text-left px-3 py-2">Phiếu lương</th>
+                                    <th class="text-left px-3 py-2">Nhân viên</th>
+                                    <th class="text-right px-3 py-2">Còn phải trả</th>
+                                    <th class="text-right px-3 py-2 w-44">Số tiền trả</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="row in paymentRows" :key="row.payslip_id" class="border-t">
+                                    <td class="px-3 py-2">{{ row.code }}</td>
+                                    <td class="px-3 py-2">{{ row.employee_name }}</td>
+                                    <td class="px-3 py-2 text-right">{{ formatMoney(row.remaining) }}</td>
+                                    <td class="px-3 py-2">
+                                        <input v-model.number="row.amount" type="number" min="1" :max="row.remaining" class="w-full border rounded px-2 py-1 text-right" />
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-600 mb-1">Ghi chú</label>
+                        <textarea v-model="paymentForm.note" rows="2" class="w-full border rounded px-3 py-2"></textarea>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-3 px-6 py-4 border-t bg-gray-50">
+                    <button type="button" @click="showPaymentModal = false" class="px-5 py-2 border rounded">Bỏ qua</button>
+                    <button type="button" :disabled="isPaying" @click="submitPayment" class="px-5 py-2 bg-blue-600 text-white rounded disabled:opacity-50">
+                        Xác nhận thanh toán
+                    </button>
+                </div>
+            </div>
+        </div>
+    </Teleport>
+
     <!-- Modal Các khoản giảm trừ -->
     <Teleport to="body">
         <div v-if="showDeductionModal" class="fixed inset-0 z-50 flex items-center justify-center">
@@ -1565,6 +1659,17 @@
             </div>
         </div>
     </Teleport>
+    <CancelReasonModal
+        :show="cancelModal.show"
+        :title="cancelModal.kind === 'paysheet' ? 'Hủy bảng lương' : 'Hủy thanh toán lương'"
+        :document-code="cancelModal.target?.code || ''"
+        :warning="cancelModal.kind === 'paysheet'
+            ? 'Chỉ hủy khi không còn thanh toán hợp lệ. Hệ thống tạo dòng đảo và giữ nguyên lịch sử.'
+            : `Hệ thống hủy CashFlow liên quan và tạo dòng đảo cho ${formatMoney(cancelModal.target?.amount || 0)}.`"
+        :submitting="cancelModal.submitting"
+        @close="closeCancelModal"
+        @confirm="confirmCancellation"
+    />
 </template>
 
 <script setup>
@@ -1574,6 +1679,7 @@ import ExcelButtons from "@/Components/ExcelButtons.vue";
 import { ref, computed, reactive, onMounted, watch } from "vue";
 import axios from "axios";
 import { formatVND as formatMoney } from '@/utils/money';
+import CancelReasonModal from '@/Components/CancelReasonModal.vue';
 
 const props = defineProps({
     branches: { type: Array, default: () => [] },
@@ -1640,6 +1746,7 @@ const selectedSlipIds = ref([]);
 const selectAllSlips = ref(false);
 const isPaying = ref(false);
 const expandedSlipId = ref(null);
+const cancelModal = reactive({ show: false, kind: '', target: null, submitting: false });
 
 // ===== Deduction modal =====
 const showDeductionModal = ref(false);
@@ -1725,6 +1832,7 @@ const editSummary = computed(() => {
         bonus: slips.reduce((s, p) => s + (p.bonus || 0), 0),
         deductions: slips.reduce((s, p) => s + (p.deductions || 0), 0),
         total_salary: slips.reduce((s, p) => s + (p.total_salary || 0), 0),
+        applied_advance: slips.reduce((s, p) => s + (p.applied_advance || 0), 0),
         paid_amount: slips.reduce((s, p) => s + (p.paid_amount || 0), 0),
         remaining: slips.reduce((s, p) => s + (p.remaining || 0), 0),
     };
@@ -1778,6 +1886,42 @@ const createForm = reactive({
     scope: "all",
     employee_ids: [],
 });
+
+const localDateTimeValue = () => {
+    const now = new Date();
+    return new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+        .toISOString()
+        .slice(0, 16);
+};
+const showPaymentModal = ref(false);
+const paymentPaysheet = ref(null);
+const paymentRows = ref([]);
+const paymentForm = reactive({
+    payment_date: localDateTimeValue(),
+    payment_method: "cash",
+    note: "",
+});
+
+const openPaymentModal = (ps) => {
+    if (!(ps.can_pay ?? ps.status === "locked")) {
+        alert("Chỉ bảng lương đã chốt mới được thanh toán.");
+        return;
+    }
+    paymentPaysheet.value = ps;
+    paymentRows.value = detailPayslips.value
+        .filter((slip) => selectedSlipIds.value.includes(slip.id) && Number(slip.remaining) > 0)
+        .map((slip) => ({
+            payslip_id: slip.id,
+            code: slip.code,
+            employee_name: slip.employee?.name || "",
+            remaining: Number(slip.remaining),
+            amount: Number(slip.remaining),
+        }));
+    paymentForm.payment_date = localDateTimeValue();
+    paymentForm.payment_method = "cash";
+    paymentForm.note = `Thanh toán ${ps.name || ps.code}`;
+    showPaymentModal.value = paymentRows.value.length > 0;
+};
 
 // Chu kỳ lương được tính tự động từ backend (xử lý đúng 28/29/30/31 ngày)
 const payrollCycles = ref([]);
@@ -1988,15 +2132,9 @@ const lockPaysheet = async (ps) => {
 };
 
 const cancelPaysheet = async (ps) => {
-    if (!confirm("Hủy bỏ bảng lương này?")) return;
-    try {
-        await axios.put(`/api/paysheets/${ps.id}/cancel`);
-        await fetchPaysheets();
-        expandedId.value = null;
-    } catch (e) {
-        alert("Có lỗi!");
-        console.error(e);
-    }
+    cancelModal.kind = 'paysheet';
+    cancelModal.target = ps;
+    cancelModal.show = true;
 };
 
 const saveNotes = async (ps) => {
@@ -2016,26 +2154,76 @@ const toggleSelectAllSlips = () => {
 };
 
 const paySelected = async (ps) => {
-    if (
-        !confirm(
-            `Thanh toán ${selectedSlipIds.value.length} phiếu lương đã chọn?`,
-        )
-    )
+    openPaymentModal(ps);
+};
+
+const submitPayment = async () => {
+    const ps = paymentPaysheet.value;
+    if (!ps || paymentRows.value.some((row) => row.amount <= 0 || row.amount > row.remaining)) {
+        alert("Số tiền thanh toán phải lớn hơn 0 và không vượt số còn phải trả.");
         return;
+    }
     isPaying.value = true;
     try {
         await axios.post(`/api/paysheets/${ps.id}/pay`, {
-            payslip_ids: selectedSlipIds.value,
+            payment_date: paymentForm.payment_date,
+            payment_method: paymentForm.payment_method,
+            note: paymentForm.note,
+            payments: paymentRows.value.map((row) => ({
+                payslip_id: row.payslip_id,
+                amount: Number(row.amount),
+            })),
+        }, {
+            headers: { "Idempotency-Key": `payment-ui:${ps.id}:${Date.now()}` },
         });
+        showPaymentModal.value = false;
         await fetchPaysheets();
         await fetchDetail(ps.id);
         selectedSlipIds.value = [];
         selectAllSlips.value = false;
     } catch (e) {
-        alert("Có lỗi!");
+        alert(e.response?.data?.message || "Không thể thanh toán.");
         console.error(e);
     } finally {
         isPaying.value = false;
+    }
+};
+
+const cancelPayment = async (payment) => {
+    cancelModal.kind = 'payment';
+    cancelModal.target = payment;
+    cancelModal.show = true;
+};
+
+const closeCancelModal = () => {
+    if (cancelModal.submitting) return;
+    cancelModal.show = false;
+    cancelModal.target = null;
+};
+
+const confirmCancellation = async (reason) => {
+    cancelModal.submitting = true;
+    try {
+        if (cancelModal.kind === 'paysheet') {
+            await axios.put(`/api/paysheets/${cancelModal.target.id}/cancel`, {
+                reason,
+                cancel_date: localDateTimeValue(),
+            });
+            expandedId.value = null;
+        } else {
+            await axios.post(`/api/paysheet-payments/${cancelModal.target.id}/cancel`, {
+                reason,
+                cancel_date: localDateTimeValue(),
+            });
+            await fetchDetail(expandedId.value);
+        }
+        await fetchPaysheets();
+        cancelModal.show = false;
+        cancelModal.target = null;
+    } catch (e) {
+        alert(e.response?.data?.message || "Không thể hủy chứng từ.");
+    } finally {
+        cancelModal.submitting = false;
     }
 };
 

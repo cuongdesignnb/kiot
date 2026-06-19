@@ -381,6 +381,9 @@ Route::get('/employees/attendance/settings/devices', [App\Http\Controllers\Emplo
 Route::get('/employees/payroll/settings', [App\Http\Controllers\EmployeeController::class, 'payrollSettings'])->name('employees.payroll-settings')->middleware('permission:payroll_settings.view');
 Route::get('/employees/workday/settings', [App\Http\Controllers\EmployeeController::class, 'workdaySettings'])->name('employees.workday-settings')->middleware('permission:workday_settings.view');
 Route::get('/employees/workday/settings/holidays', [App\Http\Controllers\EmployeeController::class, 'holidayManagement'])->name('employees.workday-settings.holidays')->middleware('permission:workday_settings.manage');
+Route::get('/employees/payroll/reconciliation', [App\Http\Controllers\PayrollReconciliationController::class, 'page'])
+    ->name('employees.payroll-reconciliation')
+    ->middleware('permission:payroll.reconciliation.view');
 
 // ═══════════════════════════════════════
 // REPORT routes

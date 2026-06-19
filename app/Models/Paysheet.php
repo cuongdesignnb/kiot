@@ -19,6 +19,7 @@ class Paysheet extends Model
         'branch_id',
         'scope',
         'status',
+        'payment_status',
         'needs_recalc',
         'total_salary',
         'total_paid',
@@ -64,7 +65,8 @@ class Paysheet extends Model
     {
         $last = static::orderByDesc('id')->value('code');
         $num = $last ? ((int) substr($last, 2)) + 1 : 1;
-        return 'BL' . str_pad($num, 6, '0', STR_PAD_LEFT);
+
+        return 'BL'.str_pad($num, 6, '0', STR_PAD_LEFT);
     }
 
     /**
@@ -74,8 +76,12 @@ class Paysheet extends Model
     {
         $this->total_salary = $this->payslips()->sum('total_salary');
         $this->total_paid = $this->payslips()->sum('paid_amount');
-        $this->total_remaining = $this->total_salary - $this->total_paid;
+        $this->total_remaining = $this->payslips()->sum('remaining');
         $this->employee_count = $this->payslips()->count();
+        $statuses = $this->payslips()->pluck('payment_status');
+        $this->payment_status = $statuses->isNotEmpty() && $statuses->every(fn ($status) => $status === 'paid')
+            ? 'paid'
+            : ($statuses->contains(fn ($status) => in_array($status, ['partial', 'paid'], true)) ? 'partial' : 'unpaid');
         $this->save();
     }
 }

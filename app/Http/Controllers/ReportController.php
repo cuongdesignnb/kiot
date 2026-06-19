@@ -171,13 +171,13 @@ class ReportController extends Controller
         $grossProfit = $m['gross_profit'];
 
         // Operating expenses from CashFlow (type = 'payment'), excluding NCC payments (already in COGS)
-        $expenseQuery = CashFlow::active()->where('type', 'payment')
+        $expenseQuery = CashFlow::active()->nonPayrollForExpense()->where('type', 'payment')
             ->whereBetween('created_at', [$dateFrom, $dateTo])
             ->where('category', '!=', 'Chi tiền trả NCC');
         $totalExpenses = (float) $expenseQuery->sum('amount');
 
         // Expense breakdown by category
-        $expenseCategories = CashFlow::active()->where('type', 'payment')
+        $expenseCategories = CashFlow::active()->nonPayrollForExpense()->where('type', 'payment')
             ->whereBetween('created_at', [$dateFrom, $dateTo])
             ->where('category', '!=', 'Chi tiền trả NCC')
             ->select('category', DB::raw('SUM(amount) as total'))
@@ -199,7 +199,7 @@ class ReportController extends Controller
         $netProfit = $netRevenue - $cogs - $totalExpenses + $otherIncome;
 
         // Previous period expenses (also excluding NCC payments)
-        $prevExpenses = (float) CashFlow::active()->where('type', 'payment')
+        $prevExpenses = (float) CashFlow::active()->nonPayrollForExpense()->where('type', 'payment')
             ->whereBetween('created_at', [$prevFrom, $prevTo])
             ->where('category', '!=', 'Chi tiền trả NCC')
             ->sum('amount');

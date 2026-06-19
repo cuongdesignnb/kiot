@@ -607,12 +607,12 @@ class AuditFinancialProfitDataCommand extends Command
             })
             ->get();
 
-        $payrollIncludedTotal = $paysheetsInPeriod->whereIn('status', ['calculated', 'locked'])->sum('total_salary');
+        $payrollIncludedTotal = $paysheetsInPeriod->where('status', 'locked')->sum('total_salary');
         $payrollExcludedCancelledTotal = $paysheetsInPeriod->where('status', 'cancelled')->sum('total_salary');
         $payrollNeedsRecalcTotal = $paysheetsInPeriod->where('needs_recalc', 1)->sum('total_salary');
 
         $this->info("--- KIỂM TRA BẢNG LƯƠNG TRONG KỲ ---");
-        $this->line("Tổng chi phí lương hợp lệ (calculated/locked): " . number_format($payrollIncludedTotal, 0, '.', ',') . 'đ');
+        $this->line("Tổng chi phí lương hợp lệ (locked): " . number_format($payrollIncludedTotal, 0, '.', ',') . 'đ');
         $this->line("Tổng lương bảng đã hủy: " . number_format($payrollExcludedCancelledTotal, 0, '.', ',') . 'đ');
         $this->line("Tổng lương bảng cần tính toán lại: " . number_format($payrollNeedsRecalcTotal, 0, '.', ',') . 'đ');
         $this->table(
@@ -912,6 +912,7 @@ class AuditFinancialProfitDataCommand extends Command
         ];
 
         $query = CashFlow::active()
+            ->nonPayrollForExpense()
             ->where('type', $type)
             ->whereBetween($timeColumn, [$startDate, $endDate])
             ->where(function ($q) use ($excludedReferenceTypes) {
@@ -937,7 +938,7 @@ class AuditFinancialProfitDataCommand extends Command
     private function payrollExpenseAmount(Carbon $startDate, Carbon $endDate, $branchId = null): float
     {
         $query = Paysheet::query()
-            ->whereIn('status', ['calculated', 'locked'])
+            ->where('status', 'locked')
             ->whereDate('period_start', '>=', $startDate->toDateString())
             ->whereDate('period_end', '<=', $endDate->toDateString());
 
