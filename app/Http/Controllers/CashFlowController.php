@@ -21,7 +21,7 @@ class CashFlowController extends Controller
         $this->searchable = ['code', 'description', 'reference_code', 'target_name', 'category'];
         $this->sortable = ['code', 'time', 'type', 'amount', 'category', 'created_at'];
         $this->dateColumn = 'time';
-        $this->scalarFilters = ['type', 'payment_method', 'status', 'bank_account_id', 'category', 'target_type'];
+        $this->scalarFilters = ['type', 'payment_method', 'status', 'bank_account_id', 'branch_id', 'category', 'target_type'];
     }
 
     public function index(Request $request)
@@ -33,8 +33,8 @@ class CashFlowController extends Controller
         $cashFlows = $query->paginate(15)->withQueryString();
 
         // Summary metrics
-        $totalReceipts = CashFlow::where('type', 'receipt')->where('status', '!=', 'cancelled')->sum('amount');
-        $totalPayments = CashFlow::where('type', 'payment')->where('status', '!=', 'cancelled')->sum('amount');
+        $totalReceipts = CashFlow::active()->where('type', 'receipt')->sum('amount');
+        $totalPayments = CashFlow::active()->where('type', 'payment')->sum('amount');
         $fundBalance = $totalReceipts - $totalPayments;
 
         $customers = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()

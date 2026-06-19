@@ -34,9 +34,9 @@ class FinancialReportPayrollExpenseTest extends TestCase
     }
  
     /**
-     * Case 1 — Bảng lương calculated được cộng vào Chi phí (6)
+     * Case 1 — Bảng lương calculated chưa được ghi nhận vào Chi phí (6)
      */
-    public function test_calculated_paysheet_included_in_expenses(): void
+    public function test_calculated_paysheet_excluded_from_expenses(): void
     {
         Paysheet::create([
             'code'                  => 'BL-' . uniqid(),
@@ -59,9 +59,7 @@ class FinancialReportPayrollExpenseTest extends TestCase
         $response->assertOk();
         $response->assertInertia(fn ($page) =>
             $page->component('Reports/FinancialReport')
-                ->where('report.totalExpenses', 20000000)
-                ->where('report.expensesByCategory.0.name', 'Chi lương nhân viên')
-                ->where('report.expensesByCategory.0.amount', 20000000)
+                ->where('report.totalExpenses', 0)
         );
     }
  
@@ -168,7 +166,7 @@ class FinancialReportPayrollExpenseTest extends TestCase
             'name'                  => 'Bảng lương paid test',
             'period_start'          => $this->startDate->toDateString(),
             'period_end'            => $this->endDate->toDateString(),
-            'status'                => 'calculated',
+            'status'                => 'locked',
             'total_salary'          => 20000000,
             'standard_working_days' => 26,
             'employee_count'        => 3,
@@ -216,7 +214,7 @@ class FinancialReportPayrollExpenseTest extends TestCase
             'name'                  => 'Bảng lương A',
             'period_start'          => $this->startDate->toDateString(),
             'period_end'            => $this->endDate->toDateString(),
-            'status'                => 'calculated',
+            'status'                => 'locked',
             'total_salary'          => 10000000,
             'branch_id'             => $branchA->id,
             'standard_working_days' => 26,
@@ -228,7 +226,7 @@ class FinancialReportPayrollExpenseTest extends TestCase
             'name'                  => 'Bảng lương B',
             'period_start'          => $this->startDate->toDateString(),
             'period_end'            => $this->endDate->toDateString(),
-            'status'                => 'calculated',
+            'status'                => 'locked',
             'total_salary'          => 30000000,
             'branch_id'             => $branchB->id,
             'standard_working_days' => 26,
@@ -265,7 +263,7 @@ class FinancialReportPayrollExpenseTest extends TestCase
             'name'                  => 'Bảng lương tháng trước',
             'period_start'          => $prevMonthStart->toDateString(),
             'period_end'            => $prevMonthEnd->toDateString(),
-            'status'                => 'calculated',
+            'status'                => 'locked',
             'total_salary'          => 10000000,
             'standard_working_days' => 26,
             'employee_count'        => 2,
@@ -295,7 +293,7 @@ class FinancialReportPayrollExpenseTest extends TestCase
             'name'                  => 'Bảng lương test',
             'period_start'          => $this->startDate->toDateString(),
             'period_end'            => $this->endDate->toDateString(),
-            'status'                => 'calculated',
+            'status'                => 'locked',
             'total_salary'          => 20000000,
             'standard_working_days' => 26,
             'employee_count'        => 2,
@@ -335,7 +333,7 @@ class FinancialReportPayrollExpenseTest extends TestCase
             'name'                  => 'Bảng lương test',
             'period_start'          => $this->startDate->toDateString(),
             'period_end'            => $this->endDate->toDateString(),
-            'status'                => 'calculated',
+            'status'                => 'locked',
             'total_salary'          => 20000000,
             'standard_working_days' => 26,
             'employee_count'        => 2,

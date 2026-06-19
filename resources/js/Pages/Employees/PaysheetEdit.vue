@@ -36,6 +36,10 @@
                             class="px-4 py-1.5 bg-green-600 text-white text-sm font-medium rounded-md hover:bg-green-700 transition">
                             Chốt lương
                         </button>
+                        <button v-if="localPaysheet.status === 'locked'" @click="openCancelPaysheetModal"
+                            class="px-4 py-1.5 bg-red-600 text-white text-sm font-medium rounded-md hover:bg-red-700 transition">
+                            Huy bang luong
+                        </button>
                     </div>
                 </div>
             </header>
@@ -617,6 +621,15 @@
 
             </div>
         </Teleport>
+        <CancelReasonModal
+            :show="cancelModal.show"
+            title="Huy bang luong"
+            :document-code="localPaysheet.code || ''"
+            warning="Bang luong da chot se duoc huy bang chung tu dao. He thong khong xoa du lieu cu va se dao cac phat sinh No & Tam ung cua bang nay."
+            :submitting="cancelModal.submitting"
+            @close="closeCancelModal"
+            @confirm="confirmCancelPaysheet"
+        />
     </AppLayout>
 </template>
 
@@ -627,6 +640,7 @@ import { ref, computed, reactive, onMounted } from "vue";
 import axios from "axios";
 import { formatVND as fmt } from '@/utils/money';
 import MoneyInput from '@/Components/MoneyInput.vue';
+import CancelReasonModal from '@/Components/CancelReasonModal.vue';
 
 const props = defineProps({
     paysheet: { type: Object, required: true },
@@ -645,6 +659,7 @@ const isLocked = computed(() => localPaysheet.value.status === 'locked' || local
 const panelCollapsed = ref(false);
 const panelSaving = ref(false);
 const panelError = ref('');
+const cancelModal = reactive({ show: false, submitting: false });
 // Step 24.12-FIX — resolve the displayed standard_working_days from the
 // canonical chain: persisted column → backend-computed effective →
 // per-payslip details.standard_work_units → 0 (forces user to enter).
@@ -689,6 +704,33 @@ async function savePanelDraft() {
 }
 
 // Auto-recalc khi mở trang nếu có dữ liệu thay đổi
+function openCancelPaysheetModal() {
+    cancelModal.show = true;
+}
+
+function closeCancelModal() {
+    if (cancelModal.submitting) return;
+    cancelModal.show = false;
+}
+
+async function confirmCancelPaysheet(reason) {
+    cancelModal.submitting = true;
+    try {
+        const { data } = await axios.post(`/api/paysheets/${localPaysheet.value.id}/cancel`, {
+            reason,
+        });
+        if (data?.success) {
+            localPaysheet.value = data.paysheet || data.data || localPaysheet.value;
+            cancelModal.show = false;
+            autoRecalcMessage.value = 'Bang luong da duoc huy bang chung tu dao.';
+        }
+    } catch (e) {
+        alert(e.response?.data?.message || 'Khong the huy bang luong.');
+    } finally {
+        cancelModal.submitting = false;
+    }
+}
+
 onMounted(async () => {
     if (localPaysheet.value.needs_recalc && !isLocked.value) {
         try {

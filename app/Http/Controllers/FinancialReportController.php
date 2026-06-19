@@ -257,6 +257,7 @@ class FinancialReportController extends Controller
         ];
 
         $query = CashFlow::active()
+            ->nonPayrollForExpense()
             ->where('type', $type)
             ->whereBetween($timeColumn, [$startDate, $endDate])
             ->where(function ($q) use ($excludedReferenceTypes) {
@@ -282,7 +283,7 @@ class FinancialReportController extends Controller
     private function payrollExpenseQuery(Carbon $startDate, Carbon $endDate, $branchId = null)
     {
         $query = Paysheet::query()
-            ->whereIn('status', ['calculated', 'locked'])
+            ->where('status', 'locked')
             ->whereDate('period_start', '>=', $startDate->toDateString())
             ->whereDate('period_end', '<=', $endDate->toDateString());
 
