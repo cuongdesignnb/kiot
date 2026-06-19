@@ -7,7 +7,7 @@
 - Source branch: `origin/hotfix/payroll-standard-work-minutes-full-day`
 - Source branch SHA: `12ac4a902c60b2e850ed2ce66041f20d388b3028`
 - Integration branch: `integrate/payroll-employee-debt-with-main-after-pr2`
-- Integration SHA: final branch HEAD in Draft PR
+- Integration SHA: `55bba19a7b7443d49b00afd8d74de4c012e7cdbe`
 - Merge-base: `182243703b6297d5a2c11d41cab09c7907c1d2ca`
 - Ahead/behind before integration: main-only `4`, source-only `14`
 - Draft PR URL: `https://github.com/cuongdesignnb/kiot/pull/3`
@@ -274,3 +274,75 @@ Rollout recommendation:
 - Backfill/apply command run: No.
 - Legacy `employees.balance` conversion/opening balance: Not run.
 - Required BA/Owner approvals: mark Ready, merge PR #3, production deploy, production migration, permission rollout, any salary ledger backfill/apply/rebuild/opening-balance action.
+
+## 15. Final BA/Owner Sign-off Checklist
+
+Verification time: 2026-06-19, final checklist pass on PR #3.
+
+Current PR state:
+
+- PR: `https://github.com/cuongdesignnb/kiot/pull/3`
+- State: Open.
+- Draft: Yes.
+- Mergeable: Yes.
+- Merged: No.
+- Base: `main`.
+- Base SHA: `031ab576262103675c45b878629196b1ea4b6e64`.
+- Head branch: `integrate/payroll-employee-debt-with-main-after-pr2`.
+- Head SHA: `55bba19a7b7443d49b00afd8d74de4c012e7cdbe`.
+- Local worktree tracked changes before this checklist update: clean.
+- Ignored artifacts present only from test/build/session/cache: `.phpunit.result.cache`, `bootstrap/cache/*`, `node_modules/`, `public/build/`, `storage/framework/*`, `storage/logs/laravel.log`, `vendor/`. These are not committed.
+
+Evidence already available:
+
+| Gate | Status | Evidence |
+|---|---|---|
+| Clone migration safety | PASS | `migrate:status`, `migrate --pretend`, and clone `migrate --force` on `sales_test_pr3_migration_safety` |
+| Payroll tests | PASS | Payroll suite and named payroll tests passed |
+| Debt/CashFlow/Reports regression | PASS | SapoDebtParity, Orders, POS, CashFlow(s), Report(s) passed |
+| Build/check | PASS | `npm run build` and `git diff --check` passed |
+| UAT business flows | PASS | Authenticated local HTTP session + clone DB readback |
+| UI render | PASS | Login, dashboard, paysheet list, paysheet edit rendered |
+| Permission matrix | REVIEWED | Payroll permissions and route middleware reviewed |
+| Write-capable commands | REVIEWED | `--apply` and rebuild risks documented |
+| Production safety | PASS | No production deploy, migration, DB touch, audit, backfill, or command apply |
+
+Known limitation for BA decision:
+
+- Direct click-by-click browser automation for `Chốt lương` was limited by a JavaScript confirm/CDP issue in the Codex in-app browser.
+- Business behavior was still verified through authenticated local HTTP API calls against the same local app and clone DB, with DB readback.
+- BA/Owner should decide whether this evidence is sufficient or whether a human should run an additional manual UI click-by-click pass in a normal browser/staging environment before marking the PR ready.
+
+BA/Owner decision checklist:
+
+| Decision | Current recommendation | Owner action needed |
+|---|---|---|
+| Accept current UAT evidence | Acceptable for BA review | BA/Owner confirm |
+| Require extra manual UI click-by-click | Optional, based on risk appetite | BA/Owner decide |
+| Convert PR #3 Draft to Ready | Not done by agent | BA/Owner approval required |
+| Merge PR #3 into `main` | Not approved yet | Explicit BA/Owner merge approval required |
+| Production deploy | No-go | Separate production approval required |
+| Production migration | No-go | Backup/restore rehearsal + BA/Owner approval required |
+| Production permission rollout | No-go | Role/permission rollout approval required |
+| Backfill/opening balance/legacy conversion | No-go | Separate data strategy approval required |
+
+Hard no-go items still enforced:
+
+- No production deploy.
+- No production migration.
+- No production DB touch.
+- No production artisan command.
+- No command `--apply`.
+- No `payroll:rebuild-salary-balances` on production.
+- No `employees.balance` conversion.
+- No opening balance creation.
+- No production permission assignment.
+- No merge PR #3 unless BA/Owner gives explicit approval.
+- No mark Ready unless BA/Owner gives explicit approval.
+
+Final recommendation:
+
+- Ready for BA/Owner final review: Yes.
+- Ready to mark PR Ready: Pending BA/Owner sign-off.
+- Ready to merge main: Pending explicit BA/Owner merge approval.
+- Ready for production deploy/migration: No.
