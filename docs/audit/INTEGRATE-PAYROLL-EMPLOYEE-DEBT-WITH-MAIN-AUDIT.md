@@ -10,7 +10,7 @@
 - Integration SHA: final branch HEAD in Draft PR
 - Merge-base: `182243703b6297d5a2c11d41cab09c7907c1d2ca`
 - Ahead/behind before integration: main-only `4`, source-only `14`
-- Draft PR URL: pending until branch push
+- Draft PR URL: `https://github.com/cuongdesignnb/kiot/pull/3`
 
 ## 2. Changed Files
 
