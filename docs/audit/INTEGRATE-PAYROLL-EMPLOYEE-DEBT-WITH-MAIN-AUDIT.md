@@ -124,13 +124,14 @@ Warnings observed:
 
 ## 8. Manual QA
 
-- Payroll employee debt: not run in browser; covered by feature tests.
-- Salary advance: not run in browser; covered by feature tests.
-- Payment/cancel: not run in browser; covered by feature tests.
-- CashFlow/report: not run in browser; covered by feature tests.
-- Attendance/payroll hotfix smoke: not run in browser; covered by `ManualTimekeepingTest`.
-- Debt smoke: not run in browser; covered by `SapoDebtParityTest`.
-- Evidence path: terminal test output in this Codex session; no production or staging UI evidence collected.
+- Local browser UI render: PASS for login, paysheet list, and paysheet edit on `http://127.0.0.1:8003`.
+- Browser automation limitation: clicking `Chốt lương` opened a JavaScript confirm dialog and the in-app browser CDP session became unstable. I did not force the browser further.
+- Business UAT execution: PASS via authenticated local HTTP session against the same local app and clone DB, using browser-equivalent headers (`Origin`, `Referer`, `X-Requested-With`) plus session cookies.
+- DB verification: PASS via local clone DB readback; `salary_balance_cache = ledger effective sum = 600000`.
+- CashFlow/report cancellation evidence: cancelled payroll payment/advance CashFlows have `status=cancelled` and `deleted_at` set, while active payroll CashFlows remain active.
+- Debt smoke: PASS via `CustomerDebt/SapoDebtParityTest`.
+- Attendance/payroll hotfix smoke: PASS via `ManualTimekeepingTest` and payroll suite.
+- Evidence path: this report section plus terminal output from the local clone run; no production or staging UI screenshot committed.
 
 ## 9. GO/NO-GO
 
@@ -146,4 +147,130 @@ Warnings observed:
 2. Legacy payroll balances are not automatically converted. `employees.balance` stays untouched until BA approves opening balance strategy.
 3. Write-capable artisan commands exist and must be restricted operationally; especially `payroll:rebuild-salary-balances` writes unless `--dry-run`.
 4. Permission rollout is code-only; no production role assignment was performed.
-5. Manual UI UAT was not performed in this task.
+5. Full click-by-click browser UAT is partially limited by in-app browser automation around a JavaScript confirm dialog. UI render passed; business actions were verified through authenticated local API calls and clone DB readback.
+
+## 11. Staging/Clone Migration Safety Review
+
+- Environment: local clone/testing DB on Docker MySQL `sales_mysql_test:3319`.
+- DB source: base `origin/main` (`031ab576262103675c45b878629196b1ea4b6e64`) migrated first, then PR #3 migrations applied.
+- Database: `sales_test_pr3_migration_safety`.
+- Branch: `integrate/payroll-employee-debt-with-main-after-pr2`.
+- Head before report update: `b051c15a958839543111eda4036220c8258de08a`.
+- Production DB used: No.
+- Production deploy/migration/audit: No.
+- `migrate:fresh`: Not run.
+
+Migration status before PR migrations:
+
+| Migration | Before | After clone migrate |
+|---|---|---|
+| `2026_06_13_000001_create_employee_salary_ledger_system` | Pending | Ran, batch 2 |
+| `2026_06_13_000002_allow_legacy_null_cash_flow_status` | Pending | Ran, batch 2 |
+| `2026_06_18_000001_add_payroll_cashflow_metadata` | Pending | Ran, batch 2 |
+
+`migrate --pretend` summary:
+
+- `employees`: add `salary_balance_cache`, `salary_balance_calculated_at`.
+- `paysheets`: add `payment_status`.
+- `payslips`: add `payment_status`, `applied_advance`.
+- `paysheet_payments`: add nullable unique `code`, `status`, nullable `cash_flow_id` FK, cancel metadata, nullable unique `idempotency_key`.
+- `cash_flows`: add cancel metadata, make `status` nullable/default active, add nullable `branch_id` FK, nullable unique `idempotency_key`.
+- New tables: `salary_advances`, `salary_advance_applications`, `employee_salary_ledger_entries`.
+- New indexes/FKs: nullable FKs on payroll/cashflow metadata; unique nullable payroll codes/idempotency; unique advance application pair; unique ledger reversal pair.
+
+Clone migrate result:
+
+- `php artisan migrate --env=testing --force`: PASS on clone DB.
+- `php artisan migrate:status --env=testing`: PR migrations shown as `Ran`.
+
+Risk notes:
+
+- Existing-data risk: additive columns default to zero/unpaid; legacy `employees.balance` is not converted and must remain untouched until BA/Owner approval.
+- Lock risk: `cash_flows`, `employees`, `paysheets`, `payslips`, and `paysheet_payments` are high-value tables; run during a controlled production window after backup/restore rehearsal.
+- Rollback notes: migration rollback drops the new payroll ledger/advance tables and removes added columns; any data created after production deploy would require a BA-approved data runbook before rollback.
+
+Write-capable command review:
+
+| Command | Default behavior | Dry-run evidence | Production risk |
+|---|---|---|---|
+| `payroll:migrate-salary-ledger` | Dry-run/report unless `--apply` | PASS, `Mode: DRY-RUN`, no candidates | `--apply` can convert/open salary balances; BA approval required |
+| `payroll:backfill-paid-payslip-ledger` | Requires dry-run/apply mode | PASS, candidate `0` | `--apply` writes ledger rows |
+| `payroll:backfill-payment-cashflow` | Requires dry-run/apply mode | PASS, candidate `0` | `--apply` writes CashFlow rows |
+| `payroll:rebuild-salary-balances` | Writes by default unless `--dry-run` | PASS with `--dry-run` | High risk; must never run on production without explicit approval |
+| `salary:recalculate` | Legacy write-capable salary command | Not run | High risk; out of PR #3 rollout |
+
+## 12. Browser UAT Evidence
+
+- URL: `http://127.0.0.1:8003`.
+- Branch: `integrate/payroll-employee-debt-with-main-after-pr2`.
+- Commit tested before report update: `b051c15a958839543111eda4036220c8258de08a`.
+- DB: `sales_test_pr3_migration_safety` on `sales_mysql_test:3319`.
+- Browser: Codex in-app browser.
+- User/role: `uat-pr3@example.test`, admin-compatible user with `role_id = null`.
+- Dataset prefix: `UAT-PR3-20260619093937`.
+- UI evidence: login page, dashboard, paysheet list, and paysheet edit rendered successfully. Paysheet list showed `PAY-20260619093937`, `ADV-20260619093937`, and `CANCEL-20260619093937`.
+- Automation limitation: direct browser click on `Chốt lương` hit an unstable JavaScript confirm/CDP state. Business UAT actions below were executed through authenticated local HTTP session against the same server and clone DB.
+
+| Case | Result | Evidence | Notes |
+|---|---|---|---|
+| Lock paysheet accrual | PASS | `PUT /api/paysheets/1/lock` => `200`, status `locked`; ledger `payroll_accrual` created; no CashFlow created by lock | UI edit page rendered the source calculated sheet before action |
+| Partial payment | PASS | `POST /api/paysheets/1/pay` amount `400000` => payment `TTPL000001`, active, CashFlow created | Later cancelled in UAT 5 |
+| Full payment | PASS | Remaining `600000` paid via `TTPL000002`; sheet became paid before cancelling first payment | After UAT 5 final state is partial, expected because one payment was cancelled |
+| Overpayment blocked | PASS | Attempted `700000` when remaining was `600000` => HTTP `422`, message `So tien tra vuot so con phai tra.` | No extra payment/CashFlow created |
+| Cancel payment | PASS | `POST /api/paysheet-payments/1/cancel` => payment `cancelled`; CashFlow `PCPL000001` `status=cancelled`, `deleted_at` set; reversal ledger created | Sheet remaining recalculated to `400000` |
+| Create advance | PASS | `POST /api/employees/1/salary-advances` amount `500000` => `TU000001`, active, CashFlow `PCTU1` active, salary advance ledger negative | Used for allocation case |
+| Allocate advance | PASS | Locking `ADV-20260619093937` applied `500000`; payslip `applied_advance=500000`, remaining `200000`; application active | No double-count observed |
+| Block cancel allocated advance | PASS | Cancel `TU000001` => HTTP `422`, message `Không thể hủy tạm ứng đã được cấn vào phiếu lương.` | CashFlow/ledger unchanged |
+| Cancel unallocated advance | PASS | Created `TU000002` amount `200000`, then cancelled; CashFlow `PCTU2` `status=cancelled`, `deleted_at` set; reversal ledger created | Advance status `cancelled` |
+| Block locked/cancelled mutation | PASS | Locked sheet recalculate/update/delete returned `422`; cancelled sheet recalculate returned `422` | Delete locked sheet message was payment-related because the sheet already had payment history |
+| Reconciliation UI/API | PASS | `GET /api/payroll/reconciliation` => HTTP `200`; browser page route attempted after prior confirm issue but tab automation remained unstable | API evidence accepted; no production data touched |
+| CashFlow/report cancelled exclusion | PASS | DB readback: cancelled payment/advance CashFlows have `status=cancelled` and soft-delete timestamp; report regression tests PASS | Active payroll CashFlows remain active |
+| Debt smoke | PASS | `CustomerDebt/SapoDebtParityTest` PASS | Not manually rerun in browser in this step |
+| Attendance/payroll hotfix smoke | PASS | `ManualTimekeepingTest` and payroll suite PASS | Not manually rerun in browser in this step |
+
+Clone DB readback after UAT:
+
+- Employee `UAT-PR3-20260619093937`: `salary_balance_cache = 600000`.
+- Effective ledger sum: `600000`.
+- Paysheet `PAY-20260619093937`: `locked`, `total_salary=1000000`, `total_paid=600000`, `total_remaining=400000`, payment status `partial`.
+- Paysheet `ADV-20260619093937`: `locked`, `total_salary=700000`, `applied_advance=500000`, `total_remaining=200000`.
+- Paysheet `CANCEL-20260619093937`: `cancelled`, no active payment.
+- CashFlows: `PCPL000001` cancelled, `PCPL000002` active, `PCTU1` active, `PCTU2` cancelled.
+
+## 13. Permission Matrix
+
+Permission definitions were reviewed in `App\Models\Role::getPermissionsMap()` and route middleware.
+
+| Action | Permission | Result |
+|---|---|---|
+| View salary balance | `employee.view_salary_balance` | Present in permission map |
+| Create advance | `payroll.advance.create` | Present; API route protected |
+| Cancel advance | `payroll.advance.cancel` | Present; API route protected |
+| View ledger | `payroll.ledger.view` | Present; API route protected |
+| Export ledger | `payroll.ledger.export` | Present; API route protected |
+| Pay paysheet | `payroll.pay` | Present; API route protected |
+| Cancel payment | `payroll.pay.cancel` | Present; API route protected |
+| View reconciliation | `payroll.reconciliation.view` | Present; API and page routes protected |
+| Export reconciliation | `payroll.reconciliation.export` | Present; API route protected |
+| Rebuild balance | `payroll.rebuild_balance` | Present; high-risk UI/API permission |
+| Override locked period | `payroll.override_locked_period` | Present; route/service uses date guard |
+| Override backdate limit | `payroll.override_backdate_limit` | Present; route/service uses date guard |
+
+Rollout recommendation:
+
+- Do not assign `payroll.rebuild_balance`, `payroll.override_locked_period`, or `payroll.override_backdate_limit` broadly.
+- Keep write-capable artisan commands operationally restricted; no production `--apply` or rebuild command without BA/Owner sign-off.
+- Production role assignment was not performed in this task.
+
+## 14. Updated GO/NO-GO
+
+- Ready for BA review: Yes, with local clone migration safety, tests/build, permission review, and UAT evidence above.
+- Ready to mark PR ready: No, not by agent decision. BA/Owner must approve after reviewing this report.
+- Ready to merge main: No.
+- Ready for production deploy: No.
+- Ready for production migration: No.
+- Production DB touched: No.
+- Production deploy/migration/audit run: No.
+- Backfill/apply command run: No.
+- Legacy `employees.balance` conversion/opening balance: Not run.
+- Required BA/Owner approvals: mark Ready, merge PR #3, production deploy, production migration, permission rollout, any salary ledger backfill/apply/rebuild/opening-balance action.
