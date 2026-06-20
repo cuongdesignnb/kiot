@@ -716,6 +716,13 @@ class SupplierController extends Controller
         $netDebt = $customerDebt - $supplierDebt;
         $supplierOrientedBalance = $supplierDebt - $customerDebt;
         $ledgerSummary = $ledger['summary'] ?? [];
+        $compatNet = (float) (
+            $ledgerSummary['display_balance_final']
+            ?? $ledgerSummary['document_final_balance']
+            ?? $ledger['closing_balance']
+            ?? $ledgerSummary['net']
+            ?? ($usePartnerTimeline ? $supplierOrientedBalance : $supplierDebt)
+        );
 
         $hasDebtOffsetVoucher = \App\Models\DebtOffset::query()
             ->where('customer_id', $supplier->id)
@@ -751,9 +758,7 @@ class SupplierController extends Controller
                 'display_balance_final'       => (float) ($ledgerSummary['display_balance_final'] ?? $ledger['closing_balance'] ?? 0.0),
 
                 // Backward-compatible keys (existing FE/tests still read these)
-                'net' => $usePartnerTimeline
-                    ? (float) ($ledgerSummary['supplier_oriented_balance'] ?? $ledger['closing_balance'] ?? $supplierOrientedBalance)
-                    : (float) ($ledger['closing_balance'] ?? 0.0),
+                'net' => $compatNet,
                 'is_dual_role' => $isDualRole,
                 'customer_debt_amount' => $customerDebt,
                 'supplier_debt_amount' => $supplierDebt,

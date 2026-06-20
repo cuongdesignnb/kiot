@@ -211,7 +211,7 @@ class CustomerDebtExcelExportService
 
             $sheet->setCellValue('A' . $row, $when);
             $sheet->setCellValue('B' . $row, $entry['code'] ?? '');
-            $sheet->setCellValue('C' . $row, $entry['type'] ?? $entry['type_label'] ?? '');
+            $sheet->setCellValue('C' . $row, $this->entryLabel($entry));
             if ($effect > 0) {
                 $sheet->setCellValue('K' . $row, $effect);
             } elseif ($effect < 0) {
@@ -474,7 +474,13 @@ class CustomerDebtExcelExportService
 
     private function entryEffect(array $entry): float
     {
-        return (float) ($entry['customer_effect'] ?? $entry['amount'] ?? 0);
+        foreach (['customer_display_effect', 'customer_effect', 'display_effect', 'amount'] as $key) {
+            if (array_key_exists($key, $entry) && is_numeric($entry[$key])) {
+                return (float) $entry[$key];
+            }
+        }
+
+        return 0.0;
     }
 
     private function entryDisplayEffect(array $entry): float
@@ -484,6 +490,23 @@ class CustomerDebtExcelExportService
         }
 
         return $this->entryEffect($entry);
+    }
+
+    private function entryLabel(array $entry): string
+    {
+        foreach (['type', 'type_label', 'display_type', 'document_type', 'label', 'badge_label'] as $key) {
+            if (array_key_exists($key, $entry) && $entry[$key] !== null && $entry[$key] !== '') {
+                return (string) $entry[$key];
+            }
+        }
+
+        return match ((string) ($entry['event_kind'] ?? $entry['reference_type'] ?? '')) {
+            'customer_sale', 'Invoice' => 'Bán hàng',
+            'invoice_payment', 'invoice_payment_fallback', 'customer_payment', 'CashFlow' => 'Thanh toán',
+            'sales_return', 'OrderReturn' => 'Trả hàng bán',
+            'refund' => 'Hoàn tiền khách',
+            default => '',
+        };
     }
 
     private function storeName(): string
