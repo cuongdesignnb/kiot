@@ -915,9 +915,92 @@ class CustomerController extends Controller
 
         return \App\Services\CsvService::export(
             ['Mã chứng từ', 'Loại', 'Giá trị', 'Dư nợ sau GD', 'Ngày'],
-            collect($entries)->map(fn($e) => [$e['code'], $e['type'], $e['amount'], $e['balance'], $this->customerDebtEntryExportTime($e)]),
+            collect($entries)->map(function ($entry) {
+                $normalized = $this->normalizeCustomerDebtExportEntry(is_array($entry) ? $entry : (array) $entry);
+
+                return [
+                    $normalized['code'],
+                    $normalized['type'],
+                    $normalized['amount'],
+                    $normalized['balance'],
+                    $normalized['time'],
+                ];
+            }),
             "cong_no_kh_{$customer->code}.csv"
         );
+    }
+
+    private function normalizeCustomerDebtExportEntry(array $entry): array
+    {
+        $isLegacy = array_key_exists('type', $entry);
+
+        return [
+            'code' => $this->firstDebtExportString($entry, ['code', 'document_code', 'reference_code']),
+            'type' => $this->customerDebtExportType($entry),
+            'amount' => $this->firstDebtExportNumber(
+                $entry,
+                $isLegacy
+                    ? ['amount', 'customer_display_effect', 'customer_effect', 'display_effect', 'value', 'total']
+                    : ['customer_display_effect', 'customer_effect', 'display_effect', 'amount', 'value', 'total']
+            ),
+            'balance' => $this->firstDebtExportNumber($entry, [
+                'balance',
+                'debt_remain',
+                'customer_display_running_balance',
+                'running_balance',
+                'display_balance_after',
+                'display_balance_final',
+            ]),
+            'time' => $this->customerDebtEntryExportTime($entry),
+        ];
+    }
+
+    private function customerDebtExportType(array $entry): string
+    {
+        $label = $this->firstDebtExportString($entry, [
+            'type',
+            'type_label',
+            'display_type',
+            'document_type',
+            'label',
+            'badge_label',
+        ]);
+
+        if ($label !== '') {
+            return $label;
+        }
+
+        return match ((string) ($entry['event_kind'] ?? $entry['reference_type'] ?? '')) {
+            'customer_sale', 'Invoice' => 'Bán hàng',
+            'invoice_payment', 'invoice_payment_fallback', 'customer_payment', 'CashFlow' => 'Thanh toán',
+            'sales_return', 'OrderReturn' => 'Trả hàng bán',
+            'refund' => 'Hoàn tiền khách',
+            'purchase' => 'Nhập hàng',
+            'purchase_return', 'PurchaseReturn' => 'Trả hàng nhập',
+            default => '',
+        };
+    }
+
+    private function firstDebtExportString(array $entry, array $keys): string
+    {
+        foreach ($keys as $key) {
+            if (array_key_exists($key, $entry) && $entry[$key] !== null && $entry[$key] !== '') {
+                return (string) $entry[$key];
+            }
+        }
+
+        return '';
+    }
+
+    private function firstDebtExportNumber(array $entry, array $keys): float
+    {
+        foreach ($keys as $key) {
+            if (array_key_exists($key, $entry) && is_numeric($entry[$key])) {
+                return (float) $entry[$key];
+            }
+        }
+
+        return 0.0;
     }
 
     private function customerDebtEntryExportRawTime(array $entry)
