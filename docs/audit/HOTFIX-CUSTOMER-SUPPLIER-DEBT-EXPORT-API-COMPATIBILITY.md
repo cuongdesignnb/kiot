@@ -18,11 +18,15 @@ Kết quả broad Customer/Supplier debt suite giảm từ `50 failed` xuống `
 |---|---|
 | Branch hotfix | `hotfix/customer-supplier-debt-export-api-compatibility` |
 | HEAD trước hotfix code | `1b979a95554f7ccddc744668fb1996cbb2dd6444` |
+| Hotfix code commit | `e7602beb721d292e1f31e68005a9532e8664eb9d` |
 | `origin/main` khi bắt đầu | `4ef0189587e4d2edc0b49cc16a239acf059ac969` |
+| Pull Request | `#5` - `https://github.com/cuongdesignnb/kiot/pull/5` |
+| PR base | `main` at `4ef0189587e4d2edc0b49cc16a239acf059ac969` |
+| PR head khi tạo | `hotfix/customer-supplier-debt-export-api-compatibility` at `e7602beb721d292e1f31e68005a9532e8664eb9d` |
 | Report triage trước đó | `docs/audit/CUSTOMER-SUPPLIER-DEBT-REGRESSION-TRIAGE-AFTER-PR4.md` |
 | Production touched | Không |
 
-Ghi chú: local `main` đã có commit audit report trước khi tách branch hotfix; `origin/main` vẫn là PR #4 SHA `4ef0189587e4d2edc0b49cc16a239acf059ac969`.
+Ghi chú: local `main` đã có commit audit report trước khi tách branch hotfix; `origin/main` vẫn là PR #4 SHA `4ef0189587e4d2edc0b49cc16a239acf059ac969`. PR #5 chỉ ở trạng thái ready for review; chưa merge, chưa deploy.
 
 ## Scope
 
