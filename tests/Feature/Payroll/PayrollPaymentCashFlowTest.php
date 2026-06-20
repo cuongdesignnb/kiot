@@ -9,8 +9,10 @@ use App\Models\EmployeeSalaryLedgerEntry;
 use App\Models\Paysheet;
 use App\Models\PaysheetPayment;
 use App\Models\Payslip;
+use App\Models\SalaryAdvance;
 use App\Models\User;
 use App\Services\PayrollPaymentCashFlowService;
+use App\Services\PayrollReconciliationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
 use Tests\TestCase;
@@ -169,6 +171,85 @@ class PayrollPaymentCashFlowTest extends TestCase
         $this->assertSame('cancelled', CashFlow::withTrashed()->findOrFail($cashFlowId)->status);
     }
 
+    public function test_reconciliation_accepts_cancelled_payment_with_cancelled_soft_deleted_cash_flow(): void
+    {
+        $this->lockPaysheet();
+        $payment = $this->paySalary(400_000);
+        $cashFlowId = $payment->fresh()->cash_flow_id;
+
+        $this->postJson("/api/paysheet-payments/{$payment->id}/cancel", [
+            'reason' => 'Huy thanh toan tao nham',
+            'cancel_date' => now()->toDateTimeString(),
+        ])->assertOk();
+
+        $payment->refresh();
+        $cashFlow = CashFlow::withTrashed()->findOrFail($cashFlowId);
+        $this->assertSame('cancelled', $payment->status);
+        $this->assertSame('cancelled', $cashFlow->status);
+        $this->assertNotNull($cashFlow->deleted_at);
+
+        $report = app(PayrollReconciliationService::class)->audit(['employee' => $this->employee->id]);
+
+        $this->assertFalse($this->documentIssues($report)->contains(fn (array $issue) => $issue['group'] === 'payment'
+            && $issue['issue'] === 'PAYMENT_WITHOUT_CASHFLOW'
+            && (int) $issue['document_id'] === (int) $payment->id));
+    }
+
+    public function test_reconciliation_still_reports_active_payment_without_cash_flow(): void
+    {
+        $payment = $this->legacyPaymentWithoutCashFlow(500_000, true);
+
+        $report = app(PayrollReconciliationService::class)->audit(['employee' => $this->employee->id]);
+
+        $this->assertTrue($this->documentIssues($report)->contains(fn (array $issue) => $issue['group'] === 'payment'
+            && $issue['issue'] === 'PAYMENT_WITHOUT_CASHFLOW'
+            && (int) $issue['document_id'] === (int) $payment->id));
+    }
+
+    public function test_reconciliation_still_reports_active_payment_cash_flow_amount_mismatch(): void
+    {
+        $this->lockPaysheet();
+        $payment = $this->paySalary(400_000);
+        CashFlow::whereKey($payment->cash_flow_id)->update(['amount' => 399_999]);
+
+        $report = app(PayrollReconciliationService::class)->audit(['employee' => $this->employee->id]);
+
+        $this->assertTrue($this->documentIssues($report)->contains(fn (array $issue) => $issue['group'] === 'payment'
+            && $issue['issue'] === 'CASHFLOW_AMOUNT_MISMATCH'
+            && (int) $issue['document_id'] === (int) $payment->id));
+    }
+
+    public function test_reconciliation_accepts_cancelled_advance_with_cancelled_soft_deleted_cash_flow(): void
+    {
+        $this->postJson("/api/employees/{$this->employee->id}/salary-advances", [
+            'amount' => 300_000,
+            'advance_date' => now()->toDateTimeString(),
+            'payment_method' => 'cash',
+            'branch_id' => $this->branch->id,
+            'note' => 'Tam ung test huy',
+        ], ['Idempotency-Key' => 'advance-reconciliation-cancel'])->assertCreated();
+
+        $advance = SalaryAdvance::firstOrFail();
+        $cashFlowId = $advance->cash_flow_id;
+
+        $this->postJson("/api/salary-advances/{$advance->id}/cancel", [
+            'reason' => 'Huy tam ung tao nham',
+            'cancel_date' => now()->toDateTimeString(),
+        ])->assertOk();
+
+        $advance->refresh();
+        $cashFlow = CashFlow::withTrashed()->findOrFail($cashFlowId);
+        $this->assertSame('cancelled', $advance->status);
+        $this->assertSame('cancelled', $cashFlow->status);
+        $this->assertNotNull($cashFlow->deleted_at);
+
+        $report = app(PayrollReconciliationService::class)->audit(['employee' => $this->employee->id]);
+
+        $this->assertFalse($this->documentIssues($report)->contains(fn (array $issue) => $issue['group'] === 'advance'
+            && $issue['issue'] === 'ADVANCE_WITHOUT_CASHFLOW'
+            && (int) $issue['document_id'] === (int) $advance->id));
+    }
+
     private function lockPaysheet(): void
     {
         $this->putJson("/api/paysheets/{$this->paysheet->id}/lock")->assertOk();
@@ -226,5 +307,10 @@ class PayrollPaymentCashFlowTest extends TestCase
         $this->paysheet->recalculateTotals();
 
         return $payment;
+    }
+
+    private function documentIssues(array $report)
+    {
+        return collect($report['document_issues'] ?? []);
     }
 }
