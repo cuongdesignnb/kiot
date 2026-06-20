@@ -128,23 +128,25 @@ Kiot `origin/main` at `1603cd93` contains the core port:
 
 | STT | Logic nghiep vu | Sapo source file/commit | Kiot source file/commit | Da port vao main chua | Da co test chua | Test pass chua | Da deploy production chua | Rui ro du lieu | Ket luan | Buoc tiep theo |
 |---:|---|---|---|---|---|---|---|---|---|---|
-| 1 | Signed debt / credit am | `CustomerDebtService`, `a08fe9b` | `CustomerDebtService`, `1603cd93` | Co | `SapoDebtParityTest` | Prior PR #5 PASS; current run blocked DB | Theo brief: PR #5 da deploy; audit nay khong verify prod | Low | Dat parity source | Re-run tests khi DB local on |
-| 2 | Invoice/POS/order signed balance effect | `Invoice/Order/POS`, `2321a3e`, `a08fe9b` | `InvoiceSaleService`, `InvoiceUpdateService`, `OrderController`, `PosController` | Co | `SapoDebtParityTest`, POS/Orders tests | Prior PASS; current blocked DB | Da tren main | Medium neu regression sau nay | Dat parity source | Regression only |
-| 3 | Customer payment allocation | `CustomerPaymentService`, `540019e` | `CustomerPaymentService`, `CustomerPaymentAllocation` | Co | `SapoDebtParityTest`, customer payment tests | Prior PASS; current blocked DB | Da tren main | Low/Medium | Dat parity source | Regression only |
-| 4 | CashFlow cancellation idempotent | `CustomerPaymentService`, `540019e` | `CustomerPaymentService::cancel()` | Co | `SapoDebtParityTest` | Prior PASS; current blocked DB | Da tren main | Medium | Dat parity source | Regression only |
-| 5 | Order payment summary Option A | `OrderPaymentSummaryService`, `3e98d8e`, `570f121` | `OrderPaymentSummaryService`, `OrderController`, POS | Co | `SapoDebtParityTest`, `Orders`, `POS` | Prior PASS; current blocked DB | Da tren main | Medium legacy data audit only | Dat parity source | Manual review legacy cumulative `amount_paid` before remediation |
-| 6 | Partner merge marker 0 | `PartnerMergeService`, `693b523` | `PartnerMergeService`, `PartnerMerge` | Co | `SapoDebtParityTest` | Prior PASS; current blocked DB | Da tren main | Medium if legacy MERGE data exists | Dat parity for new merges | Do not cleanup legacy without BA |
-| 7 | Partner guard | `PartnerTransactionGuard`, `693b523` | `PartnerTransactionGuard` wired broadly | Co | `SapoDebtParityTest` | Prior PASS; current blocked DB | Da tren main | Low | Dat parity source | Regression only |
+| 1 | Signed debt / credit am | `CustomerDebtService`, `a08fe9b` | `CustomerDebtService`, `1603cd93` | Co | `SapoDebtParityTest` | Retest PASS: `SapoDebtParityTest` 12/12 | Theo brief: PR #5 da deploy; audit nay khong verify prod | Low | Dat parity source | Regression only |
+| 2 | Invoice/POS/order signed balance effect | `Invoice/Order/POS`, `2321a3e`, `a08fe9b` | `InvoiceSaleService`, `InvoiceUpdateService`, `OrderController`, `PosController` | Co | `SapoDebtParityTest`, POS/Orders tests | Retest PASS via `SapoDebtParityTest` 12/12 | Da tren main | Medium neu regression sau nay | Dat parity source | Regression only |
+| 3 | Customer payment allocation | `CustomerPaymentService`, `540019e` | `CustomerPaymentService`, `CustomerPaymentAllocation` | Co | `SapoDebtParityTest`, customer payment tests | Retest PASS via `SapoDebtParityTest`; `CustomerDebt` suite PASS 17/17 | Da tren main | Low/Medium | Dat parity source | Regression only |
+| 4 | CashFlow cancellation idempotent | `CustomerPaymentService`, `540019e` | `CustomerPaymentService::cancel()` | Co | `SapoDebtParityTest` | Retest PASS via `SapoDebtParityTest` | Da tren main | Medium | Dat parity source | Regression only |
+| 5 | Order payment summary Option A | `OrderPaymentSummaryService`, `3e98d8e`, `570f121` | `OrderPaymentSummaryService`, `OrderController`, POS | Co | `SapoDebtParityTest`, `Orders`, `POS` | Retest PASS via `SapoDebtParityTest`; broader Orders/POS not rerun in this report-only update | Da tren main | Medium legacy data audit only | Dat parity source | Manual review legacy cumulative `amount_paid` before remediation |
+| 6 | Partner merge marker 0 | `PartnerMergeService`, `693b523` | `PartnerMergeService`, `PartnerMerge` | Co | `SapoDebtParityTest` | Retest PASS via `SapoDebtParityTest` | Da tren main | Medium if legacy MERGE data exists | Dat parity for new merges | Do not cleanup legacy without BA |
+| 7 | Partner guard | `PartnerTransactionGuard`, `693b523` | `PartnerTransactionGuard` wired broadly | Co | `SapoDebtParityTest` | Retest PASS via `SapoDebtParityTest` | Da tren main | Low | Dat parity source | Regression only |
 | 8 | Dual-role net orientation | `PartnerDebtLedgerService`, Sapo dual-role commits | `CustomerController`, `SupplierController`, `PartnerDebtLedgerService` | Co mot phan | Many Customers/Suppliers tests | 29 remaining failures | Da tren main | Medium display/API contract | Core formula exists; customer partner timeline compatibility not closed | BA contract decision |
 | 9 | Customer document-first timeline | Sapo/Kiot timeline work | `CustomerDebtDocumentTimelineService`, `PartnerDebtLedgerService` | Co mot phan | Customers tests | 29 remaining failures include this | Da tren main | Medium/High display trust | Not missing core Sapo parity; contract mismatch | Dedicated compatibility PR |
-| 10 | Supplier document-first timeline/API aliases | Sapo ledger/timeline | `SupplierDebtDocumentTimelineService`, `SupplierController`, PR #5 | Co | Supplier/Suppliers tests | Prior Supplier-only compatibility fixed; 2 Supplier dual-role failures remain | Da tren main | Medium | Mostly fixed by PR #5 | Include dual-role display in next PR |
+| 10 | Supplier document-first timeline/API aliases | Sapo ledger/timeline | `SupplierDebtDocumentTimelineService`, `SupplierController`, PR #5 | Co | Supplier/Suppliers tests | Retest Supplier suite PASS 59/59; Suppliers suite still has 2 dual-role display failures | Da tren main | Medium | Mostly fixed by PR #5 | Include dual-role display in next PR |
 | 11 | Frontend customer debt | Sapo/Kiot customer UI | `resources/js/Pages/Customers/Index.vue` | Co mot phan | UI/UAT prior evidence | Prior UAT PASS core; remaining contract tests | Da tren main | Medium | Core credit/payment UI OK; timeline fields still contract-sensitive | Audit after compatibility PR |
 | 12 | Frontend supplier debt | Sapo/Kiot supplier UI | `resources/js/Pages/Suppliers/Index.vue` | Co mot phan | Supplier tests | Supplier default API fixed, dual-role display remains | Da tren main | Medium | Mostly OK | Keep aliases while frontend migrates |
 | 13 | POS/order UI | `3e98d8e` | POS/Orders frontend/controllers | Co | POS/Orders tests | Prior PASS | Da tren main | Low | Dat parity | Regression only |
 | 14 | Exports | Sapo/Kiot export hotfix | Customer/Supplier export services/controllers | Co for PR #5 scope | Customer export/Supplier export tests | Prior PASS for fixed scope | Da tren main | Low/Medium | Customer export and supplier API fixed | Supplier/customer timeline exports should follow compatibility PR |
-| 15 | Remaining 29 failures | N/A | Customer legacy/partner tests | Chua chot | Co | Fail in prior PR #5 broad run | Da tren main but not clean | Medium | BA decision required | Split next PRs |
+| 15 | Remaining 29 failures | N/A | Customer legacy/partner tests | Chua chot | Co | Retest broad suite still 29 failures, no new failures | Da tren main but not clean | Medium | BA decision required | Split next PRs |
 
 ## Test Results
+
+> Note: The initial local run was blocked by MySQL connection refused. This was later superseded by the "Retest After Testing DB Unblocked" section using disposable Docker MySQL. The authoritative current test result is the retest result below.
 
 Commands required by brief:
 
@@ -158,7 +160,7 @@ php artisan test tests/Feature/CustomerDebt tests/Feature/Customers tests/Featur
 git diff --check
 ```
 
-Current audit run on this machine:
+Initial local audit run on this machine, now superseded by the Docker MySQL retest below:
 
 | Command | Result |
 |---|---|
