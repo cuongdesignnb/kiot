@@ -563,7 +563,10 @@ class CustomerController extends Controller
      */
     public function debtHistory(Request $request, Customer $customer)
     {
-        $mode = $request->query('mode', 'document');
+        $mode = $request->query('mode');
+        if ($mode === null) {
+            $mode = $request->expectsJson() ? 'legacy' : 'document';
+        }
 
         if ($mode === 'legacy') {
             $ledger = app(\App\Services\PartnerDebtLedgerService::class)->buildCustomerNetLedger($customer);
