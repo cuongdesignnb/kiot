@@ -810,6 +810,12 @@ class SupplierDebtDocumentTimelineService
             return $entry;
         });
 
+        if ($usePartnerTimeline) {
+            $entries = $entries
+                ->map(fn (array $entry) => $this->normalizeSupplierPartnerDisplayAliases($entry))
+                ->values();
+        }
+
         // Sort ASC for running balance calculation
         $sortedAsc = collect($entries)
             ->sort(function (array $a, array $b) {
@@ -837,16 +843,22 @@ class SupplierDebtDocumentTimelineService
         $running = 0.0;
         $sorted = $sortedAsc->map(function (array $entry) use (&$running) {
             $effect = (float) ($entry['supplier_display_effect'] ?? $entry['display_effect'] ?? $entry['amount'] ?? 0);
+            $displayBalanceEffect = (float) ($entry['supplier_display_balance_effect'] ?? $effect);
 
             if (($entry['affects_document_balance'] ?? true) === false) {
+                $entry['supplier_display_effect'] = $effect;
+                $entry['supplier_display_balance_effect'] = $displayBalanceEffect;
+                $entry['supplier_balance_effect'] = (float) ($entry['supplier_balance_effect'] ?? 0.0);
                 $entry['supplier_display_running_balance'] = $running;
                 $entry['running_balance'] = $running;
                 return $entry;
             }
 
-            $running += $effect;
+            $running += $displayBalanceEffect;
 
             $entry['supplier_display_effect'] = $effect;
+            $entry['supplier_display_balance_effect'] = $displayBalanceEffect;
+            $entry['supplier_balance_effect'] = (float) ($entry['supplier_balance_effect'] ?? $displayBalanceEffect);
             $entry['display_effect'] = (float) ($entry['display_effect'] ?? $effect);
             $entry['supplier_display_running_balance'] = $running;
             $entry['running_balance'] = $running;
@@ -907,6 +919,68 @@ class SupplierDebtDocumentTimelineService
         }
 
         $virtualOpening = null;
+        if ($usePartnerTimeline && $displayEntries->isNotEmpty() && abs($documentFinalBalance - $storedBalance) > 1.0) {
+            $openingAmount = $storedBalance - $documentFinalBalance;
+            $openingTime = $this->virtualOpeningTime($displayEntries);
+            $virtualOpening = $this->withCompatibilityAliases($this->createEntry([
+                'id' => 'virtual-opening-supplier-' . $supplier->id,
+                'code' => 'OPENING-BALANCE-SUPPLIER-' . $supplier->id,
+                'display_type' => 'So du dau ky',
+                'event_kind' => 'virtual_opening_balance',
+                'domain' => 'adjustment',
+                'document_amount' => abs($openingAmount),
+                'amount' => $openingAmount,
+                'display_effect' => $openingAmount,
+                'supplier_display_effect' => $openingAmount,
+                'supplier_display_balance_effect' => $openingAmount,
+                'supplier_balance_effect' => 0.0,
+                'supplier_display_running_balance' => $openingAmount,
+                'supplier_running_balance' => $openingAmount,
+                'running_balance' => $openingAmount,
+                'time' => $openingTime,
+                'display_time' => $openingTime,
+                'created_at' => $openingTime,
+                'reference_type' => 'Customer',
+                'reference_id' => $supplier->id,
+                'reference_code' => $supplier->code,
+                'badge_label' => 'So du dau ky',
+                'badge_title' => 'Read-only display row for stored supplier partner balance.',
+                'is_real_voucher' => false,
+                'is_virtual_fallback' => true,
+                'is_virtual_opening' => true,
+                'source' => 'virtual_opening_balance',
+                'source_ledger' => 'virtual_opening_balance',
+                'affects_debt_balance' => false,
+                'reference_only' => false,
+                'is_reference_only' => false,
+            ]));
+
+            $displayEntries = $displayEntries
+                ->map(fn (array $entry) => $this->shiftSupplierDisplayRunningAliases($entry, $openingAmount))
+                ->prepend($virtualOpening)
+                ->sort(function (array $a, array $b) {
+                    $timeCompare = strcmp(
+                        (string) ($b['event_sort_time'] ?? $b['time'] ?? ''),
+                        (string) ($a['event_sort_time'] ?? $a['time'] ?? '')
+                    );
+
+                    if ($timeCompare !== 0) {
+                        return $timeCompare;
+                    }
+
+                    $displayOrderCompare = ((int) ($b['display_order'] ?? 0))
+                        <=> ((int) ($a['display_order'] ?? 0));
+
+                    if ($displayOrderCompare !== 0) {
+                        return $displayOrderCompare;
+                    }
+
+                    return strcmp((string) ($b['code'] ?? ''), (string) ($a['code'] ?? ''));
+                })
+                ->values();
+            $documentFinalBalance = $storedBalance;
+        }
+
         if ($displayEntries->isEmpty() && abs($storedBalance) > 1.0) {
             $virtualOpening = $this->withCompatibilityAliases($this->createEntry([
                 'id' => 'virtual-opening-supplier-' . $supplier->id,
@@ -1133,9 +1207,13 @@ class SupplierDebtDocumentTimelineService
     private function withCompatibilityAliases(array $entry): array
     {
         $effect = (float) ($entry['supplier_display_effect'] ?? $entry['display_effect'] ?? $entry['amount'] ?? 0.0);
+        $displayBalanceEffect = (float) ($entry['supplier_display_balance_effect'] ?? $effect);
+        $balanceEffect = (float) ($entry['supplier_balance_effect'] ?? $displayBalanceEffect);
         $running = (float) ($entry['supplier_display_running_balance'] ?? $entry['running_balance'] ?? 0.0);
 
         $entry['supplier_effect'] = $effect;
+        $entry['supplier_display_balance_effect'] = $displayBalanceEffect;
+        $entry['supplier_balance_effect'] = $balanceEffect;
         $entry['debt_remain'] = $running;
         $entry['type_label'] = $entry['type_label']
             ?? $entry['display_type']
@@ -1147,9 +1225,87 @@ class SupplierDebtDocumentTimelineService
         $entry['supplier_partner_effect'] = $entry['supplier_partner_effect'] ?? $effect;
         $entry['partner_running_balance'] = $entry['partner_running_balance'] ?? $running;
         $entry['supplier_partner_running_balance'] = $entry['supplier_partner_running_balance'] ?? $running;
+        $entry['affects_debt_balance'] = $entry['affects_debt_balance'] ?? ! (bool) (
+            $entry['reference_only']
+            ?? $entry['is_reference_only']
+            ?? false
+        );
         $entry['created_at'] = $this->compatibilityCreatedAt($entry);
 
         return $entry;
+    }
+
+    private function normalizeSupplierPartnerDisplayAliases(array $entry): array
+    {
+        $effect = (float) ($entry['supplier_display_effect'] ?? $entry['display_effect'] ?? $entry['amount'] ?? 0.0);
+        $entry['supplier_display_effect'] = $effect;
+        $entry['supplier_display_balance_effect'] = (float) ($entry['supplier_display_balance_effect'] ?? $effect);
+
+        $eventKind = (string) ($entry['event_kind'] ?? '');
+        $referenceType = (string) ($entry['reference_type'] ?? '');
+        $domain = (string) ($entry['domain'] ?? '');
+        $isCustomerDocumentReference = $domain === 'customer'
+            && in_array($eventKind, [
+                'customer_sale',
+                'invoice_payment',
+                'invoice_payment_fallback',
+                'sales_return',
+                'refund',
+            ], true)
+            && in_array($referenceType, ['Invoice', 'OrderReturn', 'CashFlow'], true);
+
+        if ($isCustomerDocumentReference) {
+            $entry['supplier_balance_effect'] = 0.0;
+            $entry['affects_debt_balance'] = false;
+            $entry['reference_only'] = true;
+            $entry['is_reference_only'] = true;
+            $entry['badge_label'] = 'Phải thu KH';
+        } else {
+            $entry['supplier_balance_effect'] = (float) ($entry['supplier_balance_effect'] ?? $entry['supplier_display_balance_effect']);
+            $entry['affects_debt_balance'] = $entry['affects_debt_balance'] ?? true;
+        }
+
+        $entry['partner_effect'] = $entry['partner_effect'] ?? $effect;
+        $entry['supplier_partner_effect'] = $entry['supplier_partner_effect'] ?? $effect;
+        $entry['source_ledger'] = $entry['source_ledger'] ?? $this->compatibilitySourceLedger($entry);
+
+        return $entry;
+    }
+
+    private function shiftSupplierDisplayRunningAliases(array $entry, float $amount): array
+    {
+        foreach ([
+            'supplier_display_running_balance',
+            'supplier_running_balance',
+            'running_balance',
+            'partner_running_balance',
+            'supplier_partner_running_balance',
+            'debt_remain',
+            'balance',
+        ] as $key) {
+            if (array_key_exists($key, $entry) && $entry[$key] !== null && $entry[$key] !== '') {
+                $entry[$key] = (float) $entry[$key] + $amount;
+            }
+        }
+
+        return $entry;
+    }
+
+    private function virtualOpeningTime(Collection $entries): Carbon
+    {
+        $first = $entries
+            ->map(fn ($entry) => is_array($entry) ? $entry : (array) $entry)
+            ->filter(fn ($entry) => !empty($entry['time'] ?? $entry['display_time'] ?? $entry['created_at'] ?? null))
+            ->sortBy(fn ($entry) => $this->normalizeSortableTime($entry['time'] ?? $entry['display_time'] ?? $entry['created_at'] ?? null))
+            ->first();
+
+        $value = $first['time'] ?? $first['display_time'] ?? $first['created_at'] ?? null;
+
+        try {
+            return $value ? Carbon::parse($value)->subSecond() : Carbon::now()->startOfDay();
+        } catch (\Throwable) {
+            return Carbon::now()->startOfDay();
+        }
     }
 
     private function compatibilityType(array $entry): string
