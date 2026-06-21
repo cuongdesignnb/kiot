@@ -711,6 +711,21 @@ class SupplierController extends Controller
             ];
         }
 
+        $pagedEntries = $pagedEntries
+            ->map(function ($entry) {
+                $entry = is_array($entry) ? $entry : (array) $entry;
+                if (!array_key_exists('affects_debt_balance', $entry)) {
+                    $entry['affects_debt_balance'] = ! (bool) (
+                        $entry['reference_only']
+                        ?? $entry['is_reference_only']
+                        ?? false
+                    );
+                }
+
+                return $entry;
+            })
+            ->values();
+
         $customerDebt = (float) ($supplier->debt_amount ?? 0);
         $supplierDebt = $hasSupplierColumn ? (float) ($supplier->supplier_debt_amount ?? 0) : 0.0;
         $netDebt = $customerDebt - $supplierDebt;
