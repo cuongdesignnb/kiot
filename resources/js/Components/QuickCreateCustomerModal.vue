@@ -1,6 +1,7 @@
 <script setup>
 import { ref, watch, reactive } from 'vue';
 import axios from 'axios';
+import CustomerGroupCombobox from './CustomerGroupCombobox.vue';
 
 const props = defineProps({
     show: { type: Boolean, default: false },
@@ -13,6 +14,7 @@ const props = defineProps({
 const emit = defineEmits(['close', 'created']);
 
 const creating = ref(false);
+const customerGroups = ref([]);
 
 const form = ref({
     name: '',
@@ -54,6 +56,50 @@ const existingResults = ref([]);
 const showExistingDropdown = ref(false);
 const selectedExistingEntity = ref(null);
 let searchExistingTimeout = null;
+
+const normalizeCustomerGroups = (groups) => (groups || []).map((group) => ({
+    id: group.id ?? null,
+    value: group.value ?? group.name,
+    label: group.label ?? group.name,
+    source: group.source ?? 'master',
+})).filter((group) => group.value);
+
+const loadCustomerGroups = async () => {
+    try {
+        const { data } = await axios.get('/customer-groups/options');
+        customerGroups.value = normalizeCustomerGroups(data);
+    } catch (e) {
+        console.error('Lỗi tải nhóm khách hàng:', e);
+    }
+};
+
+const createCustomerGroup = async (name) => {
+    const groupName = (name || '').trim();
+    if (!groupName) return;
+
+    const existing = customerGroups.value.find((group) => group.value.toLowerCase() === groupName.toLowerCase());
+    if (existing) {
+        form.value.customer_group = existing.value;
+        return;
+    }
+
+    try {
+        const { data } = await axios.post('/customer-groups', { name: groupName });
+        const createdName = data?.group?.name || groupName;
+        await loadCustomerGroups();
+        if (!customerGroups.value.some((group) => group.value === createdName)) {
+            customerGroups.value.push({
+                id: data?.group?.id ?? null,
+                value: createdName,
+                label: createdName,
+                source: 'master',
+            });
+        }
+        form.value.customer_group = createdName;
+    } catch (e) {
+        alert(e.response?.data?.message || 'Lỗi tạo nhóm khách hàng.');
+    }
+};
 
 watch(searchExistingQuery, (val) => {
     if (!val) {
@@ -105,6 +151,7 @@ const resetForm = () => {
 watch(() => props.show, (val) => {
     if (val) {
         resetForm();
+        loadCustomerGroups();
         form.value.name = props.initialName || '';
         form.value.is_supplier = props.isSupplier;
         form.value.is_customer = !props.isSupplier;
@@ -290,7 +337,13 @@ const cancelDualRole = () => {
                         <div class="p-4 space-y-4">
                             <div>
                                 <label class="block font-semibold mb-1">Nhóm {{ entityLabel }}</label>
-                                <input v-model="form.customer_group" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 outline-none" placeholder="Chọn nhóm" />
+                                <CustomerGroupCombobox
+                                    v-model="form.customer_group"
+                                    :groups="customerGroups"
+                                    placeholder="Chọn nhóm"
+                                    :allow-create="true"
+                                    @create="createCustomerGroup"
+                                />
                             </div>
                             <div>
                                 <label class="block font-semibold mb-1">Ghi chú</label>

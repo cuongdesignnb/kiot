@@ -4,6 +4,8 @@ namespace Tests\Feature\POS;
 
 use App\Models\Customer;
 use App\Models\CustomerGroup;
+use App\Models\Invoice;
+use App\Models\Product;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -71,5 +73,57 @@ class Hotfix246CPosQuickCreateCustomerGroupDropdownTest extends TestCase
         $customer = Customer::where('phone', '0902466001')->first();
         $this->assertNotNull($customer);
         $this->assertSame('Nguyen POS 24.6C', $customer->name);
+    }
+
+    public function test_pos_quick_created_customer_group_is_snapshotted_on_checkout(): void
+    {
+        $user = $this->userWith(['pos.use', 'customers.edit']);
+
+        $groupResponse = $this->actingAs($user)->postJson('/customer-groups', [
+            'name' => 'POS Snapshot Group 24.6C',
+        ]);
+        $groupResponse->assertOk();
+
+        $customerResponse = $this->actingAs($user)->postJson('/api/pos/customers', [
+            'name' => 'Snapshot POS Customer 24.6C',
+            'phone' => '0902466002',
+            'customer_group' => 'POS Snapshot Group 24.6C',
+            'is_customer' => true,
+            'is_supplier' => false,
+        ]);
+        $customerResponse->assertOk();
+
+        $customerId = $customerResponse->json('customer.id');
+        $product = Product::create([
+            'name' => 'POS Snapshot Product 24.6C',
+            'sku' => 'POS-SNAPSHOT-' . uniqid(),
+            'retail_price' => 100000,
+            'cost_price' => 60000,
+            'stock_quantity' => 10,
+            'inventory_total_cost' => 600000,
+            'has_serial' => false,
+            'is_active' => true,
+            'category_id' => null,
+        ]);
+
+        $this->actingAs($user)->postJson('/api/pos/checkout', [
+            'customer_id' => $customerId,
+            'subtotal' => 100000,
+            'discount' => 0,
+            'total' => 100000,
+            'customer_paid' => 100000,
+            'payment_method' => 'cash',
+            'items' => [[
+                'product_id' => $product->id,
+                'quantity' => 1,
+                'price' => 100000,
+                'discount' => 0,
+                'serial_ids' => [],
+            ]],
+        ])->assertOk();
+
+        $invoice = Invoice::where('customer_id', $customerId)->latest('id')->first();
+        $this->assertNotNull($invoice);
+        $this->assertSame('POS Snapshot Group 24.6C', $invoice->customer_group_name);
     }
 }

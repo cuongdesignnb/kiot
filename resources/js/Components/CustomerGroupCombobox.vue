@@ -28,6 +28,7 @@ const open = ref(false);
 const query = ref('');
 const rootEl = ref(null);
 const inputEl = ref(null);
+const dropdownStyle = ref({});
 
 // Selected label (for display when popover is closed).
 const selectedLabel = computed(() => {
@@ -62,7 +63,19 @@ const openDropdown = async () => {
     open.value = true;
     query.value = '';
     await nextTick();
+    updateDropdownPosition();
     inputEl.value?.focus();
+};
+
+const updateDropdownPosition = () => {
+    if (!rootEl.value) return;
+    const rect = rootEl.value.getBoundingClientRect();
+    dropdownStyle.value = {
+        position: 'fixed',
+        top: `${rect.bottom + 4}px`,
+        left: `${rect.left}px`,
+        width: `${rect.width}px`,
+    };
 };
 
 const closeDropdown = () => {
@@ -94,6 +107,9 @@ const onDocClick = (e) => {
         closeDropdown();
     }
 };
+const onViewportChange = () => {
+    if (open.value) updateDropdownPosition();
+};
 const onKey = (e) => {
     if (!open.value) return;
     if (e.key === 'Escape') {
@@ -105,10 +121,14 @@ const onKey = (e) => {
 onMounted(() => {
     document.addEventListener('mousedown', onDocClick);
     document.addEventListener('keydown', onKey);
+    window.addEventListener('resize', onViewportChange);
+    window.addEventListener('scroll', onViewportChange, true);
 });
 onBeforeUnmount(() => {
     document.removeEventListener('mousedown', onDocClick);
     document.removeEventListener('keydown', onKey);
+    window.removeEventListener('resize', onViewportChange);
+    window.removeEventListener('scroll', onViewportChange, true);
 });
 
 // If the parent updates modelValue while the popover is open (e.g. after
@@ -154,7 +174,8 @@ watch(() => props.modelValue, () => {
         <!-- Dropdown -->
         <div
             v-if="open"
-            class="absolute left-0 right-0 mt-1 bg-white border border-gray-200 rounded shadow-lg z-50 max-h-64 overflow-y-auto"
+            class="bg-white border border-gray-200 rounded shadow-lg z-[120] max-h-64 overflow-y-auto"
+            :style="dropdownStyle"
             data-customer-group-dropdown
         >
             <ul v-if="filtered.length" class="py-1 text-sm">
