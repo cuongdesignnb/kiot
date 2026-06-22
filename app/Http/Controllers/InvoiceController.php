@@ -17,6 +17,7 @@ use App\Services\DebtOffsetService;
 use App\Services\InvoiceSaleService;
 use App\Services\InvoiceUpdateService;
 use App\Services\StockMovementService;
+use App\Support\Customers\CustomerGroupSnapshot;
 use App\Support\Filters\FilterableIndex;
 use App\Support\Reports\SellerResolver;
 use Illuminate\Http\Request;
@@ -71,6 +72,7 @@ class InvoiceController extends Controller
             });
 
         $this->applyFilters($query, $request);
+        $this->applyCustomerGroupFilter($query, $request);
 
         // HOTFIX 24.28B — seller_key filter (Người bán)
         $sellerKey = $request->input('seller_key') ?? $request->input('employee_id');
@@ -152,6 +154,7 @@ class InvoiceController extends Controller
                     ['value' => '0', 'label' => 'Đã trả đủ'],
                 ],
                 // HOTFIX 24.30 — full active employee list for invoice detail dropdown
+                'customerGroups' => $this->customerGroupOptions(),
                 'invoiceSellerOptions' => $sellerResolver->buildInvoiceSellerOptions(),
             ],
         ]);
@@ -564,11 +567,12 @@ class InvoiceController extends Controller
         $this->configureInvoiceFilters();
         $query = \App\Models\Invoice::with(['customer']);
         $this->applyFilters($query, $request);
+        $this->applyCustomerGroupFilter($query, $request);
         $invoices = $query->get();
 
         return \App\Services\CsvService::export(
-            ['Mã hóa đơn', 'Thời gian', 'Khách hàng', 'Tổng tiền hàng', 'Giảm giá', 'Tổng cộng', 'Khách đã trả', 'Ghi chú'],
-            $invoices->map(fn($i) => [$i->code, ($i->transaction_date ?? $i->created_at)?->format('d/m/Y H:i'), $i->customer?->name, $i->subtotal, $i->discount, $i->total, $i->customer_paid, $i->note]),
+            ['Mã hóa đơn', 'Thời gian', 'Khách hàng', 'Nhóm khách', 'Tổng tiền hàng', 'Giảm giá', 'Tổng cộng', 'Khách đã trả', 'Ghi chú'],
+            $invoices->map(fn($i) => [$i->code, ($i->transaction_date ?? $i->created_at)?->format('d/m/Y H:i'), $i->customer?->name, $this->invoiceCustomerGroupName($i), $i->subtotal, $i->discount, $i->total, $i->customer_paid, $i->note]),
             'hoa_don.csv'
         );
     }
@@ -586,6 +590,7 @@ class InvoiceController extends Controller
                 'transaction_date' => $invoice->transaction_date?->format('d/m/Y H:i'),
                 'created_by_name' => $invoice->created_by_name ?? 'Admin',
                 'seller_name' => $invoice->seller_name,
+                'customer_group_name' => $this->invoiceCustomerGroupName($invoice),
                 'customer' => $invoice->customer ? [
                     'id' => $invoice->customer->id,
                     'name' => $invoice->customer->name,
@@ -628,6 +633,7 @@ class InvoiceController extends Controller
             'created_by_name' => $invoice->created_by_name ?? 'Admin',
             'customer_name' => $invoice->customer->name ?? 'Khách lẻ',
             'customer_code' => $invoice->customer->code ?? '',
+            'customer_group_name' => $this->invoiceCustomerGroupName($invoice),
             'note' => $invoice->note,
             'subtotal' => $invoice->subtotal,
             'discount' => $invoice->discount,
@@ -797,5 +803,55 @@ class InvoiceController extends Controller
             'seller_name' => $sellerDisplayName,
             'seller_key'  => "employee:{$employee->id}",
         ]);
+    }
+
+    private function applyCustomerGroupFilter($query, Request $request): void
+    {
+        if (!$request->filled('customer_group')) {
+            return;
+        }
+
+        $groupExpression = str_replace(
+            'customers.',
+            'customer_group_filter_customers.',
+            CustomerGroupSnapshot::invoiceGroupExpression()
+        );
+
+        $query
+            ->leftJoin('customers as customer_group_filter_customers', 'customer_group_filter_customers.id', '=', 'invoices.customer_id')
+            ->whereRaw($groupExpression . ' = ?', [(string) $request->input('customer_group')])
+            ->select('invoices.*');
+    }
+
+    private function customerGroupOptions()
+    {
+        $snapshotGroups = \Illuminate\Support\Facades\Schema::hasColumn('invoices', 'customer_group_name')
+            ? Invoice::query()
+                ->whereNotNull('customer_group_name')
+                ->where('customer_group_name', '!=', '')
+                ->distinct()
+                ->pluck('customer_group_name')
+            : collect();
+
+        $customerGroups = \App\Models\Customer::query()
+            ->whereNotNull('customer_group')
+            ->where('customer_group', '!=', '')
+            ->distinct()
+            ->pluck('customer_group');
+
+        return $snapshotGroups
+            ->concat($customerGroups)
+            ->push(CustomerGroupSnapshot::UNGROUPED)
+            ->filter()
+            ->unique()
+            ->sort()
+            ->values()
+            ->map(fn ($group) => ['value' => $group, 'label' => $group])
+            ->values();
+    }
+
+    private function invoiceCustomerGroupName(Invoice $invoice): string
+    {
+        return CustomerGroupSnapshot::normalize($invoice->customer_group_name ?? $invoice->customer?->customer_group);
     }
 }

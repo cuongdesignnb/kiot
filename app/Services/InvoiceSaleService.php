@@ -11,6 +11,7 @@ use App\Models\Product;
 use App\Models\Purchase;
 use App\Models\SerialImei;
 use App\Models\Setting;
+use App\Support\Customers\CustomerGroupSnapshot;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -145,6 +146,8 @@ class InvoiceSaleService
         if (isset($context['transaction_date'])) {
             $attrs['sale_time'] = Carbon::parse($context['transaction_date']);
         }
+
+        $attrs = CustomerGroupSnapshot::applyToAttributes($attrs, $attrs['customer_id'] ?? null, 'invoices');
 
         return $attrs;
     }

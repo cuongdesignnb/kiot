@@ -770,7 +770,7 @@ class CustomerController extends Controller
         });
 
         $columns = ['id', 'code', 'name', 'phone', 'phone2', 'email', 'address',
-                    'debt_amount', 'total_spent'];
+                    'customer_group', 'debt_amount', 'total_spent'];
         $columns = array_values(array_filter($columns, fn($c) => Schema::hasColumn('customers', $c)));
 
         $rows = $query->orderBy('name')->limit(20)->get($columns);
@@ -785,6 +785,7 @@ class CustomerController extends Controller
                     'phone2'        => $c->phone2 ?? null,
                     'email'         => $c->email ?? null,
                     'address'       => $c->address ?? null,
+                    'customer_group'=> $c->customer_group ?? null,
                     'debt_amount'   => isset($c->debt_amount) ? (float) $c->debt_amount : 0,
                     'total_spent'   => isset($c->total_spent) ? (float) $c->total_spent : 0,
                     'display_label' => trim(($c->name ?? '') . ($c->phone ? ' — ' . $c->phone : '')) ?: ('#' . $c->id),

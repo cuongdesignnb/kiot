@@ -15,6 +15,7 @@ use App\Models\Setting;
 use App\Enums\OrderStatus;
 use App\Models\InvoiceItemSerial;
 use App\Models\SerialImei;
+use App\Support\Customers\CustomerGroupSnapshot;
 use App\Support\Filters\FilterableIndex;
 use App\Services\CustomerDebtService;
 use App\Services\LockPeriodService;
@@ -232,7 +233,7 @@ class OrderController extends Controller
             $priceBookName = $validated['price_book_name'];
         }
 
-        $order = Order::create([
+        $orderData = [
             'code' => 'DH' . time(), // Simple unique code for now
             'customer_id' => $validated['customer_id'] ?? null,
             'branch_id' => $validated['branch_id'] ?? null,
@@ -258,7 +259,9 @@ class OrderController extends Controller
             'weight' => $validated['weight'] ?? 0,
             'delivery_fee' => $validated['delivery_fee'] ?? 0,
             'cod_amount' => $validated['cod_amount'] ?? 0,
-        ]);
+        ];
+        $orderData = CustomerGroupSnapshot::applyToAttributes($orderData, $orderData['customer_id'] ?? null, 'orders');
+        $order = Order::create($orderData);
 
         // Cho phép chọn ngày (kế toán nhập sau)
         if ($request->filled('order_date')) {
@@ -617,6 +620,7 @@ class OrderController extends Controller
                 ]);
             }
 
+            $invoiceData = CustomerGroupSnapshot::applyToAttributes($invoiceData, $invoiceData['customer_id'] ?? null, 'invoices');
             $invoice = \App\Models\Invoice::create($invoiceData);
 
             // 2) Create Invoice Items + Deduct stock — RR-13: qua MovingAvgCostingService + StockMovement
@@ -896,7 +900,7 @@ class OrderController extends Controller
             $totalPayment = $totalPrice - $totalDiscount + $totalOther;
             $totalDeposit = $orders->sum('amount_paid');
 
-            $merged = Order::create([
+            $mergedOrderData = [
                 'code' => 'DH' . time() . 'M',
                 'customer_id' => $customers->first(),
                 'branch_id' => $branches->first(),
@@ -910,7 +914,9 @@ class OrderController extends Controller
                 'created_by_name' => auth()->user()?->name,
                 'assigned_to_name' => $orders->first()->assigned_to_name,
                 'price_book_name' => $orders->first()->price_book_name,
-            ]);
+            ];
+            $mergedOrderData = CustomerGroupSnapshot::applyToAttributes($mergedOrderData, $mergedOrderData['customer_id'] ?? null, 'orders');
+            $merged = Order::create($mergedOrderData);
 
             // Copy all items
             foreach ($orders as $order) {

@@ -24,6 +24,7 @@ const props = defineProps({
     branchName: String,
     branches: Array,
     salesChannels: Array,
+    customerGroups: Array,
 });
 
 // Filter state
@@ -33,11 +34,13 @@ const dateFrom = ref(props.filters.date_from);
 const dateTo = ref(props.filters.date_to);
 const branchId = ref(props.filters.branch_id || "");
 const salesChannel = ref(props.filters.sales_channel || "");
+const customerGroup = ref(props.filters.customer_group || "");
 const viewMode = ref(props.filters.view || "chart");
 
 // State for expandable rows (only for concern=employee)
 const expandedRows = ref({});
 const isEmployeeReport = computed(() => concern.value === 'employee');
+const isCustomerGroupReport = computed(() => ['customer_group_revenue', 'customer_group_profit'].includes(concern.value));
 const hasChildren = (row) => isEmployeeReport.value && Array.isArray(row.children) && row.children.length > 0;
 const isExpanded = (row) => !!expandedRows.value[row.id];
 const toggleRow = (row) => {
@@ -51,6 +54,8 @@ const concernOptions = [
     { value: "discount", label: "Giảm giá HĐ" },
     { value: "returns", label: "Trả hàng" },
     { value: "employee", label: "Nhân viên" },
+    { value: "customer_group_revenue", label: "Doanh thu theo nhóm khách" },
+    { value: "customer_group_profit", label: "Lợi nhuận theo nhóm khách" },
 ];
 
 const periodOptions = [
@@ -72,6 +77,7 @@ const applyFilter = () => {
         view: viewMode.value,
         branch_id: branchId.value || undefined,
         sales_channel: salesChannel.value || undefined,
+        customer_group: customerGroup.value || undefined,
     };
     if (period.value === "custom") {
         params.date_from = dateFrom.value;
@@ -82,7 +88,7 @@ const applyFilter = () => {
 };
 
 // Auto-apply when key filters change
-watch([concern, period, branchId, salesChannel], () => {
+watch([concern, period, branchId, salesChannel, customerGroup], () => {
     applyFilter();
 });
 
@@ -169,6 +175,7 @@ const pdfReportDate = `${String(now.getDate()).padStart(2,'0')}/${String(now.get
 
 const reportTitle = computed(() => {
     if (isEmployeeReport.value) return 'Báo cáo bán hàng theo nhân viên';
+    if (isCustomerGroupReport.value) return props.chartData?.title || 'Báo cáo bán hàng theo nhóm khách';
     return props.chartData?.title || 'Báo cáo bán hàng';
 });
 </script>
@@ -241,6 +248,14 @@ const reportTitle = computed(() => {
                     <select v-model="salesChannel" class="w-full text-sm border border-gray-300 rounded px-2 py-1.5">
                         <option value="">Chọn phương thức bán hàng</option>
                         <option v-for="sc in salesChannels" :key="sc" :value="sc">{{ sc }}</option>
+                    </select>
+                </div>
+
+                <div class="mb-4">
+                    <label class="text-xs text-gray-500 font-medium mb-1.5 block">Nhóm khách</label>
+                    <select v-model="customerGroup" class="w-full text-sm border border-gray-300 rounded px-2 py-1.5">
+                        <option value="">Tất cả nhóm</option>
+                        <option v-for="group in (customerGroups || [])" :key="group" :value="group">{{ group }}</option>
                     </select>
                 </div>
             </aside>
@@ -460,4 +475,3 @@ const reportTitle = computed(() => {
     main { padding: 0 !important; }
 }
 </style>
-

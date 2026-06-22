@@ -7,6 +7,7 @@ use App\Models\Employee;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\OrderReturn;
+use App\Support\Customers\CustomerGroupSnapshot;
 use App\Support\Reports\SellerResolver;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -25,6 +26,7 @@ class SalesReportController extends Controller
         $dateTo   = $request->input('date_to');
         $branchId = $request->input('branch_id');
         $salesChannel = $request->input('sales_channel');
+        $customerGroup = $request->input('customer_group');
         $viewMode = $request->input('view', 'chart');        // chart|report
 
         // ── Resolve date range from period preset ──
@@ -61,12 +63,19 @@ class SalesReportController extends Controller
             case 'employee':
                 $chartData = $this->buildEmployeeSeries($invoiceQuery, $returnsQuery, $branchId, $salesChannel);
                 break;
+            case 'customer_group_revenue':
+                $chartData = $this->buildCustomerGroupSeries($startDate, $endDate, $branchId, $salesChannel, $customerGroup, false);
+                break;
+            case 'customer_group_profit':
+                $chartData = $this->buildCustomerGroupSeries($startDate, $endDate, $branchId, $salesChannel, $customerGroup, true);
+                break;
         }
 
         // ── Filter options ──
         $branches = Branch::orderBy('name')->get(['id', 'name']);
         $salesChannels = Invoice::whereNotNull('sales_channel')
             ->distinct()->pluck('sales_channel')->filter()->values();
+        $customerGroups = $this->customerGroupOptions();
         $branchName = $branchId ? Branch::find($branchId)?->name : 'Tất cả chi nhánh';
 
         return Inertia::render('Reports/SalesReport', [
@@ -77,6 +86,7 @@ class SalesReportController extends Controller
                 'date_to' => $endDate->format('Y-m-d'),
                 'branch_id' => $branchId,
                 'sales_channel' => $salesChannel,
+                'customer_group' => $customerGroup,
                 'view' => $viewMode,
             ],
             'periodLabel' => $periodLabel,
@@ -84,6 +94,7 @@ class SalesReportController extends Controller
             'branchName' => $branchName,
             'branches' => $branches,
             'salesChannels' => $salesChannels,
+            'customerGroups' => $customerGroups,
         ]);
     }
 
@@ -368,6 +379,163 @@ class SalesReportController extends Controller
             'rows' => $rows,
             'summary' => $summary,
         ];
+    }
+
+    private function buildCustomerGroupSeries(Carbon $startDate, Carbon $endDate, $branchId, $salesChannel, ?string $customerGroup, bool $profitMode): array
+    {
+        $groupExpr = CustomerGroupSnapshot::invoiceGroupExpression();
+
+        $invoiceBase = DB::table('invoices')
+            ->leftJoin('customers', 'customers.id', '=', 'invoices.customer_id')
+            ->whereBetween('invoices.created_at', [$startDate, $endDate])
+            ->where('invoices.status', '!=', 'Đã hủy');
+
+        if ($branchId) $invoiceBase->where('invoices.branch_id', $branchId);
+        if ($salesChannel) $invoiceBase->where('invoices.sales_channel', $salesChannel);
+        if ($customerGroup) $invoiceBase->whereRaw($groupExpr . ' = ?', [$customerGroup]);
+
+        $invoiceRows = (clone $invoiceBase)
+            ->selectRaw("$groupExpr as group_name")
+            ->selectRaw('COUNT(DISTINCT invoices.customer_id) as customer_count')
+            ->selectRaw('COUNT(invoices.id) as invoice_count')
+            ->selectRaw('COALESCE(SUM(invoices.subtotal), 0) as gross_revenue')
+            ->selectRaw('COALESCE(SUM(invoices.discount), 0) as discount')
+            ->selectRaw('COALESCE(SUM(invoices.total), 0) as revenue_after_discount')
+            ->selectRaw('COALESCE(SUM(invoices.customer_paid), 0) as customer_paid')
+            ->selectRaw('COALESCE(SUM(invoices.total - invoices.customer_paid), 0) as debt')
+            ->groupBy('group_name')
+            ->get()
+            ->keyBy('group_name');
+
+        $costExpr = Schema::hasColumn('invoice_items', 'cost_price')
+            ? 'invoice_items.quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0)'
+            : 'invoice_items.quantity * COALESCE(products.cost_price, 0)';
+
+        $soldRows = (clone $invoiceBase)
+            ->join('invoice_items', 'invoice_items.invoice_id', '=', 'invoices.id')
+            ->leftJoin('products', 'products.id', '=', 'invoice_items.product_id')
+            ->selectRaw("$groupExpr as group_name")
+            ->selectRaw('COALESCE(SUM(invoice_items.quantity), 0) as sold_quantity')
+            ->selectRaw("COALESCE(SUM($costExpr), 0) as cogs_sold")
+            ->groupBy('group_name')
+            ->get()
+            ->keyBy('group_name');
+
+        $returnBase = DB::table('returns')
+            ->leftJoin('invoices', 'invoices.id', '=', 'returns.invoice_id')
+            ->leftJoin('customers', 'customers.id', '=', 'invoices.customer_id')
+            ->whereBetween('returns.created_at', [$startDate, $endDate])
+            ->where('returns.status', '!=', 'Đã hủy');
+
+        if ($branchId) $returnBase->where('returns.branch_id', $branchId);
+        if ($salesChannel) $returnBase->where('invoices.sales_channel', $salesChannel);
+        if ($customerGroup) $returnBase->whereRaw($groupExpr . ' = ?', [$customerGroup]);
+
+        $returnRows = (clone $returnBase)
+            ->selectRaw("$groupExpr as group_name")
+            ->selectRaw('COUNT(returns.id) as return_count')
+            ->selectRaw('COALESCE(SUM(returns.total), 0) as return_value')
+            ->groupBy('group_name')
+            ->get()
+            ->keyBy('group_name');
+
+        $returnCostColumn = Schema::hasColumn('return_items', 'cost_price') ? 'cost_price' : 'import_price';
+        $returnCostRows = (clone $returnBase)
+            ->join('return_items', 'return_items.return_id', '=', 'returns.id')
+            ->selectRaw("$groupExpr as group_name")
+            ->selectRaw("COALESCE(SUM(return_items.quantity * COALESCE(return_items.$returnCostColumn, 0)), 0) as cogs_returned")
+            ->groupBy('group_name')
+            ->get()
+            ->keyBy('group_name');
+
+        $groupNames = $invoiceRows->keys()
+            ->merge($returnRows->keys())
+            ->merge($soldRows->keys())
+            ->merge($returnCostRows->keys())
+            ->unique()
+            ->sort()
+            ->values();
+
+        $rows = $groupNames->map(function ($groupName) use ($invoiceRows, $returnRows, $soldRows, $returnCostRows, $profitMode) {
+            $invoice = $invoiceRows[$groupName] ?? null;
+            $return = $returnRows[$groupName] ?? null;
+            $sold = $soldRows[$groupName] ?? null;
+            $returnCost = $returnCostRows[$groupName] ?? null;
+
+            $revenueAfterDiscount = (float) ($invoice->revenue_after_discount ?? 0);
+            $returnValue = (float) ($return->return_value ?? 0);
+            $netRevenue = $revenueAfterDiscount - $returnValue;
+            $cogsSold = (float) ($sold->cogs_sold ?? 0);
+            $cogsReturned = (float) ($returnCost->cogs_returned ?? 0);
+            $cogsNet = $cogsSold - $cogsReturned;
+            $grossProfit = $netRevenue - $cogsNet;
+
+            $row = [
+                'id' => (string) $groupName,
+                'name' => (string) $groupName,
+                'customer_count' => (int) ($invoice->customer_count ?? 0),
+                'invoice_count' => (int) ($invoice->invoice_count ?? 0),
+                'gross_revenue' => round((float) ($invoice->gross_revenue ?? 0), 2),
+                'discount' => round((float) ($invoice->discount ?? 0), 2),
+                'revenue_after_discount' => round($revenueAfterDiscount, 2),
+                'customer_paid' => round((float) ($invoice->customer_paid ?? 0), 2),
+                'debt' => round((float) ($invoice->debt ?? 0), 2),
+                'return_value' => round($returnValue, 2),
+                'net_revenue' => round($netRevenue, 2),
+                'invoice_quantity' => round((float) ($sold->sold_quantity ?? 0), 2),
+                'cogs_sold' => round($cogsSold, 2),
+                'cogs_returned' => round($cogsReturned, 2),
+                'cogs_net' => round($cogsNet, 2),
+                'gross_profit' => round($grossProfit, 2),
+                'gross_margin' => $netRevenue > 0 ? round($grossProfit / $netRevenue * 100, 2) : 0,
+            ];
+            $row['value'] = $profitMode ? $row['gross_profit'] : $row['net_revenue'];
+
+            return $row;
+        })->values()->all();
+
+        return [
+            'title' => $profitMode ? 'Lợi nhuận theo nhóm khách hàng' : 'Doanh thu theo nhóm khách hàng',
+            'labels' => array_column($rows, 'name'),
+            'datasets' => [
+                ['label' => $profitMode ? 'Lợi nhuận gộp' : 'Doanh thu thuần', 'data' => array_column($rows, 'value')],
+            ],
+            'total' => array_sum(array_column($rows, 'value')),
+            'type' => 'bar',
+            'rows' => $rows,
+            'summary' => [
+                'count' => count($rows),
+                'net_revenue' => array_sum(array_column($rows, 'net_revenue')),
+                'gross_profit' => array_sum(array_column($rows, 'gross_profit')),
+                'return_value' => array_sum(array_column($rows, 'return_value')),
+            ],
+            'groupMode' => $profitMode ? 'profit' : 'revenue',
+        ];
+    }
+
+    private function customerGroupOptions()
+    {
+        $snapshotGroups = Schema::hasColumn('invoices', 'customer_group_name')
+            ? Invoice::query()
+                ->whereNotNull('customer_group_name')
+                ->where('customer_group_name', '!=', '')
+                ->distinct()
+                ->pluck('customer_group_name')
+            : collect();
+
+        $customerGroups = \App\Models\Customer::query()
+            ->whereNotNull('customer_group')
+            ->where('customer_group', '!=', '')
+            ->distinct()
+            ->pluck('customer_group');
+
+        return $snapshotGroups
+            ->concat($customerGroups)
+            ->push(CustomerGroupSnapshot::UNGROUPED)
+            ->filter()
+            ->unique()
+            ->sort()
+            ->values();
     }
 
     private function buildSalesDailyChildren($invoiceQuery, $returnsQuery, array $filters): array

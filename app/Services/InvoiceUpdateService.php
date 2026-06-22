@@ -12,6 +12,7 @@ use App\Models\Product;
 use App\Models\SerialImei;
 use App\Models\Setting;
 use App\Models\Warranty;
+use App\Support\Customers\CustomerGroupSnapshot;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -332,6 +333,7 @@ class InvoiceUpdateService
             if ($changePlan['date_changed'] && Schema::hasColumn('invoices', 'transaction_date')) {
                 $updateData['transaction_date'] = $newTxDate;
             }
+            $updateData = CustomerGroupSnapshot::applyToAttributes($updateData, $updateData['customer_id'] ?? null, 'invoices');
             $invoice->update($updateData);
 
             // --- 4. Delete old items, create new ---

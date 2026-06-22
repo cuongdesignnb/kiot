@@ -14,6 +14,7 @@ use App\Services\InvoiceSaleService;
 use App\Services\PosReturnExchangeService;
 use App\Services\ProductSearchService;
 use App\Services\SerialAvailabilityService;
+use App\Support\Customers\CustomerGroupSnapshot;
 use App\Support\Reports\SellerResolver;
 
 class PosController extends Controller
@@ -402,7 +403,7 @@ class PosController extends Controller
                 return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
             }
 
-            $order = \App\Models\Order::create([
+            $orderData = [
                 'code' => 'DH' . time() . rand(10, 99),
                 'customer_id' => $customer?->id,
                 'branch_id' => null,
@@ -417,7 +418,9 @@ class PosController extends Controller
                 'total_payment' => $validated['total'],
                 'amount_paid' => 0,
                 'note' => $validated['note'] ?? null,
-            ]);
+            ];
+            $orderData = CustomerGroupSnapshot::applyToAttributes($orderData, $orderData['customer_id'] ?? null, 'orders');
+            $order = \App\Models\Order::create($orderData);
 
             if (!empty($validated['sale_time'])) {
                 $order->update(['created_at' => \Carbon\Carbon::parse($validated['sale_time'])]);
@@ -465,7 +468,7 @@ class PosController extends Controller
             })
             ->orderBy('name')
             ->limit(10)
-            ->get(['id', 'code', 'name', 'phone', 'debt_amount']);
+            ->get(['id', 'code', 'name', 'phone', 'debt_amount', 'customer_group']);
 
         return response()->json($customers);
     }
