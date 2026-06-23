@@ -56,7 +56,7 @@ class DashboardController extends Controller
         $thisMonthCost = $metricsMonth['cogs_net'];
 
         // Tổng chi phí (phiếu chi) tháng này - trừ các khoản trả NCC (đã tính vào giá vốn)
-        $thisMonthExpenses = CashFlow::where('type', 'payment')
+        $thisMonthExpenses = CashFlow::active()->where('type', 'payment')
             ->where('created_at', '>=', $startOfMonth)
             ->where(function ($q) {
                 $q->where('category', '!=', 'Chi tiền trả NCC')
@@ -68,7 +68,9 @@ class DashboardController extends Controller
         $thisMonthProfit = $metricsMonth['gross_profit'];
 
         // Nhập hàng tháng này
-        $thisMonthPurchase = Purchase::where('created_at', '>=', $startOfMonth)->sum('total_amount');
+        $thisMonthPurchase = Purchase::where('created_at', '>=', $startOfMonth)
+            ->where('status', 'completed')
+            ->sum('total_amount');
 
         // Trả hàng tháng này
         $thisMonthReturn = OrderReturn::where('created_at', '>=', $startOfMonth)->sum('total');
@@ -110,10 +112,10 @@ class DashboardController extends Controller
             if ($weekStart->gt(Carbon::now())) break;
 
             $cashFlowChart['labels'][] = 'Tuần ' . $w;
-            $cashFlowChart['receipts'][] = (float) CashFlow::where('type', 'receipt')
+            $cashFlowChart['receipts'][] = (float) CashFlow::active()->where('type', 'receipt')
                 ->whereNotIn('category', ['Thu nợ khách hàng', 'Điều chỉnh công nợ'])
                 ->whereBetween('created_at', [$weekStart, $weekEnd])->sum('amount');
-            $cashFlowChart['payments'][] = (float) CashFlow::where('type', 'payment')
+            $cashFlowChart['payments'][] = (float) CashFlow::active()->where('type', 'payment')
                 ->whereBetween('created_at', [$weekStart, $weekEnd])->sum('amount');
         }
 

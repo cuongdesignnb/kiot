@@ -27,7 +27,7 @@ class SupplierReportController extends Controller
         // ── Purchase data per supplier (loại phiếu đã hủy) ──
         $purchaseQuery = Purchase::whereBetween('created_at', [$startDate, $endDate])
             ->whereNotNull('supplier_id')
-            ->where('status', '!=', 'Đã hủy');
+            ->where('status', '!=', 'cancelled');
         if ($branchId && \Illuminate\Support\Facades\Schema::hasColumn('purchases', 'branch_id')) {
             $purchaseQuery->where('branch_id', $branchId);
         }
@@ -49,7 +49,7 @@ class SupplierReportController extends Controller
                 ? 'total_amount' : 'total';
             $retQ = DB::table('purchase_returns')
                 ->whereBetween('created_at', [$startDate, $endDate])
-                ->where('status', '!=', 'Đã hủy')
+                ->where('status', '!=', 'cancelled')
                 ->whereNotNull('supplier_id');
             if ($branchId && \Illuminate\Support\Facades\Schema::hasColumn('purchase_returns', 'branch_id')) {
                 $retQ->where('branch_id', $branchId);

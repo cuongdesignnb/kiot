@@ -1839,15 +1839,21 @@ class PartnerDebtLedgerService
     {
         $displayTotal = (float) $entries->sum(fn ($entry) => $this->customerDisplayEffect(is_array($entry) ? $entry : (array) $entry));
         $openingBalance = $targetBalance - $displayTotal;
-        $hasReferenceOnlyFinancialEntry = $entries->contains(function ($entry) {
-            $entry = is_array($entry) ? $entry : (array) $entry;
 
-            return (bool) ($entry['is_reference_only'] ?? false)
-                && abs($this->customerDisplayEffect($entry)) >= 0.01;
-        });
+        if ($entries->isNotEmpty() && abs($targetBalance) < 0.01) {
+            $needsZeroTargetOpening = $entries->contains(function ($entry) {
+                $entry = is_array($entry) ? $entry : (array) $entry;
+                $source = (string) ($entry['source'] ?? '');
+                $kind = (string) ($entry['event_kind'] ?? '');
+                $referenceType = (string) ($entry['reference_type'] ?? '');
 
-        if ($entries->isNotEmpty() && abs($targetBalance) < 0.01 && !$hasReferenceOnlyFinancialEntry) {
-            return $entries->values();
+                return $source === 'supplier_ledger_mirror'
+                    && (str_contains($kind, 'debt_offset') || str_contains($referenceType, 'DebtOffset'));
+            });
+
+            if (!$needsZeroTargetOpening) {
+                return $entries->values();
+            }
         }
 
         if (abs($openingBalance) < 0.01) {

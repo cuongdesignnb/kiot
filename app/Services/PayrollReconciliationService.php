@@ -102,7 +102,10 @@ class PayrollReconciliationService
 
     private function paymentIssues(array $filters)
     {
-        $query = PaysheetPayment::query()->with(['cashFlow', 'employee:id,code,name,branch_id']);
+        $query = PaysheetPayment::query()->with([
+            'cashFlow' => fn ($cashFlow) => $cashFlow->withTrashed(),
+            'employee:id,code,name,branch_id',
+        ]);
         $this->scopeDocumentQuery($query, $filters);
 
         return $query->get()->flatMap(function (PaysheetPayment $payment) {
@@ -118,6 +121,10 @@ class PayrollReconciliationService
                 $issues[] = 'PAYMENT_WITHOUT_CASHFLOW';
             } elseif ((int) $payment->cashFlow->amount !== (int) $payment->amount) {
                 $issues[] = 'CASHFLOW_AMOUNT_MISMATCH';
+            } elseif ($this->paymentRequiresActiveCashFlow($payment) && ! $this->isActiveCashFlow($payment->cashFlow)) {
+                $issues[] = 'PAYMENT_WITHOUT_CASHFLOW';
+            } elseif ($this->paymentIsCancelled($payment) && ! $this->isCancelledCashFlow($payment->cashFlow)) {
+                $issues[] = 'PAYMENT_WITHOUT_CASHFLOW';
             }
 
             return collect($issues)->map(fn ($issue) => $this->documentIssue(
@@ -132,7 +139,10 @@ class PayrollReconciliationService
 
     private function advanceIssues(array $filters)
     {
-        $query = SalaryAdvance::query()->with(['cashFlow', 'employee:id,code,name,branch_id']);
+        $query = SalaryAdvance::query()->with([
+            'cashFlow' => fn ($cashFlow) => $cashFlow->withTrashed(),
+            'employee:id,code,name,branch_id',
+        ]);
         $this->scopeDocumentQuery($query, $filters);
 
         return $query->get()->flatMap(function (SalaryAdvance $advance) {
@@ -145,6 +155,10 @@ class PayrollReconciliationService
                 $issues[] = 'ADVANCE_WITHOUT_LEDGER';
             }
             if (! $advance->cashFlow) {
+                $issues[] = 'ADVANCE_WITHOUT_CASHFLOW';
+            } elseif ($this->advanceRequiresActiveCashFlow($advance) && ! $this->isActiveCashFlow($advance->cashFlow)) {
+                $issues[] = 'ADVANCE_WITHOUT_CASHFLOW';
+            } elseif ($this->advanceIsCancelled($advance) && ! $this->isCancelledCashFlow($advance->cashFlow)) {
                 $issues[] = 'ADVANCE_WITHOUT_CASHFLOW';
             }
             $applicationTotal = (int) SalaryAdvanceApplication::where('salary_advance_id', $advance->id)
@@ -162,6 +176,36 @@ class PayrollReconciliationService
                 $advance->id
             ));
         });
+    }
+
+    private function paymentRequiresActiveCashFlow(PaysheetPayment $payment): bool
+    {
+        return ! $this->paymentIsCancelled($payment);
+    }
+
+    private function paymentIsCancelled(PaysheetPayment $payment): bool
+    {
+        return $payment->status === 'cancelled';
+    }
+
+    private function advanceRequiresActiveCashFlow(SalaryAdvance $advance): bool
+    {
+        return ! $this->advanceIsCancelled($advance);
+    }
+
+    private function advanceIsCancelled(SalaryAdvance $advance): bool
+    {
+        return $advance->status === 'cancelled';
+    }
+
+    private function isActiveCashFlow(CashFlow $cashFlow): bool
+    {
+        return $cashFlow->deleted_at === null && $cashFlow->status !== 'cancelled';
+    }
+
+    private function isCancelledCashFlow(CashFlow $cashFlow): bool
+    {
+        return $cashFlow->deleted_at !== null || $cashFlow->status === 'cancelled';
     }
 
     private function scopeDocumentQuery(Builder $query, array $filters): void

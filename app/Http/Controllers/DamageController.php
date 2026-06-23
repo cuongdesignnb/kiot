@@ -13,6 +13,7 @@ use App\Models\SerialImei;
 use App\Models\User;
 use App\Enums\DamageStatus;
 use App\Services\MovingAvgCostingService;
+use App\Services\LockPeriodService;
 use App\Services\SerialAvailabilityService;
 use App\Services\StockMovementService;
 use App\Support\Filters\DateRangePresets;
@@ -462,8 +463,15 @@ class DamageController extends Controller
         return $currentEmployee?->name ?: ($currentUser?->name ?: 'Chưa có');
     }
 
-    public function cancel(Damage $damage)
+    public function cancel(Request $request, Damage $damage)
     {
+        $validated = $request->validate([
+            'cancel_reason' => 'required|string|min:5|max:500',
+        ], [
+            'cancel_reason.required' => 'Vui lòng nhập lý do hủy phiếu xuất.',
+            'cancel_reason.min' => 'Lý do hủy phải có ít nhất 5 ký tự.',
+        ]);
+        $cancelReason = trim($validated['cancel_reason']);
         if ($damage->status === DamageStatus::CANCELLED) {
             if (request()->wantsJson()) {
                 return response()->json(['success' => false, 'message' => 'Phiếu xuất hủy đã bị hủy trước đó.'], 422);
@@ -488,12 +496,19 @@ class DamageController extends Controller
             }
         }
 
-        DB::transaction(function () use ($damage) {
+        app(LockPeriodService::class)->assertNotLocked($damage->destroyed_date ?? $damage->created_at, 'damage_cancel');
+
+        DB::transaction(function () use ($damage, $cancelReason) {
             $damage->load('items');
 
             // Phiếu draft chưa đụng kho → chỉ đổi status
             if ($damage->status === DamageStatus::DRAFT) {
-                $damage->update(['status' => DamageStatus::CANCELLED]);
+                $damage->update([
+                    'status' => DamageStatus::CANCELLED,
+                    'cancel_reason' => $cancelReason,
+                    'cancelled_by' => auth()->id(),
+                    'cancelled_at' => now(),
+                ]);
                 return;
             }
 
@@ -533,14 +548,20 @@ class DamageController extends Controller
                 );
             }
 
-            $damage->update(['status' => DamageStatus::CANCELLED]);
+            $damage->update([
+                'status' => DamageStatus::CANCELLED,
+                'cancel_reason' => $cancelReason,
+                'cancelled_by' => auth()->id(),
+                'cancelled_at' => now(),
+            ]);
         });
 
         // Step 24.0: audit log damage cancel
         \App\Models\ActivityLog::log(
             \App\Models\ActivityLog::ACTION_DAMAGE_CANCEL,
             "Hủy phiếu xuất hủy {$damage->code}",
-            $damage
+            $damage,
+            ['cancel_reason' => $cancelReason]
         );
 
         if (request()->wantsJson()) {

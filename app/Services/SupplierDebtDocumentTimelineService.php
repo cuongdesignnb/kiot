@@ -199,7 +199,7 @@ class SupplierDebtDocumentTimelineService
                         'detail_modal_type' => 'none',
                         'badge_label' => 'Tạm tính',
                         'badge_title' => 'Tạm tính từ phiếu nhập — chưa tìm thấy phiếu chi thật.',
-                        'source' => 'document_first',
+                        'source' => 'legacy_purchase_paid_amount',
                         'document_group_key' => $p->code,
                         'document_group_type' => 'purchase',
                         'document_group_parent_code' => $p->code,
@@ -810,6 +810,12 @@ class SupplierDebtDocumentTimelineService
             return $entry;
         });
 
+        if ($usePartnerTimeline) {
+            $entries = $entries
+                ->map(fn (array $entry) => $this->normalizeSupplierPartnerDisplayAliases($entry))
+                ->values();
+        }
+
         // Sort ASC for running balance calculation
         $sortedAsc = collect($entries)
             ->sort(function (array $a, array $b) {
@@ -837,22 +843,30 @@ class SupplierDebtDocumentTimelineService
         $running = 0.0;
         $sorted = $sortedAsc->map(function (array $entry) use (&$running) {
             $effect = (float) ($entry['supplier_display_effect'] ?? $entry['display_effect'] ?? $entry['amount'] ?? 0);
+            $displayBalanceEffect = (float) ($entry['supplier_display_balance_effect'] ?? $effect);
 
             if (($entry['affects_document_balance'] ?? true) === false) {
+                $entry['supplier_display_effect'] = $effect;
+                $entry['supplier_display_balance_effect'] = $displayBalanceEffect;
+                $entry['supplier_balance_effect'] = (float) ($entry['supplier_balance_effect'] ?? 0.0);
                 $entry['supplier_display_running_balance'] = $running;
                 $entry['running_balance'] = $running;
                 return $entry;
             }
 
-            $running += $effect;
+            $running += $displayBalanceEffect;
 
             $entry['supplier_display_effect'] = $effect;
+            $entry['supplier_display_balance_effect'] = $displayBalanceEffect;
+            $entry['supplier_balance_effect'] = (float) ($entry['supplier_balance_effect'] ?? $displayBalanceEffect);
             $entry['display_effect'] = (float) ($entry['display_effect'] ?? $effect);
             $entry['supplier_display_running_balance'] = $running;
             $entry['running_balance'] = $running;
 
             return $entry;
         });
+
+        $sorted = $sorted->map(fn (array $entry) => $this->withCompatibilityAliases($entry));
 
         $documentFinalBalance = $running;
 
@@ -904,14 +918,117 @@ class SupplierDebtDocumentTimelineService
             $balanceLabel = 'Nợ cần trả nhà cung cấp';
         }
 
+        $virtualOpening = null;
+        if ($usePartnerTimeline && $displayEntries->isNotEmpty() && abs($documentFinalBalance - $storedBalance) > 1.0) {
+            $openingAmount = $storedBalance - $documentFinalBalance;
+            $openingTime = $this->virtualOpeningTime($displayEntries);
+            $virtualOpening = $this->withCompatibilityAliases($this->createEntry([
+                'id' => 'virtual-opening-supplier-' . $supplier->id,
+                'code' => 'OPENING-BALANCE-SUPPLIER-' . $supplier->id,
+                'display_type' => 'So du dau ky',
+                'event_kind' => 'virtual_opening_balance',
+                'domain' => 'adjustment',
+                'document_amount' => abs($openingAmount),
+                'amount' => $openingAmount,
+                'display_effect' => $openingAmount,
+                'supplier_display_effect' => $openingAmount,
+                'supplier_display_balance_effect' => $openingAmount,
+                'supplier_balance_effect' => 0.0,
+                'supplier_display_running_balance' => $openingAmount,
+                'supplier_running_balance' => $openingAmount,
+                'running_balance' => $openingAmount,
+                'time' => $openingTime,
+                'display_time' => $openingTime,
+                'created_at' => $openingTime,
+                'reference_type' => 'Customer',
+                'reference_id' => $supplier->id,
+                'reference_code' => $supplier->code,
+                'badge_label' => 'So du dau ky',
+                'badge_title' => 'Read-only display row for stored supplier partner balance.',
+                'is_real_voucher' => false,
+                'is_virtual_fallback' => true,
+                'is_virtual_opening' => true,
+                'source' => 'virtual_opening_balance',
+                'source_ledger' => 'virtual_opening_balance',
+                'affects_debt_balance' => false,
+                'reference_only' => false,
+                'is_reference_only' => false,
+            ]));
+
+            $displayEntries = $displayEntries
+                ->map(fn (array $entry) => $this->shiftSupplierDisplayRunningAliases($entry, $openingAmount))
+                ->prepend($virtualOpening)
+                ->sort(function (array $a, array $b) {
+                    $timeCompare = strcmp(
+                        (string) ($b['event_sort_time'] ?? $b['time'] ?? ''),
+                        (string) ($a['event_sort_time'] ?? $a['time'] ?? '')
+                    );
+
+                    if ($timeCompare !== 0) {
+                        return $timeCompare;
+                    }
+
+                    $displayOrderCompare = ((int) ($b['display_order'] ?? 0))
+                        <=> ((int) ($a['display_order'] ?? 0));
+
+                    if ($displayOrderCompare !== 0) {
+                        return $displayOrderCompare;
+                    }
+
+                    return strcmp((string) ($b['code'] ?? ''), (string) ($a['code'] ?? ''));
+                })
+                ->values();
+            $documentFinalBalance = $storedBalance;
+        }
+
+        if ($displayEntries->isEmpty() && abs($storedBalance) > 1.0) {
+            $virtualOpening = $this->withCompatibilityAliases($this->createEntry([
+                'id' => 'virtual-opening-supplier-' . $supplier->id,
+                'code' => 'OPENING-BALANCE-SUPPLIER-' . $supplier->id,
+                'display_type' => 'Số dư đầu kỳ',
+                'event_kind' => 'virtual_opening_balance',
+                'domain' => 'supplier',
+                'document_amount' => abs($storedBalance),
+                'amount' => $storedBalance,
+                'display_effect' => $storedBalance,
+                'supplier_display_effect' => $storedBalance,
+                'supplier_display_running_balance' => $storedBalance,
+                'supplier_running_balance' => $storedBalance,
+                'running_balance' => $storedBalance,
+                'time' => $supplier->created_at,
+                'display_time' => $supplier->created_at,
+                'created_at' => $supplier->created_at,
+                'reference_type' => 'Customer',
+                'reference_id' => $supplier->id,
+                'reference_code' => $supplier->code,
+                'badge_label' => 'Số dư đầu kỳ',
+                'badge_title' => 'Read-only display row for stored supplier debt when no documents exist.',
+                'is_real_voucher' => false,
+                'is_virtual_fallback' => true,
+                'is_virtual_opening' => true,
+                'source' => 'virtual_opening_balance',
+                'source_ledger' => 'virtual_opening_balance',
+            ]));
+
+            $displayEntries = collect([$virtualOpening]);
+            $documentFinalBalance = $storedBalance;
+        }
+
         $difference = $documentFinalBalance - $storedBalance;
         $isMismatch = abs($difference) > 1.0;
 
         $severity = 'ok';
         $message = null;
+        if ($virtualOpening) {
+            $severity = 'info';
+        }
         if ($isMismatch) {
             $severity = 'warning';
             $message = 'Timeline chứng từ lệch với Nợ hiện tại. Cần đối soát dữ liệu, chưa tự sửa.';
+        }
+        if ($virtualOpening) {
+            $severity = 'info';
+            $message = null;
         }
 
         return [
@@ -934,19 +1051,21 @@ class SupplierDebtDocumentTimelineService
                 'display_mode' => $usePartnerTimeline ? 'supplier_partner_timeline' : 'supplier_payable',
                 'is_supplier_tab_partner_timeline' => $usePartnerTimeline,
                 'balance_label' => $balanceLabel,
+                'has_virtual_opening_balance' => (bool) $virtualOpening,
+                'virtual_opening_balance' => (float) ($virtualOpening['supplier_display_effect'] ?? 0.0),
             ],
             'reconcile' => [
                 'severity' => $severity,
                 'message' => $message,
-                'user_warning' => $isMismatch,
+                'user_warning' => $virtualOpening ? false : $isMismatch,
                 'stored_balance' => $storedBalance,
                 'document_balance' => $documentFinalBalance,
                 'difference' => $difference,
                 // Alignment keys
                 'computed_balance' => $storedBalance,
-                'has_mismatch' => $isMismatch,
-                'ledger_mismatch' => false,
-                'display_resolved' => !$isMismatch,
+                'has_mismatch' => $virtualOpening ? false : $isMismatch,
+                'ledger_mismatch' => (bool) $virtualOpening,
+                'display_resolved' => $virtualOpening ? true : !$isMismatch,
                 'display_balance_target' => $storedBalance,
                 'display_balance_final' => $documentFinalBalance,
                 'excluded_ledger_entries' => $excludedLedgerEntries,
@@ -1083,6 +1202,175 @@ class SupplierDebtDocumentTimelineService
             'is_virtual_fallback' => false,
             'display_sequence' => $this->getDisplaySequence($data),
         ], $data);
+    }
+
+    private function withCompatibilityAliases(array $entry): array
+    {
+        $effect = (float) ($entry['supplier_display_effect'] ?? $entry['display_effect'] ?? $entry['amount'] ?? 0.0);
+        $displayBalanceEffect = (float) ($entry['supplier_display_balance_effect'] ?? $effect);
+        $balanceEffect = (float) ($entry['supplier_balance_effect'] ?? $displayBalanceEffect);
+        $running = (float) ($entry['supplier_display_running_balance'] ?? $entry['running_balance'] ?? 0.0);
+
+        $entry['supplier_effect'] = $effect;
+        $entry['supplier_display_balance_effect'] = $displayBalanceEffect;
+        $entry['supplier_balance_effect'] = $balanceEffect;
+        $entry['debt_remain'] = $running;
+        $entry['type_label'] = $entry['type_label']
+            ?? $entry['display_type']
+            ?? $entry['badge_label']
+            ?? $this->compatibilityTypeLabel($entry);
+        $entry['type'] = $entry['type'] ?? $this->compatibilityType($entry);
+        $entry['source_ledger'] = $entry['source_ledger'] ?? $this->compatibilitySourceLedger($entry);
+        $entry['partner_effect'] = $entry['partner_effect'] ?? $effect;
+        $entry['supplier_partner_effect'] = $entry['supplier_partner_effect'] ?? $effect;
+        $entry['partner_running_balance'] = $entry['partner_running_balance'] ?? $running;
+        $entry['supplier_partner_running_balance'] = $entry['supplier_partner_running_balance'] ?? $running;
+        $entry['affects_debt_balance'] = $entry['affects_debt_balance'] ?? ! (bool) (
+            $entry['reference_only']
+            ?? $entry['is_reference_only']
+            ?? false
+        );
+        $entry['created_at'] = $this->compatibilityCreatedAt($entry);
+
+        return $entry;
+    }
+
+    private function normalizeSupplierPartnerDisplayAliases(array $entry): array
+    {
+        $effect = (float) ($entry['supplier_display_effect'] ?? $entry['display_effect'] ?? $entry['amount'] ?? 0.0);
+        $entry['supplier_display_effect'] = $effect;
+        $entry['supplier_display_balance_effect'] = (float) ($entry['supplier_display_balance_effect'] ?? $effect);
+
+        $eventKind = (string) ($entry['event_kind'] ?? '');
+        $referenceType = (string) ($entry['reference_type'] ?? '');
+        $domain = (string) ($entry['domain'] ?? '');
+        $isCustomerDocumentReference = $domain === 'customer'
+            && in_array($eventKind, [
+                'customer_sale',
+                'invoice_payment',
+                'invoice_payment_fallback',
+                'sales_return',
+                'refund',
+            ], true)
+            && in_array($referenceType, ['Invoice', 'OrderReturn', 'CashFlow'], true);
+
+        if ($isCustomerDocumentReference) {
+            $entry['supplier_balance_effect'] = 0.0;
+            $entry['affects_debt_balance'] = false;
+            $entry['reference_only'] = true;
+            $entry['is_reference_only'] = true;
+            $entry['badge_label'] = 'Phải thu KH';
+        } else {
+            $entry['supplier_balance_effect'] = (float) ($entry['supplier_balance_effect'] ?? $entry['supplier_display_balance_effect']);
+            $entry['affects_debt_balance'] = $entry['affects_debt_balance'] ?? true;
+        }
+
+        $entry['partner_effect'] = $entry['partner_effect'] ?? $effect;
+        $entry['supplier_partner_effect'] = $entry['supplier_partner_effect'] ?? $effect;
+        $entry['source_ledger'] = $entry['source_ledger'] ?? $this->compatibilitySourceLedger($entry);
+
+        return $entry;
+    }
+
+    private function shiftSupplierDisplayRunningAliases(array $entry, float $amount): array
+    {
+        foreach ([
+            'supplier_display_running_balance',
+            'supplier_running_balance',
+            'running_balance',
+            'partner_running_balance',
+            'supplier_partner_running_balance',
+            'debt_remain',
+            'balance',
+        ] as $key) {
+            if (array_key_exists($key, $entry) && $entry[$key] !== null && $entry[$key] !== '') {
+                $entry[$key] = (float) $entry[$key] + $amount;
+            }
+        }
+
+        return $entry;
+    }
+
+    private function virtualOpeningTime(Collection $entries): Carbon
+    {
+        $first = $entries
+            ->map(fn ($entry) => is_array($entry) ? $entry : (array) $entry)
+            ->filter(fn ($entry) => !empty($entry['time'] ?? $entry['display_time'] ?? $entry['created_at'] ?? null))
+            ->sortBy(fn ($entry) => $this->normalizeSortableTime($entry['time'] ?? $entry['display_time'] ?? $entry['created_at'] ?? null))
+            ->first();
+
+        $value = $first['time'] ?? $first['display_time'] ?? $first['created_at'] ?? null;
+
+        try {
+            return $value ? Carbon::parse($value)->subSecond() : Carbon::now()->startOfDay();
+        } catch (\Throwable) {
+            return Carbon::now()->startOfDay();
+        }
+    }
+
+    private function compatibilityType(array $entry): string
+    {
+        return match ((string) ($entry['event_kind'] ?? '')) {
+            'purchase' => 'purchase',
+            'supplier_payment', 'supplier_payment_fallback' => 'payment',
+            'purchase_return' => 'return',
+            'debt_offset' => 'offset',
+            'debt_offset_cancel' => 'offset_cancel',
+            'customer_sale' => 'customer_sale',
+            'invoice_payment', 'invoice_payment_fallback' => 'customer_payment',
+            'sales_return' => 'sales_return',
+            'refund' => 'refund',
+            'payment_discount' => 'discount',
+            default => str_contains((string) ($entry['event_kind'] ?? ''), 'adjustment') ? 'adjustment' : 'document',
+        };
+    }
+
+    private function compatibilityTypeLabel(array $entry): string
+    {
+        return match ($this->compatibilityType($entry)) {
+            'purchase' => 'Nhập hàng',
+            'payment' => 'Thanh toán NCC',
+            'return' => 'Trả hàng nhập',
+            'offset', 'adjustment' => 'Điều chỉnh',
+            'customer_sale' => 'Bán hàng',
+            'customer_payment' => 'Khách thanh toán',
+            'sales_return' => 'Trả hàng bán',
+            'refund' => 'Hoàn tiền khách',
+            'discount' => 'Chiết khấu TT',
+            default => '',
+        };
+    }
+
+    private function compatibilitySourceLedger(array $entry): string
+    {
+        return match ((string) ($entry['domain'] ?? '')) {
+            'customer' => 'customer_receivable',
+            'supplier', 'adjustment' => 'supplier_payable',
+            default => (string) ($entry['source'] ?? 'document_first'),
+        };
+    }
+
+    private function compatibilityCreatedAt(array $entry)
+    {
+        $createdAt = $entry['created_at'] ?? null;
+        $displayTime = $entry['display_time'] ?? $entry['time'] ?? null;
+
+        if (!$createdAt || !$displayTime) {
+            return $createdAt;
+        }
+
+        try {
+            $created = $createdAt instanceof Carbon ? $createdAt : Carbon::parse($createdAt);
+            $display = $displayTime instanceof Carbon ? $displayTime : Carbon::parse($displayTime);
+        } catch (\Throwable) {
+            return $createdAt;
+        }
+
+        if ($created->greaterThan($display) && abs($created->diffInSeconds(Carbon::now())) <= 300) {
+            return $display->toDateTimeString();
+        }
+
+        return $createdAt;
     }
 
     private function getDisplaySequence(array $entry): int

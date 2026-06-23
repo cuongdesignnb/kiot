@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, reactive, computed } from "vue";
 import { Head, router, Link } from "@inertiajs/vue3";
@@ -26,88 +26,88 @@ const sidebarConfig = computed(() => [
     {
         key: "date",
         type: "dateRange",
-        label: "Thời gian",
+        label: "Thá»i gian",
         fields: { filter: "date_filter", from: "date_from", to: "date_to" },
         zone: "quick",
     },
     {
         key: "branch_id",
         type: "select",
-        label: "Chi nhánh",
+        label: "Chi nhÃ¡nh",
         options: (props.filterOptions?.branches || []).map((b) => ({
             value: String(b.id),
             label: b.name,
         })),
-        placeholder: "-- Tất cả chi nhánh --",
+        placeholder: "-- Táº¥t cáº£ chi nhÃ¡nh --",
         zone: "quick",
     },
     {
         key: "status",
         type: "checkbox",
-        label: "Trạng thái hóa đơn",
+        label: "Tráº¡ng thÃ¡i hÃ³a Ä‘Æ¡n",
         options: props.filterOptions?.statuses || [],
         zone: "main",
     },
     {
         key: "is_delivery",
         type: "select",
-        label: "Loại hóa đơn",
+        label: "Loáº¡i hÃ³a Ä‘Æ¡n",
         options: props.filterOptions?.deliveryOptions || [],
-        placeholder: "-- Tất cả --",
+        placeholder: "-- Táº¥t cáº£ --",
         zone: "main",
     },
     {
         key: "has_debt",
         type: "select",
-        label: "Công nợ",
+        label: "CÃ´ng ná»£",
         options: props.filterOptions?.debtOptions || [],
-        placeholder: "-- Tất cả --",
+        placeholder: "-- Táº¥t cáº£ --",
         zone: "main",
     },
     {
         key: "payment_method",
         type: "select",
-        label: "Hình thức thanh toán",
+        label: "HÃ¬nh thá»©c thanh toÃ¡n",
         options: props.filterOptions?.paymentMethods || [],
-        placeholder: "-- Tất cả --",
+        placeholder: "-- Táº¥t cáº£ --",
         zone: "main",
     },
     {
         key: "seller_key",
         type: "select",
-        label: "Người bán",
+        label: "NgÆ°á»i bÃ¡n",
         options: (props.filterOptions?.sellers || []).map((s) => ({
             value: s.key,
             label: s.display_name || s.name,
         })),
-        placeholder: "-- Tất cả --",
+        placeholder: "-- Táº¥t cáº£ --",
         zone: "main",
     },
     {
         key: "creator_key",
         type: "select",
-        label: "Người tạo",
+        label: "NgÆ°á»i táº¡o",
         options: (props.filterOptions?.creators || []).map((c) => ({
             value: c.key,
             label: c.display_name || c.name,
         })),
-        placeholder: "-- Tất cả --",
+        placeholder: "-- Táº¥t cáº£ --",
         zone: "advanced",
     },
     {
         key: "sales_channel",
         type: "select",
-        label: "Kênh bán",
+        label: "KÃªnh bÃ¡n",
         options: props.filterOptions?.salesChannels || [],
-        placeholder: "-- Tất cả --",
+        placeholder: "-- Táº¥t cáº£ --",
         zone: "advanced",
     },
     {
         key: "delivery_partner",
         type: "select",
-        label: "Đối tác giao hàng",
+        label: "Äá»‘i tÃ¡c giao hÃ ng",
         options: [], // populated when partner list is available
-        placeholder: "-- Tất cả --",
+        placeholder: "-- Táº¥t cáº£ --",
         zone: "advanced",
     },
 ]);
@@ -118,7 +118,7 @@ const paymentHistoryData = reactive({});
 const paymentLoading = reactive({});
 
 const getInvoiceTab = (id) => invoiceTabs[id] || "info";
-const isInvoiceCancelled = (invoice) => invoice?.status === 'Đã hủy';
+const isInvoiceCancelled = (invoice) => invoice?.status === 'ÄÃ£ há»§y';
 const invoiceDisplayTime = (invoice) =>
     invoice?.transaction_date ||
     invoice?.display_time ||
@@ -173,9 +173,9 @@ const toggleExpand = (id) => {
 const isExpanded = (id) => expandedRows.value.includes(id);
 
 
-// HOTFIX 24.3C — proper cancel modal that handles the time-lock override flow.
+// HOTFIX 24.3C â€” proper cancel modal that handles the time-lock override flow.
 // Native window.confirm couldn't collect time_lock_override_reason, so users
-// with override permission hit "Cần nhập lý do override" and were stuck.
+// with override permission hit "Cáº§n nháº­p lÃ½ do override" and were stuck.
 const showCancelModal = ref(false);
 const cancellingInvoice = ref(null);
 const cancelReason = ref('');
@@ -201,19 +201,19 @@ const submitCancelInvoice = () => {
     const inv = cancellingInvoice.value;
     if (!inv) return;
     if (inv.cancel_block_reason) return; // UI guard; backend also enforces
-    if (inv.requires_override_reason) {
-        const trimmed = (cancelReason.value || '').trim();
-        if (trimmed.length < 5) {
-            cancelError.value = 'Vui lòng nhập lý do override (ít nhất 5 ký tự).';
-            return;
-        }
+    const trimmedReason = (cancelReason.value || '').trim();
+    if (trimmedReason.length < 5) {
+        cancelError.value = inv.requires_override_reason
+            ? 'Vui lòng nhập lý do hủy/override (ít nhất 5 ký tự).'
+            : 'Vui lòng nhập lý do hủy hóa đơn (ít nhất 5 ký tự).';
+        return;
     }
     cancelError.value = '';
     cancelSubmitting.value = true;
     router.delete(`/invoices/${inv.id}`, {
         data: inv.requires_override_reason
-            ? { time_lock_override_reason: cancelReason.value.trim() }
-            : {},
+            ? { cancel_reason: trimmedReason, time_lock_override_reason: trimmedReason }
+            : { cancel_reason: trimmedReason },
         preserveScroll: true,
         onSuccess: () => {
             showCancelModal.value = false;
@@ -223,7 +223,7 @@ const submitCancelInvoice = () => {
         onError: (errors) => {
             // Inertia surfaces validation errors; flash error comes via page props.
             const flashErr = errors?.error || errors?.message;
-            cancelError.value = flashErr || 'Không thể hủy hóa đơn. Vui lòng kiểm tra lại.';
+            cancelError.value = flashErr || 'KhÃ´ng thá»ƒ há»§y hÃ³a Ä‘Æ¡n. Vui lÃ²ng kiá»ƒm tra láº¡i.';
         },
         onFinish: () => {
             cancelSubmitting.value = false;
@@ -239,7 +239,7 @@ const printInvoice = (invoice) => {
     );
 };
 
-// HOTFIX 24.30 — Change seller for an invoice
+// HOTFIX 24.30 â€” Change seller for an invoice
 const sellerUpdating = reactive({});
 const invoiceSellerOptions = computed(() => props.filterOptions?.invoiceSellerOptions || []);
 
@@ -253,12 +253,12 @@ const changeSeller = async (invoice, newSellerKey) => {
     if (!newSellerKey || sellerUpdating[invoice.id]) return;
     if (newSellerKey === currentSellerKey(invoice)) return;
 
-    const oldName = invoice.seller_name || 'Chưa xác định';
+    const oldName = invoice.seller_name || 'ChÆ°a xÃ¡c Ä‘á»‹nh';
     const newOpt = invoiceSellerOptions.value.find(o => o.key === newSellerKey);
     const newName = newOpt?.display_name || newOpt?.name || newSellerKey;
 
     const confirmed = window.confirm(
-        `Bạn có chắc muốn đổi người bán của hóa đơn ${invoice.code} từ "${oldName}" sang "${newName}"?\n\nThay đổi này sẽ ảnh hưởng báo cáo doanh số/lợi nhuận theo nhân viên.`
+        `Báº¡n cÃ³ cháº¯c muá»‘n Ä‘á»•i ngÆ°á»i bÃ¡n cá»§a hÃ³a Ä‘Æ¡n ${invoice.code} tá»« "${oldName}" sang "${newName}"?\n\nThay Ä‘á»•i nÃ y sáº½ áº£nh hÆ°á»Ÿng bÃ¡o cÃ¡o doanh sá»‘/lá»£i nhuáº­n theo nhÃ¢n viÃªn.`
     );
     if (!confirmed) return;
 
@@ -271,7 +271,7 @@ const changeSeller = async (invoice, newSellerKey) => {
         invoice.seller_name = data.seller_name;
         invoice.seller_key = data.seller_key;
     } catch (e) {
-        const msg = e.response?.data?.message || 'Không thể đổi người bán. Vui lòng thử lại.';
+        const msg = e.response?.data?.message || 'KhÃ´ng thá»ƒ Ä‘á»•i ngÆ°á»i bÃ¡n. Vui lÃ²ng thá»­ láº¡i.';
         alert(msg);
     }
     sellerUpdating[invoice.id] = false;
@@ -279,7 +279,7 @@ const changeSeller = async (invoice, newSellerKey) => {
 </script>
 
 <template>
-    <Head title="Hóa đơn - KiotViet Clone" />
+    <Head title="HÃ³a Ä‘Æ¡n - KiotViet Clone" />
     <AppLayout>
         <template #sidebar>
             <div class="p-3">
@@ -295,7 +295,7 @@ const changeSeller = async (invoice, newSellerKey) => {
             <div
                 class="flex items-center justify-between px-4 pb-3 border-b border-gray-200"
             >
-                <div class="text-2xl font-bold text-gray-800">Hóa đơn</div>
+                <div class="text-2xl font-bold text-gray-800">HÃ³a Ä‘Æ¡n</div>
 
                 <div class="flex-1 max-w-[400px] ml-6 relative">
                     <svg
@@ -314,7 +314,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                     <input
                         type="text"
                         v-model="filters.search"
-                        placeholder="Theo mã hóa đơn, mã KH, tên KH, sđt..."
+                        placeholder="Theo mÃ£ hÃ³a Ä‘Æ¡n, mÃ£ KH, tÃªn KH, sÄ‘t..."
                         class="w-full pl-9 pr-8 py-1.5 focus:outline-none border border-gray-300 rounded text-sm placeholder-gray-400"
                     />
                 </div>
@@ -337,7 +337,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                 d="M12 4v16m8-8H4"
                             ></path>
                         </svg>
-                        Tạo mới
+                        Táº¡o má»›i
                     </Link>
                     <ExcelButtons export-url="/invoices/export" />
                     <button
@@ -381,13 +381,13 @@ const changeSeller = async (invoice, newSellerKey) => {
                                     class="rounded border-gray-300"
                                 />
                             </th>
-                            <SortableHeader label="Mã hóa đơn" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-2 py-2" @sort="handleSort" />
-                            <SortableHeader label="Thời gian" field="transaction_date" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-2 py-2" @sort="handleSort" />
-                            <th class="px-2 py-2">Khách hàng</th>
-                            <SortableHeader label="Tổng tiền hàng" field="subtotal" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
-                            <SortableHeader label="Giảm giá" field="discount" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
-                            <SortableHeader label="Tổng sau giảm giá" field="total" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
-                            <SortableHeader label="Khách đã trả" field="customer_paid" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader label="MÃ£ hÃ³a Ä‘Æ¡n" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-2 py-2" @sort="handleSort" />
+                            <SortableHeader label="Thá»i gian" field="transaction_date" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-2 py-2" @sort="handleSort" />
+                            <th class="px-2 py-2">KhÃ¡ch hÃ ng</th>
+                            <SortableHeader label="Tá»•ng tiá»n hÃ ng" field="subtotal" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader label="Giáº£m giÃ¡" field="discount" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader label="Tá»•ng sau giáº£m giÃ¡" field="total" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader label="KhÃ¡ch Ä‘Ã£ tráº£" field="customer_paid" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100">
@@ -419,10 +419,10 @@ const changeSeller = async (invoice, newSellerKey) => {
                                     <h3
                                         class="text-[17px] font-bold text-gray-800 mb-1"
                                     >
-                                        Không tìm thấy kết quả
+                                        KhÃ´ng tÃ¬m tháº¥y káº¿t quáº£
                                     </h3>
                                     <p class="text-[14px]">
-                                        Không tìm thấy hóa đơn nào phù hợp.
+                                        KhÃ´ng tÃ¬m tháº¥y hÃ³a Ä‘Æ¡n nÃ o phÃ¹ há»£p.
                                     </p>
                                 </div>
                             </td>
@@ -461,7 +461,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                     {{ formatInvoiceDisplayTime(invoice) }}
                                 </td>
                                 <td class="px-2 py-2">
-                                    {{ invoice.customer?.name || "Khách lẻ" }}
+                                    {{ invoice.customer?.name || "KhÃ¡ch láº»" }}
                                 </td>
                                 <td class="px-4 py-2 text-right">
                                     {{ formatCurrency(invoice.subtotal) }}
@@ -483,7 +483,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                             v-if="isInvoiceCancelled(invoice) && Number(invoice.customer_paid || 0) > 0"
                                             class="text-[11px] text-gray-400 font-normal"
                                         >
-                                            Trước hủy: {{ formatCurrency(invoice.customer_paid) }}
+                                            TrÆ°á»›c há»§y: {{ formatCurrency(invoice.customer_paid) }}
                                         </div>
                                     </div>
                                 </td>
@@ -519,7 +519,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                 "
                                                 class="px-4 pb-2"
                                             >
-                                                Thông tin
+                                                ThÃ´ng tin
                                             </button>
                                             <button
                                                 @click="
@@ -537,7 +537,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                 "
                                                 class="px-4 pb-2"
                                             >
-                                                Lịch sử thanh toán
+                                                Lá»‹ch sá»­ thanh toÃ¡n
                                             </button>
                                         </div>
 
@@ -557,7 +557,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                     {{
                                                         invoice.customer
                                                             ?.name ||
-                                                        "A Dũng Kiều Mai"
+                                                        "A DÅ©ng Kiá»u Mai"
                                                     }}
                                                 </h2>
                                                 <svg
@@ -581,7 +581,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                         class="bg-green-100 text-green-700 px-2 py-0.5 rounded textxs font-medium"
                                                         >{{
                                                             invoice.status ||
-                                                            "Hoàn thành"
+                                                            "HoÃ n thÃ nh"
                                                         }}</span
                                                     >
                                                 </span>
@@ -602,13 +602,13 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                     >
                                                         <span
                                                             class="text-gray-400 w-24"
-                                                            >Người tạo:</span
+                                                            >NgÆ°á»i táº¡o:</span
                                                         >
                                                         <span
                                                             class="text-gray-800"
                                                             >{{
                                                                 invoice.created_by_name ||
-                                                                "Không rõ"
+                                                                "KhÃ´ng rÃµ"
                                                             }}</span
                                                         >
                                                     </div>
@@ -617,17 +617,17 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                     >
                                                         <span
                                                             class="text-gray-400 w-24"
-                                                            >Người bán:</span
+                                                            >NgÆ°á»i bÃ¡n:</span
                                                         >
                                                         <select
                                                             class="border border-gray-300 rounded px-2 py-0.5 outline-none flex-1"
                                                             :class="{ 'opacity-50': sellerUpdating[invoice.id] }"
-                                                            :disabled="sellerUpdating[invoice.id] || invoice.status === 'Đã hủy'"
+                                                            :disabled="sellerUpdating[invoice.id] || invoice.status === 'ÄÃ£ há»§y'"
                                                             :value="currentSellerKey(invoice)"
                                                             @change="changeSeller(invoice, $event.target.value)"
                                                         >
                                                             <option value="" disabled>
-                                                                {{ invoice.seller_name || "Chưa xác định người bán" }}
+                                                                {{ invoice.seller_name || "ChÆ°a xÃ¡c Ä‘á»‹nh ngÆ°á»i bÃ¡n" }}
                                                             </option>
                                                             <option
                                                                 v-for="opt in invoiceSellerOptions"
@@ -643,7 +643,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                     >
                                                         <span
                                                             class="text-gray-400 w-24"
-                                                            >Ngày bán:</span
+                                                            >NgÃ y bÃ¡n:</span
                                                         >
                                                         <div
                                                             class="flex items-center border border-gray-300 rounded px-2 py-0.5 w-[160px] bg-white"
@@ -686,7 +686,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                     >
                                                         <span
                                                             class="text-gray-400 w-24"
-                                                            >Kênh bán:</span
+                                                            >KÃªnh bÃ¡n:</span
                                                         >
                                                         <select
                                                             class="border border-gray-300 rounded px-2 py-0.5 outline-none flex-1"
@@ -694,7 +694,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                             <option>
                                                                 {{
                                                                     invoice.sales_channel ||
-                                                                    "Bán trực tiếp"
+                                                                    "BÃ¡n trá»±c tiáº¿p"
                                                                 }}
                                                             </option>
                                                         </select>
@@ -704,13 +704,13 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                     >
                                                         <span
                                                             class="text-gray-400 w-24"
-                                                            >Bảng giá:</span
+                                                            >Báº£ng giÃ¡:</span
                                                         >
                                                         <span
                                                             class="text-gray-800"
                                                             >{{
                                                                 invoice.price_book_name ||
-                                                                "Bảng giá chung"
+                                                                "Báº£ng giÃ¡ chung"
                                                             }}</span
                                                         >
                                                     </div>
@@ -731,37 +731,37 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                                 <th
                                                                     class="px-6 py-3 text-left font-bold text-gray-800 w-32 border-r border-gray-100"
                                                                 >
-                                                                    Mã hàng
+                                                                    MÃ£ hÃ ng
                                                                 </th>
                                                                 <th
                                                                     class="px-4 py-3 text-left font-bold text-gray-800 border-r border-gray-100"
                                                                 >
-                                                                    Tên hàng
+                                                                    TÃªn hÃ ng
                                                                 </th>
                                                                 <th
                                                                     class="px-4 py-3 text-right font-bold text-gray-800 w-24 border-r border-gray-100"
                                                                 >
-                                                                    Số lượng
+                                                                    Sá»‘ lÆ°á»£ng
                                                                 </th>
                                                                 <th
                                                                     class="px-4 py-3 text-right font-bold text-gray-800 w-32 border-r border-gray-100"
                                                                 >
-                                                                    Đơn giá
+                                                                    ÄÆ¡n giÃ¡
                                                                 </th>
                                                                 <th
                                                                     class="px-4 py-3 text-right font-bold text-gray-800 w-32 border-r border-gray-100"
                                                                 >
-                                                                    Giảm giá
+                                                                    Giáº£m giÃ¡
                                                                 </th>
                                                                 <th
                                                                     class="px-4 py-3 text-right font-bold text-gray-800 w-32 border-r border-gray-100"
                                                                 >
-                                                                    Giá bán
+                                                                    GiÃ¡ bÃ¡n
                                                                 </th>
                                                                 <th
                                                                     class="px-6 py-3 text-right font-bold text-gray-800 w-32 border-r border-gray-100"
                                                                 >
-                                                                    Thành tiền
+                                                                    ThÃ nh tiá»n
                                                                 </th>
                                                             </tr>
                                                         </thead>
@@ -879,7 +879,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                     <div class="w-[60%]">
                                                         <textarea
                                                             class="w-full h-24 border border-gray-300 p-3 text-[13px] outline-none focus:border-blue-500 resize-none rounded-none placeholder-gray-400"
-                                                            placeholder="Ghi chú..."
+                                                            placeholder="Ghi chÃº..."
                                                         ></textarea>
                                                     </div>
                                                     <div
@@ -889,7 +889,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                             class="flex justify-between py-1.5 text-gray-500"
                                                         >
                                                             <span
-                                                                >Tổng tiền hàng
+                                                                >Tá»•ng tiá»n hÃ ng
                                                                 ({{
                                                                     invoice
                                                                         .items
@@ -910,8 +910,8 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                             class="flex justify-between py-1.5 text-gray-500"
                                                         >
                                                             <span
-                                                                >Giảm giá hóa
-                                                                đơn</span
+                                                                >Giáº£m giÃ¡ hÃ³a
+                                                                Ä‘Æ¡n</span
                                                             >
                                                             <span
                                                                 class="text-gray-800 font-medium"
@@ -926,8 +926,8 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                             class="flex justify-between py-1.5 text-gray-500"
                                                         >
                                                             <span
-                                                                >Khách cần
-                                                                trả</span
+                                                                >KhÃ¡ch cáº§n
+                                                                tráº£</span
                                                             >
                                                             <span
                                                                 class="text-gray-800 font-medium"
@@ -940,7 +940,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                         </div>
                                                         <div class="flex justify-between py-1.5 text-gray-500">
                                                              <span>
-                                                                 {{ isInvoiceCancelled(invoice) ? 'Khách đã trả hiệu lực' : 'Khách đã trả' }}
+                                                                 {{ isInvoiceCancelled(invoice) ? 'KhÃ¡ch Ä‘Ã£ tráº£ hiá»‡u lá»±c' : 'KhÃ¡ch Ä‘Ã£ tráº£' }}
                                                              </span>
                                                              <span class="text-gray-800 font-medium">
                                                                  {{ formatCurrency(effectiveCustomerPaid(invoice)) }}
@@ -950,7 +950,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                              v-if="isInvoiceCancelled(invoice) && Number(invoice.customer_paid || 0) > 0"
                                                              class="flex justify-between py-1 text-xs text-gray-400 font-normal"
                                                          >
-                                                             <span>Đã trả trước hủy</span>
+                                                             <span>ÄÃ£ tráº£ trÆ°á»›c há»§y</span>
                                                              <span>{{ formatCurrency(invoice.customer_paid) }}</span>
                                                          </div>
                                                     </div>
@@ -982,7 +982,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                                     d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
                                                                 ></path>
                                                             </svg>
-                                                            Hủy
+                                                            Há»§y
                                                         </button>
                                                     </div>
                                                     <div class="flex gap-2">
@@ -1003,7 +1003,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                                     d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
                                                                 ></path>
                                                             </svg>
-                                                            Chỉnh sửa
+                                                            Chá»‰nh sá»­a
                                                         </Link>
                                                         <Link
                                                             :href="`/orders/create?action=return&invoice_id=${invoice.id}`"
@@ -1022,7 +1022,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                                     d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
                                                                 ></path>
                                                             </svg>
-                                                            Trả hàng
+                                                            Tráº£ hÃ ng
                                                         </Link>
                                                         <button
                                                             @click.stop="
@@ -1068,7 +1068,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                     "
                                                     class="text-center py-8 text-gray-400"
                                                 >
-                                                    Đang tải...
+                                                    Äang táº£i...
                                                 </div>
                                                 <div
                                                     v-else-if="
@@ -1078,10 +1078,10 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                     "
                                                 >
                                                     <div
-                                                        v-if="invoice.status === 'Đã hủy' && Number(invoice.customer_paid || 0) > 0"
+                                                        v-if="invoice.status === 'ÄÃ£ há»§y' && Number(invoice.customer_paid || 0) > 0"
                                                         class="mb-3 text-xs text-yellow-600 bg-yellow-50 p-2.5 border border-yellow-200 rounded font-medium"
                                                     >
-                                                        Hóa đơn đã hủy. Khoản đã trả trước hủy chỉ còn là snapshot, không còn hiệu lực trong sổ quỹ.
+                                                        HÃ³a Ä‘Æ¡n Ä‘Ã£ há»§y. Khoáº£n Ä‘Ã£ tráº£ trÆ°á»›c há»§y chá»‰ cÃ²n lÃ  snapshot, khÃ´ng cÃ²n hiá»‡u lá»±c trong sá»• quá»¹.
                                                     </div>
                                                     <div
                                                         v-if="
@@ -1091,8 +1091,8 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                         "
                                                         class="text-center py-8 text-gray-400"
                                                     >
-                                                        Không có lịch sử thanh
-                                                        toán
+                                                        KhÃ´ng cÃ³ lá»‹ch sá»­ thanh
+                                                        toÃ¡n
                                                     </div>
                                                     <table
                                                         v-else
@@ -1105,27 +1105,27 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                                 <th
                                                                     class="px-3 py-2 text-left"
                                                                 >
-                                                                    Mã phiếu
+                                                                    MÃ£ phiáº¿u
                                                                 </th>
                                                                 <th
                                                                     class="px-3 py-2 text-left"
                                                                 >
-                                                                    Thời gian
+                                                                    Thá»i gian
                                                                 </th>
                                                                 <th
                                                                     class="px-3 py-2 text-left"
                                                                 >
-                                                                    Phương thức
+                                                                    PhÆ°Æ¡ng thá»©c
                                                                 </th>
                                                                 <th
                                                                     class="px-3 py-2 text-right"
                                                                 >
-                                                                    Số tiền
+                                                                    Sá»‘ tiá»n
                                                                 </th>
                                                                 <th
                                                                     class="px-3 py-2 text-left"
                                                                 >
-                                                                    Ghi chú
+                                                                    Ghi chÃº
                                                                 </th>
                                                             </tr>
                                                         </thead>
@@ -1147,7 +1147,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                                         v-if="p.status === 'cancelled' || p.is_cancelled"
                                                                         class="ml-2 rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-semibold text-red-600 inline-block"
                                                                     >
-                                                                        Đã hủy
+                                                                        ÄÃ£ há»§y
                                                                     </span>
                                                                 </td>
                                                                 <td
@@ -1166,7 +1166,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                                 >
                                                                     {{
                                                                         p.method ||
-                                                                        "Tiền mặt"
+                                                                        "Tiá»n máº·t"
                                                                     }}
                                                                 </td>
                                                                 <td
@@ -1195,7 +1195,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                     v-else
                                                     class="text-center py-8 text-gray-400"
                                                 >
-                                                    Đang tải...
+                                                    Äang táº£i...
                                                 </div>
                                             </div>
                                         </div>
@@ -1212,12 +1212,12 @@ const changeSeller = async (invoice, newSellerKey) => {
                 class="flex items-center justify-between p-3 border-t border-gray-200 bg-gray-50/50 text-sm flex-shrink-0"
             >
                 <div class="text-gray-600">
-                    Hiển thị từ
-                    <span class="font-bold">{{ invoices.from || 0 }}</span> đến
+                    Hiá»ƒn thá»‹ tá»«
+                    <span class="font-bold">{{ invoices.from || 0 }}</span> Ä‘áº¿n
                     <span class="font-bold">{{ invoices.to || 0 }}</span> trong
-                    tổng số
-                    <span class="font-bold">{{ invoices.total || 0 }}</span> hóa
-                    đơn
+                    tá»•ng sá»‘
+                    <span class="font-bold">{{ invoices.total || 0 }}</span> hÃ³a
+                    Ä‘Æ¡n
                 </div>
                 <!-- Pagination -->
                 <div
@@ -1249,14 +1249,14 @@ const changeSeller = async (invoice, newSellerKey) => {
             </div>
         </div>
 
-        <!-- HOTFIX 24.3C — Cancel invoice modal (replaces window.confirm) -->
+        <!-- HOTFIX 24.3C â€” Cancel invoice modal (replaces window.confirm) -->
         <div
             v-if="showCancelModal && cancellingInvoice"
             class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
         >
             <div class="bg-white rounded-lg shadow-xl w-full max-w-lg">
                 <div class="flex items-center justify-between px-6 py-4 border-b">
-                    <h3 class="text-lg font-bold text-gray-800">Hủy hóa đơn</h3>
+                    <h3 class="text-lg font-bold text-gray-800">Há»§y hÃ³a Ä‘Æ¡n</h3>
                     <button
                         @click="closeCancelInvoiceModal"
                         class="text-gray-400 hover:text-gray-600 text-2xl leading-none"
@@ -1266,18 +1266,18 @@ const changeSeller = async (invoice, newSellerKey) => {
 
                 <div class="px-6 py-4 space-y-3 text-sm">
                     <div class="grid grid-cols-2 gap-y-1 gap-x-4">
-                        <div class="text-gray-500">Mã hóa đơn</div>
+                        <div class="text-gray-500">MÃ£ hÃ³a Ä‘Æ¡n</div>
                         <div class="font-semibold text-gray-800">{{ cancellingInvoice.code }}</div>
-                        <div class="text-gray-500">Khách hàng</div>
-                        <div class="text-gray-800">{{ cancellingInvoice.customer?.name || 'Khách lẻ' }}</div>
-                        <div class="text-gray-500">Tổng tiền</div>
-                        <div class="text-gray-800 tabular-nums">{{ Number(cancellingInvoice.total || 0).toLocaleString('vi-VN') }} ₫</div>
-                        <div class="text-gray-500">Trạng thái</div>
+                        <div class="text-gray-500">KhÃ¡ch hÃ ng</div>
+                        <div class="text-gray-800">{{ cancellingInvoice.customer?.name || 'KhÃ¡ch láº»' }}</div>
+                        <div class="text-gray-500">Tá»•ng tiá»n</div>
+                        <div class="text-gray-800 tabular-nums">{{ Number(cancellingInvoice.total || 0).toLocaleString('vi-VN') }} â‚«</div>
+                        <div class="text-gray-500">Tráº¡ng thÃ¡i</div>
                         <div class="text-gray-800">{{ cancellingInvoice.status }}</div>
                     </div>
 
                     <div class="px-3 py-2 bg-amber-50 border border-amber-200 rounded text-amber-800 text-xs">
-                        Hủy hóa đơn sẽ đảo tồn kho, serial/IMEI, công nợ, dòng tiền và báo cáo liên quan.
+                        Há»§y hÃ³a Ä‘Æ¡n sáº½ Ä‘áº£o tá»“n kho, serial/IMEI, cÃ´ng ná»£, dÃ²ng tiá»n vÃ  bÃ¡o cÃ¡o liÃªn quan.
                     </div>
 
                     <div
@@ -1292,18 +1292,18 @@ const changeSeller = async (invoice, newSellerKey) => {
                             v-if="cancellingInvoice.is_time_locked"
                             class="px-3 py-2 bg-orange-50 border border-orange-200 rounded text-orange-800 text-xs"
                         >
-                            Hóa đơn đã quá thời gian cho phép hủy ({{ cancellingInvoice.order_change_time_hours }} giờ — đã trôi {{ cancellingInvoice.lock_age_hours }} giờ). Cần lý do override.
+                            HÃ³a Ä‘Æ¡n Ä‘Ã£ quÃ¡ thá»i gian cho phÃ©p há»§y ({{ cancellingInvoice.order_change_time_hours }} giá» â€” Ä‘Ã£ trÃ´i {{ cancellingInvoice.lock_age_hours }} giá»). Cáº§n lÃ½ do override.
                         </div>
 
-                        <div v-if="cancellingInvoice.requires_override_reason">
+                        <div>
                             <label class="block text-xs font-medium text-gray-700 mb-1">
-                                Lý do override <span class="text-red-500">*</span>
+                                Lý do hủy <span class="text-red-500">*</span>
                             </label>
                             <textarea
                                 v-model="cancelReason"
                                 rows="3"
                                 class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                placeholder="Nhập lý do hủy quá hạn (ít nhất 5 ký tự)"
+                                placeholder="Nhập lý do hủy chứng từ (ít nhất 5 ký tự)"
                                 :disabled="cancelSubmitting"
                             ></textarea>
                             <p class="mt-1 text-xs text-gray-400">Tối thiểu 5 ký tự. Sẽ ghi vào nhật ký hệ thống.</p>
@@ -1323,13 +1323,13 @@ const changeSeller = async (invoice, newSellerKey) => {
                         @click="closeCancelInvoiceModal"
                         :disabled="cancelSubmitting"
                         class="px-4 py-2 border border-gray-300 rounded text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50"
-                    >Đóng</button>
+                    >ÄÃ³ng</button>
                     <button
                         @click="submitCancelInvoice"
                         :disabled="cancelSubmitting || !!cancellingInvoice.cancel_block_reason"
                         class="px-5 py-2 bg-red-600 text-white rounded text-sm font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                        {{ cancelSubmitting ? 'Đang hủy...' : 'Xác nhận hủy' }}
+                        {{ cancelSubmitting ? 'Äang há»§y...' : 'XÃ¡c nháº­n há»§y' }}
                     </button>
                 </div>
             </div>

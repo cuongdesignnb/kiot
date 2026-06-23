@@ -94,7 +94,13 @@ const printDamage = (damage) => {
 
 const cancelDamage = (damage) => {
     if (!confirm("Bạn chắc chắn muốn hủy phiếu xuất hủy này? Hệ thống sẽ rollback tồn kho và serial đã xuất hủy.")) return;
-    router.post(`/damages/${damage.id}/cancel`, {}, {
+    const cancelReason = window.prompt("Nhập lý do hủy phiếu xuất:");
+    if (cancelReason === null) return;
+    if (cancelReason.trim().length < 5) {
+        alert("Lý do hủy phải có ít nhất 5 ký tự.");
+        return;
+    }
+    router.post(`/damages/${damage.id}/cancel`, { cancel_reason: cancelReason.trim() }, {
         preserveScroll: true,
     });
 };
