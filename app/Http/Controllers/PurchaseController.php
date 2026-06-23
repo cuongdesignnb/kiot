@@ -544,105 +544,117 @@ class PurchaseController extends Controller
         ]);
     }
 
+    public function edit(Purchase $purchase)
+    {
+        if ($purchase->status === 'cancelled') {
+            return redirect()->route('purchases.show', $purchase)->with('error', 'Không thể sửa phiếu nhập đã hủy.');
+        }
+
+        $purchase->load(['supplier', 'items.product', 'user', 'employee']);
+        foreach ($purchase->items as $item) {
+            if ($item->product && $item->product->has_serial) {
+                $item->setRelation('serials', SerialImei::where('purchase_id', $purchase->id)
+                    ->where('product_id', $item->product_id)
+                    ->orderBy('serial_number')
+                    ->get(['id', 'serial_number', 'status', 'product_id', 'purchase_id']));
+                $item->quantity = $item->serials->count();
+            } else {
+                $item->setRelation('serials', collect([]));
+            }
+        }
+
+        $suppliers = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
+            ->where('is_supplier', true)
+            ->get();
+        if ($purchase->supplier && !$suppliers->contains('id', $purchase->supplier_id)) {
+            $suppliers->push($purchase->supplier);
+        }
+
+        $products = Product::where('is_active', true)
+            ->orWhereIn('id', $purchase->items->pluck('product_id')->filter()->unique())
+            ->get();
+
+        $priceBooks = \App\Models\PriceBook::where('is_active', true)->get();
+        $sellerResolver = new \App\Support\Reports\SellerResolver();
+
+        return Inertia::render('Purchases/Edit', [
+            'purchase' => $purchase,
+            'suppliers' => $suppliers->values(),
+            'products' => $products,
+            'employees' => $sellerResolver->buildInvoiceSellerOptions(),
+            'showRetailPrice' => $priceBooks->contains('enable_retail_price', true),
+            'showTechnicianPrice' => $priceBooks->contains('enable_technician_price', true),
+            'bankAccounts' => \App\Models\BankAccount::where('status', 'active')->get(),
+        ]);
+    }
+
     public function update(Request $request, Purchase $purchase)
     {
-        $request->validate([
-            'note' => 'nullable|string',
-            'purchase_date' => 'nullable|date',
+        $validated = $request->validate([
+            'supplier_id' => 'required|exists:customers,id',
+            'note' => 'nullable|string|max:1000',
+            'purchase_date' => 'required|date',
             'discount' => 'nullable|numeric|min:0',
             'paid_amount' => 'nullable|numeric|min:0',
-            'payment_method' => 'nullable|string|in:cash,transfer',
+            'payment_method' => 'required|string|in:cash,transfer',
             'bank_account_info' => 'nullable|string',
             'employee_id' => 'nullable|string',
             'status' => 'nullable|string|in:draft,completed',
-            'items' => 'nullable|array',
+            'items' => 'required|array|min:1',
             'items.*.product_id' => 'required_with:items|exists:products,id',
-            'items.*.quantity' => 'required_with:items|integer|min:0',
+            'items.*.quantity' => 'required_with:items|numeric|min:0',
             'items.*.price' => 'required_with:items|numeric|min:0',
+            'items.*.retail_price' => 'nullable|numeric|min:0',
+            'items.*.technician_price' => 'nullable|numeric|min:0',
+            'items.*.discount' => 'nullable|numeric|min:0',
+            'items.*.serials' => 'nullable|array',
+            'items.*.warranty_months' => 'nullable|integer|min:0',
             'other_costs' => 'nullable|array',
             'other_costs.*.name' => 'required_with:other_costs|string|max:255',
             'other_costs.*.amount' => 'required_with:other_costs|numeric|min:0',
         ]);
+
+        if ($purchase->status === 'cancelled') {
+            return back()->withErrors(['purchase' => 'Không thể sửa phiếu nhập đã hủy.']);
+        }
+
         app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
-            $purchase->supplier_id ? (int) $purchase->supplier_id : null,
+            (int) $validated['supplier_id'],
             'supplier_id'
         );
 
-        $isDraftToComplete = $purchase->status === 'draft' && ($request->status ?? $purchase->status) === 'completed';
+        app(LockPeriodService::class)->assertNotLocked($purchase->purchase_date ?? $purchase->created_at, 'purchase_update');
+        app(LockPeriodService::class)->assertNotLocked($validated['purchase_date'], 'purchase_update');
 
         try {
             DB::beginTransaction();
-            app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
-                $purchase->supplier_id ? (int) $purchase->supplier_id : null,
-                'supplier_id'
-            );
 
-            // Parse employee_id / virtual admin user
-            $employeeIdInput = $request->employee_id;
-            $dbEmployeeId = $purchase->employee_id;
-            $dbUserId = $purchase->user_id;
-
-            if ($request->has('employee_id')) {
-                if ($employeeIdInput) {
-                    if (preg_match('/^employee:(\d+)$/', $employeeIdInput, $matches)) {
-                        $dbEmployeeId = (int) $matches[1];
-                        if (!\App\Models\Employee::where('is_active', true)->where('id', $dbEmployeeId)->exists()) {
-                            return back()->withErrors(['employee_id' => 'Nhân viên không hợp lệ hoặc đã ngưng hoạt động.']);
-                        }
-                    } elseif (preg_match('/^admin_user:(\d+)$/', $employeeIdInput, $matches)) {
-                        $dbUserId = (int) $matches[1];
-                        $dbEmployeeId = null;
-                        $adminUser = \App\Models\User::find($dbUserId);
-                        if (!$adminUser || ($adminUser->status ?? 'active') !== 'active' || !$adminUser->isAdmin()) {
-                            return back()->withErrors(['employee_id' => 'Tài khoản admin không hợp lệ.']);
-                        }
-                    } elseif (is_numeric($employeeIdInput)) {
-                        $dbEmployeeId = (int) $employeeIdInput;
-                        if (!\App\Models\Employee::where('is_active', true)->where('id', $dbEmployeeId)->exists()) {
-                            return back()->withErrors(['employee_id' => 'Nhân viên không hợp lệ hoặc đã ngưng hoạt động.']);
-                        }
-                    } else {
-                        return back()->withErrors(['employee_id' => 'Người nhập không hợp lệ.']);
-                    }
-                } else {
-                    $dbEmployeeId = null;
-                }
+            $purchase = Purchase::with(['items.product', 'supplier'])->lockForUpdate()->findOrFail($purchase->id);
+            $oldStatus = $purchase->status;
+            $newStatus = $validated['status'] ?? $purchase->status;
+            if ($oldStatus === 'completed' && $newStatus !== 'completed') {
+                throw new \RuntimeException('Không thể chuyển phiếu nhập đã hoàn thành về phiếu tạm.');
             }
+            $wasStocked = $oldStatus === 'completed';
+            $willBeStocked = $newStatus === 'completed';
+            $actor = $this->resolvePurchaseActor($validated['employee_id'] ?? null, $purchase);
+            $oldEmployeeId = $purchase->employee_id;
+            $oldUserId = $purchase->user_id;
+            $oldNote = $purchase->note;
+            $oldSupplierId = (int) $purchase->supplier_id;
+            $newSupplierId = (int) $validated['supplier_id'];
+            $oldTotalAmount = (float) $purchase->total_amount;
+            $oldPaidAmount = (float) $purchase->paid_amount;
+            $oldDebt = (float) $purchase->debt_amount;
+            $oldPurchaseDate = $purchase->purchase_date ?? $purchase->created_at;
+            $oldItems = $purchase->items->keyBy('product_id');
+            $oldSerialsByProduct = SerialImei::where('purchase_id', $purchase->id)
+                ->get()
+                ->groupBy('product_id')
+                ->map(fn($rows) => $rows->keyBy(fn($serial) => $this->normalizeSerial($serial->serial_number)));
 
-            // Nếu draft → completed: cập nhật items trước khi tính tổng
-            if ($isDraftToComplete && $request->has('items')) {
-                $purchase->items()->delete();
-                $totalAmount = 0;
-                foreach ($request->items as $item) {
-                    $product = Product::find($item['product_id']);
-                    $qty = $item['quantity'] ?? 0;
-                    $price = $item['price'] ?? 0;
-                    $itemDiscount = $item['discount'] ?? 0;
-                    $subtotal = $qty * $price - $itemDiscount;
-                    $totalAmount += $subtotal;
-
-                    $purchase->items()->create([
-                        'product_id' => $product->id,
-                        'product_name' => $product->name,
-                        'product_code' => $product->sku,
-                        'quantity' => $qty,
-                        'price' => $price,
-                        'discount' => $itemDiscount,
-                        'subtotal' => $subtotal,
-                        'warranty_months' => $item['warranty_months'] ?? 0,
-                    ]);
-                }
-                $purchase->total_amount = $totalAmount;
-            }
-
-            $oldPaidAmount = $purchase->paid_amount;
-            $oldDebt = $purchase->debt_amount;
-
-            $discount = $request->discount ?? $purchase->discount;
-            $paidAmount = $request->paid_amount ?? $purchase->paid_amount;
-
-            // Chi phí nhập khác
-            $otherCosts = collect($request->other_costs ?? $purchase->other_costs ?? [])
+            $normalizedItems = $this->normalizePurchaseUpdateItems($validated['items']);
+            $otherCosts = collect($validated['other_costs'] ?? [])
                 ->map(fn($c) => [
                     'name' => trim((string)($c['name'] ?? '')),
                     'amount' => round((float)($c['amount'] ?? 0), 2),
@@ -650,61 +662,79 @@ class PurchaseController extends Controller
                 ->filter(fn($c) => $c['name'] !== '' && $c['amount'] > 0)
                 ->values()
                 ->all();
-
             $otherCostsTotal = collect($otherCosts)->sum('amount');
+            $discount = (float) ($validated['discount'] ?? 0);
+            $paidAmount = (float) ($validated['paid_amount'] ?? 0);
+            $totalAmount = 0.0;
+            $changedItems = [];
+            $changedSerials = [];
+            $productSerialFlags = Product::whereIn('id', collect($normalizedItems)->pluck('product_id'))
+                ->pluck('has_serial', 'id');
+            $goodsTotalForAllocation = collect($normalizedItems)->sum(function ($item) use ($productSerialFlags) {
+                $quantity = $productSerialFlags->get($item['product_id'])
+                    ? count(array_unique($item['serials']))
+                    : (int) $item['quantity'];
 
-            $payAmount = $purchase->total_amount - $discount + $otherCostsTotal;
-            $debtAmount = $payAmount - $paidAmount;
+                return max(0, ($quantity * (float) $item['price']) - (float) $item['discount']);
+            });
 
-            $purchase->update([
-                'note' => $request->note ?? $purchase->note,
-                'purchase_date' => $request->purchase_date ?? $purchase->purchase_date,
-                'discount' => $discount,
-                'other_costs' => !empty($otherCosts) ? $otherCosts : null,
-                'other_costs_total' => $otherCostsTotal,
-                'paid_amount' => $paidAmount,
-                'debt_amount' => $debtAmount,
-                'payment_method' => $request->payment_method ?? $purchase->payment_method,
-                'bank_account_info' => $request->bank_account_info,
-                'employee_id' => $dbEmployeeId,
-                'user_id' => $dbUserId,
-                'status' => $isDraftToComplete ? 'completed' : $purchase->status,
-            ]);
+            foreach ($normalizedItems as $itemData) {
+                $product = Product::lockForUpdate()->findOrFail($itemData['product_id']);
+                $oldItem = $oldItems->get($product->id);
+                $oldQty = ($wasStocked && $oldItem) ? (int) $oldItem->quantity : 0;
+                $oldPrice = $oldItem ? (float) $oldItem->price : 0.0;
+                $oldUnitCost = $oldItem ? (float) ($oldItem->unit_cost_allocated ?? $oldItem->price) : 0.0;
+                $oldDiscount = $oldItem ? (float) $oldItem->discount : 0.0;
+                $oldWarranty = $oldItem ? (int) ($oldItem->warranty_months ?? 0) : 0;
+                $allocationQty = $product->has_serial
+                    ? count(array_unique($itemData['serials']))
+                    : (int) $itemData['quantity'];
+                $lineSubtotalForAllocation = ($allocationQty * (float) $itemData['price']) - (float) $itemData['discount'];
+                if ($lineSubtotalForAllocation < -0.01) {
+                    throw new \RuntimeException("Chiết khấu sản phẩm \"{$product->name}\" không được lớn hơn thành tiền dòng hàng.");
+                }
+                $allocatedOtherCost = $goodsTotalForAllocation > 0
+                    ? ($otherCostsTotal * max(0, $lineSubtotalForAllocation) / $goodsTotalForAllocation)
+                    : 0.0;
+                $unitCostAllocated = $allocationQty > 0
+                    ? (max(0, $lineSubtotalForAllocation) + $allocatedOtherCost) / $allocationQty
+                    : (float) $itemData['price'];
+                $costChanged = abs($unitCostAllocated - $oldUnitCost) >= 0.0001;
 
-            // ── Draft → Completed: cộng tồn kho + ghi nợ ──
-            if ($isDraftToComplete) {
-                $costingMethod = \App\Models\Setting::get('inventory_costing_method', 'average');
-                $goodsTotal = (float) $purchase->total_amount;
+                if ($product->has_serial) {
+                    $serials = array_values(array_unique($itemData['serials']));
+                    $newQty = $willBeStocked ? count($serials) : 0;
+                    $oldSerials = $oldSerialsByProduct->get($product->id, collect());
+                    $oldSerialNumbers = $wasStocked ? $oldSerials->keys()->all() : [];
+                    $serialsAdded = array_values(array_diff($serials, $oldSerialNumbers));
+                    $serialsRemoved = array_values(array_diff($oldSerialNumbers, $serials));
+                    $hasLockedSerial = $oldSerials->contains(fn($serial) => $serial->status !== 'in_stock');
 
-                foreach ($purchase->items as $item) {
-                    $product = Product::find($item->product_id);
-                    if (!$product) continue;
+                    if ($willBeStocked && count($serials) === 0) {
+                        throw new \RuntimeException("Sản phẩm \"{$product->name}\" quản lý Serial/IMEI cần nhập đủ số serial theo số lượng.");
+                    }
+                    if ($hasLockedSerial && ((float) $itemData['price'] !== $oldPrice || $costChanged || !empty($serialsRemoved))) {
+                        throw new \RuntimeException("Không thể sửa đơn giá hoặc xóa serial vì hàng trong phiếu đã phát sinh giao dịch sau nhập.");
+                    }
+                    foreach ($serialsRemoved as $serialNumber) {
+                        $serial = $oldSerials->get($serialNumber);
+                        if (!$serial || $serial->status !== 'in_stock') {
+                            throw new \RuntimeException("Không thể xóa Serial/IMEI \"{$serialNumber}\" vì serial này đã phát sinh giao dịch sau nhập.");
+                        }
+                    }
+                    foreach ($serialsAdded as $serialNumber) {
+                        $exists = SerialImei::where('serial_number', $serialNumber)->first();
+                        if ($exists) {
+                            throw new \RuntimeException("Serial/IMEI \"{$serialNumber}\" đã tồn tại trong hệ thống.");
+                        }
+                    }
 
-                    // Phân bổ phí nhập theo tỉ lệ subtotal
-                    $itemSubtotal = (float) $item->subtotal;
-                    $allocatedFee = ($otherCostsTotal > 0 && $goodsTotal > 0)
-                        ? ($otherCostsTotal * $itemSubtotal / $goodsTotal)
-                        : 0.0;
-                    $unitCostAllocated = $item->quantity > 0
-                        ? round(($itemSubtotal + $allocatedFee) / $item->quantity, 2)
-                        : (float) $item->price;
-                    $item->unit_cost_allocated = $unitCostAllocated;
-                    $item->save();
-
-                    // BQ DI ĐỘNG: áp dụng nhập hàng
-                    \App\Services\MovingAvgCostingService::applyPurchase(
-                        $product,
-                        (int) $item->quantity,
-                        (float) $unitCostAllocated
-                    );
-                    $product->refresh();
-
-                    // Create Serial/IMEI records if applicable
-                    if ($product->has_serial && !empty($item->serials)) {
-                        foreach ($item->serials as $serialNumber) {
-                            SerialImei::create([
+                    $addedSerialRows = [];
+                    if ($willBeStocked) {
+                        foreach ($serialsAdded as $serialNumber) {
+                            $addedSerialRows[] = SerialImei::create([
                                 'product_id' => $product->id,
-                                'serial_number' => $this->normalizeSerial(is_string($serialNumber) ? $serialNumber : $serialNumber['serial_number'] ?? ''),
+                                'serial_number' => $serialNumber,
                                 'status' => 'in_stock',
                                 'purchase_id' => $purchase->id,
                                 'cost_price' => $unitCostAllocated,
@@ -713,64 +743,317 @@ class PurchaseController extends Controller
                         }
                     }
 
-                    if ($product->has_serial) {
+                    if ($willBeStocked) {
+                        $deltaQty = $newQty - $oldQty;
+                        if ($deltaQty > 0) {
+                            \App\Services\MovingAvgCostingService::applyPurchase($product, $deltaQty, $unitCostAllocated);
+                        } elseif ($deltaQty < 0) {
+                            if ((int) $product->stock_quantity < abs($deltaQty)) {
+                                throw new \RuntimeException('Không thể giảm số lượng vì hàng đã được bán/xuất hoặc tồn kho hiện tại không đủ để điều chỉnh.');
+                            }
+                            \App\Services\MovingAvgCostingService::applyPurchaseReturn($product, abs($deltaQty), $oldUnitCost);
+                        } elseif ($costChanged && !$hasLockedSerial) {
+                            $costDelta = $newQty * ($unitCostAllocated - $oldUnitCost);
+                            \App\Services\MovingAvgCostingService::applyRepairAdjustment($product, $costDelta);
+                        }
+                        $product->refresh();
+                        foreach ($addedSerialRows as $serial) {
+                            StockMovementService::record($product, StockMovementService::TYPE_ADJUST_IN, 1, $unitCostAllocated, $purchase, [
+                                'serial_imei_id' => $serial->id,
+                                'ref_code' => $purchase->code,
+                                'moved_at' => $validated['purchase_date'],
+                                'note' => 'Sửa phiếu nhập: thêm serial ' . $serial->serial_number,
+                            ]);
+                        }
+                        foreach ($serialsRemoved as $serialNumber) {
+                            $serial = $oldSerials->get($serialNumber);
+                            StockMovementService::record($product, StockMovementService::TYPE_ADJUST_OUT, 1, $oldUnitCost, $purchase, [
+                                'serial_imei_id' => $serial->id,
+                                'ref_code' => $purchase->code,
+                                'moved_at' => $validated['purchase_date'],
+                                'note' => 'Sửa phiếu nhập: xóa serial ' . $serialNumber,
+                            ]);
+                            $serial->delete();
+                        }
+                        foreach ($oldSerials as $serial) {
+                            if (in_array($this->normalizeSerial($serial->serial_number), $serials, true)) {
+                                $serial->forceFill([
+                                    'cost_price' => $unitCostAllocated,
+                                    'original_cost' => $unitCostAllocated,
+                                    'warranty_expires_at' => $itemData['warranty_months'] > 0
+                                        ? \Carbon\Carbon::parse($validated['purchase_date'])->copy()->addMonths($itemData['warranty_months'])
+                                        : null,
+                                ])->save();
+                            }
+                        }
                         $product->recomputeFromSerials();
                     }
-                }
 
-                // Supplier debt
-                $supplier = Customer::find($purchase->supplier_id);
-                if ($supplier) {
-                    if ($supplier->is_customer && !$supplier->is_supplier) {
-                        $supplier->is_supplier = true;
+                    $itemQty = count($serials);
+                    $changedSerials[] = [
+                        'product_id' => $product->id,
+                        'added' => $serialsAdded,
+                        'removed' => $serialsRemoved,
+                    ];
+                } else {
+                    $newQty = $willBeStocked ? (int) $itemData['quantity'] : 0;
+                    if ($willBeStocked && $newQty <= 0) {
+                        throw new \RuntimeException("Số lượng sản phẩm \"{$product->name}\" phải lớn hơn 0.");
                     }
-                    $supplier->supplier_debt_amount += $debtAmount;
-                    $supplier->total_bought += $purchase->total_amount;
-                    $supplier->save();
+                    if ($willBeStocked && $oldItem && $costChanged && (int) $product->stock_quantity < $oldQty) {
+                        throw new \RuntimeException('Không thể sửa đơn giá nhập vì hàng trong phiếu đã phát sinh giao dịch sau nhập. Vui lòng tạo phiếu điều chỉnh giá vốn nếu cần.');
+                    }
+                    if ($willBeStocked) {
+                        $deltaQty = $newQty - $oldQty;
+                        if ($deltaQty > 0) {
+                            \App\Services\MovingAvgCostingService::applyPurchase($product, $deltaQty, $unitCostAllocated);
+                            StockMovementService::record($product, StockMovementService::TYPE_ADJUST_IN, $deltaQty, $unitCostAllocated, $purchase, [
+                                'ref_code' => $purchase->code,
+                                'moved_at' => $validated['purchase_date'],
+                                'note' => 'Sửa phiếu nhập: tăng số lượng',
+                            ]);
+                        } elseif ($deltaQty < 0) {
+                            if ((int) $product->stock_quantity < abs($deltaQty)) {
+                                throw new \RuntimeException('Không thể giảm số lượng vì hàng đã được bán/xuất hoặc tồn kho hiện tại không đủ để điều chỉnh.');
+                            }
+                            \App\Services\MovingAvgCostingService::applyPurchaseReturn($product, abs($deltaQty), $oldUnitCost);
+                            StockMovementService::record($product, StockMovementService::TYPE_ADJUST_OUT, abs($deltaQty), $oldUnitCost, $purchase, [
+                                'ref_code' => $purchase->code,
+                                'moved_at' => $validated['purchase_date'],
+                                'note' => 'Sửa phiếu nhập: giảm số lượng',
+                            ]);
+                        } elseif ($oldItem && $costChanged) {
+                            $costDelta = $newQty * ($unitCostAllocated - $oldUnitCost);
+                            \App\Services\MovingAvgCostingService::applyRepairAdjustment($product, $costDelta);
+                        }
+                    }
+                    $itemQty = (int) $itemData['quantity'];
                 }
 
-                // CashFlow
-                if ($paidAmount > 0) {
-                    CashFlow::create([
-                        'code' => 'PC' . date('YmdHis'),
-                        'type' => 'payment',
-                        'amount' => $paidAmount,
-                        'time' => now(),
-                        'category' => 'Chi tiền trả NCC',
-                        'target_type' => 'Nhà cung cấp',
-                        'target_name' => $supplier->name ?? 'Nhà cung cấp',
-                        'reference_type' => 'Purchase',
-                        'reference_code' => $purchase->code,
-                        'description' => 'Chi tiền trả NCC cho phiếu ' . $purchase->code,
-                    ]);
+                if ((float) ($itemData['retail_price'] ?? 0) > 0) {
+                    $product->retail_price = $itemData['retail_price'];
                 }
+                if ((float) ($itemData['technician_price'] ?? 0) > 0) {
+                    $product->technician_price = $itemData['technician_price'];
+                }
+                $product->save();
+
+                $itemSubtotal = ($itemQty * (float) $itemData['price']) - (float) $itemData['discount'];
+                $totalAmount += $itemSubtotal;
+                $warrantyExpiresAt = $itemData['warranty_months'] > 0
+                    ? \Carbon\Carbon::parse($validated['purchase_date'])->copy()->addMonths($itemData['warranty_months'])->toDateString()
+                    : null;
+
+                $purchaseItem = $oldItem ?: new PurchaseItem(['purchase_id' => $purchase->id]);
+                $purchaseItem->fill([
+                    'product_id' => $product->id,
+                    'product_name' => $product->name,
+                    'product_code' => $product->sku,
+                    'quantity' => $itemQty,
+                    'price' => $itemData['price'],
+                    'discount' => $itemData['discount'],
+                    'subtotal' => $itemSubtotal,
+                    'unit_cost_allocated' => $unitCostAllocated,
+                    'warranty_months' => $itemData['warranty_months'],
+                    'warranty_expires_at' => $warrantyExpiresAt,
+                ])->save();
+
+                $changedItems[] = [
+                    'product_id' => $product->id,
+                    'old_quantity' => $oldItem?->quantity,
+                    'new_quantity' => $itemQty,
+                    'old_price' => $oldPrice,
+                    'new_price' => (float) $itemData['price'],
+                    'old_discount' => $oldDiscount,
+                    'new_discount' => (float) $itemData['discount'],
+                    'old_warranty_months' => $oldWarranty,
+                    'new_warranty_months' => (int) $itemData['warranty_months'],
+                ];
             }
 
-            // Update supplier debt if paid amount changed (ONLY for non-draft→completed updates)
-            if (!$isDraftToComplete && $paidAmount != $oldPaidAmount && $purchase->supplier) {
-                $debtDiff = $debtAmount - $oldDebt;
-                $purchase->supplier->supplier_debt_amount += $debtDiff;
-                $purchase->supplier->save();
+            $newProductIds = collect($normalizedItems)->pluck('product_id')->all();
+            foreach ($oldItems as $oldItem) {
+                if (in_array($oldItem->product_id, $newProductIds, true)) {
+                    continue;
+                }
+                $product = Product::lockForUpdate()->find($oldItem->product_id);
+                if (!$product) {
+                    continue;
+                }
+                if ($wasStocked) {
+                    if ($product->has_serial) {
+                        $serials = SerialImei::where('purchase_id', $purchase->id)->where('product_id', $product->id)->get();
+                        foreach ($serials as $serial) {
+                            if ($serial->status !== 'in_stock') {
+                                throw new \RuntimeException("Không thể xóa Serial/IMEI \"{$serial->serial_number}\" vì serial này đã phát sinh giao dịch sau nhập.");
+                            }
+                        }
+                        \App\Services\MovingAvgCostingService::applyPurchaseReturn($product, (int) $oldItem->quantity, (float) ($oldItem->unit_cost_allocated ?? $oldItem->price));
+                        $product->refresh();
+                        foreach ($serials as $serial) {
+                            StockMovementService::record($product, StockMovementService::TYPE_ADJUST_OUT, 1, (float) ($oldItem->unit_cost_allocated ?? $oldItem->price), $purchase, [
+                                'serial_imei_id' => $serial->id,
+                                'ref_code' => $purchase->code,
+                                'moved_at' => $validated['purchase_date'],
+                                'note' => 'Sửa phiếu nhập: xóa dòng serial',
+                            ]);
+                            $serial->delete();
+                        }
+                        $product->recomputeFromSerials();
+                    } else {
+                        if ((int) $product->stock_quantity < (int) $oldItem->quantity) {
+                            throw new \RuntimeException('Không thể xóa dòng hàng vì tồn kho hiện tại không đủ để điều chỉnh.');
+                        }
+                        \App\Services\MovingAvgCostingService::applyPurchaseReturn($product, (int) $oldItem->quantity, (float) ($oldItem->unit_cost_allocated ?? $oldItem->price));
+                        StockMovementService::record($product, StockMovementService::TYPE_ADJUST_OUT, (int) $oldItem->quantity, (float) ($oldItem->unit_cost_allocated ?? $oldItem->price), $purchase, [
+                            'ref_code' => $purchase->code,
+                            'moved_at' => $validated['purchase_date'],
+                            'note' => 'Sửa phiếu nhập: xóa dòng hàng',
+                        ]);
+                    }
+                }
+                $oldItem->delete();
+                $changedItems[] = [
+                    'product_id' => $product->id,
+                    'old_quantity' => $oldItem->quantity,
+                    'new_quantity' => 0,
+                    'old_price' => (float) $oldItem->price,
+                    'new_price' => 0,
+                    'removed' => true,
+                ];
+            }
 
-                // Create cash flow for additional payment
-                $additionalPayment = $paidAmount - $oldPaidAmount;
-                if ($additionalPayment > 0) {
-                    CashFlow::create([
-                        'code' => 'PC' . date('YmdHis') . rand(10,99),
+            $payAmount = $totalAmount - $discount + $otherCostsTotal;
+            $computedDebtAmount = $payAmount - $paidAmount;
+            if ($payAmount < 0 || $computedDebtAmount < -0.01) {
+                throw new \RuntimeException('Tổng tiền hoặc công nợ phiếu nhập không hợp lệ.');
+            }
+            $storedPaidAmount = $willBeStocked ? $paidAmount : 0.0;
+            $storedDebtAmount = $willBeStocked ? $computedDebtAmount : 0.0;
+            $oldLedgerDebt = $wasStocked ? $oldDebt : 0.0;
+            $newLedgerDebt = $willBeStocked ? $storedDebtAmount : 0.0;
+            $oldLedgerTotal = $wasStocked ? $oldTotalAmount : 0.0;
+            $newLedgerTotal = $willBeStocked ? $totalAmount : 0.0;
+            $oldLedgerPaid = $wasStocked ? $oldPaidAmount : 0.0;
+            $newLedgerPaid = $willBeStocked ? $storedPaidAmount : 0.0;
+
+            $purchase->update([
+                'supplier_id' => $newSupplierId,
+                'note' => $validated['note'] ?? null,
+                'purchase_date' => $validated['purchase_date'],
+                'total_amount' => $totalAmount,
+                'discount' => $discount,
+                'other_costs' => !empty($otherCosts) ? $otherCosts : null,
+                'other_costs_total' => $otherCostsTotal,
+                'paid_amount' => $storedPaidAmount,
+                'debt_amount' => $storedDebtAmount,
+                'payment_method' => $validated['payment_method'],
+                'bank_account_info' => $validated['bank_account_info'] ?? null,
+                'employee_id' => $actor['employee_id'],
+                'user_id' => $actor['user_id'],
+                'status' => $newStatus,
+            ]);
+
+            if ($oldSupplierId !== $newSupplierId) {
+                if ($oldSupplier = Customer::lockForUpdate()->find($oldSupplierId)) {
+                    $oldSupplier->supplier_debt_amount -= $oldLedgerDebt;
+                    $oldSupplier->total_bought -= $oldLedgerTotal;
+                    $oldSupplier->save();
+                }
+                if ($newSupplier = Customer::lockForUpdate()->find($newSupplierId)) {
+                    $newSupplier->supplier_debt_amount += $newLedgerDebt;
+                    $newSupplier->total_bought += $newLedgerTotal;
+                    if ($newSupplier->is_customer && !$newSupplier->is_supplier) {
+                        $newSupplier->is_supplier = true;
+                    }
+                    $newSupplier->save();
+                }
+            } elseif ($purchase->supplier) {
+                $debtDiff = $newLedgerDebt - $oldLedgerDebt;
+                $totalDiff = $newLedgerTotal - $oldLedgerTotal;
+                $purchase->supplier->supplier_debt_amount += $debtDiff;
+                $purchase->supplier->total_bought += $totalDiff;
+                $purchase->supplier->save();
+            }
+
+            $purchase->unsetRelation('supplier');
+            $purchase->load('supplier');
+
+            $paymentChanged = abs($newLedgerPaid - $oldLedgerPaid) >= 0.01 || $oldSupplierId !== $newSupplierId;
+            if ($paymentChanged) {
+                $cashFlows = CashFlow::where('reference_type', 'Purchase')
+                    ->where('reference_code', $purchase->code)
+                    ->where(function ($q) {
+                        $q->whereNull('status')->orWhere('status', '!=', 'cancelled');
+                    })
+                    ->orderBy('id')
+                    ->get();
+                foreach ($cashFlows as $cashFlow) {
+                    app(LockPeriodService::class)->assertNotLocked($cashFlow->time ?? $cashFlow->created_at, 'purchase_payment_update');
+                }
+
+                if ($newLedgerPaid > 0) {
+                    $cashFlow = $cashFlows->first() ?: new CashFlow([
+                        'code' => 'PC' . date('YmdHis') . rand(10, 99),
                         'type' => 'payment',
-                        'amount' => $additionalPayment,
+                        'reference_type' => 'Purchase',
+                        'reference_code' => $purchase->code,
+                    ]);
+                    $cashFlow->forceFill([
+                        'amount' => $newLedgerPaid,
                         'time' => now(),
                         'category' => 'Chi tiền trả NCC',
                         'target_type' => 'Nhà cung cấp',
                         'target_name' => $purchase->supplier->name ?? 'Nhà cung cấp',
-                        'reference_type' => 'Purchase',
-                        'reference_code' => $purchase->code,
-                        'description' => 'Trả thêm tiền NCC cho phiếu ' . $purchase->code,
-                    ]);
-                }
+                        'description' => 'Cập nhật tiền trả NCC cho phiếu ' . $purchase->code,
+                        'status' => null,
+                        'deleted_at' => null,
+                    ])->save();
 
-                // Note: Không gọi DebtOffsetService - unified ledger view tự xử lý bù trừ
+                    foreach ($cashFlows->skip(1) as $extraFlow) {
+                        $extraFlow->forceFill([
+                            'status' => 'cancelled',
+                            'cancel_reason' => 'Gộp phiếu chi khi sửa phiếu nhập',
+                            'cancelled_by' => auth()->id(),
+                            'cancelled_at' => now(),
+                        ])->save();
+                        $extraFlow->delete();
+                    }
+                } else {
+                    foreach ($cashFlows as $cashFlow) {
+                        $cashFlow->forceFill([
+                            'status' => 'cancelled',
+                            'cancel_reason' => 'Sửa phiếu nhập về tiền trả NCC bằng 0',
+                            'cancelled_by' => auth()->id(),
+                            'cancelled_at' => now(),
+                        ])->save();
+                        $cashFlow->delete();
+                    }
+                }
             }
+
+            \App\Models\ActivityLog::log(
+                \App\Models\ActivityLog::ACTION_PURCHASE_UPDATE,
+                "Cập nhật phiếu nhập {$purchase->code}",
+                $purchase,
+                [
+                    'old_total_amount' => $oldTotalAmount,
+                    'new_total_amount' => $totalAmount,
+                    'old_paid_amount' => $oldPaidAmount,
+                    'new_paid_amount' => $storedPaidAmount,
+                    'old_debt_amount' => $oldDebt,
+                    'new_debt_amount' => $storedDebtAmount,
+                    'changed_items' => $changedItems,
+                    'changed_serials' => $changedSerials,
+                    'changed_payment' => $paymentChanged,
+                    'changed_employee' => $oldEmployeeId !== $actor['employee_id'] || $oldUserId !== $actor['user_id'],
+                    'changed_note' => $oldNote !== ($validated['note'] ?? null),
+                    'old_purchase_date' => optional($oldPurchaseDate)->toDateTimeString(),
+                    'new_purchase_date' => \Carbon\Carbon::parse($validated['purchase_date'])->toDateTimeString(),
+                    'old_supplier_id' => $oldSupplierId,
+                    'new_supplier_id' => $newSupplierId,
+                ]
+            );
 
             DB::commit();
             return redirect()->route('purchases.show', $purchase->id)->with('success', 'Cập nhật phiếu nhập hàng thành công!');
@@ -969,6 +1252,82 @@ class PurchaseController extends Controller
                 'subtotal' => $item->subtotal,
             ]),
         ]);
+    }
+
+    private function resolvePurchaseActor(?string $employeeIdInput, Purchase $purchase): array
+    {
+        $dbEmployeeId = $purchase->employee_id;
+        $dbUserId = $purchase->user_id ?: auth()->id();
+
+        if ($employeeIdInput === null || $employeeIdInput === '') {
+            return ['employee_id' => null, 'user_id' => auth()->id()];
+        }
+
+        if (preg_match('/^employee:(\d+)$/', $employeeIdInput, $matches)) {
+            $dbEmployeeId = (int) $matches[1];
+            if (!\App\Models\Employee::where('is_active', true)->where('id', $dbEmployeeId)->exists()) {
+                throw new \RuntimeException('Nhân viên không hợp lệ hoặc đã ngưng hoạt động.');
+            }
+            return ['employee_id' => $dbEmployeeId, 'user_id' => auth()->id()];
+        }
+
+        if (preg_match('/^admin_user:(\d+)$/', $employeeIdInput, $matches)) {
+            $dbUserId = (int) $matches[1];
+            $adminUser = \App\Models\User::find($dbUserId);
+            if (!$adminUser || ($adminUser->status ?? 'active') !== 'active' || !$adminUser->isAdmin()) {
+                throw new \RuntimeException('Tài khoản admin không hợp lệ.');
+            }
+            return ['employee_id' => null, 'user_id' => $dbUserId];
+        }
+
+        if (is_numeric($employeeIdInput)) {
+            $dbEmployeeId = (int) $employeeIdInput;
+            if (!\App\Models\Employee::where('is_active', true)->where('id', $dbEmployeeId)->exists()) {
+                throw new \RuntimeException('Nhân viên không hợp lệ hoặc đã ngưng hoạt động.');
+            }
+            return ['employee_id' => $dbEmployeeId, 'user_id' => auth()->id()];
+        }
+
+        throw new \RuntimeException('Người nhập không hợp lệ.');
+    }
+
+    private function normalizePurchaseUpdateItems(array $items): array
+    {
+        $normalized = [];
+        $seenProducts = [];
+
+        foreach ($items as $item) {
+            $productId = (int) ($item['product_id'] ?? 0);
+            if ($productId <= 0) {
+                throw new \RuntimeException('Dữ liệu hàng hóa không hợp lệ.');
+            }
+            if (isset($seenProducts[$productId])) {
+                throw new \RuntimeException('Không được nhập trùng một hàng hóa trong cùng phiếu nhập.');
+            }
+            $seenProducts[$productId] = true;
+
+            $serials = array_values(array_filter(array_map(
+                fn($serial) => $this->normalizeSerial(is_string($serial) ? $serial : ''),
+                (array) ($item['serials'] ?? [])
+            ), fn($serial) => $serial !== ''));
+
+            if (count($serials) !== count(array_unique($serials))) {
+                throw new \RuntimeException('Serial/IMEI bị trùng trong phiếu nhập hiện tại.');
+            }
+
+            $normalized[] = [
+                'product_id' => $productId,
+                'quantity' => (float) ($item['quantity'] ?? 0),
+                'price' => round((float) ($item['price'] ?? 0), 2),
+                'retail_price' => round((float) ($item['retail_price'] ?? 0), 2),
+                'technician_price' => round((float) ($item['technician_price'] ?? 0), 2),
+                'discount' => round((float) ($item['discount'] ?? 0), 2),
+                'serials' => $serials,
+                'warranty_months' => (int) ($item['warranty_months'] ?? 0),
+            ];
+        }
+
+        return $normalized;
     }
 
     private function normalizeSerial(?string $serial): string

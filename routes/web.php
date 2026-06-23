@@ -108,6 +108,7 @@ Route::get('/purchases/create', [PurchaseController::class, 'create'])->name('pu
 Route::middleware('permission:purchases.view')->group(function () {
     Route::get('/purchases', [PurchaseController::class, 'index'])->name('purchases.index');
     Route::get('/purchases/{purchase}/detail', [PurchaseController::class, 'detail']);
+    Route::get('/purchases/{purchase}/edit', [PurchaseController::class, 'edit'])->name('purchases.edit');
     Route::get('/purchases/{purchase}', [PurchaseController::class, 'show'])->name('purchases.show');
 });
 Route::middleware('permission:purchases.create')->group(function () {
@@ -462,7 +463,7 @@ Route::get('/warranties/export', [App\Http\Controllers\WarrantyController::class
 Route::get('/paysheets/export', [App\Http\Controllers\PaysheetController::class, 'export'])->name('paysheets.export')->middleware('permission:paysheets.export');
 
 // ======================
-// � TASKS (unified: repairs + general)
+// TASKS (unified: repairs + general)
 // =======================
 // Step 24.0C: Audit Log Viewer
 Route::get('/activity-logs', [\App\Http\Controllers\ActivityLogController::class, 'index'])

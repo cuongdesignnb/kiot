@@ -92,7 +92,11 @@ const getLocalDatetime = (val) => {
 };
 
 const selectedSupplierId = ref(props.purchase.supplier_id || '');
-const selectedEmployeeId = ref(props.purchase.employee_id || '');
+const selectedEmployeeId = ref(
+    props.purchase.employee_id
+        ? `employee:${props.purchase.employee_id}`
+        : (props.purchase.user_id ? `admin_user:${props.purchase.user_id}` : '')
+);
 const purchaseDate = ref(getLocalDatetime(props.purchase.purchase_date || props.purchase.created_at));
 const status = ref(props.purchase.status || 'completed');
 const discount = ref(Number(props.purchase.discount) || 0);
@@ -483,7 +487,7 @@ const goToCreateProduct = () => {
                         </div>
                         <select v-model="selectedEmployeeId" class="text-[13px] text-gray-700 font-medium bg-transparent border-b border-dashed border-gray-300 outline-none focus:border-green-500 py-0.5 pr-4">
                             <option value="">-- Nhân viên nhập --</option>
-                            <option v-for="emp in employees" :key="emp.id" :value="emp.id">{{ emp.name }}</option>
+                            <option v-for="emp in employees" :key="emp.id" :value="emp.id">{{ emp.display_name || emp.name }}</option>
                         </select>
                     </div>
                     <DateTimePicker

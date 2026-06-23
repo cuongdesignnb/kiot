@@ -456,11 +456,11 @@ const paymentMethodLabel = (method) => {
                     </button>
                 </div>
                 <div class="flex items-center gap-2">
-                    <button v-if="purchase.status !== 'cancelled'" @click="openUpdateModal"
+                    <Link v-if="purchase.status !== 'cancelled'" :href="`/purchases/${purchase.id}/edit`"
                         class="bg-blue-500 hover:bg-blue-600 text-white px-5 py-2 rounded text-sm font-medium flex items-center gap-1.5 transition-colors">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
                         Sửa phiếu nhập
-                    </button>
+                    </Link>
                     <Link v-if="purchase.status === 'completed' || purchase.status === 'returned'" :href="'/purchase-returns/create?purchase_id=' + purchase.id"
                         class="bg-orange-500 hover:bg-orange-600 text-white px-5 py-2 rounded text-sm font-medium flex items-center gap-1.5 transition-colors">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"></path></svg>
