@@ -243,12 +243,19 @@ class CashFlowController extends Controller
 
     public function destroy(Request $request, $cash_flow)
     {
+        $validated = $request->validate([
+            'cancel_reason' => 'required|string|min:5|max:500',
+        ], [
+            'cancel_reason.required' => 'Vui lòng nhập lý do hủy phiếu thu/chi.',
+            'cancel_reason.min' => 'Lý do hủy phải có ít nhất 5 ký tự.',
+        ]);
+
         $cashFlow = CashFlow::withTrashed()->findOrFail($cash_flow);
 
         // Lock period check
         app(LockPeriodService::class)->assertNotLocked($cashFlow->time, 'cashflow_cancel');
 
-        $status = app(CustomerPaymentService::class)->cancel($cashFlow);
+        $status = app(CustomerPaymentService::class)->cancel($cashFlow, trim($validated['cancel_reason']));
         if ($status === CustomerPaymentService::ALREADY_CANCELLED) {
             $message = 'Phieu thu nay da bi huy truoc do.';
 
@@ -257,7 +264,7 @@ class CashFlowController extends Controller
                 : back()->with('error', $message);
         }
         if ($status === CustomerPaymentService::SOURCE_DOCUMENT_REQUIRED) {
-            $message = 'Phieu lien ket chung tu nguon phai duoc huy tu chung tu do.';
+            $message = 'Phiếu thu/chi này phát sinh từ chứng từ nguồn. Vui lòng hủy chứng từ gốc để hệ thống tự đảo kho, công nợ và sổ quỹ.';
 
             return $request->wantsJson()
                 ? response()->json(['success' => false, 'status' => $status, 'message' => $message], 422)

@@ -23,10 +23,14 @@ class Purchase extends Model
         'payment_method',
         'bank_account_info',
         'purchase_order_id',
+        'cancel_reason',
+        'cancelled_by',
+        'cancelled_at',
     ];
 
     protected $casts = [
         'purchase_date' => 'datetime',
+        'cancelled_at' => 'datetime',
         'other_costs' => 'array',
         'other_costs_total' => 'decimal:2',
     ];

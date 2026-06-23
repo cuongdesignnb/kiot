@@ -438,7 +438,14 @@ const deleteFlow = (id) => {
             "Bạn có chắc chắn muốn huỷ phiếu này? Hành động này không thể hoàn tác.",
         )
     ) {
+        const cancelReason = window.prompt("Nhập lý do hủy phiếu thu/chi:");
+        if (cancelReason === null) return;
+        if (cancelReason.trim().length < 5) {
+            alert("Lý do hủy phải có ít nhất 5 ký tự.");
+            return;
+        }
         router.delete(`/cash-flows/${id}`, {
+            data: { cancel_reason: cancelReason.trim() },
             preserveScroll: true,
             preserveState: true,
             onSuccess: () => {

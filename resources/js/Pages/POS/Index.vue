@@ -1,7 +1,7 @@
 <script setup>
 import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
-import { Head, Link } from '@inertiajs/vue3';
+import { Head, Link, usePage } from '@inertiajs/vue3';
 import axios from 'axios';
 import QuickCreateCustomerModal from '@/Components/QuickCreateCustomerModal.vue';
 import QuickCreateProductModal from '@/Components/QuickCreateProductModal.vue';
@@ -13,6 +13,8 @@ const props = defineProps({
     sellerOptions: Array,
     bankAccounts: Array,
 });
+
+const page = usePage();
 
 // State for search and products (global)
 const query = ref('');
@@ -209,6 +211,7 @@ const tabBadgeCount = (tab) => {
 // purely for legacy draft compat and is derived from selectedSellerKey.
 const selectedSellerKey = ref('');
 const sellerOptions = computed(() => props.sellerOptions || []);
+const allowPosOversell = computed(() => page.props.app_settings?.inventory_allow_oversell ?? true);
 const selectedEmployeeId = computed({
     get: () => {
         const k = selectedSellerKey.value;
@@ -318,6 +321,7 @@ const checkAndHydrateOrderFromUrl = async () => {
                             stock_quantity: item.stock_quantity,
                         },
                         quantity: item.qty,
+                        quantityInput: String(item.qty ?? ''),
                         targetQuantity: item.qty,
                         price: item.price,
                         discount: item.discount,
@@ -496,6 +500,7 @@ const selectSerialForItem = (item, serialObj) => {
         item.serials.push(serialObj);
         if (!activeTab.value || activeTab.value.mode !== 'process_order') {
             item.quantity = item.serials.length;
+            syncQuantityInput(item);
         }
         normalizeExchangeLineDiscount(item);
     }
@@ -521,6 +526,7 @@ const removeSerialFromItem = (item, idx) => {
     item.serials.splice(idx, 1);
     if (!activeTab.value || activeTab.value.mode !== 'process_order') {
         item.quantity = item.serials.length;
+        syncQuantityInput(item);
     }
     normalizeExchangeLineDiscount(item);
     searchSerialsForItem(item);
@@ -538,6 +544,7 @@ const selectAllSerialsForItem = (item) => {
     });
     if (!activeTab.value || activeTab.value.mode !== 'process_order') {
         item.quantity = item.serials.length;
+        syncQuantityInput(item);
     }
     normalizeExchangeLineDiscount(item);
     item.serialInput = '';
@@ -549,6 +556,7 @@ const deselectAllSerialsForItem = (item) => {
     item.serials = [];
     if (!activeTab.value || activeTab.value.mode !== 'process_order') {
         item.quantity = 0;
+        syncQuantityInput(item);
     }
     normalizeExchangeLineDiscount(item);
     searchSerialsForItem(item);
@@ -582,6 +590,7 @@ const loadDraft = () => {
                     ...createNewTab(),
                     ...tab,
                     cart: (tab.cart || []).map(i => {
+                        i.quantityInput = String(i.quantity ?? '');
                         if (i.is_serial_product) {
                             return { ...i, showSerialDropdown: false, serialLoading: false, availableSerials: i.allAvailableSerials || [] };
                         }
@@ -654,6 +663,7 @@ const addToCart = (product) => {
             const newItem = {
                 product: product,
                 quantity: 0,
+                quantityInput: '0',
                 price: product.retail_price,
                 discount: 0,
                 is_serial_product: true,
@@ -676,11 +686,12 @@ const addToCart = (product) => {
     // Regular product (no serial)
     const existingItem = cart.value.find(item => item.product.id === product.id && !item.is_serial_product);
     if (existingItem) {
-        existingItem.quantity += 1;
+        setCartQuantity(existingItem, (Number(existingItem.quantity) || 0) + 1);
     } else {
         cart.value.unshift({
             product: product,
             quantity: 1,
+            quantityInput: '1',
             price: product.retail_price,
             discount: 0,
             is_serial_product: false,
@@ -693,13 +704,157 @@ const removeFromCart = (index) => {
     cart.value.splice(index, 1);
 };
 
+const productAllowsDecimalQuantity = (item) => {
+    return !!(
+        item?.product?.allow_decimal_quantity
+        || item?.product?.allows_decimal_quantity
+        || item?.product?.is_decimal_quantity
+        || item?.product?.unit?.allow_decimal_quantity
+    );
+};
+
+const formatQuantityValue = (value) => {
+    const n = Number(value) || 0;
+    return Number.isInteger(n) ? String(n) : String(n).replace(/\.?0+$/, '');
+};
+
+const syncQuantityInput = (item) => {
+    if (!item) return;
+    item.quantityInput = formatQuantityValue(item.quantity);
+};
+
+const availableCartQuantity = (item) => {
+    if (!item?.product) return 0;
+    if (item.is_serial_product && item.product.sellable_quantity !== undefined) {
+        return Number(item.product.sellable_quantity) || 0;
+    }
+    return Number(item.product.stock_quantity) || 0;
+};
+
+const sanitizeQuantityInput = (item) => {
+    const raw = String(item.quantityInput ?? '');
+    if (productAllowsDecimalQuantity(item)) {
+        const normalized = raw.replace(',', '.');
+        const firstDot = normalized.indexOf('.');
+        let sanitized = normalized.replace(/[^\d.]/g, '');
+        if (firstDot !== -1) {
+            sanitized = sanitized.slice(0, firstDot + 1) + sanitized.slice(firstDot + 1).replace(/\./g, '');
+        }
+        item.quantityInput = sanitized;
+        return;
+    }
+    item.quantityInput = raw.replace(/[^\d]/g, '');
+};
+
+const parseQuantityInput = (item) => {
+    const raw = String(item.quantityInput ?? '').trim();
+    if (!raw) return { ok: false, message: 'Số lượng không hợp lệ' };
+
+    if (productAllowsDecimalQuantity(item)) {
+        const normalized = raw.replace(',', '.');
+        if (!/^\d+(\.\d+)?$/.test(normalized)) {
+            return { ok: false, message: 'Số lượng không hợp lệ' };
+        }
+        const qty = Number(normalized);
+        return Number.isFinite(qty) ? { ok: true, qty } : { ok: false, message: 'Số lượng không hợp lệ' };
+    }
+
+    if (!/^\d+$/.test(raw)) {
+        return { ok: false, message: 'Số lượng không hợp lệ' };
+    }
+    return { ok: true, qty: Number(raw) };
+};
+
+const setCartQuantity = (item, qty, options = {}) => {
+    const showAlert = options.showAlert ?? true;
+    if (!item || item.is_serial_product) {
+        if (showAlert) alert('Sản phẩm quản lý serial, vui lòng chọn đủ serial để thay đổi số lượng');
+        syncQuantityInput(item);
+        return false;
+    }
+
+    if (!Number.isFinite(qty) || qty <= 0) {
+        if (showAlert) alert(qty === 0 ? 'Số lượng phải lớn hơn 0' : 'Số lượng không hợp lệ');
+        syncQuantityInput(item);
+        return false;
+    }
+
+    if (!productAllowsDecimalQuantity(item) && !Number.isInteger(qty)) {
+        if (showAlert) alert('Số lượng không hợp lệ');
+        syncQuantityInput(item);
+        return false;
+    }
+
+    const available = availableCartQuantity(item);
+    if (qty > available) {
+        if (!allowPosOversell.value) {
+            if (showAlert) alert('Số lượng vượt quá tồn kho khả dụng');
+            syncQuantityInput(item);
+            return false;
+        }
+        item.stockWarning = `Vượt tồn khả dụng (${available})`;
+    } else {
+        item.stockWarning = '';
+    }
+
+    item.quantity = qty;
+    syncQuantityInput(item);
+    return true;
+};
+
+const commitCartQuantityInput = (item, index) => {
+    if (activeTab.value?.mode === 'process_order') {
+        syncQuantityInput(item);
+        return;
+    }
+    if (item?.is_serial_product) {
+        alert('Sản phẩm quản lý serial, vui lòng chọn đủ serial để thay đổi số lượng');
+        syncQuantityInput(item);
+        return;
+    }
+
+    const parsed = parseQuantityInput(item);
+    if (!parsed.ok) {
+        alert(parsed.message);
+        syncQuantityInput(item);
+        return;
+    }
+
+    if (parsed.qty <= 0) {
+        alert('Số lượng phải lớn hơn 0');
+        removeFromCart(index);
+        return;
+    }
+
+    setCartQuantity(item, parsed.qty);
+};
+
+const validateCartQuantitiesForSubmit = () => {
+    for (let index = 0; index < cart.value.length; index++) {
+        const item = cart.value[index];
+        if (item.is_serial_product) continue;
+
+        const parsed = parseQuantityInput(item);
+        if (!parsed.ok || parsed.qty <= 0) {
+            alert(parsed.ok ? 'Số lượng phải lớn hơn 0' : parsed.message);
+            syncQuantityInput(item);
+            return false;
+        }
+
+        if (!setCartQuantity(item, parsed.qty)) {
+            return false;
+        }
+    }
+    return true;
+};
+
 // Update quantity
 const updateQuantity = (index, delta) => {
     const item = cart.value[index];
     if (item.is_serial_product) return;
-    const newQty = item.quantity + delta;
+    const newQty = (Number(item.quantity) || 0) + delta;
     if (newQty > 0) {
-        item.quantity = newQty;
+        setCartQuantity(item, newQty);
     } else {
         removeFromCart(index);
     }
@@ -762,6 +917,10 @@ const toastMsg = ref('');
 const processCheckout = async () => {
     if (cart.value.length === 0) {
         alert("Giỏ hàng trống!");
+        return;
+    }
+
+    if (activeTab.value?.mode !== 'process_order' && !validateCartQuantitiesForSubmit()) {
         return;
     }
 
@@ -1783,7 +1942,7 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                         </div>
                         
                         <!-- Quantity: hide +/- for serial products -->
-                        <div class="col-span-2 flex items-center justify-center">
+                        <div class="col-span-2 flex flex-col items-center justify-center">
                             <template v-if="item.is_serial_product">
                                 <span class="text-sm font-bold text-gray-800 bg-gray-100 px-3 py-1 rounded" :class="{'text-red-500 bg-red-50 border border-red-200': item.quantity === 0}">{{ item.quantity }}</span>
                             </template>
@@ -1792,11 +1951,22 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                                     <button @click="updateQuantity(index, -1)" :disabled="activeTab.mode === 'process_order'" class="w-7 h-7 flex items-center justify-center rounded bg-white text-gray-600 hover:bg-red-50 hover:text-red-500 transition-colors shadow-sm cursor-pointer disabled:opacity-50">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M20 12H4"></path></svg>
                                     </button>
-                                    <input type="text" readonly :value="item.quantity" class="w-10 text-center bg-transparent text-sm font-bold text-gray-800 focus:outline-none focus:ring-0 select-none">
+                                    <input
+                                        type="text"
+                                        v-model="item.quantityInput"
+                                        inputmode="numeric"
+                                        autocomplete="off"
+                                        :disabled="activeTab.mode === 'process_order'"
+                                        @input="sanitizeQuantityInput(item)"
+                                        @keydown.enter.prevent="commitCartQuantityInput(item, index)"
+                                        @blur="commitCartQuantityInput(item, index)"
+                                        class="w-14 h-7 text-center bg-transparent text-sm font-bold text-gray-800 focus:outline-none focus:ring-1 focus:ring-blue-400 rounded disabled:opacity-60 disabled:cursor-not-allowed"
+                                    >
                                     <button @click="updateQuantity(index, 1)" :disabled="activeTab.mode === 'process_order'" class="w-7 h-7 flex items-center justify-center rounded bg-white text-gray-600 hover:bg-blue-50 hover:text-blue-600 transition-colors shadow-sm cursor-pointer disabled:opacity-50">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"></path></svg>
                                     </button>
                                 </div>
+                                <div v-if="item.stockWarning" class="mt-1 text-[10px] font-medium text-orange-600 text-center leading-tight">{{ item.stockWarning }}</div>
                             </template>
                         </div>
                         <div class="col-span-2 text-right">

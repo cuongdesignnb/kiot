@@ -110,9 +110,9 @@ class CustomerPaymentService
         });
     }
 
-    public function cancel(CashFlow $cashFlow): string
+    public function cancel(CashFlow $cashFlow, ?string $reason = null): string
     {
-        return DB::transaction(function () use ($cashFlow) {
+        return DB::transaction(function () use ($cashFlow, $reason) {
             $flow = CashFlow::withTrashed()->lockForUpdate()->findOrFail($cashFlow->id);
             if (!BusinessStatus::isValidCashFlow($flow->status) || $flow->trashed()) {
                 return self::ALREADY_CANCELLED;
@@ -120,9 +120,8 @@ class CustomerPaymentService
 
             if ($flow->reference_type === 'DebtPayment') {
                 $this->cancelDebtPayment($flow);
-            } elseif ($flow->reference_type === 'Invoice') {
-                $this->cancelInvoicePayment($flow);
             } elseif (in_array($flow->reference_type, [
+                'Invoice',
                 'Order',
                 'OrderReturn',
                 'Purchase',
@@ -133,6 +132,9 @@ class CustomerPaymentService
             }
 
             $flow->status = 'cancelled';
+            $flow->cancel_reason = $reason;
+            $flow->cancelled_by = auth()->id();
+            $flow->cancelled_at = now();
             $flow->save();
             $flow->delete();
 

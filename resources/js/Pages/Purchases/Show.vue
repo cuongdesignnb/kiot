@@ -33,7 +33,14 @@ const cancelPurchase = () => {
         ? 'Bạn có chắc muốn hủy bỏ phiếu nhập hàng này? Tồn kho và công nợ sẽ được hoàn lại.'
         : 'Bạn có chắc muốn xóa phiếu tạm này?';
     if (!confirm(msg)) return;
+    const cancelReason = window.prompt('Nhập lý do hủy phiếu nhập:');
+    if (cancelReason === null) return;
+    if (cancelReason.trim().length < 5) {
+        alert('Lý do hủy phải có ít nhất 5 ký tự.');
+        return;
+    }
     router.delete(`/purchases/${props.purchase.id}`, {
+        data: { cancel_reason: cancelReason.trim() },
         onSuccess: () => {},
     });
 };

@@ -19,11 +19,15 @@ class Damage extends Model
         'destroyed_date',
         'total_qty',
         'total_value',
-        'note'
+        'note',
+        'cancel_reason',
+        'cancelled_by',
+        'cancelled_at',
     ];
 
     protected $casts = [
         'destroyed_date' => 'datetime',
+        'cancelled_at' => 'datetime',
     ];
 
     public function items()

@@ -349,6 +349,14 @@ class InvoiceController extends Controller
 
     public function destroy(Invoice $invoice, Request $request)
     {
+        $validated = $request->validate([
+            'cancel_reason' => 'required|string|min:5|max:500',
+            'time_lock_override_reason' => 'nullable|string|min:5|max:500',
+        ], [
+            'cancel_reason.required' => 'Vui lòng nhập lý do hủy hóa đơn.',
+            'cancel_reason.min' => 'Lý do hủy phải có ít nhất 5 ký tự.',
+        ]);
+        $cancelReason = trim($validated['cancel_reason']);
         // RR-01 Guard: Không cho hủy lặp — idempotent check
         if ($invoice->status === 'Đã hủy') {
             return back()->with('error', 'Hóa đơn này đã được hủy trước đó.');
@@ -372,7 +380,7 @@ class InvoiceController extends Controller
             if (!$hasOverride) {
                 return back()->with('error', "Đã quá thời gian cho phép hủy hóa đơn ({$orderChangeTime} giờ). Cần quyền override.");
             }
-            $reason = $request->input('time_lock_override_reason');
+            $reason = $validated['time_lock_override_reason'] ?? null;
             if (!$reason || strlen(trim($reason)) < 5) {
                 return back()->with('error', 'Cần nhập lý do override (ít nhất 5 ký tự).');
             }
@@ -452,13 +460,33 @@ class InvoiceController extends Controller
             }
 
             // RR-01: Đổi status CashFlow sang cancelled (không xóa) — đồng bộ với CashFlowController@cancel
-            $cancelledCashFlowCount = CashFlow::where('reference_type', 'Invoice')
+            $relatedCashFlows = CashFlow::withTrashed()
+                ->where('reference_type', 'Invoice')
                 ->where('reference_code', $invoice->code)
-                ->where('status', '!=', 'cancelled')
-                ->update(['status' => 'cancelled']);
+                ->where(function ($q) {
+                    $q->whereNull('status')->orWhere('status', '!=', 'cancelled');
+                })
+                ->get();
+
+            foreach ($relatedCashFlows as $cashFlow) {
+                $cashFlow->forceFill([
+                    'status' => 'cancelled',
+                    'cancel_reason' => $cancelReason,
+                    'cancelled_by' => auth()->id(),
+                    'cancelled_at' => now(),
+                ])->save();
+
+                if (!$cashFlow->trashed()) {
+                    $cashFlow->delete();
+                }
+            }
+            $cancelledCashFlowCount = $relatedCashFlows->count();
 
             // RR-01: Đổi trạng thái hóa đơn — KHÔNG xóa vật lý (giữ items cho audit trail)
             $invoice->status = 'Đã hủy';
+            $invoice->cancel_reason = $cancelReason;
+            $invoice->cancelled_by = auth()->id();
+            $invoice->cancelled_at = now();
             $invoice->save();
 
             DB::commit();
@@ -468,18 +496,22 @@ class InvoiceController extends Controller
                 \App\Models\ActivityLog::ACTION_INVOICE_CANCEL,
                 "Hủy hóa đơn {$invoice->code}",
                 $invoice,
-                ['total' => (float) $invoice->total]
+                [
+                    'total' => (float) $invoice->total,
+                    'cancel_reason' => $cancelReason,
+                    'cancelled_cash_flows' => $cancelledCashFlowCount,
+                ]
             );
 
             // Step 24.3: log override if applicable
-            if ($isOverdue && !empty($request->input('time_lock_override_reason'))) {
+            if ($isOverdue && !empty($validated['time_lock_override_reason'])) {
                 \App\Models\ActivityLog::log(
                     \App\Models\ActivityLog::ACTION_INVOICE_CANCEL_TIME_LOCK_OVERRIDE,
                     "Hủy hóa đơn {$invoice->code} quá hạn (override)",
                     $invoice,
                     [
                         'total' => (float) $invoice->total,
-                        'reason' => $request->input('time_lock_override_reason'),
+                        'reason' => $validated['time_lock_override_reason'],
                     ]
                 );
             }
