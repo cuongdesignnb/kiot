@@ -116,8 +116,8 @@ class PurchaseController extends Controller
                 'employees' => $employees->map(fn($e) => ['value' => $e->id, 'label' => $e->name]),
                 'paymentMethods' => PaymentMethod::basicOptions(),
                 'debtOptions' => [
-                    ['value' => '1', 'label' => 'CÃ²n ná»£ NCC'],
-                    ['value' => '0', 'label' => 'ÄÃ£ tráº£ Ä‘á»§'],
+                    ['value' => '1', 'label' => 'Còn nợ NCC'],
+                    ['value' => '0', 'label' => 'Đã trả đủ'],
                 ],
             ],
         ]);
@@ -125,9 +125,9 @@ class PurchaseController extends Controller
 
     public function create(Request $request)
     {
-        // HOTFIX 24.19 â€” only active suppliers may be picked when
+        // HOTFIX 24.19 — only active suppliers may be picked when
         // creating a purchase. Deactivated rows stay on /suppliers
-        // (admin view) but the Nháº­p hÃ ng selector must hide them so
+        // (admin view) but the Nhập hàng selector must hide them so
         // operators can't open new debt against a stopped vendor.
         // Customer.status defaults to 'active' (migration
         // 2026_02_28_063352_add_supplier_fields_to_customers_table);
@@ -209,17 +209,17 @@ class PurchaseController extends Controller
             'supplier_id'
         );
 
-        // â”€â”€ Step 23.3: Validate serial cho hÃ ng has_serial khi nháº­p â”€â”€
-        // BUG-1: count(serials) pháº£i === quantity (khÃ´ng cho phiáº¿u nháº­p 5 mÃ  chá»‰ liá»‡t 2 serial).
-        // BUG-2: chá»‘ng trÃ¹ng serial trong cÃ¹ng request (chá»‘ng user dÃ¡n nháº§m 2 láº§n).
-        // EXISTING: chá»‘ng serial Ä‘Ã£ tá»“n táº¡i trong DB (giá»¯ nguyÃªn).
+        // ── Step 23.3: Validate serial cho hàng has_serial khi nhập ──
+        // BUG-1: count(serials) phải === quantity (không cho phiếu nhập 5 mà chỉ liệt 2 serial).
+        // BUG-2: chống trùng serial trong cùng request (chống user dán nhầm 2 lần).
+        // EXISTING: chống serial đã tồn tại trong DB (giữ nguyên).
         $globalSeenSerials = [];
         foreach ($request->items as $i => $item) {
             $product = Product::find($item['product_id']);
             if (!$product || !$product->has_serial) continue;
 
             $serials = array_values(array_filter(array_map(
-                fn($s) => is_string($s) ? trim($s) : '',
+                fn($s) => $this->normalizeSerial(is_string($s) ? $s : ''),
                 (array) ($item['serials'] ?? [])
             ), fn($s) => $s !== ''));
             $qty = (int) ($item['quantity'] ?? 0);
@@ -230,18 +230,18 @@ class PurchaseController extends Controller
             if (count($serials) !== $qty) {
                 return back()->withErrors(["items.{$i}.serials" => "S\u1ea3n ph\u1ea9m \"{$product->name}\" c\u1ea7n nh\u1eadp \u0111\u1ee7 {$qty} serial (\u0111ang nh\u1eadp " . count($serials) . ")."]);
             }
-            // Duplicate trong cÃ¹ng item
+            // Duplicate trong cùng item
             if (count($serials) !== count(array_unique($serials))) {
                 return back()->withErrors(["items.{$i}.serials" => "S\u1ea3n ph\u1ea9m \"{$product->name}\" c\u00f3 serial b\u1ecb tr\u00f9ng trong c\u00f9ng phi\u1ebfu nh\u1eadp."]);
             }
             // Duplicate cross-item
             foreach ($serials as $sn) {
                 if (isset($globalSeenSerials[$sn])) {
-                    return back()->withErrors(["items.{$i}.serials" => "Serial \"{$sn}\" b\u1ecb nh\u1eadp tr\u00f9ng \u1edf nhi\u1ec1u d\u00f2ng s\u1ea3n ph\u1ea9m."]);
+                    return back()->withErrors(["items.{$i}.serials" => "Serial/IMEI \"{$sn}\" bị trùng trong phiếu nhập hiện tại."]);
                 }
                 $globalSeenSerials[$sn] = true;
             }
-            // ÄÃ£ tá»“n táº¡i trong DB
+            // Đã tồn tại trong DB
             $existing = SerialImei::whereIn('serial_number', $serials)->first();
             if ($existing) {
                 return back()->withErrors(["items.{$i}.serials" => "Serial/IMEI \"{$existing->serial_number}\" \u0111\u00e3 t\u1ed3n t\u1ea1i trong h\u1ec7 th\u1ed1ng."]);
@@ -264,22 +264,22 @@ class PurchaseController extends Controller
                 if (preg_match('/^employee:(\d+)$/', $employeeIdInput, $matches)) {
                     $dbEmployeeId = (int) $matches[1];
                     if (!\App\Models\Employee::where('is_active', true)->where('id', $dbEmployeeId)->exists()) {
-                        return back()->withErrors(['employee_id' => 'NhÃ¢n viÃªn khÃ´ng há»£p lá»‡ hoáº·c Ä‘Ã£ ngÆ°ng hoáº¡t Ä‘á»™ng.']);
+                        return back()->withErrors(['employee_id' => 'Nhân viên không hợp lệ hoặc đã ngưng hoạt động.']);
                     }
                 } elseif (preg_match('/^admin_user:(\d+)$/', $employeeIdInput, $matches)) {
                     $dbUserId = (int) $matches[1];
                     $dbEmployeeId = null;
                     $adminUser = \App\Models\User::find($dbUserId);
                     if (!$adminUser || ($adminUser->status ?? 'active') !== 'active' || !$adminUser->isAdmin()) {
-                        return back()->withErrors(['employee_id' => 'TÃ i khoáº£n admin khÃ´ng há»£p lá»‡.']);
+                        return back()->withErrors(['employee_id' => 'Tài khoản admin không hợp lệ.']);
                     }
                 } elseif (is_numeric($employeeIdInput)) {
                     $dbEmployeeId = (int) $employeeIdInput;
                     if (!\App\Models\Employee::where('is_active', true)->where('id', $dbEmployeeId)->exists()) {
-                        return back()->withErrors(['employee_id' => 'NhÃ¢n viÃªn khÃ´ng há»£p lá»‡ hoáº·c Ä‘Ã£ ngÆ°ng hoáº¡t Ä‘á»™ng.']);
+                        return back()->withErrors(['employee_id' => 'Nhân viên không hợp lệ hoặc đã ngưng hoạt động.']);
                     }
                 } else {
-                    return back()->withErrors(['employee_id' => 'NgÆ°á»i nháº­p khÃ´ng há»£p lá»‡.']);
+                    return back()->withErrors(['employee_id' => 'Người nhập không hợp lệ.']);
                 }
             }
 
@@ -293,7 +293,7 @@ class PurchaseController extends Controller
 
             $discount = $request->discount ?? 0;
 
-            // Chi phÃ­ nháº­p khÃ¡c
+            // Chi phí nhập khác
             $otherCosts = collect($request->other_costs ?? [])
                 ->map(fn($c) => [
                     'name' => trim((string)($c['name'] ?? '')),
@@ -335,7 +335,7 @@ class PurchaseController extends Controller
                     ? ($purchase->purchase_date ?? now())->copy()->addMonths($warrantyMonths)->toDateString()
                     : null;
 
-                // PhÃ¢n bá»• phÃ­ nháº­p (other_costs) theo tá»‰ lá»‡ subtotal cá»§a dÃ²ng hiá»‡n táº¡i
+                // Phân bổ phí nhập (other_costs) theo tỉ lệ subtotal của dòng hiện tại
                 $itemSubtotal = $item['quantity'] * $item['price'] - ($item['discount'] ?? 0);
                 $allocatedFee = ($otherCostsTotal > 0 && $total_amount > 0)
                     ? ($otherCostsTotal * $itemSubtotal / $total_amount)
@@ -359,7 +359,7 @@ class PurchaseController extends Controller
                 ]);
 
                 if ($purchase->status === 'completed') {
-                    // BQ DI Äá»˜NG: gá»i service Ã¡p dá»¥ng nháº­p hÃ ng (cáº­p nháº­t stock + cost_price + inventory_total_cost)
+                    // BQ DI ĐỘNG: gọi service áp dụng nhập hàng (cập nhật stock + cost_price + inventory_total_cost)
                     \App\Services\MovingAvgCostingService::applyPurchase(
                         $product,
                         (int) $item['quantity'],
@@ -390,7 +390,7 @@ class PurchaseController extends Controller
                         foreach ($item['serials'] as $serialNumber) {
                             SerialImei::create([
                                 'product_id' => $product->id,
-                                'serial_number' => trim($serialNumber),
+                                'serial_number' => $this->normalizeSerial($serialNumber),
                                 'status' => 'in_stock',
                                 'purchase_id' => $purchase->id,
                                 'cost_price' => $unitCostAllocated,
@@ -399,12 +399,12 @@ class PurchaseController extends Controller
                         }
                     }
 
-                    // Sync stock_quantity vá»›i serial in_stock count (audit, khÃ´ng Ä‘á»¥ng cost)
+                    // Sync stock_quantity với serial in_stock count (audit, không đụng cost)
                     if ($product->has_serial) {
                         $product->recomputeFromSerials();
                     }
 
-                    // Phase 4 â€” Ghi sá»• cÃ¡i tá»“n kho
+                    // Phase 4 — Ghi sổ cái tồn kho
                     StockMovementService::record(
                         $product,
                         StockMovementService::TYPE_IN_PURCHASE,
@@ -415,7 +415,7 @@ class PurchaseController extends Controller
                             'branch_id' => $purchase->branch_id ?? null,
                             'ref_code' => $purchase->code,
                             'moved_at' => $purchase->purchase_date ?? now(),
-                            'note' => 'Nháº­p hÃ ng tá»« phiáº¿u ' . $purchase->code,
+                            'note' => 'Nhập hàng từ phiếu ' . $purchase->code,
                         ]
                     );
                 }
@@ -435,23 +435,23 @@ class PurchaseController extends Controller
                     $supplier->save();
                 }
 
-                // Create Cash Flow if paid > 0 (Chi tiá»n tráº£ NCC)
+                // Create Cash Flow if paid > 0 (Chi tiền trả NCC)
                 if ($paid_amount > 0) {
                     CashFlow::create([
                         'code' => 'PC' . date('YmdHis'),
                         'type' => 'payment', // chi
                         'amount' => $paid_amount,
                         'time' => now(),
-                        'category' => 'Chi tiá»n tráº£ NCC',
-                        'target_type' => 'NhÃ  cung cáº¥p',
-                        'target_name' => $supplier->name ?? 'NhÃ  cung cáº¥p',
+                        'category' => 'Chi tiền trả NCC',
+                        'target_type' => 'Nhà cung cấp',
+                        'target_name' => $supplier->name ?? 'Nhà cung cấp',
                         'reference_type' => 'Purchase',
                         'reference_code' => $purchase->code,
-                        'description' => 'Chi tiá»n tráº£ NCC cho phiáº¿u ' . $purchase->code
+                        'description' => 'Chi tiền trả NCC cho phiếu ' . $purchase->code
                     ]);
                 }
 
-                // Note: KhÃ´ng gá»i DebtOffsetService - unified ledger view tá»± xá»­ lÃ½ bÃ¹ trá»«
+                // Note: Không gọi DebtOffsetService - unified ledger view tự xử lý bù trừ
             }
 
             DB::commit();
@@ -459,19 +459,20 @@ class PurchaseController extends Controller
             // Step 24.0: audit log purchase create
             \App\Models\ActivityLog::log(
                 \App\Models\ActivityLog::ACTION_PURCHASE_CREATE,
-                "Táº¡o phiáº¿u nháº­p hÃ ng {$purchase->code}",
+                "Tạo phiếu nhập hàng {$purchase->code}",
                 $purchase,
                 [
                     'total' => (float) ($purchase->total_amount ?? 0),
-                    'cancel_reason' => $cancelReason,
-                    'cancelled_cash_flows' => $relatedCashFlows->count(),
+                    'paid_amount' => (float) ($purchase->paid_amount ?? 0),
+                    'debt_amount' => (float) ($purchase->debt_amount ?? 0),
+                    'status' => $purchase->status,
                 ]
             );
 
-            return redirect()->route('purchases.index')->with('success', 'Táº¡o Ä‘Æ¡n nháº­p hÃ ng thÃ nh cÃ´ng!');
+            return redirect()->route('purchases.index')->with('success', 'Tạo đơn nhập hàng thành công!');
         } catch (\Exception $e) {
             DB::rollBack();
-            return back()->with('error', 'CÃ³ lá»—i xáº£y ra: ' . $e->getMessage());
+            return back()->with('error', 'Có lỗi xảy ra: ' . $e->getMessage());
         }
     }
 
@@ -586,29 +587,29 @@ class PurchaseController extends Controller
                     if (preg_match('/^employee:(\d+)$/', $employeeIdInput, $matches)) {
                         $dbEmployeeId = (int) $matches[1];
                         if (!\App\Models\Employee::where('is_active', true)->where('id', $dbEmployeeId)->exists()) {
-                            return back()->withErrors(['employee_id' => 'NhÃ¢n viÃªn khÃ´ng há»£p lá»‡ hoáº·c Ä‘Ã£ ngÆ°ng hoáº¡t Ä‘á»™ng.']);
+                            return back()->withErrors(['employee_id' => 'Nhân viên không hợp lệ hoặc đã ngưng hoạt động.']);
                         }
                     } elseif (preg_match('/^admin_user:(\d+)$/', $employeeIdInput, $matches)) {
                         $dbUserId = (int) $matches[1];
                         $dbEmployeeId = null;
                         $adminUser = \App\Models\User::find($dbUserId);
                         if (!$adminUser || ($adminUser->status ?? 'active') !== 'active' || !$adminUser->isAdmin()) {
-                            return back()->withErrors(['employee_id' => 'TÃ i khoáº£n admin khÃ´ng há»£p lá»‡.']);
+                            return back()->withErrors(['employee_id' => 'Tài khoản admin không hợp lệ.']);
                         }
                     } elseif (is_numeric($employeeIdInput)) {
                         $dbEmployeeId = (int) $employeeIdInput;
                         if (!\App\Models\Employee::where('is_active', true)->where('id', $dbEmployeeId)->exists()) {
-                            return back()->withErrors(['employee_id' => 'NhÃ¢n viÃªn khÃ´ng há»£p lá»‡ hoáº·c Ä‘Ã£ ngÆ°ng hoáº¡t Ä‘á»™ng.']);
+                            return back()->withErrors(['employee_id' => 'Nhân viên không hợp lệ hoặc đã ngưng hoạt động.']);
                         }
                     } else {
-                        return back()->withErrors(['employee_id' => 'NgÆ°á»i nháº­p khÃ´ng há»£p lá»‡.']);
+                        return back()->withErrors(['employee_id' => 'Người nhập không hợp lệ.']);
                     }
                 } else {
                     $dbEmployeeId = null;
                 }
             }
 
-            // Náº¿u draft â†’ completed: cáº­p nháº­t items trÆ°á»›c khi tÃ­nh tá»•ng
+            // Nếu draft → completed: cập nhật items trước khi tính tổng
             if ($isDraftToComplete && $request->has('items')) {
                 $purchase->items()->delete();
                 $totalAmount = 0;
@@ -640,7 +641,7 @@ class PurchaseController extends Controller
             $discount = $request->discount ?? $purchase->discount;
             $paidAmount = $request->paid_amount ?? $purchase->paid_amount;
 
-            // Chi phÃ­ nháº­p khÃ¡c
+            // Chi phí nhập khác
             $otherCosts = collect($request->other_costs ?? $purchase->other_costs ?? [])
                 ->map(fn($c) => [
                     'name' => trim((string)($c['name'] ?? '')),
@@ -670,7 +671,7 @@ class PurchaseController extends Controller
                 'status' => $isDraftToComplete ? 'completed' : $purchase->status,
             ]);
 
-            // â”€â”€ Draft â†’ Completed: cá»™ng tá»“n kho + ghi ná»£ â”€â”€
+            // ── Draft → Completed: cộng tồn kho + ghi nợ ──
             if ($isDraftToComplete) {
                 $costingMethod = \App\Models\Setting::get('inventory_costing_method', 'average');
                 $goodsTotal = (float) $purchase->total_amount;
@@ -679,7 +680,7 @@ class PurchaseController extends Controller
                     $product = Product::find($item->product_id);
                     if (!$product) continue;
 
-                    // PhÃ¢n bá»• phÃ­ nháº­p theo tá»‰ lá»‡ subtotal
+                    // Phân bổ phí nhập theo tỉ lệ subtotal
                     $itemSubtotal = (float) $item->subtotal;
                     $allocatedFee = ($otherCostsTotal > 0 && $goodsTotal > 0)
                         ? ($otherCostsTotal * $itemSubtotal / $goodsTotal)
@@ -690,7 +691,7 @@ class PurchaseController extends Controller
                     $item->unit_cost_allocated = $unitCostAllocated;
                     $item->save();
 
-                    // BQ DI Äá»˜NG: Ã¡p dá»¥ng nháº­p hÃ ng
+                    // BQ DI ĐỘNG: áp dụng nhập hàng
                     \App\Services\MovingAvgCostingService::applyPurchase(
                         $product,
                         (int) $item->quantity,
@@ -703,7 +704,7 @@ class PurchaseController extends Controller
                         foreach ($item->serials as $serialNumber) {
                             SerialImei::create([
                                 'product_id' => $product->id,
-                                'serial_number' => trim(is_string($serialNumber) ? $serialNumber : $serialNumber['serial_number'] ?? ''),
+                                'serial_number' => $this->normalizeSerial(is_string($serialNumber) ? $serialNumber : $serialNumber['serial_number'] ?? ''),
                                 'status' => 'in_stock',
                                 'purchase_id' => $purchase->id,
                                 'cost_price' => $unitCostAllocated,
@@ -735,17 +736,17 @@ class PurchaseController extends Controller
                         'type' => 'payment',
                         'amount' => $paidAmount,
                         'time' => now(),
-                        'category' => 'Chi tiá»n tráº£ NCC',
-                        'target_type' => 'NhÃ  cung cáº¥p',
-                        'target_name' => $supplier->name ?? 'NhÃ  cung cáº¥p',
+                        'category' => 'Chi tiền trả NCC',
+                        'target_type' => 'Nhà cung cấp',
+                        'target_name' => $supplier->name ?? 'Nhà cung cấp',
                         'reference_type' => 'Purchase',
                         'reference_code' => $purchase->code,
-                        'description' => 'Chi tiá»n tráº£ NCC cho phiáº¿u ' . $purchase->code,
+                        'description' => 'Chi tiền trả NCC cho phiếu ' . $purchase->code,
                     ]);
                 }
             }
 
-            // Update supplier debt if paid amount changed (ONLY for non-draftâ†’completed updates)
+            // Update supplier debt if paid amount changed (ONLY for non-draft→completed updates)
             if (!$isDraftToComplete && $paidAmount != $oldPaidAmount && $purchase->supplier) {
                 $debtDiff = $debtAmount - $oldDebt;
                 $purchase->supplier->supplier_debt_amount += $debtDiff;
@@ -759,23 +760,23 @@ class PurchaseController extends Controller
                         'type' => 'payment',
                         'amount' => $additionalPayment,
                         'time' => now(),
-                        'category' => 'Chi tiá»n tráº£ NCC',
-                        'target_type' => 'NhÃ  cung cáº¥p',
-                        'target_name' => $purchase->supplier->name ?? 'NhÃ  cung cáº¥p',
+                        'category' => 'Chi tiền trả NCC',
+                        'target_type' => 'Nhà cung cấp',
+                        'target_name' => $purchase->supplier->name ?? 'Nhà cung cấp',
                         'reference_type' => 'Purchase',
                         'reference_code' => $purchase->code,
-                        'description' => 'Tráº£ thÃªm tiá»n NCC cho phiáº¿u ' . $purchase->code,
+                        'description' => 'Trả thêm tiền NCC cho phiếu ' . $purchase->code,
                     ]);
                 }
 
-                // Note: KhÃ´ng gá»i DebtOffsetService - unified ledger view tá»± xá»­ lÃ½ bÃ¹ trá»«
+                // Note: Không gọi DebtOffsetService - unified ledger view tự xử lý bù trừ
             }
 
             DB::commit();
-            return redirect()->route('purchases.show', $purchase->id)->with('success', 'Cáº­p nháº­t phiáº¿u nháº­p hÃ ng thÃ nh cÃ´ng!');
+            return redirect()->route('purchases.show', $purchase->id)->with('success', 'Cập nhật phiếu nhập hàng thành công!');
         } catch (\Exception $e) {
             DB::rollBack();
-            return back()->with('error', 'CÃ³ lá»—i xáº£y ra: ' . $e->getMessage());
+            return back()->with('error', 'Có lỗi xảy ra: ' . $e->getMessage());
         }
     }
 
@@ -784,8 +785,8 @@ class PurchaseController extends Controller
         $validated = $request->validate([
             'cancel_reason' => 'required|string|min:5|max:500',
         ], [
-            'cancel_reason.required' => 'Vui lÃ²ng nháº­p lÃ½ do há»§y phiáº¿u nháº­p.',
-            'cancel_reason.min' => 'LÃ½ do há»§y pháº£i cÃ³ Ã­t nháº¥t 5 kÃ½ tá»±.',
+            'cancel_reason.required' => 'Vui lòng nhập lý do hủy phiếu nhập.',
+            'cancel_reason.min' => 'Lý do hủy phải có ít nhất 5 ký tự.',
         ]);
         $cancelReason = trim($validated['cancel_reason']);
 
@@ -793,7 +794,7 @@ class PurchaseController extends Controller
         app(LockPeriodService::class)->assertNotLocked($purchase->purchase_date ?? $purchase->created_at, 'purchase_cancel');
 
         if ($purchase->status === 'cancelled') {
-            return back()->with('error', 'Phiáº¿u nÃ y Ä‘Ã£ bá»‹ há»§y trÆ°á»›c Ä‘Ã³.');
+            return back()->with('error', 'Phiếu này đã bị hủy trước đó.');
         }
 
         if ($purchase->status !== 'completed') {
@@ -825,7 +826,7 @@ class PurchaseController extends Controller
                         ->count();
                     if ($soldSerials > 0) {
                         DB::rollBack();
-                        return back()->with('error', "KhÃ´ng thá»ƒ há»§y: sáº£n pháº©m \"{$product->name}\" Ä‘Ã£ cÃ³ {$soldSerials} serial Ä‘Ã£ bÃ¡n/sá»­ dá»¥ng.");
+                        return back()->with('error', "Không thể hủy: sản phẩm \"{$product->name}\" đã có {$soldSerials} serial đã bán/sử dụng.");
                     }
                 }
 
@@ -833,7 +834,7 @@ class PurchaseController extends Controller
                     throw new \Exception('Không thể hủy phiếu nhập vì hàng đã được bán/xuất hoặc tồn kho hiện tại không đủ để đảo phiếu.');
                 }
 
-                // BQ DI Äá»˜NG: rÃºt khá»i tá»“n theo cost lÃºc nháº­p (snapshot unit_cost_allocated)
+                // BQ DI ĐỘNG: rút khỏi tồn theo cost lúc nhập (snapshot unit_cost_allocated)
                 $unitCostAtPurchase = (float) ($item->unit_cost_allocated ?: $item->price);
                 \App\Services\MovingAvgCostingService::applyPurchaseReturn(
                     $product,
@@ -851,7 +852,7 @@ class PurchaseController extends Controller
                     $product->recomputeFromSerials();
                 }
 
-                // Phase 4 â€” Ghi sá»• cÃ¡i: hoÃ n nháº­p (out)
+                // Phase 4 — Ghi sổ cái: hoàn nhập (out)
                 StockMovementService::record(
                     $product,
                     StockMovementService::TYPE_OUT_PURCHASE_RETURN,
@@ -862,7 +863,7 @@ class PurchaseController extends Controller
                         'branch_id' => $purchase->branch_id ?? null,
                         'ref_code' => $purchase->code,
                         'moved_at' => now(),
-                        'note' => 'Há»§y phiáº¿u nháº­p ' . $purchase->code,
+                        'note' => 'Hủy phiếu nhập ' . $purchase->code,
                     ]
                 );
             }
@@ -892,7 +893,7 @@ class PurchaseController extends Controller
                 }
             }
 
-            // Giá»¯ items cho audit trail (khÃ´ng xÃ³a)
+            // Giữ items cho audit trail (không xóa)
             $purchase->status = 'cancelled';
             $purchase->cancel_reason = $cancelReason;
             $purchase->cancelled_by = auth()->id();
@@ -904,15 +905,15 @@ class PurchaseController extends Controller
             // Step 24.0: audit log purchase cancel
             \App\Models\ActivityLog::log(
                 \App\Models\ActivityLog::ACTION_PURCHASE_DELETE,
-                "Há»§y phiáº¿u nháº­p hÃ ng {$purchase->code}",
+                "Hủy phiếu nhập hàng {$purchase->code}",
                 $purchase,
                 ['total' => (float) ($purchase->total ?? 0)]
             );
 
-            return redirect()->route('purchases.index')->with('success', 'ÄÃ£ há»§y phiáº¿u nháº­p hÃ ng. Tá»“n kho, giÃ¡ vá»‘n vÃ  cÃ´ng ná»£ Ä‘Ã£ Ä‘Æ°á»£c hoÃ n láº¡i.');
+            return redirect()->route('purchases.index')->with('success', 'Đã hủy phiếu nhập hàng. Tồn kho, giá vốn và công nợ đã được hoàn lại.');
         } catch (\Exception $e) {
             DB::rollBack();
-            return back()->with('error', 'Lá»—i: ' . $e->getMessage());
+            return back()->with('error', 'Lỗi: ' . $e->getMessage());
         }
     }
 
@@ -927,7 +928,7 @@ class PurchaseController extends Controller
         $purchases = $query->get();
 
         return \App\Services\CsvService::export(
-            ['MÃ£ nháº­p hÃ ng', 'Thá»i gian', 'NhÃ  cung cáº¥p', 'Tá»•ng cá»™ng', 'Giáº£m giÃ¡', 'ÄÃ£ tráº£ NCC', 'CÃ²n ná»£ NCC', 'Tráº¡ng thÃ¡i', 'Ghi chÃº'],
+            ['Mã nhập hàng', 'Thời gian', 'Nhà cung cấp', 'Tổng cộng', 'Giảm giá', 'Đã trả NCC', 'Còn nợ NCC', 'Trạng thái', 'Ghi chú'],
             $purchases->map(fn($p) => [$p->code, $p->created_at?->format('d/m/Y H:i'), $p->supplier?->name, $p->total_amount, $p->discount, $p->paid_amount, $p->debt_amount, $p->status, $p->note]),
             'nhap_hang.csv'
         );
@@ -947,7 +948,7 @@ class PurchaseController extends Controller
             'id' => $purchase->id,
             'code' => $purchase->code,
             'status' => $purchase->status,
-            'status_label' => $purchase->status === 'completed' ? 'ÄÃ£ nháº­p hÃ ng' : ($purchase->status === 'returned' ? 'ÄÃ£ tráº£ hÃ ng' : ($purchase->status === 'cancelled' ? 'ÄÃ£ há»§y' : ucfirst($purchase->status))),
+            'status_label' => $purchase->status === 'completed' ? 'Đã nhập hàng' : ($purchase->status === 'returned' ? 'Đã trả hàng' : ($purchase->status === 'cancelled' ? 'Đã hủy' : ucfirst($purchase->status))),
             'purchase_date' => $purchase->purchase_date ? $purchase->purchase_date->format('d/m/Y H:i') : ($purchase->created_at ? $purchase->created_at->format('d/m/Y H:i') : ''),
             'user_name' => $purchase->user->name ?? 'Admin',
             'employee_name' => $purchase->employee->name ?? null,
@@ -968,5 +969,12 @@ class PurchaseController extends Controller
                 'subtotal' => $item->subtotal,
             ]),
         ]);
+    }
+
+    private function normalizeSerial(?string $serial): string
+    {
+        $serial = preg_replace('/[\x00-\x1F\x7F-\x9F]/u', '', (string) $serial) ?? '';
+
+        return strtoupper(trim($serial));
     }
 }

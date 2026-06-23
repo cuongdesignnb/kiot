@@ -101,6 +101,10 @@ const note = ref(props.purchase.note || '');
 const submitRef = ref(false);
 const paymentMethod = ref(props.purchase.payment_method || 'cash');
 const bankAccountInfo = ref(props.purchase.bank_account_info || '');
+const normalizeSerial = (value) => String(value || '')
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
+    .trim()
+    .toUpperCase();
 
 // Chi phí nhập khác
 const otherCosts = ref(
@@ -209,10 +213,11 @@ const removeItem = (index) => {
 };
 
 const addSerial = (item) => {
-    const val = item.serialInput?.trim();
+    const val = normalizeSerial(item.serialInput);
     if (!val) return;
+    item.serials = (item.serials || []).map(normalizeSerial).filter(Boolean);
     if (item.serials.includes(val)) {
-        alert('Serial/IMEI "' + val + '" đã tồn tại trong danh sách!');
+        alert('Serial/IMEI "' + val + '" bị trùng trong phiếu nhập hiện tại.');
         return;
     }
     item.serials.push(val);
@@ -304,7 +309,7 @@ const save = async () => {
                 retail_price: Number(item.retail_price) || 0,
                 technician_price: Number(item.technician_price) || 0,
                 discount: Number(item.discount) || 0,
-                serials: item.serials || [],
+                serials: (item.serials || []).map(normalizeSerial).filter(Boolean),
                 warranty_months: item.warranty_months || 0,
             }))
         });

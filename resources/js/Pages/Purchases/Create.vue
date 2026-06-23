@@ -95,6 +95,14 @@ const paymentMethod = ref('cash');
 const bankAccountInfo = ref('');
 
 const moneyNumber = (value) => Number(parseMoneyModelValue(value) || 0);
+const normalizeSerial = (value) => String(value || '')
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
+    .trim()
+    .toUpperCase();
+const firstErrorMessage = (errors) => {
+    const first = Object.values(errors || {}).flat?.()[0] ?? Object.values(errors || {})[0];
+    return Array.isArray(first) ? first[0] : first;
+};
 
 // Chi phí nhập khác
 const otherCosts = ref([]);
@@ -378,10 +386,11 @@ const removeItem = (index) => {
 };
 
 const addSerial = (item) => {
-    const val = item.serialInput?.trim();
+    const val = normalizeSerial(item.serialInput);
     if (!val) return;
+    item.serials = (item.serials || []).map(normalizeSerial).filter(Boolean);
     if (item.serials.includes(val)) {
-        alert('Serial/IMEI "' + val + '" đã tồn tại trong danh sách!');
+        alert('Serial/IMEI "' + val + '" bị trùng trong phiếu nhập hiện tại.');
         return;
     }
     item.serials.push(val);
@@ -477,7 +486,7 @@ const save = () => {
             retail_price: moneyNumber(item.retail_price),
             technician_price: moneyNumber(item.technician_price),
             discount: moneyNumber(item.discount),
-            serials: item.serials || [],
+            serials: (item.serials || []).map(normalizeSerial).filter(Boolean),
             warranty_months: item.warranty_months || 0,
         }))
     }, {
@@ -485,7 +494,7 @@ const save = () => {
             clearBrowserDraft();
         },
         onError: (errors) => {
-            const firstError = Object.values(errors)[0];
+            const firstError = firstErrorMessage(errors);
             if (firstError) alert(firstError);
         },
         onFinish: () => {
