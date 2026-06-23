@@ -611,8 +611,16 @@ class SupplierController extends Controller
         $data = $this->purchaseHistory($id)->getData(true);
 
         return \App\Services\CsvService::export(
-            ['Mã phiếu nhập', 'Ngày', 'Người tạo', 'Chi nhánh', 'Tổng tiền', 'Trạng thái'],
-            collect($data)->map(fn($p) => [$p['code'], $p['date'], $p['user_name'], $p['branch'], $p['total'], $p['status_label']]),
+            ['Mã phiếu', 'Thời gian', 'Loại phiếu', 'Người tạo', 'Chi nhánh', 'Tổng tiền', 'Trạng thái'],
+            collect($data)->map(fn($p) => [
+                $p['code'],
+                $p['transaction_at_display'] ?? $p['date'] ?? '',
+                $p['type_label'] ?? '',
+                $p['user_name'] ?? '',
+                $p['branch'] ?? '',
+                $p['total'] ?? 0,
+                $p['status_label'] ?? '',
+            ]),
             "lich_su_nhap_{$id}.csv"
         );
     }
@@ -640,23 +648,67 @@ class SupplierController extends Controller
     public function purchaseHistory($id)
     {
         $purchases = Purchase::where('supplier_id', $id)
-            ->with(['user:id,name'])
-            ->orderByDesc('purchase_date')
+            ->with(['user:id,name', 'employee:id,name'])
             ->get()
             ->map(function ($p) {
+                $transactionAt = $p->purchase_date
+                    ? \Carbon\Carbon::parse($p->purchase_date)
+                    : ($p->created_at ? \Carbon\Carbon::parse($p->created_at) : null);
+
                 return [
                     'id' => $p->id,
+                    'type' => 'purchase',
+                    'type_label' => 'Nhập hàng',
                     'code' => $p->code,
-                    'date' => $p->purchase_date ? $p->purchase_date->format('d/m/Y H:i') : ($p->created_at ? $p->created_at->format('d/m/Y H:i') : ''),
-                    'user_name' => $p->user->name ?? 'Admin',
+                    'transaction_at' => $transactionAt?->toIso8601String(),
+                    'transaction_at_display' => $transactionAt?->format('H:i d/m/Y') ?? '',
+                    'date' => $transactionAt?->format('H:i d/m/Y') ?? '',
+                    'purchase_date' => $transactionAt?->toIso8601String(),
+                    'user_name' => $p->employee->name ?? $p->user->name ?? 'Admin',
+                    'creator_name' => $p->employee->name ?? $p->user->name ?? 'Admin',
                     'branch' => 'Laptopplus.vn',
+                    'branch_name' => 'Laptopplus.vn',
                     'total' => $p->total_amount,
+                    'total_amount' => (float) $p->total_amount,
                     'status' => $p->status,
                     'status_label' => $p->status === 'completed' ? 'Đã nhập hàng' : ($p->status === 'returned' ? 'Đã trả hàng' : ucfirst($p->status)),
                 ];
             });
 
-        return response()->json($purchases);
+        $purchaseReturns = PurchaseReturn::where('supplier_id', $id)
+            ->with(['user:id,name', 'employee:id,name'])
+            ->get()
+            ->map(function ($return) {
+                $transactionAt = $return->return_date
+                    ? \Carbon\Carbon::parse($return->return_date)
+                    : ($return->created_at ? \Carbon\Carbon::parse($return->created_at) : null);
+
+                return [
+                    'id' => $return->id,
+                    'type' => 'purchase_return',
+                    'type_label' => 'Trả hàng nhập',
+                    'code' => $return->code,
+                    'transaction_at' => $transactionAt?->toIso8601String(),
+                    'transaction_at_display' => $transactionAt?->format('H:i d/m/Y') ?? '',
+                    'date' => $transactionAt?->format('H:i d/m/Y') ?? '',
+                    'return_date' => $transactionAt?->toIso8601String(),
+                    'user_name' => $return->employee->name ?? $return->user->name ?? 'Admin',
+                    'creator_name' => $return->employee->name ?? $return->user->name ?? 'Admin',
+                    'branch' => 'Laptopplus.vn',
+                    'branch_name' => 'Laptopplus.vn',
+                    'total' => $return->total_amount,
+                    'total_amount' => (float) $return->total_amount,
+                    'status' => $return->status,
+                    'status_label' => $return->status === 'completed' ? 'Hoàn thành' : ucfirst((string) $return->status),
+                ];
+            });
+
+        $histories = $purchases
+            ->merge($purchaseReturns)
+            ->sortByDesc(fn($item) => $item['transaction_at'] ? \Carbon\Carbon::parse($item['transaction_at'])->timestamp : 0)
+            ->values();
+
+        return response()->json($histories);
     }
 
     /**

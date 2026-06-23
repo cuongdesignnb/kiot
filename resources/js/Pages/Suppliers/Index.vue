@@ -12,10 +12,11 @@ import { useFilters } from "@/composables/useFilters.js";
 import axios from "axios";
 
 const formatDateTime = (val) => {
-    if (!val) return '';
+    if (!val) return '-';
     const d = new Date(val);
-    if (isNaN(d)) return val;
-    return d.toLocaleDateString('vi-VN') + ' ' + d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+    if (Number.isNaN(d.getTime())) return '-';
+    const pad = (number) => String(number).padStart(2, '0');
+    return `${pad(d.getHours())}:${pad(d.getMinutes())} ${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
 };
 
 const supplierEntryDisplayTime = (entry) =>
@@ -493,6 +494,15 @@ const showPurchaseDetail = async (purchaseId) => {
     purchaseDetail.loading = false;
 };
 
+const openSupplierHistoryRow = (row) => {
+    if (!row) return;
+    if (row.type === 'purchase_return') {
+        window.location.assign(`/purchase-returns/${row.id}`);
+        return;
+    }
+    showPurchaseDetail(row.id);
+};
+
 // STEP 10 — supplier debt voucher detail (click a code in the Công nợ tab).
 const supplierVoucher = reactive({ show: false, loading: false, error: '', payload: null });
 const openSupplierVoucherDetail = async (entry, supplierId) => {
@@ -531,16 +541,23 @@ const filteredDebt = (id) => {
 const supplierTabSorts = reactive({});
 
 const getSupplierTabSort = (supplierId, tab) => {
-    return supplierTabSorts[`${supplierId}:${tab}`] || { field: 'time', direction: 'desc' };
+    return supplierTabSorts[`${supplierId}:${tab}`] || { field: 'transaction_at', direction: 'desc' };
 };
 
 const toggleSupplierTabTimeSort = (supplierId, tab) => {
     const key = `${supplierId}:${tab}`;
     const current = getSupplierTabSort(supplierId, tab);
     supplierTabSorts[key] = {
-        field: 'time',
+        field: 'transaction_at',
         direction: current.direction === 'desc' ? 'asc' : 'desc',
     };
+};
+
+const getSupplierHistorySortTooltip = (supplierId) => {
+    const sort = getSupplierTabSort(supplierId, 'history');
+    return sort.direction === 'desc'
+        ? 'Đang sắp xếp: mới nhất trước'
+        : 'Đang sắp xếp: cũ nhất trước';
 };
 
 const parseSupplierTabTime = (value) => {
@@ -568,8 +585,8 @@ const sortedSupplierHistory = (supplierId) => {
     const sort = getSupplierTabSort(supplierId, 'history');
     // Copy before sorting — never mutate the cached source.
     return [...data].sort((a, b) => {
-        const av = parseSupplierTabTime(a.date || a.purchase_date || a.created_at);
-        const bv = parseSupplierTabTime(b.date || b.purchase_date || b.created_at);
+        const av = parseSupplierTabTime(a.transaction_at || a.purchase_date || a.return_date || a.created_at);
+        const bv = parseSupplierTabTime(b.transaction_at || b.purchase_date || b.return_date || b.created_at);
         return sort.direction === 'desc' ? bv - av : av - bv;
     });
 };
@@ -1285,11 +1302,12 @@ const submitActivate = (supplier) => {
                                                             <th
                                                                 class="px-3 py-2 cursor-pointer select-none hover:text-gray-900"
                                                                 @click.stop="toggleSupplierTabTimeSort(supplier.id, 'history')"
-                                                                :title="getSupplierTabSort(supplier.id, 'history').direction === 'desc' ? 'Đang sắp xếp: mới nhất trước' : 'Đang sắp xếp: cũ nhất trước'"
+                                                                :title="getSupplierHistorySortTooltip(supplier.id)"
                                                             >
                                                                 Thời gian
                                                                 <span class="ml-1 text-[10px]">{{ getSupplierTabSort(supplier.id, 'history').direction === 'desc' ? '▼' : '▲' }}</span>
                                                             </th>
+                                                            <th class="px-3 py-2">Loại phiếu</th>
                                                             <th class="px-3 py-2">Người tạo</th>
                                                             <th class="px-3 py-2">Chi nhánh</th>
                                                             <th class="px-3 py-2 text-right">Tổng cộng</th>
@@ -1297,13 +1315,14 @@ const submitActivate = (supplier) => {
                                                         </tr>
                                                     </thead>
                                                     <tbody class="divide-y">
-                                                        <tr v-if="!supplierHistory[supplier.id]?.length"><td colspan="6" class="px-3 py-6 text-center text-gray-400">Chưa có phiếu nhập/trả hàng.</td></tr>
-                                                        <tr v-for="h in sortedSupplierHistory(supplier.id)" :key="h.id" class="hover:bg-gray-50">
-                                                            <td class="px-3 py-2 text-blue-600 font-semibold cursor-pointer hover:underline" @click="showPurchaseDetail(h.id)">{{ h.code }}</td>
-                                                            <td class="px-3 py-2">{{ h.date }}</td>
-                                                            <td class="px-3 py-2">{{ h.user_name }}</td>
-                                                            <td class="px-3 py-2">{{ h.branch }}</td>
-                                                            <td class="px-3 py-2 text-right font-semibold">{{ formatCurrency(h.total) }}</td>
+                                                        <tr v-if="!supplierHistory[supplier.id]?.length"><td colspan="7" class="px-3 py-6 text-center text-gray-400">Chưa có phiếu nhập/trả hàng.</td></tr>
+                                                        <tr v-for="h in sortedSupplierHistory(supplier.id)" :key="`${h.type || 'purchase'}:${h.id}`" class="hover:bg-gray-50">
+                                                            <td class="px-3 py-2 text-blue-600 font-semibold cursor-pointer hover:underline" @click="openSupplierHistoryRow(h)">{{ h.code }}</td>
+                                                            <td class="px-3 py-2">{{ formatDateTime(h.transaction_at || h.purchase_date || h.return_date) }}</td>
+                                                            <td class="px-3 py-2">{{ h.type_label || 'Nhập hàng' }}</td>
+                                                            <td class="px-3 py-2">{{ h.creator_name || h.user_name }}</td>
+                                                            <td class="px-3 py-2">{{ h.branch_name || h.branch }}</td>
+                                                            <td class="px-3 py-2 text-right font-semibold">{{ formatCurrency(h.total_amount ?? h.total) }}</td>
                                                             <td class="px-3 py-2">
                                                                 <span :class="h.status === 'completed' ? 'text-green-600' : 'text-orange-600'" class="font-semibold text-xs">{{ h.status_label }}</span>
                                                             </td>
