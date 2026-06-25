@@ -143,6 +143,61 @@ class Step247AdvancedProductSearchTest extends TestCase
         $this->assertContains($product->id, $this->productIdsFromJson($response));
     }
 
+    public function test_api_product_search_matches_serial(): void
+    {
+        $admin = $this->admin();
+        $product = $this->product([
+            'has_serial' => true,
+            'stock_quantity' => 1,
+            'inventory_total_cost' => 1_000_000,
+        ]);
+        $this->serial($product, 'PURCHASE-SEARCH-SERIAL-247');
+
+        $response = $this->actingAs($admin)->getJson('/api/products/search?search=PURCHASE-SEARCH-SERIAL-247');
+        $response->assertOk();
+
+        $this->assertContains($product->id, $this->productIdsFromJson($response));
+    }
+
+    public function test_api_product_search_active_only_excludes_inactive_products(): void
+    {
+        $admin = $this->admin();
+        $active = $this->product([
+            'sku' => 'ACTIVE-PURCHASE-SEARCH-247',
+            'name' => 'Purchase Search Active Product',
+            'is_active' => true,
+        ]);
+        $inactive = $this->product([
+            'sku' => 'INACTIVE-PURCHASE-SEARCH-247',
+            'name' => 'Purchase Search Inactive Product',
+            'is_active' => false,
+        ]);
+
+        $response = $this->actingAs($admin)
+            ->getJson('/api/products/search?active_only=1&search=' . urlencode('Purchase Search'));
+        $response->assertOk();
+
+        $ids = $this->productIdsFromJson($response);
+        $this->assertContains($active->id, $ids);
+        $this->assertNotContains($inactive->id, $ids);
+    }
+
+    public function test_api_product_search_without_active_only_keeps_inactive_contract(): void
+    {
+        $admin = $this->admin();
+        $inactive = $this->product([
+            'sku' => 'INACTIVE-CONTRACT-247',
+            'name' => 'Inactive Contract Search Product',
+            'is_active' => false,
+        ]);
+
+        $response = $this->actingAs($admin)
+            ->getJson('/api/products/search?search=' . urlencode('Inactive Contract Search'));
+        $response->assertOk();
+
+        $this->assertContains($inactive->id, $this->productIdsFromJson($response));
+    }
+
     public function test_product_search_matches_serial_and_pos_returns_matched_serials(): void
     {
         $admin = $this->admin();

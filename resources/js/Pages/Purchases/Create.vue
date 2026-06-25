@@ -5,6 +5,7 @@ import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import DateTimePicker from '@/Components/DateTimePicker.vue';
 import QuickCreateProductModal from '@/Components/QuickCreateProductModal.vue';
 import MoneyInput from '@/Components/MoneyInput.vue';
+import axios from 'axios';
 // STEP 24.13-FIX — use the full customer modal in supplier mode so the form
 // matches the standalone /suppliers create page (4 accordions: basic, address,
 // group, invoice info). The previous simple modal was too sparse.
@@ -13,7 +14,6 @@ import QuickCreateCustomerModal from '@/Components/QuickCreateCustomerModal.vue'
 const page = usePage();
 
 const props = defineProps({
-    products: Array,
     suppliers: Array,
     employees: Array,
     categories: Array,
@@ -25,8 +25,6 @@ const props = defineProps({
     bankAccounts: Array,
 });
 
-// Local mutable copy of products list (to add newly created products)
-const allProducts = ref([...(props.products || [])]);
 const localSuppliers = ref([...(props.suppliers || [])]);
 
 // STEP 24.13-FIX — supplier modal owns its own state; page just toggles
@@ -36,6 +34,11 @@ const showCreateSupplierModal = ref(false);
 const searchQuery = ref('');
 const showSuggestions = ref(false);
 const showCreateDropdown = ref(false);
+const filteredProducts = ref([]);
+const isSearchingProduct = ref(false);
+const productSearchError = ref('');
+let productSearchTimeout = null;
+let productSearchSeq = 0;
 const items = ref([]);
 
 const selectedSupplierId = ref('');
@@ -336,19 +339,47 @@ onMounted(() => {
 onBeforeUnmount(() => {
     window.removeEventListener('beforeunload', beforeUnloadHandler);
     if (draftSaveTimer) clearTimeout(draftSaveTimer);
-});
-
-const filteredProducts = computed(() => {
-    if (!searchQuery.value) return [];
-    const query = searchQuery.value.toLowerCase();
-    return allProducts.value.filter(p => 
-        p.name.toLowerCase().includes(query) || 
-        p.sku.toLowerCase().includes(query)
-    ).slice(0, 10);
+    if (productSearchTimeout) clearTimeout(productSearchTimeout);
 });
 
 watch(searchQuery, (val) => {
-    if (val) showSuggestions.value = true;
+    const keyword = String(val || '').trim();
+    productSearchError.value = '';
+    if (productSearchTimeout) clearTimeout(productSearchTimeout);
+
+    if (!keyword) {
+        productSearchSeq++;
+        filteredProducts.value = [];
+        isSearchingProduct.value = false;
+        showSuggestions.value = false;
+        return;
+    }
+
+    showSuggestions.value = true;
+    const seq = ++productSearchSeq;
+    productSearchTimeout = setTimeout(async () => {
+        isSearchingProduct.value = true;
+        try {
+            const response = await axios.get('/api/products/search', {
+                params: {
+                    search: keyword,
+                    active_only: 1,
+                },
+            });
+            if (seq === productSearchSeq) {
+                filteredProducts.value = Array.isArray(response.data) ? response.data : [];
+            }
+        } catch (error) {
+            if (seq === productSearchSeq) {
+                filteredProducts.value = [];
+                productSearchError.value = 'Không thể tìm hàng hóa lúc này.';
+            }
+        } finally {
+            if (seq === productSearchSeq) {
+                isSearchingProduct.value = false;
+            }
+        }
+    }, 300);
 });
 
 const selectProduct = (product) => {
@@ -558,7 +589,16 @@ const localBrands = ref([...(props.brands || [])]);
                     </div>
                     <input v-model="searchQuery" @focus="showSuggestions = true" @blur="hideSuggestions" type="text" class="w-full pl-9 pr-12 py-[9px] border border-gray-300 text-gray-800 rounded focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500 bg-white" placeholder="Tìm hàng hóa theo mã hoặc tên (F3)">
                     
-                    <div v-if="showSuggestions && filteredProducts.length > 0" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded-sm z-50 max-h-[300px] overflow-auto">
+                    <div v-if="showSuggestions && (searchQuery.trim() || isSearchingProduct)" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded-sm z-50 max-h-[300px] overflow-auto">
+                        <div v-if="isSearchingProduct" class="p-3 text-sm text-gray-500 text-center">
+                            Đang tìm kiếm...
+                        </div>
+                        <div v-else-if="productSearchError" class="p-3 text-sm text-red-500 text-center">
+                            {{ productSearchError }}
+                        </div>
+                        <div v-else-if="filteredProducts.length === 0 && searchQuery.trim()" class="p-3 text-sm text-gray-500 text-center">
+                            Không tìm thấy hàng hóa phù hợp
+                        </div>
                         <div v-for="product in filteredProducts" :key="product.id" @mousedown.prevent="selectProduct(product)" class="flex items-center gap-3 p-2 border-b border-gray-100 hover:bg-gray-50 cursor-pointer">
                             <img :src="product.image || 'https://ui-avatars.com/api/?name=' + product.name + '&background=random'" class="w-10 h-10 object-cover rounded border border-gray-200">
                             <div class="flex-1">
@@ -913,7 +953,7 @@ const localBrands = ref([...(props.brands || [])]);
             :show-retail-price="showRetailPrice"
             :show-technician-price="showTechnicianPrice"
             @close="showCreateProductModal = false"
-            @created="(p) => { allProducts.push(p); selectProduct(p); }"
+            @created="(p) => selectProduct(p)"
         />
 
         <QuickCreateCustomerModal

@@ -1,6 +1,6 @@
 <script setup>
 import { formatVND as formatCurrency } from '@/utils/money';
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onBeforeUnmount } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
 import QuickCreateCustomerModal from '@/Components/QuickCreateCustomerModal.vue';
@@ -9,7 +9,6 @@ import MoneyInput from '@/Components/MoneyInput.vue';
 
 const props = defineProps({
     purchase: Object,
-    products: Array,
     suppliers: Array,
     employees: Array,
     showRetailPrice: Boolean,
@@ -17,8 +16,6 @@ const props = defineProps({
     bankAccounts: Array,
 });
 
-// Local mutable copy of products list
-const allProducts = ref([...(props.products || [])]);
 const localSuppliers = ref([...(props.suppliers || [])]);
 
 // Quick Create Supplier
@@ -157,29 +154,52 @@ const items = ref(
 
 const filteredProducts = ref([]);
 const isSearchingProduct = ref(false);
+const productSearchError = ref('');
 
 let searchTimeout = null;
+let productSearchSeq = 0;
 watch(searchQuery, (val) => {
-    if (!val) {
+    const keyword = String(val || '').trim();
+    productSearchError.value = '';
+    if (searchTimeout) clearTimeout(searchTimeout);
+
+    if (!keyword) {
+        productSearchSeq++;
         filteredProducts.value = [];
         showSuggestions.value = false;
+        isSearchingProduct.value = false;
         return;
     }
     showSuggestions.value = true;
-    if (searchTimeout) clearTimeout(searchTimeout);
+    const seq = ++productSearchSeq;
     searchTimeout = setTimeout(async () => {
         isSearchingProduct.value = true;
         try {
             const response = await axios.get('/api/products/search', {
-                params: { search: val }
+                params: {
+                    search: keyword,
+                    active_only: 1,
+                }
             });
-            filteredProducts.value = response.data;
+            if (seq === productSearchSeq) {
+                filteredProducts.value = Array.isArray(response.data) ? response.data : [];
+            }
         } catch (error) {
             console.error("Lỗi tìm kiếm sản phẩm:", error);
+            if (seq === productSearchSeq) {
+                filteredProducts.value = [];
+                productSearchError.value = 'Không thể tìm hàng hóa lúc này.';
+            }
         } finally {
-            isSearchingProduct.value = false;
+            if (seq === productSearchSeq) {
+                isSearchingProduct.value = false;
+            }
         }
     }, 300);
+});
+
+onBeforeUnmount(() => {
+    if (searchTimeout) clearTimeout(searchTimeout);
 });
 
 const selectProduct = (product) => {
@@ -353,8 +373,11 @@ const goToCreateProduct = () => {
                         <div v-if="isSearchingProduct" class="p-3 text-sm text-gray-500 text-center">
                             Đang tìm kiếm...
                         </div>
-                        <div v-else-if="filteredProducts.length === 0 && searchQuery" class="p-3 text-sm text-gray-500 text-center">
-                            Không tìm thấy sản phẩm hợp lệ
+                        <div v-else-if="productSearchError" class="p-3 text-sm text-red-500 text-center">
+                            {{ productSearchError }}
+                        </div>
+                        <div v-else-if="filteredProducts.length === 0 && searchQuery.trim()" class="p-3 text-sm text-gray-500 text-center">
+                            Không tìm thấy hàng hóa phù hợp
                         </div>
                         <div v-for="product in filteredProducts" :key="product.id" @mousedown.prevent="selectProduct(product)" class="flex items-center gap-3 p-2 border-b border-gray-100 hover:bg-gray-50 cursor-pointer">
                             <img :src="product.image || 'https://ui-avatars.com/api/?name=' + product.name + '&background=random'" class="w-10 h-10 object-cover rounded border border-gray-200">

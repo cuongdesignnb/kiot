@@ -23,6 +23,10 @@ class ProductController extends Controller
     {
         $query = Product::query();
 
+        if ($request->boolean('active_only')) {
+            $query->where('is_active', true);
+        }
+
         if ($request->filled('search')) {
             $search = trim((string) $request->input('search'));
             $productSearch->apply($query, $search, [

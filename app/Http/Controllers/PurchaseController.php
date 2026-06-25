@@ -135,7 +135,6 @@ class PurchaseController extends Controller
         $suppliers = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
             ->where('is_supplier', true)
             ->get();
-        $products = Product::where('is_active', true)->get();
 
         $purchaseOrderInfo = null;
         if ($request->has('purchase_order_id')) {
@@ -167,7 +166,6 @@ class PurchaseController extends Controller
         $sellerResolver = new \App\Support\Reports\SellerResolver();
         return Inertia::render('Purchases/Create', [
             'suppliers' => $suppliers,
-            'products' => $products,
             'employees' => $sellerResolver->buildInvoiceSellerOptions(),
             'categories' => \App\Models\Category::with('children')->whereNull('parent_id')->orderBy('name')->get(),
             'brands' => \App\Models\Brand::all(),
@@ -570,17 +568,12 @@ class PurchaseController extends Controller
             $suppliers->push($purchase->supplier);
         }
 
-        $products = Product::where('is_active', true)
-            ->orWhereIn('id', $purchase->items->pluck('product_id')->filter()->unique())
-            ->get();
-
         $priceBooks = \App\Models\PriceBook::where('is_active', true)->get();
         $sellerResolver = new \App\Support\Reports\SellerResolver();
 
         return Inertia::render('Purchases/Edit', [
             'purchase' => $purchase,
             'suppliers' => $suppliers->values(),
-            'products' => $products,
             'employees' => $sellerResolver->buildInvoiceSellerOptions(),
             'showRetailPrice' => $priceBooks->contains('enable_retail_price', true),
             'showTechnicianPrice' => $priceBooks->contains('enable_technician_price', true),
@@ -591,7 +584,7 @@ class PurchaseController extends Controller
     public function update(Request $request, Purchase $purchase)
     {
         $validated = $request->validate([
-            'supplier_id' => 'required|exists:customers,id',
+            'supplier_id' => 'sometimes|exists:customers,id',
             'note' => 'nullable|string|max:1000',
             'purchase_date' => 'required|date',
             'discount' => 'nullable|numeric|min:0',
@@ -600,7 +593,7 @@ class PurchaseController extends Controller
             'bank_account_info' => 'nullable|string',
             'employee_id' => 'nullable|string',
             'status' => 'nullable|string|in:draft,completed',
-            'items' => 'required|array|min:1',
+            'items' => 'sometimes|array|min:1',
             'items.*.product_id' => 'required_with:items|exists:products,id',
             'items.*.quantity' => 'required_with:items|numeric|min:0',
             'items.*.price' => 'required_with:items|numeric|min:0',
@@ -617,6 +610,8 @@ class PurchaseController extends Controller
         if ($purchase->status === 'cancelled') {
             return back()->withErrors(['purchase' => 'Không thể sửa phiếu nhập đã hủy.']);
         }
+
+        $validated['supplier_id'] = $validated['supplier_id'] ?? $purchase->supplier_id;
 
         app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
             (int) $validated['supplier_id'],
@@ -653,7 +648,19 @@ class PurchaseController extends Controller
                 ->groupBy('product_id')
                 ->map(fn($rows) => $rows->keyBy(fn($serial) => $this->normalizeSerial($serial->serial_number)));
 
-            $normalizedItems = $this->normalizePurchaseUpdateItems($validated['items']);
+            $itemPayload = $validated['items'] ?? $oldItems->map(function ($oldItem) use ($oldSerialsByProduct) {
+                return [
+                    'product_id' => $oldItem->product_id,
+                    'quantity' => $oldItem->quantity,
+                    'price' => $oldItem->price,
+                    'retail_price' => $oldItem->product?->retail_price ?? 0,
+                    'technician_price' => $oldItem->product?->technician_price ?? 0,
+                    'discount' => $oldItem->discount ?? 0,
+                    'serials' => $oldSerialsByProduct->get($oldItem->product_id, collect())->keys()->all(),
+                    'warranty_months' => $oldItem->warranty_months ?? 0,
+                ];
+            })->values()->all();
+            $normalizedItems = $this->normalizePurchaseUpdateItems($itemPayload);
             $otherCosts = collect($validated['other_costs'] ?? [])
                 ->map(fn($c) => [
                     'name' => trim((string)($c['name'] ?? '')),
@@ -925,8 +932,8 @@ class PurchaseController extends Controller
 
             $payAmount = $totalAmount - $discount + $otherCostsTotal;
             $computedDebtAmount = $payAmount - $paidAmount;
-            if ($payAmount < 0 || $computedDebtAmount < -0.01) {
-                throw new \RuntimeException('Tổng tiền hoặc công nợ phiếu nhập không hợp lệ.');
+            if ($payAmount < 0) {
+                throw new \RuntimeException('Tổng tiền phiếu nhập không hợp lệ.');
             }
             $storedPaidAmount = $willBeStocked ? $paidAmount : 0.0;
             $storedDebtAmount = $willBeStocked ? $computedDebtAmount : 0.0;
