@@ -63,7 +63,7 @@ class StockTransferController extends Controller
 
     public function create()
     {
-        $products = Product::where('is_active', true)->get();
+        $products = Product::where('is_active', true)->where('type', '!=', 'service')->get();
         $branches = Branch::all();
 
         return Inertia::render('StockTransfers/Create', [
@@ -112,6 +112,11 @@ class StockTransferController extends Controller
             if (!$product) {
                 return back()->withErrors([
                     "items.{$idx}.product_id" => 'Sản phẩm không tồn tại.',
+                ])->withInput();
+            }
+            if ($product->isService()) {
+                return back()->withErrors([
+                    "items.{$idx}.product_id" => 'Dịch vụ không quản lý tồn kho nên không thể chuyển kho.',
                 ])->withInput();
             }
 

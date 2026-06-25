@@ -152,7 +152,7 @@ class OrderReturnCreationService
         $seenSerialIds = [];
         foreach ($payload['items'] as $item) {
             $product = Product::find($item['product_id']);
-            if (!$product || !$product->has_serial) {
+            if (!$product || !$product->tracksInventory() || !$product->has_serial) {
                 continue;
             }
 
@@ -227,7 +227,7 @@ class OrderReturnCreationService
         }
 
         $restoredSerials = collect();
-        if ($product->has_serial) {
+        if ($product->tracksInventory() && $product->has_serial) {
             if (!empty($item['serial_ids'])) {
                 $restoredSerials = SerialImei::whereIn('id', $item['serial_ids'])
                     ->where('product_id', $product->id)
@@ -253,11 +253,11 @@ class OrderReturnCreationService
             }
         }
 
-        $restoredCostPerUnit = $invoiceItem
-            ? (float) $invoiceItem->cost_price
-            : (float) $product->cost_price;
+        $restoredCostPerUnit = $product->tracksInventory()
+            ? ($invoiceItem ? (float) $invoiceItem->cost_price : (float) $product->cost_price)
+            : 0.0;
 
-        $serialIdsForItem = $product->has_serial
+        $serialIdsForItem = $product->tracksInventory() && $product->has_serial
             ? $restoredSerials->pluck('id')->map(fn ($id) => (int) $id)->all()
             : null;
 
@@ -271,6 +271,10 @@ class OrderReturnCreationService
             'cost_price' => $restoredCostPerUnit,
             'serial_ids' => !empty($serialIdsForItem) ? $serialIdsForItem : null,
         ]);
+
+        if (!$product->tracksInventory()) {
+            return;
+        }
 
         MovingAvgCostingService::applySaleReturn($product, $qty, $restoredCostPerUnit);
         $product->refresh();

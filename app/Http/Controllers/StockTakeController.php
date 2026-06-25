@@ -56,7 +56,7 @@ class StockTakeController extends Controller
 
     public function create()
     {
-        $products = Product::where('is_active', true)->get();
+        $products = Product::where('is_active', true)->where('type', '!=', 'service')->get();
         $branches = Branch::all();
 
         return Inertia::render('StockTakes/Create', [
@@ -91,6 +91,9 @@ class StockTakeController extends Controller
 
             $product = Product::find($pid);
             if (!$product) continue;
+            if ($product->isService()) {
+                return back()->withErrors(["items.{$i}.product_id" => "Dịch vụ không quản lý tồn kho nên không thể kiểm kho."]);
+            }
             $systemStock = (int) $product->stock_quantity;
             $actualStock = (int) $item['actual_stock'];
             $diffQty = $actualStock - $systemStock;

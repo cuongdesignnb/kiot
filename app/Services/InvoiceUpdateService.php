@@ -269,7 +269,7 @@ class InvoiceUpdateService
             // --- 1. Reverse old sale ---
             foreach ($invoice->items as $oldItem) {
                 $product = Product::find($oldItem->product_id);
-                if ($product) {
+                if ($product && $product->tracksInventory()) {
                     $costAtSale = (float) ($oldItem->cost_price ?? $product->cost_price ?? 0);
                     MovingAvgCostingService::applySaleReturn($product, (int) $oldItem->quantity, $costAtSale);
                     $product->refresh();
@@ -344,11 +344,16 @@ class InvoiceUpdateService
             foreach ($payload['items'] as $item) {
                 $product = Product::lockForUpdate()->find($item['product_id']);
                 $serialIds = $item['serial_ids'] ?? [];
-                $snapshotCostPrice = (float) ($product->cost_price ?? 0);
+                $isService = $product?->isService() ?? false;
+                $snapshotCostPrice = $isService ? 0.0 : (float) ($product->cost_price ?? 0);
                 $serialStr = null;
                 $soldSerials = collect();
 
-                if ($product && $product->has_serial && !empty($serialIds)) {
+                if ($isService && !empty($serialIds)) {
+                    throw new \Exception("Sản phẩm '{$product->name}' là dịch vụ, không quản lý Serial/IMEI.");
+                }
+
+                if ($product && $product->tracksInventory() && $product->has_serial && !empty($serialIds)) {
                     $serialIds = is_array($serialIds) ? $serialIds : [$serialIds];
                     $soldSerials = SerialImei::whereIn('id', $serialIds)
                         ->where('product_id', $product->id)
@@ -374,7 +379,7 @@ class InvoiceUpdateService
                     'serial'     => $serialStr,
                 ]);
 
-                if ($product) {
+                if ($product && $product->tracksInventory()) {
                     if (!$allowOversell && $product->stock_quantity < $item['quantity']) {
                         throw new \Exception("Sản phẩm [{$product->sku}] {$product->name} không đủ tồn kho (Còn: {$product->stock_quantity})");
                     }
@@ -487,7 +492,10 @@ class InvoiceUpdateService
             }
 
             $serialIds = $item['serial_ids'] ?? [];
-            if ($product->has_serial && !empty($serialIds)) {
+            if ($product->isService() && !empty($serialIds)) {
+                throw new \Exception("Sản phẩm '{$product->name}' là dịch vụ, không quản lý Serial/IMEI.");
+            }
+            if ($product->tracksInventory() && $product->has_serial && !empty($serialIds)) {
                 if (count($serialIds) !== (int) $item['quantity']) {
                     throw new \Exception("Sản phẩm '{$product->name}' cần chọn đủ {$item['quantity']} serial, hiện có " . count($serialIds) . '.');
                 }

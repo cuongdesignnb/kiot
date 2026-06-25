@@ -16,6 +16,7 @@ use App\Services\ProductExcel\ProductExcelExportService;
 use App\Services\ProductExcel\ProductExcelFieldCatalog;
 use App\Services\ProductExcel\ProductExcelImportService;
 use App\Services\ProductSearchService;
+use Illuminate\Validation\ValidationException;
 
 class ProductController extends Controller
 {
@@ -25,6 +26,10 @@ class ProductController extends Controller
 
         if ($request->boolean('active_only')) {
             $query->where('is_active', true);
+        }
+
+        if ($request->boolean('inventory_only')) {
+            $query->where('type', '!=', 'service');
         }
 
         if ($request->filled('search')) {
@@ -68,8 +73,20 @@ class ProductController extends Controller
         $result = $products->map(function ($product) use ($bookPriceByProductId, $priceBookName, $priceBookId) {
             $bookPrice = $bookPriceByProductId->get($product->id);
             $sellingPrice = $bookPrice ?? $product->retail_price ?? $product->cost_price ?? 0;
+            $flags = $product->isService()
+                ? [
+                    'is_service' => true,
+                    'tracks_inventory' => false,
+                    'has_serial' => false,
+                    'sellable_quantity' => null,
+                    'stock_display' => '---',
+                ]
+                : [
+                    'is_service' => false,
+                    'tracks_inventory' => true,
+                ];
 
-            return array_merge($product->toArray(), [
+            return array_merge($product->toArray(), $flags, [
                 'selling_price' => (float) $sellingPrice,
                 'price_book_id' => $priceBookId,
                 'price_book_name' => $priceBookName,
@@ -132,6 +149,7 @@ class ProductController extends Controller
 
         // Lọc theo tồn kho
         if ($request->filled('stock_filter')) {
+            $query->where('type', '!=', 'service');
             switch ($request->input('stock_filter')) {
                 case 'in_stock':
                     $query->where('stock_quantity', '>', 0);
@@ -163,6 +181,22 @@ class ProductController extends Controller
 
         // Append serial counts for serial products
         $products->getCollection()->transform(function ($product) use ($searchTerm, $serialLike) {
+            if ($product->isService()) {
+                $product->is_service = true;
+                $product->tracks_inventory = false;
+                $product->has_serial = false;
+                $product->stock_display = '---';
+                $product->in_stock_count = null;
+                $product->ready_count = null;
+                $product->repairing_count = null;
+                $product->dismantled_count = null;
+                $product->total_serial_count = null;
+                $product->avg_final_cost = 0;
+                $product->matched_serials = [];
+
+                return $product;
+            }
+
             if ($product->has_serial) {
                 $inStockSerials = $product->serialImeis()->where('status', 'in_stock');
                 // Tồn kho = tất cả serial có status 'in_stock' (kể cả đang sửa chữa)
@@ -246,6 +280,7 @@ class ProductController extends Controller
             'technician_price' => 'nullable|numeric|min:0',
             'stock_quantity' => 'numeric|min:0',
             'min_stock' => 'numeric|min:0',
+            'max_stock' => 'nullable|numeric|min:0',
             'has_serial' => 'boolean',
             'has_variants' => 'boolean',
             'sell_directly' => 'boolean',
@@ -276,6 +311,8 @@ class ProductController extends Controller
             'maintenance_policies.*.duration_value' => 'required_with:maintenance_policies|integer|min:0|max:1200',
             'maintenance_policies.*.duration_unit' => 'required_with:maintenance_policies|in:day,month,year',
         ]);
+
+        $validatedData = $this->normalizeServicePayload($validatedData);
 
         // Step 24.9 — normalise + derive primary warranty_months for back-compat
         $normalizer = app(\App\Services\ProductWarrantyPolicyNormalizer::class);
@@ -454,6 +491,7 @@ class ProductController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
+            'type' => 'nullable|in:standard,service,combo,manufactured',
             'sku' => 'nullable|string|unique:products,sku,' . $product->id,
             'barcode' => 'nullable|string',
             'category_id' => 'nullable|exists:categories,id',
@@ -463,6 +501,7 @@ class ProductController extends Controller
             'technician_price' => 'nullable|numeric|min:0',
             'stock_quantity' => 'numeric|min:0',
             'min_stock' => 'numeric|min:0',
+            'max_stock' => 'nullable|numeric|min:0',
             'has_serial' => 'boolean',
             'has_variants' => 'boolean',
             'sell_directly' => 'boolean',
@@ -490,6 +529,12 @@ class ProductController extends Controller
             'maintenance_policies.*.duration_unit' => 'required_with:maintenance_policies|in:day,month,year',
         ]);
 
+        $validated['type'] = $validated['type'] ?? $product->type ?? 'standard';
+        if ($validated['type'] === 'service' && !$product->isService()) {
+            $this->assertCanConvertToService($product);
+        }
+        $validated = $this->normalizeServicePayload($validated);
+
         // Step 24.9 — normalise + derive primary warranty_months
         $normalizer = app(\App\Services\ProductWarrantyPolicyNormalizer::class);
         if (array_key_exists('warranty_policies', $validated) || array_key_exists('warranty_months', $validated)) {
@@ -510,7 +555,7 @@ class ProductController extends Controller
 
         // Serial products: stock_quantity is managed by purchase/sale flows,
         // never allow the Edit form to overwrite it
-        if ($product->has_serial) {
+        if ($product->has_serial && ($validated['type'] ?? $product->type) !== 'service') {
             unset($validated['stock_quantity']);
         }
 
@@ -566,6 +611,46 @@ class ProductController extends Controller
         }
 
         return redirect()->route('products.index')->with('success', 'Cập nhật hàng hóa thành công!');
+    }
+
+    private function normalizeServicePayload(array $data): array
+    {
+        if (($data['type'] ?? null) !== 'service') {
+            return $data;
+        }
+
+        $data['cost_price'] = 0;
+        $data['last_purchase_price'] = 0;
+        $data['inventory_total_cost'] = 0;
+        $data['stock_quantity'] = 0;
+        $data['min_stock'] = 0;
+        $data['max_stock'] = null;
+        $data['has_serial'] = false;
+        $data['has_variants'] = false;
+        $data['weight'] = null;
+        $data['location'] = null;
+        $data['variants'] = [];
+
+        return $data;
+    }
+
+    private function assertCanConvertToService(Product $product): void
+    {
+        $hasInventory = (float) ($product->stock_quantity ?? 0) > 0
+            || $product->serialImeis()->exists()
+            || \App\Models\StockMovement::where('product_id', $product->id)->exists()
+            || \App\Models\PurchaseItem::where('product_id', $product->id)->exists()
+            || \App\Models\StockTransferItem::where('product_id', $product->id)->exists()
+            || \App\Models\StockTakeItem::where('product_id', $product->id)->exists()
+            || \App\Models\DamageItem::where('product_id', $product->id)->exists()
+            || \App\Models\PurchaseReturnItem::where('product_id', $product->id)->exists()
+            || \App\Models\TaskPart::where('product_id', $product->id)->exists();
+
+        if ($hasInventory) {
+            throw ValidationException::withMessages([
+                'type' => 'Không thể đổi hàng hóa đã phát sinh tồn kho/serial/chứng từ kho sang Dịch vụ.',
+            ]);
+        }
     }
 
     public function inventoryCard(Product $product)

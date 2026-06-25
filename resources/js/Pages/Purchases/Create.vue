@@ -364,6 +364,7 @@ watch(searchQuery, (val) => {
                 params: {
                     search: keyword,
                     active_only: 1,
+                    inventory_only: 1,
                 },
             });
             if (seq === productSearchSeq) {
@@ -383,6 +384,11 @@ watch(searchQuery, (val) => {
 });
 
 const selectProduct = (product) => {
+    if (product?.type === 'service' || product?.is_service || product?.tracks_inventory === false) {
+        productSearchError.value = 'Dịch vụ không quản lý tồn kho nên không thể nhập hàng.';
+        return;
+    }
+
     const existing = items.value.find(i => i.product_id === product.id);
     if (!existing) {
         items.value.unshift({ 

@@ -508,6 +508,9 @@ class TaskService
     {
         return DB::transaction(function () use ($task, $productId, $quantity, $notes, $exportedBy, $serialIds) {
             $product = Product::findOrFail($productId);
+            if ($product->isService()) {
+                throw new \RuntimeException("Dịch vụ \"{$product->name}\" không quản lý tồn kho nên không thể dùng làm linh kiện.");
+            }
 
             // ── Serial validation cho linh kiện has_serial ──
             if ($product->has_serial) {
@@ -760,6 +763,9 @@ class TaskService
             }
 
             $product = Product::findOrFail($productId);
+            if ($product->isService()) {
+                throw new \RuntimeException("Dịch vụ \"{$product->name}\" không quản lý tồn kho nên không thể nhập bóc máy.");
+            }
             $cost = $unitCost ?? (float) ($product->cost_price ?? 0);
             $totalCost = $cost * $quantity;
 
@@ -922,6 +928,9 @@ class TaskService
         $product = Product::find($part->product_id);
         if (!$product) {
             throw new \RuntimeException('Không tìm thấy sản phẩm linh kiện output.');
+        }
+        if ($product->isService()) {
+            throw new \RuntimeException("Dịch vụ \"{$product->name}\" không quản lý tồn kho nên không thể hoàn tác linh kiện.");
         }
 
         $quantity = (int) $part->quantity;

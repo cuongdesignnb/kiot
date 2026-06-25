@@ -389,7 +389,7 @@ class OrderReturnController extends Controller
 
                 // Xác định serial cần khôi phục (nếu hàng serial)
                 $restoredSerials = collect();
-                if ($product->has_serial) {
+                if ($product->tracksInventory() && $product->has_serial) {
                     if (!empty($item['serial_ids'])) {
                         $restoredSerials = SerialImei::whereIn('id', $item['serial_ids'])
                             ->where('product_id', $product->id)
@@ -418,14 +418,14 @@ class OrderReturnController extends Controller
                 // Tính giá vốn hoàn lại (snapshot lúc bán) — ƯU TIÊN invoice_item.cost_price
                 $restoredCostPerUnit = 0.0;
                 if ($invoiceItem) {
-                    $restoredCostPerUnit = (float) $invoiceItem->cost_price;
+                    $restoredCostPerUnit = $product->tracksInventory() ? (float) $invoiceItem->cost_price : 0.0;
                 } else {
                     // Không có thông tin gốc — fallback dùng cost hiện tại
-                    $restoredCostPerUnit = (float) $product->cost_price;
+                    $restoredCostPerUnit = $product->tracksInventory() ? (float) $product->cost_price : 0.0;
                 }
 
                 // RR-08: lưu serial_ids đã trả để cancel rollback đúng
-                $serialIdsForItem = $product->has_serial
+                $serialIdsForItem = $product->tracksInventory() && $product->has_serial
                     ? $restoredSerials->pluck('id')->map(fn ($id) => (int) $id)->all()
                     : null;
 
@@ -439,6 +439,10 @@ class OrderReturnController extends Controller
                     'cost_price' => $restoredCostPerUnit,
                     'serial_ids' => !empty($serialIdsForItem) ? $serialIdsForItem : null,
                 ]);
+
+                if (!$product->tracksInventory()) {
+                    continue;
+                }
 
                 // BQ DI ĐỘNG: phục hồi tồn ở cost lúc bán
                 \App\Services\MovingAvgCostingService::applySaleReturn(
@@ -581,7 +585,7 @@ class OrderReturnController extends Controller
 
             // 1. Rollback stock: trừ lại tồn kho đã cộng (đảo ngược applySaleReturn)
             foreach ($return->items as $item) {
-                if ($item->product) {
+                if ($item->product && $item->product->tracksInventory()) {
                     $unitCost = (float) ($item->cost_price ?: $item->product->cost_price ?? 0);
 
                     // BQ DI ĐỘNG: rút khỏi tồn ở chính cost lúc trả hàng (đảo ngược applySaleReturn)

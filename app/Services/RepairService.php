@@ -74,6 +74,9 @@ class RepairService
     {
         return DB::transaction(function () use ($repair, $productId, $quantity, $notes, $exportedBy) {
             $product = Product::findOrFail($productId);
+            if ($product->isService()) {
+                throw new \RuntimeException("Dịch vụ \"{$product->name}\" không quản lý tồn kho nên không thể dùng làm linh kiện.");
+            }
 
             if ($product->stock_quantity < $quantity) {
                 throw new \RuntimeException("Tồn kho linh kiện \"{$product->name}\" không đủ (còn {$product->stock_quantity}, cần {$quantity}).");

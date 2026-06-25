@@ -166,7 +166,12 @@ class PosReturnExchangeService
                     'exchange.items' => "San pham '{$product->name}' co serial hang doi bi trung.",
                 ]);
             }
-            if ($product->has_serial) {
+            if ($product->isService() && !empty($serialIds)) {
+                throw ValidationException::withMessages([
+                    'exchange.items' => "Sản phẩm '{$product->name}' là dịch vụ, không quản lý Serial/IMEI.",
+                ]);
+            }
+            if ($product->tracksInventory() && $product->has_serial) {
                 if (count($serialIds) !== $qty) {
                     throw ValidationException::withMessages([
                         'exchange.items' => "San pham '{$product->name}' can chon du {$qty} serial hang doi.",
@@ -178,7 +183,7 @@ class PosReturnExchangeService
                         'exchange.items' => "San pham '{$product->name}' co serial hang doi khong hop le.",
                     ]);
                 }
-            } elseif ((float) $product->stock_quantity < $qty) {
+            } elseif ($product->tracksInventory() && (float) $product->stock_quantity < $qty) {
                 throw ValidationException::withMessages([
                     'exchange.items' => "San pham '{$product->name}' khong du ton kho hang doi (con {$product->stock_quantity}).",
                 ]);

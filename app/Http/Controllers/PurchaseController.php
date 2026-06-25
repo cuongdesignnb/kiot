@@ -214,6 +214,11 @@ class PurchaseController extends Controller
         $globalSeenSerials = [];
         foreach ($request->items as $i => $item) {
             $product = Product::find($item['product_id']);
+            if ($product && $product->isService()) {
+                return back()->withErrors([
+                    "items.{$i}.product_id" => "Dịch vụ \"{$product->name}\" không quản lý tồn kho nên không thể nhập hàng.",
+                ]);
+            }
             if (!$product || !$product->has_serial) continue;
 
             $serials = array_values(array_filter(array_map(
@@ -687,6 +692,9 @@ class PurchaseController extends Controller
 
             foreach ($normalizedItems as $itemData) {
                 $product = Product::lockForUpdate()->findOrFail($itemData['product_id']);
+                if ($product->isService()) {
+                    throw new \RuntimeException("Dịch vụ \"{$product->name}\" không quản lý tồn kho nên không thể nhập hàng.");
+                }
                 $oldItem = $oldItems->get($product->id);
                 $oldQty = ($wasStocked && $oldItem) ? (int) $oldItem->quantity : 0;
                 $oldPrice = $oldItem ? (float) $oldItem->price : 0.0;

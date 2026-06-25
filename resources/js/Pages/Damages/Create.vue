@@ -209,7 +209,7 @@ watch(searchQuery, (val) => {
         isSearchingProduct.value = true;
         try {
             const response = await axios.get('/api/products/search', {
-                params: { search: val }
+                params: { search: val, active_only: 1, inventory_only: 1 }
             });
             filteredProducts.value = response.data;
         } catch (error) {

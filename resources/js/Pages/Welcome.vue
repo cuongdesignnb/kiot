@@ -743,7 +743,10 @@ const formatDate = (val) => {
                                 </td>
                                 <td class="p-3 text-right">
                                     <!-- Sản phẩm có Serial -->
-                                    <template v-if="product.has_serial">
+                                    <template v-if="product.is_service || product.type === 'service' || product.tracks_inventory === false">
+                                        <span class="font-bold text-gray-400">---</span>
+                                    </template>
+                                    <template v-else-if="product.has_serial">
                                         <div class="text-[13px] font-bold text-gray-800">{{ product.in_stock_count || 0 }} <span class="text-gray-400 font-normal">tồn kho</span></div>
                                         <div class="flex flex-col items-end gap-0.5 mt-1">
                                             <span v-if="product.ready_count > 0" class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-bold inline-flex items-center gap-0.5">
@@ -1321,29 +1324,27 @@ const formatDate = (val) => {
                                                                 class="p-2.5 text-right font-bold text-gray-800"
                                                             >
                                                                 {{
-                                                                    product.stock_quantity ||
-                                                                    0
+                                                                    (product.is_service || product.type === 'service' || product.tracks_inventory === false)
+                                                                        ? '---'
+                                                                        : (product.stock_quantity || 0)
                                                                 }}
                                                             </td>
                                                             <td
                                                                 class="p-2.5 text-right"
                                                             >
                                                                 {{
-                                                                    formatCurrency(
-                                                                        product.cost_price,
-                                                                    )
+                                                                    (product.is_service || product.type === 'service' || product.tracks_inventory === false)
+                                                                        ? '---'
+                                                                        : formatCurrency(product.cost_price)
                                                                 }}
                                                             </td>
                                                             <td
                                                                 class="p-2.5 text-right font-bold text-blue-700"
                                                             >
                                                                 {{
-                                                                    formatCurrency(
-                                                                        (product.stock_quantity ||
-                                                                            0) *
-                                                                            (product.cost_price ||
-                                                                                0),
-                                                                    )
+                                                                    (product.is_service || product.type === 'service' || product.tracks_inventory === false)
+                                                                        ? '---'
+                                                                        : formatCurrency((product.stock_quantity || 0) * (product.cost_price || 0))
                                                                 }}
                                                             </td>
                                                         </tr>
@@ -1361,8 +1362,9 @@ const formatDate = (val) => {
                                                                 class="p-2.5 text-right text-gray-800"
                                                             >
                                                                 {{
-                                                                    product.stock_quantity ||
-                                                                    0
+                                                                    (product.is_service || product.type === 'service' || product.tracks_inventory === false)
+                                                                        ? '---'
+                                                                        : (product.stock_quantity || 0)
                                                                 }}
                                                             </td>
                                                             <td
@@ -1372,12 +1374,9 @@ const formatDate = (val) => {
                                                                 class="p-2.5 text-right text-blue-700"
                                                             >
                                                                 {{
-                                                                    formatCurrency(
-                                                                        (product.stock_quantity ||
-                                                                            0) *
-                                                                            (product.cost_price ||
-                                                                                0),
-                                                                    )
+                                                                    (product.is_service || product.type === 'service' || product.tracks_inventory === false)
+                                                                        ? '---'
+                                                                        : formatCurrency((product.stock_quantity || 0) * (product.cost_price || 0))
                                                                 }}
                                                             </td>
                                                         </tr>

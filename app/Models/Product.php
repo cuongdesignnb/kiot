@@ -100,6 +100,21 @@ class Product extends Model
         return $this->hasMany(SerialImei::class);
     }
 
+    public function isService(): bool
+    {
+        return $this->type === 'service';
+    }
+
+    public function tracksInventory(): bool
+    {
+        return !$this->isService();
+    }
+
+    public function canHaveSerial(): bool
+    {
+        return $this->type === 'standard';
+    }
+
     /**
      * Lấy ngày nhập hàng sớm nhất cho sản phẩm này.
      * Fallback về created_at nếu chưa có phiếu nhập nào.
@@ -133,7 +148,7 @@ class Product extends Model
      */
     public function recomputeFromSerials(): void
     {
-        if (!$this->has_serial) {
+        if (!$this->has_serial || $this->isService()) {
             return;
         }
 

@@ -178,12 +178,17 @@ class InvoiceSaleService
             return;
         }
 
+        $isService = $product->isService();
         $serialIds = $item['serial_ids'] ?? [];
 
+        if ($isService && !empty($serialIds)) {
+            throw new \Exception("Sản phẩm '{$product->name}' là dịch vụ, không quản lý Serial/IMEI.");
+        }
+
         // Validate stock / serial
-        if ($product->has_serial && !empty($serialIds)) {
+        if (!$isService && $product->has_serial && !empty($serialIds)) {
             $this->assertSerialsValid($product, $serialIds);
-        } elseif (!$allowOversell && $product->stock_quantity < $item['quantity']) {
+        } elseif (!$isService && !$allowOversell && $product->stock_quantity < $item['quantity']) {
             throw new \Exception(
                 "Sản phẩm [{$product->sku}] {$product->name} không đủ tồn kho "
                 . "(Còn: {$product->stock_quantity}). Không cho phép tồn kho âm."
@@ -191,12 +196,12 @@ class InvoiceSaleService
         }
 
         // Snapshot BQ trước khi trừ tồn (dùng cho InvoiceItem.cost_price + StockMovement.unit_cost)
-        $snapshotCostPrice = (float) ($product->cost_price ?? 0);
+        $snapshotCostPrice = $isService ? 0.0 : (float) ($product->cost_price ?? 0);
 
         // ─── Bước A: Tạo InvoiceItem TRƯỚC ───
         $serialStr = null;
         $soldSerials = collect();
-        if ($product->has_serial && !empty($serialIds)) {
+        if (!$isService && $product->has_serial && !empty($serialIds)) {
             $soldSerials = SerialImei::whereIn('id', $serialIds)
                 ->where('product_id', $product->id)
                 ->get();
@@ -229,6 +234,10 @@ class InvoiceSaleService
             $serial->invoice_id      = $invoice->id;
             $serial->sold_cost_price = $snapshotCostPrice;
             $serial->save();
+        }
+
+        if ($isService) {
+            return;
         }
 
         // ─── Bước C: Trừ tồn + costing ───
@@ -335,7 +344,7 @@ class InvoiceSaleService
 
         foreach ($items as $item) {
             $product = Product::find($item['product_id']);
-            if ($product) {
+            if ($product && $product->tracksInventory()) {
                 $earliest = $product->getEarliestImportDate();
                 if ($earliest && $txDate->lt($earliest)) {
                     throw new \Exception(
@@ -357,7 +366,7 @@ class InvoiceSaleService
         }
         foreach ($items as $item) {
             $product = Product::find($item['product_id']);
-            if ($product && $product->stock_quantity < $item['quantity']) {
+            if ($product && $product->tracksInventory() && $product->stock_quantity < $item['quantity']) {
                 throw new \Exception(
                     "Sản phẩm '{$product->name}' không đủ tồn kho (còn {$product->stock_quantity})."
                 );
@@ -381,7 +390,7 @@ class InvoiceSaleService
                 continue;
             }
             $product = Product::find($productId);
-            if (!$product || !$product->has_serial) {
+            if (!$product || !$product->tracksInventory() || !$product->has_serial) {
                 continue;
             }
             $serialIds = array_values(array_filter(array_map('intval', (array) ($item['serial_ids'] ?? []))));

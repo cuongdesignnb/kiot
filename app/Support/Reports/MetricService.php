@@ -15,8 +15,8 @@ use Illuminate\Support\Facades\Schema;
  * Conventions (see metric_dictionary_reports.md):
  *  - gross_revenue = SUM(invoices.subtotal)  [NOT invoices.total]
  *  - return_value  = SUM(returns.subtotal)
- *  - cogs_sold     = SUM(items.qty * COALESCE(NULLIF(items.cost_price,0), products.cost_price, 0))
- *  - cogs_returned = SUM(return_items.qty * COALESCE(return_items.import_price, 0))
+ *  - cogs_sold     = SUM(non-service items.qty * COALESCE(NULLIF(items.cost_price,0), products.cost_price, 0))
+ *  - cogs_returned = SUM(non-service return_items.qty * COALESCE(return_items.import_price, 0))
  *  - cogs_net      = cogs_sold - cogs_returned
  *  - net_revenue   = gross_revenue - invoice_discount - return_value
  *  - gross_profit  = net_revenue - cogs_net
@@ -84,8 +84,8 @@ class MetricService
         $returnIds    = (clone $retQ)->pluck('id');
 
         $costExpr = $hasItemCost
-            ? 'invoice_items.quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0)'
-            : 'invoice_items.quantity * COALESCE(products.cost_price, 0)';
+            ? "CASE WHEN products.type = 'service' THEN 0 ELSE invoice_items.quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0) END"
+            : "CASE WHEN products.type = 'service' THEN 0 ELSE invoice_items.quantity * COALESCE(products.cost_price, 0) END";
 
         $cogsSold = $invoiceIds->isEmpty() ? 0.0 : (float) DB::table('invoice_items')
             ->join('products', 'invoice_items.product_id', '=', 'products.id')
@@ -95,8 +95,9 @@ class MetricService
         $cogsReturned = 0.0;
         if ($returnIds->isNotEmpty() && $hasReturnItemCost) {
             $cogsReturned = (float) DB::table('return_items')
+                ->join('products', 'return_items.product_id', '=', 'products.id')
                 ->whereIn('return_id', $returnIds)
-                ->sum(DB::raw("return_items.quantity * COALESCE(return_items.$hasReturnItemCost, 0)"));
+                ->sum(DB::raw("CASE WHEN products.type = 'service' THEN 0 ELSE return_items.quantity * COALESCE(return_items.$hasReturnItemCost, 0) END"));
         }
 
         $cogsNet     = $cogsSold - $cogsReturned;

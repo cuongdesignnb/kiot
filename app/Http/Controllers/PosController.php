@@ -119,6 +119,17 @@ class PosController extends Controller
         $availability = app(SerialAvailabilityService::class);
         $serialLike = $productSearch->serialLikePattern($search);
         $products->each(function ($p) use ($search, $serialLike, $availability) {
+            if ($p->isService()) {
+                $p->is_service = true;
+                $p->tracks_inventory = false;
+                $p->has_serial = false;
+                $p->sellable_quantity = null;
+                $p->stock_display = '---';
+                $p->matched_serials = [];
+
+                return;
+            }
+
             $p->sellable_quantity = $p->has_serial
                 ? max(0, $p->stock_quantity - $p->repairing_count)
                 : $p->stock_quantity;

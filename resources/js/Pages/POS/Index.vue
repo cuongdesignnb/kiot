@@ -713,6 +713,16 @@ const productAllowsDecimalQuantity = (item) => {
     );
 };
 
+const isServiceProduct = (productOrLine) => {
+    const product = productOrLine?.product || productOrLine;
+    return !!(product?.is_service || product?.type === 'service' || product?.tracks_inventory === false);
+};
+
+const productStockDisplay = (productOrLine) => {
+    const product = productOrLine?.product || productOrLine;
+    return isServiceProduct(product) ? '---' : (product?.stock_display ?? product?.stock_quantity ?? 0);
+};
+
 const formatQuantityValue = (value) => {
     const n = Number(value) || 0;
     return Number.isInteger(n) ? String(n) : String(n).replace(/\.?0+$/, '');
@@ -725,6 +735,7 @@ const syncQuantityInput = (item) => {
 
 const availableCartQuantity = (item) => {
     if (!item?.product) return 0;
+    if (isServiceProduct(item)) return Number.POSITIVE_INFINITY;
     if (item.is_serial_product && item.product.sellable_quantity !== undefined) {
         return Number(item.product.sellable_quantity) || 0;
     }
@@ -786,7 +797,7 @@ const setCartQuantity = (item, qty, options = {}) => {
     }
 
     const available = availableCartQuantity(item);
-    if (qty > available) {
+    if (Number.isFinite(available) && qty > available) {
         if (!allowPosOversell.value) {
             if (showAlert) alert('Số lượng vượt quá tồn kho khả dụng');
             syncQuantityInput(item);
@@ -1265,6 +1276,7 @@ const closeExchangeSearch = (tab) => {
 const exchangeAvailableQty = (productOrLine) => {
     const product = productOrLine?.product || productOrLine;
     if (!product) return 0;
+    if (isServiceProduct(product)) return Number.POSITIVE_INFINITY;
     const raw = product.has_serial && product.sellable_quantity !== undefined
         ? product.sellable_quantity
         : product.stock_quantity;
@@ -1320,6 +1332,11 @@ const exchangeLineAmount = (item) => {
 const validateExchangeLineQty = (line) => {
     if (!line) return false;
     const available = exchangeAvailableQty(line);
+    if (isServiceProduct(line)) {
+        const qty = Number(line.quantity) || 0;
+        line.stockWarning = '';
+        return qty > 0;
+    }
     if (line.is_serial_product) {
         line.quantity = line.serials?.length || 0;
         line.stockWarning = line.quantity > available ? `Vượt tồn khả dụng (${available})` : '';
@@ -1335,6 +1352,12 @@ const setExchangeQty = (line, value) => {
     const available = exchangeAvailableQty(line);
     let next = Number.parseInt(value, 10);
     if (!Number.isFinite(next) || next < 1) next = 1;
+    if (!Number.isFinite(available)) {
+        line.quantity = next;
+        line.stockWarning = '';
+        normalizeExchangeLineDiscount(line);
+        return;
+    }
     if (available <= 0) {
         line.quantity = 0;
         line.stockWarning = 'Hết tồn kho';
@@ -1395,7 +1418,7 @@ const searchExchangeProducts = async (tab) => {
 const addExchangeItem = async (tab, product) => {
     const rs = tab?.returnState;
     if (!rs || !product) return;
-    if (exchangeAvailableQty(product) <= 0) {
+    if (!isServiceProduct(product) && exchangeAvailableQty(product) <= 0) {
         rs.error = 'Hàng đổi đã hết tồn kho, không thể chọn để đổi.';
         return;
     }
@@ -1793,7 +1816,7 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                             <div class="flex-1 mr-3">
                                 <div class="font-bold text-[13px] text-gray-800">{{ product.name }}</div>
                                 <div class="text-[11px] text-gray-500 mt-0.5">
-                                    {{ product.sku }} | Tồn: {{ product.stock_quantity }}
+                                    {{ product.sku }} | Tồn: {{ productStockDisplay(product) }}
                                     <span v-if="product.repairing_count > 0" class="text-yellow-600 font-semibold">({{ product.repairing_count }} đang sửa)</span>
                                     <span v-if="product.has_serial && product.sellable_quantity !== undefined" class="text-green-600 font-semibold ml-1">| Sẵn: {{ product.sellable_quantity }}</span>
                                 </div>
@@ -2518,13 +2541,13 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                                         :key="`exchange-${product.id}`"
                                         @mousedown.prevent="addExchangeItem(activeTab, product)"
                                         class="flex cursor-pointer items-start justify-between gap-3 border-b border-gray-100 px-3 py-2.5 last:border-0 hover:bg-amber-50"
-                                        :class="exchangeAvailableQty(product) <= 0 ? 'opacity-40 pointer-events-none' : ''"
+                                        :class="!isServiceProduct(product) && exchangeAvailableQty(product) <= 0 ? 'opacity-40 pointer-events-none' : ''"
                                     >
                                         <div class="min-w-0 flex-1">
                                             <div class="truncate text-sm font-semibold text-gray-800">{{ product.name }}</div>
                                             <div class="text-xs text-gray-500">
-                                                {{ product.sku }} · Tồn: {{ product.stock_quantity }} · Đặt: 0<span v-if="product.has_serial"> · Sẵn: {{ product.sellable_quantity }}</span>
-                                                <span v-if="exchangeAvailableQty(product) <= 0" class="ml-1 font-semibold text-red-600">Hết tồn</span>
+                                                {{ product.sku }} · Tồn: {{ productStockDisplay(product) }} · Đặt: 0<span v-if="product.has_serial"> · Sẵn: {{ product.sellable_quantity }}</span>
+                                                <span v-if="!isServiceProduct(product) && exchangeAvailableQty(product) <= 0" class="ml-1 font-semibold text-red-600">Hết tồn</span>
                                             </div>
                                             <div v-if="product.matched_serials && product.matched_serials.length" class="mt-1 flex flex-wrap gap-1">
                                                 <span
@@ -2559,7 +2582,7 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                             <div class="col-span-3 min-w-0">
                                     <div class="font-semibold text-sm text-gray-800 truncate">{{ item.product.name }}</div>
                                     <div class="text-xs text-gray-500">
-                                        {{ item.product.sku }} · Tồn: {{ item.product.stock_quantity ?? 0 }} · Đặt: 0<span v-if="item.is_serial_product"> · Sẵn: {{ item.product.sellable_quantity ?? exchangeAvailableQty(item) }} · Serial/IMEI</span>
+                                        {{ item.product.sku }} · Tồn: {{ productStockDisplay(item) }} · Đặt: 0<span v-if="item.is_serial_product"> · Sẵn: {{ item.product.sellable_quantity ?? exchangeAvailableQty(item) }} · Serial/IMEI</span>
                                     </div>
                                 </div>
                                 <div class="col-span-2 flex items-center justify-center">
@@ -2573,12 +2596,12 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                                             @input="setExchangeQty(item, $event.target.value)"
                                             type="number"
                                             min="1"
-                                            :max="exchangeAvailableQty(item)"
+                                            :max="Number.isFinite(exchangeAvailableQty(item)) ? exchangeAvailableQty(item) : undefined"
                                             class="mx-1 w-14 rounded border border-gray-300 px-1 py-1 text-center text-sm font-bold tabular-nums focus:outline-none focus:ring-1 focus:ring-amber-500"
                                         />
                                         <button
                                             @click="updateExchangeQty(item, 1)"
-                                            :disabled="(Number(item.quantity) || 0) >= exchangeAvailableQty(item)"
+                                            :disabled="Number.isFinite(exchangeAvailableQty(item)) && (Number(item.quantity) || 0) >= exchangeAvailableQty(item)"
                                             class="w-7 h-7 border rounded bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
                                         >+</button>
                                     </template>

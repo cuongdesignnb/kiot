@@ -1,6 +1,6 @@
 <script setup>
 import { Head, useForm, Link } from '@inertiajs/vue3';
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import axios from 'axios';
 import AppLayout from '../../Layouts/AppLayout.vue';
 import MoneyInput from '../../Components/MoneyInput.vue';
@@ -179,6 +179,20 @@ const form = useForm({
         }))
         : [],
 });
+
+const isServiceProduct = computed(() => form.type === 'service');
+
+watch(isServiceProduct, (isService) => {
+    if (!isService) return;
+    form.cost_price = 0;
+    form.stock_quantity = 0;
+    form.min_stock = 0;
+    form.has_serial = false;
+    form.has_variants = false;
+    form.weight = '';
+    form.location = '';
+    form.variants = [];
+}, { immediate: true });
 
 // Step 24.9 — warranty/maintenance row helpers + active product tab
 const productActiveTab = ref('info'); // 'info' | 'warranty'
@@ -448,11 +462,11 @@ const generateVariants = () => {
                                     <input type="checkbox" v-model="form.allow_point_accumulation" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4">
                                     Tích điểm
                                 </label>
-                                <label v-if="props.product.type === 'standard'" class="flex items-center gap-2 text-sm text-gray-700 font-medium pt-2 border-t border-gray-100 cursor-pointer">
+                                <label v-if="!isServiceProduct && form.type === 'standard'" class="flex items-center gap-2 text-sm text-gray-700 font-medium pt-2 border-t border-gray-100 cursor-pointer">
                                     <input type="checkbox" v-model="form.has_serial" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4">
                                     Quản lý Serial/IMEI
                                 </label>
-                                <label v-if="props.product.type === 'standard'" class="flex items-center gap-2 text-sm text-gray-700 font-medium cursor-pointer">
+                                <label v-if="!isServiceProduct && form.type === 'standard'" class="flex items-center gap-2 text-sm text-gray-700 font-medium cursor-pointer">
                                     <input type="checkbox" v-model="form.has_variants" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4">
                                     Có biến thể (màu sắc, kích thước...)
                                 </label>
@@ -536,11 +550,11 @@ const generateVariants = () => {
                                     </div>
 
                                     <!-- Vị trí & Trọng lượng -->
-                                    <div>
+                                    <div v-if="!isServiceProduct">
                                         <label class="block text-sm font-semibold text-gray-700 mb-1">Vị trí lưu kho</label>
                                         <input type="text" v-model="form.location" class="w-full border border-gray-300 rounded p-2 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-sm text-gray-800">
                                     </div>
-                                    <div>
+                                    <div v-if="!isServiceProduct">
                                         <label class="block text-sm font-semibold text-gray-700 mb-1">Trọng lượng</label>
                                         <input type="text" v-model="form.weight" class="w-full border border-gray-300 rounded p-2 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-sm text-gray-800">
                                     </div>
@@ -551,8 +565,10 @@ const generateVariants = () => {
                                     <div>
                                         <label class="block text-sm font-semibold text-gray-700 mb-1">Giá vốn</label>
                                         <MoneyInput v-model="form.cost_price" suffix
-                                                   input-class="w-full border border-gray-300 rounded p-2 pr-7 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-right text-base font-semibold text-gray-800"
+                                                   :disabled="isServiceProduct"
+                                                   :input-class="'w-full border border-gray-300 rounded p-2 pr-7 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-right text-base font-semibold' + (isServiceProduct ? ' bg-gray-50 text-gray-400 cursor-not-allowed' : ' text-gray-800')"
                                         />
+                                        <p v-if="isServiceProduct" class="text-[11px] text-gray-400 mt-1 italic">Dịch vụ không tính giá vốn tồn kho</p>
                                         <span v-if="form.errors.cost_price" class="text-red-500 text-xs mt-1 block">{{ form.errors.cost_price }}</span>
                                     </div>
                                     <div>
@@ -581,7 +597,7 @@ const generateVariants = () => {
                                     </div>
 
                                     <!-- Tồn kho -->
-                                    <template v-if="props.product.type === 'standard'">
+                                    <template v-if="!isServiceProduct && form.type === 'standard'">
                                         <div>
                                             <label class="block text-sm font-semibold text-gray-700 mb-1">Tồn kho</label>
                                             <template v-if="form.has_serial">
@@ -600,7 +616,7 @@ const generateVariants = () => {
                                     </template>
 
                                     <!-- BIẾN THỂ / THUỘC TÍNH -->
-                                    <template v-if="form.has_variants && props.product.type === 'standard'">
+                                    <template v-if="form.has_variants && !isServiceProduct && form.type === 'standard'">
                                         <div class="col-span-2 border-t border-gray-200 pt-4 mt-2">
                                             <h4 class="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
                                                 <svg class="w-4 h-4 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"></path></svg>
@@ -768,7 +784,7 @@ const generateVariants = () => {
             </div>
 
             <!-- Serial/IMEI Management Section -->
-            <div v-if="form.has_serial" class="max-w-6xl mx-auto px-4 md:px-6 mt-4">
+            <div v-if="form.has_serial && !isServiceProduct" class="max-w-6xl mx-auto px-4 md:px-6 mt-4">
                 <div class="bg-white rounded border border-gray-200 shadow-sm overflow-hidden">
                     <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
                         <h3 class="text-base font-bold text-gray-800">Quản lý Serial/IMEI</h3>

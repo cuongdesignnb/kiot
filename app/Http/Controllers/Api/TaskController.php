@@ -477,7 +477,7 @@ class TaskController extends Controller
             return response()->json([]);
         }
 
-        $query = Product::query();
+        $query = Product::where('is_active', true)->where('type', '!=', 'service');
         $productSearch->apply($query, $q, [
             'include_serials' => true,
             'serial_relation' => 'serials',

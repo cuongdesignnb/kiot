@@ -398,6 +398,7 @@ class InvoiceController extends Controller
             foreach ($invoice->items as $item) {
                 $product = \App\Models\Product::find($item->product_id);
                 if (!$product) continue;
+                if (!$product->tracksInventory()) continue;
 
                 $qtyBack = (int) $item->quantity;
                 $costAtSale = (float) ($item->cost_price ?? $product->cost_price ?? 0);
