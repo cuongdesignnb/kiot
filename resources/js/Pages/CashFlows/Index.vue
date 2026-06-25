@@ -9,6 +9,7 @@ import SidebarFilter from "@/Components/Filters/SidebarFilter.vue";
 import DateTimePicker from "@/Components/DateTimePicker.vue";
 import MoneyInput from "@/Components/MoneyInput.vue";
 import { useFilters } from "@/composables/useFilters.js";
+import { nowDatetimeLocal, toDatetimeLocalValue } from "@/utils/dateTime.js";
 
 const props = defineProps({
     cashFlows: Object,
@@ -127,7 +128,7 @@ const modalType = ref("receipt"); // receipt or payment
 const form = useForm({
     id: null,
     type: "receipt",
-    time: new Date().toISOString().slice(0, 16),
+    time: nowDatetimeLocal(),
     category: "",
     target_type: "Khác",
     target_id: null,
@@ -343,9 +344,7 @@ const openModal = (type, flow = null) => {
         modalType.value = flow.type;
         form.id = flow.id;
         form.type = flow.type;
-        form.time = flow.time
-            ? new Date(flow.time).toISOString().slice(0, 16)
-            : new Date(flow.created_at).toISOString().slice(0, 16);
+        form.time = toDatetimeLocalValue(flow.time || flow.created_at);
         form.category = flow.category || "";
         form.target_type = flow.target_type || "Khác";
         form.target_id = flow.target_id || null;
@@ -362,7 +361,7 @@ const openModal = (type, flow = null) => {
         modalType.value = type;
         form.id = null;
         form.type = type;
-        form.time = new Date().toISOString().slice(0, 16);
+        form.time = nowDatetimeLocal();
         form.category = "";
         form.target_type = "Khác";
         form.target_id = null;

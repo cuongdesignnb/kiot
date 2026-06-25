@@ -16,6 +16,11 @@ export function pad2(n) {
     return String(n).padStart(2, '0');
 }
 
+export function nowDatetimeLocal() {
+    const d = new Date();
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
 /**
  * Internal: parse any reasonable date value into a JS Date (or null).
  * Accepts: Date object, ISO string, 'yyyy-MM-dd', 'yyyy-MM-ddTHH:mm', 'yyyy-MM-dd HH:mm:ss', number (epoch ms).

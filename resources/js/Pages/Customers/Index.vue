@@ -10,6 +10,7 @@ import DateTimePicker from "@/Components/DateTimePicker.vue";
 import CustomerGroupCombobox from "@/Components/CustomerGroupCombobox.vue";
 import MoneyInput from "@/Components/MoneyInput.vue";
 import { useFilters } from "@/composables/useFilters.js";
+import { nowDatetimeLocal } from "@/utils/dateTime.js";
 import axios from "axios";
 
 const props = defineProps({
@@ -437,9 +438,7 @@ const openDebtModal = async (customer, type) => {
     debtForm.note = "";
     debtForm.mode = "auto";
     // Mặc định ngày điều chỉnh = hiện tại (YYYY-MM-DDTHH:mm cho datetime-local)
-    const _now = new Date();
-    _now.setMinutes(_now.getMinutes() - _now.getTimezoneOffset());
-    debtForm.date = _now.toISOString().slice(0, 16);
+    debtForm.date = nowDatetimeLocal();
     outstandingInvoices.value = [];
     debtPaymentResult.value = null;
 
@@ -560,9 +559,7 @@ const openPaymentDiscountModal = async (customer) => {
     paymentDiscountForm.allocate_to_invoices = true;
     paymentDiscountForm.performed_by = "";
 
-    const _now = new Date();
-    _now.setMinutes(_now.getMinutes() - _now.getTimezoneOffset());
-    paymentDiscountForm.discount_at = _now.toISOString().slice(0, 16);
+    paymentDiscountForm.discount_at = nowDatetimeLocal();
 
     paymentDiscountModal.show = true;
     paymentDiscountModal.loadingInvoices = true;

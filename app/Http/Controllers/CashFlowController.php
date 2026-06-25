@@ -10,6 +10,7 @@ use App\Services\LockPeriodService;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use App\Enums\PaymentMethod;
+use App\Support\BusinessDateTime;
 use App\Support\Filters\FilterableIndex;
 
 class CashFlowController extends Controller
@@ -135,14 +136,14 @@ class CashFlowController extends Controller
         $prefix = $request->type === 'receipt' ? 'PT' : 'PC';
 
         // Lock period check
-        $txDate = $request->time ? \Carbon\Carbon::parse($request->time) : now();
+        $txDate = BusinessDateTime::forCreate($request->input('time'));
         app(LockPeriodService::class)->assertNotLocked($txDate, 'cashflow_create');
 
         $cashFlow = CashFlow::create([
             'code' => $prefix . date('ymdHis') . rand(10, 99),
             'type' => $request->type,
             'amount' => $request->amount,
-            'time' => $request->time ? \Carbon\Carbon::parse($request->time) : now(),
+            'time' => $txDate,
             'category' => $request->category,
             'target_type' => $request->target_type,
             'target_id' => $request->target_id,
@@ -212,13 +213,13 @@ class CashFlowController extends Controller
             );
         }
 
-        $txDate = $request->time ? \Carbon\Carbon::parse($request->time) : $cashFlow->time;
+        $txDate = BusinessDateTime::forUpdate($request->input('time'), $cashFlow->time);
         app(LockPeriodService::class)->assertNotLocked($txDate, 'cashflow_update');
 
         $oldCategory = $cashFlow->category;
 
         $cashFlow->update([
-            'time' => $request->time ? \Carbon\Carbon::parse($request->time) : $cashFlow->time,
+            'time' => $txDate,
             'category' => $request->category,
             'target_type' => $request->target_type,
             'target_id' => $request->target_id,
@@ -323,7 +324,7 @@ class CashFlowController extends Controller
             $type = mb_strtolower(trim($row[2] ?? '')) === 'thu' ? 'receipt' : 'payment';
             CashFlow::create([
                 'code' => trim($row[0]),
-                'time' => trim($row[1] ?? '') ?: now(),
+                'time' => BusinessDateTime::forCreate(trim($row[1] ?? '')),
                 'type' => $type,
                 'amount' => (float) preg_replace('/[^0-9.]/', '', $row[3] ?? '0'),
                 'target_name' => trim($row[4] ?? ''),
@@ -354,13 +355,14 @@ class CashFlowController extends Controller
         }
 
         $refCode = 'CQ' . date('ymdHis') . rand(10, 99);
+        $transferTime = BusinessDateTime::forCreate();
 
         // Phieu chi o quy nguon
         $payment = CashFlow::create([
             'code' => 'PC' . date('ymdHis') . rand(10, 99),
             'type' => 'payment',
             'amount' => $request->amount,
-            'time' => now(),
+            'time' => $transferTime,
             'category' => 'Chuyển quỹ nội bộ',
             'payment_method' => $request->from_method,
             'reference_type' => 'transfer',
@@ -374,7 +376,7 @@ class CashFlowController extends Controller
             'code' => 'PT' . date('ymdHis') . rand(10, 99),
             'type' => 'receipt',
             'amount' => $request->amount,
-            'time' => now(),
+            'time' => $transferTime,
             'category' => 'Chuyển quỹ nội bộ',
             'payment_method' => $request->to_method,
             'bank_account_id' => $request->bank_account_id,

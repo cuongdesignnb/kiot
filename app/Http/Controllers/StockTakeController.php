@@ -9,11 +9,11 @@ use App\Models\StockTake;
 use App\Models\StockTakeItem;
 use App\Models\Product;
 use App\Enums\StockTakeStatus;
+use App\Support\BusinessDateTime;
 use App\Support\Filters\FilterableIndex;
 use App\Services\LockPeriodService;
 use App\Services\MovingAvgCostingService;
 use App\Services\StockMovementService;
-use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use App\Models\Branch;
 
@@ -73,6 +73,7 @@ class StockTakeController extends Controller
             'items.*.product_id' => 'required|exists:products,id',
             'items.*.actual_stock' => 'required|numeric|min:0',
             'status' => 'required|in:draft,balanced',
+            'action_date' => 'nullable|date',
             'note' => 'nullable|string'
         ]);
 
@@ -118,15 +119,15 @@ class StockTakeController extends Controller
             DB::beginTransaction();
 
             // Lock period check
-            $txDate = $request->action_date ? Carbon::parse($request->action_date) : Carbon::now();
-            app(LockPeriodService::class)->assertNotLocked($txDate, 'stocktake_create');
+            $stockTakeDate = BusinessDateTime::forCreate($request->input('action_date'));
+            app(LockPeriodService::class)->assertNotLocked($stockTakeDate, 'stocktake_create');
 
             $stockTake = StockTake::create([
                 'code' => $request->code ?? 'KK' . time(),
                 'status' => $request->status,
                 'user_name' => 'Trần Văn Tiến', // hardcoded for demo
                 'balancer_name' => $request->status === 'balanced' ? 'Trần Văn Tiến' : null,
-                'balanced_date' => $request->status === 'balanced' ? Carbon::now() : null,
+                'balanced_date' => $request->status === 'balanced' ? $stockTakeDate : null,
                 'note' => $request->note,
                 'total_actual_qty' => array_sum(array_column($serverItems, 'actual_stock')),
                 'total_diff_qty' => array_sum(array_column($serverItems, 'diff_qty')),
@@ -135,13 +136,8 @@ class StockTakeController extends Controller
                 'total_diff_value' => array_sum(array_column($serverItems, 'diff_value'))
             ]);
 
-            if ($request->filled('action_date')) {
-                $stockTake->created_at = Carbon::parse($request->action_date);
-                if ($request->status === 'balanced') {
-                    $stockTake->balanced_date = Carbon::parse($request->action_date);
-                }
-                $stockTake->save();
-            }
+            $stockTake->created_at = $stockTakeDate;
+            $stockTake->save();
 
             foreach ($serverItems as $item) {
                 StockTakeItem::create([
@@ -167,7 +163,8 @@ class StockTakeController extends Controller
                                 $diff > 0 ? StockMovementService::TYPE_ADJUST_IN : StockMovementService::TYPE_ADJUST_OUT,
                                 abs($diff),
                                 $costPerUnit,
-                                $stockTake
+                                $stockTake,
+                                ['moved_at' => $stockTakeDate]
                             );
                         }
                     }
@@ -334,7 +331,8 @@ class StockTakeController extends Controller
                         $diff > 0 ? StockMovementService::TYPE_ADJUST_IN : StockMovementService::TYPE_ADJUST_OUT,
                         abs($diff),
                         $costPerUnit,
-                        $stockTake
+                        $stockTake,
+                        ['moved_at' => $balancedDate]
                     );
                 }
             }
@@ -345,7 +343,7 @@ class StockTakeController extends Controller
             $stockTake->update([
                 'status' => 'balanced',
                 'balancer_name' => auth()->user()?->name ?? 'Hệ thống',
-                'balanced_date' => Carbon::now(),
+                'balanced_date' => $balancedDate,
                 'total_actual_qty' => $stockTake->items->sum('actual_stock'),
                 'total_diff_qty' => $stockTake->items->sum('diff_qty'),
                 'total_diff_increase' => $stockTake->items->where('diff_qty', '>', 0)->sum('diff_qty'),

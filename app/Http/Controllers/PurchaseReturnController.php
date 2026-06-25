@@ -15,6 +15,7 @@ use App\Models\User;
 use App\Enums\PaymentMethod;
 use App\Enums\PurchaseReturnStatus;
 use App\Services\StockMovementService;
+use App\Support\BusinessDateTime;
 use App\Support\Filters\FilterableIndex;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
@@ -283,6 +284,7 @@ class PurchaseReturnController extends Controller
             'items.*.serial_ids' => 'nullable|array',
             'refund_amount' => 'nullable|numeric|min:0',
             'note' => 'nullable|string',
+            'return_date' => 'nullable|date',
             'payment_method' => 'nullable|string|in:cash,transfer',
             'bank_account_info' => 'nullable|string',
         ]);
@@ -353,6 +355,7 @@ class PurchaseReturnController extends Controller
 
             $totalAmount = collect($request->items)->sum(fn($item) => $item['quantity'] * $item['price']);
             $refundAmount = $request->refund_amount ?? $totalAmount;
+            $returnDate = BusinessDateTime::forCreate($request->input('return_date'));
 
             $return = PurchaseReturn::create([
                 'code' => $request->code ?? 'PTN' . time(),
@@ -366,7 +369,7 @@ class PurchaseReturnController extends Controller
                 'note' => $request->note,
                 'payment_method' => $request->payment_method ?? 'cash',
                 'bank_account_info' => $request->bank_account_info,
-                'return_date' => now(),
+                'return_date' => $returnDate,
             ]);
 
             $costingMethod = \App\Models\Setting::get('inventory_costing_method', 'average');
@@ -448,7 +451,7 @@ class PurchaseReturnController extends Controller
                     'code' => 'PT' . date('YmdHis'),
                     'type' => 'receipt',
                     'amount' => $refundAmount,
-                    'time' => now(),
+                    'time' => $returnDate,
                     'category' => 'Thu tiền NCC trả hàng',
                     'target_type' => 'Nhà cung cấp',
                     'target_name' => $purchase->supplier->name ?? 'Nhà cung cấp',
@@ -504,6 +507,7 @@ class PurchaseReturnController extends Controller
             'items.*.price' => 'required|numeric|min:0',
             'refund_amount' => 'nullable|numeric|min:0',
             'note' => 'nullable|string',
+            'return_date' => 'nullable|date',
             'payment_method' => 'nullable|string|in:cash,transfer',
             'bank_account_info' => 'nullable|string',
         ]);
@@ -546,6 +550,7 @@ class PurchaseReturnController extends Controller
 
             $totalAmount = collect($request->items)->sum(fn($item) => $item['quantity'] * $item['price']);
             $refundAmount = $request->refund_amount ?? $totalAmount;
+            $returnDate = BusinessDateTime::forCreate($request->input('return_date'));
             $supplier = Customer::findOrFail($request->supplier_id);
 
             $return = PurchaseReturn::create([
@@ -560,7 +565,7 @@ class PurchaseReturnController extends Controller
                 'note' => $request->note,
                 'payment_method' => $request->payment_method ?? 'cash',
                 'bank_account_info' => $request->bank_account_info,
-                'return_date' => now(),
+                'return_date' => $returnDate,
             ]);
 
             foreach ($request->items as $item) {
@@ -601,7 +606,7 @@ class PurchaseReturnController extends Controller
                     $return,
                     [
                         'ref_code' => $return->code,
-                        'moved_at' => now(),
+                        'moved_at' => $returnDate,
                         'note' => 'Trả hàng NCC nhanh ' . $return->code,
                     ]
                 );
@@ -618,7 +623,7 @@ class PurchaseReturnController extends Controller
                     'code' => 'PT' . date('YmdHis'),
                     'type' => 'receipt',
                     'amount' => $refundAmount,
-                    'time' => now(),
+                    'time' => $returnDate,
                     'category' => 'Thu tiền NCC trả hàng',
                     'target_type' => 'Nhà cung cấp',
                     'target_name' => $supplier->name,

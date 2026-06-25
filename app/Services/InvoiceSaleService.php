@@ -11,6 +11,7 @@ use App\Models\Product;
 use App\Models\Purchase;
 use App\Models\SerialImei;
 use App\Models\Setting;
+use App\Support\BusinessDateTime;
 use App\Support\Customers\CustomerGroupSnapshot;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -40,6 +41,9 @@ class InvoiceSaleService
     public function createSale(array $payload, array $context = []): Invoice
     {
         return DB::transaction(function () use ($payload, $context) {
+            $transactionDate = BusinessDateTime::forCreate($context['transaction_date'] ?? null);
+            $context['transaction_date'] = $transactionDate;
+
             app(PartnerTransactionGuard::class)->assertCanTransact(
                 isset($payload['customer_id']) ? (int) $payload['customer_id'] : null,
                 'customer_id'
@@ -53,7 +57,7 @@ class InvoiceSaleService
             if (!empty($context['validate_before_purchase_date'])) {
                 $this->assertNotBeforePurchaseDate(
                     $payload['items'],
-                    $context['transaction_date'] ?? now()
+                    $transactionDate
                 );
             }
             if (!empty($context['validate_stock_setting'])) {
@@ -65,21 +69,16 @@ class InvoiceSaleService
 
             // Step 24.3: set transaction_date + lock_started_at (defensive: only if migrated)
             if (\Illuminate\Support\Facades\Schema::hasColumn('invoices', 'transaction_date')) {
-                $txDate = !empty($context['transaction_date'])
-                    ? Carbon::parse($context['transaction_date'])
-                    : now();
+                $txDate = $transactionDate;
                 $updateFields = [
                     'transaction_date' => $txDate,
                     'lock_started_at'  => now(),
+                    'created_at'       => $txDate,
                 ];
-                // Backward compat: keep created_at override for legacy reports
-                if (!empty($context['transaction_date'])) {
-                    $updateFields['created_at'] = $txDate;
-                }
                 $invoice->update($updateFields);
-            } elseif (!empty($context['transaction_date'])) {
+            } else {
                 // Column doesn't exist yet but user supplied a date — only update created_at
-                $invoice->update(['created_at' => Carbon::parse($context['transaction_date'])]);
+                $invoice->update(['created_at' => $transactionDate]);
             }
 
             // ─── 3. Loop items ───
@@ -144,7 +143,7 @@ class InvoiceSaleService
             $attrs['created_by'] = $context['seller_id'];
         }
         if (isset($context['transaction_date'])) {
-            $attrs['sale_time'] = Carbon::parse($context['transaction_date']);
+            $attrs['sale_time'] = $context['transaction_date'];
         }
 
         $attrs = CustomerGroupSnapshot::applyToAttributes($attrs, $attrs['customer_id'] ?? null, 'invoices');
@@ -230,7 +229,7 @@ class InvoiceSaleService
             ]);
 
             $serial->status          = 'sold';
-            $serial->sold_at         = now();
+            $serial->sold_at         = $invoice->transaction_date ?? $invoice->created_at ?? now();
             $serial->invoice_id      = $invoice->id;
             $serial->sold_cost_price = $snapshotCostPrice;
             $serial->save();
@@ -259,7 +258,7 @@ class InvoiceSaleService
                     ? $context['stock_movement_branch_id']
                     : ($invoice->branch_id ?? null),
                 'ref_code'  => $invoice->code,
-                'moved_at'  => $invoice->created_at ?? now(),
+                'moved_at'  => $invoice->transaction_date ?? $invoice->created_at ?? now(),
                 'note'      => 'Xuất bán hóa đơn ' . $invoice->code,
             ]
         );
@@ -318,7 +317,7 @@ class InvoiceSaleService
             'code'           => 'PT' . date('YmdHis') . rand(10, 99),
             'type'           => 'receipt',
             'amount'         => $customerPaid,
-            'time'           => now(),
+            'time'           => $invoice->transaction_date ?? $invoice->created_at ?? now(),
             'category'       => 'Thu tiền khách trả',
             'target_type'    => 'Khách hàng',
             'target_id'      => $customer?->id,

@@ -14,6 +14,7 @@ use App\Models\CashFlow;
 use App\Models\SerialImei;
 use App\Enums\PaymentMethod;
 use App\Enums\PurchaseStatus;
+use App\Support\BusinessDateTime;
 use App\Support\Filters\FilterableIndex;
 use App\Services\LockPeriodService;
 use App\Services\StockMovementService;
@@ -287,8 +288,8 @@ class PurchaseController extends Controller
             }
 
             // Lock period check
-            $txDate = $request->purchase_date ? \Carbon\Carbon::parse($request->purchase_date) : now();
-            app(LockPeriodService::class)->assertNotLocked($txDate, 'purchase_create');
+            $purchaseDate = BusinessDateTime::forCreate($request->input('purchase_date'));
+            app(LockPeriodService::class)->assertNotLocked($purchaseDate, 'purchase_create');
 
             $total_amount = collect($request->items)->sum(function ($item) {
                 return $item['quantity'] * $item['price'] - ($item['discount'] ?? 0);
@@ -325,7 +326,7 @@ class PurchaseController extends Controller
                 'debt_amount' => $debt_amount,
                 'note' => $request->note,
                 'status' => $request->status ?? 'completed',
-                'purchase_date' => $request->purchase_date ?? now(),
+                'purchase_date' => $purchaseDate,
                 'payment_method' => $request->payment_method ?? 'cash',
                 'bank_account_info' => $request->bank_account_info,
             ]);
@@ -444,7 +445,7 @@ class PurchaseController extends Controller
                         'code' => 'PC' . date('YmdHis'),
                         'type' => 'payment', // chi
                         'amount' => $paid_amount,
-                        'time' => now(),
+                        'time' => $purchaseDate,
                         'category' => 'Chi tiền trả NCC',
                         'target_type' => 'Nhà cung cấp',
                         'target_name' => $supplier->name ?? 'Nhà cung cấp',
@@ -469,6 +470,7 @@ class PurchaseController extends Controller
                     'paid_amount' => (float) ($purchase->paid_amount ?? 0),
                     'debt_amount' => (float) ($purchase->debt_amount ?? 0),
                     'status' => $purchase->status,
+                    'business_time' => $purchaseDate->toDateTimeString(),
                 ]
             );
 
@@ -591,7 +593,7 @@ class PurchaseController extends Controller
         $validated = $request->validate([
             'supplier_id' => 'sometimes|exists:customers,id',
             'note' => 'nullable|string|max:1000',
-            'purchase_date' => 'required|date',
+            'purchase_date' => 'nullable|date',
             'discount' => 'nullable|numeric|min:0',
             'paid_amount' => 'nullable|numeric|min:0',
             'payment_method' => 'required|string|in:cash,transfer',
@@ -617,6 +619,11 @@ class PurchaseController extends Controller
         }
 
         $validated['supplier_id'] = $validated['supplier_id'] ?? $purchase->supplier_id;
+        $purchaseDate = BusinessDateTime::forUpdate(
+            $request->input('purchase_date'),
+            $purchase->purchase_date ?? $purchase->created_at
+        );
+        $validated['purchase_date'] = $purchaseDate;
 
         app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
             (int) $validated['supplier_id'],
@@ -624,7 +631,7 @@ class PurchaseController extends Controller
         );
 
         app(LockPeriodService::class)->assertNotLocked($purchase->purchase_date ?? $purchase->created_at, 'purchase_update');
-        app(LockPeriodService::class)->assertNotLocked($validated['purchase_date'], 'purchase_update');
+        app(LockPeriodService::class)->assertNotLocked($purchaseDate, 'purchase_update');
 
         try {
             DB::beginTransaction();
@@ -796,7 +803,7 @@ class PurchaseController extends Controller
                                     'cost_price' => $unitCostAllocated,
                                     'original_cost' => $unitCostAllocated,
                                     'warranty_expires_at' => $itemData['warranty_months'] > 0
-                                        ? \Carbon\Carbon::parse($validated['purchase_date'])->copy()->addMonths($itemData['warranty_months'])
+                                        ? $purchaseDate->copy()->addMonths($itemData['warranty_months'])
                                         : null,
                                 ])->save();
                             }
@@ -856,7 +863,7 @@ class PurchaseController extends Controller
                 $itemSubtotal = ($itemQty * (float) $itemData['price']) - (float) $itemData['discount'];
                 $totalAmount += $itemSubtotal;
                 $warrantyExpiresAt = $itemData['warranty_months'] > 0
-                    ? \Carbon\Carbon::parse($validated['purchase_date'])->copy()->addMonths($itemData['warranty_months'])->toDateString()
+                    ? $purchaseDate->copy()->addMonths($itemData['warranty_months'])->toDateString()
                     : null;
 
                 $purchaseItem = $oldItem ?: new PurchaseItem(['purchase_id' => $purchase->id]);
@@ -1016,7 +1023,7 @@ class PurchaseController extends Controller
                     ]);
                     $cashFlow->forceFill([
                         'amount' => $newLedgerPaid,
-                        'time' => now(),
+                        'time' => $purchaseDate,
                         'category' => 'Chi tiền trả NCC',
                         'target_type' => 'Nhà cung cấp',
                         'target_name' => $purchase->supplier->name ?? 'Nhà cung cấp',
@@ -1064,7 +1071,8 @@ class PurchaseController extends Controller
                     'changed_employee' => $oldEmployeeId !== $actor['employee_id'] || $oldUserId !== $actor['user_id'],
                     'changed_note' => $oldNote !== ($validated['note'] ?? null),
                     'old_purchase_date' => optional($oldPurchaseDate)->toDateTimeString(),
-                    'new_purchase_date' => \Carbon\Carbon::parse($validated['purchase_date'])->toDateTimeString(),
+                    'new_purchase_date' => $purchaseDate->toDateTimeString(),
+                    'business_time' => $purchaseDate->toDateTimeString(),
                     'old_supplier_id' => $oldSupplierId,
                     'new_supplier_id' => $newSupplierId,
                 ]

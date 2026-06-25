@@ -11,11 +11,11 @@ use App\Models\Branch;
 use App\Models\Product;
 use App\Models\SerialImei;
 use App\Enums\StockTransferStatus;
+use App\Support\BusinessDateTime;
 use App\Support\Filters\FilterableIndex;
 use App\Services\LockPeriodService;
 use App\Services\MovingAvgCostingService;
 use App\Services\StockMovementService;
-use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
 class StockTransferController extends Controller
@@ -84,6 +84,7 @@ class StockTransferController extends Controller
             'items.*.serial_ids' => 'nullable|array',
             'items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
             'status' => 'required|in:draft,transferring,received',
+            'action_date' => 'nullable|date',
             'note' => 'nullable|string'
         ], [
             'to_branch_id.different' => 'Chi nhánh nhận phải khác chi nhánh chuyển.',
@@ -183,8 +184,8 @@ class StockTransferController extends Controller
             DB::beginTransaction();
 
             // Lock period check
-            $txDate = $request->action_date ? Carbon::parse($request->action_date) : Carbon::now();
-            app(LockPeriodService::class)->assertNotLocked($txDate, 'transfer_create');
+            $transferDate = BusinessDateTime::forCreate($request->input('action_date'));
+            app(LockPeriodService::class)->assertNotLocked($transferDate, 'transfer_create');
 
             $transfer = StockTransfer::create([
                 'code' => $request->code ?? 'CH' . time(),
@@ -192,22 +193,14 @@ class StockTransferController extends Controller
                 'to_branch_id' => $request->to_branch_id,
                 'status' => $request->status,
                 'note' => $request->note,
-                'sent_date' => $request->status !== 'draft' ? Carbon::now() : null,
-                'receive_date' => $request->status === 'received' ? Carbon::now() : null,
+                'sent_date' => $request->status !== 'draft' ? $transferDate : null,
+                'receive_date' => $request->status === 'received' ? $transferDate : null,
                 'total_quantity' => $serverTotalQty,
                 'total_price' => $serverTotalPrice,
             ]);
 
-            if ($request->filled('action_date')) {
-                $transfer->created_at = Carbon::parse($request->action_date);
-                if ($request->status !== 'draft') {
-                    $transfer->sent_date = Carbon::parse($request->action_date);
-                }
-                if ($request->status === 'received') {
-                    $transfer->receive_date = Carbon::parse($request->action_date);
-                }
-                $transfer->save();
-            }
+            $transfer->created_at = $transferDate;
+            $transfer->save();
 
             foreach ($serverItems as $row) {
                 /** @var \App\Models\Product $product */
@@ -241,7 +234,7 @@ class StockTransferController extends Controller
                         $qty,
                         $cogs['cogs_per_unit'],
                         $transfer,
-                        ['branch_id' => $request->from_branch_id]
+                        ['branch_id' => $request->from_branch_id, 'moved_at' => $transferDate]
                     );
 
                     // Step 23.9: Mark serials in_transit (transferring) hoặc giữ in_stock cho 'received'
@@ -267,7 +260,7 @@ class StockTransferController extends Controller
                         $qty,
                         $costPerUnit,
                         $transfer,
-                        ['branch_id' => $request->to_branch_id]
+                        ['branch_id' => $request->to_branch_id, 'moved_at' => $transferDate]
                     );
                     $transferItem->update(['received_quantity' => $qty]);
 
@@ -331,6 +324,10 @@ class StockTransferController extends Controller
      */
     public function receive(Request $request, $id)
     {
+        $request->validate([
+            'receive_date' => 'nullable|date',
+        ]);
+
         $transfer = StockTransfer::with('items')->findOrFail($id);
 
         if ($transfer->status !== 'transferring') {
@@ -338,7 +335,7 @@ class StockTransferController extends Controller
         }
 
         // Validate receive_date >= sent_date
-        $receiveDate = $request->receive_date ? Carbon::parse($request->receive_date) : Carbon::now();
+        $receiveDate = BusinessDateTime::forCreate($request->input('receive_date'));
         if ($transfer->sent_date && $receiveDate->lt($transfer->sent_date)) {
             return response()->json(['success' => false, 'message' => 'Ngay nhan khong duoc truoc ngay chuyen.'], 422);
         }
@@ -411,7 +408,7 @@ class StockTransferController extends Controller
                             $recvQty,
                             $costPerUnit,
                             $transfer,
-                            ['branch_id' => $transfer->to_branch_id]
+                            ['branch_id' => $transfer->to_branch_id, 'moved_at' => $receiveDate]
                         );
 
                         // Step 23.9: Hàng has_serial — chuyển in_transit → in_stock

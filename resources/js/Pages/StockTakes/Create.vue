@@ -4,6 +4,7 @@ import { ref, computed, watch } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
 import DateTimePicker from '@/Components/DateTimePicker.vue';
+import { nowDatetimeLocal } from '@/utils/dateTime.js';
 
 const props = defineProps({
     products: Array,
@@ -11,10 +12,7 @@ const props = defineProps({
     stockTakeCode: String
 });
 
-const pad = (n) => String(n).padStart(2, '0');
-const nowInit = new Date();
-const localNowStr = `${nowInit.getFullYear()}-${pad(nowInit.getMonth()+1)}-${pad(nowInit.getDate())}T${pad(nowInit.getHours())}:${pad(nowInit.getMinutes())}`;
-const transactionDate = ref(localNowStr);
+const transactionDate = ref(nowDatetimeLocal());
 
 const selectedBranch = ref('');
 

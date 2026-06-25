@@ -16,9 +16,9 @@ use App\Services\MovingAvgCostingService;
 use App\Services\LockPeriodService;
 use App\Services\SerialAvailabilityService;
 use App\Services\StockMovementService;
+use App\Support\BusinessDateTime;
 use App\Support\Filters\DateRangePresets;
 use App\Support\Filters\FilterableIndex;
-use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -258,6 +258,8 @@ class DamageController extends Controller
         try {
             DB::beginTransaction();
 
+            $damageDate = BusinessDateTime::forCreate($request->input('action_date'));
+
             $employeeName = $this->resolveDamageActorName(
                 $request->input('damage_actor_key'),
                 $request->filled('employee_id') ? (int) $request->employee_id : null
@@ -269,17 +271,14 @@ class DamageController extends Controller
                 'status' => $request->status,
                 'created_by_name' => $employeeName,
                 'destroyed_by_name' => $serverTotalQty > 0 ? $employeeName : 'Chưa có',
-                'destroyed_date' => clone Carbon::now(),
+                'destroyed_date' => $damageDate,
                 'note' => $request->note,
                 'total_qty' => $serverTotalQty,
                 'total_value' => $serverTotalValue,
             ]);
 
-            if ($request->filled('action_date')) {
-                $damage->created_at = Carbon::parse($request->action_date);
-                $damage->destroyed_date = Carbon::parse($request->action_date);
-                $damage->save();
-            }
+            $damage->created_at = $damageDate;
+            $damage->save();
 
             foreach ($serverItems as $row) {
                 /** @var \App\Models\Product $product */

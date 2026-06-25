@@ -13,6 +13,7 @@ use App\Services\DebtOffsetService;
 use App\Services\OrderReturnCreationService;
 use App\Services\ReturnTotalCalculator;
 use App\Services\StockMovementService;
+use App\Support\BusinessDateTime;
 use App\Support\Filters\FilterableIndex;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -181,6 +182,7 @@ class OrderReturnController extends Controller
             'total' => 'required|numeric',
             'paid_to_customer' => 'nullable|numeric',
             'note' => 'nullable|string',
+            'order_date' => 'nullable|date',
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|exists:products,id',
             'items.*.qty' => 'required|numeric|min:1',
@@ -216,7 +218,7 @@ class OrderReturnController extends Controller
 
         $createdReturn = app(OrderReturnCreationService::class)->create($validated, [
             'created_by_name' => auth()->user()?->name ?? 'Admin',
-            'order_date' => $request->input('order_date'),
+            'order_date' => $validated['order_date'] ?? null,
         ]);
 
         if ($request->expectsJson()) {
@@ -329,6 +331,8 @@ class OrderReturnController extends Controller
 
         $createdReturn = null;
         \Illuminate\Support\Facades\DB::transaction(function () use ($validated, &$createdReturn) {
+            $returnDate = BusinessDateTime::forCreate($validated['order_date'] ?? null);
+
             // Check return time limit
             if (Setting::get('return_time_limit_enabled', false) && !empty($validated['invoice_id'])) {
                 $invoice = \App\Models\Invoice::find($validated['invoice_id']);
@@ -356,6 +360,7 @@ class OrderReturnController extends Controller
                 'paid_to_customer' => $validated['paid_to_customer'] ?? $validated['total'],
                 'note' => $validated['note'] ?? null,
                 'created_by_name' => auth()->user()?->name ?? 'Admin',
+                'created_at' => $returnDate,
             ];
             // Step 24.6E: persist fee_type + fee_value when the schema has them.
             if (\Illuminate\Support\Facades\Schema::hasColumn('returns', 'fee_type')) {
@@ -477,7 +482,7 @@ class OrderReturnController extends Controller
                     [
                         'branch_id' => $return->branch_id ?? null,
                         'ref_code' => $return->code,
-                        'moved_at' => $return->return_date ?? now(),
+                        'moved_at' => $returnDate,
                         'note' => 'Khách trả hàng phiếu ' . $return->code,
                     ]
                 );
@@ -503,7 +508,7 @@ class OrderReturnController extends Controller
                     'code' => 'PC' . date('YmdHis') . rand(10, 99),
                     'type' => 'payment',
                     'amount' => $return->paid_to_customer,
-                    'time' => now(),
+                    'time' => $returnDate,
                     'category' => 'Chi tiền trả hàng khách',
                     'target_type' => 'Khách hàng',
                     'target_id' => $return->customer_id,

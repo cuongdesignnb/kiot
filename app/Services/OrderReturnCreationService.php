@@ -12,6 +12,7 @@ use App\Models\Product;
 use App\Models\ReturnItem;
 use App\Models\SerialImei;
 use App\Models\Setting;
+use App\Support\BusinessDateTime;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
@@ -31,6 +32,7 @@ class OrderReturnCreationService
 
         $createdReturn = DB::transaction(function () use ($payload, $context) {
             $this->assertReturnTimeLimit($payload);
+            $returnDate = $this->resolveReturnDate($payload, $context);
 
             $returnPayload = [
                 'code' => $context['code'] ?? ('TH' . date('YmdHis') . rand(10, 99)),
@@ -45,6 +47,7 @@ class OrderReturnCreationService
                 'paid_to_customer' => $payload['paid_to_customer'] ?? $payload['total'],
                 'note' => $payload['note'] ?? null,
                 'created_by_name' => $context['created_by_name'] ?? auth()->user()?->name ?? 'Admin',
+                'created_at' => $returnDate,
             ];
 
             if (Schema::hasColumn('returns', 'fee_type')) {
@@ -57,12 +60,11 @@ class OrderReturnCreationService
             $return = OrderReturn::create($returnPayload);
 
             foreach ($payload['items'] as $item) {
-                $this->createReturnItemAndRestoreStock($return, $item, $payload);
+                $this->createReturnItemAndRestoreStock($return, $item, $payload, $returnDate);
             }
 
             $this->recordCustomerImpact($return, $payload, $context);
-            $this->recordCashFlow($return, $payload, $context);
-            $this->applyReturnDate($return, $payload, $context);
+            $this->recordCashFlow($return, $payload, $context, $returnDate);
 
             return $return->load('items.product', 'invoice');
         });
@@ -71,7 +73,10 @@ class OrderReturnCreationService
             ActivityLog::ACTION_RETURN_CREATE,
             "Tao phieu tra hang {$createdReturn->code}",
             $createdReturn,
-            ['total' => (float) $createdReturn->total]
+            [
+                'total' => (float) $createdReturn->total,
+                'business_time' => optional($createdReturn->created_at)->toDateTimeString(),
+            ]
         );
 
         return $createdReturn;
@@ -208,7 +213,7 @@ class OrderReturnCreationService
         }
     }
 
-    private function createReturnItemAndRestoreStock(OrderReturn $return, array $item, array $payload): void
+    private function createReturnItemAndRestoreStock(OrderReturn $return, array $item, array $payload, \Carbon\Carbon $returnDate): void
     {
         $product = Product::lockForUpdate()->find($item['product_id']);
         if (!$product) {
@@ -300,7 +305,7 @@ class OrderReturnCreationService
             [
                 'branch_id' => $return->branch_id ?? null,
                 'ref_code' => $return->code,
-                'moved_at' => $return->return_date ?? now(),
+                'moved_at' => $returnDate,
                 'note' => 'Khach tra hang phieu ' . $return->code,
             ]
         );
@@ -337,7 +342,7 @@ class OrderReturnCreationService
         $customer->decrement('total_spent', $payload['total']);
     }
 
-    private function recordCashFlow(OrderReturn $return, array $payload, array $context): void
+    private function recordCashFlow(OrderReturn $return, array $payload, array $context, \Carbon\Carbon $returnDate): void
     {
         if ((float) $return->paid_to_customer <= 0) {
             return;
@@ -348,7 +353,7 @@ class OrderReturnCreationService
             'code' => 'PC' . date('YmdHis') . rand(10, 99),
             'type' => 'payment',
             'amount' => $return->paid_to_customer,
-            'time' => now(),
+            'time' => $returnDate,
             'category' => 'Chi tien tra hang khach',
             'target_type' => 'Khach hang',
             'target_id' => $return->customer_id,
@@ -360,21 +365,19 @@ class OrderReturnCreationService
         ]);
     }
 
-    private function applyReturnDate(OrderReturn $return, array $payload, array $context): void
+    private function resolveReturnDate(array $payload, array $context): \Carbon\Carbon
     {
-        $orderDate = $context['order_date'] ?? $payload['order_date'] ?? null;
-        if (!$orderDate) {
-            return;
-        }
+        $orderDate = $context['order_date'] ?? $payload['return_date'] ?? $payload['order_date'] ?? null;
+        $returnDate = BusinessDateTime::forCreate($orderDate);
 
-        $returnDate = \Carbon\Carbon::parse($orderDate);
         if (!empty($payload['invoice_id'])) {
             $invoice = Invoice::find($payload['invoice_id']);
-            if ($invoice && $returnDate->lt($invoice->created_at)) {
+            $invoiceDate = $invoice?->transaction_date ?? $invoice?->created_at;
+            if ($invoiceDate && $returnDate->lt($invoiceDate)) {
                 throw new \Exception('Ngay tra hang khong the truoc ngay hoa don goc.');
             }
         }
 
-        $return->update(['created_at' => $returnDate]);
+        return $returnDate;
     }
 }

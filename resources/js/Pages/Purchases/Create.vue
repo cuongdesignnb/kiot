@@ -5,6 +5,7 @@ import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import DateTimePicker from '@/Components/DateTimePicker.vue';
 import QuickCreateProductModal from '@/Components/QuickCreateProductModal.vue';
 import MoneyInput from '@/Components/MoneyInput.vue';
+import { nowDatetimeLocal } from '@/utils/dateTime.js';
 import axios from 'axios';
 // STEP 24.13-FIX — use the full customer modal in supplier mode so the form
 // matches the standalone /suppliers create page (4 accordions: basic, address,
@@ -84,11 +85,7 @@ const clearSupplier = () => {
 };
 
 const selectedEmployeeId = ref('');
-// Use local time (not UTC) for datetime-local input
-const pad = (n) => String(n).padStart(2, '0');
-const nowLocal = new Date();
-const localNow = `${nowLocal.getFullYear()}-${pad(nowLocal.getMonth()+1)}-${pad(nowLocal.getDate())}T${pad(nowLocal.getHours())}:${pad(nowLocal.getMinutes())}`;
-const purchaseDate = ref(localNow);
+const purchaseDate = ref(nowDatetimeLocal());
 const status = ref('completed');
 const discount = ref(0);
 const paidAmount = ref(0);

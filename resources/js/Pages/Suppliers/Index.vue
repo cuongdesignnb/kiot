@@ -9,6 +9,7 @@ import SidebarFilter from "@/Components/Filters/SidebarFilter.vue";
 import DateTimePicker from "@/Components/DateTimePicker.vue";
 import MoneyInput from "@/Components/MoneyInput.vue";
 import { useFilters } from "@/composables/useFilters.js";
+import { nowDatetimeLocal } from "@/utils/dateTime.js";
 import axios from "axios";
 
 const formatDateTime = (val) => {
@@ -625,9 +626,7 @@ const openDebtAction = (supplier, type) => {
     debtAmount.value = type === 'adjustment' ? (supplier.supplier_debt_amount || 0) : 0;
     debtNote.value = '';
     // Mặc định ngày điều chỉnh = hiện tại
-    const _now = new Date();
-    _now.setMinutes(_now.getMinutes() - _now.getTimezoneOffset());
-    debtDate.value = _now.toISOString().slice(0, 16);
+    debtDate.value = nowDatetimeLocal();
     showDebtModal.value = true;
 };
 
