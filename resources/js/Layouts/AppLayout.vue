@@ -331,7 +331,7 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                         </div>
                     </div>
                     <Link
-                        v-if="canAny(['cashbook.view'])"
+                        v-if="canAny(['cash_flows.view'])"
                         href="/cash-flows"
                         class="px-3 py-2 hover:bg-[#005bb5] rounded"
                         :class="{
@@ -340,7 +340,7 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                         >Sổ quỹ</Link
                     >
                     <!-- Công việc — chỉ hiện khi module bật + có quyền -->
-                    <div v-if="($page.props.app_settings?.task_module_enabled || $page.props.app_settings?.repair_tracking_enabled) && canAny(['tasks.view', 'repairs.view'])" class="relative group">
+                    <div v-if="($page.props.app_settings?.task_module_enabled || $page.props.app_settings?.repair_tracking_enabled) && canAny(['tasks.view', 'repairs.view', 'tasks.self.view'])" class="relative group">
                         <button
                             class="px-3 py-2 hover:bg-[#005bb5] rounded flex items-center gap-1"
                             :class="{
@@ -355,16 +355,19 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                         >
                             <div class="bg-white rounded py-1">
                                 <Link
+                                    v-if="canAny(['tasks.view', 'repairs.view'])"
                                     href="/tasks"
                                     class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100"
                                     >Danh sách công việc</Link
                                 >
                                 <Link
+                                    v-if="canAny(['tasks.self.view', 'tasks.view'])"
                                     href="/my-tasks"
                                     class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100"
                                     >Việc của tôi</Link
                                 >
                                 <Link
+                                    v-if="canAny(['tasks.performance', 'repair_performance.view'])"
                                     href="/tasks/performance"
                                     class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100"
                                     >Báo cáo năng suất</Link
@@ -372,7 +375,7 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                             </div>
                         </div>
                     </div>
-                    <div class="relative group">
+                    <div v-if="canAny(['reports.view'])" class="relative group">
                         <button
                             class="px-3 py-2 hover:bg-[#005bb5] rounded flex items-center gap-1"
                             :class="{ 'bg-[#005bb5]': $page.url.startsWith('/reports') }"
@@ -400,6 +403,7 @@ watch(() => page.props.flash, triggerToast, { deep: true });
 
             <div class="flex items-center gap-4 text-sm font-medium">
                 <Link
+                    v-if="canAny(['pos.use'])"
                     href="/pos"
                     class="bg-white text-blue-600 px-4 py-1.5 rounded-full font-bold flex items-center gap-2 hover:bg-gray-100 transition-colors"
                 >

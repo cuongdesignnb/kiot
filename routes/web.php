@@ -397,8 +397,8 @@ Route::get('/reports/products', [App\Http\Controllers\ProductReportController::c
 Route::get('/reports/customers', [App\Http\Controllers\CustomerReportController::class, 'index'])->name('reports.customers')->middleware('permission:reports.view');
 Route::get('/reports/suppliers', [App\Http\Controllers\SupplierReportController::class, 'index'])->name('reports.suppliers')->middleware('permission:reports.view');
 
-Route::get('/reports/debt-reconciliation', [ReportController::class, 'debtReconciliation'])->name('reports.debt-reconciliation');
-Route::get('/reports/debt-reconciliation/export', [ReportController::class, 'exportDebtReconciliation'])->name('reports.debt-reconciliation.export');
+Route::get('/reports/debt-reconciliation', [ReportController::class, 'debtReconciliation'])->name('reports.debt-reconciliation')->middleware('permission:reports.view');
+Route::get('/reports/debt-reconciliation/export', [ReportController::class, 'exportDebtReconciliation'])->name('reports.debt-reconciliation.export')->middleware('permission:reports.view');
 
 // Phase 5 — Phân tích & lịch sử giá vốn
 Route::get('/reports/cost-analysis', [ReportController::class, 'costAnalysis'])
@@ -471,9 +471,9 @@ Route::get('/activity-logs', [\App\Http\Controllers\ActivityLogController::class
     ->middleware('permission:system.audit.view');
 
 Route::get('/tasks', [TaskPageController::class, 'index'])->middleware('permission:tasks.view')->name('tasks.index');
-Route::get('/tasks/performance', [TaskPageController::class, 'performance'])->middleware('permission:tasks.view')->name('tasks.performance');
-Route::get('/tasks/{id}', [TaskPageController::class, 'show'])->middleware('permission:tasks.view')->name('tasks.show');
-Route::get('/my-tasks', [TaskPageController::class, 'myTasks'])->name('my-tasks');
+Route::get('/tasks/performance', [TaskPageController::class, 'performance'])->middleware('permission:tasks.performance')->name('tasks.performance');
+Route::get('/tasks/{id}', [TaskPageController::class, 'show'])->name('tasks.show');
+Route::get('/my-tasks', [TaskPageController::class, 'myTasks'])->middleware('permission:tasks.self.view')->name('my-tasks');
 
 // Backward compat: redirect old repair routes
 Route::get('/repairs', fn () => redirect('/tasks?type=repair'));

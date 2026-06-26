@@ -238,6 +238,9 @@ class Role extends Model
                 ],
             ],
             'Công việc & Sửa chữa' => [
+                'tasks.self.view' => 'Xem việc của tôi',
+                'tasks.self.create' => 'Tạo công việc cho bản thân',
+                'tasks.self.progress' => 'Cập nhật tiến độ việc của tôi',
                 'tasks.view' => 'Xem công việc',
                 'tasks.create' => 'Tạo công việc',
                 'tasks.create_external' => 'Tạo phiếu sửa chữa khách ngoài (Step 24.0B)',

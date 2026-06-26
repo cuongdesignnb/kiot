@@ -10,6 +10,7 @@ use App\Models\SerialImei;
 use App\Models\Product;
 use App\Models\Warranty;
 use App\Services\ProductSearchService;
+use App\Services\TaskAccessService;
 use App\Services\TaskService;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
@@ -17,10 +18,12 @@ use Carbon\Carbon;
 class TaskController extends Controller
 {
     protected TaskService $service;
+    protected TaskAccessService $taskAccess;
 
-    public function __construct(TaskService $service)
+    public function __construct(TaskService $service, TaskAccessService $taskAccess)
     {
         $this->service = $service;
+        $this->taskAccess = $taskAccess;
     }
 
     /**
@@ -89,8 +92,12 @@ class TaskController extends Controller
      *
      * Step 23.8F: include customer/warranty/invoice cho external repair UI.
      */
-    public function show(Task $task)
+    public function show(Request $request, Task $task)
     {
+        if (!$this->taskAccess->canViewTask($request->user(), $task)) {
+            return response()->json(['message' => 'Bạn không có quyền xem công việc này.'], 403);
+        }
+
         $task->load([
             'product:id,name,sku,image,has_serial',
             'serialImei:id,serial_number,status,repair_status,cost_price,product_id,invoice_id,sold_at,purchase_return_id',
@@ -132,11 +139,26 @@ class TaskController extends Controller
     {
         $type = $request->input('type', Task::TYPE_GENERAL);
         $isExternal = $request->boolean('external', false);
+        $user = $request->user();
+        $hasGlobalCreate = $user?->hasPermission('tasks.create') ?? false;
+        $hasSelfCreate = $user?->hasPermission('tasks.self.create') ?? false;
+        $creatorEmployee = $this->taskAccess->activeEmployeeFor($user);
+
+        if (!$hasGlobalCreate && $hasSelfCreate && !$creatorEmployee) {
+            return response()->json([
+                'message' => 'Tài khoản chưa liên kết nhân viên active nên không thể tạo việc cho bản thân.',
+            ], 403);
+        }
+
+        if (!$hasGlobalCreate && $hasSelfCreate && $type !== Task::TYPE_GENERAL) {
+            return response()->json([
+                'message' => 'Nhân viên tự phục vụ chỉ được tạo công việc cá nhân.',
+            ], 403);
+        }
 
         // Step 24.0B: external repair cần permission tách `tasks.create_external` (fallback `tasks.create`).
         if ($type === Task::TYPE_REPAIR && $isExternal) {
-            $user = $request->user();
-            if ($user && !$user->hasAnyPermission(['tasks.create_external', 'tasks.create'])) {
+            if ($user && !$user->hasAnyPermission(['tasks.create_external', 'tasks.create', 'tasks.self.create'])) {
                 return response()->json([
                     'message' => 'Bạn không có quyền tạo phiếu sửa chữa khách ngoài.',
                 ], 403);
@@ -192,7 +214,8 @@ class TaskController extends Controller
 
         $data['type'] = $type;
         $data['external'] = $isExternal;
-        $data['created_by'] = $request->user()?->id;
+        $data['created_by'] = $user?->id;
+        $data['creator_employee_id'] = $creatorEmployee?->id;
 
         try {
             $task = $this->service->createTask($data);
