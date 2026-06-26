@@ -16,6 +16,9 @@ class SupplierDebtTimelineParityTest extends TestCase
 {
     use DatabaseTransactions;
 
+    private const INFERRED_ALLOCATION_MESSAGE = 'Số dư tổng đã khớp, nhưng phân bổ phiếu thanh toán công nợ tổng quát theo từng phiếu nhập chỉ là suy luận từ dữ liệu lịch sử. Cần đối soát nếu trước đây đã phân bổ thủ công.';
+    private const UNALLOCATED_GENERIC_PAYMENT_MESSAGE = 'Có phiếu thanh toán công nợ tổng quát chưa thể đối chiếu an toàn với phiếu nhập. Timeline giữ dữ liệu gốc và không tự sửa.';
+
     private User $admin;
 
     protected function setUp(): void
@@ -68,6 +71,9 @@ class SupplierDebtTimelineParityTest extends TestCase
         $this->assertSame(2_900_000.0, (float) $result['summary']['current_debt']);
         $this->assertFalse((bool) $result['reconcile']['has_mismatch']);
         $this->assertSame('warning', $result['reconcile']['severity']);
+        $this->assertSame(self::INFERRED_ALLOCATION_MESSAGE, $result['reconcile']['message']);
+        $this->assertStringContainsString('chỉ là suy luận', $result['reconcile']['message']);
+        $this->assertTrue((bool) $result['reconcile']['user_warning']);
         $this->assertTrue((bool) $result['reconcile']['has_inferred_generic_allocations']);
         $this->assertSame('inferred', $result['reconcile']['allocation_confidence']);
         $this->assertFalse((bool) $result['reconcile']['display_resolved']);
@@ -98,6 +104,7 @@ class SupplierDebtTimelineParityTest extends TestCase
             ->assertJsonPath('summary.display_balance_final', 2_900_000)
             ->assertJsonPath('summary.current_debt', 2_900_000)
             ->assertJsonPath('reconcile.has_mismatch', false)
+            ->assertJsonPath('reconcile.message', self::INFERRED_ALLOCATION_MESSAGE)
             ->assertJsonPath('reconcile.severity', 'warning')
             ->assertJsonPath('reconcile.has_inferred_generic_allocations', true)
             ->assertJsonPath('reconcile.display_resolved', false);
@@ -121,6 +128,8 @@ class SupplierDebtTimelineParityTest extends TestCase
         $this->assertSame(1_000_000.0, (float) $result['summary']['document_final_balance']);
         $this->assertFalse((bool) $result['reconcile']['has_mismatch']);
         $this->assertSame('warning', $result['reconcile']['severity']);
+        $this->assertSame(self::INFERRED_ALLOCATION_MESSAGE, $result['reconcile']['message']);
+        $this->assertStringContainsString('chỉ là suy luận', $result['reconcile']['message']);
         $this->assertTrue((bool) $result['reconcile']['user_warning']);
         $this->assertTrue((bool) $result['reconcile']['has_inferred_generic_allocations']);
         $this->assertFalse((bool) $result['reconcile']['display_resolved']);
@@ -163,7 +172,11 @@ class SupplierDebtTimelineParityTest extends TestCase
         $this->assertSame(1_000_000.0, (float) $result['summary']['document_final_balance']);
         $this->assertFalse((bool) $result['reconcile']['has_mismatch']);
         $this->assertSame('warning', $result['reconcile']['severity']);
+        $this->assertSame(self::INFERRED_ALLOCATION_MESSAGE, $result['reconcile']['message']);
+        $this->assertStringContainsString('chỉ là suy luận', $result['reconcile']['message']);
+        $this->assertTrue((bool) $result['reconcile']['user_warning']);
         $this->assertTrue((bool) $result['reconcile']['has_inferred_generic_allocations']);
+        $this->assertFalse((bool) $result['reconcile']['display_resolved']);
         $this->assertSame('generic_supplier_payment_allocation_is_inferred_not_actual', $result['reconcile']['generic_payment_allocation']['warnings'][0]);
 
         $this->assertTrue($inferredAllocations->contains(fn (array $allocation) =>
@@ -218,6 +231,29 @@ class SupplierDebtTimelineParityTest extends TestCase
         $this->assertTrue((bool) $result['reconcile']['has_unallocated_generic_payments']);
         $this->assertFalse((bool) $result['reconcile']['has_inferred_generic_allocations']);
         $this->assertSame($snapshot, $this->readOnlySnapshot($supplier), 'Ambiguous timeline build must be read-only.');
+    }
+
+    public function test_unallocated_generic_payment_warning_is_vietnamese_when_balance_matches(): void
+    {
+        $supplier = $this->supplier('NCC-UNALLOCATED-GENERIC', 0);
+        $base = Carbon::parse('2026-06-01 09:00:00');
+
+        $this->genericPayment($supplier, 'PCPN-UNALLOCATED-001', 500_000, $base);
+        $this->purchase($supplier, 'PN-UNALLOCATED-001', 500_000, 0, $base->copy()->addDay());
+
+        $snapshot = $this->readOnlySnapshot($supplier);
+        $result = app(SupplierDebtDocumentTimelineService::class)->build($supplier->fresh());
+
+        $this->assertSame(0.0, (float) $result['summary']['document_final_balance']);
+        $this->assertSame(0.0, (float) $result['summary']['stored_supplier_debt']);
+        $this->assertFalse((bool) $result['reconcile']['has_mismatch']);
+        $this->assertSame('warning', $result['reconcile']['severity']);
+        $this->assertTrue((bool) $result['reconcile']['user_warning']);
+        $this->assertFalse((bool) $result['reconcile']['display_resolved']);
+        $this->assertTrue((bool) $result['reconcile']['has_unallocated_generic_payments']);
+        $this->assertSame(self::UNALLOCATED_GENERIC_PAYMENT_MESSAGE, $result['reconcile']['message']);
+        $this->assertStringContainsString('chưa thể đối chiếu an toàn', $result['reconcile']['message']);
+        $this->assertSame($snapshot, $this->readOnlySnapshot($supplier), 'Unallocated generic-payment warning must be read-only.');
     }
 
     private function supplier(string $code, int $payable): Customer

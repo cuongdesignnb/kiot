@@ -153,6 +153,7 @@ Patch `SupplierDebtDocumentTimelineService` only:
 - Mark generic payment rows as `payment_allocation_confidence=global_payment_only`, `allocation_is_actual=false`.
 - Return `reconcile.generic_payment_allocation` diagnostics with inferred allocation evidence, warnings, and unallocated generic payment residuals.
 - If numeric balance matches only because inferred generic allocation suppressed TTNH fallback, keep `reconcile.severity=warning`, `user_warning=true`, and `display_resolved=false`; do not present it as a clean actual allocation.
+- Reconcile warning messages for inferred and unallocated generic payments are localized in Vietnamese for final review.
 - Do not mutate `customers`, `purchases`, `cash_flows`, or `supplier_debt_transactions`.
 
 `SupplierController::debtTransactions()` also adds the read-only alias `summary.current_debt` to the API response so the endpoint exposes the same contract as the document timeline service. This is outside the default P0 file list, but it is response-only and required by the MASTER TASK API assertion. No write-path or permission behavior is changed.
@@ -191,7 +192,7 @@ Baseline red test before hotfix:
 
 After blocker review update:
 
-- `php artisan test tests/Feature/Suppliers/SupplierDebtTimelineParityTest.php`: PASS, 5 passed, 65 assertions.
+- `php artisan test tests/Feature/Suppliers/SupplierDebtTimelineParityTest.php`: PASS, 6 passed, 85 assertions.
 - `php artisan test tests/Feature/Customers`: PASS, 148 passed, 1 skipped, 799 assertions.
 - `php -l app/Services/SupplierDebtDocumentTimelineService.php`: PASS.
 - `php -l app/Http/Controllers/SupplierController.php`: PASS.
@@ -203,11 +204,13 @@ Blocker-specific assertions now covered:
 - Generic payment row is `global_payment_only` and `allocation_is_actual=false`.
 - Inferred allocation diagnostics list purchase coverage as `allocation_confidence=inferred`, not actual allocation evidence.
 - Numeric reconcile may have `has_mismatch=false`, but when generic inference is used it returns `severity=warning`, `user_warning=true`, `display_resolved=false`, and `has_inferred_generic_allocations=true`.
+- Inferred allocation warning message is Vietnamese and contains `chỉ là suy luận`.
+- Unallocated generic payment warning message is Vietnamese and contains `chưa thể đối chiếu an toàn`.
 - Future-payment ambiguity keeps fallback, reports warning, and remains read-only.
 
 Regression suites with unrelated pre-existing/out-of-scope failures:
 
-- `php artisan test tests/Feature/Suppliers`: 49 passed, 1 failed, 411 assertions.
+- `php artisan test tests/Feature/Suppliers`: 50 passed, 1 failed, 431 assertions.
   - Failing test: `Tests\Feature\Suppliers\Step248SupplierActionsTest::user_without_suppliers_edit_permission_is_blocked`.
   - Failure: expected redirect `/`, actual `403`.
   - Classification: permission behavior, outside supplier debt/timeline scope. Not fixed in this P0 hotfix.

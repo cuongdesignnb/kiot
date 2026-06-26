@@ -1052,11 +1052,11 @@ class SupplierDebtDocumentTimelineService
         }
         if (!$isMismatch && !$virtualOpening && $hasInferredGenericAllocations) {
             $severity = 'warning';
-            $message = 'Generic SupplierPayment has no persisted allocation table; purchase-level coverage is inferred for display only and needs review when manual allocation may have been used.';
+            $message = 'Số dư tổng đã khớp, nhưng phân bổ phiếu thanh toán công nợ tổng quát theo từng phiếu nhập chỉ là suy luận từ dữ liệu lịch sử. Cần đối soát nếu trước đây đã phân bổ thủ công.';
         }
         if (!$isMismatch && !$virtualOpening && $hasUnallocatedGenericPayments) {
             $severity = 'warning';
-            $message = 'Some Generic SupplierPayment rows cannot be safely inferred; fallback and diagnostics are kept read-only.';
+            $message = 'Có phiếu thanh toán công nợ tổng quát chưa thể đối chiếu an toàn với phiếu nhập. Timeline giữ dữ liệu gốc và không tự sửa.';
         }
         if ($virtualOpening) {
             $severity = 'info';
@@ -1161,6 +1161,27 @@ class SupplierDebtDocumentTimelineService
             ->all();
 
         if (empty($purchaseStates)) {
+            foreach ($genericPayments as $payment) {
+                $amount = (float) $payment->amount;
+
+                if ($amount <= 0.01) {
+                    continue;
+                }
+
+                $diagnostics['has_unallocated_generic_payments'] = true;
+                $diagnostics['unallocated_generic_payments'][] = [
+                    'payment_code' => $payment->code,
+                    'amount' => $amount,
+                    'allocation_confidence' => 'unknown',
+                    'allocation_is_actual' => false,
+                    'reason' => 'no_eligible_purchase_paid_snapshot_at_or_before_payment_time',
+                ];
+            }
+
+            if ($diagnostics['has_unallocated_generic_payments']) {
+                $diagnostics['warnings'][] = 'generic_supplier_payment_has_unallocated_residual';
+            }
+
             return [
                 'coverage' => [],
                 'diagnostics' => $diagnostics,
