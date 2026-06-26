@@ -55,6 +55,14 @@ class Role extends Model
                         'products.export' => 'Xuất file hàng hóa',
                         'products.view_cost_price' => 'Xem giá vốn (giá nhập)',
                     ],
+                    'Thư viện media' => [
+                        'media.view' => 'Xem thư viện media',
+                        'media.upload' => 'Tải ảnh lên thư viện media',
+                        'media.create_folder' => 'Tạo thư mục media',
+                        'media.edit' => 'Sửa thông tin media',
+                        'media.delete' => 'Xóa media',
+                        'media.move' => 'Di chuyển media',
+                    ],
                     'Thiết lập giá' => [
                         'price_settings.view' => 'Xem thiết lập giá',
                         'price_settings.edit' => 'Chỉnh sửa giá',
@@ -238,6 +246,9 @@ class Role extends Model
                 ],
             ],
             'Công việc & Sửa chữa' => [
+                'tasks.self.view' => 'Xem việc của tôi',
+                'tasks.self.create' => 'Tạo công việc cho bản thân',
+                'tasks.self.progress' => 'Cập nhật tiến độ việc của tôi',
                 'tasks.view' => 'Xem công việc',
                 'tasks.create' => 'Tạo công việc',
                 'tasks.create_external' => 'Tạo phiếu sửa chữa khách ngoài (Step 24.0B)',

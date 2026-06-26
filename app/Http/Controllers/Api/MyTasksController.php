@@ -5,16 +5,19 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Task;
 use App\Models\TaskAssignment;
+use App\Services\TaskAccessService;
 use App\Services\TaskService;
 use Illuminate\Http\Request;
 
 class MyTasksController extends Controller
 {
     protected TaskService $service;
+    protected TaskAccessService $taskAccess;
 
-    public function __construct(TaskService $service)
+    public function __construct(TaskService $service, TaskAccessService $taskAccess)
     {
         $this->service = $service;
+        $this->taskAccess = $taskAccess;
     }
 
     /**
@@ -22,9 +25,9 @@ class MyTasksController extends Controller
      */
     public function index(Request $request)
     {
-        $employee = $request->user()->employee;
+        $employee = $this->taskAccess->activeEmployeeFor($request->user());
         if (!$employee) {
-            return response()->json(['data' => [], 'message' => 'Tài khoản chưa liên kết nhân viên.']);
+            return response()->json(['message' => 'Tài khoản chưa liên kết nhân viên active.'], 403);
         }
 
         $query = Task::with([
@@ -64,7 +67,7 @@ class MyTasksController extends Controller
      */
     public function respond(Request $request, TaskAssignment $assignment)
     {
-        $employee = $request->user()->employee;
+        $employee = $this->taskAccess->activeEmployeeFor($request->user());
         if (!$employee || $assignment->employee_id !== $employee->id) {
             return response()->json(['message' => 'Không có quyền.'], 403);
         }
@@ -84,9 +87,9 @@ class MyTasksController extends Controller
      */
     public function updateProgress(Request $request, Task $task)
     {
-        $employee = $request->user()->employee;
+        $employee = $this->taskAccess->activeEmployeeFor($request->user());
         if (!$employee) {
-            return response()->json(['message' => 'Không có quyền.'], 403);
+            return response()->json(['message' => 'Tài khoản chưa liên kết nhân viên active.'], 403);
         }
 
         // Verify employee is assigned to this task
@@ -108,9 +111,9 @@ class MyTasksController extends Controller
      */
     public function acceptAll(Request $request)
     {
-        $employee = $request->user()->employee;
+        $employee = $this->taskAccess->activeEmployeeFor($request->user());
         if (!$employee) {
-            return response()->json(['message' => 'Tài khoản chưa liên kết nhân viên.'], 403);
+            return response()->json(['message' => 'Tài khoản chưa liên kết nhân viên active.'], 403);
         }
 
         // Lấy tất cả assignments pending của NV này, mà task chưa completed/cancelled

@@ -295,6 +295,7 @@ class ProductController extends Controller
             'variants' => 'nullable|array',
             'variants.*.sku' => 'nullable|string',
             'variants.*.name' => 'required|string|max:255',
+            'variants.*.image' => 'nullable|string|max:500',
             'variants.*.cost_price' => 'numeric|min:0',
             'variants.*.retail_price' => 'numeric|min:0',
             'variants.*.stock_quantity' => 'numeric|min:0',
@@ -389,6 +390,7 @@ class ProductController extends Controller
                 $variant = $product->variants()->create([
                     'sku' => $variantSku,
                     'name' => $vData['name'],
+                    'image' => $vData['image'] ?? null,
                     'cost_price' => $vData['cost_price'] ?? $product->cost_price,
                     'retail_price' => $vData['retail_price'] ?? $product->retail_price,
                     'stock_quantity' => $vData['stock_quantity'] ?? 0,
@@ -494,6 +496,7 @@ class ProductController extends Controller
             'type' => 'nullable|in:standard,service,combo,manufactured',
             'sku' => 'nullable|string|unique:products,sku,' . $product->id,
             'barcode' => 'nullable|string',
+            'image' => 'nullable|string|max:500',
             'category_id' => 'nullable|exists:categories,id',
             'brand_id' => 'nullable|exists:brands,id',
             'cost_price' => 'numeric|min:0',
@@ -512,6 +515,7 @@ class ProductController extends Controller
             'variants.*.id' => 'nullable|integer',
             'variants.*.sku' => 'nullable|string',
             'variants.*.name' => 'required|string|max:255',
+            'variants.*.image' => 'nullable|string|max:500',
             'variants.*.cost_price' => 'numeric|min:0',
             'variants.*.retail_price' => 'numeric|min:0',
             'variants.*.stock_quantity' => 'numeric|min:0',
@@ -583,6 +587,7 @@ class ProductController extends Controller
                         $variant->update([
                             'sku' => $vData['sku'] ?? $variant->sku,
                             'name' => $vData['name'],
+                            'image' => $vData['image'] ?? $variant->image,
                             'cost_price' => $vData['cost_price'] ?? $variant->cost_price,
                             'retail_price' => $vData['retail_price'] ?? $variant->retail_price,
                             'stock_quantity' => $vData['stock_quantity'] ?? $variant->stock_quantity,
@@ -598,6 +603,7 @@ class ProductController extends Controller
                 $variant = $product->variants()->create([
                     'sku' => $variantSku,
                     'name' => $vData['name'],
+                    'image' => $vData['image'] ?? null,
                     'cost_price' => $vData['cost_price'] ?? $product->cost_price,
                     'retail_price' => $vData['retail_price'] ?? $product->retail_price,
                     'stock_quantity' => $vData['stock_quantity'] ?? 0,

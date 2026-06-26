@@ -18,10 +18,13 @@ class CheckPermission
                 : redirect()->guest(route('login'));
         }
 
-        if (!$user->hasPermission($permission)) {
+        $permissions = preg_split('/[|,]/', $permission, -1, PREG_SPLIT_NO_EMPTY);
+        $permissions = array_map('trim', $permissions ?: [$permission]);
+
+        if (!$user->hasAnyPermission($permissions)) {
             return $request->expectsJson()
                 ? response()->json(['message' => 'Bạn không có quyền thực hiện thao tác này.'], 403)
-                : redirect('/')->with('error', 'Bạn không có quyền truy cập.');
+                : abort(403, 'Bạn không có quyền truy cập.');
         }
 
         return $next($request);

@@ -7,7 +7,7 @@ import QuickCreateCustomerModal from '@/Components/QuickCreateCustomerModal.vue'
 import QuickCreateProductModal from '@/Components/QuickCreateProductModal.vue';
 import DateTimePicker from '@/Components/DateTimePicker.vue';
 import MoneyInput from '@/Components/MoneyInput.vue';
-import { nowDatetimeLocal } from '@/utils/dateTime.js';
+import { toDatetimeLocalValue } from '@/utils/dateTime.js';
 
 const props = defineProps({
     employees: Array,
@@ -226,7 +226,7 @@ const selectedEmployeeId = computed({
 const currentTime = ref('');
 
 // Ngày bán
-const saleDate = ref(nowDatetimeLocal());
+const saleDate = ref(toDatetimeLocalValue(new Date()));
 
 const updateTime = () => {
     const now = new Date();
@@ -983,9 +983,7 @@ const processCheckout = async () => {
 
             const response = await axios.post(`/orders/${activeTab.value.source_order_id}/process`, processPayload);
             if (response.data.success) {
-                toastMsg.value = response.data.message;
-                setTimeout(() => toastMsg.value = '', 4000);
-                resetAfterCheckout();
+                handleCheckoutSuccess(response.data.message);
             } else {
                 alert("Lỗi: " + response.data.message);
             }
@@ -1012,9 +1010,7 @@ const processCheckout = async () => {
 
             const response = await axios.post('/api/pos/quick-order', orderPayload);
             if (response.data.success) {
-                toastMsg.value = response.data.message;
-                setTimeout(() => toastMsg.value = '', 4000);
-                resetAfterCheckout();
+                handleCheckoutSuccess(response.data.message);
             } else {
                 alert("Lỗi: " + response.data.message);
             }
@@ -1046,9 +1042,7 @@ const processCheckout = async () => {
         const response = await axios.post('/api/pos/checkout', payload);
         
         if (response.data.success) {
-            toastMsg.value = `${response.data.message} - Phiếu ${response.data.invoice_code}`;
-            setTimeout(() => toastMsg.value = '', 4000);
-            resetAfterCheckout();
+            handleCheckoutSuccess(`${response.data.message} - Phiếu ${response.data.invoice_code}`);
         } else {
             alert("Lỗi: " + response.data.message);
         }
@@ -1075,11 +1069,20 @@ const resetAfterCheckout = () => {
         t.customerQuery = '';
         t.note = '';
     }
-    // Reset saleDate to current time after checkout
-    const now = new Date();
-    saleDate.value = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    saleDate.value = toDatetimeLocalValue(new Date());
     saveDraft();
     searchProducts();
+};
+
+const handleCheckoutSuccess = (message) => {
+    toastMsg.value = message;
+    setTimeout(() => toastMsg.value = '', 4000);
+
+    try {
+        resetAfterCheckout();
+    } catch (error) {
+        console.error('POS reset after successful checkout failed:', error);
+    }
 };
 
 // STEP 24.13 — page just toggles the shared QuickCreateProductModal.

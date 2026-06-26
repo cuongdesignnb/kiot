@@ -4,6 +4,7 @@ import { ref, computed, onMounted, watch } from 'vue';
 import axios from 'axios';
 import AppLayout from '../../Layouts/AppLayout.vue';
 import MoneyInput from '../../Components/MoneyInput.vue';
+import MediaLibrary from '../../Components/MediaLibrary.vue';
 import { formatVND as formatCurrency } from '@/utils/money';
 
 const props = defineProps({
@@ -139,6 +140,7 @@ const form = useForm({
     name: props.product.name,
     sku: props.product.sku,
     barcode: props.product.barcode || '',
+    image: props.product.image || '',
     category_id: props.product.category_id || '',
     brand_id: props.product.brand_id || '',
     cost_price: props.product.cost_price || 0,
@@ -156,6 +158,7 @@ const form = useForm({
         id: v.id,
         sku: v.sku || '',
         name: v.name,
+        image: v.image || '',
         cost_price: v.cost_price || 0,
         retail_price: v.retail_price || 0,
         stock_quantity: v.stock_quantity || 0,
@@ -412,6 +415,7 @@ const generateVariants = () => {
             id: existing?.id || null,
             sku: existing?.sku || '',
             name: (form.name ? form.name + ' - ' : '') + name,
+            image: existing?.image || '',
             cost_price: existing?.cost_price ?? form.cost_price,
             retail_price: existing?.retail_price ?? form.retail_price,
             stock_quantity: existing?.stock_quantity ?? 0,
@@ -449,10 +453,7 @@ const generateVariants = () => {
                     <!-- Cột Trái: Upload Hình Ảnh -->
                     <div class="w-1/4">
                         <div class="bg-white rounded border border-gray-200 shadow-sm p-4">
-                            <div class="border-2 border-dashed border-gray-300 rounded-lg h-48 flex items-center justify-center flex-col text-gray-400 bg-gray-50 hover:bg-blue-50 hover:border-blue-400 hover:text-blue-500 cursor-pointer transition-colors group">
-                                <svg class="w-10 h-10 mb-2 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-                                <span class="text-sm font-semibold">Cập nhật ảnh</span>
-                            </div>
+                            <MediaLibrary v-model="form.image" collection="products" label="Cập nhật ảnh sản phẩm" />
                             <div class="pt-4 space-y-3">
                                 <label class="flex items-center gap-2 text-sm text-gray-700 font-medium cursor-pointer">
                                     <input type="checkbox" v-model="form.sell_directly" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4">
@@ -656,6 +657,7 @@ const generateVariants = () => {
                                                     <table class="w-full text-sm border border-gray-200">
                                                         <thead class="bg-gray-50">
                                                             <tr>
+                                                                <th class="px-2 py-1.5 text-left text-xs font-semibold text-gray-600 w-20">Ảnh</th>
                                                                 <th class="px-2 py-1.5 text-left text-xs font-semibold text-gray-600">Tên biến thể</th>
                                                                 <th class="px-2 py-1.5 text-left text-xs font-semibold text-gray-600 w-28">SKU</th>
                                                                 <th class="px-2 py-1.5 text-right text-xs font-semibold text-gray-600 w-28">Giá vốn</th>
@@ -665,6 +667,7 @@ const generateVariants = () => {
                                                         </thead>
                                                         <tbody>
                                                             <tr v-for="(v, vi) in form.variants" :key="vi" class="border-t border-gray-100">
+                                                                <td class="px-2 py-1"><MediaLibrary v-model="v.image" collection="products" label="Ảnh" preview-size="sm" /></td>
                                                                 <td class="px-2 py-1"><input type="text" v-model="v.name" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm"></td>
                                                                 <td class="px-2 py-1"><input type="text" v-model="v.sku" placeholder="Tự động" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm"></td>
                                                                 <td class="px-2 py-1"><MoneyInput v-model="v.cost_price" input-class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right" /></td>

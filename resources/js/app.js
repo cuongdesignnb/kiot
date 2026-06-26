@@ -4,8 +4,6 @@ import { createInertiaApp } from '@inertiajs/vue3';
 import { resolvePageComponent } from 'laravel-vite-plugin/inertia-helpers';
 // Reload hooks for CashFlow
 
-console.log("Starting Web App... Invoices");
-
 createInertiaApp({
     title: (title) => `${title} - KiotViet Clone`,
     resolve: (name) => {

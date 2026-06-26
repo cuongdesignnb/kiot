@@ -280,6 +280,7 @@ const generateVariants = () => {
         return {
             sku: existing?.sku || '',
             name: (form.name ? form.name + ' - ' : '') + name,
+            image: existing?.image || '',
             cost_price: existing?.cost_price ?? form.cost_price,
             retail_price: existing?.retail_price ?? form.retail_price,
             stock_quantity: existing?.stock_quantity ?? 0,
@@ -572,6 +573,7 @@ const generateVariants = () => {
                                                     <table class="w-full text-sm border border-gray-200">
                                                         <thead class="bg-gray-50">
                                                             <tr>
+                                                                <th class="px-2 py-1.5 text-left text-xs font-semibold text-gray-600 w-20">Ảnh</th>
                                                                 <th class="px-2 py-1.5 text-left text-xs font-semibold text-gray-600">Tên biến thể</th>
                                                                 <th class="px-2 py-1.5 text-left text-xs font-semibold text-gray-600 w-28">SKU</th>
                                                                 <th class="px-2 py-1.5 text-right text-xs font-semibold text-gray-600 w-28">Giá vốn</th>
@@ -581,6 +583,7 @@ const generateVariants = () => {
                                                         </thead>
                                                         <tbody>
                                                             <tr v-for="(v, vi) in form.variants" :key="vi" class="border-t border-gray-100">
+                                                                <td class="px-2 py-1"><MediaLibrary v-model="v.image" collection="products" label="Ảnh" preview-size="sm" /></td>
                                                                 <td class="px-2 py-1"><input type="text" v-model="v.name" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm"></td>
                                                                 <td class="px-2 py-1"><input type="text" v-model="v.sku" placeholder="Tự động" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm"></td>
                                                                 <td class="px-2 py-1"><MoneyInput v-model="v.cost_price" input-class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right" /></td>

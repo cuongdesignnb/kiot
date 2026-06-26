@@ -238,19 +238,19 @@ Route::prefix('tasks')->group(function () {
     Route::middleware('permission:tasks.view')->group(function () {
         Route::get('/', [\App\Http\Controllers\Api\TaskController::class, 'index']);
         Route::get('/categories', [\App\Http\Controllers\Api\TaskController::class, 'categories']);
-        Route::get('/performance', [\App\Http\Controllers\Api\TaskController::class, 'performance']);
         Route::get('/search-serials', [\App\Http\Controllers\Api\TaskController::class, 'searchSerials']);
         Route::get('/search-products', [\App\Http\Controllers\Api\TaskController::class, 'searchProducts']);
         Route::get('/product-serials', [\App\Http\Controllers\Api\TaskController::class, 'productSerials']);
         // Step 23.8D — warranty lookup
         Route::get('/lookup-warranty', [\App\Http\Controllers\Api\TaskController::class, 'lookupWarranty'])->middleware('permission:tasks.attach_warranty');
-        Route::get('/{task}', [\App\Http\Controllers\Api\TaskController::class, 'show']);
     });
+    Route::get('/performance', [\App\Http\Controllers\Api\TaskController::class, 'performance'])->middleware('permission:tasks.performance');
+    Route::get('/{task}', [\App\Http\Controllers\Api\TaskController::class, 'show'])->middleware('auth:sanctum');
     Route::middleware('permission:tasks.create')->group(function () {
         Route::post('/batch-repair', [\App\Http\Controllers\Api\TaskController::class, 'batchCreateRepair']);
-        Route::post('/', [\App\Http\Controllers\Api\TaskController::class, 'store']);
         Route::put('/{task}', [\App\Http\Controllers\Api\TaskController::class, 'update']);
     });
+    Route::post('/', [\App\Http\Controllers\Api\TaskController::class, 'store'])->middleware('permission:tasks.create|tasks.self.create');
     Route::delete('/{task}', [\App\Http\Controllers\Api\TaskController::class, 'destroy'])->middleware('permission:tasks.create');
     Route::post('/{task}/assign', [\App\Http\Controllers\Api\TaskController::class, 'assign'])->middleware('permission:tasks.assign');
     // Step 24.0B: parts management tách quyền `tasks.manage_parts`.
@@ -290,10 +290,10 @@ Route::prefix('notifications')->middleware('auth:sanctum')->group(function () {
 
 // 👤 MY TASKS (employee portal)
 Route::prefix('my-tasks')->middleware('auth:sanctum')->group(function () {
-    Route::get('/', [\App\Http\Controllers\Api\MyTasksController::class, 'index']);
-    Route::post('/accept-all', [\App\Http\Controllers\Api\MyTasksController::class, 'acceptAll']);
-    Route::post('/{assignment}/respond', [\App\Http\Controllers\Api\MyTasksController::class, 'respond']);
-    Route::post('/{task}/progress', [\App\Http\Controllers\Api\MyTasksController::class, 'updateProgress']);
+    Route::get('/', [\App\Http\Controllers\Api\MyTasksController::class, 'index'])->middleware('permission:tasks.self.view');
+    Route::post('/accept-all', [\App\Http\Controllers\Api\MyTasksController::class, 'acceptAll'])->middleware('permission:tasks.self.view');
+    Route::post('/{assignment}/respond', [\App\Http\Controllers\Api\MyTasksController::class, 'respond'])->middleware('permission:tasks.self.view');
+    Route::post('/{task}/progress', [\App\Http\Controllers\Api\MyTasksController::class, 'updateProgress'])->middleware('permission:tasks.self.progress');
 });
 
 Route::prefix('repair-performance-tiers')->group(function () {
@@ -323,9 +323,17 @@ Route::prefix('users')->group(function () {
 
 // 📁 MEDIA LIBRARY
 Route::prefix('media')->group(function () {
-    Route::get('/', [\App\Http\Controllers\Api\MediaController::class, 'index']);
-    Route::post('/', [\App\Http\Controllers\Api\MediaController::class, 'store']);
-    Route::delete('/{media}', [\App\Http\Controllers\Api\MediaController::class, 'destroy']);
+    Route::get('/', [\App\Http\Controllers\Api\MediaController::class, 'index'])->middleware('permission:media.view');
+    Route::post('/', [\App\Http\Controllers\Api\MediaController::class, 'store'])->middleware('permission:media.upload');
+    Route::put('/{media}', [\App\Http\Controllers\Api\MediaController::class, 'update'])->middleware('permission:media.edit');
+    Route::delete('/{media}', [\App\Http\Controllers\Api\MediaController::class, 'destroy'])->middleware('permission:media.delete');
+});
+
+Route::prefix('media-folders')->group(function () {
+    Route::get('/', [\App\Http\Controllers\Api\MediaFolderController::class, 'index'])->middleware('permission:media.view');
+    Route::post('/', [\App\Http\Controllers\Api\MediaFolderController::class, 'store'])->middleware('permission:media.create_folder');
+    Route::put('/{mediaFolder}', [\App\Http\Controllers\Api\MediaFolderController::class, 'update'])->middleware('permission:media.edit');
+    Route::delete('/{mediaFolder}', [\App\Http\Controllers\Api\MediaFolderController::class, 'destroy'])->middleware('permission:media.delete');
 });
 
 // 🏷️ PRODUCT ATTRIBUTES

@@ -6,6 +6,7 @@ import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
 import MoneyInput from "@/Components/MoneyInput.vue";
+import MediaLibrary from "@/Components/MediaLibrary.vue";
 import { usePermission } from "@/composables/usePermission";
 import axios from "axios";
 
@@ -74,6 +75,7 @@ const form = useForm({
     phone: "",
     email: "",
     cccd: "",
+    avatar: "",
     branch_id: null,
     department_id: null,
     job_title_id: null,
@@ -100,6 +102,7 @@ const openEditModal = (employee) => {
     form.phone = employee.phone;
     form.email = employee.email;
     form.cccd = employee.cccd;
+    form.avatar = employee.avatar || "";
     form.branch_id = employee.branch_id;
     form.department_id = employee.department_id;
     form.job_title_id = employee.job_title_id;
@@ -1149,32 +1152,7 @@ const bonusCalcLabel = (calc) => {
                                 <div
                                     class="w-32 flex flex-col items-center mt-2"
                                 >
-                                    <div
-                                        class="w-28 h-28 rounded border border-dashed border-gray-400 bg-gray-50 flex items-center justify-center flex-col text-gray-500 cursor-pointer hover:bg-gray-100 transition"
-                                    >
-                                        <svg
-                                            class="w-6 h-6 mb-1 text-gray-400"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            viewBox="0 0 24 24"
-                                        >
-                                            <path
-                                                stroke-linecap="round"
-                                                stroke-linejoin="round"
-                                                stroke-width="2"
-                                                d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"
-                                            ></path>
-                                            <path
-                                                stroke-linecap="round"
-                                                stroke-linejoin="round"
-                                                stroke-width="2"
-                                                d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"
-                                            ></path>
-                                        </svg>
-                                    </div>
-                                    <div class="font-bold mb-2 mt-2">
-                                        Chọn ảnh
-                                    </div>
+                                    <MediaLibrary v-model="form.avatar" collection="employees" label="Chọn ảnh" preview-size="lg" />
                                 </div>
 
                                 <!-- Form Fields -->

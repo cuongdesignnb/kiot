@@ -30,12 +30,16 @@ class TaskService
 
             // External repair — no serial/stock required
             if ($type === Task::TYPE_REPAIR && !empty($data['external'])) {
-                return $this->createExternalRepair($data);
+                $task = $this->createExternalRepair($data);
+                $this->ensureCreatorAssignment($task, $data['creator_employee_id'] ?? null, $data['created_by'] ?? null);
+                return $task;
             }
 
             // Internal repair flow — needs serial in_stock
             if ($type === Task::TYPE_REPAIR) {
-                return $this->createRepairTask($data);
+                $task = $this->createRepairTask($data);
+                $this->ensureCreatorAssignment($task, $data['creator_employee_id'] ?? null, $data['created_by'] ?? null);
+                return $task;
             }
 
             // General flow
@@ -53,8 +57,43 @@ class TaskService
                 'created_by'        => $data['created_by'] ?? null,
             ]);
 
+            $this->ensureCreatorAssignment($task, $data['creator_employee_id'] ?? null, $data['created_by'] ?? null);
+
             return $task;
         });
+    }
+
+    /**
+     * Ensure the active employee linked to the creator can see their own task in My Tasks.
+     *
+     * This intentionally does not notify, accept, or move the task to in_progress.
+     */
+    public function ensureCreatorAssignment(Task $task, ?int $creatorEmployeeId, ?int $createdBy): ?TaskAssignment
+    {
+        if (!$creatorEmployeeId) {
+            return null;
+        }
+
+        $assignment = TaskAssignment::firstOrCreate(
+            [
+                'task_id' => $task->id,
+                'employee_id' => $creatorEmployeeId,
+            ],
+            [
+                'assigned_by' => $createdBy,
+                'status' => TaskAssignment::STATUS_PENDING,
+                'assigned_at' => now(),
+            ]
+        );
+
+        if (!$task->assigned_employee_id) {
+            $task->update([
+                'assigned_employee_id' => $creatorEmployeeId,
+                'assigned_at' => $assignment->assigned_at ?? now(),
+            ]);
+        }
+
+        return $assignment;
     }
 
     /**
