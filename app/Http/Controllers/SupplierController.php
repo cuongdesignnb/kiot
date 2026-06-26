@@ -803,6 +803,7 @@ class SupplierController extends Controller
                 'customer_receivable_balance' => $customerDebt,
                 'supplier_payable_balance'    => $supplierDebt,
                 'partner_net_position'        => $netDebt,
+                'current_debt'                => $usePartnerTimeline ? $supplierOrientedBalance : $supplierDebt,
                 'supplier_oriented_balance'   => $supplierOrientedBalance,
                 'has_debt_offset_voucher'     => $hasDebtOffsetVoucher,
                 'is_actual_offset'            => false,

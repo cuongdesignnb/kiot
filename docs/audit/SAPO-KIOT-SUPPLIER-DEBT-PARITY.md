@@ -170,6 +170,36 @@ Required verification:
 
 No frontend change is planned, so `npm run build` is not required unless Vue changes are introduced.
 
+## Test Evidence
+
+Baseline red test before hotfix:
+
+- `php artisan test tests/Feature/Suppliers/SupplierDebtTimelineParityTest.php`: FAIL.
+- Production-shaped fixture computed `document_final_balance=-11,980,000` instead of expected `2,900,000`.
+- Partial fallback fixture computed `document_final_balance=500,000` instead of expected `300,000`.
+
+After hotfix:
+
+- `php artisan test tests/Feature/Suppliers/SupplierDebtTimelineParityTest.php`: PASS, 2 passed, 24 assertions.
+- `php artisan test tests/Feature/Customers`: PASS, 148 passed, 1 skipped, 799 assertions.
+- `php -l app/Services/SupplierDebtDocumentTimelineService.php`: PASS.
+- `php -l app/Http/Controllers/SupplierController.php`: PASS.
+- `git diff --check`: PASS.
+
+Regression suites with unrelated pre-existing/out-of-scope failures:
+
+- `php artisan test tests/Feature/Suppliers`: 46 passed, 1 failed, 370 assertions.
+  - Failing test: `Tests\Feature\Suppliers\Step248SupplierActionsTest::user_without_suppliers_edit_permission_is_blocked`.
+  - Failure: expected redirect `/`, actual `403`.
+  - Classification: permission behavior, outside supplier debt/timeline scope. Not fixed in this P0 hotfix.
+- `php artisan test tests/Feature/Supplier`: 58 passed, 1 failed, 241 assertions.
+  - Failing test: `Tests\Feature\Supplier\HOTFIX2414SupplierTabExportTest::supplier_purchase_history_export_downloads_csv`.
+  - Failure: expected CSV body to contain `Mã phiếu nhập`, actual header contains `Mã phiếu`.
+  - Classification: supplier purchase history export header, outside supplier debt/timeline scope. Not fixed in this P0 hotfix.
+- `tests/Feature/SupplierDebt` directory does not exist in this repository.
+
+Environment note: local PHP emits startup warnings for missing optional extensions `oci8_12c`, `oci8_19`, `pdo_firebird`, and `pdo_oci`. These warnings did not block the executed tests.
+
 ## Production Dry-run Plan
 
 Later, after review/merge and before deploy:

@@ -105,6 +105,16 @@ class SupplierDebtDocumentTimelineService
             }
         }
 
+        $realPaymentCoverageByPurchase = [];
+        foreach ($paymentsByPurchase as $refCode => $cfs) {
+            $realPaymentCoverageByPurchase[$refCode] = (float) collect($cfs)->sum('amount');
+        }
+
+        foreach ($this->allocateGenericSupplierPaymentsToPurchasePaidAmounts($purchases, collect($standalonePayments), $realPaymentCoverageByPurchase) as $purchaseCode => $coveredAmount) {
+            $realPaymentCoverageByPurchase[$purchaseCode] = (float) ($realPaymentCoverageByPurchase[$purchaseCode] ?? 0.0)
+                + (float) $coveredAmount;
+        }
+
         // Emit linked payments
         foreach ($paymentsByPurchase as $refCode => $cfs) {
             $purchase = $purchases->firstWhere('code', $refCode);
@@ -160,17 +170,12 @@ class SupplierDebtDocumentTimelineService
 
         // 3. Fallback Payment from purchase.paid_amount
         foreach ($purchases as $p) {
-            if ((float) $p->paid_amount > 0) {
-                $hasRealPayment = isset($paymentsByPurchase[$p->code]) && count($paymentsByPurchase[$p->code]) > 0;
-                if (!$hasRealPayment) {
-                    foreach ($supplierPayments as $cf) {
-                        if ($cf->code === 'PCPN' . preg_replace('/^PN/', '', $p->code) || $cf->code === 'TTNH' . preg_replace('/^PN/', '', $p->code)) {
-                            $hasRealPayment = true;
-                            break;
-                        }
-                    }
-                }
-                if (!$hasRealPayment) {
+            $paidAmount = (float) $p->paid_amount;
+            if ($paidAmount > 0) {
+                $coveredAmount = max(0.0, (float) ($realPaymentCoverageByPurchase[$p->code] ?? 0.0));
+                $uncoveredPaidAmount = max(0.0, $paidAmount - $coveredAmount);
+
+                if ($uncoveredPaidAmount > 0.01) {
                     $businessTime = $p->purchase_date ?: $p->created_at;
                     $entries->push($this->createEntry([
                         'id' => 'purpay-fallback-' . $p->id,
@@ -178,10 +183,10 @@ class SupplierDebtDocumentTimelineService
                         'display_type' => 'Thanh toán NCC',
                         'event_kind' => 'supplier_payment_fallback',
                         'domain' => 'supplier',
-                        'document_amount' => (float) $p->paid_amount,
-                        'amount' => (float) $p->paid_amount,
-                        'display_effect' => -(float) $p->paid_amount,
-                        'supplier_display_effect' => -(float) $p->paid_amount,
+                        'document_amount' => $uncoveredPaidAmount,
+                        'amount' => $uncoveredPaidAmount,
+                        'display_effect' => -$uncoveredPaidAmount,
+                        'supplier_display_effect' => -$uncoveredPaidAmount,
                         'time' => $businessTime,
                         'display_time' => $businessTime,
                         'created_at' => $p->created_at,
@@ -200,6 +205,8 @@ class SupplierDebtDocumentTimelineService
                         'badge_label' => 'Tạm tính',
                         'badge_title' => 'Tạm tính từ phiếu nhập — chưa tìm thấy phiếu chi thật.',
                         'source' => 'legacy_purchase_paid_amount',
+                        'real_payment_covered_amount' => $coveredAmount,
+                        'fallback_uncovered_paid_amount' => $uncoveredPaidAmount,
                         'document_group_key' => $p->code,
                         'document_group_type' => 'purchase',
                         'document_group_parent_code' => $p->code,
@@ -1071,6 +1078,87 @@ class SupplierDebtDocumentTimelineService
                 'excluded_ledger_entries' => $excludedLedgerEntries,
             ]
         ];
+    }
+
+    private function allocateGenericSupplierPaymentsToPurchasePaidAmounts(
+        Collection $purchases,
+        Collection $genericPayments,
+        array $directCoverageByPurchase
+    ): array {
+        if ($genericPayments->isEmpty()) {
+            return [];
+        }
+
+        $purchaseStates = $purchases
+            ->filter(fn (Purchase $purchase) => (float) $purchase->paid_amount > 0.01)
+            ->sort(function (Purchase $a, Purchase $b) {
+                $timeCompare = strcmp(
+                    $this->normalizeSortableTime($a->purchase_date ?: $a->created_at),
+                    $this->normalizeSortableTime($b->purchase_date ?: $b->created_at)
+                );
+
+                if ($timeCompare !== 0) {
+                    return $timeCompare;
+                }
+
+                return ((int) $a->id) <=> ((int) $b->id);
+            })
+            ->map(function (Purchase $purchase) use ($directCoverageByPurchase) {
+                $paidAmount = (float) $purchase->paid_amount;
+                $directCovered = max(0.0, (float) ($directCoverageByPurchase[$purchase->code] ?? 0.0));
+
+                return [
+                    'code' => (string) $purchase->code,
+                    'remaining_paid_amount' => max(0.0, $paidAmount - $directCovered),
+                ];
+            })
+            ->filter(fn (array $state) => $state['remaining_paid_amount'] > 0.01)
+            ->values()
+            ->all();
+
+        if (empty($purchaseStates)) {
+            return [];
+        }
+
+        $coverage = [];
+        $payments = $genericPayments
+            ->filter(fn (CashFlow $cashFlow) => (float) $cashFlow->amount > 0.01)
+            ->sort(function (CashFlow $a, CashFlow $b) {
+                $timeCompare = strcmp(
+                    $this->normalizeSortableTime($a->time ?: $a->created_at),
+                    $this->normalizeSortableTime($b->time ?: $b->created_at)
+                );
+
+                if ($timeCompare !== 0) {
+                    return $timeCompare;
+                }
+
+                return ((int) $a->id) <=> ((int) $b->id);
+            })
+            ->values();
+
+        foreach ($payments as $payment) {
+            $remainingPayment = (float) $payment->amount;
+
+            foreach ($purchaseStates as $index => $state) {
+                if ($remainingPayment <= 0.01) {
+                    break;
+                }
+
+                if ($state['remaining_paid_amount'] <= 0.01) {
+                    continue;
+                }
+
+                $allocated = min($remainingPayment, $state['remaining_paid_amount']);
+                $purchaseCode = $state['code'];
+
+                $coverage[$purchaseCode] = (float) ($coverage[$purchaseCode] ?? 0.0) + $allocated;
+                $purchaseStates[$index]['remaining_paid_amount'] -= $allocated;
+                $remainingPayment -= $allocated;
+            }
+        }
+
+        return $coverage;
     }
 
     private function classifySupplierDebt(SupplierDebtTransaction $stx): array
