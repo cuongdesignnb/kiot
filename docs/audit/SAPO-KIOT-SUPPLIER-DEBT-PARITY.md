@@ -182,7 +182,7 @@ Baseline red test before hotfix:
 - Production-shaped fixture computed `document_final_balance=-11,980,000` instead of expected `2,900,000`.
 - Partial fallback fixture computed `document_final_balance=500,000` instead of expected `300,000`.
 
-After hotfix:
+After final P0 hotfix:
 
 - `php artisan test tests/Feature/Suppliers/SupplierDebtTimelineParityTest.php`: PASS, 3 passed, 30 assertions.
 - `php artisan test tests/Feature/Customers`: PASS, 148 passed, 1 skipped, 799 assertions.
@@ -192,10 +192,11 @@ After hotfix:
 
 Regression suites with unrelated pre-existing/out-of-scope failures:
 
-- `php artisan test tests/Feature/Suppliers`: 46 passed, 1 failed, 370 assertions.
+- `php artisan test tests/Feature/Suppliers`: 47 passed, 1 failed, 376 assertions.
   - Failing test: `Tests\Feature\Suppliers\Step248SupplierActionsTest::user_without_suppliers_edit_permission_is_blocked`.
   - Failure: expected redirect `/`, actual `403`.
   - Classification: permission behavior, outside supplier debt/timeline scope. Not fixed in this P0 hotfix.
+  - Baseline proof: running the same filtered test at `c5b1ffbccf4a6b48fc57ec1ed99d7e9c6fda4b87` also FAILS with the same expected redirect `/`, actual `403`.
 - `php artisan test tests/Feature/Supplier`: 58 passed, 1 failed, 241 assertions.
   - Failing test: `Tests\Feature\Supplier\HOTFIX2414SupplierTabExportTest::supplier_purchase_history_export_downloads_csv`.
   - Failure: expected CSV body to contain `Mã phiếu nhập`, actual header contains `Mã phiếu`.
