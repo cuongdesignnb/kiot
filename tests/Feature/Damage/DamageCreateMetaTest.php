@@ -247,5 +247,10 @@ class DamageCreateMetaTest extends TestCase
         $ids = collect($response->json())->pluck('id')->all();
 
         $this->assertSame([$sellable->id], $ids);
+        $response->assertJsonPath('0.serial_number', $sellable->serial_number);
+        $response->assertJsonPath('0.product_id', $product->id);
+        $response->assertJsonMissingPath('0.cost_price');
+        $response->assertJsonMissingPath('0.label');
+        $response->assertJsonMissingPath('0.product');
     }
 }

@@ -157,10 +157,16 @@ class PosController extends Controller
     {
         $serials = $availability->querySellableForProduct($product->id)
             ->orderBy('serial_number')
-            ->get();
+            ->get(['id', 'serial_number', 'product_id', 'status', 'repair_status']);
 
         return response()->json(
-            $serials->map(fn($s) => $availability->normalizeForResponse($s))->values()
+            $serials->map(fn($s) => [
+                'id' => (int) $s->id,
+                'serial_number' => $s->serial_number,
+                'product_id' => (int) $s->product_id,
+                'status' => $s->status,
+                'repair_status' => $s->repair_status,
+            ])->values()
         );
     }
 

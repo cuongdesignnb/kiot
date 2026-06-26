@@ -58,55 +58,94 @@ const visibleSerialsForItem = (item) => {
     return [...selectedRows, ...limited];
 };
 
-const serialLoadControllers = new WeakMap();
+const serialCache = new Map();
+const serialRequests = new Map();
 const serialLoadTimeoutMs = 8000;
+const serialCacheKey = (item) => `${selectedBranch.value || 'all'}:${item?.product_id || ''}`;
+
+const normalizeSerialsPayload = (payload) => {
+    if (!Array.isArray(payload)) return [];
+
+    return payload
+        .filter((serial) => serial && serial.id)
+        .map((serial) => ({
+            id: Number(serial.id),
+            serial_number: serial.serial_number || '',
+            product_id: serial.product_id ? Number(serial.product_id) : null,
+            status: serial.status || null,
+            repair_status: serial.repair_status || null,
+        }));
+};
 
 const loadSerialsForItem = async (item, force = false) => {
-    if (!item || !item.product_id || !item.has_serial || (item.serial_loading && !force)) {
+    if (!item || !item.product_id || !item.has_serial) {
         return;
     }
 
-    if (force) {
-        serialLoadControllers.get(item)?.abort();
+    const cacheKey = serialCacheKey(item);
+    if (!force && serialCache.has(cacheKey)) {
+        item.serials = serialCache.get(cacheKey);
+        item.serial_error = item.serials.length ? '' : 'Không có serial/IMEI khả dụng để xuất hủy.';
+        return;
+    }
+
+    const existingRequest = serialRequests.get(cacheKey);
+    if (existingRequest) {
+        if (!force) {
+            item.serial_loading = true;
+            item.serial_error = '';
+            try {
+                item.serials = await existingRequest.promise;
+                item.serial_error = item.serials.length ? '' : 'Không có serial/IMEI khả dụng để xuất hủy.';
+            } catch (error) {
+                if (error.code !== 'ERR_CANCELED' && error.name !== 'CanceledError' && error.name !== 'AbortError') {
+                    item.serial_error = 'Không tải được serial/IMEI. Vui lòng thử bấm Tải lại.';
+                }
+            } finally {
+                item.serial_loading = false;
+            }
+            return;
+        }
+
+        existingRequest.controller.abort();
     }
 
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), serialLoadTimeoutMs);
 
-    serialLoadControllers.set(item, controller);
     item.serial_loading = true;
     item.serial_error = '';
 
-    try {
-        const startedAt = performance.now();
-        console.info('[Damage serial] loading product', item.product_id);
-
-        const response = await axios.get(`/api/products/${item.product_id}/serials`, {
+    const requestPromise = axios.get(`/api/products/${item.product_id}/serials`, {
             signal: controller.signal,
+            params: selectedBranch.value ? { branch_id: selectedBranch.value } : {},
             headers: {
                 Accept: 'application/json',
                 'X-Requested-With': 'XMLHttpRequest',
             },
+        })
+        .then((response) => {
+            const serials = normalizeSerialsPayload(response.data);
+            serialCache.set(cacheKey, serials);
+            return serials;
+        })
+        .finally(() => {
+            window.clearTimeout(timeoutId);
+            if (serialRequests.get(cacheKey)?.controller === controller) {
+                serialRequests.delete(cacheKey);
+            }
         });
 
-        console.info('[Damage serial] response', response.status, response.data);
+    serialRequests.set(cacheKey, { controller, promise: requestPromise });
 
-        const serials = Array.isArray(response.data) ? response.data : [];
-
-        console.info('[Damage serial] loaded', {
-            product_id: item.product_id,
-            count: serials.length,
-            ms: Math.round(performance.now() - startedAt),
-        });
-
+    try {
+        const serials = await requestPromise;
         item.serials = serials;
 
         if (serials.length === 0) {
             item.serial_error = 'Không có serial/IMEI khả dụng để xuất hủy. Vui lòng kiểm tra trạng thái serial trong hàng hóa.';
         }
     } catch (error) {
-        console.error('[Damage serial] error', error);
-
         if (error.code === 'ERR_CANCELED' || error.name === 'CanceledError' || error.name === 'AbortError') {
             item.serial_error = 'Tải serial/IMEI quá thời gian. Vui lòng bấm Tải lại.';
         } else if (error.response?.status === 403) {
@@ -121,11 +160,16 @@ const loadSerialsForItem = async (item, force = false) => {
 
         item.serials = [];
     } finally {
-        window.clearTimeout(timeoutId);
-        if (serialLoadControllers.get(item) === controller) {
-            serialLoadControllers.delete(item);
-        }
         item.serial_loading = false;
+    }
+};
+
+const toggleSerialPicker = (item) => {
+    if (!item || !item.has_serial) return;
+
+    item.serial_picker_open = !item.serial_picker_open;
+    if (item.serial_picker_open && (!Array.isArray(item.serials) || item.serials.length === 0) && !item.serial_error) {
+        loadSerialsForItem(item);
     }
 };
 
@@ -234,16 +278,13 @@ const selectProduct = (product) => {
             serial_search: '',
             serial_loading: false,
             serial_error: '',
+            serial_picker_open: false,
         };
 
         items.value.unshift(item);
-
-        if (item.has_serial) {
-            loadSerialsForItem(item);
-        }
     } else {
         if (existing.has_serial) {
-            loadSerialsForItem(existing);
+            toggleSerialPicker(existing);
         } else {
             existing.qty++;
             normalizeQty(existing);
@@ -459,9 +500,9 @@ const save = (status) => {
 
                                     <div
                                         v-if="isSerialProduct(item)"
-                                        class="mt-3 rounded border border-gray-200 bg-gray-50 p-3"
+                                        class="mt-3 rounded border border-gray-200 bg-gray-50 p-3 font-sans text-[13px] leading-5"
                                     >
-                                        <div class="mb-2 flex items-center justify-between gap-2 text-[12px]">
+                                        <div class="mb-2 flex items-center justify-between gap-2 text-[13px] leading-5">
                                             <span class="font-semibold text-gray-700">Chọn serial/IMEI hủy</span>
                                             <div class="flex items-center gap-2">
                                                 <span class="text-gray-500">
@@ -469,38 +510,55 @@ const save = (status) => {
                                                 </span>
                                                 <button
                                                     type="button"
-                                                    class="rounded border border-gray-300 bg-white px-2 py-0.5 text-[11px] font-medium text-blue-600 hover:border-blue-400 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                                    class="rounded border border-gray-300 bg-white px-2 py-0.5 text-[12px] font-medium text-blue-600 hover:border-blue-400 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
                                                     :disabled="item.serial_loading"
-                                                    @click="loadSerialsForItem(item, true)"
+                                                    @click="item.serial_picker_open = true; loadSerialsForItem(item, true)"
                                                 >
                                                     Tải lại
                                                 </button>
                                             </div>
                                         </div>
 
-                                        <div v-if="item.serial_loading" class="text-[12px] text-gray-500">
+                                        <div v-if="!item.serial_picker_open" class="rounded border border-dashed border-blue-200 bg-white px-3 py-2 text-gray-600">
+                                            <button
+                                                type="button"
+                                                class="font-semibold text-blue-700 hover:text-blue-800"
+                                                @click="toggleSerialPicker(item)"
+                                            >
+                                                Chọn serial/IMEI hủy
+                                            </button>
+                                            <span class="ml-2 text-gray-500">Mở danh sách serial/IMEI khả dụng.</span>
+                                        </div>
+                                        <div v-else-if="item.serial_loading" class="text-gray-500">
                                             Đang tải serial/IMEI khả dụng...
                                         </div>
-                                        <div v-else-if="item.serial_error" class="text-[12px] text-red-600">
-                                            {{ item.serial_error }}
+                                        <div v-else-if="item.serial_error" class="flex items-center justify-between gap-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-red-700">
+                                            <span>{{ item.serial_error }}</span>
+                                            <button
+                                                type="button"
+                                                class="shrink-0 rounded border border-red-300 bg-white px-2 py-1 text-[12px] font-semibold text-red-700 hover:bg-red-100"
+                                                @click="loadSerialsForItem(item, true)"
+                                            >
+                                                Thử lại
+                                            </button>
                                         </div>
                                         <div v-else>
                                             <input
                                                 v-model="item.serial_search"
                                                 type="text"
-                                                class="mb-2 w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-[12px] outline-none focus:border-blue-500"
-                                                placeholder="T?m serial/IMEI..."
+                                                class="mb-2 w-full rounded border border-gray-300 bg-white px-2 py-1.5 font-sans text-[13px] leading-5 outline-none focus:border-blue-500"
+                                                placeholder="Tìm serial/IMEI..."
                                             />
 
-                                            <div v-if="!item.serials || item.serials.length === 0" class="text-[12px] text-red-600">
-                                                Kh?ng c? serial/IMEI kh? d?ng ?? xu?t h?y.
+                                            <div v-if="!item.serials || item.serials.length === 0" class="text-red-600">
+                                                Không có serial/IMEI khả dụng để xuất hủy.
                                             </div>
 
                                             <div v-else>
-                                                <div class="mb-2 text-[11px] text-green-600">
-                                                    T?m th?y {{ item.serials.length }} serial/IMEI kh? d?ng
+                                                <div class="mb-2 text-green-600">
+                                                    Tìm thấy {{ item.serials.length }} serial/IMEI khả dụng
                                                     <span v-if="visibleSerialsForItem(item).length < item.serials.length" class="text-gray-500">
-                                                        ? ?ang hi?n th? {{ visibleSerialsForItem(item).length }} k?t qu?, h?y g? ?? l?c nhanh.
+                                                        - đang hiển thị {{ visibleSerialsForItem(item).length }} kết quả, hãy gõ để lọc nhanh.
                                                     </span>
                                                 </div>
                                                 <div class="flex max-h-40 flex-wrap gap-2 overflow-auto">
@@ -508,7 +566,7 @@ const save = (status) => {
                                                         v-for="serial in visibleSerialsForItem(item)"
                                                         :key="serial.id"
                                                         type="button"
-                                                        class="rounded border px-2 py-1 text-[12px] font-medium transition-colors"
+                                                        class="rounded border px-2 py-1 font-mono text-[12px] leading-5 transition-colors"
                                                         :class="isSerialSelected(item, serial)
                                                             ? 'border-blue-500 bg-blue-600 text-white'
                                                             : 'border-gray-300 bg-white text-gray-700 hover:border-blue-400 hover:text-blue-700'"

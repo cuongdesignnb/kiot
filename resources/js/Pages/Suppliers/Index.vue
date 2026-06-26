@@ -528,6 +528,70 @@ const openSupplierVoucherDetail = async (entry, supplierId) => {
     supplierVoucher.loading = false;
 };
 
+const emptyText = (value) => {
+    if (value === null || value === undefined || value === '') return '—';
+    return value;
+};
+
+const formatVoucherDateTime = (value) => {
+    if (!value) return '—';
+
+    const raw = String(value).trim();
+    const vnMatch = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2}))?$/);
+    if (vnMatch) {
+        const [, day, month, year, hour, minute] = vnMatch;
+        const date = `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}`;
+        return hour ? `${String(hour).padStart(2, '0')}:${minute} ${date}` : date;
+    }
+
+    const formatted = formatDateTime(value);
+    return formatted === '-' ? raw : formatted;
+};
+
+const statusLabels = {
+    completed: 'Hoàn thành',
+    pending: 'Đang xử lý',
+    draft: 'Phiếu tạm',
+    cancelled: 'Đã hủy',
+    active: 'Đang hoạt động',
+    inactive: 'Ngừng hoạt động',
+    payment: 'Phiếu chi',
+    receipt: 'Phiếu thu',
+};
+
+const paymentMethodLabels = {
+    cash: 'Tiền mặt',
+    transfer: 'Chuyển khoản',
+    bank_transfer: 'Chuyển khoản',
+    card: 'Thẻ',
+};
+
+const formatVoucherStatus = (value) => emptyText(statusLabels[value] || value);
+const formatVoucherPaymentMethod = (value) => emptyText(paymentMethodLabels[value] || value);
+const formatVoucherMoney = (value) => (value === null || value === undefined || value === '' ? '—' : formatCurrency(value));
+
+const supplierVoucherDisplayRows = computed(() => {
+    const data = supplierVoucher.payload?.data || {};
+    const voucherType = supplierVoucher.payload?.type || '';
+    const totalAmount = data.total_amount ?? data.total ?? data.amount;
+    const paidAmount = data.paid_amount ?? (voucherType === 'cashflow' ? data.amount : null);
+    const debtAmount = data.debt_amount;
+
+    return [
+        { label: 'Mã phiếu', value: emptyText(data.code || supplierVoucher.payload?.code) },
+        { label: 'Trạng thái', value: formatVoucherStatus(data.status || data.type) },
+        { label: 'Ngày nhập', value: formatVoucherDateTime(data.purchase_date || data.return_date || data.time || data.created_at) },
+        { label: 'Nhà cung cấp', value: emptyText(data.supplier_name || data.target_name) },
+        { label: 'Mã nhà cung cấp', value: emptyText(data.supplier_code) },
+        { label: 'Người tạo', value: emptyText(data.user_name) },
+        { label: 'Tổng tiền', value: formatVoucherMoney(totalAmount) },
+        { label: 'Giảm giá', value: formatVoucherMoney(data.discount) },
+        { label: 'Đã thanh toán', value: formatVoucherMoney(paidAmount) },
+        { label: 'Còn phải trả', value: formatVoucherMoney(debtAmount) },
+        { label: 'Phương thức thanh toán', value: formatVoucherPaymentMethod(data.payment_method) },
+    ];
+});
+
 const filteredDebt = (id) => {
     const raw = supplierDebt[id];
     const data = Array.isArray(raw) ? raw : (raw?.entries || []);
@@ -2351,9 +2415,9 @@ const submitActivate = (supplier) => {
                         <button @click="supplierVoucher.show = false" class="text-gray-400 hover:text-gray-600">✕</button>
                     </div>
                     <div class="p-6 space-y-2 text-sm">
-                        <div v-for="(val, key) in supplierVoucher.payload.data" :key="key" class="flex justify-between gap-4" v-show="!Array.isArray(val) && val !== null && val !== ''">
-                            <span class="text-gray-500">{{ key }}</span>
-                            <span class="text-gray-800 font-medium text-right">{{ val }}</span>
+                        <div v-for="row in supplierVoucherDisplayRows" :key="row.label" class="flex justify-between gap-4">
+                            <span class="text-gray-500">{{ row.label }}</span>
+                            <span class="text-gray-800 font-medium text-right">{{ row.value }}</span>
                         </div>
                         <div v-if="Array.isArray(supplierVoucher.payload.data.items) && supplierVoucher.payload.data.items.length" class="mt-3">
                             <table class="w-full text-left border-collapse text-[13px]">
