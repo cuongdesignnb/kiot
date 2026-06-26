@@ -473,7 +473,7 @@ Route::get('/activity-logs', [\App\Http\Controllers\ActivityLogController::class
 Route::get('/tasks', [TaskPageController::class, 'index'])->middleware('permission:tasks.view')->name('tasks.index');
 Route::get('/tasks/performance', [TaskPageController::class, 'performance'])->middleware('permission:tasks.performance')->name('tasks.performance');
 Route::get('/tasks/{id}', [TaskPageController::class, 'show'])->name('tasks.show');
-Route::get('/my-tasks', [TaskPageController::class, 'myTasks'])->middleware('permission:tasks.self.view')->name('my-tasks');
+Route::get('/my-tasks', [TaskPageController::class, 'myTasks'])->middleware('permission:tasks.view|tasks.self.view')->name('my-tasks');
 
 // Backward compat: redirect old repair routes
 Route::get('/repairs', fn () => redirect('/tasks?type=repair'));

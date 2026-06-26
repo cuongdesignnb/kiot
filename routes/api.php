@@ -290,14 +290,14 @@ Route::prefix('notifications')->middleware('auth:sanctum')->group(function () {
 
 // 👤 MY TASKS (employee portal)
 Route::prefix('my-tasks')->middleware('auth:sanctum')->group(function () {
-    Route::get('/', [\App\Http\Controllers\Api\MyTasksController::class, 'index'])->middleware('permission:tasks.self.view');
-    Route::post('/', [\App\Http\Controllers\Api\MyTasksController::class, 'store'])->middleware('permission:tasks.self.create');
-    Route::get('/categories', [\App\Http\Controllers\Api\MyTasksController::class, 'categories'])->middleware('permission:tasks.self.create');
-    Route::get('/products/search', [\App\Http\Controllers\Api\MyTasksController::class, 'searchProducts'])->middleware('permission:tasks.self.create');
-    Route::get('/serials/search', [\App\Http\Controllers\Api\MyTasksController::class, 'searchSerials'])->middleware('permission:tasks.self.create');
-    Route::post('/accept-all', [\App\Http\Controllers\Api\MyTasksController::class, 'acceptAll'])->middleware('permission:tasks.self.view');
-    Route::post('/{assignment}/respond', [\App\Http\Controllers\Api\MyTasksController::class, 'respond'])->middleware('permission:tasks.self.view');
-    Route::post('/{task}/progress', [\App\Http\Controllers\Api\MyTasksController::class, 'updateProgress'])->middleware('permission:tasks.self.progress');
+    Route::get('/', [\App\Http\Controllers\Api\MyTasksController::class, 'index'])->middleware('permission:tasks.view|tasks.self.view');
+    Route::post('/', [\App\Http\Controllers\Api\MyTasksController::class, 'store'])->middleware('permission:tasks.create|tasks.self.create');
+    Route::get('/categories', [\App\Http\Controllers\Api\MyTasksController::class, 'categories'])->middleware('permission:tasks.create|tasks.self.create');
+    Route::get('/products/search', [\App\Http\Controllers\Api\MyTasksController::class, 'searchProducts'])->middleware('permission:tasks.create|tasks.self.create');
+    Route::get('/serials/search', [\App\Http\Controllers\Api\MyTasksController::class, 'searchSerials'])->middleware('permission:tasks.create|tasks.self.create');
+    Route::post('/accept-all', [\App\Http\Controllers\Api\MyTasksController::class, 'acceptAll'])->middleware('permission:tasks.view|tasks.self.view');
+    Route::post('/{assignment}/respond', [\App\Http\Controllers\Api\MyTasksController::class, 'respond'])->middleware('permission:tasks.view|tasks.self.view');
+    Route::post('/{task}/progress', [\App\Http\Controllers\Api\MyTasksController::class, 'updateProgress'])->middleware('permission:tasks.complete|tasks.self.progress');
 });
 
 Route::prefix('repair-performance-tiers')->group(function () {
