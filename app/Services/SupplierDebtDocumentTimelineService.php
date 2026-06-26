@@ -110,7 +110,15 @@ class SupplierDebtDocumentTimelineService
             $realPaymentCoverageByPurchase[$refCode] = (float) collect($cfs)->sum('amount');
         }
 
-        foreach ($this->allocateGenericSupplierPaymentsToPurchasePaidAmounts($purchases, collect($standalonePayments), $realPaymentCoverageByPurchase) as $purchaseCode => $coveredAmount) {
+        $genericPaymentInference = $this->inferGenericSupplierPaymentCoverage(
+            $purchases,
+            collect($standalonePayments),
+            $realPaymentCoverageByPurchase
+        );
+        $genericPaymentCoverageByPurchase = $genericPaymentInference['coverage'];
+        $genericPaymentAllocationDiagnostics = $genericPaymentInference['diagnostics'];
+
+        foreach ($genericPaymentCoverageByPurchase as $purchaseCode => $coveredAmount) {
             $realPaymentCoverageByPurchase[$purchaseCode] = (float) ($realPaymentCoverageByPurchase[$purchaseCode] ?? 0.0)
                 + (float) $coveredAmount;
         }
@@ -173,6 +181,7 @@ class SupplierDebtDocumentTimelineService
             $paidAmount = (float) $p->paid_amount;
             if ($paidAmount > 0) {
                 $coveredAmount = max(0.0, (float) ($realPaymentCoverageByPurchase[$p->code] ?? 0.0));
+                $genericInferredCoveredAmount = max(0.0, (float) ($genericPaymentCoverageByPurchase[$p->code] ?? 0.0));
                 $uncoveredPaidAmount = max(0.0, $paidAmount - $coveredAmount);
 
                 if ($uncoveredPaidAmount > 0.01) {
@@ -206,6 +215,8 @@ class SupplierDebtDocumentTimelineService
                         'badge_title' => 'Tạm tính từ phiếu nhập — chưa tìm thấy phiếu chi thật.',
                         'source' => 'legacy_purchase_paid_amount',
                         'real_payment_covered_amount' => $coveredAmount,
+                        'generic_payment_inferred_covered_amount' => $genericInferredCoveredAmount,
+                        'payment_allocation_confidence' => $genericInferredCoveredAmount > 0.01 ? 'inferred' : 'actual_or_direct',
                         'fallback_uncovered_paid_amount' => $uncoveredPaidAmount,
                         'document_group_key' => $p->code,
                         'document_group_type' => 'purchase',
@@ -247,6 +258,10 @@ class SupplierDebtDocumentTimelineService
                 'badge_title' => $cf->description ?: $cf->note,
                 'is_real_voucher' => true,
                 'is_virtual_fallback' => false,
+                'payment_allocation_confidence' => 'global_payment_only',
+                'allocation_is_actual' => false,
+                'needs_manual_review' => (bool) ($genericPaymentAllocationDiagnostics['has_inferred_allocations'] ?? false),
+                'payment_allocation_note' => 'Generic SupplierPayment has no persisted purchase allocation table; per-purchase coverage is inferred for display/reconcile diagnostics only.',
                 'source' => 'document_first',
             ]));
         }
@@ -1023,6 +1038,8 @@ class SupplierDebtDocumentTimelineService
 
         $difference = $documentFinalBalance - $storedBalance;
         $isMismatch = abs($difference) > 1.0;
+        $hasInferredGenericAllocations = (bool) ($genericPaymentAllocationDiagnostics['has_inferred_allocations'] ?? false);
+        $hasUnallocatedGenericPayments = (bool) ($genericPaymentAllocationDiagnostics['has_unallocated_generic_payments'] ?? false);
 
         $severity = 'ok';
         $message = null;
@@ -1032,6 +1049,14 @@ class SupplierDebtDocumentTimelineService
         if ($isMismatch) {
             $severity = 'warning';
             $message = 'Timeline chứng từ lệch với Nợ hiện tại. Cần đối soát dữ liệu, chưa tự sửa.';
+        }
+        if (!$isMismatch && !$virtualOpening && $hasInferredGenericAllocations) {
+            $severity = 'warning';
+            $message = 'Generic SupplierPayment has no persisted allocation table; purchase-level coverage is inferred for display only and needs review when manual allocation may have been used.';
+        }
+        if (!$isMismatch && !$virtualOpening && $hasUnallocatedGenericPayments) {
+            $severity = 'warning';
+            $message = 'Some Generic SupplierPayment rows cannot be safely inferred; fallback and diagnostics are kept read-only.';
         }
         if ($virtualOpening) {
             $severity = 'info';
@@ -1064,15 +1089,19 @@ class SupplierDebtDocumentTimelineService
             'reconcile' => [
                 'severity' => $severity,
                 'message' => $message,
-                'user_warning' => $virtualOpening ? false : $isMismatch,
+                'user_warning' => $virtualOpening ? false : ($isMismatch || $hasInferredGenericAllocations || $hasUnallocatedGenericPayments),
                 'stored_balance' => $storedBalance,
                 'document_balance' => $documentFinalBalance,
                 'difference' => $difference,
+                'allocation_confidence' => $hasInferredGenericAllocations ? 'inferred' : 'actual_or_legacy',
+                'has_inferred_generic_allocations' => $hasInferredGenericAllocations,
+                'has_unallocated_generic_payments' => $hasUnallocatedGenericPayments,
+                'generic_payment_allocation' => $genericPaymentAllocationDiagnostics,
                 // Alignment keys
                 'computed_balance' => $storedBalance,
                 'has_mismatch' => $virtualOpening ? false : $isMismatch,
                 'ledger_mismatch' => (bool) $virtualOpening,
-                'display_resolved' => $virtualOpening ? true : !$isMismatch,
+                'display_resolved' => $virtualOpening ? true : (!$isMismatch && !$hasInferredGenericAllocations && !$hasUnallocatedGenericPayments),
                 'display_balance_target' => $storedBalance,
                 'display_balance_final' => $documentFinalBalance,
                 'excluded_ledger_entries' => $excludedLedgerEntries,
@@ -1080,13 +1109,26 @@ class SupplierDebtDocumentTimelineService
         ];
     }
 
-    private function allocateGenericSupplierPaymentsToPurchasePaidAmounts(
+    private function inferGenericSupplierPaymentCoverage(
         Collection $purchases,
         Collection $genericPayments,
         array $directCoverageByPurchase
     ): array {
+        $diagnostics = [
+            'policy' => 'inferred_fifo_projection_only',
+            'has_inferred_allocations' => false,
+            'has_unallocated_generic_payments' => false,
+            'inferred_allocations' => [],
+            'unallocated_generic_payments' => [],
+            'warnings' => [],
+            'note' => 'Generic SupplierPayment rows do not persist purchase-level allocation. Coverage is inferred only to avoid duplicate TTNH fallback in the display timeline; it is not actual allocation evidence.',
+        ];
+
         if ($genericPayments->isEmpty()) {
-            return [];
+            return [
+                'coverage' => [],
+                'diagnostics' => $diagnostics,
+            ];
         }
 
         $purchaseStates = $purchases
@@ -1119,7 +1161,10 @@ class SupplierDebtDocumentTimelineService
             ->all();
 
         if (empty($purchaseStates)) {
-            return [];
+            return [
+                'coverage' => [],
+                'diagnostics' => $diagnostics,
+            ];
         }
 
         $coverage = [];
@@ -1162,10 +1207,42 @@ class SupplierDebtDocumentTimelineService
                 $coverage[$purchaseCode] = (float) ($coverage[$purchaseCode] ?? 0.0) + $allocated;
                 $purchaseStates[$index]['remaining_paid_amount'] -= $allocated;
                 $remainingPayment -= $allocated;
+
+                $diagnostics['has_inferred_allocations'] = true;
+                $diagnostics['inferred_allocations'][] = [
+                    'payment_code' => $payment->code,
+                    'purchase_code' => $purchaseCode,
+                    'amount' => $allocated,
+                    'allocation_confidence' => 'inferred',
+                    'allocation_is_actual' => false,
+                    'evidence' => 'purchase_paid_amount_snapshot_without_persisted_supplier_payment_allocation',
+                ];
+            }
+
+            if ($remainingPayment > 0.01) {
+                $diagnostics['has_unallocated_generic_payments'] = true;
+                $diagnostics['unallocated_generic_payments'][] = [
+                    'payment_code' => $payment->code,
+                    'amount' => $remainingPayment,
+                    'allocation_confidence' => 'unknown',
+                    'allocation_is_actual' => false,
+                    'reason' => 'no_eligible_purchase_paid_snapshot_at_or_before_payment_time',
+                ];
             }
         }
 
-        return $coverage;
+        if ($diagnostics['has_inferred_allocations']) {
+            $diagnostics['warnings'][] = 'generic_supplier_payment_allocation_is_inferred_not_actual';
+        }
+
+        if ($diagnostics['has_unallocated_generic_payments']) {
+            $diagnostics['warnings'][] = 'generic_supplier_payment_has_unallocated_residual';
+        }
+
+        return [
+            'coverage' => $coverage,
+            'diagnostics' => $diagnostics,
+        ];
     }
 
     private function classifySupplierDebt(SupplierDebtTransaction $stx): array

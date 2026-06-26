@@ -67,11 +67,17 @@ class SupplierDebtTimelineParityTest extends TestCase
         $this->assertSame(2_900_000.0, (float) $result['summary']['display_balance_final']);
         $this->assertSame(2_900_000.0, (float) $result['summary']['current_debt']);
         $this->assertFalse((bool) $result['reconcile']['has_mismatch']);
+        $this->assertSame('warning', $result['reconcile']['severity']);
+        $this->assertTrue((bool) $result['reconcile']['has_inferred_generic_allocations']);
+        $this->assertSame('inferred', $result['reconcile']['allocation_confidence']);
+        $this->assertFalse((bool) $result['reconcile']['display_resolved']);
 
         $this->assertNotNull($entries->firstWhere('code', 'PCPN260422188'));
         $this->assertNotNull($entries->firstWhere('code', 'PCPN260626688'));
         $this->assertSame(1, $entries->where('code', 'PCPN260422188')->count());
         $this->assertSame(1, $entries->where('code', 'PCPN260626688')->count());
+        $this->assertFalse((bool) $entries->firstWhere('code', 'PCPN260422188')['allocation_is_actual']);
+        $this->assertSame('global_payment_only', $entries->firstWhere('code', 'PCPN260422188')['payment_allocation_confidence']);
 
         $this->assertSame([], $entries
             ->filter(fn (array $entry) => str_starts_with((string) ($entry['code'] ?? ''), 'TTNH'))
@@ -91,7 +97,82 @@ class SupplierDebtTimelineParityTest extends TestCase
         $response->assertOk()
             ->assertJsonPath('summary.display_balance_final', 2_900_000)
             ->assertJsonPath('summary.current_debt', 2_900_000)
-            ->assertJsonPath('reconcile.has_mismatch', false);
+            ->assertJsonPath('reconcile.has_mismatch', false)
+            ->assertJsonPath('reconcile.severity', 'warning')
+            ->assertJsonPath('reconcile.has_inferred_generic_allocations', true)
+            ->assertJsonPath('reconcile.display_resolved', false);
+    }
+
+    public function test_generic_supplier_payment_manual_allocation_without_persisted_table_is_marked_inferred(): void
+    {
+        $supplier = $this->supplier('NCC-MANUAL-ALLOCATION', 1_000_000);
+        $base = Carbon::parse('2026-06-01 09:00:00');
+
+        $this->purchase($supplier, 'PN-MANUAL-A', 1_000_000, 0, $base);
+        $this->purchase($supplier, 'PN-MANUAL-B', 1_000_000, 1_000_000, $base->copy()->addHour());
+        $this->genericPayment($supplier, 'PCPN-MANUAL-B', 1_000_000, $base->copy()->addHours(2));
+
+        $snapshot = $this->readOnlySnapshot($supplier);
+        $result = app(SupplierDebtDocumentTimelineService::class)->build($supplier->fresh());
+        $entries = collect($result['entries']);
+        $payment = $entries->firstWhere('code', 'PCPN-MANUAL-B');
+        $inferredAllocations = collect($result['reconcile']['generic_payment_allocation']['inferred_allocations']);
+
+        $this->assertSame(1_000_000.0, (float) $result['summary']['document_final_balance']);
+        $this->assertFalse((bool) $result['reconcile']['has_mismatch']);
+        $this->assertSame('warning', $result['reconcile']['severity']);
+        $this->assertTrue((bool) $result['reconcile']['user_warning']);
+        $this->assertTrue((bool) $result['reconcile']['has_inferred_generic_allocations']);
+        $this->assertFalse((bool) $result['reconcile']['display_resolved']);
+
+        $this->assertNotNull($payment);
+        $this->assertSame('global_payment_only', $payment['payment_allocation_confidence']);
+        $this->assertFalse((bool) $payment['allocation_is_actual']);
+        $this->assertArrayNotHasKey('payment_for_code', $payment);
+
+        $this->assertTrue($inferredAllocations->contains(fn (array $allocation) =>
+            $allocation['payment_code'] === 'PCPN-MANUAL-B'
+            && $allocation['purchase_code'] === 'PN-MANUAL-B'
+            && (float) $allocation['amount'] === 1_000_000.0
+            && $allocation['allocation_confidence'] === 'inferred'
+            && $allocation['allocation_is_actual'] === false
+        ));
+        $this->assertFalse($inferredAllocations->contains('purchase_code', 'PN-MANUAL-A'));
+
+        $this->assertSame([], $entries
+            ->filter(fn (array $entry) => str_starts_with((string) ($entry['code'] ?? ''), 'TTNH'))
+            ->pluck('code')
+            ->values()
+            ->all());
+        $this->assertSame($snapshot, $this->readOnlySnapshot($supplier), 'Manual-allocation ambiguity handling must be read-only.');
+    }
+
+    public function test_generic_supplier_payment_auto_fifo_is_inferred_not_actual_allocation_evidence(): void
+    {
+        $supplier = $this->supplier('NCC-AUTO-FIFO', 1_000_000);
+        $base = Carbon::parse('2026-06-01 09:00:00');
+
+        $this->purchase($supplier, 'PN-AUTO-A', 1_000_000, 1_000_000, $base);
+        $this->purchase($supplier, 'PN-AUTO-B', 1_000_000, 0, $base->copy()->addHour());
+        $this->genericPayment($supplier, 'PCPN-AUTO-A', 1_000_000, $base->copy()->addHours(2));
+
+        $result = app(SupplierDebtDocumentTimelineService::class)->build($supplier->fresh());
+        $entries = collect($result['entries']);
+        $inferredAllocations = collect($result['reconcile']['generic_payment_allocation']['inferred_allocations']);
+
+        $this->assertSame(1_000_000.0, (float) $result['summary']['document_final_balance']);
+        $this->assertFalse((bool) $result['reconcile']['has_mismatch']);
+        $this->assertSame('warning', $result['reconcile']['severity']);
+        $this->assertTrue((bool) $result['reconcile']['has_inferred_generic_allocations']);
+        $this->assertSame('generic_supplier_payment_allocation_is_inferred_not_actual', $result['reconcile']['generic_payment_allocation']['warnings'][0]);
+
+        $this->assertTrue($inferredAllocations->contains(fn (array $allocation) =>
+            $allocation['payment_code'] === 'PCPN-AUTO-A'
+            && $allocation['purchase_code'] === 'PN-AUTO-A'
+            && $allocation['allocation_confidence'] === 'inferred'
+            && $allocation['allocation_is_actual'] === false
+        ));
+        $this->assertSame('global_payment_only', $entries->firstWhere('code', 'PCPN-AUTO-A')['payment_allocation_confidence']);
     }
 
     public function test_legacy_ttnh_fallback_uses_only_uncovered_paid_amount(): void
@@ -110,6 +191,9 @@ class SupplierDebtTimelineParityTest extends TestCase
         $this->assertNotNull($fallback);
         $this->assertSame(300_000.0, (float) $fallback['amount']);
         $this->assertSame(-300_000.0, (float) $fallback['supplier_display_effect']);
+        $this->assertFalse((bool) $result['reconcile']['has_inferred_generic_allocations']);
+        $this->assertSame('ok', $result['reconcile']['severity']);
+        $this->assertTrue((bool) $result['reconcile']['display_resolved']);
     }
 
     public function test_ambiguous_generic_payment_does_not_cover_future_purchase_or_mutate_data(): void
@@ -131,6 +215,8 @@ class SupplierDebtTimelineParityTest extends TestCase
         $this->assertSame(-500_000.0, (float) $entries->firstWhere('code', 'PCPN-AMBIGUOUS-001')['supplier_display_effect']);
         $this->assertTrue((bool) $result['reconcile']['has_mismatch']);
         $this->assertSame('warning', $result['reconcile']['severity']);
+        $this->assertTrue((bool) $result['reconcile']['has_unallocated_generic_payments']);
+        $this->assertFalse((bool) $result['reconcile']['has_inferred_generic_allocations']);
         $this->assertSame($snapshot, $this->readOnlySnapshot($supplier), 'Ambiguous timeline build must be read-only.');
     }
 

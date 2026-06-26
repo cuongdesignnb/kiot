@@ -7,7 +7,7 @@
 - Source branch/SHA: `origin/main` at `884df654191a9113b02a509a3bf4670adb08ae75`
 - Target repository: `cuongdesignnb/kiot`
 - Target base SHA: `c5b1ffbccf4a6b48fc57ec1ed99d7e9c6fda4b87`
-- Working branch: `audit/sapo-kiot-supplier-debt-parity`
+- Working branch: `hotfix/supplier-debt-timeline-double-count`
 - Audit data safety: read-only code/schema/test audit. No production DB, no migration, no backfill, no debt rebuild, no legacy cleanup.
 
 ## File And Symbol Inventory
@@ -22,8 +22,8 @@
 | Routes | `routes/api.php` | `routes/api.php` | supplier debt/payment APIs | Equivalent | Route is present. |
 | Purchase flow | `PurchaseController` | `PurchaseController` | create/update/cancel purchase | Equivalent enough for scope | Direct purchase payments create `CashFlow reference_type=Purchase` and update `Purchase.paid_amount/debt_amount`. |
 | CashFlow flow | `CashFlow` model/controller | `CashFlow` model/controller | payment records | Compatible with caveat | `CashFlow::active()` is NULL-safe for `cancelled`; document service must not count cancelled/deleted rows as real payments. |
-| Supplier debt transaction | `SupplierDebtTransaction` | `SupplierDebtTransaction` | supplier payment ledger | Compatible schema | No persistent supplier allocation table exists; generic payments allocate by write-path behavior. |
-| Tests | Supplier debt/timeline tests | Supplier debt/timeline tests | PHPUnit | Missing P0 fixture | Existing tests cover direct payment and some legacy fallback. Missing production-shaped generic SupplierPayment + fallback residual fixture. |
+| Supplier debt transaction | `SupplierDebtTransaction` | `SupplierDebtTransaction` | supplier payment ledger | Compatible schema | No persistent supplier-payment allocation table exists; generic payment to purchase mapping cannot be proven as actual allocation. |
+| Tests | Supplier debt/timeline tests | Supplier debt/timeline tests | PHPUnit | Added P0 fixtures | Covers production-shaped generic payment double-count, manual-allocation ambiguity, auto-FIFO inference, direct payment, residual fallback, and future-payment ambiguity. |
 
 ## Call Graph Payment/Debt
 
@@ -47,7 +47,7 @@
 - `purchases.paid_amount/debt_amount` updated by manual allocation or FIFO auto allocation
 - `customers.supplier_debt_amount` decreased by payment amount
 
-No persistent supplier payment allocation table exists in current Kiot schema.
+No persistent supplier payment allocation table exists in current Kiot schema. Therefore, historical generic `SupplierPayment` rows can prove the global payment event, but they cannot prove the exact purchase-level allocation when manual allocation may have been used.
 
 ### Supplier debt tab default runtime
 
@@ -83,10 +83,10 @@ No migration is required for the selected hotfix.
 | Flow | Sapo contract observed | Kiot current behavior at base | Status | Risk |
 |---|---|---|---|---|
 | Direct purchase payment | CashFlow `reference_type=Purchase` is real payment evidence; do not also synthesize TTNH. | Document timeline suppresses fallback for direct reference. | Equivalent | Low |
-| Generic supplier payment | One business payment has CashFlow + SupplierDebtTransaction + purchase `paid_amount` updates. | Document timeline emits generic `PCPN` and still may synthesize full TTNH for purchases updated by that payment. | Diverged | High, double counts payment. |
+| Generic supplier payment | One business payment has CashFlow + SupplierDebtTransaction + purchase `paid_amount` updates. | Document timeline emits generic `PCPN` and still may synthesize full TTNH for purchases updated by that payment. | Diverged | High, double counts payment. Purchase-level mapping is unproven for manual allocation history. |
 | Legacy paid purchase without real payment | `Purchase.paid_amount` may synthesize virtual TTNH. | Document timeline does this. | Equivalent | Medium, must remain for legacy. |
 | Partial covered paid amount | Fallback should represent only residual uncovered `paid_amount`. | Document timeline currently emits full `paid_amount` if no direct match. | Missing | High |
-| Ambiguous generic payment | Do not mutate DB or hide warning by data update. | No diagnostic-specific handling in document service. | Partial | Medium |
+| Ambiguous generic payment | Do not mutate DB or hide warning by data update. | Base had no diagnostic-specific handling in document service. | Fixed with diagnostic | Medium |
 | CashFlow + SupplierDebtTransaction same code | One economic payment. | Existing code de-dupes ledger row after CashFlow code exists. | Equivalent | Low |
 | Cancelled CashFlow | Must not count as real payment. | `CashFlow::active()` handles `cancelled` and `deleted_at`; accent variants are a known broader hardening area. | Partial | Medium |
 | Sorting/running balance | Closing balance must be independent of display order. | Current balance sort is chronological; incident mismatch is not just row order. | Equivalent | Low |
@@ -101,15 +101,16 @@ No migration is required for the selected hotfix.
 2. Business payment identity:
    - Primary key: `cash_flows.code` / `supplier_debt_transactions.code` when both exist.
    - Direct allocation key: `reference_type=Purchase` + `reference_code=PN...`.
-   - Generic allocation key: supplier id + active generic payment amount + write-path FIFO/manual purchase projection.
+   - Generic payment evidence key: supplier id + active generic payment amount/code.
+   - Generic purchase-level coverage is inferred from current `Purchase.paid_amount` residual and payment time only for display/fallback suppression. It is not actual allocation evidence.
 3. CashFlow and SupplierDebtTransaction with same payment code are one business payment. Timeline may display one financial row; balance must apply it once.
 4. `Purchase.paid_amount` is a projection/snapshot for current purchase state and a fallback legacy evidence only for the uncovered residual.
 5. TTNH fallback may be generated only for `uncovered_paid_amount > 0.01`.
-6. Fallback must be suppressed for the covered part explained by direct Purchase CashFlow or generic supplier payment allocation.
-7. When ambiguity cannot be resolved, do not update DB, do not delete rows, keep reconcile diagnostics/warning. The selected P0 hotfix uses the existing write-path FIFO contract; it does not run subset-sum guessing.
+6. Fallback must be suppressed for the covered part explained by direct Purchase CashFlow or by generic SupplierPayment inference, but generic inference must be marked as `inferred`, not `actual`.
+7. When ambiguity cannot be resolved, do not update DB, do not delete rows, keep reconcile diagnostics/warning. The selected P0 hotfix uses Policy B: FIFO is presentation-only inference for generic payments without persisted allocation. It does not run subset-sum guessing and does not claim purchase-level allocation is actual.
 8. Closing payable balance formula for supplier tab: sum purchase totals minus real payments minus residual fallback payments minus returns/offsets/discounts/adjustments.
 9. Running balance is calculated oldest to newest; display can be newest first, but closing balance must not change with pagination or display order.
-10. Reconcile compares computed document balance to `customers.supplier_debt_amount`; code must fix document reconstruction, not overwrite stored balance.
+10. Reconcile compares computed document balance to `customers.supplier_debt_amount`; code must fix document reconstruction, not overwrite stored balance. If numeric balance matches only after inferred generic allocation, `has_mismatch` may be false but `severity` remains `warning`, `display_resolved=false`, and `has_inferred_generic_allocations=true`.
 
 ## Incident Reconstruction
 
@@ -137,7 +138,7 @@ Classification: mixed cause, mostly incorrect/partial Kiot port in default docum
 | Update stored supplier debt | Force DB to match timeline | Unsafe, hides duplicate event, forbidden | Reject |
 | UI hide warning or force display balance | Makes screen look aligned | Hides accounting error, forbidden | Reject |
 | Remove all TTNH fallback when any generic payment exists | May undercount legitimate legacy paid purchases | Too broad | Reject |
-| Residual fallback by real payment coverage | Compute direct/generic real payment coverage and synthesize only uncovered `paid_amount` | Correct scope; no DB write; needs tests | Chosen |
+| Residual fallback by real payment coverage | Compute direct real payment coverage and generic payment inferred coverage; synthesize only uncovered `paid_amount` | Correct scope; no DB write; must expose inference diagnostics | Chosen with Policy B |
 
 ## Chosen Fix
 
@@ -145,10 +146,13 @@ Patch `SupplierDebtDocumentTimelineService` only:
 
 - Calculate real payment coverage per purchase.
 - Count direct Purchase CashFlow against its purchase.
-- Allocate generic supplier payments over purchase paid residual using the same FIFO order used by `SupplierController::recordPayment()` auto mode.
+- Infer generic supplier payment coverage over purchase paid residual in FIFO order. This is presentation-only inference because Kiot has no persisted supplier-payment allocation table.
 - Do not allocate generic supplier payments into purchases whose purchase time is after the payment time.
 - Generate TTNH fallback only for residual uncovered paid amount.
 - Keep generic PCPN payment visible as a real payment row once.
+- Mark generic payment rows as `payment_allocation_confidence=global_payment_only`, `allocation_is_actual=false`.
+- Return `reconcile.generic_payment_allocation` diagnostics with inferred allocation evidence, warnings, and unallocated generic payment residuals.
+- If numeric balance matches only because inferred generic allocation suppressed TTNH fallback, keep `reconcile.severity=warning`, `user_warning=true`, and `display_resolved=false`; do not present it as a clean actual allocation.
 - Do not mutate `customers`, `purchases`, `cash_flows`, or `supplier_debt_transactions`.
 
 `SupplierController::debtTransactions()` also adds the read-only alias `summary.current_debt` to the API response so the endpoint exposes the same contract as the document timeline service. This is outside the default P0 file list, but it is response-only and required by the MASTER TASK API assertion. No write-path or permission behavior is changed.
@@ -159,6 +163,9 @@ Add `tests/Feature/Suppliers/SupplierDebtTimelineParityTest.php` with:
 
 - Production-shaped fixture proving `45,530,000 - 42,630,000 = 2,900,000`.
 - Assert generic PCPN appears once and TTNH fallback is not emitted for purchases covered by real generic payments.
+- Assert generic PCPN rows are global payment evidence only, not actual purchase allocation evidence.
+- Add manual allocation trái FIFO fixture: earlier purchase remains unpaid, later purchase is paid by generic payment; timeline must mark allocation as inferred and read-only.
+- Add auto FIFO fixture: inferred coverage may suppress duplicate fallback, but still warns that allocation is inferred.
 - Assert direct Purchase CashFlow still appears.
 - Assert read-only service/API call does not mutate stored supplier debt, purchase paid/debt totals, cashflow count, or supplier debt transaction count.
 - Add residual fallback test for partial uncovered `paid_amount`.
@@ -182,17 +189,25 @@ Baseline red test before hotfix:
 - Production-shaped fixture computed `document_final_balance=-11,980,000` instead of expected `2,900,000`.
 - Partial fallback fixture computed `document_final_balance=500,000` instead of expected `300,000`.
 
-After final P0 hotfix:
+After blocker review update:
 
-- `php artisan test tests/Feature/Suppliers/SupplierDebtTimelineParityTest.php`: PASS, 3 passed, 30 assertions.
+- `php artisan test tests/Feature/Suppliers/SupplierDebtTimelineParityTest.php`: PASS, 5 passed, 65 assertions.
 - `php artisan test tests/Feature/Customers`: PASS, 148 passed, 1 skipped, 799 assertions.
 - `php -l app/Services/SupplierDebtDocumentTimelineService.php`: PASS.
 - `php -l app/Http/Controllers/SupplierController.php`: PASS.
 - `git diff --check`: PASS.
 
+Blocker-specific assertions now covered:
+
+- Generic `SupplierPayment` manual allocation without persisted table is marked inferred.
+- Generic payment row is `global_payment_only` and `allocation_is_actual=false`.
+- Inferred allocation diagnostics list purchase coverage as `allocation_confidence=inferred`, not actual allocation evidence.
+- Numeric reconcile may have `has_mismatch=false`, but when generic inference is used it returns `severity=warning`, `user_warning=true`, `display_resolved=false`, and `has_inferred_generic_allocations=true`.
+- Future-payment ambiguity keeps fallback, reports warning, and remains read-only.
+
 Regression suites with unrelated pre-existing/out-of-scope failures:
 
-- `php artisan test tests/Feature/Suppliers`: 47 passed, 1 failed, 376 assertions.
+- `php artisan test tests/Feature/Suppliers`: 49 passed, 1 failed, 411 assertions.
   - Failing test: `Tests\Feature\Suppliers\Step248SupplierActionsTest::user_without_suppliers_edit_permission_is_blocked`.
   - Failure: expected redirect `/`, actual `403`.
   - Classification: permission behavior, outside supplier debt/timeline scope. Not fixed in this P0 hotfix.
