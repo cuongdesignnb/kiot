@@ -146,9 +146,12 @@ Patch `SupplierDebtDocumentTimelineService` only:
 - Calculate real payment coverage per purchase.
 - Count direct Purchase CashFlow against its purchase.
 - Allocate generic supplier payments over purchase paid residual using the same FIFO order used by `SupplierController::recordPayment()` auto mode.
+- Do not allocate generic supplier payments into purchases whose purchase time is after the payment time.
 - Generate TTNH fallback only for residual uncovered paid amount.
 - Keep generic PCPN payment visible as a real payment row once.
 - Do not mutate `customers`, `purchases`, `cash_flows`, or `supplier_debt_transactions`.
+
+`SupplierController::debtTransactions()` also adds the read-only alias `summary.current_debt` to the API response so the endpoint exposes the same contract as the document timeline service. This is outside the default P0 file list, but it is response-only and required by the MASTER TASK API assertion. No write-path or permission behavior is changed.
 
 ## Test Plan
 
@@ -159,6 +162,7 @@ Add `tests/Feature/Suppliers/SupplierDebtTimelineParityTest.php` with:
 - Assert direct Purchase CashFlow still appears.
 - Assert read-only service/API call does not mutate stored supplier debt, purchase paid/debt totals, cashflow count, or supplier debt transaction count.
 - Add residual fallback test for partial uncovered `paid_amount`.
+- Add ambiguity/future-purchase test proving a generic payment cannot be allocated to a purchase that occurs after the payment and that the service keeps reconcile warning without DB mutation.
 
 Required verification:
 
@@ -180,7 +184,7 @@ Baseline red test before hotfix:
 
 After hotfix:
 
-- `php artisan test tests/Feature/Suppliers/SupplierDebtTimelineParityTest.php`: PASS, 2 passed, 24 assertions.
+- `php artisan test tests/Feature/Suppliers/SupplierDebtTimelineParityTest.php`: PASS, 3 passed, 30 assertions.
 - `php artisan test tests/Feature/Customers`: PASS, 148 passed, 1 skipped, 799 assertions.
 - `php -l app/Services/SupplierDebtDocumentTimelineService.php`: PASS.
 - `php -l app/Http/Controllers/SupplierController.php`: PASS.

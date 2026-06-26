@@ -1091,6 +1091,7 @@ class SupplierDebtDocumentTimelineService
 
         $purchaseStates = $purchases
             ->filter(fn (Purchase $purchase) => (float) $purchase->paid_amount > 0.01)
+            ->filter(fn (Purchase $purchase) => (string) ($purchase->status ?? '') === 'completed')
             ->sort(function (Purchase $a, Purchase $b) {
                 $timeCompare = strcmp(
                     $this->normalizeSortableTime($a->purchase_date ?: $a->created_at),
@@ -1109,6 +1110,7 @@ class SupplierDebtDocumentTimelineService
 
                 return [
                     'code' => (string) $purchase->code,
+                    'sort_time' => $this->normalizeSortableTime($purchase->purchase_date ?: $purchase->created_at),
                     'remaining_paid_amount' => max(0.0, $paidAmount - $directCovered),
                 ];
             })
@@ -1139,6 +1141,7 @@ class SupplierDebtDocumentTimelineService
 
         foreach ($payments as $payment) {
             $remainingPayment = (float) $payment->amount;
+            $paymentTime = $this->normalizeSortableTime($payment->time ?: $payment->created_at);
 
             foreach ($purchaseStates as $index => $state) {
                 if ($remainingPayment <= 0.01) {
@@ -1146,6 +1149,10 @@ class SupplierDebtDocumentTimelineService
                 }
 
                 if ($state['remaining_paid_amount'] <= 0.01) {
+                    continue;
+                }
+
+                if ($paymentTime !== '' && (string) $state['sort_time'] > $paymentTime) {
                     continue;
                 }
 

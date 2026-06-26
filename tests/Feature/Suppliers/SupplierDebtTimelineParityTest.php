@@ -96,20 +96,42 @@ class SupplierDebtTimelineParityTest extends TestCase
 
     public function test_legacy_ttnh_fallback_uses_only_uncovered_paid_amount(): void
     {
-        $supplier = $this->supplier('NCC-PARTIAL-FALLBACK', 300_000);
+        $supplier = $this->supplier('NCC-PARTIAL-FALLBACK', 500_000);
         $base = Carbon::parse('2026-06-01 09:00:00');
 
-        $this->purchase($supplier, 'PN-PARTIAL-001', 1_000_000, 700_000, $base);
-        $this->genericPayment($supplier, 'PCPN-PARTIAL-001', 500_000, $base->copy()->addHour());
+        $purchase = $this->purchase($supplier, 'PN-PARTIAL-001', 1_000_000, 500_000, $base);
+        $this->directPurchasePayment($supplier, $purchase, 'PC-PARTIAL-001', 200_000, $base->copy()->addHour());
 
         $result = app(SupplierDebtDocumentTimelineService::class)->build($supplier->fresh());
         $entries = collect($result['entries']);
         $fallback = $entries->firstWhere('code', 'TTNH-PARTIAL-001');
 
-        $this->assertSame(300_000.0, (float) $result['summary']['document_final_balance']);
+        $this->assertSame(500_000.0, (float) $result['summary']['document_final_balance']);
         $this->assertNotNull($fallback);
-        $this->assertSame(200_000.0, (float) $fallback['amount']);
-        $this->assertSame(-200_000.0, (float) $fallback['supplier_display_effect']);
+        $this->assertSame(300_000.0, (float) $fallback['amount']);
+        $this->assertSame(-300_000.0, (float) $fallback['supplier_display_effect']);
+    }
+
+    public function test_ambiguous_generic_payment_does_not_cover_future_purchase_or_mutate_data(): void
+    {
+        $supplier = $this->supplier('NCC-AMBIGUOUS-FUTURE', 500_000);
+        $base = Carbon::parse('2026-06-01 09:00:00');
+
+        $this->genericPayment($supplier, 'PCPN-AMBIGUOUS-001', 500_000, $base);
+        $this->purchase($supplier, 'PN-AMBIGUOUS-001', 1_000_000, 500_000, $base->copy()->addDay());
+
+        $snapshot = $this->readOnlySnapshot($supplier);
+        $result = app(SupplierDebtDocumentTimelineService::class)->build($supplier->fresh());
+        $entries = collect($result['entries']);
+
+        $fallback = $entries->firstWhere('code', 'TTNH-AMBIGUOUS-001');
+
+        $this->assertNotNull($fallback, 'Future generic payment must not suppress legacy paid_amount fallback by guesswork.');
+        $this->assertSame(500_000.0, (float) $fallback['amount']);
+        $this->assertSame(-500_000.0, (float) $entries->firstWhere('code', 'PCPN-AMBIGUOUS-001')['supplier_display_effect']);
+        $this->assertTrue((bool) $result['reconcile']['has_mismatch']);
+        $this->assertSame('warning', $result['reconcile']['severity']);
+        $this->assertSame($snapshot, $this->readOnlySnapshot($supplier), 'Ambiguous timeline build must be read-only.');
     }
 
     private function supplier(string $code, int $payable): Customer
