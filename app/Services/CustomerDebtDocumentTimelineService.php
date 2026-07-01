@@ -940,7 +940,10 @@ class CustomerDebtDocumentTimelineService
 
         $rawDocumentFinalBalance = $documentFinalBalance;
         $displayAdjustment = $storedNet - $rawDocumentFinalBalance;
-        $hasDisplayAlignment = $displayEntries->isNotEmpty() && abs($displayAdjustment) > 1.0;
+        $canResolveByDisplayAlignment = $isDualRole || abs($storedNet) >= abs($rawDocumentFinalBalance);
+        $hasDisplayAlignment = $displayEntries->isNotEmpty()
+            && abs($displayAdjustment) > 1.0
+            && $canResolveByDisplayAlignment;
         $virtualOpening = null;
 
         if ($hasDisplayAlignment) {

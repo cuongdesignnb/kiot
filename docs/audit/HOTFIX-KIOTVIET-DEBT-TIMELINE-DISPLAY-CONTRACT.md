@@ -84,8 +84,19 @@ Manual cases covered by new fixtures:
 
 ## Verification
 
+Local disposable database used:
+
+- Docker container: `kiot_debt_contract_mysql`
+- MySQL: `8.0`
+- Host: `127.0.0.1:3321`
+- Database: `kiot_debt_contract_test`
+- User: `kiot_test`
+- Production was not accessed.
+
 | Command | Result |
 |---|---|
+| `php artisan config:clear` with Docker test DB env | PASS |
+| `php artisan migrate --force` with Docker test DB env | PASS |
 | `php -l app/Support/Debt/PartnerDebtDisplayBalance.php` | PASS, with local PHP extension startup warnings for missing `oci8_*`, `pdo_oci`, `pdo_firebird` |
 | `php -l app/Services/CustomerDebtDocumentTimelineService.php` | PASS, same extension warnings |
 | `php -l app/Services/SupplierDebtDocumentTimelineService.php` | PASS, same extension warnings |
@@ -95,7 +106,19 @@ Manual cases covered by new fixtures:
 | `php -l` on new test files | PASS, same extension warnings |
 | `git diff --check` | PASS |
 | `npm run build` | PASS |
-| `php artisan test tests/Feature/CustomerDebt/CustomerDebtTimelineDisplayBalanceContractTest.php tests/Feature/Suppliers/SupplierDebtTimelineDisplayBalanceContractTest.php tests/Feature/Purchases/PurchaseCreateSupplierDebtDisplayContractTest.php` | BLOCKED by local DB connection refused: `SQLSTATE[HY000] [2002] No connection could be made because the target machine actively refused it` |
+| `php artisan test tests/Feature/CustomerDebt/CustomerDebtTimelineDisplayBalanceContractTest.php tests/Feature/Suppliers/SupplierDebtTimelineDisplayBalanceContractTest.php tests/Feature/Purchases/PurchaseCreateSupplierDebtDisplayContractTest.php` | PASS: 4 passed, 39 assertions |
+| `php artisan test tests/Feature/CustomerDebt/SapoDebtParityTest.php` | PASS: 12 passed, 41 assertions |
+| `php artisan test tests/Feature/Customers` | PASS: 148 passed, 1 skipped, 799 assertions |
+| `php artisan test tests/Feature/Suppliers` | PASS: 45 passed, 346 assertions |
+| `php artisan test tests/Feature/Purchases` | PASS: 6 passed, 34 assertions |
+| `php artisan test tests/Feature/CustomerDebt tests/Feature/Customers tests/Feature/Supplier tests/Feature/Suppliers tests/Feature/Purchases` | FAIL: 274 passed, 1 skipped, 2 failed, 1484 assertions |
+
+Regression blockers still present outside this display-contract scope:
+
+| Test | Failure | Scope decision |
+|---|---|---|
+| `Tests\Feature\CustomerDebt\RR06CustomerDebtLedgerTest::cancel_invoice_should_create_customer_debt_reverse_transaction` | Invoice cancellation leaves `debt_amount` at `600000` instead of decreasing. | Existing customer debt write-path/cancellation behavior. Not changed in this read-side hotfix; leave PR draft until BA decides separate fix or accepts known blocker. |
+| `Tests\Feature\Supplier\HOTFIX2414SupplierTabExportTest::supplier_purchase_history_export_downloads_csv` | CSV header is `Mã phiếu`; test expects `Mã phiếu nhập`. | Supplier purchase-history CSV export label. This hotfix did not change export generation; leave as separate blocker. |
 
 ## Production Safety
 
@@ -118,4 +141,5 @@ Manual cases covered by new fixtures:
    - `supplier_screen_debt`
    - `supplier_oriented_balance`
 4. Timeline response now separates raw document reconstruction from displayed running balance.
-5. Targeted PHPUnit tests are added but need a running local/test DB to complete assertion verification.
+5. Targeted PHPUnit tests now pass on a disposable Docker MySQL test DB.
+6. Full selected debt/supplier/purchase regression is not all-green because of two blockers outside the read-side display-contract scope listed above.

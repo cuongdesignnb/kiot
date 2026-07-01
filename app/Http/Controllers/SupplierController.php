@@ -802,6 +802,7 @@ class SupplierController extends Controller
                 'supplier_payable_balance'    => $supplierDebt,
                 'partner_net_position'        => $netDebt,
                 'supplier_oriented_balance'   => $supplierOrientedBalance,
+                'current_debt'                => (float) ($ledgerSummary['current_debt'] ?? $supplierOrientedBalance),
                 'has_debt_offset_voucher'     => $hasDebtOffsetVoucher,
                 'is_actual_offset'            => false,
                 'is_net_view'                 => $usePartnerTimeline,
@@ -821,6 +822,11 @@ class SupplierController extends Controller
                 'virtual_opening_balance'     => (float) ($ledgerSummary['virtual_opening_balance'] ?? 0.0),
                 'display_balance_target'      => (float) ($ledgerSummary['display_balance_target'] ?? $supplierOrientedBalance),
                 'display_balance_final'       => (float) ($ledgerSummary['display_balance_final'] ?? $ledger['closing_balance'] ?? 0.0),
+                'raw_document_final_balance'  => (float) ($ledgerSummary['raw_document_final_balance'] ?? $ledgerSummary['document_final_balance_before_alignment'] ?? $ledgerSummary['document_final_balance'] ?? 0.0),
+                'document_final_balance_before_alignment' => (float) ($ledgerSummary['document_final_balance_before_alignment'] ?? $ledgerSummary['document_final_balance'] ?? 0.0),
+                'display_alignment_amount'    => (float) ($ledgerSummary['display_alignment_amount'] ?? 0.0),
+                'display_aligned'             => (bool) ($ledgerSummary['display_aligned'] ?? false),
+                'has_virtual_display_alignment' => (bool) ($ledgerSummary['has_virtual_display_alignment'] ?? false),
 
                 // Backward-compatible keys (existing FE/tests still read these)
                 'net' => $compatNet,

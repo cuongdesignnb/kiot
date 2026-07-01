@@ -921,7 +921,10 @@ class SupplierDebtDocumentTimelineService
 
         $rawDocumentFinalBalance = $documentFinalBalance;
         $displayAdjustment = $storedBalance - $rawDocumentFinalBalance;
-        $hasDisplayAlignment = $displayEntries->isNotEmpty() && abs($displayAdjustment) > 1.0;
+        $canResolveByDisplayAlignment = $isDualRole || abs($storedBalance) >= abs($rawDocumentFinalBalance);
+        $hasDisplayAlignment = $displayEntries->isNotEmpty()
+            && abs($displayAdjustment) > 1.0
+            && $canResolveByDisplayAlignment;
         $virtualOpening = null;
 
         if ($hasDisplayAlignment) {
