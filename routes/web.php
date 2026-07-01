@@ -108,11 +108,13 @@ Route::get('/purchases/create', [PurchaseController::class, 'create'])->name('pu
 Route::middleware('permission:purchases.view')->group(function () {
     Route::get('/purchases', [PurchaseController::class, 'index'])->name('purchases.index');
     Route::get('/purchases/{purchase}/detail', [PurchaseController::class, 'detail']);
-    Route::get('/purchases/{purchase}/edit', [PurchaseController::class, 'edit'])->name('purchases.edit');
     Route::get('/purchases/{purchase}', [PurchaseController::class, 'show'])->name('purchases.show');
 });
 Route::middleware('permission:purchases.create')->group(function () {
     Route::post('/purchases', [PurchaseController::class, 'store'])->name('purchases.store');
+});
+Route::middleware('permission:purchases.edit')->group(function () {
+    Route::get('/purchases/{purchase}/edit', [PurchaseController::class, 'edit'])->name('purchases.edit');
     Route::put('/purchases/{purchase}', [PurchaseController::class, 'update'])->name('purchases.update');
 });
 // Step 24.0B: hủy phiếu nhập tách khỏi quyền tạo

@@ -10,6 +10,7 @@ use App\Models\Product;
 use App\Models\Category;
 use App\Models\Branch;
 use App\Models\Customer;
+use App\Models\Purchase;
 use App\Models\SerialImei;
 use App\Models\Task;
 use App\Models\StockTransfer;
@@ -380,5 +381,38 @@ class Step240BRbacEnforcementTest extends TestCase
         $log = ActivityLog::where('action', ActivityLog::ACTION_TASK_COMPLETE)->latest('id')->first();
         $this->assertNotNull($log);
         $this->assertEquals($admin->id, $log->user_id);
+    }
+
+    public function test_purchase_edit_routes_require_purchase_edit_permission(): void
+    {
+        $supplier = Customer::create([
+            'code' => 'NCC-' . uniqid(),
+            'name' => 'NCC RBAC',
+            'is_supplier' => true,
+            'status' => 'active',
+        ]);
+        $purchase = Purchase::create([
+            'code' => 'PNRBAC' . uniqid(),
+            'supplier_id' => $supplier->id,
+            'total_amount' => 100000,
+            'paid_amount' => 0,
+            'debt_amount' => 100000,
+            'status' => 'completed',
+            'purchase_date' => now(),
+        ]);
+
+        $viewOnly = $this->staffWith(['purchases.view']);
+        $this->actingAs($viewOnly);
+        $this->getJson("/purchases/{$purchase->id}/edit")->assertStatus(403);
+        $this->putJson("/purchases/{$purchase->id}", [])->assertStatus(403);
+
+        $createOnly = $this->staffWith(['purchases.create']);
+        $this->actingAs($createOnly);
+        $this->getJson("/purchases/{$purchase->id}/edit")->assertStatus(403);
+        $this->putJson("/purchases/{$purchase->id}", [])->assertStatus(403);
+
+        $editor = $this->staffWith(['purchases.edit']);
+        $this->actingAs($editor);
+        $this->get("/purchases/{$purchase->id}/edit")->assertOk();
     }
 }

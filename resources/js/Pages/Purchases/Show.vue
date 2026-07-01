@@ -5,6 +5,7 @@ import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import DateTimePicker from '@/Components/DateTimePicker.vue';
 import MoneyInput from '@/Components/MoneyInput.vue';
+import { usePermission } from '@/composables/usePermission';
 
 const props = defineProps({
     purchase: Object,
@@ -14,6 +15,7 @@ const props = defineProps({
 });
 
 const activeTab = ref('info');
+const { can } = usePermission();
 
 const formatDate = (val) => val ? new Date(val).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 
@@ -456,7 +458,7 @@ const paymentMethodLabel = (method) => {
                     </button>
                 </div>
                 <div class="flex items-center gap-2">
-                    <Link v-if="purchase.status !== 'cancelled'" :href="`/purchases/${purchase.id}/edit`"
+                    <Link v-if="purchase.status !== 'cancelled' && can('purchases.edit')" :href="`/purchases/${purchase.id}/edit`"
                         class="bg-blue-500 hover:bg-blue-600 text-white px-5 py-2 rounded text-sm font-medium flex items-center gap-1.5 transition-colors">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
                         Sửa phiếu nhập

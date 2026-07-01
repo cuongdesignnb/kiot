@@ -120,6 +120,7 @@ class Role extends Model
                     'Nhập hàng' => [
                         'purchases.view' => 'Xem phiếu nhập hàng',
                         'purchases.create' => 'Tạo phiếu nhập hàng',
+                        'purchases.edit' => 'Sửa phiếu nhập hàng',
                         'purchases.cancel' => 'Hủy phiếu nhập hàng (Step 24.0B)',
                         'purchases.return.create' => 'Tạo phiếu trả nhà cung cấp (Step 24.0B)',
                         'purchases.return.cancel' => 'Hủy phiếu trả nhà cung cấp (Step 24.0B)',

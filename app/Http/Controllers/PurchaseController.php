@@ -618,13 +618,19 @@ class PurchaseController extends Controller
 
         $validated['supplier_id'] = $validated['supplier_id'] ?? $purchase->supplier_id;
 
-        app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
-            (int) $validated['supplier_id'],
-            'supplier_id'
-        );
+        try {
+            app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
+                (int) $validated['supplier_id'],
+                'supplier_id'
+            );
 
-        app(LockPeriodService::class)->assertNotLocked($purchase->purchase_date ?? $purchase->created_at, 'purchase_update');
-        app(LockPeriodService::class)->assertNotLocked($validated['purchase_date'], 'purchase_update');
+            app(LockPeriodService::class)->assertNotLocked($purchase->purchase_date ?? $purchase->created_at, 'purchase_update');
+            app(LockPeriodService::class)->assertNotLocked($validated['purchase_date'], 'purchase_update');
+        } catch (\App\Exceptions\LockPeriodException $e) {
+            return back()->with('error', $e->getMessage());
+        } catch (\Throwable $e) {
+            return back()->with('error', $e->getMessage());
+        }
 
         try {
             DB::beginTransaction();
