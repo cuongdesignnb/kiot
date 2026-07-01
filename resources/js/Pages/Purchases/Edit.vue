@@ -1,7 +1,7 @@
 <script setup>
 import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, watch, onBeforeUnmount } from 'vue';
-import { Head, Link, router } from '@inertiajs/vue3';
+import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import axios from 'axios';
 import QuickCreateCustomerModal from '@/Components/QuickCreateCustomerModal.vue';
 import DateTimePicker from '@/Components/DateTimePicker.vue';
@@ -100,6 +100,9 @@ const discount = ref(Number(props.purchase.discount) || 0);
 const paidAmount = ref(Number(props.purchase.paid_amount) || 0);
 const note = ref(props.purchase.note || '');
 const submitRef = ref(false);
+const formError = ref('');
+const page = usePage();
+const flashError = computed(() => page.props.flash?.error || '');
 const paymentMethod = ref(props.purchase.payment_method || 'cash');
 const bankAccountInfo = ref(props.purchase.bank_account_info || '');
 const normalizeSerial = (value) => String(value || '')
@@ -308,45 +311,54 @@ const projectedSupplierCredit = computed(() => Math.max(0, -projectedSupplierBal
 // Alias kept for templates / submit logic that already reads `debtAmount`.
 const debtAmount = currentPurchaseDebt;
 
-const save = async () => {
+const save = () => {
+    formError.value = '';
+
     if (items.value.length === 0) {
-        alert("Vui lòng chọn ít nhất 1 hàng hóa để nhập hàng.");
+        formError.value = 'Vui lòng chọn ít nhất 1 hàng hóa để nhập hàng.';
         return;
     }
     if (!selectedSupplierId.value) {
-        alert("Vui lòng chọn nhà cung cấp!");
+        formError.value = 'Vui lòng chọn nhà cung cấp.';
         return;
     }
 
-    submitRef.value = true;
-
-    try {
-        await router.put(`/purchases/${props.purchase.id}`, {
-            status: status.value,
-            supplier_id: selectedSupplierId.value || null,
-            employee_id: selectedEmployeeId.value || null,
-            purchase_date: purchaseDate.value || null,
-            note: note.value,
-            discount: Number(discount.value) || 0,
-            paid_amount: Number(paidAmount.value) || 0,
-            payment_method: paymentMethod.value,
-            bank_account_info: paymentMethod.value === 'transfer' ? bankAccountInfo.value : null,
-            other_costs: otherCosts.value.map(c => ({ name: c.name, amount: Number(c.amount) || 0 })),
-            items: items.value.map(item => ({
-                product_id: item.product_id,
-                quantity: item.has_serial ? (item.serials?.length || 0) : (parseInt(item.quantity) || 0),
-                price: Number(item.price) || 0,
-                retail_price: Number(item.retail_price) || 0,
-                technician_price: Number(item.technician_price) || 0,
-                discount: Number(item.discount) || 0,
-                serials: (item.serials || []).map(normalizeSerial).filter(Boolean),
-                warranty_months: item.warranty_months || 0,
-            }))
-        });
-    } catch (e) {
-        alert("Có lỗi xảy ra, vui lòng kiểm tra lại dữ liệu.");
-        submitRef.value = false;
-    }
+    router.put(`/purchases/${props.purchase.id}`, {
+        status: status.value,
+        supplier_id: selectedSupplierId.value || null,
+        employee_id: selectedEmployeeId.value || null,
+        purchase_date: purchaseDate.value || null,
+        note: note.value,
+        discount: Number(discount.value) || 0,
+        paid_amount: Number(paidAmount.value) || 0,
+        payment_method: paymentMethod.value,
+        bank_account_info: paymentMethod.value === 'transfer' ? bankAccountInfo.value : null,
+        other_costs: otherCosts.value.map(c => ({ name: c.name, amount: Number(c.amount) || 0 })),
+        items: items.value.map(item => ({
+            product_id: item.product_id,
+            quantity: item.has_serial ? (item.serials?.length || 0) : (parseInt(item.quantity) || 0),
+            price: Number(item.price) || 0,
+            retail_price: Number(item.retail_price) || 0,
+            technician_price: Number(item.technician_price) || 0,
+            discount: Number(item.discount) || 0,
+            serials: (item.serials || []).map(normalizeSerial).filter(Boolean),
+            warranty_months: item.warranty_months || 0,
+        }))
+    }, {
+        preserveScroll: true,
+        onStart: () => {
+            submitRef.value = true;
+        },
+        onError: (errors) => {
+            const firstError = Object.values(errors || {})[0];
+            formError.value = Array.isArray(firstError)
+                ? firstError[0]
+                : (firstError || 'Không thể cập nhật phiếu nhập. Vui lòng kiểm tra lại dữ liệu.');
+        },
+        onFinish: () => {
+            submitRef.value = false;
+        },
+    });
 };
 
 // Navigate to full product creation page
@@ -718,6 +730,9 @@ const goToCreateProduct = () => {
 
                 <!-- Action Button -->
                 <div class="p-4 bg-white border-t border-gray-200 shadow-[0_-2px_10px_rgba(0,0,0,0.05)]">
+                    <div v-if="formError || flashError" class="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-600">
+                        {{ formError || flashError }}
+                    </div>
                     <button @click="save" :disabled="submitRef" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded text-[15px] uppercase tracking-wide transition-colors flex justify-center items-center gap-2 disabled:opacity-50">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Cập nhật phiếu nhập
                     </button>

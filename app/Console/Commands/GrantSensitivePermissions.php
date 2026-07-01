@@ -47,6 +47,7 @@ class GrantSensitivePermissions extends Command
         'returns.cancel',
 
         // Purchases
+        'purchases.edit',
         'purchases.cancel',
         'purchases.return.create',
         'purchases.return.cancel',
