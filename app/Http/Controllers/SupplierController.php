@@ -609,7 +609,7 @@ class SupplierController extends Controller
         $data = $this->purchaseHistory($id)->getData(true);
 
         return \App\Services\CsvService::export(
-            ['Mã phiếu', 'Thời gian', 'Loại phiếu', 'Người tạo', 'Chi nhánh', 'Tổng tiền', 'Trạng thái'],
+            ['Mã phiếu nhập', 'Thời gian', 'Loại phiếu', 'Người tạo', 'Chi nhánh', 'Tổng tiền', 'Trạng thái'],
             collect($data)->map(fn($p) => [
                 $p['code'],
                 $p['transaction_at_display'] ?? $p['date'] ?? '',

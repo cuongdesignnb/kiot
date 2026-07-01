@@ -53,9 +53,10 @@ The latest visible timeline running balance must match the current screen balanc
 | Supplier timeline | `app/Services/SupplierDebtDocumentTimelineService.php` | Replaces non-empty virtual opening row with read-only display alignment; keeps raw audit fields |
 | Customer list API | `app/Http/Controllers/CustomerController.php` | Uses shared aliases |
 | Supplier list/search/API | `app/Http/Controllers/SupplierController.php` | Uses shared aliases; supplier search now returns raw debt plus supplier-oriented aliases |
+| Supplier purchase CSV | `app/Http/Controllers/SupplierController.php` | Fixes purchase-history CSV header from `Mã phiếu` to `Mã phiếu nhập`; response/export label only |
 | Purchase create/edit payload | `app/Http/Controllers/PurchaseController.php` | Adds supplier display aliases to supplier picker props |
 | Purchase frontend | `resources/js/Pages/Purchases/Create.vue`, `resources/js/Pages/Purchases/Edit.vue` | Uses supplier-oriented display balance for old/projected supplier balance and search results |
-| Tests | `tests/Feature/CustomerDebt/CustomerDebtTimelineDisplayBalanceContractTest.php`, `tests/Feature/Suppliers/SupplierDebtTimelineDisplayBalanceContractTest.php`, `tests/Feature/Purchases/PurchaseCreateSupplierDebtDisplayContractTest.php` | Adds contract coverage for customer timeline, supplier timeline, and purchase supplier picker |
+| Tests | `tests/Feature/CustomerDebt/CustomerDebtTimelineDisplayBalanceContractTest.php`, `tests/Feature/Suppliers/SupplierDebtTimelineDisplayBalanceContractTest.php`, `tests/Feature/Purchases/PurchaseCreateSupplierDebtDisplayContractTest.php`, `tests/Feature/CustomerDebt/RR06CustomerDebtLedgerTest.php` | Adds contract coverage for customer timeline, supplier timeline, and purchase supplier picker; updates RR06 cancellation request to include required `cancel_reason` |
 
 ## Display Alignment Policy
 
@@ -108,17 +109,46 @@ Local disposable database used:
 | `npm run build` | PASS |
 | `php artisan test tests/Feature/CustomerDebt/CustomerDebtTimelineDisplayBalanceContractTest.php tests/Feature/Suppliers/SupplierDebtTimelineDisplayBalanceContractTest.php tests/Feature/Purchases/PurchaseCreateSupplierDebtDisplayContractTest.php` | PASS: 4 passed, 39 assertions |
 | `php artisan test tests/Feature/CustomerDebt/SapoDebtParityTest.php` | PASS: 12 passed, 41 assertions |
+| `php artisan test tests/Feature/CustomerDebt` | PASS: 18 passed, 65 assertions |
+| `php artisan test tests/Feature/Supplier` | PASS: 59 passed, 243 assertions |
 | `php artisan test tests/Feature/Customers` | PASS: 148 passed, 1 skipped, 799 assertions |
 | `php artisan test tests/Feature/Suppliers` | PASS: 45 passed, 346 assertions |
 | `php artisan test tests/Feature/Purchases` | PASS: 6 passed, 34 assertions |
-| `php artisan test tests/Feature/CustomerDebt tests/Feature/Customers tests/Feature/Supplier tests/Feature/Suppliers tests/Feature/Purchases` | FAIL: 274 passed, 1 skipped, 2 failed, 1484 assertions |
+| `php artisan test tests/Feature/Customers tests/Feature/Suppliers tests/Feature/Purchases` | PASS: 199 passed, 1 skipped, 1179 assertions |
+| `php artisan test tests/Feature/CustomerDebt tests/Feature/Customers tests/Feature/Supplier tests/Feature/Suppliers tests/Feature/Purchases` | PASS: 276 passed, 1 skipped, 1487 assertions |
 
-Regression blockers still present outside this display-contract scope:
+## Regression Blocker Triage
 
-| Test | Failure | Scope decision |
-|---|---|---|
-| `Tests\Feature\CustomerDebt\RR06CustomerDebtLedgerTest::cancel_invoice_should_create_customer_debt_reverse_transaction` | Invoice cancellation leaves `debt_amount` at `600000` instead of decreasing. | Existing customer debt write-path/cancellation behavior. Not changed in this read-side hotfix; leave PR draft until BA decides separate fix or accepts known blocker. |
-| `Tests\Feature\Supplier\HOTFIX2414SupplierTabExportTest::supplier_purchase_history_export_downloads_csv` | CSV header is `Mã phiếu`; test expects `Mã phiếu nhập`. | Supplier purchase-history CSV export label. This hotfix did not change export generation; leave as separate blocker. |
+Baseline worktree:
+
+- Path: `D:\Kiot\kiot-main-baseline`
+- Commit: `origin/main` at `e52012f3349f80e114396f9a84aae5722dc592f3`
+- Dependency note: local baseline used a `vendor` junction to `D:\Kiot\kiotviet-clone\vendor` only to run PHPUnit; no production access.
+
+| Test | Hotfix before triage | `origin/main` baseline | Classification | Action |
+|---|---|---|---|---|
+| `Tests\Feature\CustomerDebt\RR06CustomerDebtLedgerTest::cancel_invoice_should_create_customer_debt_reverse_transaction` | FAIL: `debt_amount` stayed `600000` | FAIL: same result | Pre-existing test/request compatibility issue, not caused by display hotfix | Updated the test request to include required `cancel_reason`; no `InvoiceController` or write-path change |
+| `Tests\Feature\Supplier\HOTFIX2414SupplierTabExportTest::supplier_purchase_history_export_downloads_csv` | FAIL: CSV header `Mã phiếu`; expected `Mã phiếu nhập` | FAIL: same result | Pre-existing low-risk export label mismatch | Changed only the purchase-history CSV header label |
+
+Post-triage blocker rerun:
+
+| Test | Result |
+|---|---|
+| `php artisan test tests/Feature/CustomerDebt/RR06CustomerDebtLedgerTest.php --filter=cancel_invoice_should_create_customer_debt_reverse_transaction` | PASS: 1 passed, 2 assertions |
+| `php artisan test tests/Feature/Supplier/HOTFIX2414SupplierTabExportTest.php --filter=supplier_purchase_history_export_downloads_csv` | PASS: 1 passed, 6 assertions |
+
+RR06 root cause:
+
+- The controller currently validates `cancel_reason` before entering the cancellation transaction.
+- The failing RR06 test did not send `cancel_reason`, so the request returned through validation and never exercised debt reversal.
+- After the test sends `cancel_reason`, the existing `CustomerDebtService::recordInvoiceBalanceReversal()` path passes and creates the reverse debt effect.
+- No invoice cancellation production code, stock movement, cashflow, serial, costing, or debt write-path was changed in this triage.
+
+Supplier CSV root cause:
+
+- `SupplierController::exportPurchaseHistory()` emitted a generic `Mã phiếu` header.
+- The pinned supplier purchase-history export contract expects `Mã phiếu nhập`.
+- Fix is label-only; row data and JSON loaders are unchanged.
 
 ## Production Safety
 
@@ -142,4 +172,5 @@ Regression blockers still present outside this display-contract scope:
    - `supplier_oriented_balance`
 4. Timeline response now separates raw document reconstruction from displayed running balance.
 5. Targeted PHPUnit tests now pass on a disposable Docker MySQL test DB.
-6. Full selected debt/supplier/purchase regression is not all-green because of two blockers outside the read-side display-contract scope listed above.
+6. The two broad-regression blockers were confirmed pre-existing on `origin/main`, then resolved without production data changes.
+7. Full selected debt/supplier/purchase regression is now green on local Docker MySQL.
