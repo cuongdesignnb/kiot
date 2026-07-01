@@ -17,6 +17,7 @@ use App\Enums\PurchaseStatus;
 use App\Support\Filters\FilterableIndex;
 use App\Services\LockPeriodService;
 use App\Services\StockMovementService;
+use App\Support\Debt\PartnerDebtDisplayBalance;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
 use App\Services\DebtOffsetService;
@@ -134,7 +135,8 @@ class PurchaseController extends Controller
         // we also accept NULL to be tolerant of any pre-default rows.
         $suppliers = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
             ->where('is_supplier', true)
-            ->get();
+            ->get()
+            ->map(fn (Customer $supplier) => $this->withSupplierDebtDisplayAliases($supplier));
 
         $purchaseOrderInfo = null;
         if ($request->has('purchase_order_id')) {
@@ -568,9 +570,10 @@ class PurchaseController extends Controller
 
         $suppliers = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
             ->where('is_supplier', true)
-            ->get();
+            ->get()
+            ->map(fn (Customer $supplier) => $this->withSupplierDebtDisplayAliases($supplier));
         if ($purchase->supplier && !$suppliers->contains('id', $purchase->supplier_id)) {
-            $suppliers->push($purchase->supplier);
+            $suppliers->push($this->withSupplierDebtDisplayAliases($purchase->supplier));
         }
 
         $priceBooks = \App\Models\PriceBook::where('is_active', true)->get();
@@ -1356,5 +1359,14 @@ class PurchaseController extends Controller
         $serial = preg_replace('/[\x00-\x1F\x7F-\x9F]/u', '', (string) $serial) ?? '';
 
         return strtoupper(trim($serial));
+    }
+
+    private function withSupplierDebtDisplayAliases(Customer $supplier): Customer
+    {
+        foreach (PartnerDebtDisplayBalance::aliases($supplier) as $key => $value) {
+            $supplier->{$key} = $value;
+        }
+
+        return $supplier;
     }
 }

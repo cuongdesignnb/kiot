@@ -11,6 +11,7 @@ use App\Models\PurchaseReturn;
 use App\Models\CustomerDebt;
 use App\Models\DebtOffset;
 use App\Models\SupplierDebtTransaction;
+use App\Support\Debt\PartnerDebtDisplayBalance;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Schema;
@@ -931,14 +932,65 @@ class CustomerDebtDocumentTimelineService
         });
 
         // Stored balances & reconciliation
-        $storedCustomerDebt = (float) ($customer->debt_amount ?? 0);
-        $storedSupplierDebt = $hasSupplierColumn ? (float) ($customer->supplier_debt_amount ?? 0) : 0.0;
-        $storedNet = $storedCustomerDebt - $storedSupplierDebt;
+        $storedCustomerDebt = PartnerDebtDisplayBalance::customerReceivable($customer);
+        $storedSupplierDebt = $hasSupplierColumn ? PartnerDebtDisplayBalance::supplierPayable($customer) : 0.0;
+        $storedNet = $hasSupplierColumn
+            ? PartnerDebtDisplayBalance::customerScreen($customer)
+            : $storedCustomerDebt;
 
-        $difference = $documentFinalBalance - $storedNet;
-        $isMismatch = abs($difference) > 1.0;
+        $rawDocumentFinalBalance = $documentFinalBalance;
+        $displayAdjustment = $storedNet - $rawDocumentFinalBalance;
+        $hasDisplayAlignment = $displayEntries->isNotEmpty() && abs($displayAdjustment) > 1.0;
+        $virtualOpening = null;
 
-        $severity = 'ok';
+        if ($hasDisplayAlignment) {
+            $displayEntries = $displayEntries
+                ->map(fn (array $entry) => $this->shiftCustomerDisplayRunningAliases($entry, $displayAdjustment))
+                ->values();
+        }
+
+        if ($displayEntries->isEmpty() && abs($storedNet) > 1.0) {
+            $openingTime = $customer->created_at instanceof Carbon ? $customer->created_at : Carbon::now()->startOfDay();
+            $virtualOpening = $this->createEntry([
+                'id' => 'virtual-opening-customer-' . $customer->id,
+                'code' => 'OPENING-BALANCE-' . $customer->id,
+                'display_type' => 'Số dư đầu kỳ',
+                'event_kind' => 'virtual_opening_balance',
+                'domain' => 'customer',
+                'document_amount' => abs($storedNet),
+                'amount' => $storedNet,
+                'display_effect' => $storedNet,
+                'customer_display_effect' => $storedNet,
+                'customer_effect' => $storedNet,
+                'customer_display_running_balance' => $storedNet,
+                'customer_running_balance' => $storedNet,
+                'running_balance' => $storedNet,
+                'debt_remain' => $storedNet,
+                'time' => $openingTime,
+                'display_time' => $openingTime,
+                'created_at' => $openingTime,
+                'reference_type' => 'Customer',
+                'reference_id' => $customer->id,
+                'reference_code' => $customer->code,
+                'badge_label' => 'Số dư đầu kỳ',
+                'badge_title' => 'Read-only display row for stored customer balance when no documents exist.',
+                'is_real_voucher' => false,
+                'is_virtual_fallback' => true,
+                'is_virtual_opening' => true,
+                'source' => 'virtual_opening_balance',
+                'source_ledger' => 'virtual_opening_balance',
+            ]);
+
+            $displayEntries = collect([$virtualOpening]);
+        }
+
+        $displayFinalBalance = ($hasDisplayAlignment || $virtualOpening) ? $storedNet : $rawDocumentFinalBalance;
+
+        $difference = $rawDocumentFinalBalance - $storedNet;
+        $rawMismatch = abs($difference) > 1.0;
+        $isMismatch = $rawMismatch && !$hasDisplayAlignment && !$virtualOpening;
+
+        $severity = ($hasDisplayAlignment || $virtualOpening) ? 'info' : 'ok';
         $message = null;
         if ($isMismatch) {
             $severity = 'warning';
@@ -951,7 +1003,9 @@ class CustomerDebtDocumentTimelineService
                 'current_debt' => $storedNet,
                 'stored_customer_debt' => $storedCustomerDebt,
                 'stored_supplier_debt' => $storedSupplierDebt,
-                'document_final_balance' => $documentFinalBalance,
+                'document_final_balance' => $rawDocumentFinalBalance,
+                'raw_document_final_balance' => $rawDocumentFinalBalance,
+                'document_final_balance_before_alignment' => $rawDocumentFinalBalance,
                 'is_dual_role' => $isDualRole,
                 'mode' => 'document_first',
                 'count' => $displayEntries->count(),
@@ -961,22 +1015,33 @@ class CustomerDebtDocumentTimelineService
                 'net_debt_amount' => $storedNet,
                 'net' => $storedNet,
                 'display_balance_target' => $storedNet,
-                'display_balance_final' => $documentFinalBalance,
+                'display_balance_final' => $displayFinalBalance,
+                'display_alignment_amount' => $hasDisplayAlignment ? $displayAdjustment : 0.0,
+                'display_aligned' => $hasDisplayAlignment,
+                'has_virtual_display_alignment' => $hasDisplayAlignment,
+                'has_virtual_opening_balance' => (bool) $virtualOpening,
+                'virtual_opening_balance' => (float) ($virtualOpening['customer_display_effect'] ?? 0.0),
             ],
             'reconcile' => [
                 'severity' => $severity,
                 'message' => $message,
                 'user_warning' => $isMismatch,
                 'stored_balance' => $storedNet,
-                'document_balance' => $documentFinalBalance,
+                'document_balance' => $rawDocumentFinalBalance,
+                'raw_document_balance' => $rawDocumentFinalBalance,
                 'difference' => $difference,
                 // Alignment keys
                 'computed_balance' => $storedNet,
                 'has_mismatch' => $isMismatch,
-                'ledger_mismatch' => false,
+                'raw_has_mismatch' => $rawMismatch,
+                'ledger_mismatch' => (bool) $virtualOpening,
                 'display_resolved' => !$isMismatch,
                 'display_balance_target' => $storedNet,
-                'display_balance_final' => $documentFinalBalance,
+                'display_balance_final' => $displayFinalBalance,
+                'display_alignment_amount' => $hasDisplayAlignment ? $displayAdjustment : 0.0,
+                'display_aligned' => $hasDisplayAlignment,
+                'has_virtual_display_alignment' => $hasDisplayAlignment,
+                'has_virtual_opening_balance' => (bool) $virtualOpening,
                 'excluded_ledger_entries' => $excludedLedgerEntries,
             ]
         ];
@@ -1079,6 +1144,23 @@ class CustomerDebtDocumentTimelineService
             'is_virtual_fallback' => false,
             'display_sequence' => $this->getDisplaySequence($data),
         ], $data);
+    }
+
+    private function shiftCustomerDisplayRunningAliases(array $entry, float $amount): array
+    {
+        foreach ([
+            'customer_display_running_balance',
+            'customer_running_balance',
+            'running_balance',
+            'debt_remain',
+            'balance',
+        ] as $key) {
+            if (array_key_exists($key, $entry) && $entry[$key] !== null && $entry[$key] !== '') {
+                $entry[$key] = (float) $entry[$key] + $amount;
+            }
+        }
+
+        return $entry;
     }
 
     private function getDisplaySequence(array $entry): int

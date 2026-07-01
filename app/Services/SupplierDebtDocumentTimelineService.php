@@ -11,6 +11,7 @@ use App\Models\PurchaseReturn;
 use App\Models\CustomerDebt;
 use App\Models\DebtOffset;
 use App\Models\SupplierDebtTransaction;
+use App\Support\Debt\PartnerDebtDisplayBalance;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Schema;
@@ -907,78 +908,26 @@ class SupplierDebtDocumentTimelineService
         });
 
         // Stored balances & reconciliation
-        $storedCustomerDebt = (float) ($supplier->debt_amount ?? 0);
-        $storedSupplierDebt = $hasSupplierColumn ? (float) ($supplier->supplier_debt_amount ?? 0) : 0.0;
+        $storedCustomerDebt = PartnerDebtDisplayBalance::customerReceivable($supplier);
+        $storedSupplierDebt = $hasSupplierColumn ? PartnerDebtDisplayBalance::supplierPayable($supplier) : 0.0;
 
         if ($usePartnerTimeline) {
-            $storedBalance = $storedSupplierDebt - $storedCustomerDebt;
+            $storedBalance = PartnerDebtDisplayBalance::supplierScreen($supplier);
             $balanceLabel = 'Nợ cần trả nhà cung cấp';
         } else {
             $storedBalance = $storedSupplierDebt;
             $balanceLabel = 'Nợ cần trả nhà cung cấp';
         }
 
+        $rawDocumentFinalBalance = $documentFinalBalance;
+        $displayAdjustment = $storedBalance - $rawDocumentFinalBalance;
+        $hasDisplayAlignment = $displayEntries->isNotEmpty() && abs($displayAdjustment) > 1.0;
         $virtualOpening = null;
-        if ($usePartnerTimeline && $displayEntries->isNotEmpty() && abs($documentFinalBalance - $storedBalance) > 1.0) {
-            $openingAmount = $storedBalance - $documentFinalBalance;
-            $openingTime = $this->virtualOpeningTime($displayEntries);
-            $virtualOpening = $this->withCompatibilityAliases($this->createEntry([
-                'id' => 'virtual-opening-supplier-' . $supplier->id,
-                'code' => 'OPENING-BALANCE-SUPPLIER-' . $supplier->id,
-                'display_type' => 'So du dau ky',
-                'event_kind' => 'virtual_opening_balance',
-                'domain' => 'adjustment',
-                'document_amount' => abs($openingAmount),
-                'amount' => $openingAmount,
-                'display_effect' => $openingAmount,
-                'supplier_display_effect' => $openingAmount,
-                'supplier_display_balance_effect' => $openingAmount,
-                'supplier_balance_effect' => 0.0,
-                'supplier_display_running_balance' => $openingAmount,
-                'supplier_running_balance' => $openingAmount,
-                'running_balance' => $openingAmount,
-                'time' => $openingTime,
-                'display_time' => $openingTime,
-                'created_at' => $openingTime,
-                'reference_type' => 'Customer',
-                'reference_id' => $supplier->id,
-                'reference_code' => $supplier->code,
-                'badge_label' => 'So du dau ky',
-                'badge_title' => 'Read-only display row for stored supplier partner balance.',
-                'is_real_voucher' => false,
-                'is_virtual_fallback' => true,
-                'is_virtual_opening' => true,
-                'source' => 'virtual_opening_balance',
-                'source_ledger' => 'virtual_opening_balance',
-                'affects_debt_balance' => false,
-                'reference_only' => false,
-                'is_reference_only' => false,
-            ]));
 
+        if ($hasDisplayAlignment) {
             $displayEntries = $displayEntries
-                ->map(fn (array $entry) => $this->shiftSupplierDisplayRunningAliases($entry, $openingAmount))
-                ->prepend($virtualOpening)
-                ->sort(function (array $a, array $b) {
-                    $timeCompare = strcmp(
-                        (string) ($b['event_sort_time'] ?? $b['time'] ?? ''),
-                        (string) ($a['event_sort_time'] ?? $a['time'] ?? '')
-                    );
-
-                    if ($timeCompare !== 0) {
-                        return $timeCompare;
-                    }
-
-                    $displayOrderCompare = ((int) ($b['display_order'] ?? 0))
-                        <=> ((int) ($a['display_order'] ?? 0));
-
-                    if ($displayOrderCompare !== 0) {
-                        return $displayOrderCompare;
-                    }
-
-                    return strcmp((string) ($b['code'] ?? ''), (string) ($a['code'] ?? ''));
-                })
+                ->map(fn (array $entry) => $this->shiftSupplierDisplayRunningAliases($entry, $displayAdjustment))
                 ->values();
-            $documentFinalBalance = $storedBalance;
         }
 
         if ($displayEntries->isEmpty() && abs($storedBalance) > 1.0) {
@@ -1014,10 +963,12 @@ class SupplierDebtDocumentTimelineService
             $documentFinalBalance = $storedBalance;
         }
 
-        $difference = $documentFinalBalance - $storedBalance;
-        $isMismatch = abs($difference) > 1.0;
+        $displayFinalBalance = ($hasDisplayAlignment || $virtualOpening) ? $storedBalance : $documentFinalBalance;
+        $difference = $rawDocumentFinalBalance - $storedBalance;
+        $rawMismatch = abs($difference) > 1.0;
+        $isMismatch = $rawMismatch && !$hasDisplayAlignment && !$virtualOpening;
 
-        $severity = 'ok';
+        $severity = ($hasDisplayAlignment || $virtualOpening) ? 'info' : 'ok';
         $message = null;
         if ($virtualOpening) {
             $severity = 'info';
@@ -1037,7 +988,9 @@ class SupplierDebtDocumentTimelineService
                 'current_debt' => $storedBalance,
                 'stored_customer_debt' => $storedCustomerDebt,
                 'stored_supplier_debt' => $storedSupplierDebt,
-                'document_final_balance' => $documentFinalBalance,
+                'document_final_balance' => $rawDocumentFinalBalance,
+                'raw_document_final_balance' => $rawDocumentFinalBalance,
+                'document_final_balance_before_alignment' => $rawDocumentFinalBalance,
                 'is_dual_role' => $isDualRole,
                 'mode' => 'document_first',
                 'count' => $displayEntries->count(),
@@ -1047,7 +1000,10 @@ class SupplierDebtDocumentTimelineService
                 'net_debt_amount' => $storedCustomerDebt - $storedSupplierDebt,
                 'net' => $storedBalance,
                 'display_balance_target' => $storedBalance,
-                'display_balance_final' => $documentFinalBalance,
+                'display_balance_final' => $displayFinalBalance,
+                'display_alignment_amount' => $hasDisplayAlignment ? $displayAdjustment : 0.0,
+                'display_aligned' => $hasDisplayAlignment,
+                'has_virtual_display_alignment' => $hasDisplayAlignment,
                 'display_mode' => $usePartnerTimeline ? 'supplier_partner_timeline' : 'supplier_payable',
                 'is_supplier_tab_partner_timeline' => $usePartnerTimeline,
                 'balance_label' => $balanceLabel,
@@ -1059,15 +1015,20 @@ class SupplierDebtDocumentTimelineService
                 'message' => $message,
                 'user_warning' => $virtualOpening ? false : $isMismatch,
                 'stored_balance' => $storedBalance,
-                'document_balance' => $documentFinalBalance,
+                'document_balance' => $rawDocumentFinalBalance,
+                'raw_document_balance' => $rawDocumentFinalBalance,
                 'difference' => $difference,
                 // Alignment keys
                 'computed_balance' => $storedBalance,
-                'has_mismatch' => $virtualOpening ? false : $isMismatch,
+                'has_mismatch' => $isMismatch,
+                'raw_has_mismatch' => $rawMismatch,
                 'ledger_mismatch' => (bool) $virtualOpening,
                 'display_resolved' => $virtualOpening ? true : !$isMismatch,
                 'display_balance_target' => $storedBalance,
-                'display_balance_final' => $documentFinalBalance,
+                'display_balance_final' => $displayFinalBalance,
+                'display_alignment_amount' => $hasDisplayAlignment ? $displayAdjustment : 0.0,
+                'display_aligned' => $hasDisplayAlignment,
+                'has_virtual_display_alignment' => $hasDisplayAlignment,
                 'excluded_ledger_entries' => $excludedLedgerEntries,
             ]
         ];

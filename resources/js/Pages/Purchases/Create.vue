@@ -50,14 +50,51 @@ const selectedSupplierObj = computed(() => {
     return localSuppliers.value.find(s => s.id == selectedSupplierId.value);
 });
 
+const truthyFlag = (value) =>
+    value === true ||
+    value === 1 ||
+    value === '1' ||
+    value === 'true';
+
+const supplierDisplayBalance = (supplier) => {
+    if (!supplier) return 0;
+
+    if (
+        supplier.supplier_screen_debt !== undefined ||
+        supplier.supplier_oriented_balance !== undefined ||
+        supplier.supplier_display_balance !== undefined ||
+        supplier.supplier_list_debt_amount !== undefined
+    ) {
+        return Number(
+            supplier.supplier_screen_debt ??
+            supplier.supplier_oriented_balance ??
+            supplier.supplier_display_balance ??
+            supplier.supplier_list_debt_amount ??
+            0
+        );
+    }
+
+    const payable = Number(supplier.supplier_payable_balance ?? supplier.supplier_debt_amount ?? 0);
+    const receivable = Number(supplier.customer_receivable_balance ?? supplier.debt_amount ?? 0);
+
+    return truthyFlag(supplier.is_dual_role_partner) || truthyFlag(supplier.is_customer)
+        ? payable - receivable
+        : payable;
+};
+
+const withSupplierDisplayDebt = (supplier) => ({
+    ...supplier,
+    supplier_debt_amount: supplierDisplayBalance(supplier),
+});
+
 const filteredSuppliers = computed(() => {
     const q = (supplierQuery.value || '').toLowerCase().trim();
-    if (!q) return localSuppliers.value.slice(0, 20);
+    if (!q) return localSuppliers.value.slice(0, 20).map(withSupplierDisplayDebt);
     return localSuppliers.value.filter(s =>
         (s.name && s.name.toLowerCase().includes(q)) ||
         (s.code && s.code.toLowerCase().includes(q)) ||
         (s.phone && s.phone.includes(q))
-    ).slice(0, 20);
+    ).slice(0, 20).map(withSupplierDisplayDebt);
 });
 
 let supplierSearchTimeout;
@@ -470,7 +507,7 @@ const currentPurchaseDebt = computed(() => Math.max(0, currentPurchaseBalance.va
 const purchaseOverpaidAmount = computed(() => Math.max(0, -currentPurchaseBalance.value));
 
 const oldSupplierBalance = computed(
-    () => Number(selectedSupplierObj.value?.supplier_debt_amount || 0)
+    () => supplierDisplayBalance(selectedSupplierObj.value)
 );
 const oldSupplierDebt = computed(() => Math.max(0, oldSupplierBalance.value));
 const oldSupplierCredit = computed(() => Math.max(0, -oldSupplierBalance.value));

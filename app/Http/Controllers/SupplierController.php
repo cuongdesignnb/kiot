@@ -10,6 +10,7 @@ use App\Models\CashFlow;
 use App\Models\Invoice;
 use App\Models\DebtOffset;
 use App\Models\SupplierDebtTransaction;
+use App\Support\Debt\PartnerDebtDisplayBalance;
 use App\Support\Filters\FilterableIndex;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -60,19 +61,9 @@ class SupplierController extends Controller
         $suppliers = $query->paginate(50)->withQueryString();
 
         $suppliers->getCollection()->transform(function ($supplier) {
-            $customerDebt = (float) ($supplier->debt_amount ?? 0);
-            $supplierDebt = (float) ($supplier->supplier_debt_amount ?? 0);
-            $isDualRole = (bool) ($supplier->is_customer && $supplier->is_supplier);
-            $supplierListDebt = $isDualRole
-                ? $supplierDebt - $customerDebt
-                : $supplierDebt;
-
-            $supplier->customer_receivable_balance = $customerDebt;
-            $supplier->supplier_payable_balance = $supplierDebt;
-            $supplier->partner_net_position = $customerDebt - $supplierDebt;
-            $supplier->supplier_screen_debt = $supplierListDebt;
-            $supplier->supplier_oriented_balance = $supplierListDebt;
-            $supplier->supplier_list_debt_amount = $supplierListDebt;
+            foreach (PartnerDebtDisplayBalance::aliases($supplier) as $key => $value) {
+                $supplier->{$key} = $value;
+            }
 
             return $supplier;
         });
@@ -246,10 +237,17 @@ class SupplierController extends Controller
             });
         }
 
-        return response()->json(
-            $query->orderBy('name')->limit(20)
-                ->get(['id', 'code', 'name', 'phone', 'supplier_debt_amount'])
-        );
+        $suppliers = $query->orderBy('name')->limit(20)
+            ->get(['id', 'code', 'name', 'phone', 'debt_amount', 'supplier_debt_amount', 'is_customer', 'is_supplier'])
+            ->map(function (Customer $supplier) {
+                foreach (PartnerDebtDisplayBalance::aliases($supplier) as $key => $value) {
+                    $supplier->{$key} = $value;
+                }
+
+                return $supplier;
+            });
+
+        return response()->json($suppliers);
     }
 
     public function quickStore(Request $request)
@@ -778,10 +776,10 @@ class SupplierController extends Controller
             })
             ->values();
 
-        $customerDebt = (float) ($supplier->debt_amount ?? 0);
-        $supplierDebt = $hasSupplierColumn ? (float) ($supplier->supplier_debt_amount ?? 0) : 0.0;
+        $customerDebt = PartnerDebtDisplayBalance::customerReceivable($supplier);
+        $supplierDebt = $hasSupplierColumn ? PartnerDebtDisplayBalance::supplierPayable($supplier) : 0.0;
         $netDebt = $customerDebt - $supplierDebt;
-        $supplierOrientedBalance = $supplierDebt - $customerDebt;
+        $supplierOrientedBalance = PartnerDebtDisplayBalance::supplierScreen($supplier);
         $ledgerSummary = $ledger['summary'] ?? [];
         $compatNet = (float) (
             $ledgerSummary['display_balance_final']
