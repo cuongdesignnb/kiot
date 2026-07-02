@@ -64,6 +64,19 @@ const setActiveTab = (id, tab) => {
 
 // KiotViet: 'Nợ hiện tại' = NET position (dương = KH nợ DN, âm = DN nợ KH)
 const customerNetDebt = (customer) => {
+    if (!customer) return 0;
+
+    if (
+        customer.customer_screen_debt !== undefined ||
+        customer.customer_display_balance !== undefined
+    ) {
+        return Number(
+            customer.customer_screen_debt ??
+            customer.customer_display_balance ??
+            0
+        );
+    }
+
     const debt = Number(customer.debt_amount) || 0;
     const supplierDebt = Number(customer.supplier_debt_amount) || 0;
     // Unified: customer_balance = receivable - payable
@@ -345,6 +358,18 @@ const customerDebtEntryDisplayEffect = (entry) => {
 const getDebtEntryRunningBalance = (entry) => {
     if (entry?.customer_display_running_balance !== undefined && entry.customer_display_running_balance !== null && entry.customer_display_running_balance !== '') {
         return Number(entry.customer_display_running_balance);
+    }
+    if (entry?.customer_running_balance !== undefined && entry.customer_running_balance !== null && entry.customer_running_balance !== '') {
+        return Number(entry.customer_running_balance);
+    }
+    if (entry?.display_running_balance !== undefined && entry.display_running_balance !== null && entry.display_running_balance !== '') {
+        return Number(entry.display_running_balance);
+    }
+    if (entry?.debt_remain !== undefined && entry.debt_remain !== null && entry.debt_remain !== '') {
+        return Number(entry.debt_remain);
+    }
+    if (entry?.balance !== undefined && entry.balance !== null && entry.balance !== '') {
+        return Number(entry.balance);
     }
     if (entry?.running_balance !== undefined && entry.running_balance !== null && entry.running_balance !== '') {
         return Number(entry.running_balance);

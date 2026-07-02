@@ -45,13 +45,15 @@ const supplierNetDebt = (supplier) => {
         supplier.supplier_screen_debt ??
         supplier.supplier_list_debt_amount ??
         supplier.supplier_oriented_balance ??
+        supplier.supplier_display_balance ??
         0
     );
 
     if (
         supplier.supplier_screen_debt !== undefined ||
         supplier.supplier_list_debt_amount !== undefined ||
-        supplier.supplier_oriented_balance !== undefined
+        supplier.supplier_oriented_balance !== undefined ||
+        supplier.supplier_display_balance !== undefined
     ) {
         return supplierScreenDebt;
     }
