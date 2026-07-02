@@ -1,0 +1,6 @@
+.env
+.git
+node_modules
+vendor
+storage/app/audit/*
+public/hot

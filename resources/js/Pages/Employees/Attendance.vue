@@ -1,0 +1,1008 @@
+<template>
+  <Head title="Bảng chấm công - KiotViet Clone" />
+  <AppLayout>
+  <div class="h-screen flex flex-col bg-gray-50 font-sans">
+    <!-- Header -->
+    <header class="bg-white border-b border-gray-200 px-6 py-3">
+      <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+        <h1 class="text-lg font-bold text-gray-800">Bảng chấm công</h1>
+
+        <div class="flex items-center gap-3 flex-wrap">
+          <!-- Search -->
+          <div class="relative">
+            <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            <input v-model="searchQuery" type="text" placeholder="Tìm kiếm nhân viên" class="pl-8 pr-3 py-1.5 text-sm border border-gray-300 rounded-md w-48 outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500">
+          </div>
+
+          <!-- View mode (shift/employee) -->
+          <select v-model="viewMode" class="text-sm border border-gray-300 rounded-md px-3 py-1.5 outline-none focus:ring-1 focus:ring-blue-500">
+            <option value="shift">Xem theo ca</option>
+            <option value="employee">Xem theo nhân viên</option>
+          </select>
+
+          <!-- Period mode (week/month) -->
+          <select v-model="periodMode" class="text-sm border border-gray-300 rounded-md px-3 py-1.5 outline-none focus:ring-1 focus:ring-blue-500">
+            <option value="week">Theo tuần</option>
+            <option value="month">Theo tháng</option>
+          </select>
+
+          <!-- Period nav -->
+          <div class="flex items-center gap-1">
+            <button @click="changePeriod(-1)" class="p-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50"><svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg></button>
+            <div class="text-sm font-medium text-gray-700 bg-white border border-gray-300 px-3 py-1.5 rounded whitespace-nowrap">
+              <template v-if="periodMode === 'week'">Tuần {{ weekNumber }} - Th. {{ weekMonth }} {{ weekYear }}</template>
+              <template v-else>Tháng {{ currentMonthDisplay }} / {{ currentYearDisplay }}</template>
+            </div>
+            <button @click="changePeriod(1)" class="p-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50"><svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg></button>
+          </div>
+
+          <!-- Duyệt chấm công -->
+          <button @click="recalculate" class="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 transition disabled:opacity-50" :disabled="isRecalculating">
+            <svg v-if="isRecalculating" class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/></svg>
+            <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            <span>Duyệt chấm công</span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-1 overflow-auto">
+      <div v-if="loading" class="flex justify-center items-center h-64">
+        <svg class="animate-spin h-8 w-8 text-blue-600" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/></svg>
+      </div>
+
+      <div v-else class="bg-white border-t border-gray-200">
+        <!-- Weekly view (cards) -->
+        <div v-if="periodMode === 'week'" class="overflow-x-auto">
+          <table class="min-w-full">
+            <thead class="sticky top-0 z-10">
+              <tr class="border-b border-gray-200 bg-gray-50">
+                <th class="px-4 py-2.5 text-left text-xs font-medium text-gray-500 sticky left-0 bg-gray-50 z-20 min-w-[180px] border-r border-gray-200">
+                  {{ viewMode === 'shift' ? 'Ca làm việc' : 'Nhân viên' }}
+                </th>
+                <th v-for="day in displayDays" :key="day.date"
+                  class="py-2.5 text-center text-xs font-medium text-gray-500 border-r border-gray-200 last:border-r-0"
+                  :class="periodMode === 'month' ? 'px-1 min-w-[48px]' : 'px-3 min-w-[200px]'"
+                >
+                  <div v-if="periodMode === 'week'">{{ day.dayName }} <span class="font-semibold text-gray-700">{{ day.dayNum }}</span></div>
+                  <div v-else>
+                    <div class="text-[10px] leading-tight" :class="day.isWeekend ? 'text-red-400' : 'text-gray-400'">{{ day.dayNameShort }}</div>
+                    <div class="font-semibold text-gray-700 text-[11px]">{{ day.dayNum }}</div>
+                  </div>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- Xem theo Ca -->
+              <template v-if="viewMode === 'shift'">
+                <template v-if="shiftGroups.length === 0">
+                  <tr><td :colspan="displayDays.length + 1" class="px-6 py-10 text-center text-gray-400">Chưa có dữ liệu chấm công.</td></tr>
+                </template>
+                <tr v-for="shiftGroup in filteredShiftGroups" :key="shiftGroup.shiftKey" class="border-b border-gray-200">
+                  <td class="px-4 py-3 align-top sticky left-0 bg-white z-10 border-r border-gray-200">
+                    <div class="font-semibold text-sm text-gray-800">{{ shiftGroup.shiftName }}</div>
+                    <div class="text-xs text-gray-500">{{ shiftGroup.shiftTime }}</div>
+                  </td>
+                  <td v-for="day in displayDays" :key="day.date"
+                    class="py-2 align-top border-r border-gray-200 last:border-r-0"
+                    :class="periodMode === 'month' ? 'px-0.5' : 'px-2'"
+                  >
+                    <div class="flex flex-col gap-1">
+                      <template v-for="item in getShiftDayItems(shiftGroup, day.date)" :key="item.schedule.id">
+                        <div
+                          @click="openModal(item.schedule)"
+                          class="rounded cursor-pointer hover:shadow transition"
+                          :class="[getCardClasses(item.record), periodMode === 'month' ? 'px-1 py-0.5 text-[9px]' : 'px-2 py-1.5 text-xs']"
+                        >
+                          <template v-if="periodMode === 'month'">
+                            <div class="font-semibold truncate" :title="item.employeeName">{{ item.employeeName.split(' ').pop() }}</div>
+                            <div class="text-[8px] mt-0.5" :class="getTimeTextClass(item.record)">
+                              {{ formatCheckTimeShort(item.record?.check_in_at) }}
+                            </div>
+                          </template>
+                          <template v-else>
+                            <div class="font-semibold text-[12px]">{{ item.employeeName }}</div>
+                            <div class="text-[11px] mt-0.5" :class="getTimeTextClass(item.record)">
+                              {{ formatCheckTime(item.record?.check_in_at) }} - {{ formatCheckTime(item.record?.check_out_at) }}
+                            </div>
+                            <div v-if="getOtInfo(item.record)" class="text-[10px] mt-0.5" :class="getOtTextClass(item.record)">
+                              {{ getOtInfo(item.record) }}
+                            </div>
+                            <div v-if="!item.record" class="text-[10px] text-gray-400 italic mt-0.5">Chưa chấm công</div>
+                          </template>
+                        </div>
+                      </template>
+                    </div>
+                  </td>
+                </tr>
+              </template>
+
+              <!-- Xem theo Nhân viên -->
+              <template v-else>
+                <template v-if="filteredEmployeeGroups.length === 0">
+                  <tr><td :colspan="displayDays.length + 1" class="px-6 py-10 text-center text-gray-400">Chưa có dữ liệu chấm công.</td></tr>
+                </template>
+                <tr v-for="empRow in filteredEmployeeGroups" :key="empRow.employee.id" class="border-b border-gray-200 hover:bg-gray-50">
+                  <td class="px-4 py-3 align-top sticky left-0 bg-white z-10 border-r border-gray-200">
+                    <div class="font-semibold text-sm text-gray-800">{{ empRow.employee.name }}</div>
+                    <div class="text-xs text-gray-500">{{ empRow.employee.code }}</div>
+                  </td>
+                  <td v-for="day in displayDays" :key="day.date"
+                    class="py-2 align-top border-r border-gray-200 last:border-r-0"
+                    :class="periodMode === 'month' ? 'px-0.5' : 'px-2'"
+                  >
+                    <div class="flex flex-col gap-1">
+                      <template v-if="empRow.days[day.date]?.length">
+                        <div
+                          v-for="schedule in empRow.days[day.date]"
+                          :key="schedule.id"
+                          @click="openModal(schedule)"
+                          class="rounded cursor-pointer hover:shadow transition"
+                          :class="[getCardClasses(schedule.timekeeping_record), periodMode === 'month' ? 'px-1 py-0.5 text-[9px]' : 'px-2 py-1.5 text-xs']"
+                        >
+                          <template v-if="periodMode === 'month'">
+                            <div class="font-semibold truncate" :title="schedule.shift?.name || 'Ca tự do'">{{ (schedule.shift?.name || 'Tự do').substring(0,4) }}</div>
+                            <div class="text-[8px] mt-0.5" :class="getTimeTextClass(schedule.timekeeping_record)">
+                              {{ formatCheckTimeShort(schedule.timekeeping_record?.check_in_at) }}
+                            </div>
+                          </template>
+                          <template v-else>
+                            <div class="font-semibold text-[12px]">{{ schedule.shift?.name || 'Ca tự do' }}</div>
+                            <div class="text-[11px] mt-0.5" :class="getTimeTextClass(schedule.timekeeping_record)">
+                              {{ formatCheckTime(schedule.timekeeping_record?.check_in_at) }} - {{ formatCheckTime(schedule.timekeeping_record?.check_out_at) }}
+                            </div>
+                            <div v-if="getOtInfo(schedule.timekeeping_record)" class="text-[10px] mt-0.5" :class="getOtTextClass(schedule.timekeeping_record)">
+                              {{ getOtInfo(schedule.timekeeping_record) }}
+                            </div>
+                            <div v-if="!schedule.timekeeping_record" class="text-[10px] text-gray-400 italic mt-0.5">Chưa chấm công</div>
+                          </template>
+                        </div>
+                      </template>
+                    </div>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Monthly dot-based view -->
+        <div v-else class="overflow-x-auto">
+          <table class="min-w-full border-collapse bg-white text-[12px]">
+            <thead class="sticky top-0 z-10">
+              <tr class="bg-white border-b border-gray-200">
+                <th v-if="viewMode === 'shift'" class="px-3 py-2 text-left text-xs font-medium text-gray-500 sticky left-0 bg-white z-20 min-w-[110px] border-r border-gray-200">
+                  Ca làm việc <span class="text-gray-400 font-bold ml-0.5 text-sm">+</span>
+                </th>
+                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 sticky bg-white z-20 min-w-[140px] border-r border-gray-200" :class="viewMode === 'shift' ? 'left-[110px]' : 'left-0'">
+                  Nhân viên <span class="text-gray-400 font-bold ml-0.5 text-sm">+</span>
+                </th>
+                <th v-for="day in monthDays" :key="day.date" class="px-0 py-1.5 text-center border-r border-gray-100 min-w-[36px]">
+                  <div class="text-[10px] leading-tight" :class="[day.isWeekend ? 'text-red-400' : 'text-gray-400', day.date === todayStr ? 'text-blue-600 font-bold' : '']">{{ day.dayNameShort }}</div>
+                  <div class="relative inline-flex items-center justify-center w-6 h-6">
+                    <span v-if="day.date === todayStr" class="absolute inset-0 bg-blue-500 rounded-full"></span>
+                    <span class="relative text-[11px] font-semibold" :class="day.date === todayStr ? 'text-white' : 'text-gray-700'">{{ day.dayNum }}</span>
+                  </div>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- Monthly Shift view -->
+              <template v-if="viewMode === 'shift'">
+                <template v-if="monthlyShiftEmployeeRows.length === 0">
+                  <tr><td :colspan="monthDays.length + 2" class="px-6 py-10 text-center text-gray-400">Chưa có dữ liệu chấm công.</td></tr>
+                </template>
+                <template v-for="shift in monthlyShiftEmployeeRows" :key="shift.shiftKey">
+                  <tr v-for="(empRow, empIdx) in shift.employees" :key="empRow.employee.id" class="border-b border-gray-100 hover:bg-gray-50/40">
+                    <td v-if="empIdx === 0" :rowspan="shift.employees.length" class="px-3 py-2 align-top sticky left-0 bg-white z-10 border-r border-gray-200 text-xs">
+                      <div class="font-semibold text-gray-800">{{ shift.shiftName }}</div>
+                      <div class="text-gray-400 text-[10px]">{{ shift.shiftTime }}</div>
+                    </td>
+                    <td class="px-3 py-2 sticky bg-white z-10 border-r border-gray-200 text-xs text-gray-700 truncate max-w-[140px]" :class="viewMode === 'shift' ? 'left-[110px]' : 'left-0'">
+                      {{ empRow.employee.name }}
+                    </td>
+                    <td v-for="day in monthDays" :key="day.date" class="text-center py-2 border-r border-gray-50">
+                      <span v-if="empRow.schedules[day.date] && getDotColor(empRow.schedules[day.date], day.date)"
+                        @click="openModal(empRow.schedules[day.date])"
+                        class="inline-block w-1.5 h-1.5 rounded-full cursor-pointer hover:scale-[1.8] transition-transform"
+                        :class="dotCls(getDotColor(empRow.schedules[day.date], day.date))"
+                      ></span>
+                    </td>
+                  </tr>
+                </template>
+              </template>
+              <!-- Monthly Employee view -->
+              <template v-else>
+                <template v-if="monthlyEmployeeRows.length === 0">
+                  <tr><td :colspan="monthDays.length + 2" class="px-6 py-10 text-center text-gray-400">Chưa có dữ liệu chấm công.</td></tr>
+                </template>
+                <tr v-for="empRow in monthlyEmployeeRows" :key="empRow.employee.id" class="border-b border-gray-100 hover:bg-gray-50/40">
+                  <td class="px-3 py-2 sticky left-0 bg-white z-10 border-r border-gray-200 text-xs">
+                    <div class="font-semibold text-gray-800">{{ empRow.employee.name }}</div>
+                    <div class="text-gray-400 text-[10px]">{{ empRow.employee.code }}</div>
+                  </td>
+                  <td v-for="day in monthDays" :key="day.date" class="text-center py-2 border-r border-gray-50">
+                    <span v-if="empRow.schedules[day.date] && getDotColor(empRow.schedules[day.date], day.date)"
+                      @click="openModal(empRow.schedules[day.date])"
+                      class="inline-block w-1.5 h-1.5 rounded-full cursor-pointer hover:scale-[1.8] transition-transform"
+                      :class="dotCls(getDotColor(empRow.schedules[day.date], day.date))"
+                    ></span>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Legend -->
+        <div class="flex items-center justify-center px-6 py-3 bg-gray-50 border-t border-gray-200">
+          <div class="inline-flex items-center gap-5 rounded-full border border-gray-200 bg-white px-4 py-2 text-xs text-gray-700 shadow-lg shadow-gray-200/70">
+            <span class="flex items-center gap-1.5">
+              <span class="inline-flex items-center justify-center h-4 w-4 rounded-full bg-blue-600 text-white">
+                <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="4">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </span>
+              Đúng giờ
+            </span>
+            <span class="flex items-center gap-1.5">
+              <span class="inline-flex items-center justify-center h-4 w-4 rounded-full bg-purple-500 text-white">
+                <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="4">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </span>
+              Đi muộn / Về sớm
+            </span>
+            <span class="flex items-center gap-1.5">
+              <span class="inline-flex items-center justify-center h-4 w-4 rounded-full bg-red-600 text-white">
+                <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="4">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </span>
+              Chấm công thiếu
+            </span>
+            <span class="flex items-center gap-1.5">
+              <span class="inline-flex items-center justify-center h-4 w-4 rounded-full bg-orange-500 text-white">
+                <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="4">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </span>
+              Chưa chấm công
+            </span>
+            <span class="flex items-center gap-1.5">
+              <span class="inline-flex items-center justify-center h-4 w-4 rounded-full bg-slate-400 text-white">
+                <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="4">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </span>
+              Nghỉ làm
+            </span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ===== Modal chấm công ===== -->
+    <div v-if="isModalOpen" class="fixed inset-0 z-50 overflow-y-auto">
+      <div class="flex items-center justify-center min-h-screen px-4 py-6">
+        <div class="fixed inset-0 bg-black bg-opacity-40 transition-opacity" @click="closeModal"></div>
+        <div class="relative bg-white rounded-lg shadow-2xl w-full max-w-xl z-10">
+          <!-- Header -->
+          <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+            <div class="flex items-center gap-3 flex-wrap">
+              <h3 class="text-lg font-bold text-gray-900">Chấm công</h3>
+              <span class="text-sm text-gray-500">{{ activeSchedule?.employee?.name }}</span>
+              <span class="text-sm text-gray-400">{{ activeSchedule?.employee?.code }}</span>
+              <span v-if="statusBadge" class="text-xs font-medium px-2 py-0.5 rounded" :class="statusBadge.cls">{{ statusBadge.text }}</span>
+            </div>
+            <button @click="closeModal" class="text-gray-400 hover:text-gray-600 text-xl leading-none p-1">&times;</button>
+          </div>
+
+          <!-- Info -->
+          <div class="px-6 pt-4 pb-2 text-sm text-gray-600 flex flex-wrap gap-x-8 gap-y-1">
+            <div><span class="text-gray-500">Thời gian</span> <span class="ml-2 font-medium text-gray-800">{{ formatDateFull(activeSchedule?.work_date) }}</span></div>
+            <div><span class="text-gray-500">Ca làm việc</span> <span class="ml-2 font-medium text-gray-800">{{ activeSchedule?.shift?.name }} ({{ formatShiftTime(activeSchedule?.shift?.start_time) }} - {{ formatShiftTime(activeSchedule?.shift?.end_time) }})</span></div>
+          </div>
+
+          <!-- Ghi chú -->
+          <div class="px-6 py-3">
+            <label class="block text-sm text-gray-500 mb-1">Ghi chú</label>
+            <textarea v-model="form.notes" rows="2" class="w-full px-3 py-2 border border-gray-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500" placeholder=""></textarea>
+          </div>
+
+          <!-- Tabs -->
+          <div class="px-6 border-b border-gray-200">
+            <div class="flex gap-6 text-sm">
+              <button @click="modalTab = 'attendance'" class="pb-2 font-medium border-b-2 transition" :class="modalTab === 'attendance' ? 'text-blue-600 border-blue-600' : 'text-gray-500 border-transparent hover:text-gray-700'">Chấm công</button>
+              <button @click="modalTab = 'history'" class="pb-2 font-medium border-b-2 transition" :class="modalTab === 'history' ? 'text-blue-600 border-blue-600' : 'text-gray-500 border-transparent hover:text-gray-700'">Lịch sử chấm công</button>
+              <button @click="modalTab = 'penalty'" class="pb-2 font-medium border-b-2 transition" :class="modalTab === 'penalty' ? 'text-blue-600 border-blue-600' : 'text-gray-500 border-transparent hover:text-gray-700'">Phạt vi phạm</button>
+              <button @click="modalTab = 'bonus'" class="pb-2 font-medium border-b-2 transition" :class="modalTab === 'bonus' ? 'text-blue-600 border-blue-600' : 'text-gray-500 border-transparent hover:text-gray-700'">Thưởng</button>
+            </div>
+          </div>
+
+          <!-- Tab: Chấm công -->
+          <div v-if="modalTab === 'attendance'" class="px-6 py-5">
+            <!-- Attendance type -->
+            <div class="flex items-center gap-2 mb-5">
+              <span class="text-sm text-gray-600 font-medium mr-2">Chấm công</span>
+              <label v-for="opt in attendanceTypes" :key="opt.value" class="flex items-center gap-1.5 cursor-pointer text-sm">
+                <input type="radio" :value="opt.value" v-model="form.attendance_type" class="w-4 h-4 text-blue-600 focus:ring-blue-500">
+                <span :class="form.attendance_type === opt.value ? 'text-gray-800 font-medium' : 'text-gray-600'">{{ opt.label }}</span>
+              </label>
+            </div>
+
+            <!-- Check-in row -->
+            <div v-show="form.attendance_type === 'work'" class="flex items-center gap-4 mb-4 flex-wrap">
+              <label class="flex items-center gap-2 min-w-[130px]">
+                <input type="checkbox" v-model="hasCheckIn" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                <span class="text-sm text-gray-700">Vào</span>
+              </label>
+              <input type="time" v-model="form.check_in_time" :disabled="!hasCheckIn" class="px-3 py-1.5 border border-gray-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400 w-28">
+
+              <div class="border-l border-gray-200 h-6 mx-1"></div>
+
+              <label class="flex items-center gap-2">
+                <input type="checkbox" v-model="hasOT" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                <span class="text-sm text-gray-700">Làm thêm</span>
+              </label>
+              <input type="number" v-model.number="otHours" min="0" :disabled="!hasOT" class="px-2 py-1.5 border border-gray-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400 w-14 text-center">
+              <span class="text-sm text-gray-500">giờ</span>
+              <input type="number" v-model.number="otMinutes" min="0" max="59" :disabled="!hasOT" class="px-2 py-1.5 border border-gray-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400 w-14 text-center">
+              <span class="text-sm text-gray-500">phút</span>
+            </div>
+
+            <!-- Check-out row -->
+            <div v-show="form.attendance_type === 'work'" class="flex items-center gap-4">
+              <label class="flex items-center gap-2 min-w-[130px]">
+                <input type="checkbox" v-model="hasCheckOut" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                <span class="text-sm text-gray-700">Ra</span>
+              </label>
+              <input type="time" v-model="form.check_out_time" :disabled="!hasCheckOut" class="px-3 py-1.5 border border-gray-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400 w-28">
+            </div>
+
+            <!-- Estimated Work Info -->
+            <div class="mt-4 p-3 bg-blue-50/50 rounded border border-blue-100 text-xs text-blue-800">
+              <div class="flex items-center justify-between mb-1">
+                <span>Thời gian làm:</span>
+                <span class="font-semibold">{{ estimatedWorkInfo.workedMinutes }} phút</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span>Công dự kiến:</span>
+                <span class="font-semibold text-sm text-blue-900">{{ estimatedWorkInfo.workUnits }} công</span>
+              </div>
+              <div v-if="estimatedWorkInfo.reason" class="mt-1 text-[10px] text-orange-600 font-medium">
+                Lý do: {{ estimatedWorkInfo.reason }}
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab: Lịch sử -->
+          <div v-else-if="modalTab === 'history'" class="px-6 py-5 text-sm text-gray-500 italic">Chưa có dữ liệu lịch sử.</div>
+          <!-- Tab: Phạt vi phạm -->
+          <div v-else-if="modalTab === 'penalty'" class="px-6 py-5 text-sm text-gray-500 italic">Chưa có dữ liệu phạt vi phạm.</div>
+          <!-- Tab: Thưởng -->
+          <div v-else-if="modalTab === 'bonus'" class="px-6 py-5 text-sm text-gray-500 italic">Chưa có dữ liệu thưởng.</div>
+
+          <!-- Footer -->
+          <div class="flex items-center justify-between px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-lg">
+            <button @click="deleteRecord" class="flex items-center gap-1 text-sm text-gray-500 hover:text-red-600 transition">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+              <span>Hủy</span>
+            </button>
+            <div class="flex gap-3">
+              <button @click="closeModal" class="px-5 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 transition">Bỏ qua</button>
+              <button @click="saveRecord" class="inline-flex items-center px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 transition disabled:opacity-50" :disabled="isSaving">
+                <svg v-if="isSaving" class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/></svg>
+                Lưu
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  </AppLayout>
+</template>
+
+<script setup>
+import { Head } from '@inertiajs/vue3'
+import AppLayout from '@/Layouts/AppLayout.vue'
+import { ref, computed, onMounted, reactive, watch } from 'vue'
+import axios from 'axios'
+
+const schedules = ref([])
+const loading = ref(false)
+const currentDate = ref(new Date())
+const searchQuery = ref('')
+const viewMode = ref('shift')
+const periodMode = ref('week')
+
+const attendanceTypes = [
+    { value: 'work', label: 'Đi làm', icon: '🟢', activeClass: 'border-blue-500 bg-blue-50 text-blue-700 ring-1 ring-blue-500' },
+    { value: 'leave_paid', label: 'Nghỉ phép', icon: '🟡', activeClass: 'border-green-500 bg-green-50 text-green-700 ring-1 ring-green-500' },
+    { value: 'leave_unpaid', label: 'Nghỉ không lương', icon: '🔴', activeClass: 'border-red-500 bg-red-50 text-red-700 ring-1 ring-red-500' },
+]
+
+// === Helper: format date to YYYY-MM-DD ===
+const toDateStr = (d) => {
+    const y = d.getFullYear()
+    const m = (d.getMonth() + 1).toString().padStart(2, '0')
+    const day = d.getDate().toString().padStart(2, '0')
+    return `${y}-${m}-${day}`
+}
+
+// === Week calculations ===
+const currentWeekStart = computed(() => {
+    const d = new Date(currentDate.value)
+    const day = d.getDay()
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1)
+    return new Date(d.setDate(diff))
+})
+const weekStart = computed(() => toDateStr(new Date(currentWeekStart.value)))
+const weekEnd = computed(() => {
+    const d = new Date(currentWeekStart.value); d.setDate(d.getDate() + 6)
+    return toDateStr(d)
+})
+const weekNumber = computed(() => {
+    const d = new Date(currentDate.value)
+    const yearStart = new Date(d.getFullYear(),0,1)
+    return Math.ceil((((d - yearStart) / 86400000) + yearStart.getDay()+1)/7)
+})
+const weekMonth = computed(() => new Date(currentWeekStart.value).getMonth() + 1)
+const weekYear = computed(() => new Date(currentWeekStart.value).getFullYear())
+
+const weekDays = computed(() => {
+    const days = []
+    const start = new Date(currentWeekStart.value)
+    const names = ['Thứ hai', 'Thứ ba', 'Thứ tư', 'Thứ năm', 'Thứ sáu', 'Thứ bảy', 'Chủ nhật']
+    const shortNames = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN']
+    for (let i = 0; i < 7; i++) {
+        const d = new Date(start); d.setDate(start.getDate() + i)
+        days.push({
+            date: toDateStr(d),
+            dayName: names[i],
+            dayNameShort: shortNames[i],
+            dayNum: d.getDate().toString().padStart(2, '0'),
+            isWeekend: i >= 5
+        })
+    }
+    return days
+})
+
+// === Month calculations ===
+const currentMonthDisplay = computed(() => {
+    const d = new Date(currentDate.value)
+    return d.getMonth() + 1
+})
+const currentYearDisplay = computed(() => new Date(currentDate.value).getFullYear())
+
+const monthStart = computed(() => {
+    const d = new Date(currentDate.value)
+    return toDateStr(new Date(d.getFullYear(), d.getMonth(), 1))
+})
+const monthEnd = computed(() => {
+    const d = new Date(currentDate.value)
+    return toDateStr(new Date(d.getFullYear(), d.getMonth() + 1, 0))
+})
+
+const monthDays = computed(() => {
+    const days = []
+    const d = new Date(currentDate.value)
+    const year = d.getFullYear()
+    const month = d.getMonth()
+    const daysInMonth = new Date(year, month + 1, 0).getDate()
+    const shortNames = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
+    for (let i = 1; i <= daysInMonth; i++) {
+        const dt = new Date(year, month, i)
+        const dow = dt.getDay()
+        days.push({
+            date: toDateStr(dt),
+            dayName: shortNames[dow],
+            dayNameShort: shortNames[dow],
+            dayNum: i.toString().padStart(2, '0'),
+            isWeekend: dow === 0 || dow === 6
+        })
+    }
+    return days
+})
+
+// === Unified display days (week or month) ===
+const displayDays = computed(() => periodMode.value === 'month' ? monthDays.value : weekDays.value)
+
+// === Period range for API ===
+const periodFrom = computed(() => periodMode.value === 'month' ? monthStart.value : weekStart.value)
+const periodTo = computed(() => periodMode.value === 'month' ? monthEnd.value : weekEnd.value)
+
+// === Data fetching ===
+const fetchSchedules = async () => {
+    loading.value = true
+    try {
+        const res = await axios.get('/api/employee-schedules', { params: { from: periodFrom.value, to: periodTo.value } })
+        if (res.data?.success) schedules.value = res.data.data
+    } catch (e) { console.error('Lỗi khi tải dữ liệu:', e) }
+    finally { loading.value = false }
+}
+
+const changePeriod = (offset) => {
+    const d = new Date(currentDate.value)
+    if (periodMode.value === 'month') {
+        d.setMonth(d.getMonth() + offset)
+    } else {
+        d.setDate(d.getDate() + offset * 7)
+    }
+    currentDate.value = d
+    fetchSchedules()
+}
+
+// Re-fetch when switching period mode
+watch(periodMode, () => { fetchSchedules() })
+
+// === Grouping by Shift (KiotViet style) ===
+const shiftGroups = computed(() => {
+    const map = {}
+    schedules.value.forEach(s => {
+        const shiftKey = s.shift_id || 'none'
+        if (!map[shiftKey]) {
+            map[shiftKey] = {
+                shiftKey,
+                shiftName: s.shift?.name || 'Ca tự do',
+                shiftTime: s.shift ? `${s.shift.start_time?.substring(0,5)} - ${s.shift.end_time?.substring(0,5)}` : '',
+                schedules: []
+            }
+        }
+        map[shiftKey].schedules.push(s)
+    })
+    return Object.values(map).sort((a, b) => a.shiftName.localeCompare(b.shiftName))
+})
+
+const filteredShiftGroups = computed(() => {
+    if (!searchQuery.value.trim()) return shiftGroups.value
+    const q = searchQuery.value.toLowerCase()
+    return shiftGroups.value.map(g => ({
+        ...g,
+        schedules: g.schedules.filter(s => {
+            const emp = s.employee
+            return emp?.name?.toLowerCase().includes(q) || emp?.code?.toLowerCase().includes(q)
+        })
+    })).filter(g => g.schedules.length > 0)
+})
+
+const getShiftDayItems = (shiftGroup, dateStr) => {
+    return shiftGroup.schedules
+        .filter(s => s.work_date === dateStr)
+        .map(s => ({
+            schedule: s,
+            record: s.timekeeping_record,
+            employeeName: s.employee?.name || 'N/A'
+        }))
+        .sort((a, b) => a.employeeName.localeCompare(b.employeeName))
+}
+
+// === Grouping by Employee ===
+const employeeGroups = computed(() => {
+    const map = {}
+    schedules.value.forEach(s => {
+        const empId = s.employee_id
+        if (!map[empId]) { map[empId] = { employee: s.employee, days: {} } }
+        if (!map[empId].days[s.work_date]) map[empId].days[s.work_date] = []
+        map[empId].days[s.work_date].push(s)
+    })
+    return Object.values(map).sort((a, b) => (a.employee?.name || '').localeCompare(b.employee?.name || ''))
+})
+
+const filteredEmployeeGroups = computed(() => {
+    if (!searchQuery.value.trim()) return employeeGroups.value
+    const q = searchQuery.value.toLowerCase()
+    return employeeGroups.value.filter(e =>
+        e.employee?.name?.toLowerCase().includes(q) || e.employee?.code?.toLowerCase().includes(q)
+    )
+})
+
+// === Monthly dot-based view data ===
+const todayStr = computed(() => toDateStr(new Date()))
+
+const monthlyShiftEmployeeRows = computed(() => {
+    const shiftMap = {}
+    schedules.value.forEach(s => {
+        const shiftKey = s.shift_id || 'none'
+        if (!shiftMap[shiftKey]) {
+            shiftMap[shiftKey] = {
+                shiftKey,
+                shiftName: s.shift?.name || 'Ca tự do',
+                shiftTime: s.shift ? `${s.shift.start_time?.substring(0,5)} - ${s.shift.end_time?.substring(0,5)}` : '',
+                employeeMap: {}
+            }
+        }
+        const empId = s.employee_id
+        if (!shiftMap[shiftKey].employeeMap[empId]) {
+            shiftMap[shiftKey].employeeMap[empId] = { employee: s.employee, schedules: {} }
+        }
+        shiftMap[shiftKey].employeeMap[empId].schedules[s.work_date] = s
+    })
+    return Object.values(shiftMap).map(shift => ({
+        ...shift,
+        employees: Object.values(shift.employeeMap)
+            .filter(e => {
+                if (!searchQuery.value.trim()) return true
+                const q = searchQuery.value.toLowerCase()
+                return e.employee?.name?.toLowerCase().includes(q) || e.employee?.code?.toLowerCase().includes(q)
+            })
+            .sort((a, b) => (a.employee?.name || '').localeCompare(b.employee?.name || ''))
+    })).filter(g => g.employees.length > 0)
+    .sort((a, b) => (a.shiftName || '').localeCompare(b.shiftName || ''))
+})
+
+const monthlyEmployeeRows = computed(() => {
+    const map = {}
+    schedules.value.forEach(s => {
+        const empId = s.employee_id
+        if (!map[empId]) { map[empId] = { employee: s.employee, schedules: {} } }
+        map[empId].schedules[s.work_date] = s
+    })
+    let rows = Object.values(map).sort((a, b) => (a.employee?.name || '').localeCompare(b.employee?.name || ''))
+    if (searchQuery.value.trim()) {
+        const q = searchQuery.value.toLowerCase()
+        rows = rows.filter(e => e.employee?.name?.toLowerCase().includes(q) || e.employee?.code?.toLowerCase().includes(q))
+    }
+    return rows
+})
+
+const getDotColor = (schedule, dateStr) => {
+    if (!schedule) return ''
+
+    const record = schedule.timekeeping_record
+
+    if (!record) {
+        if (dateStr > todayStr.value) return ''
+        return 'orange'
+    }
+
+    const type = record.attendance_type
+
+    if (type === 'leave_paid' || type === 'leave_unpaid') return 'gray'
+
+    if (!record.check_in_at && !record.check_out_at) {
+        if (dateStr > todayStr.value) return ''
+        return 'orange'
+    }
+
+    if (Boolean(record.check_in_at) !== Boolean(record.check_out_at)) return 'red'
+
+    if (record.late_minutes > 0 || record.early_minutes > 0) return 'purple'
+
+    return 'blue'
+}
+
+const dotCls = (color) => {
+    const map = {
+        blue: 'bg-blue-600',
+        purple: 'bg-purple-500',
+        red: 'bg-red-600',
+        orange: 'bg-orange-500',
+        gray: 'bg-slate-400',
+    }
+
+    return map[color] || ''
+}
+
+const formatDateFull = (dateStr) => {
+    if (!dateStr) return ''
+    const d = new Date(dateStr)
+    const days = ['Chủ nhật', 'Thứ hai', 'Thứ ba', 'Thứ tư', 'Thứ năm', 'Thứ sáu', 'Thứ bảy']
+    return `${days[d.getDay()]}, ${d.getDate().toString().padStart(2,'0')}/${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getFullYear()}`
+}
+
+// Modal state
+const modalTab = ref('attendance')
+const hasCheckIn = ref(false)
+const hasCheckOut = ref(false)
+const hasOT = ref(false)
+const otHours = ref(0)
+const otMinutes = ref(0)
+
+// === Card Styling ===
+const getCardClasses = (record) => {
+    if (!record) return 'bg-gray-50 border border-gray-200 text-gray-600'
+    const type = record.attendance_type || 'work'
+    if (type === 'leave_paid') return 'bg-green-50 border border-green-200 text-green-800'
+    if (type === 'leave_unpaid') return 'bg-red-50 border border-red-200 text-red-800'
+    if (!record.check_in_at && !record.check_out_at) return 'bg-gray-50 border border-gray-200 text-gray-500'
+    if (Boolean(record.check_in_at) !== Boolean(record.check_out_at)) return 'bg-red-50 border border-red-300 text-red-800'
+    if (record.late_minutes > 0 || record.early_minutes > 0) return 'bg-purple-50 border border-purple-200 text-purple-800'
+    return 'bg-blue-50 border border-blue-200 text-blue-800'
+}
+
+const getTimeTextClass = (record) => {
+    if (!record) return 'text-gray-400'
+    if (record.late_minutes > 0 || record.early_minutes > 0) return 'text-purple-600'
+    if (!record.check_in_at || !record.check_out_at) return 'text-red-500'
+    return 'text-gray-600'
+}
+
+const getOtTextClass = (record) => {
+    if (!record) return ''
+    if (record.late_minutes > 0 || record.early_minutes > 0) return 'text-purple-600'
+    return 'text-blue-600'
+}
+
+// === Format helpers ===
+const formatCheckTime = (dateTimeStr) => {
+    if (!dateTimeStr) return '--'
+    const d = new Date(dateTimeStr)
+    return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`
+}
+
+const formatCheckTimeShort = (dateTimeStr) => {
+    if (!dateTimeStr) return '--'
+    const d = new Date(dateTimeStr)
+    return `${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}`
+}
+
+const formatDateVietnamese = (dateStr) => {
+    if (!dateStr) return ''
+    const d = new Date(dateStr)
+    return `${d.getDate().toString().padStart(2,'0')}/${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getFullYear()}`
+}
+
+const formatShiftTime = (timeStr) => timeStr ? timeStr.substring(0, 5) : ''
+
+const getOtInfo = (record) => {
+    if (!record) return ''
+    const parts = []
+    if (record.late_minutes > 0) parts.push(`Đi muộn ${record.late_minutes}p`)
+    if (record.early_minutes > 0) parts.push(`Về sớm ${record.early_minutes}p`)
+    if (record.ot_minutes > 0) {
+        const h = Math.floor(record.ot_minutes / 60)
+        const m = record.ot_minutes % 60
+        let otText = 'Làm thêm '
+        if (record.ot_minutes >= 60) {
+            otText += `${h}h ${m > 0 ? m + 'p' : ''}`
+        } else {
+            otText += `${record.ot_minutes}p`
+        }
+        parts.push(otText)
+    }
+    return parts.join(', ')
+}
+
+// === Recalculate ===
+const isRecalculating = ref(false)
+const recalculate = async () => {
+    const label = periodMode.value === 'month' ? 'tháng này' : 'tuần này'
+    if (!confirm(`Duyệt chấm công sẽ tự động tính toán lại dữ liệu chấm công cho ${label}. Bạn chắc chắn?`)) return
+    isRecalculating.value = true
+    try {
+        await axios.post('/api/timekeeping-records/recalculate', { from: periodFrom.value, to: periodTo.value })
+        await fetchSchedules()
+        alert('Duyệt chấm công hoàn tất!')
+    } catch(e) { alert('Có lỗi xảy ra khi duyệt công!'); console.error(e) }
+    finally { isRecalculating.value = false }
+}
+
+// === Modal ===
+const isModalOpen = ref(false)
+const activeSchedule = ref(null)
+const isSaving = ref(false)
+
+const form = reactive({
+    employee_work_schedule_id: '',
+    attendance_type: 'work',
+    check_in_time: '',
+    check_out_time: '',
+    ot_minutes: 0,
+    notes: ''
+})
+
+const statusBadge = computed(() => {
+    if (!activeSchedule.value) return null
+    const record = activeSchedule.value.timekeeping_record
+    if (!record || (!record.check_in_at && !record.check_out_at)) return { text: 'Chưa chấm công', cls: 'bg-yellow-100 text-yellow-700' }
+    if (record.attendance_type === 'leave_paid') return { text: 'Nghỉ có phép', cls: 'bg-gray-100 text-gray-600' }
+    if (record.attendance_type === 'leave_unpaid') return { text: 'Nghỉ không phép', cls: 'bg-gray-100 text-gray-600' }
+    if (!record.check_in_at || !record.check_out_at) return { text: 'Chấm công thiếu', cls: 'bg-red-100 text-red-600' }
+    if (record.late_minutes > 0 || record.early_minutes > 0) return { text: 'Đi muộn / Về sớm', cls: 'bg-orange-100 text-orange-600' }
+    return { text: 'Đúng giờ', cls: 'bg-blue-100 text-blue-600' }
+})
+
+const isPrefilling = ref(false)
+
+const estimatedWorkInfo = computed(() => {
+    if (form.attendance_type === 'leave_paid') {
+        return { workedMinutes: 0, workUnits: 1.0, reason: 'Nghỉ có phép' }
+    }
+    if (form.attendance_type === 'leave_unpaid') {
+        return { workedMinutes: 0, workUnits: 0.0, reason: 'Nghỉ không lương' }
+    }
+
+    let checkInVal = hasCheckIn.value ? form.check_in_time : null
+    let checkOutVal = hasCheckOut.value ? form.check_out_time : null
+
+    let schedStartStr = activeSchedule.value?.shift?.start_time || activeSchedule.value?.start_time || '08:30'
+    let schedEndStr = activeSchedule.value?.shift?.end_time || activeSchedule.value?.end_time || '17:30'
+
+    if (schedStartStr && schedStartStr.length > 5) schedStartStr = schedStartStr.substring(0, 5)
+    if (schedEndStr && schedEndStr.length > 5) schedEndStr = schedEndStr.substring(0, 5)
+
+    let inTime = checkInVal
+    let outTime = checkOutVal
+
+    let workedMinutes = 0
+    if (inTime && outTime) {
+        let [h1, m1] = inTime.split(':').map(Number)
+        let [h2, m2] = outTime.split(':').map(Number)
+        let t1 = h1 * 60 + m1
+        let t2 = h2 * 60 + m2
+        if (t2 <= t1) t2 += 1440
+        workedMinutes = t2 - t1
+    } else if (inTime && !outTime && schedEndStr) {
+        let [h1, m1] = inTime.split(':').map(Number)
+        let [h2, m2] = schedEndStr.split(':').map(Number)
+        let t1 = h1 * 60 + m1
+        let t2 = h2 * 60 + m2
+        if (t2 <= t1) t2 += 1440
+        workedMinutes = t2 - t1
+    } else if (!inTime && outTime && schedStartStr) {
+        let [h1, m1] = schedStartStr.split(':').map(Number)
+        let [h2, m2] = outTime.split(':').map(Number)
+        let t1 = h1 * 60 + m1
+        let t2 = h2 * 60 + m2
+        if (t2 <= t1) t2 += 1440
+        workedMinutes = t2 - t1
+    }
+
+    let workUnits = 0.0
+    let reason = ''
+    if (workedMinutes > 0) {
+        let fullDayMinutes = 480
+        if (schedStartStr && schedEndStr) {
+            let [h1, m1] = schedStartStr.split(':').map(Number)
+            let [h2, m2] = schedEndStr.split(':').map(Number)
+            let t1 = h1 * 60 + m1
+            let t2 = h2 * 60 + m2
+            if (t2 <= t1) t2 += 1440
+            let scheduleMinutes = t2 - t1
+            fullDayMinutes = Math.min(480, scheduleMinutes)
+        }
+        if (fullDayMinutes <= 0) fullDayMinutes = 480
+
+        if (workedMinutes >= fullDayMinutes) {
+            workUnits = 1.0
+        } else {
+            if (workedMinutes <= 480) {
+                workUnits = 0.5
+                reason = 'Chưa đủ giờ làm cả ngày'
+            } else {
+                workUnits = 1.0
+            }
+        }
+    } else {
+        workUnits = 0.0
+        reason = 'Chưa chấm công'
+    }
+
+    return {
+        workedMinutes,
+        workUnits,
+        reason
+    }
+})
+
+const openModal = (schedule) => {
+    isPrefilling.value = true
+    activeSchedule.value = schedule
+    const rec = schedule.timekeeping_record
+    form.employee_work_schedule_id = schedule.id
+    form.attendance_type = rec?.attendance_type || 'work'
+    form.check_in_time = rec?.check_in_at ? formatCheckTime(rec.check_in_at) : ''
+    form.check_out_time = rec?.check_out_at ? formatCheckTime(rec.check_out_at) : ''
+    form.ot_minutes = rec?.ot_minutes || 0
+    form.notes = rec?.notes || ''
+    // Modal state
+    modalTab.value = 'attendance'
+    hasCheckIn.value = !!form.check_in_time
+    hasCheckOut.value = !!form.check_out_time
+    hasOT.value = form.ot_minutes > 0
+    otHours.value = Math.floor(form.ot_minutes / 60)
+    otMinutes.value = form.ot_minutes % 60
+    isModalOpen.value = true
+    setTimeout(() => {
+        isPrefilling.value = false
+    }, 50)
+}
+
+// Auto-fill shift start time when Vào checkbox is checked
+watch(hasCheckIn, (checked) => {
+    if (checked && !form.check_in_time && activeSchedule.value?.shift) {
+        const st = activeSchedule.value.shift.start_time
+        form.check_in_time = st ? st.substring(0, 5) : '08:30'
+    } else if (!checked && !isPrefilling.value && activeSchedule.value?.timekeeping_record?.check_in_at) {
+        alert("Bạn đang bỏ giờ vào/ra đã có sẵn. Việc này có thể làm giảm công.")
+    }
+})
+
+// Auto-fill shift end time when Ra checkbox is checked
+watch(hasCheckOut, (checked) => {
+    if (checked && !form.check_out_time && activeSchedule.value?.shift) {
+        const et = activeSchedule.value.shift.end_time
+        form.check_out_time = et ? et.substring(0, 5) : '17:30'
+    } else if (!checked && !isPrefilling.value && activeSchedule.value?.timekeeping_record?.check_out_at) {
+        alert("Bạn đang bỏ giờ vào/ra đã có sẵn. Việc này có thể làm giảm công.")
+    }
+})
+
+const closeModal = () => { isModalOpen.value = false; activeSchedule.value = null }
+
+const deleteRecord = async () => {
+    if (!confirm('Bạn muốn hủy chấm công này?')) return
+    // Reset to empty state
+    form.attendance_type = 'work'
+    form.check_in_time = ''
+    form.check_out_time = ''
+    form.ot_minutes = 0
+    form.notes = ''
+    hasCheckIn.value = false
+    hasCheckOut.value = false
+    hasOT.value = false
+    await saveRecord()
+}
+
+const saveRecord = async () => {
+    isSaving.value = true
+    // Compute OT from hours+minutes
+    if (hasOT.value) {
+        form.ot_minutes = (parseInt(otHours.value) || 0) * 60 + (parseInt(otMinutes.value) || 0)
+    } else {
+        form.ot_minutes = 0
+    }
+    if (!hasCheckIn.value) form.check_in_time = ''
+    if (!hasCheckOut.value) form.check_out_time = ''
+    try {
+        await axios.post('/api/timekeeping-records', form)
+        await fetchSchedules()
+        closeModal()
+    } catch(e) {
+        const errData = e.response?.data
+        if (errData?.requires_confirmation) {
+            let confirmMsg = errData.message + "\n\n"
+            if (errData.diff) {
+                confirmMsg += `Chi tiết thay đổi:\n`
+                confirmMsg += `- Ngày công: ${errData.diff.old_work_units} -> ${errData.diff.new_work_units}\n`
+                confirmMsg += `- Số phút làm: ${errData.diff.old_worked_minutes} -> ${errData.diff.new_worked_minutes}\n`
+            }
+            confirmMsg += "\nBạn có chắc chắn muốn lưu thay đổi này không?"
+
+            if (confirm(confirmMsg)) {
+                isSaving.value = true
+                try {
+                    await axios.post('/api/timekeeping-records', {
+                        ...form,
+                        confirm_downgrade: true,
+                        confirm_clear_time: true
+                    })
+                    await fetchSchedules()
+                    closeModal()
+                } catch (retryErr) {
+                    const retryErrData = retryErr.response?.data
+                    const retryMsg = (retryErrData?.errors ? Object.values(retryErrData.errors).flat().join('\n') : null)
+                        || retryErrData?.message
+                        || 'Không thể lưu thay đổi sau khi xác nhận!'
+                    alert(retryMsg)
+                    console.error(retryErr)
+                } finally {
+                    isSaving.value = false
+                }
+            }
+        } else {
+            const msg = (errData?.errors ? Object.values(errData.errors).flat().join('\n') : null)
+                || errData?.message
+                || 'Không thể lưu thay đổi!'
+            alert(msg)
+            console.error(e)
+        }
+    }
+    finally { isSaving.value = false }
+}
+
+onMounted(() => { fetchSchedules() })
+</script>

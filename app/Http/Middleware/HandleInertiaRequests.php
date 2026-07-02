@@ -1,0 +1,70 @@
+<?php
+
+namespace App\Http\Middleware;
+
+use Illuminate\Http\Request;
+use Inertia\Middleware;
+
+class HandleInertiaRequests extends Middleware
+{
+    /**
+     * The root template that's loaded on the first page visit.
+     *
+     * @see https://inertiajs.com/server-side-setup#root-template
+     *
+     * @var string
+     */
+    protected $rootView = 'app';
+
+    /**
+     * Determines the current asset version.
+     *
+     * @see https://inertiajs.com/asset-versioning
+     */
+    public function version(Request $request): ?string
+    {
+        return parent::version($request);
+    }
+
+    /**
+     * Define the props that are shared by default.
+     *
+     * @see https://inertiajs.com/shared-data
+     *
+     * @return array<string, mixed>
+     */
+    public function share(Request $request): array
+    {
+        return [
+            ...parent::share($request),
+            'auth' => [
+                'user' => $request->user(),
+                'permissions' => $request->user()?->getPermissionsArray() ?? [],
+                'role_name' => $request->user()?->role?->display_name,
+            ],
+            'branch_lock' => [
+                'locked' => (bool) $request->attributes->get('branch_locked', false),
+                'branch_id' => $request->attributes->get('locked_branch_id'),
+            ],
+            'flash' => [
+                'success' => fn() => $request->session()->get('success'),
+                'error' => fn() => $request->session()->get('error'),
+                'print_id' => fn() => $request->session()->get('print_id'),
+                'new_employee_id' => fn() => $request->session()->get('new_employee_id'),
+            ],
+            'app_settings' => function () {
+                try {
+                    if (!\Illuminate\Support\Facades\Schema::hasTable('settings'))
+                        return [];
+                    $settings = [];
+                    foreach (\App\Models\Setting::all() as $s) {
+                        $settings[$s->key] = \App\Models\Setting::get($s->key);
+                    }
+                    return $settings;
+                } catch (\Exception $e) {
+                    return [];
+                }
+            }
+        ];
+    }
+}
