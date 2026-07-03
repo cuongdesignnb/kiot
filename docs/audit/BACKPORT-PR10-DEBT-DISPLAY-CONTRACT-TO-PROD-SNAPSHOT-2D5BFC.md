@@ -167,6 +167,32 @@ PHP startup warnings about missing optional extensions (`oci8_12c`, `oci8_19`, `
 - Re-ran `npm run build`: PASS.
 - Re-ran `git diff --check`: PASS.
 
+## Final Ready-for-review Gate
+
+- PR base/head verified: PASS.
+  - Base branch: `prod-snapshot/sanitized-production-customer-group-2d5bfc0-20260702`
+  - Base SHA: `6a65855c9001e92fb18dec0638262ac17bf2a647`
+  - Head branch: `hotfix/pr10-debt-display-backport-prod-snapshot`
+  - Head SHA verified locally and on GitHub before this report update: `a04db817b65d5af387a5f942328534dcf13c8cd3`
+- Files changed verified: PASS. The PR diff only includes the expected debt display/API compatibility files listed in this report.
+- No migration/backfill/DB write: PASS.
+- No production command/deploy: PASS.
+- No forbidden file: PASS. No `.env`, logs, dumps, zip files, `vendor`, `node_modules`, `public/build`, `storage/logs`, or `bootstrap/cache` files are in the PR diff.
+- Raw `supplier_debt_amount` preserved: PASS.
+- `supplier_picker_display_balance` used for purchase picker display only: PASS.
+- Supplier CSV header scope leak reverted: PASS.
+- Supplier generic payment ambiguity warning preserved: PASS.
+- Required PHP tests: PASS, 53 passed, 269 assertions.
+- Contract tests: PASS, 4 passed, 42 assertions.
+- `npm run build`: PASS.
+- `git diff --check`: PASS.
+- Manual QA:
+  - Done by local automated HTTP/feature-test coverage on testing DB for customer/supplier display balances, dual-role zero balance, supplier-only raw payable, supplier picker display alias, latest timeline running balance, and generic supplier payment ambiguity.
+  - Browser click-through QA was not run in this final gate.
+- Production deploy: not run.
+- PR merge: not run.
+- Ready for review: yes, all code/test/scope gates passed for Senior Auditor review.
+
 ## Review Checklist
 
 - [x] Backport is based on the production snapshot branch, not full `main`.
