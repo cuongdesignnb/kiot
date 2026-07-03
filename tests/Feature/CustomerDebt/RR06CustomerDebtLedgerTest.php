@@ -249,7 +249,9 @@ class RR06CustomerDebtLedgerTest extends TestCase
         $rowsBefore = DB::table('customer_debts')->where('customer_id', $this->customer->id)->count();
 
         // Cancel invoice
-        $this->actingAs($this->admin)->delete(route('invoices.destroy', $invoice->id));
+        $this->actingAs($this->admin)->delete(route('invoices.destroy', $invoice->id), [
+            'cancel_reason' => 'Regression test invoice cancellation',
+        ]);
 
         $this->customer->refresh();
         $debtAfter = (float) $this->customer->debt_amount;
