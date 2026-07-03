@@ -52,6 +52,7 @@ class PartnerDebtDisplayBalance
             'supplier_screen_debt' => $supplierScreen,
             'supplier_oriented_balance' => $supplierScreen,
             'supplier_display_balance' => $supplierScreen,
+            'supplier_picker_display_balance' => $supplierScreen,
             'supplier_list_debt_amount' => $supplierScreen,
             'is_dual_role' => self::isDualRole($partner),
             'is_dual_role_partner' => self::isDualRole($partner),

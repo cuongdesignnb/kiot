@@ -50,12 +50,14 @@ const supplierDisplayBalance = (supplier) => {
     if (!supplier) return 0;
 
     if (
+        supplier.supplier_picker_display_balance !== undefined ||
         supplier.supplier_screen_debt !== undefined ||
         supplier.supplier_oriented_balance !== undefined ||
         supplier.supplier_display_balance !== undefined ||
         supplier.supplier_list_debt_amount !== undefined
     ) {
         return Number(
+            supplier.supplier_picker_display_balance ??
             supplier.supplier_screen_debt ??
             supplier.supplier_oriented_balance ??
             supplier.supplier_display_balance ??
@@ -74,7 +76,7 @@ const supplierDisplayBalance = (supplier) => {
 
 const withSupplierDisplayDebt = (supplier) => ({
     ...supplier,
-    supplier_debt_amount: supplierDisplayBalance(supplier),
+    supplier_picker_display_balance: supplierDisplayBalance(supplier),
 });
 
 watch(supplierSearchQuery, (val) => {

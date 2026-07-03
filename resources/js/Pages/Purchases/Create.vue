@@ -61,12 +61,14 @@ const supplierDisplayBalance = (supplier) => {
     if (!supplier) return 0;
 
     if (
+        supplier.supplier_picker_display_balance !== undefined ||
         supplier.supplier_screen_debt !== undefined ||
         supplier.supplier_oriented_balance !== undefined ||
         supplier.supplier_display_balance !== undefined ||
         supplier.supplier_list_debt_amount !== undefined
     ) {
         return Number(
+            supplier.supplier_picker_display_balance ??
             supplier.supplier_screen_debt ??
             supplier.supplier_oriented_balance ??
             supplier.supplier_display_balance ??
@@ -85,7 +87,7 @@ const supplierDisplayBalance = (supplier) => {
 
 const withSupplierDisplayDebt = (supplier) => ({
     ...supplier,
-    supplier_debt_amount: supplierDisplayBalance(supplier),
+    supplier_picker_display_balance: supplierDisplayBalance(supplier),
 });
 
 const filteredSuppliers = computed(() => {
@@ -828,7 +830,7 @@ const localBrands = ref([...(props.brands || [])]);
                                         <div class="font-semibold text-gray-800">{{ s.name }}</div>
                                         <div class="text-[11px] text-gray-500">{{ s.code }} | {{ s.phone || '—' }}</div>
                                     </div>
-                                    <div v-if="s.supplier_debt_amount > 0" class="text-[11px] text-red-500 font-semibold">Nợ: {{ formatCurrency(s.supplier_debt_amount) }}</div>
+                                    <div v-if="supplierDisplayBalance(s) > 0" class="text-[11px] text-red-500 font-semibold">Nợ: {{ formatCurrency(supplierDisplayBalance(s)) }}</div>
                                 </div>
                             </div>
                         </div>

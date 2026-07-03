@@ -125,7 +125,7 @@ php artisan test tests/Feature/CustomerDebt/CustomerDebtTimelineDisplayBalanceCo
   tests/Feature/Suppliers/SupplierDebtTimelineDisplayBalanceContractTest.php \
   tests/Feature/Purchases/PurchaseCreateSupplierDebtDisplayContractTest.php --compact
 
-Result: PASS, 4 passed, 39 assertions
+Result: PASS, 4 passed, 42 assertions
 ```
 
 Frontend build:
@@ -155,6 +155,18 @@ Initial broad run surfaced:
 
 PHP startup warnings about missing optional extensions (`oci8_12c`, `oci8_19`, `pdo_firebird`, `pdo_oci`) appeared in local output. They did not fail the required tests.
 
+## Senior Auditor Follow-up
+
+- Reverted the non-scope CSV header change in `SupplierController`; purchase history export now uses the snapshot/base header `Mã phiếu`.
+- Preserved raw `supplier_debt_amount` in purchase supplier picker payloads.
+- Added response-only display alias `supplier_picker_display_balance`.
+- Updated `Purchases/Create.vue` and `Purchases/Edit.vue` so local/search supplier mapping no longer overwrites `supplier_debt_amount`.
+- Purchase picker display now uses `supplierDisplayBalance(...)` / `supplier_picker_display_balance` for display only.
+- Re-ran required PHP tests: PASS, 53 passed, 269 assertions.
+- Re-ran PR10 contract tests: PASS, 4 passed, 42 assertions.
+- Re-ran `npm run build`: PASS.
+- Re-ran `git diff --check`: PASS.
+
 ## Review Checklist
 
 - [x] Backport is based on the production snapshot branch, not full `main`.
@@ -162,6 +174,8 @@ PHP startup warnings about missing optional extensions (`oci8_12c`, `oci8_19`, `
 - [x] No production DB used.
 - [x] No write-path changed for invoice, purchase, cashflow, payroll, stock, cost, or serial.
 - [x] Supplier timeline conflict resolved without suppressing ambiguous payment warnings.
+- [x] Raw `supplier_debt_amount` is preserved; display balance uses alias fields.
+- [x] Non-scope supplier CSV header change was reverted.
 - [x] Required PHP tests pass.
 - [x] `npm run build` passes.
 - [x] `git diff --check` passes.

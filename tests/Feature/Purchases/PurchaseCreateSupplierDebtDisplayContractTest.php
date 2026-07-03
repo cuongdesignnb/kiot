@@ -43,6 +43,7 @@ class PurchaseCreateSupplierDebtDisplayContractTest extends TestCase
         $this->assertSame(205_000.0, (float) $row['supplier_payable_balance']);
         $this->assertSame(0.0, (float) $row['supplier_screen_debt']);
         $this->assertSame(0.0, (float) $row['supplier_oriented_balance']);
+        $this->assertSame(0.0, (float) $row['supplier_picker_display_balance']);
 
         $searchResponse = $this->actingAs($admin)
             ->getJson('/api/suppliers/search?search=' . urlencode($partner->code));
@@ -52,6 +53,7 @@ class PurchaseCreateSupplierDebtDisplayContractTest extends TestCase
         $this->assertNotNull($searchRow);
         $this->assertSame(205_000.0, (float) $searchRow['supplier_debt_amount']);
         $this->assertSame(0.0, (float) $searchRow['supplier_oriented_balance']);
+        $this->assertSame(0.0, (float) $searchRow['supplier_picker_display_balance']);
     }
 
     public function test_purchase_create_supplier_picker_keeps_raw_payable_for_supplier_only(): void
@@ -84,5 +86,6 @@ class PurchaseCreateSupplierDebtDisplayContractTest extends TestCase
         $this->assertSame(600_000.0, (float) $row['supplier_debt_amount']);
         $this->assertSame(600_000.0, (float) $row['supplier_screen_debt']);
         $this->assertSame(600_000.0, (float) $row['supplier_oriented_balance']);
+        $this->assertSame(600_000.0, (float) $row['supplier_picker_display_balance']);
     }
 }
