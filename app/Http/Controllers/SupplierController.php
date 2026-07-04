@@ -315,18 +315,31 @@ class SupplierController extends Controller
      */
     public function exportDebtHistory($id, Request $request)
     {
-        // Nếu không có bất kỳ query nào → fast path legacy format.
-        $hasQuery = $request->hasAny(['date_preset', 'date_from', 'date_to', 'include_detail', 'columns', 'format']);
-
-        // HOTFIX FOLLOW-UP — export must pull ALL entries; bypass the
-        // pagination added to debtTransactions() for the UI.
+        // HOTFIX — export must pull ALL entries from the same document
+        // timeline contract as the supplier debt tab. Legacy ledger export is
+        // retained only behind explicit ?mode=legacy.
         $supplier = Customer::findOrFail($id);
-        $ledger = app(\App\Services\PartnerDebtLedgerService::class)->buildSupplierPayableLedger($supplier);
+        $mode = (string) $request->query('mode', 'document');
+        $usePartnerTimeline = (bool) $supplier->is_customer
+            && (string) $request->input('view', '') === 'partner';
+
+        if ($mode === 'legacy') {
+            $ledgerService = app(\App\Services\PartnerDebtLedgerService::class);
+            $ledger = $usePartnerTimeline
+                ? $ledgerService->buildSupplierDualRolePartnerTimeline($supplier)
+                : $ledgerService->buildSupplierPayableLedger($supplier);
+        } else {
+            $options = $request->except(['page', 'per_page']);
+            $options['mode'] = 'document';
+            $ledger = app(\App\Services\SupplierDebtDocumentTimelineService::class)
+                ->build($supplier, $options);
+        }
+
         $entries = collect($ledger['entries'] ?? [])
-            ->map(fn ($e) => is_array($e) ? $e : (array) $e)
+            ->map(fn ($e) => $this->normalizeSupplierDebtExportEntry(is_array($e) ? $e : (array) $e))
             ->all();
 
-        if (!$hasQuery) {
+        if ($mode === 'legacy' && !$request->hasAny(['date_preset', 'date_from', 'date_to', 'include_detail', 'columns', 'format', 'view'])) {
             return \App\Services\CsvService::export(
                 ['Mã chứng từ', 'Loại', 'Giá trị', 'Còn nợ', 'Ngày', 'Ghi chú'],
                 collect($entries)->map(fn($t) => [
@@ -354,6 +367,8 @@ class SupplierController extends Controller
             'columns'        => 'nullable|array',
             'columns.*'      => 'string|in:unit,quantity,unit_price,discount,vat,cost,line_total,note',
             'format'         => 'nullable|string|in:csv,xlsx',
+            'mode'           => 'nullable|string|in:document,legacy',
+            'view'           => 'nullable|string|in:partner',
         ], [
             'date_from.regex' => 'Ngày bắt đầu phải có định dạng dd/mm/yyyy hoặc YYYY-MM-DD.',
             'date_to.regex'   => 'Ngày kết thúc phải có định dạng dd/mm/yyyy hoặc YYYY-MM-DD.',
@@ -434,7 +449,7 @@ class SupplierController extends Controller
                 $t['type_label'] ?? '',
                 $t['amount'] ?? 0,
                 $t['debt_remain'] ?? 0,
-                $t['note'] ?? '',
+                $t['note'] ?? $t['badge_title'] ?? '',
             ];
             $rows->push(array_merge($base, array_fill(0, count($appendDetailCols), '')));
 
@@ -454,6 +469,36 @@ class SupplierController extends Controller
         }
 
         return \App\Services\CsvService::export($headers, $rows, "cong_no_ncc_{$id}.csv");
+    }
+
+    private function normalizeSupplierDebtExportEntry(array $entry): array
+    {
+        $effect = (float) (
+            $entry['supplier_display_effect']
+            ?? $entry['supplier_effect']
+            ?? $entry['display_effect']
+            ?? $entry['amount']
+            ?? 0
+        );
+
+        $running = (float) (
+            $entry['supplier_display_running_balance']
+            ?? $entry['supplier_running_balance']
+            ?? $entry['debt_remain']
+            ?? $entry['running_balance']
+            ?? 0
+        );
+
+        $entry['supplier_effect'] = (float) ($entry['supplier_effect'] ?? $effect);
+        $entry['amount'] = (float) ($entry['amount'] ?? $entry['document_amount'] ?? abs($effect));
+        $entry['debt_remain'] = $running;
+        $entry['type_label'] = $entry['type_label']
+            ?? $entry['display_type']
+            ?? $entry['badge_label']
+            ?? '';
+        $entry['note'] = $entry['note'] ?? $entry['badge_title'] ?? '';
+
+        return $entry;
     }
 
     private function supplierDebtEntryExportRawTime(array $entry)
@@ -558,7 +603,7 @@ class SupplierController extends Controller
         $rawId = (int) $rawId;
         if ($rawId <= 0) return [];
 
-        if ($prefix === 'pur') {
+        if (in_array($prefix, ['pur', 'purchase'], true)) {
             $items = \App\Models\PurchaseItem::where('purchase_id', $rawId)->get();
             return $items->map(fn($i) => [
                 'unit'       => '',
@@ -572,7 +617,7 @@ class SupplierController extends Controller
             ])->all();
         }
 
-        if ($prefix === 'pret') {
+        if (in_array($prefix, ['pret', 'purchase_return'], true)) {
             $items = \App\Models\PurchaseReturnItem::where('purchase_return_id', $rawId)->get();
             return $items->map(fn($i) => [
                 'unit'       => '',
@@ -586,7 +631,7 @@ class SupplierController extends Controller
             ])->all();
         }
 
-        if ($prefix === 'inv') {
+        if (in_array($prefix, ['inv', 'invoice'], true)) {
             $items = \App\Models\InvoiceItem::where('invoice_id', $rawId)->get();
             return $items->map(fn($i) => [
                 'unit'       => '',

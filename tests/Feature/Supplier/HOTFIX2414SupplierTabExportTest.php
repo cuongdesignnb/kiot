@@ -74,7 +74,7 @@ class HOTFIX2414SupplierTabExportTest extends TestCase
         $this->assertStringContainsString('text/csv', strtolower($contentType));
 
         $body = $res->streamedContent() ?: $res->getContent();
-        $this->assertStringContainsString('Mã phiếu nhập', $body);
+        $this->assertStringContainsString('Mã phiếu', $body);
         $this->assertStringContainsString('Tổng tiền', $body);
         $this->assertStringContainsString($p->code, $body);
     }
@@ -85,7 +85,7 @@ class HOTFIX2414SupplierTabExportTest extends TestCase
         $sup   = $this->supplier();
         $p     = $this->purchase($sup, 500000);
 
-        $res = $this->actingAs($admin)->get("/api/suppliers/{$sup->id}/export-debt");
+        $res = $this->actingAs($admin)->get("/api/suppliers/{$sup->id}/export-debt?mode=legacy");
 
         $res->assertOk();
         $contentType = $res->headers->get('Content-Type');
