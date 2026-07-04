@@ -237,6 +237,167 @@ class CustomerDebtDocumentTimelineTest extends TestCase
         $this->assertSame(-5000000.0, (float) $res['summary']['document_final_balance']);
     }
 
+    public function test_sales_return_with_real_refund_does_not_create_virtual_pcth_fallback(): void
+    {
+        $customer = $this->createTestCustomer([
+            'debt_amount' => 0,
+        ]);
+
+        $invoiceTime = Carbon::create(2026, 6, 26, 10, 0, 0);
+        Invoice::create([
+            'code' => 'HD-REFUND-REAL-001',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 38_000_000,
+            'customer_paid' => 38_000_000,
+            'transaction_date' => $invoiceTime,
+            'created_at' => $invoiceTime,
+        ]);
+
+        CashFlow::create([
+            'code' => 'PT-REFUND-REAL-001',
+            'type' => 'receipt',
+            'amount' => 38_000_000,
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer->id,
+            'target_name' => $customer->name,
+            'reference_type' => 'Invoice',
+            'reference_code' => 'HD-REFUND-REAL-001',
+            'status' => 'active',
+            'time' => $invoiceTime->copy()->addMinute(),
+            'created_at' => $invoiceTime->copy()->addMinute(),
+        ]);
+
+        $returnTime = Carbon::create(2026, 6, 26, 11, 40, 59);
+        $return = OrderReturn::create([
+            'code' => 'TH2026062611405938',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 3_800_000,
+            'paid_to_customer' => 3_800_000,
+            'return_date' => $returnTime,
+            'created_at' => $returnTime,
+        ]);
+
+        $refund = CashFlow::create([
+            'code' => 'PC2026062611405949',
+            'type' => 'payment',
+            'amount' => 3_800_000,
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer->id,
+            'target_name' => $customer->name,
+            'reference_type' => 'OrderReturn',
+            'reference_code' => $return->code,
+            'status' => 'active',
+            'time' => $returnTime->copy()->addSeconds(11),
+            'created_at' => $returnTime->copy()->addSeconds(11),
+        ]);
+
+        $res = $this->service->build($customer);
+        $entries = collect($res['entries']);
+
+        $this->assertNotNull($entries->firstWhere('code', $return->code));
+        $this->assertNotNull($entries->firstWhere('code', $refund->code));
+        $this->assertNull($entries->firstWhere('code', 'PCTH2026062611405938'));
+
+        $returnEntry = $entries->firstWhere('code', $return->code);
+        $this->assertTrue((bool) $returnEntry['fallback_suppressed_by_real_refund']);
+        $this->assertSame($refund->code, $returnEntry['real_refund_code']);
+        $this->assertSame('reference_type_and_code', $returnEntry['refund_match_strategy']);
+        $this->assertSame(0.0, (float) $res['summary']['document_final_balance']);
+        $this->assertSame(0.0, (float) $res['summary']['display_balance_final']);
+    }
+
+    public function test_minh_vuong_like_return_refund_near_time_does_not_double_count(): void
+    {
+        $customer = $this->createTestCustomer([
+            'debt_amount' => 0,
+        ]);
+
+        $returnTime = Carbon::create(2026, 6, 26, 11, 40, 59);
+
+        Invoice::create([
+            'code' => 'HD-MV-001',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 38_000_000,
+            'customer_paid' => 38_000_000,
+            'transaction_date' => $returnTime->copy()->subHours(2),
+            'created_at' => $returnTime->copy()->subHours(2),
+        ]);
+
+        CashFlow::create([
+            'code' => 'PT-MV-001',
+            'type' => 'receipt',
+            'amount' => 38_000_000,
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer->id,
+            'target_name' => $customer->name,
+            'reference_type' => 'Invoice',
+            'reference_code' => 'HD-MV-001',
+            'status' => 'active',
+            'time' => $returnTime->copy()->subHour(),
+            'created_at' => $returnTime->copy()->subHour(),
+        ]);
+
+        OrderReturn::create([
+            'code' => 'TH-MV-001',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 3_800_000,
+            'paid_to_customer' => 3_800_000,
+            'return_date' => $returnTime,
+            'created_at' => $returnTime,
+        ]);
+
+        CashFlow::create([
+            'code' => 'PC-MV-NEAR-001',
+            'type' => 'payment',
+            'amount' => 3_800_000,
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer->id,
+            'target_name' => $customer->name,
+            'reference_type' => null,
+            'reference_code' => null,
+            'status' => 'active',
+            'time' => $returnTime->copy()->addMinutes(3),
+            'created_at' => $returnTime->copy()->addMinutes(3),
+        ]);
+
+        Invoice::create([
+            'code' => 'HD-MV-002',
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'total' => 45_000_000,
+            'customer_paid' => 45_000_000,
+            'transaction_date' => $returnTime->copy()->addHours(2),
+            'created_at' => $returnTime->copy()->addHours(2),
+        ]);
+
+        CashFlow::create([
+            'code' => 'PT-MV-002',
+            'type' => 'receipt',
+            'amount' => 45_000_000,
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer->id,
+            'target_name' => $customer->name,
+            'reference_type' => 'Invoice',
+            'reference_code' => 'HD-MV-002',
+            'status' => 'active',
+            'time' => $returnTime->copy()->addHours(2)->addMinute(),
+            'created_at' => $returnTime->copy()->addHours(2)->addMinute(),
+        ]);
+
+        $res = $this->service->build($customer);
+        $entries = collect($res['entries']);
+
+        $this->assertNotNull($entries->firstWhere('code', 'PC-MV-NEAR-001'));
+        $this->assertNull($entries->firstWhere('code', 'PCTH-MV-001'));
+        $this->assertSame(0.0, (float) $res['summary']['document_final_balance']);
+        $this->assertSame(0.0, (float) $res['summary']['display_balance_final']);
+        $this->assertFalse((bool) $res['reconcile']['has_mismatch']);
+    }
+
     /**
      * Test 7 — does not use CustomerDebt sale amount as invoice display amount
      */
