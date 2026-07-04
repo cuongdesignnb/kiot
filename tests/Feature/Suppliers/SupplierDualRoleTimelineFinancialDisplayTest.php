@@ -97,7 +97,8 @@ class SupplierDualRoleTimelineFinancialDisplayTest extends TestCase
         $this->assertNotNull($supplierEntries['TTHD008170']['supplier_partner_running_balance']);
         $this->assertEquals('Phải thu KH', $supplierEntries['TTHD008170']['badge_label']);
 
-        $this->assertTrue($supplierResponse->json('summary.has_virtual_opening_balance'));
+        $this->assertTrue($supplierResponse->json('summary.has_virtual_display_alignment'));
+        $this->assertFalse($supplierResponse->json('summary.has_virtual_opening_balance'));
         $this->assertEquals(0, $supplierResponse->json('summary.display_balance_final'));
     }
 }

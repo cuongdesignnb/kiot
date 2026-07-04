@@ -21,6 +21,7 @@ use App\Services\PartnerFinancialTimelineService;
 use App\Models\CustomerPaymentDiscount;
 use App\Services\DebtOffsetService;
 use App\Models\DebtOffset;
+use App\Support\Debt\PartnerDebtDisplayBalance;
 use App\Support\Filters\FilterableIndex;
 use App\Support\Filters\DateRangePresets;
 use Illuminate\Support\Facades\Schema;
@@ -261,9 +262,9 @@ class CustomerController extends Controller
             // Old `net_debt_amount` retained for backward compatibility;
             // new keys make it explicit this is a display delta, NOT a
             // recorded offset voucher.
-            $customer->customer_receivable_balance = $customerDebt;
-            $customer->supplier_payable_balance    = $supplierDebt;
-            $customer->partner_net_position        = $netDebt;
+            foreach (PartnerDebtDisplayBalance::aliases($customer) as $key => $value) {
+                $customer->{$key} = $value;
+            }
 
             return $customer;
         });
