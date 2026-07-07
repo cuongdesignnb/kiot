@@ -1163,7 +1163,8 @@ class SupplierController extends Controller
         ]);
 
         $supplier = Customer::findOrFail($id);
-        $currentDebt = (float) $supplier->supplier_debt_amount;
+        $currentRawPayable = (float) $supplier->supplier_debt_amount;
+        $currentDebt = $currentRawPayable;
         $type = $data['type'] ?? 'adjustment';
         $adjustedAt = !empty($data['date']) ? \Carbon\Carbon::parse($data['date']) : now();
 
@@ -1189,10 +1190,14 @@ class SupplierController extends Controller
             $supplier->update(['supplier_debt_amount' => $currentDebt + $amount]);
         } else {
             // Điều chỉnh: amount = nợ cuối mong muốn
-            $targetDebt = $data['amount'];
-            $diff = $targetDebt - $currentDebt;
+            $targetDebt = (float) $data['amount'];
+            $currentDebt = PartnerDebtDisplayBalance::supplierScreen($supplier);
+            $targetRawPayable = PartnerDebtDisplayBalance::isDualRole($supplier)
+                ? $targetDebt + (float) ($supplier->debt_amount ?? 0)
+                : $targetDebt;
+            $diff = $targetRawPayable - $currentRawPayable;
 
-            if ($diff == 0) {
+            if (abs($diff) < 0.01) {
                 return response()->json(['success' => true, 'message' => 'Công nợ không thay đổi.']);
             }
 
@@ -1203,7 +1208,7 @@ class SupplierController extends Controller
                 'code' => $code,
                 'type' => 'adjustment',
                 'amount' => $diff,
-                'debt_remain' => $targetDebt,
+                'debt_remain' => $targetRawPayable,
                 'note' => ($data['note'] ?? 'Điều chỉnh công nợ') . ' | ' . number_format($currentDebt) . ' → ' . number_format($targetDebt),
                 'user_id' => auth()->id(),
             ]);
@@ -1212,7 +1217,7 @@ class SupplierController extends Controller
                 $tx->save();
             }
 
-            $supplier->update(['supplier_debt_amount' => $targetDebt]);
+            $supplier->update(['supplier_debt_amount' => $targetRawPayable]);
         }
 
         return response()->json(['success' => true, 'message' => 'Đã cập nhật công nợ.']);
