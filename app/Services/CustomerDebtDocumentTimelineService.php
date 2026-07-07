@@ -84,7 +84,7 @@ class CustomerDebtDocumentTimelineService
         // 2. Receipt CashFlows (both linked and standalone)
         $receipts = CashFlow::active()
             ->where('target_id', $customer->id)
-            ->where('target_type', 'Khách hàng')
+            ->whereIn('target_type', $this->customerCashFlowTargetTypes())
             ->where('type', 'receipt')
             ->get();
 
@@ -239,7 +239,7 @@ class CustomerDebtDocumentTimelineService
         // 5. Payment CashFlows targeting Khách hàng (Refunds or DebtAdjustment if type payment)
         $payments = CashFlow::active()
             ->where('target_id', $customer->id)
-            ->where('target_type', 'Khách hàng')
+            ->whereIn('target_type', $this->customerCashFlowTargetTypes())
             ->where('type', 'payment')
             ->get();
 
@@ -1241,6 +1241,11 @@ class CustomerDebtDocumentTimelineService
             ->first();
 
         return $fuzzy ? ['cash_flow' => $fuzzy, 'strategy' => 'same_amount_same_customer_near_time'] : null;
+    }
+
+    private function customerCashFlowTargetTypes(): array
+    {
+        return ['Khách hàng', 'Khach hang'];
     }
 
     private function shiftCustomerDisplayRunningAliases(array $entry, float $amount): array
