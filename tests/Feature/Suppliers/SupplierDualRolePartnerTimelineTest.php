@@ -125,6 +125,97 @@ class SupplierDualRolePartnerTimelineTest extends TestCase
         $this->assertNotNull($entries->firstWhere('code', 'PCPNTEST001'));
     }
 
+    public function test_partner_view_labels_customer_debt_adjustment_receipt_as_adjustment(): void
+    {
+        $partner = $this->createDualRolePartner([
+            'debt_amount' => 0,
+            'supplier_debt_amount' => -2_700_000,
+        ]);
+
+        CashFlow::create([
+            'code' => 'PT26070714010866',
+            'type' => 'receipt',
+            'amount' => 47_400_000,
+            'time' => Carbon::parse('2026-07-07 14:01:00'),
+            'target_type' => 'Khách hàng',
+            'target_id' => $partner->id,
+            'target_name' => $partner->name,
+            'category' => 'Điều chỉnh công nợ',
+            'reference_type' => 'DebtAdjustment',
+            'reference_code' => null,
+            'description' => 'Điều chỉnh công nợ | 47,400,000 → 0',
+            'payment_method' => 'cash',
+            'status' => 'active',
+            'created_at' => Carbon::parse('2026-07-07 14:01:00'),
+        ]);
+
+        $response = $this->actingAs($this->admin)
+            ->getJson("/api/suppliers/{$partner->id}/debt-transactions?view=partner");
+
+        $response->assertOk();
+        $entry = collect($response->json('entries'))->firstWhere('code', 'PT26070714010866');
+
+        $this->assertNotNull($entry);
+        $this->assertSame('DebtAdjustment', $entry['reference_type']);
+        $this->assertSame('Điều chỉnh công nợ', $entry['display_type']);
+        $this->assertSame('customer_debt_adjustment', $entry['event_kind']);
+        $this->assertSame('Điều chỉnh', $entry['badge_label']);
+        $this->assertStringContainsString('Điều chỉnh công nợ', $entry['badge_title']);
+        $this->assertNotSame('Khách thanh toán', $entry['display_type']);
+        $this->assertNotSame('invoice_payment', $entry['event_kind']);
+        $this->assertNotSame('Thanh toán', $entry['badge_label']);
+        $this->assertSame(47_400_000.0, (float) $entry['document_amount']);
+        $this->assertSame(47_400_000.0, (float) $entry['supplier_display_effect']);
+    }
+
+    public function test_partner_view_keeps_real_customer_invoice_receipt_label_as_payment(): void
+    {
+        $partner = $this->createDualRolePartner([
+            'debt_amount' => 0,
+            'supplier_debt_amount' => 0,
+        ]);
+
+        Invoice::create([
+            'code' => 'HD-REAL-RECEIPT',
+            'customer_id' => $partner->id,
+            'subtotal' => 1_200_000,
+            'discount' => 0,
+            'total' => 1_200_000,
+            'customer_paid' => 1_200_000,
+            'status' => 'completed',
+            'transaction_date' => Carbon::parse('2026-07-07 13:00:00'),
+            'created_at' => Carbon::parse('2026-07-07 13:00:00'),
+        ]);
+
+        CashFlow::create([
+            'code' => 'PT-REAL-RECEIPT',
+            'type' => 'receipt',
+            'amount' => 1_200_000,
+            'time' => Carbon::parse('2026-07-07 13:05:00'),
+            'target_type' => 'Khách hàng',
+            'target_id' => $partner->id,
+            'target_name' => $partner->name,
+            'category' => 'Thu tiền khách trả',
+            'reference_type' => 'Invoice',
+            'reference_code' => 'HD-REAL-RECEIPT',
+            'description' => 'Thu tiền hóa đơn HD-REAL-RECEIPT',
+            'payment_method' => 'cash',
+            'status' => 'active',
+            'created_at' => Carbon::parse('2026-07-07 13:05:00'),
+        ]);
+
+        $response = $this->actingAs($this->admin)
+            ->getJson("/api/suppliers/{$partner->id}/debt-transactions?view=partner");
+
+        $response->assertOk();
+        $entry = collect($response->json('entries'))->firstWhere('code', 'PT-REAL-RECEIPT');
+
+        $this->assertNotNull($entry);
+        $this->assertSame('Khách thanh toán', $entry['display_type']);
+        $this->assertSame('invoice_payment', $entry['event_kind']);
+        $this->assertSame('Thanh toán', $entry['badge_label']);
+    }
+
     public function test_non_dual_supplier_tab_stays_supplier_payable(): void
     {
         $supplier = Customer::create([

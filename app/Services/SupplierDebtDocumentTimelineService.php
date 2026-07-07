@@ -466,7 +466,7 @@ class SupplierDebtDocumentTimelineService
             $customerReceipts = CashFlow::active()
                 ->where('type', 'receipt')
                 ->where('target_id', $supplier->id)
-                ->where('target_type', 'Khách hàng')
+                ->whereIn('target_type', ['Khách hàng', 'Khach hang'])
                 ->get();
 
             $receiptsByInvoice = [];
@@ -477,11 +477,15 @@ class SupplierDebtDocumentTimelineService
                 }
 
                 $businessTime = $cf->time ?: $cf->created_at;
-                $entries->push($this->createEntry([
+                $referenceType = class_basename(trim((string) ($cf->reference_type ?? '')));
+                $isCustomerDebtAdjustment = strcasecmp($referenceType, 'DebtAdjustment') === 0
+                    || trim((string) ($cf->category ?? '')) === 'Điều chỉnh công nợ';
+
+                $receiptEntry = [
                     'id' => 'cust-receipt-' . $cf->id,
                     'code' => $cf->code,
-                    'display_type' => 'Khách thanh toán',
-                    'event_kind' => 'invoice_payment',
+                    'display_type' => $isCustomerDebtAdjustment ? 'Điều chỉnh công nợ' : 'Khách thanh toán',
+                    'event_kind' => $isCustomerDebtAdjustment ? 'customer_debt_adjustment' : 'invoice_payment',
                     'domain' => 'customer',
                     'document_amount' => (float) $cf->amount,
                     'amount' => (float) $cf->amount,
@@ -497,12 +501,16 @@ class SupplierDebtDocumentTimelineService
                     'detail_modal_type' => 'cash_flow',
                     'detail_reference_id' => $cf->id,
                     'detail_reference_code' => $cf->code,
-                    'badge_label' => 'Thanh toán',
-                    'badge_title' => 'Khách hàng thanh toán công nợ',
+                    'badge_label' => $isCustomerDebtAdjustment ? 'Điều chỉnh' : 'Thanh toán',
+                    'badge_title' => $isCustomerDebtAdjustment
+                        ? ($cf->description ?: 'Phiếu điều chỉnh công nợ khách hàng')
+                        : 'Khách hàng thanh toán công nợ',
                     'is_real_voucher' => true,
                     'is_virtual_fallback' => false,
                     'source' => 'document_first',
-                ]));
+                ];
+
+                $entries->push($this->createEntry($receiptEntry));
             }
 
             // Fallback Customer receipts (TTHD)
@@ -1419,6 +1427,14 @@ class SupplierDebtDocumentTimelineService
             $entry['reference_only'] = true;
             $entry['is_reference_only'] = true;
             $entry['badge_label'] = 'Phải thu KH';
+
+            if (
+                $eventKind === 'invoice_payment'
+                && (bool) ($entry['is_real_voucher'] ?? false)
+                && ! (bool) ($entry['is_virtual_fallback'] ?? false)
+            ) {
+                $entry['badge_label'] = 'Thanh toán';
+            }
         } else {
             $entry['supplier_balance_effect'] = (float) ($entry['supplier_balance_effect'] ?? $entry['supplier_display_balance_effect']);
             $entry['affects_debt_balance'] = $entry['affects_debt_balance'] ?? true;
