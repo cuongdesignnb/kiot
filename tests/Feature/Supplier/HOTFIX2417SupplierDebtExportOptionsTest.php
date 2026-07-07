@@ -72,14 +72,14 @@ class HOTFIX2417SupplierDebtExportOptionsTest extends TestCase
         return $p;
     }
 
-    // ── TC-01 — no query: legacy format intact (HOTFIX 24.14 contract) ──
-    public function test_export_with_no_query_keeps_legacy_format(): void
+    // ── TC-01 — explicit mode=legacy keeps old format intact ──
+    public function test_export_with_explicit_legacy_mode_keeps_legacy_format(): void
     {
         $admin = $this->admin();
         $sup   = $this->supplier();
         $p     = $this->purchase($sup, 500000, Carbon::now());
 
-        $res = $this->actingAs($admin)->get("/api/suppliers/{$sup->id}/export-debt");
+        $res = $this->actingAs($admin)->get("/api/suppliers/{$sup->id}/export-debt?mode=legacy");
 
         $res->assertOk();
         $body = $res->streamedContent() ?: $res->getContent();

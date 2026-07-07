@@ -84,7 +84,7 @@ class CustomerDebtDocumentTimelineService
         // 2. Receipt CashFlows (both linked and standalone)
         $receipts = CashFlow::active()
             ->where('target_id', $customer->id)
-            ->where('target_type', 'Khách hàng')
+            ->whereIn('target_type', $this->customerCashFlowTargetTypes())
             ->where('type', 'receipt')
             ->get();
 
@@ -239,7 +239,7 @@ class CustomerDebtDocumentTimelineService
         // 5. Payment CashFlows targeting Khách hàng (Refunds or DebtAdjustment if type payment)
         $payments = CashFlow::active()
             ->where('target_id', $customer->id)
-            ->where('target_type', 'Khách hàng')
+            ->whereIn('target_type', $this->customerCashFlowTargetTypes())
             ->where('type', 'payment')
             ->get();
 
@@ -286,6 +286,10 @@ class CustomerDebtDocumentTimelineService
 
         foreach ($returns as $return) {
             $businessTime = ($return->return_date ?? null) ?: $return->created_at;
+            $realRefund = (float) $return->paid_to_customer > 0
+                ? $this->findRealRefundCashFlowForReturn($return, $payments)
+                : null;
+
             $entries->push($this->createEntry([
                 'id' => 'return-' . $return->id,
                 'code' => $return->code,
@@ -310,11 +314,17 @@ class CustomerDebtDocumentTimelineService
                 'badge_title' => 'Trả hàng bán',
                 'is_real_voucher' => true,
                 'is_virtual_fallback' => false,
+                'fallback_suppressed_by_real_refund' => (bool) $realRefund,
+                'real_refund_code' => $realRefund['cash_flow']?->code ?? null,
+                'real_refund_id' => $realRefund['cash_flow']?->id ?? null,
+                'refund_match_strategy' => $realRefund['strategy'] ?? null,
                 'source' => 'document_first',
             ]));
 
-            // Synthesise virtual refund if paid_to_customer > 0
-            if ((float) $return->paid_to_customer > 0) {
+            // Synthesise virtual refund only when no real refund cashflow is
+            // present. If a PC... voucher already exists, the cashflow row
+            // above is the source of truth; adding PCTH... would double count.
+            if ((float) $return->paid_to_customer > 0 && !$realRefund) {
                 $entries->push($this->createEntry([
                     'id' => 'refund-fallback-' . $return->id,
                     'code' => 'PCTH' . preg_replace('/^TH/', '', $return->code),
@@ -1147,6 +1157,95 @@ class CustomerDebtDocumentTimelineService
             'is_virtual_fallback' => false,
             'display_sequence' => $this->getDisplaySequence($data),
         ], $data);
+    }
+
+    private function findRealRefundCashFlowForReturn(OrderReturn $return, Collection $payments): ?array
+    {
+        $returnCode = (string) ($return->code ?? '');
+        $returnId = (int) $return->id;
+        $refundAmount = (float) ($return->paid_to_customer ?? 0);
+
+        if ($refundAmount <= 0.01) {
+            return null;
+        }
+
+        $candidates = $payments
+            ->filter(function (CashFlow $cashFlow) use ($refundAmount) {
+                if ((float) $cashFlow->amount <= 0.01) {
+                    return false;
+                }
+
+                if (abs((float) $cashFlow->amount - $refundAmount) > 0.01) {
+                    return false;
+                }
+
+                return $cashFlow->reference_type !== 'DebtAdjustment';
+            })
+            ->values();
+
+        $referenceTypes = [
+            'OrderReturn',
+            OrderReturn::class,
+            'Return',
+            'SalesReturn',
+            'returns',
+        ];
+
+        $exactById = $candidates->first(function (CashFlow $cashFlow) use ($referenceTypes, $returnId) {
+            return in_array((string) $cashFlow->reference_type, $referenceTypes, true)
+                && (int) ($cashFlow->reference_id ?? 0) === $returnId;
+        });
+        if ($exactById) {
+            return ['cash_flow' => $exactById, 'strategy' => 'reference_type_and_id'];
+        }
+
+        if ($returnCode !== '') {
+            $exactByCode = $candidates->first(function (CashFlow $cashFlow) use ($referenceTypes, $returnCode) {
+                return in_array((string) $cashFlow->reference_type, $referenceTypes, true)
+                    && (string) ($cashFlow->reference_code ?? '') === $returnCode;
+            });
+            if ($exactByCode) {
+                return ['cash_flow' => $exactByCode, 'strategy' => 'reference_type_and_code'];
+            }
+
+            $referenceCodeOnly = $candidates->first(fn (CashFlow $cashFlow) => (string) ($cashFlow->reference_code ?? '') === $returnCode);
+            if ($referenceCodeOnly) {
+                return ['cash_flow' => $referenceCodeOnly, 'strategy' => 'reference_code'];
+            }
+        }
+
+        $returnTime = $return->return_date ?: $return->created_at;
+        if (!$returnTime) {
+            return null;
+        }
+
+        $returnAt = Carbon::parse($returnTime);
+        $fuzzy = $candidates
+            ->filter(function (CashFlow $cashFlow) use ($returnAt) {
+                $code = strtoupper((string) ($cashFlow->code ?? ''));
+                if (!str_starts_with($code, 'PC')) {
+                    return false;
+                }
+
+                $flowTime = $cashFlow->time ?: $cashFlow->created_at;
+                if (!$flowTime) {
+                    return false;
+                }
+
+                return abs(Carbon::parse($flowTime)->diffInMinutes($returnAt, false)) <= 60;
+            })
+            ->sortBy(function (CashFlow $cashFlow) use ($returnAt) {
+                $flowTime = $cashFlow->time ?: $cashFlow->created_at;
+                return abs(Carbon::parse($flowTime)->diffInSeconds($returnAt, false));
+            })
+            ->first();
+
+        return $fuzzy ? ['cash_flow' => $fuzzy, 'strategy' => 'same_amount_same_customer_near_time'] : null;
+    }
+
+    private function customerCashFlowTargetTypes(): array
+    {
+        return ['Khách hàng', 'Khach hang'];
     }
 
     private function shiftCustomerDisplayRunningAliases(array $entry, float $amount): array

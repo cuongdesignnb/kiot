@@ -515,7 +515,7 @@ class SupplierDebtExcelExportService
         $rawId = (int) $rawId;
         if ($rawId <= 0) return [];
 
-        if ($prefix === 'pur') {
+        if (in_array($prefix, ['pur', 'purchase'], true)) {
             $lines = PurchaseItem::where('purchase_id', $rawId)->get()
                 ->map(fn($i) => [
                     'code'       => $i->product_code ?? '',
@@ -559,7 +559,7 @@ class SupplierDebtExcelExportService
             return $lines;
         }
 
-        if ($prefix === 'pret') {
+        if (in_array($prefix, ['pret', 'purchase_return'], true)) {
             return PurchaseReturnItem::where('purchase_return_id', $rawId)->get()
                 ->map(fn($i) => [
                     'code'       => $i->product_code ?? '',
@@ -574,7 +574,7 @@ class SupplierDebtExcelExportService
                 ])->all();
         }
 
-        if ($prefix === 'inv') {
+        if (in_array($prefix, ['inv', 'invoice'], true)) {
             // HOTFIX 24.17C — invoice_items table only stores product_id +
             // quantity + price + cost_price + serial. Pull product code /
             // name via the relation so the Excel detail line is not blank.
