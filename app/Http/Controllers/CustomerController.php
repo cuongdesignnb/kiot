@@ -670,10 +670,16 @@ class CustomerController extends Controller
         ]);
 
         $targetDebt = $validated['amount']; // Nợ cuối user muốn set
-        $currentDebt = (float) $customer->debt_amount;
+        $currentReceivable = (float) $customer->debt_amount;
+        $currentDebt = PartnerDebtDisplayBalance::customerScreen($customer);
         $diff = $currentDebt - $targetDebt; // diff > 0 = giảm nợ, diff < 0 = tăng nợ
 
-        if ($diff == 0) {
+        $targetReceivable = PartnerDebtDisplayBalance::isDualRole($customer)
+            ? (float) $targetDebt + (float) ($customer->supplier_debt_amount ?? 0)
+            : (float) $targetDebt;
+        $debtDelta = $targetReceivable - $currentReceivable;
+
+        if (abs($debtDelta) < 0.01) {
             return back()->with('info', 'Công nợ không thay đổi.');
         }
 
@@ -684,7 +690,7 @@ class CustomerController extends Controller
         $cashFlow = CashFlow::create([
             'code' => $prefix . date('ymdHis') . rand(10, 99),
             'type' => $type,
-            'amount' => abs($diff),
+            'amount' => abs($debtDelta),
             'time' => $adjustedAt,
             'category' => 'Điều chỉnh công nợ',
             'target_type' => 'Khách hàng',
@@ -700,10 +706,8 @@ class CustomerController extends Controller
             $cashFlow->save();
         }
 
-        // RR-06: ghi ledger adjustment qua service.
-        // delta theo signed amount cho debt_amount: targetDebt - currentDebt.
-        // Lưu ý: $diff trong code này = currentDebt - targetDebt (đảo dấu).
-        $debtDelta = $targetDebt - $currentDebt;
+        // RR-06: write the raw receivable delta after converting from the
+        // customer-screen display balance for dual-role partners.
         if (abs($debtDelta) >= 0.01) {
             app(CustomerDebtService::class)->recordAdjustment(
                 $customer->id,

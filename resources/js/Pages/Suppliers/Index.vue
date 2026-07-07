@@ -689,7 +689,7 @@ const debtActionLabels = {
 const openDebtAction = (supplier, type) => {
     debtActionSupplier.value = supplier;
     debtActionType.value = type;
-    debtAmount.value = type === 'adjustment' ? (supplier.supplier_debt_amount || 0) : 0;
+    debtAmount.value = type === 'adjustment' ? supplierNetDebt(supplier) : 0;
     debtNote.value = '';
     // Mặc định ngày điều chỉnh = hiện tại
     debtDate.value = nowDatetimeLocal();
@@ -2148,7 +2148,7 @@ const submitActivate = (supplier) => {
                         </div>
                         <div class="flex justify-between mt-1">
                             <span>Nợ hiện tại:</span>
-                            <span class="font-bold text-red-600">{{ formatCurrency(debtActionSupplier?.supplier_debt_amount || 0) }}</span>
+                            <span class="font-bold text-red-600">{{ formatCurrency(supplierNetDebt(debtActionSupplier)) }}</span>
                         </div>
                     </div>
                     <div>
