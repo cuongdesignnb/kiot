@@ -452,14 +452,15 @@ const loadingInvoices = ref(false);
 const debtPaymentResult = ref(null);
 
 const openDebtModal = async (customer, type) => {
+    const currentDebt = customerNetDebt(customer);
     debtModal.value = {
         show: true,
         type,
         customerId: customer.id,
         customerName: customer.name,
-        currentDebt: customer.debt_amount || 0,
+        currentDebt,
     };
-    debtForm.amount = type === 'adjust' ? (customer.debt_amount || 0) : 0;
+    debtForm.amount = type === 'adjust' ? currentDebt : 0;
     debtForm.note = "";
     debtForm.mode = "auto";
     // Mặc định ngày điều chỉnh = hiện tại (YYYY-MM-DDTHH:mm cho datetime-local)
