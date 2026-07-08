@@ -622,6 +622,26 @@ class CustomerController extends Controller
         ];
         $validated = $request->validate($rules);
         $allocations = $validated['allocations'] ?? [];
+
+        if ($mode === 'manual' && !empty($allocations)) {
+            $invoiceIds = collect($allocations)
+                ->pluck('invoice_id')
+                ->map(fn ($id) => (int) $id)
+                ->filter()
+                ->values();
+
+            if ($invoiceIds->isNotEmpty()) {
+                $hasCancelledInvoice = Invoice::query()
+                    ->whereIn('id', $invoiceIds)
+                    ->whereIn('status', ['Đã hủy', 'cancelled'])
+                    ->exists();
+
+                if ($hasCancelledInvoice) {
+                    return back()->with('error', 'Không thể thu nợ cho hóa đơn đã hủy.');
+                }
+            }
+        }
+
         $paymentAmount = (float) (
             $validated['amount']
             ?? collect($allocations)->sum(fn (array $allocation) => (float) $allocation['amount'])

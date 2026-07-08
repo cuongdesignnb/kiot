@@ -265,6 +265,7 @@ Route::get('/api/products/{product}/serials', [PosController::class, 'getProduct
 
 // Product search API (shared by Orders, POS, etc.)
 Route::get('/api/products/search', [ProductController::class, 'apiSearch'])->name('api.products.search');
+Route::get('/api/stock-takes/products', [StockTakeController::class, 'products'])->name('api.stock-takes.products');
 
 // Step 22.2E: Customer typeahead search cho Orders/Create (không đụng pos.use,
 // chỉ cần auth). Reuse được bởi bất kỳ màn form nào cần KH.

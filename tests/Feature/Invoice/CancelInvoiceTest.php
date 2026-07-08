@@ -3,6 +3,7 @@
 namespace Tests\Feature\Invoice;
 
 use App\Models\CashFlow;
+use App\Models\Branch;
 use App\Models\Customer;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
@@ -69,7 +70,7 @@ class CancelInvoiceTest extends TestCase
      * Mô phỏng kết quả bán hàng đã xử lý xong (giống InvoiceController@store).
      * Gọi CostingService thật, tạo StockMovement, CashFlow, update customer debt.
      */
-    private function simulateSale(Product $product, Customer $customer, int $qty, float $unitPrice, float $customerPaid): Invoice
+    private function simulateSale(Product $product, Customer $customer, int $qty, float $unitPrice, float $customerPaid, ?int $branchId = null): Invoice
     {
         $subtotal = $qty * $unitPrice;
         $total    = $subtotal;
@@ -87,6 +88,7 @@ class CancelInvoiceTest extends TestCase
             'total'         => $total,
             'customer_paid' => $customerPaid,
             'customer_id'   => $customer->id,
+            'branch_id'     => $branchId,
             'status'        => 'Hoàn thành',
             'sales_channel' => 'Test',
             'created_at'    => now(),
@@ -108,7 +110,7 @@ class CancelInvoiceTest extends TestCase
             $qty,
             $costAtSale,
             $invoice,
-            ['ref_code' => $invoice->code, 'note' => 'Bán hàng test RR01']
+            ['branch_id' => $branchId, 'ref_code' => $invoice->code, 'note' => 'Bán hàng test RR01']
         );
 
         if ($debt > 0) {
@@ -133,6 +135,14 @@ class CancelInvoiceTest extends TestCase
         }
 
         return $invoice;
+    }
+
+    private function createBranch(): Branch
+    {
+        return Branch::create([
+            'code' => 'BR-RR01-' . uniqid(),
+            'name' => 'Chi nhánh RR01 ' . uniqid(),
+        ]);
     }
 
     /* ═══════════════════════════════════════════════════════════════════════
@@ -311,6 +321,61 @@ class CancelInvoiceTest extends TestCase
         $product->refresh();
         $this->assertEquals(1000000, (float) $product->inventory_total_cost,
             "inventory_total_cost phải phục hồi, thực tế: {$product->inventory_total_cost}");
+    }
+
+    public function test_TC_RR01_02_cancel_invoice_uses_sale_cost_snapshot_when_current_cost_changed(): void
+    {
+        $admin    = $this->createAdmin();
+        $product  = $this->createProduct(10, 100000);
+        $customer = $this->createCustomer(0);
+
+        $invoice = $this->simulateSale($product, $customer, 2, 150000, 300000);
+        $product->update(['cost_price' => 150000]);
+
+        $this->actingAs($admin)->delete("/invoices/{$invoice->id}");
+
+        $product->refresh();
+        $this->assertEquals(10, (int) $product->stock_quantity);
+        $this->assertEquals(1000000, (float) $product->inventory_total_cost);
+        $this->assertEquals(100000, (float) $product->cost_price);
+        $this->assertDatabaseHas('stock_movements', [
+            'product_id' => $product->id,
+            'type' => 'in_invoice_return',
+            'qty' => 2,
+            'unit_cost' => 100000,
+            'total_cost' => 200000,
+            'ref_type' => Invoice::class,
+            'ref_id' => $invoice->id,
+            'ref_code' => $invoice->code,
+        ]);
+    }
+
+    public function test_TC_RR01_02_cancel_invoice_reversal_movement_has_audit_fields(): void
+    {
+        $admin    = $this->createAdmin();
+        $branch   = $this->createBranch();
+        $product  = $this->createProduct(10, 100000);
+        $customer = $this->createCustomer(0);
+
+        $invoice = $this->simulateSale($product, $customer, 2, 150000, 300000, $branch->id);
+
+        $this->actingAs($admin)->delete("/invoices/{$invoice->id}");
+
+        $movement = StockMovement::where('product_id', $product->id)
+            ->where('type', 'in_invoice_return')
+            ->where('ref_id', $invoice->id)
+            ->first();
+
+        $this->assertNotNull($movement);
+        $this->assertSame(2, (int) $movement->qty);
+        $this->assertEquals(100000, (float) $movement->unit_cost);
+        $this->assertEquals(200000, (float) $movement->total_cost);
+        $this->assertSame($branch->id, (int) $movement->branch_id);
+        $this->assertSame(Invoice::class, $movement->ref_type);
+        $this->assertSame($invoice->id, (int) $movement->ref_id);
+        $this->assertSame($invoice->code, $movement->ref_code);
+        $this->assertNotEmpty($movement->note);
+        $this->assertNotNull($movement->moved_at);
     }
 
     /* ═══════════════════════════════════════════════════════════════════════
