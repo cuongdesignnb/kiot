@@ -7,6 +7,7 @@ import axios from "axios";
 const tasks = ref([]);
 const loading = ref(true);
 const acceptingAll = ref(false);
+const completingTaskId = ref(null);
 const activeFilter = ref("all"); // all | pending | active | completed
 const showCreateModal = ref(false);
 const creating = ref(false);
@@ -155,6 +156,20 @@ const saveProgress = async (taskId) => {
         load();
     } catch (e) {
         alert(e.response?.data?.message || "Lỗi.");
+    }
+};
+
+const completeTask = async (task) => {
+    if (!confirm(`Hoàn thành công việc ${task.code}?`)) return;
+    completingTaskId.value = task.id;
+    try {
+        await axios.post(`/api/my-tasks/${task.id}/complete`);
+        editingProgressId.value = null;
+        await load();
+    } catch (e) {
+        alert(e.response?.data?.message || "Lỗi.");
+    } finally {
+        completingTaskId.value = null;
     }
 };
 
@@ -320,6 +335,12 @@ load();
                             <!-- Accepted: show status -->
                             <template v-else-if="t.assignment_status === 'accepted' && t.status !== 'completed' && t.status !== 'cancelled'">
                                 <span class="px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-sm font-semibold">🔧 Đang xử lý</span>
+                                <button
+                                    @click="completeTask(t)"
+                                    :disabled="completingTaskId === t.id"
+                                    class="px-4 py-1.5 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700 disabled:opacity-50 transition">
+                                    {{ completingTaskId === t.id ? 'Đang xử lý...' : 'Hoàn thành' }}
+                                </button>
                             </template>
                             <!-- Completed: show label -->
                             <template v-else-if="t.status === 'completed'">

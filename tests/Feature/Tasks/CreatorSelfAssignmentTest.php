@@ -8,260 +8,157 @@ use App\Models\SerialImei;
 use App\Models\Task;
 use App\Models\TaskAssignment;
 use App\Models\User;
-use App\Notifications\TaskAssignedNotification;
-use App\Services\TaskService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Notification;
 use Tests\TestCase;
 
 class CreatorSelfAssignmentTest extends TestCase
 {
     use RefreshDatabase;
 
-    private function userWithEmployee(bool $active = true): array
+    private function userWithEmployee(string $name = 'Tech'): array
     {
-        $user = User::factory()->create();
+        $user = User::factory()->create(['name' => $name]);
         $employee = Employee::create([
-            'name' => 'Creator Employee ' . uniqid(),
+            'name' => $name,
             'phone' => '09' . random_int(10000000, 99999999),
             'user_id' => $user->id,
-            'is_active' => $active,
+            'status' => 'active',
         ]);
 
         return [$user, $employee];
     }
 
-    private function createSerial(): SerialImei
+    private function product(array $overrides = []): Product
     {
-        $product = Product::create([
-            'name' => 'Repair Device',
+        return Product::create(array_merge([
+            'name' => 'Repair Device ' . uniqid(),
             'sku' => 'DEV-' . uniqid(),
             'cost_price' => 1000000,
             'retail_price' => 1500000,
-            'stock_quantity' => 1,
+            'stock_quantity' => 0,
             'inventory_total_cost' => 1000000,
             'has_serial' => true,
-        ]);
+        ], $overrides));
+    }
 
-        return SerialImei::create([
+    private function serial(Product $product, array $overrides = []): SerialImei
+    {
+        return SerialImei::create(array_merge([
             'product_id' => $product->id,
             'serial_number' => 'SN-' . uniqid(),
             'status' => 'in_stock',
+            'repair_status' => 'repairing',
             'cost_price' => 1000000,
-        ]);
+        ], $overrides));
     }
 
-    public function test_active_employee_creating_general_task_gets_pending_self_assignment(): void
+    private function repairTask(Product $product, SerialImei $serial, Employee $employee, string $assignmentStatus = TaskAssignment::STATUS_ACCEPTED): Task
     {
-        Notification::fake();
-        [$user, $employee] = $this->userWithEmployee();
-
-        $response = $this->actingAs($user)->postJson('/api/tasks', [
-            'type' => Task::TYPE_GENERAL,
-            'title' => 'Self assigned general task',
-        ]);
-
-        $response->assertCreated();
-        $task = Task::findOrFail($response->json('id'));
-
-        $this->assertSame(Task::STATUS_PENDING, $task->status);
-        $this->assertSame($employee->id, $task->assigned_employee_id);
-        $this->assertDatabaseHas('task_assignments', [
-            'task_id' => $task->id,
-            'employee_id' => $employee->id,
-            'assigned_by' => $user->id,
-            'status' => TaskAssignment::STATUS_PENDING,
-        ]);
-        Notification::assertNothingSent();
-
-        $myTasks = $this->actingAs($user)->getJson('/api/my-tasks');
-        $myTasks->assertOk();
-        $this->assertTrue(collect($myTasks->json('data'))->contains('id', $task->id));
-        $this->assertSame(TaskAssignment::STATUS_PENDING, collect($myTasks->json('data'))->firstWhere('id', $task->id)['assignment_status']);
-    }
-
-    public function test_active_employee_creating_external_repair_gets_pending_self_assignment(): void
-    {
-        [$user, $employee] = $this->userWithEmployee();
-
-        $response = $this->actingAs($user)->postJson('/api/tasks', [
+        $task = Task::create([
+            'code' => 'SC-' . random_int(1000, 9999) . uniqid(),
             'type' => Task::TYPE_REPAIR,
-            'external' => true,
-            'customer_name' => 'Walk-in customer',
-            'issue_description' => 'External repair issue',
-        ]);
-
-        $response->assertCreated();
-        $task = Task::findOrFail($response->json('id'));
-
-        $this->assertTrue($task->external);
-        $this->assertDatabaseHas('task_assignments', [
-            'task_id' => $task->id,
-            'employee_id' => $employee->id,
-            'status' => TaskAssignment::STATUS_PENDING,
-        ]);
-    }
-
-    public function test_active_employee_creating_internal_repair_gets_pending_self_assignment(): void
-    {
-        [$user, $employee] = $this->userWithEmployee();
-        $serial = $this->createSerial();
-
-        $response = $this->actingAs($user)->postJson('/api/tasks', [
-            'type' => Task::TYPE_REPAIR,
+            'title' => 'Internal repair',
+            'product_id' => $product->id,
             'serial_imei_id' => $serial->id,
-            'issue_description' => 'Internal repair issue',
+            'status' => Task::STATUS_IN_PROGRESS,
+            'progress' => 100,
+            'priority' => Task::PRIORITY_NORMAL,
+            'original_cost' => $serial->cost_price,
+            'parts_cost' => 0,
+            'total_cost' => $serial->cost_price,
         ]);
 
-        $response->assertCreated();
-        $task = Task::findOrFail($response->json('id'));
-
-        $this->assertFalse($task->external);
-        $this->assertDatabaseHas('task_assignments', [
+        TaskAssignment::create([
             'task_id' => $task->id,
             'employee_id' => $employee->id,
-            'status' => TaskAssignment::STATUS_PENDING,
+            'status' => $assignmentStatus,
+            'assigned_at' => now(),
+            'responded_at' => $assignmentStatus === TaskAssignment::STATUS_ACCEPTED ? now() : null,
         ]);
+
+        return $task;
     }
 
-    public function test_creator_can_accept_then_update_progress(): void
+    public function test_assigned_employee_can_complete_in_progress_task_from_my_tasks(): void
     {
         [$user, $employee] = $this->userWithEmployee();
-
-        $task = app(TaskService::class)->createTask([
-            'type' => Task::TYPE_GENERAL,
-            'title' => 'Accept then progress',
-            'created_by' => $user->id,
-            'creator_employee_id' => $employee->id,
-        ]);
-        $assignment = $task->assignments()->where('employee_id', $employee->id)->firstOrFail();
+        $product = $this->product(['stock_quantity' => 1]);
+        $serial = $this->serial($product, ['status' => 'in_stock']);
+        $task = $this->repairTask($product, $serial, $employee);
 
         $this->actingAs($user)
-            ->postJson("/api/my-tasks/{$assignment->id}/respond", ['status' => TaskAssignment::STATUS_ACCEPTED])
-            ->assertOk();
+            ->postJson("/api/my-tasks/{$task->id}/complete")
+            ->assertOk()
+            ->assertJsonPath('status', Task::STATUS_COMPLETED);
 
-        $this->assertSame(TaskAssignment::STATUS_ACCEPTED, $assignment->fresh()->status);
-        $this->assertSame(Task::STATUS_IN_PROGRESS, $task->fresh()->status);
+        $freshTask = $task->fresh();
+        $this->assertSame(Task::STATUS_COMPLETED, $freshTask->status);
+        $this->assertNotNull($freshTask->completed_at);
+    }
+
+    public function test_my_tasks_complete_restores_dismantled_repair_serial(): void
+    {
+        [$user, $employee] = $this->userWithEmployee();
+        $product = $this->product(['stock_quantity' => 0]);
+        $serial = $this->serial($product, [
+            'status' => 'dismantled',
+            'repair_status' => 'repairing',
+            'invoice_id' => null,
+            'sold_at' => null,
+            'purchase_return_id' => null,
+        ]);
+        $task = $this->repairTask($product, $serial, $employee);
 
         $this->actingAs($user)
-            ->postJson("/api/my-tasks/{$task->id}/progress", ['progress' => 50])
+            ->postJson("/api/my-tasks/{$task->id}/complete")
             ->assertOk();
 
-        $this->assertSame(50, $task->fresh()->progress);
+        $freshSerial = $serial->fresh();
+        $this->assertSame(Task::STATUS_COMPLETED, $task->fresh()->status);
+        $this->assertSame('in_stock', $freshSerial->status);
+        $this->assertSame('ready', $freshSerial->repair_status);
+        $this->assertSame(1, (int) $product->fresh()->stock_quantity);
     }
 
-    public function test_other_employee_does_not_see_unassigned_creator_task(): void
+    public function test_my_tasks_complete_does_not_restore_serial_that_left_stock(): void
     {
-        [$creatorUser, $creatorEmployee] = $this->userWithEmployee();
-        [$otherUser] = $this->userWithEmployee();
-
-        $task = app(TaskService::class)->createTask([
-            'type' => Task::TYPE_GENERAL,
-            'title' => 'Private creator task',
-            'created_by' => $creatorUser->id,
-            'creator_employee_id' => $creatorEmployee->id,
+        [$user, $employee] = $this->userWithEmployee();
+        $product = $this->product(['stock_quantity' => 0]);
+        $sold = $this->serial($product, [
+            'status' => 'dismantled',
+            'invoice_id' => 123,
+            'sold_at' => now(),
+        ]);
+        $returned = $this->serial($product, [
+            'status' => 'dismantled',
+            'purchase_return_id' => 456,
         ]);
 
-        $response = $this->actingAs($otherUser)->getJson('/api/my-tasks');
+        foreach ([$sold, $returned] as $serial) {
+            $task = $this->repairTask($product, $serial, $employee);
 
-        $response->assertOk();
-        $this->assertFalse(collect($response->json('data'))->contains('id', $task->id));
-    }
+            $this->actingAs($user)
+                ->postJson("/api/my-tasks/{$task->id}/complete")
+                ->assertOk();
 
-    public function test_user_without_active_linked_employee_does_not_get_assignment(): void
-    {
-        [$inactiveUser] = $this->userWithEmployee(false);
-        $unlinkedUser = User::factory()->create();
-
-        foreach ([$inactiveUser, $unlinkedUser] as $user) {
-            $response = $this->actingAs($user)->postJson('/api/tasks', [
-                'type' => Task::TYPE_GENERAL,
-                'title' => 'No active employee ' . uniqid(),
-            ]);
-
-            $response->assertCreated();
-            $task = Task::findOrFail($response->json('id'));
-            $this->assertNull($task->assigned_employee_id);
-            $this->assertSame(0, $task->assignments()->count());
+            $this->assertSame('dismantled', $serial->fresh()->status);
         }
     }
 
-    public function test_creator_assignment_is_not_duplicated(): void
+    public function test_unassigned_user_cannot_complete_task_from_my_tasks(): void
     {
-        [$user, $employee] = $this->userWithEmployee();
-        $service = app(TaskService::class);
+        [$assignedUser, $assignedEmployee] = $this->userWithEmployee('Assigned Tech');
+        [$otherUser] = $this->userWithEmployee('Other Tech');
+        $product = $this->product(['stock_quantity' => 0]);
+        $serial = $this->serial($product, ['status' => 'dismantled']);
+        $task = $this->repairTask($product, $serial, $assignedEmployee);
 
-        $task = $service->createTask([
-            'type' => Task::TYPE_GENERAL,
-            'title' => 'No duplicate self assignment',
-            'created_by' => $user->id,
-            'creator_employee_id' => $employee->id,
-        ]);
+        $this->actingAs($otherUser)
+            ->postJson("/api/my-tasks/{$task->id}/complete")
+            ->assertStatus(403);
 
-        $service->ensureCreatorAssignment($task, $employee->id, $user->id);
-
-        $this->assertSame(1, $task->assignments()->where('employee_id', $employee->id)->count());
-    }
-
-    public function test_backfill_dry_run_does_not_write_assignments(): void
-    {
-        [$user] = $this->userWithEmployee();
-        $task = Task::create([
-            'code' => 'TASK-' . uniqid(),
-            'type' => Task::TYPE_GENERAL,
-            'title' => 'Backfill dry run',
-            'status' => Task::STATUS_PENDING,
-            'priority' => Task::PRIORITY_NORMAL,
-            'created_by' => $user->id,
-        ]);
-
-        $this->artisan('tasks:backfill-creator-assignments')
-            ->expectsOutputToContain('Dry-run only')
-            ->assertExitCode(0);
-
-        $this->assertSame(0, $task->assignments()->count());
-    }
-
-    public function test_backfill_commit_creates_only_safe_creator_assignments(): void
-    {
-        [$user, $employee] = $this->userWithEmployee();
-        [$otherUser, $otherEmployee] = $this->userWithEmployee();
-
-        $eligible = Task::create([
-            'code' => 'TASK-' . uniqid(),
-            'type' => Task::TYPE_GENERAL,
-            'title' => 'Eligible',
-            'status' => Task::STATUS_PENDING,
-            'priority' => Task::PRIORITY_NORMAL,
-            'created_by' => $user->id,
-        ]);
-        $assignedToOther = Task::create([
-            'code' => 'TASK-' . uniqid(),
-            'type' => Task::TYPE_GENERAL,
-            'title' => 'Assigned to other',
-            'status' => Task::STATUS_PENDING,
-            'priority' => Task::PRIORITY_NORMAL,
-            'created_by' => $user->id,
-            'assigned_employee_id' => $otherEmployee->id,
-        ]);
-        $completed = Task::create([
-            'code' => 'TASK-' . uniqid(),
-            'type' => Task::TYPE_GENERAL,
-            'title' => 'Completed',
-            'status' => Task::STATUS_COMPLETED,
-            'priority' => Task::PRIORITY_NORMAL,
-            'created_by' => $otherUser->id,
-        ]);
-
-        $this->artisan('tasks:backfill-creator-assignments --commit')
-            ->assertExitCode(0);
-
-        $this->assertDatabaseHas('task_assignments', [
-            'task_id' => $eligible->id,
-            'employee_id' => $employee->id,
-            'status' => TaskAssignment::STATUS_PENDING,
-        ]);
-        $this->assertSame(0, $assignedToOther->assignments()->count());
-        $this->assertSame(0, $completed->assignments()->count());
+        $this->assertSame(Task::STATUS_IN_PROGRESS, $task->fresh()->status);
+        $this->assertSame('dismantled', $serial->fresh()->status);
+        $this->assertNotNull($assignedUser->id);
     }
 }

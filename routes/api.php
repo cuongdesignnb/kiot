@@ -297,6 +297,7 @@ Route::prefix('my-tasks')->middleware('auth:sanctum')->group(function () {
     Route::get('/serials/search', [\App\Http\Controllers\Api\MyTasksController::class, 'searchSerials'])->middleware('permission:tasks.self.create');
     Route::post('/accept-all', [\App\Http\Controllers\Api\MyTasksController::class, 'acceptAll'])->middleware('permission:tasks.self.view');
     Route::post('/{assignment}/respond', [\App\Http\Controllers\Api\MyTasksController::class, 'respond'])->middleware('permission:tasks.self.view');
+    Route::post('/{task}/complete', [\App\Http\Controllers\Api\MyTasksController::class, 'complete'])->middleware('permission:tasks.self.progress');
     Route::post('/{task}/progress', [\App\Http\Controllers\Api\MyTasksController::class, 'updateProgress'])->middleware('permission:tasks.self.progress');
 });
 
