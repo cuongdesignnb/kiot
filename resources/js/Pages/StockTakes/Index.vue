@@ -80,10 +80,11 @@ const printStockTake = (stockTake) => {
     );
 };
 
-// Tính diff live cho mỗi item
-const computedDiff = (item) => {
-    return (parseInt(item.actual_stock) || 0) - (parseInt(item.system_stock) || 0);
-};
+const toNumber = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
+const itemSystemStock = (item) => toNumber(item.system_stock_snapshot ?? item.system_stock);
+const savedDiff = (item) => toNumber(item.diff_qty);
+const savedDiffValue = (item) => toNumber(item.diff_value);
+const stockTakeTotal = (stockTake, key, fallback = 0) => stockTake[key] ?? fallback;
 
 // Cân bằng kho
 const balanceStockTake = async (stockTake) => {
@@ -214,6 +215,7 @@ const cancelStockTake = async (stockTake) => {
                             Chi nhánh
                         </div>
                         <select
+                            v-model="filters.branch_id"
                             class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-shadow text-[13px] shadow-sm"
                         >
                             <option value="">Tất cả chi nhánh</option>
@@ -403,26 +405,26 @@ const cancelStockTake = async (stockTake) => {
                                     </td>
                                     <td class="p-3 text-right">{{ stockTake.items?.length || 0 }}</td>
                                     <td class="p-3 text-right">
-                                        {{ stockTake.items?.reduce((s, i) => s + (parseInt(i.actual_stock) || 0), 0) || 0 }}
+                                        {{ stockTakeTotal(stockTake, 'total_actual_qty') }}
                                     </td>
                                     <td
                                         class="p-3 text-right font-medium"
                                         :class="{
                                             'text-red-500':
-                                                stockTake.items?.reduce((s, i) => s + computedDiff(i), 0) < 0,
+                                                toNumber(stockTake.total_diff_qty) < 0,
                                             'text-green-500':
-                                                stockTake.items?.reduce((s, i) => s + computedDiff(i), 0) > 0,
+                                                toNumber(stockTake.total_diff_qty) > 0,
                                         }"
                                     >
-                                        {{ stockTake.items?.reduce((s, i) => s + computedDiff(i), 0) || 0 }}
+                                        {{ stockTakeTotal(stockTake, 'total_diff_qty') }}
                                     </td>
                                     <td class="p-3 text-right text-green-500">
-                                        {{ stockTake.items?.filter(i => computedDiff(i) > 0).reduce((s, i) => s + computedDiff(i), 0) || 0 }}
+                                        {{ stockTakeTotal(stockTake, 'total_diff_increase') }}
                                     </td>
                                     <td
                                         class="p-3 text-right text-red-500 w-[120px]"
                                     >
-                                        {{ stockTake.items?.filter(i => computedDiff(i) < 0).reduce((s, i) => s + computedDiff(i), 0) || 0 }}
+                                        {{ stockTakeTotal(stockTake, 'total_diff_decrease') }}
                                     </td>
                                     <td class="p-3 truncate max-w-[150px]">
                                         {{
@@ -652,7 +654,7 @@ const cancelStockTake = async (stockTake) => {
                                                                     class="p-3 text-right"
                                                                 >
                                                                     {{
-                                                                        item.system_stock
+                                                                        itemSystemStock(item)
                                                                     }}
                                                                 </td>
                                                                 <td
@@ -666,15 +668,15 @@ const cancelStockTake = async (stockTake) => {
                                                                     class="p-3 text-right font-medium"
                                                                     :class="{
                                                                         'text-red-500':
-                                                                            computedDiff(item) <
+                                                                            savedDiff(item) <
                                                                             0,
                                                                         'text-green-500':
-                                                                            computedDiff(item) >
+                                                                            savedDiff(item) >
                                                                             0,
                                                                     }"
                                                                 >
                                                                     {{
-                                                                        computedDiff(item)
+                                                                        savedDiff(item)
                                                                     }}
                                                                 </td>
                                                                 <td
@@ -682,7 +684,7 @@ const cancelStockTake = async (stockTake) => {
                                                                 >
                                                                     {{
                                                                         formatCurrency(
-                                                                            computedDiff(item) * (item.product?.cost_price || 0),
+                                                                            savedDiffValue(item),
                                                                         )
                                                                     }}
                                                                 </td>
@@ -722,7 +724,7 @@ const cancelStockTake = async (stockTake) => {
                                                             <span
                                                                 class="w-20 text-right font-medium"
                                                                 >{{
-                                                                    stockTake.items?.reduce((s, i) => s + (parseInt(i.actual_stock) || 0), 0) || 0
+                                                                    stockTakeTotal(stockTake, 'total_actual_qty')
                                                                 }}</span
                                                             >
                                                         </div>
@@ -732,12 +734,12 @@ const cancelStockTake = async (stockTake) => {
                                                             <span
                                                                 class="w-[150px] text-right text-gray-500"
                                                                 >Tổng lệch tăng
-                                                                ({{ (stockTake.items?.filter(i => computedDiff(i) > 0) || []).length }}):</span
+                                                                ({{ (stockTake.items?.filter(i => savedDiff(i) > 0) || []).length }}):</span
                                                             >
                                                             <span
                                                                 class="w-20 text-right text-green-600 font-medium"
                                                                 >{{
-                                                                    stockTake.items?.filter(i => computedDiff(i) > 0).reduce((s, i) => s + computedDiff(i), 0) || 0
+                                                                    stockTakeTotal(stockTake, 'total_diff_increase')
                                                                 }}</span
                                                             >
                                                         </div>
@@ -753,7 +755,7 @@ const cancelStockTake = async (stockTake) => {
                                                                             (
                                                                                 i,
                                                                             ) =>
-                                                                                computedDiff(i) <
+                                                                                savedDiff(i) <
                                                                                 0,
                                                                         ) || []
                                                                     ).length
@@ -762,7 +764,7 @@ const cancelStockTake = async (stockTake) => {
                                                             <span
                                                                 class="w-20 text-right text-red-500 font-medium"
                                                                 >{{
-                                                                    stockTake.items?.filter(i => computedDiff(i) < 0).reduce((s, i) => s + computedDiff(i), 0) || 0
+                                                                    stockTakeTotal(stockTake, 'total_diff_decrease')
                                                                 }}</span
                                                             >
                                                         </div>
@@ -778,7 +780,7 @@ const cancelStockTake = async (stockTake) => {
                                                                             (
                                                                                 i,
                                                                             ) =>
-                                                                                computedDiff(i) !==
+                                                                                savedDiff(i) !==
                                                                                 0,
                                                                         ) || []
                                                                     ).length
@@ -787,7 +789,7 @@ const cancelStockTake = async (stockTake) => {
                                                             <span
                                                                 class="w-20 text-right font-bold"
                                                                 >{{
-                                                                    stockTake.items?.reduce((s, i) => s + computedDiff(i), 0) || 0
+                                                                    stockTakeTotal(stockTake, 'total_diff_qty')
                                                                 }}</span
                                                             >
                                                         </div>

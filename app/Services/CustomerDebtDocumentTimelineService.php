@@ -377,11 +377,13 @@ class CustomerDebtDocumentTimelineService
 
             $businessTime = $debt->recorded_at ?: $debt->created_at;
             [$displayType, $eventKind, $badgeLabel] = $this->classifyCustomerDebt($debt);
+            $typeRaw = $eventKind === 'invoice_cancel_reversal' ? 'invoice_cancel_reversal' : $debt->type;
 
             $entries->push($this->createEntry([
                 'id' => 'customer_debt-' . $debt->id,
                 'code' => $refCode ?: ('DC' . $debt->id),
                 'display_type' => $displayType,
+                'type_raw' => $typeRaw,
                 'event_kind' => $eventKind,
                 'domain' => 'adjustment',
                 'document_amount' => abs((float) $debt->amount),
@@ -1079,10 +1081,13 @@ class CustomerDebtDocumentTimelineService
         if ($type === 'return') {
             return ['Trả hàng bán', 'sales_return', 'Trả hàng'];
         }
-        if ($type === 'sale_reversal') {
-            return ['Hủy hóa đơn', 'invoice_cancel', 'Ledger'];
+        if ($type === 'sale_reversal' || $type === 'invoice_cancel_reversal') {
+            return ['Hủy hóa đơn', 'invoice_cancel_reversal', 'Ledger'];
         }
         if ($type === 'adjustment') {
+            if (str_contains($note, 'huy hoa don') || str_contains($note, 'hủy hóa đơn')) {
+                return ['Hủy hóa đơn', 'invoice_cancel_reversal', 'Ledger'];
+            }
             if (str_starts_with($refCode, 'MERGE') || str_starts_with($refCode, 'OPENING-BALANCE') || str_contains($note, 'gộp công nợ') || str_contains($note, 'gop cong no')) {
                 return ['Số dư đầu kỳ / Gộp công nợ', 'opening_balance', 'Số dư đầu kỳ'];
             }
@@ -1121,6 +1126,10 @@ class CustomerDebtDocumentTimelineService
 
     private function createEntry(array $data): array
     {
+        if (!array_key_exists('type', $data) && array_key_exists('display_type', $data)) {
+            $data['type'] = $data['display_type'];
+        }
+
         return array_merge([
             'id' => null,
             'code' => null,

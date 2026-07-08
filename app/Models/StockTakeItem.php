@@ -14,9 +14,21 @@ class StockTakeItem extends Model
         'stock_take_id',
         'product_id',
         'system_stock',
+        'system_stock_snapshot',
         'actual_stock',
+        'checked',
         'diff_qty',
-        'diff_value'
+        'diff_value',
+        'cost_price_snapshot',
+        'unit_name',
+        'category_id',
+    ];
+
+    protected $casts = [
+        'actual_stock' => 'integer',
+        'checked' => 'boolean',
+        'diff_value' => 'decimal:2',
+        'cost_price_snapshot' => 'decimal:2',
     ];
 
     public function product()

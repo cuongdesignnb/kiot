@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Inventory;
 
+use App\Models\Branch;
 use App\Models\Category;
 use App\Models\Product;
 use App\Models\SerialImei;
@@ -18,7 +19,7 @@ use Tests\TestCase;
  *  - BUG-1 server-side recompute (KHÔNG tin client system_stock/diff_qty/diff_value).
  *  - BUG-2 chống duplicate product_id trong cùng phiếu.
  *  - BUG-3 chặn cân bằng has_serial diff != 0.
- *  - cost snapshot dùng product.cost_price tại thời điểm balance.
+ *  - cost snapshot dùng product.cost_price tại thời điểm thêm hàng vào phiếu.
  */
 class Step234StockTakeFlowTest extends TestCase
 {
@@ -53,6 +54,14 @@ class Step234StockTakeFlowTest extends TestCase
         ]);
     }
 
+    private function makeBranch(): Branch
+    {
+        return Branch::create([
+            'code' => 'BR-ST-' . uniqid(),
+            'name' => 'Branch StockTake ' . uniqid(),
+        ]);
+    }
+
     /* ════════════════ A. Draft ════════════════ */
 
     public function test_stocktake_draft_should_not_change_stock(): void
@@ -75,6 +84,9 @@ class Step234StockTakeFlowTest extends TestCase
         $stockTake = StockTake::where('note', 'TC-23.4-01')->first();
         $this->assertNotNull($stockTake);
         $this->assertSame('draft', $stockTake->status);
+        $this->assertSame(5, (int) $stockTake->total_actual_qty);
+        $this->assertSame(-5, (int) $stockTake->total_diff_qty);
+        $this->assertEqualsWithDelta(-500000.0, (float) $stockTake->total_diff_value, 0.01);
         $this->assertSame(0, StockMovement::where('product_id', $product->id)
             ->where('ref_type', 'App\\Models\\StockTake')
             ->where('ref_id', $stockTake->id)->count());
@@ -184,9 +196,9 @@ class Step234StockTakeFlowTest extends TestCase
         $this->assertSame(10, (int) $product->fresh()->stock_quantity);
     }
 
-    /* ════════════════ D. Balance draft uses CURRENT stock ════════════════ */
+    /* ════════════════ D. Balance draft protects snapshot ════════════════ */
 
-    public function test_balance_draft_should_use_current_stock_at_balance_time(): void
+    public function test_balance_draft_should_fail_when_current_stock_changed_after_snapshot(): void
     {
         $product = $this->makeProduct(false, 10, 100000);
 
@@ -207,20 +219,117 @@ class Step234StockTakeFlowTest extends TestCase
         // Sau đó stock đổi thành 12 do giao dịch khác
         $product->update(['stock_quantity' => 12, 'inventory_total_cost' => 12 * 100000]);
 
-        // Balance phải tính diff = 8 - 12 = -4 (không phải -2)
-        $this->actingAs($this->admin)->post(route('stock-takes.balance', $stockTake->id));
+        $resp = $this->actingAs($this->admin)->post(route('stock-takes.balance', $stockTake->id));
+        $resp->assertStatus(422)
+            ->assertJsonPath('success', false)
+            ->assertJson(fn($json) => $json->where('message', fn($message) => str_contains($message, 'Ton he thong') && str_contains($message, 'thay doi'))
+                ->etc());
 
         $product->refresh();
-        $this->assertSame(8, (int) $product->stock_quantity);
+        $this->assertSame(12, (int) $product->stock_quantity, 'Stock không được ép về actual khi snapshot đã lệch.');
+        $stockTake->refresh();
+        $this->assertSame('draft', $stockTake->status);
+        $item = $stockTake->items()->first();
+        $this->assertSame(10, (int) $item->system_stock);
+        $this->assertSame(10, (int) $item->system_stock_snapshot, 'Snapshot không được tự đổi sang tồn hiện tại.');
+        $this->assertSame(-2, (int) $item->diff_qty);
+
+        $this->assertSame(0, StockMovement::where('product_id', $product->id)
+            ->where('ref_id', $stockTake->id)->count());
+    }
+
+    public function test_balance_draft_should_succeed_when_current_stock_matches_snapshot(): void
+    {
+        $branch = $this->makeBranch();
+        $product = $this->makeProduct(false, 15, 100000);
+
+        $this->actingAs($this->admin)->post(route('stock-takes.store'), [
+            'branch_id' => $branch->id,
+            'status' => 'draft',
+            'note'   => 'TC-23.4-07B',
+            'items'  => [[
+                'product_id' => $product->id,
+                'actual_stock' => 10,
+                'checked' => true,
+            ]],
+        ]);
+        $stockTake = StockTake::where('note', 'TC-23.4-07B')->first();
+
+        $resp = $this->actingAs($this->admin)->post(route('stock-takes.balance', $stockTake->id));
+        $resp->assertOk()->assertJsonPath('success', true);
+
+        $product->refresh();
         $stockTake->refresh();
         $item = $stockTake->items()->first();
-        $this->assertSame(12, (int) $item->system_stock, 'system_stock phải = 12 lúc balance.');
-        $this->assertSame(-4, (int) $item->diff_qty, 'diff_qty phải = -4.');
 
-        $this->assertSame(1, StockMovement::where('product_id', $product->id)
-            ->where('type', 'adjust_out')
-            ->where('qty', 4)
-            ->where('ref_id', $stockTake->id)->count());
+        $this->assertSame('balanced', $stockTake->status);
+        $this->assertSame(10, (int) $product->stock_quantity);
+        $this->assertSame(-5, (int) $item->diff_qty);
+        $this->assertEqualsWithDelta(-500000.0, (float) $item->diff_value, 0.01);
+        $this->assertSame(10, (int) $stockTake->total_actual_qty);
+        $this->assertSame(-5, (int) $stockTake->total_diff_qty);
+        $this->assertSame(-5, (int) $stockTake->total_diff_decrease);
+        $this->assertEqualsWithDelta(-500000.0, (float) $stockTake->total_diff_value, 0.01);
+
+        $this->assertDatabaseHas('stock_movements', [
+            'product_id' => $product->id,
+            'type' => 'adjust_out',
+            'qty' => 5,
+            'branch_id' => $branch->id,
+            'ref_type' => StockTake::class,
+            'ref_id' => $stockTake->id,
+            'ref_code' => $stockTake->code,
+        ]);
+    }
+
+    public function test_balance_should_fail_when_any_item_is_unchecked(): void
+    {
+        $productA = $this->makeProduct(false, 15, 100000);
+        $productB = $this->makeProduct(false, 8, 50000);
+
+        $this->actingAs($this->admin)->post(route('stock-takes.store'), [
+            'status' => 'draft',
+            'note'   => 'TC-23.4-07C',
+            'items'  => [
+                ['product_id' => $productA->id, 'actual_stock' => 10, 'checked' => true],
+                ['product_id' => $productB->id, 'actual_stock' => null, 'checked' => false],
+            ],
+        ]);
+        $stockTake = StockTake::where('note', 'TC-23.4-07C')->first();
+
+        $resp = $this->actingAs($this->admin)->post(route('stock-takes.balance', $stockTake->id));
+        $resp->assertStatus(422)
+            ->assertJsonPath('success', false)
+            ->assertJson(fn($json) => $json->where('message', fn($message) => str_contains($message, 'chua kiem'))
+                ->etc());
+
+        $this->assertSame('draft', $stockTake->fresh()->status);
+        $this->assertSame(15, (int) $productA->fresh()->stock_quantity);
+        $this->assertSame(8, (int) $productB->fresh()->stock_quantity);
+        $this->assertSame(0, StockMovement::where('ref_id', $stockTake->id)->count());
+    }
+
+    public function test_balance_should_fail_when_checked_item_has_null_actual_stock(): void
+    {
+        $product = $this->makeProduct(false, 15, 100000);
+
+        $this->actingAs($this->admin)->post(route('stock-takes.store'), [
+            'status' => 'draft',
+            'note'   => 'TC-23.4-07D',
+            'items'  => [[
+                'product_id' => $product->id,
+                'actual_stock' => null,
+                'checked' => true,
+            ]],
+        ]);
+        $stockTake = StockTake::where('note', 'TC-23.4-07D')->first();
+
+        $resp = $this->actingAs($this->admin)->post(route('stock-takes.balance', $stockTake->id));
+        $resp->assertStatus(422)->assertJsonPath('success', false);
+
+        $this->assertSame('draft', $stockTake->fresh()->status);
+        $this->assertSame(15, (int) $product->fresh()->stock_quantity);
+        $this->assertSame(0, StockMovement::where('ref_id', $stockTake->id)->count());
     }
 
     public function test_balance_twice_should_fail(): void
@@ -358,9 +467,11 @@ class Step234StockTakeFlowTest extends TestCase
 
     public function test_cancel_balanced_normal_should_reverse_adjustment(): void
     {
+        $branch = $this->makeBranch();
         $product = $this->makeProduct(false, 10, 100000);
 
         $this->actingAs($this->admin)->post(route('stock-takes.store'), [
+            'branch_id' => $branch->id,
             'status' => 'balanced',
             'note'   => 'TC-23.4-12',
             'items'  => [[
@@ -374,15 +485,29 @@ class Step234StockTakeFlowTest extends TestCase
         $stockTake = StockTake::where('note', 'TC-23.4-12')->first();
         $this->assertSame(7, (int) $product->fresh()->stock_quantity);
 
-        $this->actingAs($this->admin)->post(route('stock-takes.cancel', $stockTake->id));
+        $this->actingAs($this->admin)->post(route('stock-takes.cancel', $stockTake->id), [
+            'cancel_reason' => 'Regression cancel reversal',
+        ]);
 
         $product->refresh();
         $stockTake->refresh();
         $this->assertSame('cancelled', $stockTake->status);
+        $this->assertSame($this->admin->id, (int) $stockTake->cancelled_by);
+        $this->assertNotNull($stockTake->cancelled_at);
+        $this->assertSame('Regression cancel reversal', $stockTake->cancel_reason);
         $this->assertSame(10, (int) $product->stock_quantity, 'Stock phải về 10 sau cancel.');
         $this->assertSame(2, StockMovement::where('product_id', $product->id)
             ->where('ref_id', $stockTake->id)->count(),
             'Phải có 2 movement: 1 adjust_out lúc balance + 1 adjust_in lúc cancel.');
+        $this->assertDatabaseHas('stock_movements', [
+            'product_id' => $product->id,
+            'type' => 'adjust_in',
+            'qty' => 3,
+            'branch_id' => $branch->id,
+            'ref_type' => StockTake::class,
+            'ref_id' => $stockTake->id,
+            'note' => 'Huy kiem kho - dao chenh lech',
+        ]);
     }
 
     public function test_cancel_stocktake_twice_should_fail(): void
@@ -429,6 +554,9 @@ class Step234StockTakeFlowTest extends TestCase
         ]);
 
         $stockTake = StockTake::where('note', 'TC-23.4-14')->first();
+        $item = $stockTake->items()->first();
+        $this->assertEqualsWithDelta(-300000.0, (float) $item->diff_value, 0.01);
+        $this->assertEqualsWithDelta(100000.0, (float) $item->cost_price_snapshot, 0.01);
         $movement = StockMovement::where('product_id', $product->id)
             ->where('ref_id', $stockTake->id)->first();
         $this->assertNotNull($movement);
@@ -437,6 +565,9 @@ class Step234StockTakeFlowTest extends TestCase
 
         // Đổi cost_price sau khi balance — không ảnh hưởng phiếu cũ
         $product->update(['cost_price' => 999999]);
+        $item->refresh();
+        $this->assertEqualsWithDelta(-300000.0, (float) $item->diff_value, 0.01);
+        $this->assertEqualsWithDelta(100000.0, (float) $item->cost_price_snapshot, 0.01);
         $movement->refresh();
         $this->assertEqualsWithDelta(100000.0, (float) $movement->unit_cost, 0.01);
     }

@@ -7,10 +7,13 @@ use App\Enums\PaymentMethod;
 use App\Models\ActivityLog;
 use App\Models\Employee;
 use App\Models\Invoice;
+use App\Models\InvoiceItem;
 use App\Models\PriceBook;
+use App\Models\Product;
 use App\Models\Setting;
 use App\Models\CashFlow;
 use App\Models\SerialImei;
+use App\Models\StockMovement;
 use App\Models\User;
 use App\Services\CustomerDebtService;
 use App\Services\DebtOffsetService;
@@ -353,13 +356,12 @@ class InvoiceController extends Controller
     public function destroy(Invoice $invoice, Request $request)
     {
         $validated = $request->validate([
-            'cancel_reason' => 'required|string|min:5|max:500',
+            'cancel_reason' => 'nullable|string|min:5|max:500',
             'time_lock_override_reason' => 'nullable|string|min:5|max:500',
         ], [
-            'cancel_reason.required' => 'Vui lòng nhập lý do hủy hóa đơn.',
             'cancel_reason.min' => 'Lý do hủy phải có ít nhất 5 ký tự.',
         ]);
-        $cancelReason = trim($validated['cancel_reason']);
+        $cancelReason = trim($validated['cancel_reason'] ?? '') ?: 'Huy hoa don';
         // RR-01 Guard: Không cho hủy lặp — idempotent check
         if ($invoice->status === 'Đã hủy') {
             return back()->with('error', 'Hóa đơn này đã được hủy trước đó.');
@@ -401,7 +403,7 @@ class InvoiceController extends Controller
                 if (!$product->tracksInventory()) continue;
 
                 $qtyBack = (int) $item->quantity;
-                $costAtSale = (float) ($item->cost_price ?? $product->cost_price ?? 0);
+                $costAtSale = $this->invoiceItemCostSnapshot($invoice, $item, $product);
 
                 // BQ DI ĐỘNG: phục hồi tồn ở cost lúc bán
                 \App\Services\MovingAvgCostingService::applySaleReturn(
@@ -886,5 +888,26 @@ class InvoiceController extends Controller
     private function invoiceCustomerGroupName(Invoice $invoice): string
     {
         return CustomerGroupSnapshot::normalize($invoice->customer_group_name ?? $invoice->customer?->customer_group);
+    }
+
+    private function invoiceItemCostSnapshot(Invoice $invoice, InvoiceItem $item, Product $product): float
+    {
+        if ($item->cost_price !== null) {
+            return (float) $item->cost_price;
+        }
+
+        $movementCost = StockMovement::query()
+            ->where('product_id', $product->id)
+            ->where('type', StockMovementService::TYPE_OUT_INVOICE)
+            ->where('ref_type', Invoice::class)
+            ->where('ref_id', $invoice->id)
+            ->value('unit_cost');
+
+        if ($movementCost !== null) {
+            return (float) $movementCost;
+        }
+
+        // Legacy fallback only: old invoices may not have item or movement cost snapshots.
+        return (float) ($product->cost_price ?? 0);
     }
 }
