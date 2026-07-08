@@ -32,7 +32,7 @@ class MyTasksController extends Controller
             'branch:id,name',
             'creator:id,name',
             'product:id,name,sku',
-            'serialImei:id,serial_number,product_id,repair_status',
+            'serialImei:id,serial_number,product_id,status,repair_status',
             'serialImei.product:id,name,sku',
             'assignments' => fn($q) => $q->where('employee_id', $employee->id),
         ])
@@ -89,9 +89,8 @@ class MyTasksController extends Controller
             return response()->json(['message' => 'Không có quyền.'], 403);
         }
 
-        // Verify employee is assigned to this task
-        $isAssigned = $task->assignments()->where('employee_id', $employee->id)->exists();
-        if (!$isAssigned) {
+        $assignment = $task->assignments()->where('employee_id', $employee->id)->first();
+        if (!$assignment) {
             return response()->json(['message' => 'Bạn không được giao công việc này.'], 403);
         }
 
@@ -101,6 +100,47 @@ class MyTasksController extends Controller
 
         $result = $this->service->updateProgress($task, $data['progress']);
         return response()->json($result);
+    }
+
+    /**
+     * Hoàn thành công việc được giao cho nhân viên hiện tại.
+     */
+    public function complete(Request $request, Task $task)
+    {
+        $employee = $request->user()->employee;
+        if (!$employee) {
+            return response()->json(['message' => 'Không có quyền.'], 403);
+        }
+
+        $assignment = $task->assignments()->where('employee_id', $employee->id)->first();
+        if (!$assignment) {
+            return response()->json(['message' => 'Bạn không được giao công việc này.'], 403);
+        }
+
+        if ($assignment->status !== TaskAssignment::STATUS_ACCEPTED) {
+            return response()->json(['message' => 'Bạn cần nhận công việc trước khi hoàn thành.'], 422);
+        }
+
+        if ($task->status === Task::STATUS_COMPLETED) {
+            return response()->json(['message' => 'Công việc đã hoàn thành.'], 422);
+        }
+
+        if ($task->status === Task::STATUS_CANCELLED) {
+            return response()->json(['message' => 'Công việc đã hủy, không thể hoàn thành.'], 422);
+        }
+
+        if ($task->external && $task->type === Task::TYPE_REPAIR) {
+            return response()->json([
+                'message' => 'Phiếu sửa chữa khách ngoài cần hoàn thành từ màn chi tiết để tạo hóa đơn.',
+            ], 422);
+        }
+
+        $result = $this->service->markCompleted($task, $request->user()?->id);
+
+        return response()->json($result->load([
+            'serialImei:id,serial_number,status,repair_status,cost_price,product_id,invoice_id,sold_at,purchase_return_id',
+            'serialImei.product:id,name,sku,stock_quantity',
+        ]));
     }
 
     /**

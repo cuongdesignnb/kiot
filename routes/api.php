@@ -293,6 +293,7 @@ Route::prefix('my-tasks')->middleware('auth:sanctum')->group(function () {
     Route::get('/', [\App\Http\Controllers\Api\MyTasksController::class, 'index']);
     Route::post('/accept-all', [\App\Http\Controllers\Api\MyTasksController::class, 'acceptAll']);
     Route::post('/{assignment}/respond', [\App\Http\Controllers\Api\MyTasksController::class, 'respond']);
+    Route::post('/{task}/complete', [\App\Http\Controllers\Api\MyTasksController::class, 'complete']);
     Route::post('/{task}/progress', [\App\Http\Controllers\Api\MyTasksController::class, 'updateProgress']);
 });
 
