@@ -120,6 +120,23 @@ class CreatorSelfAssignmentTest extends TestCase
         $this->assertSame(1, (int) $product->fresh()->stock_quantity);
     }
 
+    public function test_my_tasks_complete_rejects_already_completed_task(): void
+    {
+        [$user, $employee] = $this->userWithEmployee();
+        $product = $this->product(['stock_quantity' => 1]);
+        $serial = $this->serial($product, ['status' => 'in_stock']);
+        $task = $this->repairTask($product, $serial, $employee);
+        $task->update([
+            'status' => Task::STATUS_COMPLETED,
+            'completed_at' => now(),
+        ]);
+
+        $this->actingAs($user)
+            ->postJson("/api/my-tasks/{$task->id}/complete")
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'Công việc đã hoàn thành.');
+    }
+
     public function test_my_tasks_complete_does_not_restore_serial_that_left_stock(): void
     {
         [$user, $employee] = $this->userWithEmployee();
