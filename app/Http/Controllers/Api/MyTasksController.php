@@ -226,7 +226,7 @@ class MyTasksController extends Controller
         }
 
         if ($task->status === Task::STATUS_COMPLETED) {
-            return response()->json($task->fresh());
+            return response()->json(['message' => 'Công việc đã hoàn thành.'], 422);
         }
 
         if ($task->status === Task::STATUS_CANCELLED) {
