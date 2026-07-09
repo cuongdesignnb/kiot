@@ -61,7 +61,11 @@ class StockTakeController extends Controller
         return Inertia::render('StockTakes/Create', [
             'products' => Product::where('is_active', true)->where('type', '!=', 'service')->with('units')->get(),
             'branches' => Branch::all(),
-            'categories' => Category::with('children.children')->whereNull('parent_id')->orderBy('name')->get(),
+            'categories' => Category::with('childrenRecursive')
+                ->whereNull('parent_id')
+                ->orderBy('name')
+                ->get()
+                ->map(fn(Category $category) => $this->categoryTreePayload($category)),
             'stockTakeCode' => 'KK' . date('YmdHis'),
         ]);
     }
@@ -468,6 +472,22 @@ class StockTakeController extends Controller
         }
 
         return $all->all();
+    }
+
+    private function categoryTreePayload(Category $category): array
+    {
+        $children = $category->childrenRecursive ?? collect();
+
+        return [
+            'id' => $category->id,
+            'name' => $category->name,
+            'parent_id' => $category->parent_id,
+            'children' => $children
+                ->sortBy('name', SORT_NATURAL | SORT_FLAG_CASE)
+                ->values()
+                ->map(fn(Category $child) => $this->categoryTreePayload($child))
+                ->all(),
+        ];
     }
 
     private function prepareItems(array $items, string $status, $existingSnapshots = null): array

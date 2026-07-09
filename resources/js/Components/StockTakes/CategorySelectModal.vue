@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed, defineComponent, h, ref } from "vue";
 
 const props = defineProps({
     show: Boolean,
@@ -20,16 +20,38 @@ const onlyInStock = ref(false);
 const activeOnly = ref(true);
 const inventoryOnly = ref(true);
 
-const normalize = (value) => String(value || "").toLowerCase();
+const normalize = (value) =>
+    String(value || "")
+        .trim()
+        .toLowerCase();
 
-const matchesTree = (category) => {
-    const term = normalize(search.value);
-    if (!term) return true;
-    if (normalize(category.name).includes(term)) return true;
-    return (category.children || []).some(matchesTree);
+const searchText = computed(() => normalize(search.value));
+
+const filterCategoryTree = (categories, term) => {
+    return (categories || [])
+        .map((category) => {
+            const children = filterCategoryTree(category.children || [], term);
+            const matches = normalize(category.name).includes(term);
+
+            if (!matches && children.length === 0) {
+                return null;
+            }
+
+            return {
+                ...category,
+                children,
+            };
+        })
+        .filter(Boolean);
 };
 
-const filteredCategories = computed(() => props.categories.filter(matchesTree));
+const filteredCategories = computed(() => {
+    if (!searchText.value) {
+        return props.categories || [];
+    }
+
+    return filterCategoryTree(props.categories || [], searchText.value);
+});
 
 const isSelected = (id) => selectedIds.value.includes(id);
 
@@ -59,6 +81,61 @@ const confirm = () => {
         inventory_only: inventoryOnly.value,
     });
 };
+
+const CategoryNode = defineComponent({
+    name: "CategoryNode",
+    props: {
+        category: {
+            type: Object,
+            required: true,
+        },
+        level: {
+            type: Number,
+            default: 0,
+        },
+        selectedIds: {
+            type: Array,
+            default: () => [],
+        },
+        disabled: Boolean,
+    },
+    emits: ["toggle"],
+    setup(nodeProps, { emit }) {
+        const checked = computed(() => nodeProps.selectedIds.includes(nodeProps.category.id));
+        const indent = computed(() => `${12 + nodeProps.level * 20}px`);
+
+        return () =>
+            h("div", [
+                h(
+                    "label",
+                    {
+                        class: "flex items-center gap-2 py-2 pr-3 hover:bg-gray-50 cursor-pointer",
+                        style: { paddingLeft: indent.value },
+                    },
+                    [
+                        h("input", {
+                            type: "checkbox",
+                            checked: checked.value,
+                            disabled: nodeProps.disabled,
+                            class: "rounded border-gray-300 text-blue-600 disabled:opacity-50",
+                            onChange: () => emit("toggle", nodeProps.category.id),
+                        }),
+                        h("span", nodeProps.category.name || "Chưa đặt tên"),
+                    ],
+                ),
+                ...(nodeProps.category.children || []).map((child) =>
+                    h(CategoryNode, {
+                        key: child.id,
+                        category: child,
+                        level: nodeProps.level + 1,
+                        selectedIds: nodeProps.selectedIds,
+                        disabled: nodeProps.disabled,
+                        onToggle: (id) => emit("toggle", id),
+                    }),
+                ),
+            ]);
+    },
+});
 </script>
 
 <template>
@@ -102,9 +179,9 @@ const confirm = () => {
                     </label>
                 </div>
 
-                <div class="border rounded max-h-[320px] overflow-auto text-[13px]">
-                    <div v-if="filteredCategories.length === 0" class="p-4 text-gray-500 text-center">
-                        Không tìm thấy nhóm hàng
+                <div class="border rounded min-h-[220px] max-h-[320px] overflow-auto text-[13px] bg-white">
+                    <div v-if="filteredCategories.length === 0" class="py-6 px-4 text-gray-500 text-center">
+                        Không tìm thấy nhóm hàng phù hợp
                     </div>
                     <template v-for="category in filteredCategories" :key="category.id">
                         <CategoryNode :category="category" :level="0" :selected-ids="selectedIds" :disabled="allCategories" @toggle="toggleCategory" />
@@ -127,45 +204,3 @@ const confirm = () => {
         </div>
     </div>
 </template>
-
-<script>
-export default {
-    components: {
-        CategoryNode: {
-            name: "CategoryNode",
-            props: {
-                category: Object,
-                level: Number,
-                selectedIds: Array,
-                disabled: Boolean,
-            },
-            emits: ["toggle"],
-            computed: {
-                checked() {
-                    return this.selectedIds.includes(this.category.id);
-                },
-                indent() {
-                    return `${12 + this.level * 20}px`;
-                },
-            },
-            template: `
-                <div>
-                    <label class="flex items-center gap-2 py-2 pr-3 hover:bg-gray-50 cursor-pointer" :style="{ paddingLeft: indent }">
-                        <input type="checkbox" :checked="checked" :disabled="disabled" @change="$emit('toggle', category.id)" class="rounded border-gray-300 text-blue-600 disabled:opacity-50">
-                        <span>{{ category.name }}</span>
-                    </label>
-                    <CategoryNode
-                        v-for="child in category.children || []"
-                        :key="child.id"
-                        :category="child"
-                        :level="level + 1"
-                        :selected-ids="selectedIds"
-                        :disabled="disabled"
-                        @toggle="$emit('toggle', $event)"
-                    />
-                </div>
-            `,
-        },
-    },
-};
-</script>
