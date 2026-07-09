@@ -1,7 +1,7 @@
 <script setup>
 import { formatVND as formatCurrency } from "@/utils/money";
 import { computed, ref, watch } from "vue";
-import { Head, Link, router } from "@inertiajs/vue3";
+import { Head, Link, router, usePage } from "@inertiajs/vue3";
 import axios from "axios";
 import DateTimePicker from "@/Components/DateTimePicker.vue";
 import CategorySelectModal from "@/Components/StockTakes/CategorySelectModal.vue";
@@ -12,6 +12,9 @@ const props = defineProps({
     categories: Array,
     stockTakeCode: String,
 });
+
+const page = usePage();
+const currentUser = computed(() => page.props.auth?.user);
 
 const pad = (n) => String(n).padStart(2, "0");
 const nowInit = new Date();
@@ -228,33 +231,34 @@ const save = async (status) => {
                     Kiểm kho
                 </Link>
 
-                <div class="relative w-full max-w-[620px] ml-4">
-                    <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-                    </div>
-                    <input v-model="searchQuery" @focus="showSuggestions = true" @blur="hideSuggestions" type="text" class="w-full pl-9 pr-16 py-[7px] border-none text-gray-800 rounded-sm focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white" placeholder="Tìm hàng hóa theo mã, tên hoặc barcode">
+                <div class="flex w-full max-w-[760px] ml-4 gap-2">
+                    <div class="relative flex-1 min-w-[320px]">
+                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                        </div>
+                        <input v-model="searchQuery" @focus="showSuggestions = true" @blur="hideSuggestions" type="text" class="w-full pl-9 pr-3 py-[7px] border-none text-gray-800 rounded-sm focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white" placeholder="Tìm hàng hóa theo mã, tên hoặc barcode">
 
-                    <div v-if="showSuggestions" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded-sm z-50 max-h-[300px] overflow-auto text-black">
-                        <div v-if="isSearchingProduct" class="p-3 text-sm text-gray-500 text-center">Đang tìm kiếm...</div>
-                        <div v-else-if="filteredProducts.length === 0 && searchQuery" class="p-3 text-sm text-gray-500 text-center">Không tìm thấy sản phẩm hợp lệ</div>
-                        <div v-for="product in filteredProducts" :key="product.product_id || product.id" @mousedown.prevent="selectProduct(product)" class="flex items-center gap-3 p-2 border-b border-gray-100 hover:bg-gray-50 cursor-pointer">
-                            <div class="w-10 h-10 object-cover rounded border border-gray-200 bg-gray-100 flex items-center justify-center text-gray-500 font-bold">{{ (product.name || "?").charAt(0) }}</div>
-                            <div class="flex-1">
-                                <div class="font-medium text-[13px] text-gray-800">{{ product.name }}</div>
-                                <div class="text-[12px] text-gray-500">{{ product.sku }}</div>
-                            </div>
-                            <div class="text-right">
-                                <div class="text-blue-600 font-medium text-[13px]">{{ formatCurrency(product.cost_price_snapshot ?? product.cost_price) }}</div>
-                                <div class="text-[12px] text-gray-400">Tồn: {{ product.system_stock ?? product.stock_quantity ?? 0 }}</div>
+                        <div v-if="showSuggestions" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded-sm z-50 max-h-[300px] overflow-auto text-black">
+                            <div v-if="isSearchingProduct" class="p-3 text-sm text-gray-500 text-center">Đang tìm kiếm...</div>
+                            <div v-else-if="filteredProducts.length === 0 && searchQuery" class="p-3 text-sm text-gray-500 text-center">Không tìm thấy sản phẩm hợp lệ</div>
+                            <div v-for="product in filteredProducts" :key="product.product_id || product.id" @mousedown.prevent="selectProduct(product)" class="flex items-center gap-3 p-2 border-b border-gray-100 hover:bg-gray-50 cursor-pointer">
+                                <div class="w-10 h-10 object-cover rounded border border-gray-200 bg-gray-100 flex items-center justify-center text-gray-500 font-bold">{{ (product.name || "?").charAt(0) }}</div>
+                                <div class="flex-1">
+                                    <div class="font-medium text-[13px] text-gray-800">{{ product.name }}</div>
+                                    <div class="text-[12px] text-gray-500">{{ product.sku }}</div>
+                                </div>
+                                <div class="text-right">
+                                    <div class="text-blue-600 font-medium text-[13px]">{{ formatCurrency(product.cost_price_snapshot ?? product.cost_price) }}</div>
+                                    <div class="text-[12px] text-gray-400">Tồn: {{ product.system_stock ?? product.stock_quantity ?? 0 }}</div>
+                                </div>
                             </div>
                         </div>
                     </div>
 
-                    <div class="absolute inset-y-0 right-0 pr-2 flex items-center gap-1.5 text-gray-400">
-                        <button @click="showCategoryModal = true" class="w-7 h-7 flex items-center justify-center hover:text-gray-700 hover:bg-gray-100 rounded" title="Chọn nhóm hàng">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707L14 14v4l-4 3v-7L3.293 7.293A1 1 0 013 6.586V4z"></path></svg>
-                        </button>
-                    </div>
+                    <button @click="showCategoryModal = true" class="h-[34px] px-3 flex items-center gap-2 bg-white text-[#005bb5] hover:bg-blue-50 border border-blue-200 rounded-sm font-semibold shadow-sm whitespace-nowrap" title="Chọn nhóm hàng">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707L14 14v4l-4 3v-7L3.293 7.293A1 1 0 013 6.586V4z"></path></svg>
+                        <span>Chọn nhóm hàng</span>
+                    </button>
                 </div>
             </div>
 
@@ -333,7 +337,10 @@ const save = async (status) => {
                 <div class="flex-1 overflow-auto bg-gray-50 flex flex-col">
                     <div class="p-4 flex items-center gap-2 border-b border-gray-200 bg-white">
                         <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0M12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
-                        <span class="font-medium text-gray-800 flex-1">Người kiểm</span>
+                        <div class="flex-1 min-w-0">
+                            <div class="font-medium text-gray-800">Người kiểm</div>
+                            <div class="text-[12px] text-gray-500 truncate">{{ currentUser?.name || "Tài khoản đang đăng nhập" }}</div>
+                        </div>
                         <DateTimePicker v-model="transactionDate" naked compact placeholder="dd/MM/yyyy HH:mm" input-class="text-gray-500 text-[12px] bg-gray-100 px-2 py-0.5 rounded border border-gray-200 outline-none focus:border-blue-500 hover:border-blue-400 w-[150px]" />
                     </div>
 
