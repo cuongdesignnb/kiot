@@ -13,7 +13,7 @@ class EmployeeWorkScheduleController extends Controller
             'employee:id,code,name',
             'branch:id,name',
             'shift:id,name,start_time,end_time',
-            'timekeepingRecord:id,employee_work_schedule_id,attendance_type,manual_override,scheduled_start_at,scheduled_end_at,check_in_at,check_out_at,source,late_minutes,early_minutes,ot_minutes,worked_minutes,notes',
+            'timekeepingRecord:id,employee_work_schedule_id,attendance_type,manual_override,scheduled_start_at,scheduled_end_at,check_in_at,check_out_at,source,late_minutes,early_minutes,ot_minutes,worked_minutes,work_units,notes',
         ]);
 
         if ($request->filled('employee_id'))

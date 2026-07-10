@@ -121,6 +121,33 @@ class ManualTimekeepingTest extends TestCase
         $this->assertEquals(0, $record->early_minutes);
     }
 
+    public function test_schedule_api_exposes_stored_work_units_and_minutes(): void
+    {
+        $admin = $this->admin();
+        $env = $this->setupTimekeepingEnvironment();
+
+        TimekeepingRecord::create([
+            'employee_id' => $env['employee']->id,
+            'employee_work_schedule_id' => $env['schedule']->id,
+            'branch_id' => $env['branch']->id,
+            'shift_id' => $env['shift']->id,
+            'work_date' => '2026-05-25',
+            'check_in_at' => '2026-05-25 08:30:00',
+            'check_out_at' => '2026-05-25 16:29:00',
+            'worked_minutes' => 479,
+            'work_units' => 0.5,
+            'manual_override' => true,
+            'source' => 'manual',
+            'attendance_type' => 'work',
+        ]);
+
+        $response = $this->actingAs($admin)->getJson('/api/employee-schedules?employee_id='.$env['employee']->id.'&from=2026-05-25&to=2026-05-25');
+
+        $response->assertOk()
+            ->assertJsonPath('data.0.timekeeping_record.worked_minutes', 479)
+            ->assertJsonPath('data.0.timekeeping_record.work_units', '0.50');
+    }
+
     public function test_manual_timekeeping_half_day_generates_half_work_unit(): void
     {
         $admin = $this->admin();
