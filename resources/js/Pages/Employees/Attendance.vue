@@ -203,11 +203,20 @@
                       {{ empRow.employee.name }}
                     </td>
                     <td v-for="day in monthDays" :key="day.date" class="text-center py-2 border-r border-gray-50">
-                      <span v-if="empRow.schedules[day.date] && getDotColor(empRow.schedules[day.date], day.date)"
+                      <button v-if="empRow.schedules[day.date] && getDotColor(empRow.schedules[day.date], day.date)"
+                        type="button"
                         @click="openModal(empRow.schedules[day.date])"
-                        class="inline-block w-1.5 h-1.5 rounded-full cursor-pointer hover:scale-[1.8] transition-transform"
-                        :class="dotCls(getDotColor(empRow.schedules[day.date], day.date))"
-                      ></span>
+                        class="relative inline-flex h-5 w-5 items-center justify-center rounded-full cursor-pointer"
+                        :title="getAttendanceTooltip(empRow.schedules[day.date])"
+                      >
+                        <span
+                          class="inline-block w-1.5 h-1.5 rounded-full hover:scale-[1.8] transition-transform"
+                          :class="dotCls(getDotColor(empRow.schedules[day.date], day.date))"
+                        ></span>
+                        <span v-if="getWorkUnitBadge(empRow.schedules[day.date].timekeeping_record)"
+                          class="absolute -right-1 -top-1 min-w-[12px] rounded bg-amber-500 px-0.5 text-[8px] font-bold leading-3 text-white"
+                        >{{ getWorkUnitBadge(empRow.schedules[day.date].timekeeping_record) }}</span>
+                      </button>
                     </td>
                   </tr>
                 </template>
@@ -223,11 +232,20 @@
                     <div class="text-gray-400 text-[10px]">{{ empRow.employee.code }}</div>
                   </td>
                   <td v-for="day in monthDays" :key="day.date" class="text-center py-2 border-r border-gray-50">
-                    <span v-if="empRow.schedules[day.date] && getDotColor(empRow.schedules[day.date], day.date)"
+                    <button v-if="empRow.schedules[day.date] && getDotColor(empRow.schedules[day.date], day.date)"
+                      type="button"
                       @click="openModal(empRow.schedules[day.date])"
-                      class="inline-block w-1.5 h-1.5 rounded-full cursor-pointer hover:scale-[1.8] transition-transform"
-                      :class="dotCls(getDotColor(empRow.schedules[day.date], day.date))"
-                    ></span>
+                      class="relative inline-flex h-5 w-5 items-center justify-center rounded-full cursor-pointer"
+                      :title="getAttendanceTooltip(empRow.schedules[day.date])"
+                    >
+                      <span
+                        class="inline-block w-1.5 h-1.5 rounded-full hover:scale-[1.8] transition-transform"
+                        :class="dotCls(getDotColor(empRow.schedules[day.date], day.date))"
+                      ></span>
+                      <span v-if="getWorkUnitBadge(empRow.schedules[day.date].timekeeping_record)"
+                        class="absolute -right-1 -top-1 min-w-[12px] rounded bg-amber-500 px-0.5 text-[8px] font-bold leading-3 text-white"
+                      >{{ getWorkUnitBadge(empRow.schedules[day.date].timekeeping_record) }}</span>
+                    </button>
                   </td>
                 </tr>
               </template>
@@ -363,6 +381,17 @@
 
             <!-- Estimated Work Info -->
             <div class="mt-4 p-3 bg-blue-50/50 rounded border border-blue-100 text-xs text-blue-800">
+              <template v-if="activeSchedule?.timekeeping_record">
+                <div class="flex items-center justify-between mb-1">
+                  <span>Dữ liệu đang lưu:</span>
+                  <span class="font-semibold">
+                    {{ activeSchedule.timekeeping_record.worked_minutes }} phút ·
+                    {{ Number(activeSchedule.timekeeping_record.work_units || 0) }} công ·
+                    {{ activeSchedule.timekeeping_record.manual_override ? 'Thủ công' : 'Thiết bị' }}
+                  </span>
+                </div>
+                <div class="mb-2 border-t border-blue-100"></div>
+              </template>
               <div class="flex items-center justify-between mb-1">
                 <span>Thời gian làm:</span>
                 <span class="font-semibold">{{ estimatedWorkInfo.workedMinutes }} phút</span>
@@ -746,6 +775,29 @@ const formatDateVietnamese = (dateStr) => {
 }
 
 const formatShiftTime = (timeStr) => timeStr ? timeStr.substring(0, 5) : ''
+
+const getWorkUnitBadge = (record) => {
+    if (!record || (!record.check_in_at && !record.check_out_at)) return ''
+    const units = Number(record.work_units)
+    if (units === 0.5) return '½'
+    if (units === 0) return '0'
+    return ''
+}
+
+const getAttendanceTooltip = (schedule) => {
+    const record = schedule?.timekeeping_record
+    if (!record) return 'Chưa có bản ghi chấm công'
+
+    const source = record.manual_override || record.source === 'manual' ? 'Thủ công' : 'Thiết bị'
+    return [
+        `Vào: ${formatCheckTime(record.check_in_at)}`,
+        `Ra: ${formatCheckTime(record.check_out_at)}`,
+        `Phút làm: ${record.worked_minutes ?? 0}`,
+        `Ngày công: ${Number(record.work_units || 0)}`,
+        `Muộn/Sớm: ${record.late_minutes || 0}/${record.early_minutes || 0} phút`,
+        `Nguồn: ${source}`,
+    ].join('\n')
+}
 
 const getOtInfo = (record) => {
     if (!record) return ''
