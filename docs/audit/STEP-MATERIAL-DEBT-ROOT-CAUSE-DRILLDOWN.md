@@ -5,9 +5,11 @@
 - Branch: `audit/material-debt-root-cause-drilldown`
 - Base branch: `audit/global-debt-parity-and-reconciliation-plan`
 - Base SHA: `938d1ecf4ff5b21745e1f73ecba6774a8c23ea92`
-- Implementation head SHA: pending until the implementation commit is created.
-- PR URL: pending until the branch is pushed.
-- PR status: Draft, stacked on PR16; not merged.
+- Implementation head SHA at initial PR creation: `1fd1a9cea4e678c94f0d16da2d664c3c649dfbef`.
+- PR URL: `https://github.com/cuongdesignnb/kiot/pull/17`.
+- PR status: open, Draft, mergeable, stacked on PR16; not merged.
+
+The final docs-only metadata commit SHA is reported in the handoff because a commit cannot embed its own SHA.
 
 ## Production Audit Source
 
