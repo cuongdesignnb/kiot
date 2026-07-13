@@ -5,6 +5,7 @@ namespace Tests\Feature\Console;
 use App\Console\Commands\AuditDebtParityCommand;
 use App\Models\CashFlow;
 use App\Models\Customer;
+use App\Services\Debt\PartnerDebtParityAuditService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Support\Facades\DB;
@@ -118,6 +119,170 @@ class AuditDebtParityCommandTest extends TestCase
         ])->run();
     }
 
+    public function test_csv_contains_suspect_and_technical_columns_with_pipe_serialization(): void
+    {
+        $customer = $this->customer();
+        $csv = $this->path('parity-evidence.csv');
+        $row = $this->auditRow($customer, [
+            'primary_classification' => 'TECHNICAL_LEDGER_EXCLUDED',
+            'classification_flags' => ['TECHNICAL_LEDGER_EXCLUDED', 'TARGET_TYPE_ALIAS_SUSPECT'],
+            'risk_level' => 'MEDIUM',
+            'suspect_invoice_codes' => ['HD-A', 'HD-B'],
+            'suspect_receipt_codes' => ['PT-A', 'PT-B'],
+            'suspect_return_codes' => ['TH-A', 'TH-B'],
+            'suspect_refund_codes' => ['PC-A', 'PC-B'],
+            'suspect_purchase_codes' => ['PN-A', 'PN-B'],
+            'suspect_supplier_payment_codes' => ['PCPN-A', 'PCPN-B'],
+            'suspect_purchase_return_codes' => ['THN-A', 'THN-B'],
+            'suspect_adjustment_codes' => ['DCCN-A', 'DCCN-B'],
+            'suspect_fallback_codes' => ['FB-A', 'FB-B'],
+            'customer_technical_codes' => ['MERGE-CUSTOMER-A', 'MERGE-CUSTOMER-B'],
+            'supplier_technical_codes' => ['MERGE-SUPPLIER-A', 'MERGE-SUPPLIER-B'],
+            'excluded_technical_codes' => ['MERGE-CUSTOMER-A', 'MERGE-SUPPLIER-A'],
+        ]);
+        $mock = \Mockery::mock(PartnerDebtParityAuditService::class);
+        $mock->shouldReceive('audit')->once()->andReturn($row);
+        $this->app->instance(PartnerDebtParityAuditService::class, $mock);
+
+        $this->artisan('debt:audit-parity', [
+            '--dry-run' => true,
+            '--partner-id' => $customer->id,
+            '--export' => $csv,
+        ])->assertExitCode(0);
+
+        $handle = fopen($csv, 'rb');
+        $headers = fgetcsv($handle);
+        $values = fgetcsv($handle);
+        fclose($handle);
+        $headers[0] = preg_replace('/^\xEF\xBB\xBF/', '', $headers[0]);
+        $csvRow = array_combine($headers, $values);
+
+        foreach ([
+            'partner_name', 'suspect_invoice_codes', 'suspect_receipt_codes', 'suspect_return_codes',
+            'suspect_refund_codes', 'suspect_purchase_codes', 'suspect_supplier_payment_codes',
+            'suspect_purchase_return_codes', 'suspect_adjustment_codes', 'suspect_fallback_codes',
+            'customer_technical_codes', 'supplier_technical_codes', 'excluded_technical_codes',
+        ] as $column) {
+            $this->assertArrayHasKey($column, $csvRow);
+        }
+        $this->assertSame('HD-A|HD-B', $csvRow['suspect_invoice_codes']);
+        $this->assertSame('MERGE-CUSTOMER-A|MERGE-CUSTOMER-B', $csvRow['customer_technical_codes']);
+        $this->assertSame('MERGE-CUSTOMER-A|MERGE-SUPPLIER-A', $csvRow['excluded_technical_codes']);
+    }
+
+    public function test_classification_filter_matches_a_non_primary_flag(): void
+    {
+        $customer = $this->customer();
+        $json = $this->path('classification-filter.json');
+        $mock = \Mockery::mock(PartnerDebtParityAuditService::class);
+        $mock->shouldReceive('audit')->once()->andReturn($this->auditRow($customer, [
+            'primary_classification' => 'CUSTOMER_STORED_VS_DOCUMENT',
+            'classification_flags' => ['CUSTOMER_STORED_VS_DOCUMENT', 'TARGET_TYPE_ALIAS_SUSPECT'],
+            'risk_level' => 'HIGH',
+        ]));
+        $this->app->instance(PartnerDebtParityAuditService::class, $mock);
+
+        $this->artisan('debt:audit-parity', [
+            '--dry-run' => true,
+            '--partner-id' => $customer->id,
+            '--classification' => 'TARGET_TYPE_ALIAS_SUSPECT',
+            '--json' => $json,
+        ])->assertExitCode(0);
+
+        $this->assertCount(1, json_decode((string) file_get_contents($json), true)['rows']);
+    }
+
+    public function test_risk_filter_and_validation(): void
+    {
+        $customer = $this->customer();
+        $json = $this->path('risk-filter.json');
+        $mock = \Mockery::mock(PartnerDebtParityAuditService::class);
+        $mock->shouldReceive('audit')->once()->andReturn($this->auditRow($customer, ['risk_level' => 'CRITICAL']));
+        $this->app->instance(PartnerDebtParityAuditService::class, $mock);
+
+        $this->artisan('debt:audit-parity', [
+            '--dry-run' => true,
+            '--partner-id' => $customer->id,
+            '--risk' => 'CRITICAL',
+            '--json' => $json,
+        ])->assertExitCode(0);
+        $this->assertCount(1, json_decode((string) file_get_contents($json), true)['rows']);
+
+        $this->artisan('debt:audit-parity', ['--dry-run' => true, '--risk' => 'INVALID'])
+            ->expectsOutputToContain('Invalid --risk')
+            ->assertExitCode(1);
+    }
+
+    public function test_high_risk_filter_is_supported(): void
+    {
+        $customer = $this->customer();
+        $json = $this->path('high-risk-filter.json');
+        $mock = \Mockery::mock(PartnerDebtParityAuditService::class);
+        $mock->shouldReceive('audit')->once()->andReturn($this->auditRow($customer, [
+            'primary_classification' => 'CUSTOMER_STORED_VS_DOCUMENT',
+            'classification_flags' => ['CUSTOMER_STORED_VS_DOCUMENT'],
+            'risk_level' => 'HIGH',
+        ]));
+        $this->app->instance(PartnerDebtParityAuditService::class, $mock);
+
+        $this->artisan('debt:audit-parity', [
+            '--dry-run' => true,
+            '--partner-id' => $customer->id,
+            '--risk' => 'HIGH',
+            '--json' => $json,
+        ])->assertExitCode(0);
+
+        $this->assertCount(1, json_decode((string) file_get_contents($json), true)['rows']);
+    }
+
+    public function test_audit_error_does_not_stop_scanning_but_returns_failure(): void
+    {
+        $first = $this->customer();
+        $second = $this->customer();
+        $mock = \Mockery::mock(PartnerDebtParityAuditService::class);
+        $mock->shouldReceive('audit')->twice()->andReturn(
+            $this->auditRow($first, [
+                'primary_classification' => 'AUDIT_ERROR',
+                'classification_flags' => ['AUDIT_ERROR'],
+                'risk_level' => 'CRITICAL',
+                'audit_error' => 'Synthetic audit failure',
+            ]),
+            $this->auditRow($second),
+        );
+        $this->app->instance(PartnerDebtParityAuditService::class, $mock);
+
+        $this->artisan('debt:audit-parity', [
+            '--dry-run' => true,
+            '--role' => 'customer',
+            '--limit' => '2',
+        ])->expectsOutputToContain('Total scanned: 2')->assertExitCode(1);
+    }
+
+    public function test_limit_accepts_only_positive_integer(): void
+    {
+        $customer = $this->customer();
+        $mock = \Mockery::mock(PartnerDebtParityAuditService::class);
+        $mock->shouldReceive('audit')->once()->andReturn($this->auditRow($customer));
+        $this->app->instance(PartnerDebtParityAuditService::class, $mock);
+
+        $this->artisan('debt:audit-parity', ['--dry-run' => true, '--partner-id' => $customer->id, '--limit' => '1'])
+            ->expectsOutputToContain('Total scanned: 1')
+            ->assertExitCode(0);
+
+        foreach (['0', '-1', 'abc'] as $invalid) {
+            $this->artisan('debt:audit-parity', ['--dry-run' => true, '--limit' => $invalid])
+                ->expectsOutputToContain('Invalid --limit')
+                ->assertExitCode(1);
+        }
+    }
+
+    public function test_invalid_classification_is_rejected(): void
+    {
+        $this->artisan('debt:audit-parity', ['--dry-run' => true, '--classification' => 'INVALID'])
+            ->expectsOutputToContain('Invalid --classification')
+            ->assertExitCode(1);
+    }
+
     private function customer(array $overrides = []): Customer
     {
         return Customer::query()->forceCreate(array_merge([
@@ -138,6 +303,21 @@ class AuditDebtParityCommandTest extends TestCase
         $this->files[] = $path;
 
         return $path;
+    }
+
+    private function auditRow(Customer $customer, array $overrides = []): array
+    {
+        return array_merge(array_fill_keys(PartnerDebtParityAuditService::CSV_COLUMNS, null), [
+            'partner_id' => $customer->id,
+            'partner_code' => $customer->code,
+            'partner_name' => $customer->name,
+            'role' => 'customer_only',
+            'status' => 'active',
+            'primary_classification' => 'OK',
+            'classification_flags' => ['OK'],
+            'risk_level' => 'OK',
+            'audit_error' => null,
+        ], $overrides);
     }
 
     private function databaseSnapshot(): array

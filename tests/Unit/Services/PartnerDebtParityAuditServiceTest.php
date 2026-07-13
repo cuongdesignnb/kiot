@@ -2,11 +2,20 @@
 
 namespace Tests\Unit\Services;
 
+use App\Models\Customer;
+use App\Models\CustomerDebt;
+use App\Models\Invoice;
+use App\Models\SupplierDebtTransaction;
+use App\Services\CustomerDebtDocumentTimelineService;
 use App\Services\Debt\PartnerDebtParityAuditService;
+use App\Services\SupplierDebtDocumentTimelineService;
+use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
 
 class PartnerDebtParityAuditServiceTest extends TestCase
 {
+    use DatabaseTransactions;
+
     private PartnerDebtParityAuditService $service;
 
     protected function setUp(): void
@@ -153,6 +162,97 @@ class PartnerDebtParityAuditServiceTest extends TestCase
 
         $this->assertContains('INVOICE_RECEIPT_ALLOCATION_MISMATCH', $flags);
         $this->assertContains('PURCHASE_PAYMENT_ALLOCATION_MISMATCH', $flags);
+    }
+
+    public function test_customer_parity_matches_ui_while_technical_ledger_is_evidence_only(): void
+    {
+        $partner = $this->partner();
+        CustomerDebt::query()->create([
+            'customer_id' => $partner->id,
+            'ref_code' => 'MERGE-CUSTOMER-AUDIT-1',
+            'amount' => 2_000_000,
+            'debt_total' => 2_000_000,
+            'type' => 'adjustment',
+            'recorded_at' => now(),
+        ]);
+
+        $ui = app(CustomerDebtDocumentTimelineService::class)->build($partner, []);
+        $audit = $this->service->audit($partner);
+
+        $this->assertSame(
+            (float) $ui['summary']['raw_document_final_balance'],
+            (float) $audit['customer_document_raw_final'],
+        );
+        $this->assertContains('MERGE-CUSTOMER-AUDIT-1', $audit['customer_technical_codes']);
+        $this->assertContains('MERGE-CUSTOMER-AUDIT-1', $audit['excluded_technical_codes']);
+        $this->assertTrue($audit['has_technical_ledger_exclusion']);
+        $this->assertContains('TECHNICAL_LEDGER_EXCLUDED', $audit['classification_flags']);
+        $this->assertSame(2_000_000.0, $audit['technical_customer_total']);
+    }
+
+    public function test_supplier_only_parity_matches_ui_while_technical_ledger_is_evidence_only(): void
+    {
+        $partner = $this->partner(['is_customer' => false, 'is_supplier' => true]);
+        SupplierDebtTransaction::query()->create([
+            'supplier_id' => $partner->id,
+            'code' => 'OPENING-BALANCE-SUPPLIER-AUDIT-1',
+            'type' => 'adjustment',
+            'amount' => 3_000_000,
+            'debt_remain' => 3_000_000,
+            'created_at' => now(),
+        ]);
+
+        $ui = app(SupplierDebtDocumentTimelineService::class)->build($partner, []);
+        $audit = $this->service->audit($partner);
+
+        $this->assertSame(
+            (float) $ui['summary']['raw_document_final_balance'],
+            (float) $audit['supplier_document_raw_final'],
+        );
+        $this->assertContains('OPENING-BALANCE-SUPPLIER-AUDIT-1', $audit['supplier_technical_codes']);
+        $this->assertContains('OPENING-BALANCE-SUPPLIER-AUDIT-1', $audit['excluded_technical_codes']);
+        $this->assertTrue($audit['has_technical_ledger_exclusion']);
+        $this->assertSame(3_000_000.0, $audit['technical_supplier_total']);
+    }
+
+    public function test_dual_role_supplier_parity_uses_partner_view(): void
+    {
+        $partner = $this->partner([
+            'is_supplier' => true,
+            'debt_amount' => 500_000,
+            'supplier_debt_amount' => 0,
+        ]);
+        Invoice::query()->create([
+            'code' => 'HD-DUAL-PARITY-' . uniqid(),
+            'customer_id' => $partner->id,
+            'status' => 'Hoàn thành',
+            'total' => 500_000,
+            'customer_paid' => 0,
+            'transaction_date' => now(),
+        ]);
+
+        $ui = app(SupplierDebtDocumentTimelineService::class)->build($partner, ['view' => 'partner']);
+        $audit = $this->service->audit($partner);
+
+        $this->assertSame('supplier_partner_timeline', $ui['summary']['display_mode']);
+        $this->assertSame(
+            (float) $ui['summary']['raw_document_final_balance'],
+            (float) $audit['supplier_document_raw_final'],
+        );
+    }
+
+    private function partner(array $overrides = []): Customer
+    {
+        return Customer::query()->create(array_merge([
+            'code' => 'PARITY-SERVICE-' . uniqid(),
+            'name' => 'Generic Parity Service Partner',
+            'phone' => '0900000000',
+            'debt_amount' => 0,
+            'supplier_debt_amount' => 0,
+            'is_customer' => true,
+            'is_supplier' => false,
+            'status' => 'active',
+        ], $overrides));
     }
 
     private function baseline(array $overrides = []): array

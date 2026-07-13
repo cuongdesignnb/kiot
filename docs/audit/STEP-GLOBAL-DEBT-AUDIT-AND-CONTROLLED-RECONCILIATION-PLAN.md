@@ -1,207 +1,214 @@
 # Global debt parity audit and controlled reconciliation plan
 
-## Scope and source
+## Scope and revision
 
 - Branch: `audit/global-debt-parity-and-reconciliation-plan`
 - Base branch: `hotfix/supplier-timeline-customer-debt-adjustment-label`
 - Base SHA: `4d649afa81e23f867ea71d3f666812cf7c01da49`
-- Head SHA: use the PR head; the report is committed with the implementation.
-- Scope: read-only customer/supplier/dual-role debt parity audit and proposal-only reconciliation planning.
+- Old head SHA reviewed by Senior Audit: `1db335853d50c6d790adf240c008fb205264f6a4`
+- New head SHA: use the final PR #16 head reported after push. A commit cannot embed its own resulting SHA.
+- Scope: read-only customer/supplier/dual-role parity audit and proposal-only reconciliation planning.
 - Frontend changed: no.
-- Migration/backfill/seed: no.
+- Migration/backfill/seed/data mutation: no.
 - Production command or production database access: no.
 
-## Files changed
+Files changed since Senior Audit:
 
 - `app/Services/Debt/PartnerDebtParityAuditService.php`
 - `app/Console/Commands/AuditDebtParityCommand.php`
-- `app/Services/Debt/DebtReconciliationPlanService.php`
 - `app/Console/Commands/DebtReconciliationPlanCommand.php`
 - `tests/Unit/Services/PartnerDebtParityAuditServiceTest.php`
 - `tests/Feature/Console/AuditDebtParityCommandTest.php`
 - `tests/Unit/Services/DebtReconciliationPlanServiceTest.php`
 - `tests/Feature/Console/DebtReconciliationPlanCommandTest.php`
-- `docs/audit/STEP-GLOBAL-DEBT-AUDIT-AND-CONTROLLED-RECONCILIATION-PLAN.md`
+- this report
 
-No controller, existing timeline service, write-path, frontend, migration, stock, costing, serial/IMEI, invoice, CashFlow or payroll behavior was changed.
+No controller, timeline service, ledger service, write path, frontend, migration, stock, costing, serial/IMEI, invoice, CashFlow or payroll behavior changed.
 
-## Current source architecture
+## UI timeline option contract
 
-| Concern | Canonical source used by the audit |
-|---|---|
-| Raw customer receivable | `PartnerDebtDisplayBalance::customerReceivable()` |
-| Raw supplier payable | `PartnerDebtDisplayBalance::supplierPayable()` |
-| Customer screen balance | `PartnerDebtDisplayBalance::customerScreen()` |
-| Supplier screen balance | `PartnerDebtDisplayBalance::supplierScreen()` |
-| Customer document timeline | `CustomerDebtDocumentTimelineService::build(..., audit/include_technical)` |
-| Supplier document timeline | `SupplierDebtDocumentTimelineService::build(..., audit/include_technical)` |
-| Dual-role supplier document view | Same supplier service with `view=partner` |
-| Customer ledger | `PartnerDebtLedgerService::buildCustomerNetLedger()` |
-| Pure supplier ledger | `PartnerDebtLedgerService::buildSupplierPayableLedger()` |
-| Dual-role supplier ledger | `PartnerDebtLedgerService::buildSupplierDualRolePartnerTimeline()` |
+Discovery covered both controllers, both index pages, both document timeline services, `PartnerDebtLedgerService` and `PartnerDebtDisplayBalance`.
 
-The audit keeps these values separate:
+| Screen/audit side | UI request | Audit call used for parity |
+|---|---|---|
+| Customer debt tab | `mode=document`, no technical flag | `CustomerDebtDocumentTimelineService::build($partner, [])` |
+| Supplier-only debt tab | document mode, no `view` or technical flag | `SupplierDebtDocumentTimelineService::build($partner, [])` |
+| Dual-role supplier debt tab | document mode with `view=partner` | `SupplierDebtDocumentTimelineService::build($partner, ['view' => 'partner'])` |
 
-1. stored screen balance;
-2. raw document final balance;
-3. display final balance after read-only alignment/virtual opening;
-4. raw ledger balance and display resolution state.
+The previous audit enabled `audit/include_technical`, which did not match production UI semantics. The parity pass now never asks either document timeline to include technical entries.
 
-Display alignment is not treated as proof that historical data is complete.
+Stored screen values remain explicit evidence:
 
-## Commands
+- customer screen: raw customer receivable minus raw supplier payable;
+- supplier-only screen: raw supplier payable;
+- dual-role supplier screen: raw supplier payable minus raw customer receivable.
 
-Global audit:
+Stored, document and technical ledger sources remain separate. None is declared universally authoritative.
 
-```bash
-php artisan debt:audit-parity \
-  --dry-run \
-  --only-mismatch \
-  --export=storage/app/audits/debt-parity-mismatch.csv \
-  --json=storage/app/audits/debt-parity-mismatch.json
+## Technical ledger evidence
+
+`PartnerDebtParityAuditService::technicalLedgerEvidence()` consumes only `reconcile.excluded_ledger_entries` returned by the normal UI timeline pass. It does not run a technical-enabled balance pass.
+
+Evidence fields:
+
+- `customer_technical_codes`
+- `supplier_technical_codes`
+- `excluded_technical_codes`
+- `has_technical_ledger_exclusion`
+- `technical_customer_total`
+- `technical_supplier_total`
+
+Customer technical evidence is taken from the customer UI pass and supplier technical evidence from the supplier UI pass, avoiding cross-timeline duplication for dual-role partners while preserving duplicate ledger rows as evidence. Source `customer_debts` is separated from `supplier_debt_transactions`; code arrays are unique. Technical entries affect parity balance: **no**. They remain visible through `TECHNICAL_LEDGER_EXCLUDED` and the evidence columns.
+
+The existing technical detection/exclusion behavior in both timeline services was not modified.
+
+## CSV and filters
+
+The audit CSV now includes `partner_name` plus all drilldown arrays:
+
+```text
+suspect_invoice_codes
+suspect_receipt_codes
+suspect_return_codes
+suspect_refund_codes
+suspect_purchase_codes
+suspect_supplier_payment_codes
+suspect_purchase_return_codes
+suspect_adjustment_codes
+suspect_fallback_codes
+customer_technical_codes
+supplier_technical_codes
+excluded_technical_codes
 ```
 
-Proposal-only plan:
+Arrays are serialized with `|`; JSON keeps arrays. Production names and phone numbers are not copied into this report.
 
-```bash
-php artisan debt:reconcile-plan \
-  --dry-run \
-  --audit-file=storage/app/audits/debt-parity-mismatch.json \
-  --export=storage/app/audits/debt-reconciliation-plan.csv \
-  --json=storage/app/audits/debt-reconciliation-plan.json
-```
+`debt:audit-parity` supports:
 
-Both commands fail without `--dry-run`. Input/output paths are restricted to `storage/app/audits`. There is no `--apply`, `--fix`, `--update` or `--backfill` option.
+- `--partner-id`
+- `--role=all|customer|supplier|dual`
+- `--classification=` matching primary classification **or** classification flags
+- `--risk=CRITICAL|HIGH|MEDIUM|LOW|OK`
+- `--only-mismatch`
+- `--limit=` with positive-integer validation
+
+Its summary separates total eligible, scanned, matched and exported. A partner audit error does not stop later partners, but the command exits failure if any scanned row is `AUDIT_ERROR`.
+
+`debt:reconcile-plan` filters audit rows before plan generation with `--partner-id`, `--classification` (primary or flags) and `--risk`.
+
+Both commands require `--dry-run`; input/output paths stay under `storage/app/audits`. There is no apply/fix/backfill/update/recalculate option.
 
 ## Read-only proof
 
-Static check:
+Static grep over the four implementation files for model/DB write methods returned no matches:
 
-```bash
-rg -n "save\(|update\(|delete\(|insert\(|create\(|forceDelete\(|restore\(|DB::statement|DB::update|DB::insert|DB::delete" \
-  app/Services/Debt/PartnerDebtParityAuditService.php \
-  app/Console/Commands/AuditDebtParityCommand.php \
-  app/Services/Debt/DebtReconciliationPlanService.php \
-  app/Console/Commands/DebtReconciliationPlanCommand.php
+```text
+save( update( delete( insert( create( forceDelete( restore(
+DB::statement DB::update DB::insert DB::delete
 ```
 
-Result: no matches.
+The feature test snapshots counts and financial sums for:
 
-The feature test snapshots counts and financial sums for `customers`, `customer_debts`, `supplier_debt_transactions`, `cash_flows`, `invoices`, `returns`, `purchases`, `purchase_returns` and `debt_offsets` before and after command execution. Result: unchanged.
+```text
+customers
+customer_debts
+supplier_debt_transactions
+cash_flows
+invoices
+returns
+purchases
+purchase_returns
+debt_offsets
+```
 
-The imported local database was also snapshotted before and after the full audit. Result: `DB_SNAPSHOT_UNCHANGED=True`.
+The imported local database received the same snapshot before and after all v2 commands. Both normalized snapshots have SHA-256:
+
+```text
+bab3e6c69b7e6d971d0bfed51d546e556b4cbc24858d86b5303ac7a7a0bcd32b
+```
+
+Result: `DB_SNAPSHOT_UNCHANGED=true`.
 
 ## Local database evidence
 
-- Source archive: local `kiot.sql.zip`, timestamp `2026-07-13 10:09:43`.
-- SQL member timestamp/name indicates `2026-07-13 10:09:28`.
-- Imported to isolated MariaDB 10.11 database `kiot_audit_20260713_100928`.
-- Imported tables: 106.
-- Total partners in dump: 331.
-- Eligible partners scanned: 330. One record had no customer/supplier role and zero stored debt, so it was outside the audit query.
-- Latest imported `cash_flows.created_at`: `2026-07-11 08:34:33`.
+- Source: local `kiot.sql.zip` supplied for this audit.
+- Imported database: isolated MariaDB 10.11 database `kiot_audit_20260713_100928`.
+- Tables: 106.
+- Partners: 331 total, 330 eligible under the audit query.
 - No production connection or production command was used.
+- MariaDB required local-only `DB_COLLATION=utf8mb4_unicode_ci`; no source/schema/data change was made.
+- Generated CSV/JSON remain ignored under `storage/app/audits` and are not committed.
 
-Generated CSV/JSON remain local under `storage/app/audits` and are not committed.
+## Audit v1 versus v2
 
-## Classifications and risk
+Baseline v1:
 
-Supported classifications are the constants in `PartnerDebtParityAuditService::CLASSIFICATIONS`, including stored/document/ledger differences, dual-role symmetry, virtual opening/alignment, missing history, duplicate/fallback, allocation, refund, cancellation reversal, target aliases, technical exclusions and audit errors.
+| Metric | Count |
+|---|---:|
+| Candidates | 49 |
+| Critical | 21 |
+| High | 17 |
+| Medium | 11 |
+| Blocked uncertain | 39 |
+| Code review required | 10 |
 
-Risk levels: `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `OK`. Tolerance is greater than 1 VND.
-
-Local imported-data result after correcting a false-positive real/fallback heuristic:
+UI-semantics v2:
 
 | Primary classification | Count |
 |---|---:|
 | `CUSTOMER_STORED_VS_DOCUMENT` | 10 |
-| `DUAL_ROLE_NET_MISMATCH` | 11 |
+| `DUAL_ROLE_NET_MISMATCH` | 10 |
 | `INVOICE_RECEIPT_ALLOCATION_MISMATCH` | 1 |
 | `SUPPLIER_STORED_VS_DOCUMENT` | 11 |
 | `SUPPLIER_STORED_VS_LEDGER` | 6 |
 | `TARGET_TYPE_ALIAS_SUSPECT` | 10 |
-| Total exported mismatches | 49 |
+| `TECHNICAL_LEDGER_EXCLUDED` | 2 |
+| **Total candidates** | **50** |
 
-| Risk | Count |
-|---|---:|
-| `CRITICAL` | 21 |
-| `HIGH` | 17 |
-| `MEDIUM` | 11 |
+| Risk | v1 | v2 | Change |
+|---|---:|---:|---:|
+| Critical | 21 | 21 | 0 |
+| High | 17 | 16 | -1 |
+| Medium | 11 | 13 | +2 |
 
-These are audit candidates, not confirmed data defects.
+Comparison by local partner ID, without including identifying data in the report:
 
-## Top 20 anonymized risks
+- resolved false positives: 0;
+- new candidates: 1;
+- primary-classification changes: 1, `DUAL_ROLE_NET_MISMATCH` to `TECHNICAL_LEDGER_EXCLUDED`;
+- risk changes: 1, `HIGH` to `MEDIUM`;
+- partners carrying the technical-exclusion flag: 3.
 
-| Partner | Role | Risk | Primary classification | Maximum raw document difference |
-|---|---|---|---|---:|
-| P-17 | supplier_only | CRITICAL | SUPPLIER_STORED_VS_DOCUMENT | 239,057,497 |
-| P-7 | supplier_only | CRITICAL | SUPPLIER_STORED_VS_DOCUMENT | 130,400,000 |
-| P-75 | dual_role | CRITICAL | DUAL_ROLE_NET_MISMATCH | 123,600,000 |
-| P-1 | supplier_only | CRITICAL | SUPPLIER_STORED_VS_DOCUMENT | 94,000,000 |
-| P-210 | dual_role | CRITICAL | DUAL_ROLE_NET_MISMATCH | 57,020,000 |
-| P-80 | supplier_only | CRITICAL | SUPPLIER_STORED_VS_DOCUMENT | 40,800,000 |
-| P-16 | dual_role | CRITICAL | DUAL_ROLE_NET_MISMATCH | 30,270,000 |
-| P-9 | dual_role | CRITICAL | DUAL_ROLE_NET_MISMATCH | 29,310,000 |
-| P-78 | dual_role | CRITICAL | DUAL_ROLE_NET_MISMATCH | 29,000,000 |
-| P-33 | customer_only | CRITICAL | CUSTOMER_STORED_VS_DOCUMENT | 23,460,000 |
-| P-35 | customer_only | CRITICAL | CUSTOMER_STORED_VS_DOCUMENT | 15,000,000 |
-| P-81 | dual_role | CRITICAL | DUAL_ROLE_NET_MISMATCH | 14,099,989 |
-| P-6 | dual_role | CRITICAL | DUAL_ROLE_NET_MISMATCH | 13,170,500 |
-| P-59 | supplier_only | CRITICAL | SUPPLIER_STORED_VS_DOCUMENT | 13,000,000 |
-| P-29 | dual_role | CRITICAL | DUAL_ROLE_NET_MISMATCH | 12,042,200 |
-| P-57 | supplier_only | CRITICAL | SUPPLIER_STORED_VS_DOCUMENT | 11,210,000 |
-| P-4 | supplier_only | CRITICAL | SUPPLIER_STORED_VS_LEDGER | 10,500,000 |
-| P-64 | supplier_only | CRITICAL | SUPPLIER_STORED_VS_DOCUMENT | 10,000,000 |
-| P-74 | dual_role | CRITICAL | DUAL_ROLE_NET_MISMATCH | 9,000,000 |
-| P-52 | supplier_only | CRITICAL | SUPPLIER_STORED_VS_LEDGER | 0 raw document difference; ledger-only gap |
+The extra candidate is technical evidence that was previously hidden by the technical-enabled parity pass. One existing dual-role candidate is now correctly described as a technical exclusion rather than a document-balance mismatch. This explains the movement from High to Medium without forcing counts to match v1.
 
-No partner name, phone or other personal data is included in this report.
+These remain audit candidates, not confirmed data defects.
 
-## CSV and JSON contract
+## Reconciliation plan v2
 
-CSV columns include partner identity/code/role, four stored balances, customer/supplier document raw/display/reconciliation metrics, customer/supplier ledger metrics, parity differences, source counts/totals, evidence flags, classification, risk, recommended action and audit error.
+| Proposed action | Count | Customer delta | Supplier delta | Voucher |
+|---|---:|---:|---:|---:|
+| `BLOCKED_UNCERTAIN_SOURCE_OF_TRUTH` | 38 | 0 | 0 | 0 |
+| `CODE_REVIEW_REQUIRED` | 12 | 0 | 0 | 0 |
 
-JSON additionally preserves arrays for classification flags, suspect document codes and excluded technical codes. The output includes `generated_at`, `dry_run=true`, tolerance and rows.
+All 50 rows have `status=PROPOSED`. Totals:
 
-An anonymized example:
-
-```json
-{
-  "partner_id": 9001,
-  "partner_code": "PARTNER-9001",
-  "role": "customer_only",
-  "stored_customer_screen": 2370000,
-  "customer_document_raw_final": -6700000,
-  "customer_stored_vs_document_raw": 9070000,
-  "primary_classification": "CUSTOMER_STORED_VS_DOCUMENT",
-  "risk_level": "HIGH"
-}
+```text
+customer_delta_total=0
+supplier_delta_total=0
+proposed_voucher_count=0
 ```
 
-## Reconciliation plan design
-
-The plan command consumes audit JSON and only writes proposal files. Every row remains `PROPOSED`.
-
-Local plan result:
-
-| Proposed action | Count | Data delta |
-|---|---:|---:|
-| `BLOCKED_UNCERTAIN_SOURCE_OF_TRUTH` | 39 | 0 |
-| `CODE_REVIEW_REQUIRED` | 10 | 0 |
-
-The plan never infers an actual supplier purchase allocation from generic `SupplierPayment`. The existing timeline can expose FIFO inference for presentation diagnostics, but this is not persisted allocation evidence.
-
-No customer delta, supplier delta or voucher is proposed automatically. A later data-apply design would require a separate approval, backup, approved plan hash, small batch, application-service transaction, post-audit and traceable reversal. No apply command is included in this change.
+The plan remains limited to `NO_ACTION`, `CODE_REVIEW_REQUIRED`, `OPENING_BALANCE_REVIEW_ONLY` and `BLOCKED_UNCERTAIN_SOURCE_OF_TRUTH`. It cannot write data.
 
 ## Tests and checks
 
-New tests:
+New/updated PR16 tests:
 
 ```text
-24 passed, 69 assertions
+38 passed, 153 assertions
 ```
 
-Covered: clean customer/supplier/dual-role, 9,070,000 mismatch, missing opening, document-vs-ledger variants, screen asymmetry, duplicate/fallback, refund duplicate, cancel reversal, target aliases, allocation warnings, mandatory dry-run, output path restriction, database snapshot immutability, uncertain-source blocking and proposal-only plan output.
+Coverage includes UI-parity technical fixtures for customer and supplier, dual-role partner-view, CSV headers/pipe serialization, classification primary-or-flags, Critical/High/invalid risk, limit validation, partner/classification/risk plan filters, mandatory dry-run, restricted paths, continued scanning after audit errors, database immutability and proposal-only zero-delta output.
 
 Selected debt regression:
 
@@ -218,45 +225,40 @@ Regression files:
 - `DualRoleDebtAdjustmentKiotStyleTest`
 - `CustomerDebtTimelineDisplayBalanceContractTest`
 
-PHP lint: pass for all four implementation files and four test files.
+Other checks:
 
-`git diff --check`: required before commit.
+- PHP lint: pass for all four implementation and four test files.
+- `git diff --check`: pass.
+- forbidden-file check: no matches.
+- read-only grep: no matches.
+- frontend build: not required; no frontend files changed.
+- local PHP still reports unrelated missing optional OCI/Firebird extensions.
 
-Frontend build: not required because no frontend assets changed.
+## Manual QA v2
 
-Environment warning: local PHP reports missing optional OCI/Firebird extensions. MySQL/MariaDB tests and commands completed successfully; these optional extension warnings are unrelated to debt audit behavior.
+| Audit | Eligible/scanned | Matched | Exported/result |
+|---|---:|---:|---|
+| Global `--only-mismatch` | 330/330 | 330 | 50 candidates |
+| Customer `--only-mismatch` | 279/279 | 279 | 32 candidates |
+| Supplier `--only-mismatch` | 66/66 | 66 | 30 candidates |
+| Dual-role full | 15/15 | 15 | 12 candidates, 3 OK |
+| Critical filter | 330/330 | 21 | 21 Critical rows |
+| Reconciliation plan | 50 input rows | 50 | 38 blocked, 12 code review |
 
-## Manual QA on the imported local dump
-
-| Audit | Scanned | Exported/result |
-|---|---:|---|
-| Global `--only-mismatch` | 330 | 49 candidates |
-| Customer `--only-mismatch` | 279 | 31 candidates |
-| Supplier `--only-mismatch` | 66 | 29 candidates |
-| Dual-role full | 15 | 11 mismatch candidates, 4 OK |
-| Single anonymized local partner | 1 | command completed; no database mutation |
-| Reconciliation plan | 49 rows | 39 blocked, 10 code review, zero data delta |
-
-All generated files remained under `storage/app/audits`. They are ignored local evidence and are not part of the commit.
+All generated evidence remains local and ignored. Database snapshot after QA equals the snapshot before QA.
 
 ## Known limitations
 
-- Stored balance, raw document timeline and ledger are evidence sources; none is treated as universally authoritative.
-- Generic supplier payment allocation is not persisted per purchase. FIFO coverage remains inferred and cannot prove historical manual allocation.
-- Target type aliases are reported for code/query compatibility review; the audit does not normalize stored values.
-- Cancel reversal detection uses available invoice/ledger reference codes and is a review signal, not permission to generate a reversal.
+- Stored balance, raw UI document timeline and technical ledger are evidence sources; none is universally authoritative.
+- Generic supplier payment allocation is not persisted per purchase. FIFO coverage is presentation inference and cannot prove historical manual allocation.
+- Target type aliases are review evidence; this audit does not normalize stored values.
+- Cancel reversal detection is a review signal, not permission to generate a reversal.
 - Suspect-code lists are capped at 20 per type.
-- The audit can identify candidates and evidence but cannot decide opening balances or data deltas without manual source-of-truth review.
-- No production audit has been run. Imported local data may differ from production after the dump timestamp.
-
-## Approval, backup and rollback gate
-
-No backup is required for this read-only audit. A database backup is mandatory before any future approved data apply. Git rollback for this change is code revert only because this PR does not alter data.
-
-Any future apply must stop for explicit Senior Auditor/owner approval and report affected partners, tables, total deltas, voucher counts, backup path, batch ID, rollback records and manual QA evidence.
+- A future data action requires a separate design, explicit owner approval, backup, bounded batch, post-audit and traceable rollback.
+- No production audit has run. Local imported data can differ from current production after the dump timestamp.
 
 ## Conclusion
 
-Global debt parity audit and reconciliation planning are ready for Senior Auditor review.
+PR16 now calculates document parity with the same options used by the UI timeline. Technical ledger entries are evidence only and do not affect parity balances.
 
-No data was changed. No backfill was run. No production deployment or production command was run. A separate explicit confirmation is required before any production debt adjustment.
+No data was changed. No backfill, migration, production audit, deployment or production command was run. PR #16 remains Draft and is ready for Senior Auditor re-audit, not production reconciliation.

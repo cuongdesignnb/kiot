@@ -56,7 +56,7 @@ class PartnerDebtParityAuditService
     public const RISK_LEVELS = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'OK'];
 
     public const CSV_COLUMNS = [
-        'partner_id', 'partner_code', 'role', 'status',
+        'partner_id', 'partner_code', 'partner_name', 'role', 'status',
         'raw_customer_debt', 'raw_supplier_debt', 'stored_customer_screen', 'stored_supplier_screen',
         'customer_document_raw_final', 'customer_document_display_final', 'customer_document_difference',
         'customer_document_has_mismatch', 'customer_document_raw_has_mismatch', 'customer_document_display_aligned',
@@ -90,6 +90,11 @@ class PartnerDebtParityAuditService
         'has_cancelled_invoice', 'has_cancel_reversal', 'has_customer_adjustment', 'has_supplier_adjustment',
         'has_opening_balance', 'has_virtual_opening', 'has_target_type_alias',
         'has_technical_ledger_exclusion', 'has_allocation_warning',
+        'suspect_invoice_codes', 'suspect_receipt_codes', 'suspect_return_codes',
+        'suspect_refund_codes', 'suspect_purchase_codes', 'suspect_supplier_payment_codes',
+        'suspect_purchase_return_codes', 'suspect_adjustment_codes', 'suspect_fallback_codes',
+        'customer_technical_codes', 'supplier_technical_codes', 'excluded_technical_codes',
+        'technical_customer_total', 'technical_supplier_total',
         'primary_classification', 'classification_flags', 'risk_level', 'recommended_action', 'audit_error',
     ];
 
@@ -109,19 +114,27 @@ class PartnerDebtParityAuditService
             $supplierDocument = $this->supplierDocumentSnapshot($partner, $stored['stored_supplier_screen']);
             $supplierLedger = $this->supplierLedgerSnapshot($partner, $stored['stored_supplier_screen']);
             $metrics = $this->sourceMetrics($partner);
+            $technicalEvidence = $this->technicalLedgerEvidence($customerDocument, $supplierDocument);
             $evidence = $this->evidence(
                 $partner,
                 $customerDocument['_entries'],
                 $supplierDocument['_entries'],
                 $customerDocument,
                 $supplierDocument,
+                $technicalEvidence,
             );
 
-            unset($customerDocument['_entries'], $supplierDocument['_entries']);
+            unset(
+                $customerDocument['_entries'],
+                $customerDocument['_excluded_entries'],
+                $supplierDocument['_entries'],
+                $supplierDocument['_excluded_entries'],
+            );
 
             $row = array_merge([
                 'partner_id' => (int) $partner->id,
                 'partner_code' => (string) ($partner->code ?? ''),
+                'partner_name' => (string) ($partner->name ?? ''),
                 'role' => $this->role($partner),
                 'status' => (string) ($partner->status ?? ''),
             ], $stored, $customerDocument, $customerLedger, $supplierDocument, $supplierLedger, $metrics, $evidence);
@@ -289,7 +302,7 @@ class PartnerDebtParityAuditService
         }
 
         return $this->documentSnapshot(
-            $this->customerDocuments->build($partner, ['audit' => true, 'include_technical' => true]),
+            $this->customerDocuments->build($partner, []),
             'customer',
             $stored,
         );
@@ -301,7 +314,7 @@ class PartnerDebtParityAuditService
             return $this->emptyDocumentSnapshot('supplier');
         }
 
-        $options = ['audit' => true, 'include_technical' => true];
+        $options = [];
         if (PartnerDebtDisplayBalance::isDualRole($partner)) {
             $options['view'] = 'partner';
         }
@@ -316,7 +329,10 @@ class PartnerDebtParityAuditService
         $entries = collect($timeline['entries'] ?? [])->map(fn ($entry): array => (array) $entry)->values();
         $raw = (float) ($summary['raw_document_final_balance'] ?? $summary['document_final_balance'] ?? 0);
         $display = (float) ($summary['display_balance_final'] ?? $raw);
-        $excluded = collect($reconcile['excluded_ledger_entries'] ?? [])
+        $excludedEntries = collect($reconcile['excluded_ledger_entries'] ?? [])
+            ->map(fn ($entry): array => (array) $entry)
+            ->values();
+        $excluded = $excludedEntries
             ->map(fn ($entry): string => (string) (is_array($entry) ? ($entry['code'] ?? $entry['ref_code'] ?? '') : $entry))
             ->filter()->unique()->take(20)->values()->all();
 
@@ -333,6 +349,7 @@ class PartnerDebtParityAuditService
             "{$prefix}_document_entry_count" => $entries->count(),
             "{$prefix}_document_excluded_technical_codes" => $excluded,
             "_entries" => $entries,
+            '_excluded_entries' => $excludedEntries,
         ];
     }
 
@@ -351,6 +368,7 @@ class PartnerDebtParityAuditService
             "{$prefix}_document_entry_count" => 0,
             "{$prefix}_document_excluded_technical_codes" => [],
             '_entries' => collect(),
+            '_excluded_entries' => collect(),
         ];
     }
 
@@ -462,6 +480,7 @@ class PartnerDebtParityAuditService
         Collection $supplierEntries,
         array $customerDocument,
         array $supplierDocument,
+        array $technicalEvidence,
     ): array {
         $entries = $customerEntries->concat($supplierEntries)->values();
         $eventKinds = $entries->pluck('event_kind')->map(fn ($value): string => (string) $value);
@@ -494,8 +513,7 @@ class PartnerDebtParityAuditService
             'has_virtual_opening' => (bool) ($customerDocument['customer_document_has_virtual_opening'] ?? false)
                 || (bool) ($supplierDocument['supplier_document_has_virtual_opening'] ?? false),
             'has_target_type_alias' => $targetAliases,
-            'has_technical_ledger_exclusion' => ($customerDocument['customer_document_excluded_technical_codes'] ?? []) !== []
-                || ($supplierDocument['supplier_document_excluded_technical_codes'] ?? []) !== [],
+            'has_technical_ledger_exclusion' => $technicalEvidence['has_technical_ledger_exclusion'],
             'has_allocation_warning' => $entries->contains(fn (array $e): bool => $this->entryHasAllocationWarning($e))
                 || (bool) ($supplierDocument['supplier_document_has_mismatch'] ?? false),
             'has_duplicate_real_and_fallback' => $duplicateRealFallback,
@@ -515,10 +533,40 @@ class PartnerDebtParityAuditService
             'suspect_purchase_return_codes' => $this->codes($entries, ['purchase_return']),
             'suspect_adjustment_codes' => $entries->filter(fn (array $e): bool => str_contains((string) ($e['event_kind'] ?? ''), 'adjustment'))->pluck('code')->filter()->unique()->take(20)->values()->all(),
             'suspect_fallback_codes' => $fallbackEntries->pluck('code')->filter()->unique()->take(20)->values()->all(),
-            'excluded_technical_codes' => array_values(array_unique(array_merge(
-                $customerDocument['customer_document_excluded_technical_codes'] ?? [],
-                $supplierDocument['supplier_document_excluded_technical_codes'] ?? [],
-            ))),
+        ] + $technicalEvidence;
+    }
+
+    private function technicalLedgerEvidence(array $customerDocument, array $supplierDocument): array
+    {
+        $customerEntries = collect($customerDocument['_excluded_entries'] ?? [])
+            ->map(fn ($entry): array => (array) $entry)
+            ->where('source', 'customer_debts')
+            ->filter(fn (array $entry): bool => (string) ($entry['code'] ?? '') !== '')
+            ->values();
+        if ($customerEntries->isEmpty()) {
+            $customerEntries = collect($supplierDocument['_excluded_entries'] ?? [])
+                ->map(fn ($entry): array => (array) $entry)
+                ->where('source', 'customer_debts')
+                ->filter(fn (array $entry): bool => (string) ($entry['code'] ?? '') !== '')
+                ->values();
+        }
+        $supplierEntries = collect($supplierDocument['_excluded_entries'] ?? [])
+            ->map(fn ($entry): array => (array) $entry)
+            ->where('source', 'supplier_debt_transactions')
+            ->filter(fn (array $entry): bool => (string) ($entry['code'] ?? '') !== '')
+            ->values();
+        $entries = $customerEntries->concat($supplierEntries)->values();
+
+        $codes = fn (Collection $items): array => $items->pluck('code')
+            ->filter()->unique()->take(20)->values()->all();
+
+        return [
+            'customer_technical_codes' => $codes($customerEntries),
+            'supplier_technical_codes' => $codes($supplierEntries),
+            'excluded_technical_codes' => $codes($entries),
+            'has_technical_ledger_exclusion' => $entries->isNotEmpty(),
+            'technical_customer_total' => (float) $customerEntries->sum('amount'),
+            'technical_supplier_total' => (float) $supplierEntries->sum('amount'),
         ];
     }
 
@@ -677,6 +725,7 @@ class PartnerDebtParityAuditService
         $row = array_fill_keys(self::CSV_COLUMNS, null);
         $row['partner_id'] = (int) $partner->id;
         $row['partner_code'] = (string) ($partner->code ?? '');
+        $row['partner_name'] = (string) ($partner->name ?? '');
         $row['role'] = $this->role($partner);
         $row['status'] = (string) ($partner->status ?? '');
         $row['primary_classification'] = 'AUDIT_ERROR';

@@ -79,6 +79,65 @@ class DebtReconciliationPlanCommandTest extends TestCase
         ])->assertExitCode(1);
     }
 
+    public function test_partner_classification_flag_and_risk_filters_run_before_plan_generation(): void
+    {
+        $audit = $this->path('filtered-audit.json');
+        $json = $this->path('filtered-plan.json');
+        file_put_contents($audit, json_encode(['rows' => [
+            $this->auditRow(101, 'CUSTOMER_STORED_VS_DOCUMENT', ['CUSTOMER_STORED_VS_DOCUMENT', 'TARGET_TYPE_ALIAS_SUSPECT'], 'HIGH'),
+            $this->auditRow(102, 'TARGET_TYPE_ALIAS_SUSPECT', ['TARGET_TYPE_ALIAS_SUSPECT'], 'MEDIUM'),
+            $this->auditRow(103, 'CUSTOMER_STORED_VS_DOCUMENT', ['CUSTOMER_STORED_VS_DOCUMENT'], 'HIGH'),
+        ]], JSON_THROW_ON_ERROR));
+
+        $this->artisan('debt:reconcile-plan', [
+            '--dry-run' => true,
+            '--audit-file' => $audit,
+            '--partner-id' => 101,
+            '--classification' => 'TARGET_TYPE_ALIAS_SUSPECT',
+            '--risk' => 'HIGH',
+            '--json' => $json,
+        ])->assertExitCode(0);
+
+        $rows = json_decode((string) file_get_contents($json), true, flags: JSON_THROW_ON_ERROR)['rows'];
+        $this->assertCount(1, $rows);
+        $this->assertSame(101, $rows[0]['partner_id']);
+        $this->assertSame('PROPOSED', $rows[0]['status']);
+        $this->assertEquals(0.0, $rows[0]['customer_delta']);
+        $this->assertEquals(0.0, $rows[0]['supplier_delta']);
+        $this->assertNull($rows[0]['proposed_voucher']);
+    }
+
+    public function test_invalid_plan_filters_are_rejected(): void
+    {
+        $audit = $this->path('invalid-filter-audit.json');
+        file_put_contents($audit, json_encode(['rows' => []], JSON_THROW_ON_ERROR));
+
+        $this->artisan('debt:reconcile-plan', [
+            '--dry-run' => true,
+            '--audit-file' => $audit,
+            '--classification' => 'INVALID',
+        ])->expectsOutputToContain('Invalid --classification')->assertExitCode(1);
+
+        $this->artisan('debt:reconcile-plan', [
+            '--dry-run' => true,
+            '--audit-file' => $audit,
+            '--risk' => 'INVALID',
+        ])->expectsOutputToContain('Invalid --risk')->assertExitCode(1);
+    }
+
+    public function test_plan_output_outside_audit_directory_is_rejected(): void
+    {
+        $audit = $this->path('path-audit.json');
+        file_put_contents($audit, json_encode(['rows' => []], JSON_THROW_ON_ERROR));
+
+        $this->expectException(\RuntimeException::class);
+        $this->artisan('debt:reconcile-plan', [
+            '--dry-run' => true,
+            '--audit-file' => $audit,
+            '--json' => storage_path('app/forbidden-plan.json'),
+        ])->run();
+    }
+
     private function path(string $name): string
     {
         $path = storage_path('app/audits/testing-' . uniqid() . '-' . $name);
@@ -97,5 +156,17 @@ class DebtReconciliationPlanCommandTest extends TestCase
         return collect($tables)->mapWithKeys(fn (string $table): array => [
             $table => DB::table($table)->count(),
         ])->all();
+    }
+
+    private function auditRow(int $partnerId, string $classification, array $flags, string $risk): array
+    {
+        return [
+            'partner_id' => $partnerId,
+            'partner_code' => 'GENERIC-' . $partnerId,
+            'role' => 'customer_only',
+            'risk_level' => $risk,
+            'primary_classification' => $classification,
+            'classification_flags' => $flags,
+        ];
     }
 }

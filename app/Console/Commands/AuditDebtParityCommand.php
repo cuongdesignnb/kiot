@@ -15,7 +15,10 @@ class AuditDebtParityCommand extends Command
         {--dry-run : Required read-only gate}
         {--role=all : all, customer, supplier or dual}
         {--partner-id= : Audit one local partner ID}
+        {--classification= : Filter primary classification or classification flags}
+        {--risk= : Filter CRITICAL, HIGH, MEDIUM, LOW or OK}
         {--only-mismatch : Exclude rows classified OK}
+        {--limit= : Limit number of audited partners}
         {--export= : CSV path under storage/app/audits}
         {--json= : JSON path under storage/app/audits}';
 
@@ -36,18 +39,48 @@ class AuditDebtParityCommand extends Command
             return self::FAILURE;
         }
 
+        $classification = (string) ($this->option('classification') ?? '');
+        if ($classification !== '' && !in_array($classification, PartnerDebtParityAuditService::CLASSIFICATIONS, true)) {
+            $this->error('Invalid --classification. Use a supported audit classification.');
+
+            return self::FAILURE;
+        }
+        $risk = (string) ($this->option('risk') ?? '');
+        if ($risk !== '' && !in_array($risk, PartnerDebtParityAuditService::RISK_LEVELS, true)) {
+            $this->error('Invalid --risk. Use CRITICAL, HIGH, MEDIUM, LOW or OK.');
+
+            return self::FAILURE;
+        }
+        $limitOption = $this->option('limit');
+        if ($limitOption !== null && (preg_match('/^[1-9][0-9]*$/', (string) $limitOption) !== 1)) {
+            $this->error('Invalid --limit. Use a positive integer.');
+
+            return self::FAILURE;
+        }
+        $limit = $limitOption === null ? null : (int) $limitOption;
+
         $rows = [];
         $scanned = 0;
-        $this->partnerQuery($role)->chunkById(25, function ($partners) use ($audit, &$rows, &$scanned): void {
-            foreach ($partners as $partner) {
-                $scanned++;
-                $row = $audit->audit($partner);
-                if ($this->option('only-mismatch') && $row['primary_classification'] === 'OK') {
-                    continue;
-                }
-                $rows[] = $row;
+        $matched = 0;
+        $hasAuditErrors = false;
+        $query = $this->partnerQuery($role);
+        $eligible = (clone $query)->count();
+        foreach ($query->lazyById(25) as $partner) {
+            if ($limit !== null && $scanned >= $limit) {
+                break;
             }
-        });
+            $scanned++;
+            $row = $audit->audit($partner);
+            $hasAuditErrors = $hasAuditErrors || $row['primary_classification'] === 'AUDIT_ERROR';
+            if (!$this->matchesFilters($row, $classification, $risk)) {
+                continue;
+            }
+            $matched++;
+            if ($this->option('only-mismatch') && $row['primary_classification'] === 'OK') {
+                continue;
+            }
+            $rows[] = $row;
+        }
 
         if ($path = $this->option('export')) {
             $this->writeCsv($this->auditPath((string) $path), $rows);
@@ -56,11 +89,9 @@ class AuditDebtParityCommand extends Command
             $this->writeJson($this->auditPath((string) $path), $rows);
         }
 
-        $this->printSummary($rows, $scanned);
+        $this->printSummary($rows, $eligible, $scanned, $matched);
 
-        return collect($rows)->contains(fn (array $row): bool => $row['primary_classification'] === 'AUDIT_ERROR')
-            ? self::FAILURE
-            : self::SUCCESS;
+        return $hasAuditErrors ? self::FAILURE : self::SUCCESS;
     }
 
     private function partnerQuery(string $role): Builder
@@ -147,12 +178,23 @@ class AuditDebtParityCommand extends Command
         return $value;
     }
 
-    private function printSummary(array $rows, int $scanned): void
+    private function matchesFilters(array $row, string $classification, string $risk): bool
+    {
+        $classificationMatches = $classification === ''
+            || ($row['primary_classification'] ?? '') === $classification
+            || in_array($classification, (array) ($row['classification_flags'] ?? []), true);
+
+        return $classificationMatches && ($risk === '' || ($row['risk_level'] ?? '') === $risk);
+    }
+
+    private function printSummary(array $rows, int $eligible, int $scanned, int $matched): void
     {
         $classifications = collect($rows)->countBy('primary_classification')->sortKeys();
         $risks = collect($rows)->countBy('risk_level')->sortKeys();
         $this->info('Dry-run: yes');
+        $this->info("Total eligible: {$eligible}");
         $this->info("Total scanned: {$scanned}");
+        $this->info("Total matched: {$matched}");
         $this->info('Total exported: ' . count($rows));
         $this->line('Classification counts:');
         foreach ($classifications as $classification => $count) {

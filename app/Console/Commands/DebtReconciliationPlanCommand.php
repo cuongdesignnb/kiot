@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Services\Debt\DebtReconciliationPlanService;
+use App\Services\Debt\PartnerDebtParityAuditService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
 use RuntimeException;
@@ -12,6 +13,9 @@ class DebtReconciliationPlanCommand extends Command
     protected $signature = 'debt:reconcile-plan
         {--dry-run : Required read-only gate}
         {--audit-file= : Audit JSON under storage/app/audits}
+        {--partner-id= : Filter one partner ID}
+        {--classification= : Filter primary classification or classification flags}
+        {--risk= : Filter risk level}
         {--export= : Plan CSV under storage/app/audits}
         {--json= : Plan JSON under storage/app/audits}';
 
@@ -30,6 +34,25 @@ class DebtReconciliationPlanCommand extends Command
             return self::FAILURE;
         }
 
+        $classification = (string) ($this->option('classification') ?? '');
+        if ($classification !== '' && !in_array($classification, PartnerDebtParityAuditService::CLASSIFICATIONS, true)) {
+            $this->error('Invalid --classification. Use a supported audit classification.');
+
+            return self::FAILURE;
+        }
+        $risk = (string) ($this->option('risk') ?? '');
+        if ($risk !== '' && !in_array($risk, PartnerDebtParityAuditService::RISK_LEVELS, true)) {
+            $this->error('Invalid --risk. Use CRITICAL, HIGH, MEDIUM, LOW or OK.');
+
+            return self::FAILURE;
+        }
+        $partnerId = $this->option('partner-id');
+        if ($partnerId !== null && preg_match('/^[1-9][0-9]*$/', (string) $partnerId) !== 1) {
+            $this->error('Invalid --partner-id. Use a positive integer.');
+
+            return self::FAILURE;
+        }
+
         $auditPath = $this->auditPath((string) $this->option('audit-file'));
         if (!is_file($auditPath)) {
             $this->error("Audit file not found: {$auditPath}");
@@ -37,7 +60,22 @@ class DebtReconciliationPlanCommand extends Command
             return self::FAILURE;
         }
         $payload = json_decode((string) file_get_contents($auditPath), true, flags: JSON_THROW_ON_ERROR);
-        $rows = $plans->generate((array) ($payload['rows'] ?? $payload));
+        $auditRows = collect((array) ($payload['rows'] ?? $payload))
+            ->filter(function (array $row) use ($partnerId, $classification, $risk): bool {
+                if ($partnerId !== null && (int) ($row['partner_id'] ?? 0) !== (int) $partnerId) {
+                    return false;
+                }
+                if ($classification !== ''
+                    && ($row['primary_classification'] ?? '') !== $classification
+                    && !in_array($classification, (array) ($row['classification_flags'] ?? []), true)) {
+                    return false;
+                }
+
+                return $risk === '' || ($row['risk_level'] ?? '') === $risk;
+            })
+            ->values()
+            ->all();
+        $rows = $plans->generate($auditRows);
 
         if ($path = $this->option('export')) {
             $this->writeCsv($this->auditPath((string) $path), $rows);

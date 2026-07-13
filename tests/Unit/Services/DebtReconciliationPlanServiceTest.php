@@ -56,6 +56,23 @@ class DebtReconciliationPlanServiceTest extends TestCase
         $this->assertFalse($plan['requires_backup']);
     }
 
+    public function test_every_supported_plan_remains_proposal_only_with_zero_delta(): void
+    {
+        $plans = $this->service->generate([
+            $this->row('OK'),
+            $this->row('TECHNICAL_LEDGER_EXCLUDED'),
+            $this->row('VIRTUAL_OPENING_REQUIRED'),
+            $this->row('SUPPLIER_STORED_VS_DOCUMENT'),
+        ]);
+
+        foreach ($plans as $plan) {
+            $this->assertSame('PROPOSED', $plan['status']);
+            $this->assertSame(0.0, $plan['customer_delta']);
+            $this->assertSame(0.0, $plan['supplier_delta']);
+            $this->assertNull($plan['proposed_voucher']);
+        }
+    }
+
     private function row(string $classification): array
     {
         return [
