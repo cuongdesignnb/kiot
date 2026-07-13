@@ -334,13 +334,20 @@ const save = async (status) => {
 
             <div class="w-[340px] flex-shrink-0 flex flex-col bg-white shadow-[-1px_0_0_rgba(0,0,0,0.05)] z-20">
                 <div class="flex-1 overflow-auto bg-gray-50 flex flex-col">
-                    <div class="p-4 flex items-center gap-2 border-b border-gray-200 bg-white">
-                        <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0M12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
-                        <div class="flex-1 min-w-0">
-                            <div class="font-medium text-gray-800">Người kiểm</div>
-                            <div class="text-[12px] text-gray-500 truncate">{{ currentUser?.name || "Tài khoản đang đăng nhập" }}</div>
+                    <div class="p-4 flex flex-col gap-4 border-b border-gray-200 bg-white">
+                        <div class="flex flex-col gap-1.5">
+                            <label class="font-medium text-gray-700">Người kiểm kho</label>
+                            <input
+                                type="text"
+                                :value="currentUser?.name || 'Không xác định'"
+                                readonly
+                                class="w-full border border-gray-200 bg-gray-50 rounded px-2.5 py-1.5 text-gray-700 outline-none"
+                            >
                         </div>
-                        <DateTimePicker v-model="transactionDate" naked compact placeholder="dd/MM/yyyy HH:mm" input-class="text-gray-500 text-[12px] bg-gray-100 px-2 py-0.5 rounded border border-gray-200 outline-none focus:border-blue-500 hover:border-blue-400 w-[150px]" />
+                        <div class="flex flex-col gap-1.5">
+                            <label class="font-medium text-gray-700">Ngày kiểm</label>
+                            <DateTimePicker v-model="transactionDate" naked compact placeholder="dd/MM/yyyy HH:mm" input-class="w-full text-gray-700 bg-white px-2.5 py-1.5 rounded border border-gray-300 outline-none focus:border-blue-500 hover:border-blue-400" />
+                        </div>
                     </div>
 
                     <div class="p-4 flex flex-col gap-4 bg-white border-b border-gray-200">
@@ -389,7 +396,7 @@ const save = async (status) => {
 
         <CategorySelectModal
             :show="showCategoryModal"
-            :categories="categories || []"
+            :categories="props.categories || []"
             :loading="isLoadingCategoryProducts"
             @close="showCategoryModal = false"
             @confirm="loadCategoryProducts"
