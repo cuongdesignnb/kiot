@@ -80,6 +80,181 @@ class MaterialDebtRootCauseDrilldownServiceTest extends TestCase
         $this->assertSame('UNRESOLVED', $detail['source_of_truth_status']);
     }
 
+    public function test_customer_receipt_prefers_reference_id_and_detects_code_conflict(): void
+    {
+        $partner = $this->partner();
+        $first = $this->invoice($partner, 'HD-ALLOC-ID-A', 900_000);
+        $first->customer_paid = 900_000;
+        $second = $this->invoice($partner, 'HD-ALLOC-ID-B', 900_000);
+        $flow = $this->syntheticCashFlow([
+            'id' => 800001,
+            'code' => 'PT-ALLOC-ID',
+            'type' => 'receipt',
+            'amount' => 900_000,
+            'reference_type' => 'Invoice',
+            'reference_id' => $first->id,
+            'reference_code' => $second->code,
+            'status' => 'active',
+        ]);
+
+        $evidence = $this->invokeService('allocationEvidence', [
+            collect([$flow]), collect(), collect([$first, $second]), collect(), null,
+        ])['customer_receipts'][0];
+
+        $this->assertSame('id', $evidence['reference_match_method']);
+        $this->assertTrue($evidence['reference_conflict']);
+        $this->assertTrue($evidence['explicitly_allocated']);
+        $this->assertSame('actual_reference', $evidence['allocation_confidence']);
+        $this->assertSame(0.0, $evidence['unallocated_amount']);
+        $this->assertSame($first->id, $evidence['candidate_documents'][0]['document_id']);
+        $this->assertSame('invoice_reference_id_code_conflict', $evidence['warning']);
+    }
+
+    public function test_customer_receipt_reference_id_only_is_actual_reference(): void
+    {
+        $partner = $this->partner();
+        $invoice = $this->invoice($partner, 'HD-ALLOC-ID-ONLY', 500_000);
+        $invoice->customer_paid = 500_000;
+        $flow = $this->syntheticCashFlow([
+            'id' => 800002,
+            'code' => 'PT-ALLOC-ID-ONLY',
+            'type' => 'receipt',
+            'amount' => 500_000,
+            'reference_type' => 'Invoice',
+            'reference_id' => $invoice->id,
+            'reference_code' => null,
+            'status' => 'active',
+        ]);
+
+        $evidence = $this->invokeService('allocationEvidence', [
+            collect([$flow]), collect(), collect([$invoice]), collect(), null,
+        ])['customer_receipts'][0];
+
+        $this->assertSame('id', $evidence['reference_match_method']);
+        $this->assertFalse($evidence['reference_conflict']);
+        $this->assertTrue($evidence['explicitly_allocated']);
+        $this->assertSame(0.0, $evidence['unallocated_amount']);
+    }
+
+    public function test_supplier_payment_prefers_purchase_reference_id_and_detects_code_conflict(): void
+    {
+        $partner = $this->partner(['is_customer' => false, 'is_supplier' => true]);
+        $first = $this->purchase($partner, 'PN-ALLOC-ID-A', 1_000_000);
+        $second = $this->purchase($partner, 'PN-ALLOC-ID-B', 1_000_000);
+        $flow = $this->syntheticCashFlow([
+            'id' => 800003,
+            'code' => 'PCPN-ALLOC-ID',
+            'type' => 'payment',
+            'amount' => 1_000_000,
+            'reference_type' => 'Purchase',
+            'reference_id' => $first->id,
+            'reference_code' => $second->code,
+            'status' => 'active',
+        ]);
+
+        $evidence = $this->invokeService('allocationEvidence', [
+            collect(), collect([$flow]), collect(), collect([$first, $second]), null,
+        ])['supplier_payments'][0];
+
+        $this->assertSame('id', $evidence['reference_match_method']);
+        $this->assertTrue($evidence['reference_conflict']);
+        $this->assertTrue($evidence['explicitly_allocated']);
+        $this->assertSame($first->id, $evidence['candidate_documents'][0]['document_id']);
+        $this->assertSame('purchase_reference_id_code_conflict', $evidence['warning']);
+    }
+
+    public function test_supplier_purchase_reference_id_only_is_explicit_actual_reference(): void
+    {
+        $partner = $this->partner(['is_customer' => false, 'is_supplier' => true]);
+        $purchase = $this->purchase($partner, 'PN-ALLOC-ID-ONLY', 1_000_000);
+        $flow = $this->syntheticCashFlow([
+            'id' => 800004,
+            'code' => 'PCPN-ALLOC-ID-ONLY',
+            'type' => 'payment',
+            'amount' => 1_000_000,
+            'reference_type' => 'Purchase',
+            'reference_id' => $purchase->id,
+            'reference_code' => null,
+            'status' => 'active',
+        ]);
+
+        $evidence = $this->invokeService('allocationEvidence', [
+            collect(), collect([$flow]), collect(), collect([$purchase]), null,
+        ])['supplier_payments'][0];
+
+        $this->assertSame('id', $evidence['reference_match_method']);
+        $this->assertTrue($evidence['explicitly_allocated']);
+        $this->assertFalse($evidence['inferred_allocation']);
+        $this->assertSame('actual_reference', $evidence['allocation_confidence']);
+    }
+
+    public function test_historical_receipt_and_cancelled_supplier_payment_are_excluded_from_active_allocation(): void
+    {
+        $partner = $this->partner(['is_supplier' => true]);
+        $invoice = $this->invoice($partner, 'HD-HISTORICAL-ALLOC', 500_000);
+        $invoice->customer_paid = 500_000;
+        $purchase = $this->purchase($partner, 'PN-HISTORICAL-ALLOC', 500_000);
+        $receipt = $this->syntheticCashFlow([
+            'id' => 800005,
+            'code' => 'PT-HISTORICAL-ALLOC',
+            'type' => 'receipt',
+            'amount' => 500_000,
+            'reference_type' => 'Invoice',
+            'reference_id' => $invoice->id,
+            'status' => 'active',
+            'deleted_at' => now(),
+        ]);
+        $payment = $this->syntheticCashFlow([
+            'id' => 800006,
+            'code' => 'PCPN-HISTORICAL-ALLOC',
+            'type' => 'payment',
+            'amount' => 500_000,
+            'reference_type' => 'Purchase',
+            'reference_id' => $purchase->id,
+            'status' => 'cancelled',
+        ]);
+
+        $evidence = $this->invokeService('allocationEvidence', [
+            collect([$receipt]), collect([$payment]), collect([$invoice]), collect([$purchase]), null,
+        ]);
+
+        foreach ([$evidence['customer_receipts'][0], $evidence['supplier_payments'][0]] as $row) {
+            $this->assertSame('historical', $row['evidence_scope']);
+            $this->assertFalse($row['is_active_for_balance']);
+            $this->assertFalse($row['explicitly_allocated']);
+            $this->assertSame(0.0, $row['unallocated_amount']);
+        }
+    }
+
+    public function test_supplier_fifo_projection_remains_inferred_not_actual(): void
+    {
+        $partner = $this->partner(['is_customer' => false, 'is_supplier' => true]);
+        $purchase = $this->purchase($partner, 'PN-FIFO-PROJECTION', 1_000_000);
+        $flow = $this->syntheticCashFlow([
+            'id' => 800007,
+            'code' => 'PCPN-FIFO-PROJECTION',
+            'type' => 'payment',
+            'amount' => 1_000_000,
+            'reference_type' => 'SupplierPayment',
+            'reference_code' => 'PCPN-FIFO-PROJECTION',
+            'status' => 'active',
+        ]);
+        $timeline = ['reconcile' => ['generic_payment_allocation' => ['inferred_allocations' => [[
+            'payment_code' => $flow->code,
+            'purchase_code' => $purchase->code,
+            'amount' => 1_000_000,
+        ]]]]];
+
+        $evidence = $this->invokeService('allocationEvidence', [
+            collect(), collect([$flow]), collect(), collect([$purchase]), $timeline,
+        ])['supplier_payments'][0];
+
+        $this->assertSame('fifo_projection', $evidence['reference_match_method']);
+        $this->assertTrue($evidence['inferred_allocation']);
+        $this->assertFalse($evidence['explicitly_allocated']);
+        $this->assertSame('inferred', $evidence['allocation_confidence']);
+    }
+
     public function test_cancelled_invoice_without_reversal_is_evidence_only_and_does_not_write(): void
     {
         $partner = $this->partner();
@@ -92,6 +267,8 @@ class MaterialDebtRootCauseDrilldownServiceTest extends TestCase
         $cancelled = collect($detail['cancelled_invoices'])->firstWhere('invoice_id', $invoice->id);
 
         $this->assertTrue($cancelled['missing_reversal']);
+        $this->assertFalse($cancelled['has_exact_reversal']);
+        $this->assertFalse($cancelled['has_partial_reversal']);
         $this->assertSame('CANCELLED_INVOICE_REVERSAL_GAP', $this->pattern($detail, 'CANCELLED_INVOICE_REVERSAL_GAP')['pattern']);
         $this->assertContains('Cancelled invoice reversal voucher', $detail['missing_evidence']);
         $this->assertSame($before, [CustomerDebt::query()->count(), CashFlow::withTrashed()->count()]);
@@ -115,7 +292,199 @@ class MaterialDebtRootCauseDrilldownServiceTest extends TestCase
 
         $this->assertTrue($cancelled['has_exact_reversal']);
         $this->assertFalse($cancelled['missing_reversal']);
+        $this->assertSame(900_000.0, $cancelled['expected_reversal_amount']);
+        $this->assertSame(900_000.0, $cancelled['active_reversal_amount']);
         $this->assertNull($this->pattern($detail, 'CANCELLED_INVOICE_REVERSAL_GAP'));
+    }
+
+    public function test_current_invoice_cancellation_adjustment_semantics_count_as_exact_reversal(): void
+    {
+        $partner = $this->partner();
+        $invoice = $this->invoice($partner, 'HD-CANCEL-CURRENT-SEMANTICS', 900_000, 'cancelled');
+        CustomerDebt::query()->create([
+            'customer_id' => $partner->id,
+            'ref_code' => $invoice->code,
+            'type' => 'adjustment',
+            'amount' => -900_000,
+            'debt_total' => 0,
+            'note' => 'Đảo công nợ do hủy hóa đơn ' . $invoice->code,
+            'recorded_at' => now(),
+        ]);
+
+        $detail = $this->service->drilldown($partner, $this->auditRow($partner));
+        $row = collect($detail['cancelled_invoices'])->firstWhere('invoice_id', $invoice->id);
+
+        $this->assertTrue($row['has_exact_reversal']);
+        $this->assertSame([$invoice->code], $row['matching_customer_debt_reversal_codes']);
+        $this->assertSame('code', $row['match_method']);
+    }
+
+    public function test_original_active_invoice_receipt_never_counts_as_reversal(): void
+    {
+        $partner = $this->partner();
+        $invoice = $this->invoice($partner, 'HD-CANCEL-RECEIPT', 900_000, 'cancelled');
+        CashFlow::query()->create([
+            'code' => 'PT-ORIGINAL-ACTIVE',
+            'type' => 'receipt',
+            'amount' => 900_000,
+            'time' => now(),
+            'target_type' => 'Khach hang',
+            'target_id' => $partner->id,
+            'target_name' => 'Generic Partner',
+            'reference_type' => 'Invoice',
+            'reference_code' => $invoice->code,
+            'status' => 'active',
+        ]);
+
+        $detail = $this->service->drilldown($partner, $this->auditRow($partner));
+        $row = collect($detail['cancelled_invoices'])->firstWhere('invoice_id', $invoice->id);
+
+        $this->assertSame(['PT-ORIGINAL-ACTIVE'], $row['matching_original_receipt_codes']);
+        $this->assertSame([], $row['matching_active_reversal_codes']);
+        $this->assertTrue($row['missing_reversal']);
+        $this->assertSame(0.0, $row['active_reversal_amount']);
+    }
+
+    public function test_deleted_original_receipt_is_historical_and_does_not_satisfy_reversal(): void
+    {
+        $partner = $this->partner();
+        $invoice = $this->invoice($partner, 'HD-CANCEL-DELETED-RECEIPT', 500_000, 'cancelled');
+        $receipt = CashFlow::query()->create([
+            'code' => 'PT-ORIGINAL-DELETED',
+            'type' => 'receipt',
+            'amount' => 500_000,
+            'time' => now(),
+            'target_type' => 'Khach hang',
+            'target_id' => $partner->id,
+            'target_name' => 'Generic Partner',
+            'reference_type' => 'Invoice',
+            'reference_code' => $invoice->code,
+            'status' => 'cancelled',
+        ]);
+        $receipt->delete();
+
+        $detail = $this->service->drilldown($partner, $this->auditRow($partner));
+        $row = collect($detail['cancelled_invoices'])->firstWhere('invoice_id', $invoice->id);
+        $evidence = collect($detail['allocation_evidence']['customer_receipts'])->firstWhere('cashflow_code', $receipt->code);
+
+        $this->assertSame('historical', $evidence['evidence_scope']);
+        $this->assertFalse($evidence['explicitly_allocated']);
+        $this->assertTrue($row['missing_reversal']);
+    }
+
+    public function test_partial_customer_debt_reversal_is_not_exact(): void
+    {
+        $partner = $this->partner();
+        $invoice = $this->invoice($partner, 'HD-CANCEL-PARTIAL', 900_000, 'cancelled');
+        CustomerDebt::query()->create([
+            'customer_id' => $partner->id,
+            'ref_code' => $invoice->code,
+            'type' => 'sale_reversal',
+            'amount' => -400_000,
+            'debt_total' => 0,
+            'recorded_at' => now(),
+        ]);
+
+        $detail = $this->service->drilldown($partner, $this->auditRow($partner));
+        $row = collect($detail['cancelled_invoices'])->firstWhere('invoice_id', $invoice->id);
+
+        $this->assertFalse($row['has_exact_reversal']);
+        $this->assertTrue($row['has_partial_reversal']);
+        $this->assertFalse($row['missing_reversal']);
+        $this->assertSame(500_000.0, $row['candidate_amount_difference']);
+    }
+
+    public function test_historical_explicit_cashflow_reversal_does_not_satisfy_active_contract(): void
+    {
+        $partner = $this->partner();
+        $invoice = $this->invoice($partner, 'HD-CANCEL-HISTORICAL', 900_000, 'cancelled');
+        $flow = $this->syntheticCashFlow([
+            'id' => 700001,
+            'code' => 'PC-INVOICE-CANCEL-HISTORICAL',
+            'type' => 'payment',
+            'amount' => 900_000,
+            'reference_type' => 'InvoiceCancellation',
+            'reference_id' => $invoice->id,
+            'reference_code' => $invoice->code,
+            'status' => 'cancelled',
+            'deleted_at' => now(),
+        ]);
+
+        $row = $this->invokeService('cancellationMatrix', [collect([$invoice]), collect(), collect([$flow])])[0];
+
+        $this->assertSame(['PC-INVOICE-CANCEL-HISTORICAL'], $row['matching_historical_reversal_codes']);
+        $this->assertSame([], $row['matching_active_reversal_codes']);
+        $this->assertSame(900_000.0, $row['historical_reversal_amount']);
+        $this->assertTrue($row['missing_reversal']);
+    }
+
+    public function test_generic_adjustment_with_matching_code_is_not_a_reversal(): void
+    {
+        $partner = $this->partner();
+        $invoice = $this->invoice($partner, 'HD-CANCEL-GENERIC-ADJUSTMENT', 900_000, 'cancelled');
+        CustomerDebt::query()->create([
+            'customer_id' => $partner->id,
+            'ref_code' => $invoice->code,
+            'type' => 'adjustment',
+            'amount' => -900_000,
+            'debt_total' => 0,
+            'note' => 'Generic adjustment only',
+            'recorded_at' => now(),
+        ]);
+
+        $detail = $this->service->drilldown($partner, $this->auditRow($partner));
+        $row = collect($detail['cancelled_invoices'])->firstWhere('invoice_id', $invoice->id);
+
+        $this->assertSame([], $row['matching_customer_debt_reversal_codes']);
+        $this->assertFalse($row['has_exact_reversal']);
+        $this->assertTrue($row['missing_reversal']);
+    }
+
+    public function test_explicit_cashflow_reversal_uses_reference_id_without_code(): void
+    {
+        $partner = $this->partner();
+        $invoice = $this->invoice($partner, 'HD-CANCEL-ID-ONLY', 900_000, 'cancelled');
+        $flow = $this->syntheticCashFlow([
+            'id' => 700002,
+            'code' => 'PC-INVOICE-CANCEL-ID',
+            'type' => 'payment',
+            'amount' => 900_000,
+            'reference_type' => 'InvoiceCancellation',
+            'reference_id' => $invoice->id,
+            'reference_code' => null,
+            'status' => 'active',
+        ]);
+
+        $row = $this->invokeService('cancellationMatrix', [collect([$invoice]), collect(), collect([$flow])])[0];
+
+        $this->assertSame('id', $row['match_method']);
+        $this->assertTrue($row['has_exact_reversal']);
+        $this->assertFalse($row['reference_conflict']);
+    }
+
+    public function test_explicit_reversal_id_is_authoritative_when_code_conflicts(): void
+    {
+        $partner = $this->partner();
+        $first = $this->invoice($partner, 'HD-CANCEL-ID-A', 900_000, 'cancelled');
+        $second = $this->invoice($partner, 'HD-CANCEL-ID-B', 900_000, 'cancelled');
+        $flow = $this->syntheticCashFlow([
+            'id' => 700003,
+            'code' => 'PC-INVOICE-CANCEL-CONFLICT',
+            'type' => 'payment',
+            'amount' => 900_000,
+            'reference_type' => 'InvoiceCancellation',
+            'reference_id' => $first->id,
+            'reference_code' => $second->code,
+            'status' => 'active',
+        ]);
+
+        $rows = collect($this->invokeService('cancellationMatrix', [collect([$first, $second]), collect(), collect([$flow])]))
+            ->keyBy('invoice_id');
+
+        $this->assertTrue($rows[$first->id]['has_exact_reversal']);
+        $this->assertTrue($rows[$first->id]['reference_conflict']);
+        $this->assertContains('invoice_reference_id_code_conflict', $rows[$first->id]['warnings']);
+        $this->assertTrue($rows[$second->id]['missing_reversal']);
     }
 
     public function test_document_without_ledger_and_ledger_without_document_are_distinguished(): void
@@ -299,6 +668,40 @@ class MaterialDebtRootCauseDrilldownServiceTest extends TestCase
             'customer_paid' => 0,
             'transaction_date' => now(),
         ]);
+    }
+
+    private function purchase(Customer $partner, string $code, float $total): Purchase
+    {
+        return Purchase::query()->create([
+            'code' => $code,
+            'supplier_id' => $partner->id,
+            'total_amount' => $total,
+            'paid_amount' => 0,
+            'debt_amount' => $total,
+            'status' => 'completed',
+            'purchase_date' => now(),
+        ]);
+    }
+
+    private function syntheticCashFlow(array $attributes): CashFlow
+    {
+        $flow = new CashFlow();
+        $flow->setRawAttributes(array_merge([
+            'target_type' => '',
+            'target_id' => 0,
+            'reference_code' => null,
+            'deleted_at' => null,
+            'time' => now(),
+        ], $attributes), true);
+
+        return $flow;
+    }
+
+    private function invokeService(string $method, array $arguments): mixed
+    {
+        $reflection = new \ReflectionMethod($this->service, $method);
+
+        return $reflection->invokeArgs($this->service, $arguments);
     }
 
     private function supplierPayment(Customer $partner, string $code, float $amount): CashFlow

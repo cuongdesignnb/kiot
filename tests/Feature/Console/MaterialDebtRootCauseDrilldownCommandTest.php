@@ -5,6 +5,7 @@ namespace Tests\Feature\Console;
 use App\Console\Commands\MaterialDebtRootCauseDrilldownCommand;
 use App\Models\Customer;
 use App\Services\Debt\MaterialDebtRootCauseDrilldownService;
+use Carbon\Carbon;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
@@ -22,6 +23,7 @@ class MaterialDebtRootCauseDrilldownCommandTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        Carbon::setTestNow(Carbon::create(2026, 7, 13, 10));
         $this->app->make(Kernel::class)->registerCommand(
             $this->app->make(MaterialDebtRootCauseDrilldownCommand::class),
         );
@@ -32,6 +34,7 @@ class MaterialDebtRootCauseDrilldownCommandTest extends TestCase
         foreach (array_reverse($this->cleanup) as $path) {
             is_dir($path) ? File::deleteDirectory($path) : @unlink($path);
         }
+        Carbon::setTestNow();
         parent::tearDown();
     }
 
@@ -48,16 +51,11 @@ class MaterialDebtRootCauseDrilldownCommandTest extends TestCase
         $audit = $this->auditFile([$this->auditRow($partner)]);
 
         foreach (['../outside', '/tmp/material-drilldown', 'storage/app/other/material-drilldown'] as $path) {
-            try {
-                $this->artisan('debt:drilldown-material', [
-                    '--dry-run' => true,
-                    '--audit-file' => $audit,
-                    '--export-dir' => $path,
-                ])->run();
-                $this->fail("Unsafe export path was accepted: {$path}");
-            } catch (RuntimeException $exception) {
-                $this->assertStringContainsString('Audit', $exception->getMessage());
-            }
+            $this->artisan('debt:drilldown-material', [
+                '--dry-run' => true,
+                '--audit-file' => $audit,
+                '--export-dir' => $path,
+            ])->assertExitCode(1);
         }
     }
 
@@ -161,7 +159,141 @@ class MaterialDebtRootCauseDrilldownCommandTest extends TestCase
         $this->assertSame(['ERROR', 'OK'], array_column($details, 'drilldown_status'));
         $this->assertSame('UNRESOLVED', $details[0]['source_of_truth_status']);
         $this->assertSame('Drilldown failed: RuntimeException', $details[0]['error_message']);
+        $this->assertSame('DRILLDOWN_EXECUTION_ERROR', $details[0]['error_code']);
         $this->assertFileExists($output . '/partners/' . $second->id . '.json');
+    }
+
+    public function test_partner_code_mismatch_does_not_call_service(): void
+    {
+        $partner = $this->partner();
+        $audit = $this->auditFile([$this->auditRow($partner, ['partner_code' => 'STALE-CODE'])]);
+        $output = $this->outputDir();
+        $mock = Mockery::mock(MaterialDebtRootCauseDrilldownService::class);
+        $mock->shouldNotReceive('drilldown');
+        $this->app->instance(MaterialDebtRootCauseDrilldownService::class, $mock);
+
+        $this->artisan('debt:drilldown-material', [
+            '--dry-run' => true, '--audit-file' => $audit, '--export-dir' => $output,
+        ])->assertExitCode(1);
+
+        $detail = $this->readJson($output . '/material-root-cause-detail.json')['details'][0];
+        $this->assertSame('AUDIT_ARTIFACT_PARTNER_MISMATCH', $detail['error_code']);
+        $this->assertSame(['partner_code'], $detail['mismatch_fields']);
+        $this->assertFileDoesNotExist($output . '/partners/' . $partner->id . '.json');
+    }
+
+    public function test_partner_role_mismatch_does_not_call_service(): void
+    {
+        $partner = $this->partner();
+        $audit = $this->auditFile([$this->auditRow($partner, ['role' => 'supplier_only'])]);
+        $output = $this->outputDir();
+        $mock = Mockery::mock(MaterialDebtRootCauseDrilldownService::class);
+        $mock->shouldNotReceive('drilldown');
+        $this->app->instance(MaterialDebtRootCauseDrilldownService::class, $mock);
+
+        $this->artisan('debt:drilldown-material', [
+            '--dry-run' => true, '--audit-file' => $audit, '--export-dir' => $output,
+        ])->assertExitCode(1);
+
+        $detail = $this->readJson($output . '/material-root-cause-detail.json')['details'][0];
+        $this->assertSame('AUDIT_ARTIFACT_PARTNER_MISMATCH', $detail['error_code']);
+        $this->assertSame(['role'], $detail['mismatch_fields']);
+    }
+
+    public function test_partner_not_found_and_invalid_rows_have_stable_error_codes(): void
+    {
+        $rows = [
+            array_merge($this->auditRow($this->partner()), ['partner_id' => 999999999, 'partner_code' => 'MISSING']),
+            array_merge($this->auditRow($this->partner()), ['partner_id' => 'invalid']),
+            array_merge($this->auditRow($this->partner()), ['partner_code' => '']),
+            array_merge($this->auditRow($this->partner()), ['role' => 'invalid_role']),
+        ];
+        $audit = $this->auditFile($rows);
+        $output = $this->outputDir();
+        $mock = Mockery::mock(MaterialDebtRootCauseDrilldownService::class);
+        $mock->shouldNotReceive('drilldown');
+        $this->app->instance(MaterialDebtRootCauseDrilldownService::class, $mock);
+
+        $this->artisan('debt:drilldown-material', [
+            '--dry-run' => true, '--audit-file' => $audit, '--export-dir' => $output,
+        ])->assertExitCode(1);
+
+        $codes = collect($this->readJson($output . '/material-root-cause-detail.json')['details'])
+            ->pluck('error_code')->sort()->values()->all();
+        $this->assertSame([
+            'INVALID_PARTNER_CODE', 'INVALID_PARTNER_ID', 'INVALID_PARTNER_ROLE', 'PARTNER_NOT_FOUND',
+        ], $codes);
+    }
+
+    public function test_duplicate_partner_ids_are_not_executed_or_written(): void
+    {
+        $partner = $this->partner();
+        $audit = $this->auditFile([$this->auditRow($partner), $this->auditRow($partner)]);
+        $output = $this->outputDir();
+        $mock = Mockery::mock(MaterialDebtRootCauseDrilldownService::class);
+        $mock->shouldNotReceive('drilldown');
+        $this->app->instance(MaterialDebtRootCauseDrilldownService::class, $mock);
+
+        $this->artisan('debt:drilldown-material', [
+            '--dry-run' => true, '--audit-file' => $audit, '--export-dir' => $output,
+        ])->assertExitCode(1);
+
+        $payload = $this->readJson($output . '/material-root-cause-detail.json');
+        $this->assertSame([$partner->id], $payload['metadata']['duplicate_partner_ids']);
+        $this->assertCount(1, $payload['details']);
+        $this->assertSame('DUPLICATE_PARTNER_ID', $payload['details'][0]['error_code']);
+        $this->assertFileDoesNotExist($output . '/partners/' . $partner->id . '.json');
+    }
+
+    public function test_input_sha256_is_exported_without_absolute_input_path(): void
+    {
+        $partner = $this->partner();
+        $audit = $this->auditFile([$this->auditRow($partner)]);
+        $output = $this->outputDir();
+        $expected = hash_file('sha256', $audit);
+
+        $this->artisan('debt:drilldown-material', [
+            '--dry-run' => true, '--audit-file' => $audit, '--export-dir' => $output,
+        ])->assertExitCode(0);
+
+        $summary = $this->readJson($output . '/material-root-cause-summary.json');
+        $detail = $this->readJson($output . '/material-root-cause-detail.json');
+        $log = (string) file_get_contents($output . '/command.log');
+        $csv = (string) file_get_contents($output . '/material-root-cause-summary.csv');
+        $this->assertSame($expected, $summary['metadata']['input_audit_sha256']);
+        $this->assertSame($expected, $detail['metadata']['input_audit_sha256']);
+        $this->assertSame($expected, $summary['rows'][0]['input_audit_sha256']);
+        $this->assertStringContainsString("input_audit_sha256={$expected}", $log);
+        $this->assertStringContainsString($expected, $csv);
+        $this->assertStringStartsWith('storage/app/audits/', $summary['metadata']['input_audit_file']);
+        $this->assertStringNotContainsString('D:\\', $summary['metadata']['input_audit_file']);
+    }
+
+    public function test_non_empty_export_directory_is_rejected_without_modifying_existing_file(): void
+    {
+        $partner = $this->partner();
+        $audit = $this->auditFile([$this->auditRow($partner)]);
+        $output = $this->outputDir();
+        File::ensureDirectoryExists($output);
+        file_put_contents($output . '/existing.txt', 'keep');
+
+        $this->artisan('debt:drilldown-material', [
+            '--dry-run' => true, '--audit-file' => $audit, '--export-dir' => $output,
+        ])->expectsOutputToContain('BLOCKER: export directory is not empty')->assertExitCode(1);
+
+        $this->assertSame('keep', file_get_contents($output . '/existing.txt'));
+        $this->assertFileDoesNotExist($output . '/material-root-cause-summary.json');
+        $this->assertDirectoryDoesNotExist($output . '/partners');
+    }
+
+    public function test_alias_only_row_is_skipped_as_non_material(): void
+    {
+        $this->assertCompatibilityOnlyRowIsSkipped('TARGET_TYPE_ALIAS_SUSPECT');
+    }
+
+    public function test_technical_only_row_is_skipped_as_non_material(): void
+    {
+        $this->assertCompatibilityOnlyRowIsSkipped('TECHNICAL_LEDGER_EXCLUDED');
     }
 
     public function test_command_is_read_only_across_all_debt_tables(): void
@@ -206,6 +338,33 @@ class MaterialDebtRootCauseDrilldownCommandTest extends TestCase
                 file_get_contents($secondOutput . '/' . $file),
             );
         }
+    }
+
+    private function assertCompatibilityOnlyRowIsSkipped(string $flag): void
+    {
+        $partner = $this->partner();
+        $audit = $this->auditFile([$this->auditRow($partner, [
+            'primary_classification' => $flag,
+            'classification_flags' => [$flag],
+        ])]);
+        $output = $this->outputDir();
+        $mock = Mockery::mock(MaterialDebtRootCauseDrilldownService::class);
+        $mock->shouldNotReceive('drilldown');
+        $this->app->instance(MaterialDebtRootCauseDrilldownService::class, $mock);
+
+        $this->artisan('debt:drilldown-material', [
+            '--dry-run' => true, '--audit-file' => $audit, '--export-dir' => $output,
+        ])->assertExitCode(0);
+
+        $payload = $this->readJson($output . '/material-root-cause-summary.json');
+        $this->assertSame(1, $payload['metadata']['input_row_count']);
+        $this->assertSame(0, $payload['metadata']['material_row_count']);
+        $this->assertSame(1, $payload['metadata']['non_material_skipped']);
+        $this->assertSame(0, $payload['metadata']['processed_count']);
+        $this->assertSame([], $payload['rows']);
+        $this->assertFileDoesNotExist($output . '/partners/' . $partner->id . '.json');
+        $queue = file($output . '/manual-review-queue.csv', FILE_IGNORE_NEW_LINES);
+        $this->assertCount(1, $queue);
     }
 
     private function partner(array $overrides = []): Customer
@@ -303,6 +462,7 @@ class MaterialDebtRootCauseDrilldownCommandTest extends TestCase
             'purchases' => ['total_amount', 'paid_amount', 'debt_amount'],
             'purchase_returns' => ['total_amount', 'refund_amount'],
             'debt_offsets' => ['amount'],
+            'customer_payment_allocations' => ['amount'],
         ];
         $snapshot = [];
         foreach ($spec as $table => $columns) {
