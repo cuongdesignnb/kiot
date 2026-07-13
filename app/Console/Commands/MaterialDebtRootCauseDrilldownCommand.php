@@ -6,19 +6,30 @@ use App\Models\Customer;
 use App\Services\Debt\MaterialDebtRootCauseDrilldownService;
 use App\Services\Debt\PartnerDebtParityAuditService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
 use RuntimeException;
 use Throwable;
 
 class MaterialDebtRootCauseDrilldownCommand extends Command
 {
+    private const VALID_ARTIFACT_ROLES = ['customer_only', 'supplier_only', 'dual_role'];
+
+    private const NON_MATERIAL_FLAGS = [
+        'OK',
+        'TARGET_TYPE_ALIAS_SUSPECT',
+        'TECHNICAL_LEDGER_EXCLUDED',
+        'VIRTUAL_DISPLAY_ALIGNMENT_ONLY',
+    ];
+
     public const SUMMARY_COLUMNS = [
         'partner_id', 'partner_code', 'role', 'risk_level', 'primary_classification',
         'classification_flags', 'max_abs_difference', 'stored_customer_screen',
         'stored_supplier_screen', 'customer_document_raw_final', 'customer_ledger_final',
         'supplier_document_raw_final', 'supplier_ledger_final', 'observed_patterns',
         'highest_pattern_confidence', 'source_of_truth_status', 'missing_evidence',
-        'recommended_next_review', 'drilldown_status', 'error_message',
+        'recommended_next_review', 'drilldown_status', 'error_code', 'error_message',
+        'input_audit_sha256',
     ];
 
     protected $signature = 'debt:drilldown-material
@@ -76,48 +87,112 @@ class MaterialDebtRootCauseDrilldownCommand extends Command
             return self::FAILURE;
         }
 
-        $auditPath = $this->pathUnderAuditRoot((string) $this->option('audit-file'), false);
-        if (!is_file($auditPath)) {
-            $this->error("Audit file not found: {$auditPath}");
+        try {
+            $auditPath = $this->pathUnderAuditRoot((string) $this->option('audit-file'), false);
+            if (!is_file($auditPath)) {
+                $this->error('Audit input file was not found under storage/app/audits.');
+
+                return self::FAILURE;
+            }
+            $exportDir = $this->pathUnderAuditRoot((string) $this->option('export-dir'), true);
+            $this->assertEmptyExportDirectory($exportDir);
+        } catch (RuntimeException $exception) {
+            $this->error($exception->getMessage());
 
             return self::FAILURE;
         }
-        $exportDir = $this->pathUnderAuditRoot((string) $this->option('export-dir'), true);
-        File::ensureDirectoryExists($exportDir);
-        File::ensureDirectoryExists($exportDir . DIRECTORY_SEPARATOR . 'partners');
 
-        $payload = json_decode((string) file_get_contents($auditPath), true, flags: JSON_THROW_ON_ERROR);
-        $auditRows = collect((array) ($payload['rows'] ?? $payload))
+        $inputBytes = (string) file_get_contents($auditPath);
+        $inputSha256 = hash('sha256', $inputBytes);
+        $payload = json_decode($inputBytes, true, flags: JSON_THROW_ON_ERROR);
+        $inputRows = collect((array) ($payload['rows'] ?? $payload))
             ->filter(fn ($row): bool => is_array($row))
-            ->sortBy(fn (array $row): int => (int) ($row['partner_id'] ?? 0))
+            ->values()
+            ->map(fn (array $row, int $index): array => array_merge($row, ['_input_index' => $index]));
+        $materialRows = $inputRows->filter(fn (array $row): bool => $this->isMaterialRow($row))->values();
+        $nonMaterialSkipped = $inputRows->count() - $materialRows->count();
+        $auditRows = $materialRows
             ->filter(fn (array $row): bool => $this->matchesFilters($row, $partnerId, $role, $risk, $classification))
+            ->sortBy(fn (array $row): string => sprintf(
+                '%020d|%08d',
+                filter_var($row['partner_id'] ?? null, FILTER_VALIDATE_INT) ?: 0,
+                (int) $row['_input_index'],
+            ))
             ->values();
-        $eligible = $auditRows->count();
         if (is_int($limit)) {
             $auditRows = $auditRows->take($limit)->values();
         }
 
+        $duplicateIds = $auditRows->filter(fn (array $row): bool => $this->validPartnerId($row) !== null)
+            ->groupBy(fn (array $row): int => $this->validPartnerId($row))
+            ->filter(fn (Collection $rows): bool => $rows->count() > 1)
+            ->keys()->map(fn ($id): int => (int) $id)->sort()->values();
+
+        File::ensureDirectoryExists($exportDir);
+        File::ensureDirectoryExists($exportDir . DIRECTORY_SEPARATOR . 'partners');
+
         $details = [];
         $summaries = [];
         $errors = 0;
+        $processed = 0;
+        $identityMismatches = 0;
+        $emittedDuplicateIds = collect();
         foreach ($auditRows as $auditRow) {
-            $id = (int) ($auditRow['partner_id'] ?? 0);
-            try {
+            $id = $this->validPartnerId($auditRow);
+            $detail = null;
+
+            if ($id === null) {
+                $detail = $this->errorDetail($auditRow, 'INVALID_PARTNER_ID', 'Artifact partner ID must be a positive integer.');
+            } elseif ($duplicateIds->contains($id)) {
+                if ($emittedDuplicateIds->contains($id)) {
+                    continue;
+                }
+                $emittedDuplicateIds->push($id);
+                $detail = $this->errorDetail($auditRow, 'DUPLICATE_PARTNER_ID', 'Artifact contains duplicate partner IDs.');
+            } elseif (trim((string) ($auditRow['partner_code'] ?? '')) === '') {
+                $detail = $this->errorDetail($auditRow, 'INVALID_PARTNER_CODE', 'Artifact partner code is required.');
+            } elseif (!in_array((string) ($auditRow['role'] ?? ''), self::VALID_ARTIFACT_ROLES, true)) {
+                $detail = $this->errorDetail($auditRow, 'INVALID_PARTNER_ROLE', 'Artifact partner role is invalid.');
+            } else {
                 $partner = Customer::query()->find($id);
                 if (!$partner) {
-                    throw new RuntimeException('Partner record is unavailable in the current database.');
+                    $detail = $this->errorDetail($auditRow, 'PARTNER_NOT_FOUND', 'Partner record is unavailable in the current database.');
+                } else {
+                    $mismatchFields = $this->identityMismatchFields($auditRow, $partner);
+                    if ($mismatchFields !== []) {
+                        $identityMismatches++;
+                        $detail = $this->errorDetail(
+                            $auditRow,
+                            'AUDIT_ARTIFACT_PARTNER_MISMATCH',
+                            'Artifact partner identity does not match the current database.',
+                            ['mismatch_fields' => $mismatchFields],
+                        );
+                    } else {
+                        try {
+                            $detail = $service->drilldown($partner, $auditRow);
+                            $processed++;
+                        } catch (Throwable $exception) {
+                            $detail = $this->errorDetail(
+                                $auditRow,
+                                'DRILLDOWN_EXECUTION_ERROR',
+                                'Drilldown failed: ' . class_basename($exception),
+                            );
+                        }
+                    }
                 }
-                $detail = $service->drilldown($partner, $auditRow);
-            } catch (Throwable $exception) {
+            }
+
+            if (($detail['drilldown_status'] ?? 'ERROR') === 'ERROR') {
                 $errors++;
-                $detail = $this->errorDetail($auditRow, $exception);
             }
             $details[] = $detail;
-            $summaries[] = $this->summaryRow($detail, $auditRow);
-            $this->writeJson(
-                $exportDir . DIRECTORY_SEPARATOR . 'partners' . DIRECTORY_SEPARATOR . $id . '.json',
-                $detail,
-            );
+            $summaries[] = $this->summaryRow($detail, $auditRow, $inputSha256);
+            if (($detail['drilldown_status'] ?? 'ERROR') === 'OK') {
+                $this->writeJson(
+                    $exportDir . DIRECTORY_SEPARATOR . 'partners' . DIRECTORY_SEPARATOR . $id . '.json',
+                    $detail,
+                );
+            }
         }
 
         $summaries = collect($summaries)->sortBy('partner_id')->values()->all();
@@ -128,29 +203,46 @@ class MaterialDebtRootCauseDrilldownCommand extends Command
             (int) ($row['partner_id'] ?? 0),
         ))->values()->all();
 
+        $metadata = [
+            'input_audit_file' => $this->relativeAuditPath($auditPath),
+            'input_audit_sha256' => $inputSha256,
+            'input_row_count' => $inputRows->count(),
+            'material_row_count' => $materialRows->count(),
+            'non_material_skipped' => $nonMaterialSkipped,
+            'unique_partner_ids' => $auditRows->map(fn (array $row): ?int => $this->validPartnerId($row))->filter()->unique()->count(),
+            'duplicate_partner_ids' => $duplicateIds->all(),
+            'identity_mismatch_count' => $identityMismatches,
+            'processed_count' => $processed,
+            'error_count' => $errors,
+            'generated_at' => now()->toIso8601String(),
+        ];
+
         $this->writeCsv($exportDir . DIRECTORY_SEPARATOR . 'material-root-cause-summary.csv', $summaries);
         $this->writeJson($exportDir . DIRECTORY_SEPARATOR . 'material-root-cause-summary.json', [
             'dry_run' => true,
             'source_of_truth_default' => MaterialDebtRootCauseDrilldownService::SOURCE_OF_TRUTH_STATUS,
+            'metadata' => $metadata,
             'rows' => $summaries,
         ]);
         $this->writeJson($exportDir . DIRECTORY_SEPARATOR . 'material-root-cause-detail.json', [
             'dry_run' => true,
+            'source_of_truth_default' => MaterialDebtRootCauseDrilldownService::SOURCE_OF_TRUTH_STATUS,
+            'metadata' => $metadata,
             'details' => $details,
         ]);
         $this->writeCsv($exportDir . DIRECTORY_SEPARATOR . 'manual-review-queue.csv', $queue);
         file_put_contents($exportDir . DIRECTORY_SEPARATOR . 'command.log', implode(PHP_EOL, [
             'command=debt:drilldown-material',
             'dry_run=true',
-            'eligible=' . $eligible,
-            'processed=' . count($summaries),
-            'errors=' . $errors,
             'source_of_truth_default=' . MaterialDebtRootCauseDrilldownService::SOURCE_OF_TRUTH_STATUS,
+            ...collect($metadata)->map(fn ($value, string $key): string => $key . '=' . $this->scalar($value))->values()->all(),
         ]) . PHP_EOL);
 
         $this->info('Dry-run: yes');
-        $this->info("Total eligible: {$eligible}");
-        $this->info('Total processed: ' . count($summaries));
+        $this->info('Input rows: ' . $inputRows->count());
+        $this->info('Material rows: ' . $materialRows->count());
+        $this->info("Non-material skipped: {$nonMaterialSkipped}");
+        $this->info("Total processed: {$processed}");
         $this->info("Total errors: {$errors}");
         $this->info("Output directory: {$exportDir}");
 
@@ -181,7 +273,7 @@ class MaterialDebtRootCauseDrilldownCommand extends Command
             || in_array($classification, (array) ($row['classification_flags'] ?? []), true);
     }
 
-    private function summaryRow(array $detail, array $auditRow): array
+    private function summaryRow(array $detail, array $auditRow, string $inputSha256): array
     {
         $patterns = collect($detail['observed_patterns'] ?? []);
         $confidenceRank = ['low' => 1, 'medium' => 2, 'high' => 3];
@@ -207,11 +299,13 @@ class MaterialDebtRootCauseDrilldownCommand extends Command
             'missing_evidence' => (array) ($detail['missing_evidence'] ?? ['Manual source-of-truth confirmation']),
             'recommended_next_review' => (string) ($detail['recommended_next_review'] ?? 'Manual review required.'),
             'drilldown_status' => (string) ($detail['drilldown_status'] ?? 'ERROR'),
+            'error_code' => $detail['error_code'] ?? null,
             'error_message' => $detail['error_message'] ?? null,
+            'input_audit_sha256' => $inputSha256,
         ];
     }
 
-    private function errorDetail(array $auditRow, Throwable $exception): array
+    private function errorDetail(array $auditRow, string $errorCode, string $message, array $context = []): array
     {
         return [
             'drilldown_status' => 'ERROR',
@@ -220,6 +314,10 @@ class MaterialDebtRootCauseDrilldownCommand extends Command
                 'partner_code' => (string) ($auditRow['partner_code'] ?? ''),
                 'role' => (string) ($auditRow['role'] ?? ''),
             ],
+            'artifact_partner_id' => $this->safeArtifactValue($auditRow['partner_id'] ?? null),
+            'artifact_partner_code' => $this->safeArtifactValue($auditRow['partner_code'] ?? ''),
+            'artifact_role' => $this->safeArtifactValue($auditRow['role'] ?? ''),
+            'mismatch_fields' => array_values((array) ($context['mismatch_fields'] ?? [])),
             'observed_patterns' => [[
                 'pattern' => 'UNRESOLVED',
                 'confidence' => 'low',
@@ -230,8 +328,59 @@ class MaterialDebtRootCauseDrilldownCommand extends Command
             'missing_evidence' => ['Manual source-of-truth confirmation'],
             'source_of_truth_status' => MaterialDebtRootCauseDrilldownService::SOURCE_OF_TRUTH_STATUS,
             'recommended_next_review' => 'Resolve drilldown execution error before evidence review.',
-            'error_message' => 'Drilldown failed: ' . class_basename($exception),
+            'error_code' => $errorCode,
+            'error_message' => $message,
         ];
+    }
+
+    private function isMaterialRow(array $row): bool
+    {
+        $flags = collect((array) ($row['classification_flags'] ?? []))
+            ->push((string) ($row['primary_classification'] ?? ''))
+            ->filter()->unique();
+
+        return $flags->diff(self::NON_MATERIAL_FLAGS)->isNotEmpty();
+    }
+
+    private function validPartnerId(array $row): ?int
+    {
+        $value = $row['partner_id'] ?? null;
+        if (is_int($value) && $value > 0) {
+            return $value;
+        }
+        if (is_string($value) && preg_match('/^[1-9][0-9]*$/', $value) === 1) {
+            return (int) $value;
+        }
+
+        return null;
+    }
+
+    private function identityMismatchFields(array $auditRow, Customer $partner): array
+    {
+        $mismatches = [];
+        if ((int) $auditRow['partner_id'] !== (int) $partner->id) {
+            $mismatches[] = 'partner_id';
+        }
+        if ((string) $auditRow['partner_code'] !== (string) $partner->code) {
+            $mismatches[] = 'partner_code';
+        }
+        if ((string) $auditRow['role'] !== MaterialDebtRootCauseDrilldownService::roleFor($partner)) {
+            $mismatches[] = 'role';
+        }
+
+        return $mismatches;
+    }
+
+    private function safeArtifactValue(mixed $value): int|string|null
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+        if (!is_scalar($value)) {
+            return null;
+        }
+
+        return mb_substr(trim((string) $value), 0, 128);
     }
 
     private function writeCsv(string $path, array $rows): void
@@ -277,6 +426,26 @@ class MaterialDebtRootCauseDrilldownCommand extends Command
         }
 
         return str_replace('/', DIRECTORY_SEPARATOR, $absolute);
+    }
+
+    private function assertEmptyExportDirectory(string $path): void
+    {
+        if (!is_dir($path)) {
+            return;
+        }
+
+        $entries = array_values(array_diff(scandir($path) ?: [], ['.', '..']));
+        if ($entries !== []) {
+            throw new RuntimeException('BLOCKER: export directory is not empty');
+        }
+    }
+
+    private function relativeAuditPath(string $path): string
+    {
+        $root = rtrim(str_replace('\\', '/', storage_path('app/audits')), '/');
+        $normalized = str_replace('\\', '/', $path);
+
+        return 'storage/app/audits/' . ltrim(substr($normalized, strlen($root)), '/');
     }
 
     private function positiveIntegerOption(string $name): int|false|null
