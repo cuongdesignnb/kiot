@@ -20,6 +20,8 @@ class MaterialDebtRootCauseDrilldownCommandTest extends TestCase
 
     private array $cleanup = [];
 
+    private array $junctions = [];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -31,6 +33,9 @@ class MaterialDebtRootCauseDrilldownCommandTest extends TestCase
 
     protected function tearDown(): void
     {
+        foreach (array_reverse($this->junctions) as $path) {
+            @rmdir($path);
+        }
         foreach (array_reverse($this->cleanup) as $path) {
             is_dir($path) ? File::deleteDirectory($path) : @unlink($path);
         }
@@ -245,6 +250,36 @@ class MaterialDebtRootCauseDrilldownCommandTest extends TestCase
         $this->assertFileDoesNotExist($output . '/partners/' . $partner->id . '.json');
     }
 
+    public function test_duplicate_partner_id_is_rejected_before_limit(): void
+    {
+        $partner = $this->partner();
+        $this->assertDuplicateRemainsBlocked([
+            $this->auditRow($partner),
+            $this->auditRow($partner),
+        ], ['--limit' => '1'], $partner);
+    }
+
+    public function test_duplicate_partner_id_is_rejected_before_risk_filter(): void
+    {
+        $partner = $this->partner();
+        $this->assertDuplicateRemainsBlocked([
+            $this->auditRow($partner, ['risk_level' => 'CRITICAL']),
+            $this->auditRow($partner, ['risk_level' => 'HIGH']),
+        ], ['--risk' => 'CRITICAL'], $partner);
+    }
+
+    public function test_duplicate_partner_id_is_rejected_before_classification_filter(): void
+    {
+        $partner = $this->partner();
+        $this->assertDuplicateRemainsBlocked([
+            $this->auditRow($partner),
+            $this->auditRow($partner, [
+                'primary_classification' => 'CUSTOMER_STORED_VS_LEDGER',
+                'classification_flags' => ['CUSTOMER_STORED_VS_LEDGER'],
+            ]),
+        ], ['--classification' => 'CUSTOMER_STORED_VS_DOCUMENT'], $partner);
+    }
+
     public function test_input_sha256_is_exported_without_absolute_input_path(): void
     {
         $partner = $this->partner();
@@ -284,6 +319,115 @@ class MaterialDebtRootCauseDrilldownCommandTest extends TestCase
         $this->assertSame('keep', file_get_contents($output . '/existing.txt'));
         $this->assertFileDoesNotExist($output . '/material-root-cause-summary.json');
         $this->assertDirectoryDoesNotExist($output . '/partners');
+    }
+
+    public function test_empty_existing_export_directory_is_accepted(): void
+    {
+        $partner = $this->partner();
+        $audit = $this->auditFile([$this->auditRow($partner)]);
+        $output = $this->outputDir();
+        File::ensureDirectoryExists($output);
+
+        $this->artisan('debt:drilldown-material', [
+            '--dry-run' => true, '--audit-file' => $audit, '--export-dir' => $output,
+        ])->assertExitCode(0);
+
+        $this->assertFileExists($output.'/material-root-cause-summary.json');
+    }
+
+    public function test_malformed_json_fails_safely_without_creating_output(): void
+    {
+        $audit = $this->rawAuditFile('{not-json');
+        $output = $this->outputDir();
+
+        $this->artisan('debt:drilldown-material', [
+            '--dry-run' => true, '--audit-file' => $audit, '--export-dir' => $output,
+        ])->expectsOutputToContain('Invalid audit artifact.')->assertExitCode(1);
+
+        $this->assertDirectoryDoesNotExist($output);
+    }
+
+    public function test_valid_json_scalar_and_missing_rows_shape_are_rejected(): void
+    {
+        foreach (['"scalar"', '{"metadata":true}'] as $payload) {
+            $audit = $this->rawAuditFile($payload);
+            $output = $this->outputDir();
+
+            $this->artisan('debt:drilldown-material', [
+                '--dry-run' => true, '--audit-file' => $audit, '--export-dir' => $output,
+            ])->expectsOutputToContain('Invalid audit artifact.')->assertExitCode(1);
+            $this->assertDirectoryDoesNotExist($output);
+        }
+    }
+
+    public function test_existing_file_used_as_output_directory_fails_safely(): void
+    {
+        $partner = $this->partner();
+        $audit = $this->auditFile([$this->auditRow($partner)]);
+        $output = storage_path('app/audits/testing-drilldown-output-file-'.uniqid());
+        file_put_contents($output, 'keep');
+        $this->cleanup[] = $output;
+
+        $this->artisan('debt:drilldown-material', [
+            '--dry-run' => true, '--audit-file' => $audit, '--export-dir' => $output,
+        ])->expectsOutputToContain('Output path must be a directory.')->assertExitCode(1);
+
+        $this->assertSame('keep', file_get_contents($output));
+    }
+
+    public function test_symlinked_input_cannot_escape_audit_root(): void
+    {
+        $outside = storage_path('app/testing-drilldown-outside-input-'.uniqid());
+        File::ensureDirectoryExists($outside);
+        file_put_contents($outside.'/input.json', json_encode(['rows' => []], JSON_THROW_ON_ERROR));
+        $this->cleanup[] = $outside;
+        $link = storage_path('app/audits/testing-drilldown-input-link-'.uniqid());
+        $this->createDirectoryLink($outside, $link);
+        $output = $this->outputDir();
+
+        $this->artisan('debt:drilldown-material', [
+            '--dry-run' => true, '--audit-file' => $link.'/input.json', '--export-dir' => $output,
+        ])->expectsOutputToContain('Audit path resolves outside storage/app/audits.')->assertExitCode(1);
+
+        $this->assertDirectoryDoesNotExist($output);
+    }
+
+    public function test_symlinked_output_directory_and_parent_cannot_escape_audit_root(): void
+    {
+        $partner = $this->partner();
+        $audit = $this->auditFile([$this->auditRow($partner)]);
+        foreach ([false, true] as $useChild) {
+            $outside = storage_path('app/testing-drilldown-outside-output-'.uniqid());
+            File::ensureDirectoryExists($outside);
+            $this->cleanup[] = $outside;
+            $link = storage_path('app/audits/testing-drilldown-output-link-'.uniqid());
+            $this->createDirectoryLink($outside, $link);
+            $output = $useChild ? $link.'/child' : $link;
+
+            $this->artisan('debt:drilldown-material', [
+                '--dry-run' => true, '--audit-file' => $audit, '--export-dir' => $output,
+            ])->expectsOutputToContain('Audit path resolves outside storage/app/audits.')->assertExitCode(1);
+            $this->assertDirectoryDoesNotExist($useChild ? $outside.'/child' : $outside.'/partners');
+        }
+    }
+
+    public function test_command_emits_no_database_mutation_queries_after_fixture_creation(): void
+    {
+        $partner = $this->partner();
+        $audit = $this->auditFile([$this->auditRow($partner)]);
+        $output = $this->outputDir();
+        $mutations = [];
+        DB::listen(function ($query) use (&$mutations): void {
+            if (preg_match('/^\s*(insert|update|delete|replace|alter|create|drop|truncate)\b/i', $query->sql) === 1) {
+                $mutations[] = $query->sql;
+            }
+        });
+
+        $this->artisan('debt:drilldown-material', [
+            '--dry-run' => true, '--audit-file' => $audit, '--export-dir' => $output,
+        ])->assertExitCode(0);
+
+        $this->assertSame([], $mutations);
     }
 
     public function test_alias_only_row_is_skipped_as_non_material(): void
@@ -367,6 +511,26 @@ class MaterialDebtRootCauseDrilldownCommandTest extends TestCase
         $this->assertCount(1, $queue);
     }
 
+    private function assertDuplicateRemainsBlocked(array $rows, array $options, Customer $partner): void
+    {
+        $audit = $this->auditFile($rows);
+        $output = $this->outputDir();
+        $mock = Mockery::mock(MaterialDebtRootCauseDrilldownService::class);
+        $mock->shouldNotReceive('drilldown');
+        $this->app->instance(MaterialDebtRootCauseDrilldownService::class, $mock);
+
+        $this->artisan('debt:drilldown-material', array_merge([
+            '--dry-run' => true,
+            '--audit-file' => $audit,
+            '--export-dir' => $output,
+        ], $options))->assertExitCode(1);
+
+        $payload = $this->readJson($output.'/material-root-cause-detail.json');
+        $this->assertSame([$partner->id], $payload['metadata']['duplicate_partner_ids']);
+        $this->assertSame('DUPLICATE_PARTNER_ID', $payload['details'][0]['error_code']);
+        $this->assertFileDoesNotExist($output.'/partners/'.$partner->id.'.json');
+    }
+
     private function partner(array $overrides = []): Customer
     {
         return Customer::query()->forceCreate(array_merge([
@@ -408,6 +572,29 @@ class MaterialDebtRootCauseDrilldownCommandTest extends TestCase
         $this->cleanup[] = $path;
 
         return $path;
+    }
+
+    private function rawAuditFile(string $payload): string
+    {
+        $path = storage_path('app/audits/testing-drilldown-input-'.uniqid().'.json');
+        File::ensureDirectoryExists(dirname($path));
+        file_put_contents($path, $payload);
+        $this->cleanup[] = $path;
+
+        return $path;
+    }
+
+    private function createDirectoryLink(string $target, string $link): void
+    {
+        if (DIRECTORY_SEPARATOR === '\\') {
+            exec(sprintf('cmd /c mklink /J "%s" "%s"', $link, $target), $output, $exitCode);
+            if ($exitCode !== 0) {
+                $this->markTestSkipped('Directory junction creation is unavailable in this environment.');
+            }
+        } elseif (! symlink($target, $link)) {
+            $this->markTestSkipped('Directory symlink creation is unavailable in this environment.');
+        }
+        $this->junctions[] = $link;
     }
 
     private function outputDir(): string
