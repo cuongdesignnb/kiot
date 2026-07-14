@@ -102,15 +102,32 @@ class MaterialDebtRootCauseDrilldownCommand extends Command
             return self::FAILURE;
         }
 
-        $inputBytes = (string) file_get_contents($auditPath);
-        $inputSha256 = hash('sha256', $inputBytes);
+        try {
+            $inputBytes = file_get_contents($auditPath);
+            if ($inputBytes === false) {
+                throw new RuntimeException('Audit input cannot be read.');
+            }
         $payload = json_decode($inputBytes, true, flags: JSON_THROW_ON_ERROR);
-        $inputRows = collect((array) ($payload['rows'] ?? $payload))
+            if (! is_array($payload) || ! array_key_exists('rows', $payload) || ! is_array($payload['rows'])) {
+                throw new RuntimeException('Audit input has an invalid schema.');
+            }
+        } catch (Throwable) {
+            $this->error('Invalid audit artifact.');
+
+            return self::FAILURE;
+        }
+
+        $inputSha256 = hash('sha256', $inputBytes);
+        $inputRows = collect($payload['rows'])
             ->filter(fn ($row): bool => is_array($row))
             ->values()
             ->map(fn (array $row, int $index): array => array_merge($row, ['_input_index' => $index]));
         $materialRows = $inputRows->filter(fn (array $row): bool => $this->isMaterialRow($row))->values();
         $nonMaterialSkipped = $inputRows->count() - $materialRows->count();
+        $duplicateIds = $materialRows->filter(fn (array $row): bool => $this->validPartnerId($row) !== null)
+            ->groupBy(fn (array $row): int => $this->validPartnerId($row))
+            ->filter(fn (Collection $rows): bool => $rows->count() > 1)
+            ->keys()->map(fn ($id): int => (int) $id)->sort()->values();
         $auditRows = $materialRows
             ->filter(fn (array $row): bool => $this->matchesFilters($row, $partnerId, $role, $risk, $classification))
             ->sortBy(fn (array $row): string => sprintf(
@@ -123,13 +140,10 @@ class MaterialDebtRootCauseDrilldownCommand extends Command
             $auditRows = $auditRows->take($limit)->values();
         }
 
-        $duplicateIds = $auditRows->filter(fn (array $row): bool => $this->validPartnerId($row) !== null)
-            ->groupBy(fn (array $row): int => $this->validPartnerId($row))
-            ->filter(fn (Collection $rows): bool => $rows->count() > 1)
-            ->keys()->map(fn ($id): int => (int) $id)->sort()->values();
-
-        File::ensureDirectoryExists($exportDir);
-        File::ensureDirectoryExists($exportDir . DIRECTORY_SEPARATOR . 'partners');
+        $stagingDir = null;
+        try {
+            $stagingDir = $this->createStagingDirectory($exportDir);
+            File::ensureDirectoryExists($stagingDir.DIRECTORY_SEPARATOR.'partners');
 
         $details = [];
         $summaries = [];
@@ -189,7 +203,7 @@ class MaterialDebtRootCauseDrilldownCommand extends Command
             $summaries[] = $this->summaryRow($detail, $auditRow, $inputSha256);
             if (($detail['drilldown_status'] ?? 'ERROR') === 'OK') {
                 $this->writeJson(
-                    $exportDir . DIRECTORY_SEPARATOR . 'partners' . DIRECTORY_SEPARATOR . $id . '.json',
+                        $stagingDir.DIRECTORY_SEPARATOR.'partners'.DIRECTORY_SEPARATOR.$id.'.json',
                     $detail,
                 );
             }
@@ -217,26 +231,39 @@ class MaterialDebtRootCauseDrilldownCommand extends Command
             'generated_at' => now()->toIso8601String(),
         ];
 
-        $this->writeCsv($exportDir . DIRECTORY_SEPARATOR . 'material-root-cause-summary.csv', $summaries);
-        $this->writeJson($exportDir . DIRECTORY_SEPARATOR . 'material-root-cause-summary.json', [
+            $this->writeCsv($stagingDir.DIRECTORY_SEPARATOR.'material-root-cause-summary.csv', $summaries);
+            $this->writeJson($stagingDir.DIRECTORY_SEPARATOR.'material-root-cause-summary.json', [
             'dry_run' => true,
             'source_of_truth_default' => MaterialDebtRootCauseDrilldownService::SOURCE_OF_TRUTH_STATUS,
             'metadata' => $metadata,
             'rows' => $summaries,
         ]);
-        $this->writeJson($exportDir . DIRECTORY_SEPARATOR . 'material-root-cause-detail.json', [
+            $this->writeJson($stagingDir.DIRECTORY_SEPARATOR.'material-root-cause-detail.json', [
             'dry_run' => true,
             'source_of_truth_default' => MaterialDebtRootCauseDrilldownService::SOURCE_OF_TRUTH_STATUS,
             'metadata' => $metadata,
             'details' => $details,
         ]);
-        $this->writeCsv($exportDir . DIRECTORY_SEPARATOR . 'manual-review-queue.csv', $queue);
-        file_put_contents($exportDir . DIRECTORY_SEPARATOR . 'command.log', implode(PHP_EOL, [
+            $this->writeCsv($stagingDir.DIRECTORY_SEPARATOR.'manual-review-queue.csv', $queue);
+            $logResult = file_put_contents($stagingDir.DIRECTORY_SEPARATOR.'command.log', implode(PHP_EOL, [
             'command=debt:drilldown-material',
             'dry_run=true',
             'source_of_truth_default=' . MaterialDebtRootCauseDrilldownService::SOURCE_OF_TRUTH_STATUS,
             ...collect($metadata)->map(fn ($value, string $key): string => $key . '=' . $this->scalar($value))->values()->all(),
         ]) . PHP_EOL);
+            if ($logResult === false) {
+                throw new RuntimeException('Cannot write drilldown command log.');
+            }
+            $this->publishStagedExport($stagingDir, $exportDir);
+            $stagingDir = null;
+        } catch (Throwable $exception) {
+            if (is_string($stagingDir) && is_dir($stagingDir)) {
+                File::deleteDirectory($stagingDir);
+            }
+            $this->error('Drilldown export failed ('.class_basename($exception).'); no completed export was published.');
+
+            return self::FAILURE;
+        }
 
         $this->info('Dry-run: yes');
         $this->info('Input rows: ' . $inputRows->count());
@@ -389,17 +416,26 @@ class MaterialDebtRootCauseDrilldownCommand extends Command
         if ($handle === false) {
             throw new RuntimeException("Cannot open drilldown CSV: {$path}");
         }
-        fwrite($handle, "\xEF\xBB\xBF");
-        fputcsv($handle, self::SUMMARY_COLUMNS);
-        foreach ($rows as $row) {
-            fputcsv($handle, array_map(fn (string $column): mixed => $this->scalar($row[$column] ?? null), self::SUMMARY_COLUMNS));
+        if (fwrite($handle, "\xEF\xBB\xBF") === false || fputcsv($handle, self::SUMMARY_COLUMNS) === false) {
+            fclose($handle);
+            throw new RuntimeException('Cannot write drilldown CSV.');
         }
+        foreach ($rows as $row) {
+            if (fputcsv($handle, array_map(fn (string $column): mixed => $this->scalar($row[$column] ?? null), self::SUMMARY_COLUMNS)) === false) {
         fclose($handle);
+                throw new RuntimeException('Cannot write drilldown CSV.');
+            }
+        }
+        if (! fclose($handle)) {
+            throw new RuntimeException('Cannot close drilldown CSV.');
+        }
     }
 
     private function writeJson(string $path, array $payload): void
     {
-        file_put_contents($path, json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+        if (file_put_contents($path, json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)) === false) {
+            throw new RuntimeException('Cannot write drilldown JSON.');
+        }
     }
 
     private function pathUnderAuditRoot(string $path, bool $directory): string
@@ -418,18 +454,47 @@ class MaterialDebtRootCauseDrilldownCommand extends Command
         } else {
             $absolute = $root . '/' . ltrim($normalized, '/');
         }
-        if ($absolute === $root || !str_starts_with($absolute, $root . '/')) {
+        if (! $this->pathIsWithin($absolute, $root) || $absolute === $root) {
             throw new RuntimeException('Audit files and output must be under storage/app/audits.');
         }
         if (!$directory && str_ends_with($absolute, '/')) {
             throw new RuntimeException('Audit input must be a file path.');
         }
 
-        return str_replace('/', DIRECTORY_SEPARATOR, $absolute);
+        $nativeAbsolute = str_replace('/', DIRECTORY_SEPARATOR, $absolute);
+        $canonicalRoot = realpath(str_replace('/', DIRECTORY_SEPARATOR, $root));
+        if ($canonicalRoot === false) {
+            throw new RuntimeException('Audit root is unavailable.');
+        }
+        if (file_exists($nativeAbsolute) || is_link($nativeAbsolute)) {
+            $canonicalPath = realpath($nativeAbsolute);
+            if ($canonicalPath === false || ! $this->pathIsWithin($canonicalPath, $canonicalRoot)) {
+                throw new RuntimeException('Audit path resolves outside storage/app/audits.');
+            }
+
+            return $canonicalPath;
+        }
+        if (! $directory) {
+            return $nativeAbsolute;
+        }
+
+        $ancestor = dirname($nativeAbsolute);
+        while (! file_exists($ancestor) && dirname($ancestor) !== $ancestor) {
+            $ancestor = dirname($ancestor);
+        }
+        $canonicalAncestor = realpath($ancestor);
+        if ($canonicalAncestor === false || ! $this->pathIsWithin($canonicalAncestor, $canonicalRoot)) {
+            throw new RuntimeException('Audit path resolves outside storage/app/audits.');
+        }
+
+        return $nativeAbsolute;
     }
 
     private function assertEmptyExportDirectory(string $path): void
     {
+        if (file_exists($path) && ! is_dir($path)) {
+            throw new RuntimeException('Output path must be a directory.');
+        }
         if (!is_dir($path)) {
             return;
         }
@@ -438,6 +503,44 @@ class MaterialDebtRootCauseDrilldownCommand extends Command
         if ($entries !== []) {
             throw new RuntimeException('BLOCKER: export directory is not empty');
         }
+    }
+
+    private function createStagingDirectory(string $exportDir): string
+    {
+        File::ensureDirectoryExists(dirname($exportDir));
+        $stagingDir = $exportDir.'.tmp-'.bin2hex(random_bytes(8));
+        File::ensureDirectoryExists($stagingDir);
+
+        return $stagingDir;
+    }
+
+    private function publishStagedExport(string $stagingDir, string $exportDir): void
+    {
+        foreach (['material-root-cause-summary.csv', 'material-root-cause-summary.json',
+            'material-root-cause-detail.json', 'manual-review-queue.csv', 'command.log'] as $requiredFile) {
+            if (! is_file($stagingDir.DIRECTORY_SEPARATOR.$requiredFile)) {
+                throw new RuntimeException('Required drilldown export file is missing.');
+            }
+        }
+        if (is_dir($exportDir) && ! rmdir($exportDir)) {
+            throw new RuntimeException('Cannot replace empty export directory.');
+        }
+        if (! rename($stagingDir, $exportDir)) {
+            throw new RuntimeException('Cannot publish completed drilldown export.');
+        }
+    }
+
+    private function pathIsWithin(string $path, string $root): bool
+    {
+        $normalize = static fn (string $value): string => rtrim(str_replace('\\', '/', $value), '/');
+        $path = $normalize($path);
+        $root = $normalize($root);
+        if (DIRECTORY_SEPARATOR === '\\') {
+            $path = mb_strtolower($path);
+            $root = mb_strtolower($root);
+        }
+
+        return $path === $root || str_starts_with($path, $root.'/');
     }
 
     private function relativeAuditPath(string $path): string
