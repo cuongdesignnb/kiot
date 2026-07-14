@@ -450,31 +450,36 @@ class MaterialDebtRootCauseDrilldownService
             $reference = $this->resolveDocumentReference($flow, $invoices, 'Invoice', 'invoice');
             $linkedInvoice = $reference['document'];
             $scope = $this->cashFlowEvidenceScope($flow);
-            $allocationWarning = null;
-            $candidates = $allocations->map(function (CustomerPaymentAllocation $allocation) use ($flow, $invoices, &$allocationWarning): array {
+            $candidates = $allocations->map(function (CustomerPaymentAllocation $allocation) use ($flow, $invoices): array {
                 $invoice = $invoices->firstWhere('id', $allocation->invoice_id);
                 $invoiceAvailable = $invoice !== null;
+                $amount = (float) $allocation->amount;
+                $amountValid = $amount > 0;
                 $ownershipValid = (int) ($flow->target_id ?? 0) > 0
                     && (int) $allocation->customer_id === (int) $flow->target_id
                     && $invoiceAvailable
                     && (int) $invoice->customer_id === (int) $flow->target_id;
-                if (! $invoiceAvailable) {
-                    $allocationWarning ??= 'customer_allocation_invoice_unavailable';
-                } elseif (! $ownershipValid) {
-                    $allocationWarning ??= 'customer_allocation_ownership_mismatch';
-                }
 
                 return [
                     'document_id' => (int) $allocation->invoice_id,
                     'document_code' => (string) ($invoice?->code ?? ''),
-                    'amount' => (float) $allocation->amount,
+                    'amount' => $amount,
                     'evidence' => 'customer_payment_allocations',
+                    'invoice_available' => $invoiceAvailable,
                     'valid_ownership' => $ownershipValid,
                     'invalid_ownership' => ! $ownershipValid,
+                    'valid_amount' => $amountValid,
+                    'invalid_amount' => ! $amountValid,
                 ];
             })->values();
+            $allocationWarning = match (true) {
+                $candidates->contains(fn (array $candidate): bool => $candidate['invalid_amount']) => 'customer_allocation_amount_invalid',
+                $candidates->contains(fn (array $candidate): bool => ! $candidate['invoice_available']) => 'customer_allocation_invoice_unavailable',
+                $candidates->contains(fn (array $candidate): bool => $candidate['invalid_ownership']) => 'customer_allocation_ownership_mismatch',
+                default => null,
+            };
             $allAllocationsValid = $allocations->isNotEmpty()
-                && $candidates->every(fn (array $candidate): bool => $candidate['valid_ownership']);
+                && $candidates->every(fn (array $candidate): bool => $candidate['valid_ownership'] && $candidate['valid_amount']);
             $allocated = $allAllocationsValid ? (float) $allocations->sum('amount') : 0.0;
             if ($allAllocationsValid
                 && $allocated - (float) $flow->amount > PartnerDebtParityAuditService::TOLERANCE) {

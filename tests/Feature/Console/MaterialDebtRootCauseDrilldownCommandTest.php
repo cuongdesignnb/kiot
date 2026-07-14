@@ -360,6 +360,24 @@ class MaterialDebtRootCauseDrilldownCommandTest extends TestCase
         }
     }
 
+    public function test_non_array_row_element_rejects_artifact_before_output(): void
+    {
+        $partner = $this->partner();
+        $audit = $this->rawAuditFile(json_encode([
+            'rows' => [$this->auditRow($partner), 'unexpected scalar', null],
+        ], JSON_THROW_ON_ERROR));
+        $output = $this->outputDir();
+        $mock = Mockery::mock(MaterialDebtRootCauseDrilldownService::class);
+        $mock->shouldNotReceive('drilldown');
+        $this->app->instance(MaterialDebtRootCauseDrilldownService::class, $mock);
+
+        $this->artisan('debt:drilldown-material', [
+            '--dry-run' => true, '--audit-file' => $audit, '--export-dir' => $output,
+        ])->expectsOutputToContain('Invalid audit artifact.')->assertExitCode(1);
+
+        $this->assertDirectoryDoesNotExist($output);
+    }
+
     public function test_existing_file_used_as_output_directory_fails_safely(): void
     {
         $partner = $this->partner();
