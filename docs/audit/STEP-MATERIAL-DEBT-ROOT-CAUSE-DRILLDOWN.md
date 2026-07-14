@@ -9,7 +9,7 @@
 - PR URL: `https://github.com/cuongdesignnb/kiot/pull/17`.
 - PR status: open, Draft, mergeable, stacked on PR16; not merged.
 
-The final docs-only metadata commit SHA is reported in the handoff because a commit cannot embed its own SHA.
+The final hardening commit SHA is recorded in the PR body and external handoff because a commit cannot embed its own SHA before it exists.
 
 ## Production Audit Source
 
@@ -57,7 +57,7 @@ The implementation was compared with the existing customer/supplier document tim
 
 ### Payment Allocation Limitations
 
-- Customer allocation uses persisted `customer_payment_allocations` only when the allocation customer, CashFlow target, and available Invoice owner agree. Missing/foreign invoices and allocation totals above the CashFlow amount are diagnostic evidence, never actual allocation. An explicit Invoice CashFlow reference is used only when persisted allocation rows are absent.
+- Customer allocation uses persisted `customer_payment_allocations` only when every allocation amount is positive and the allocation customer, CashFlow target, and available Invoice owner agree. Non-positive amounts, missing/foreign invoices, and allocation totals above the CashFlow amount remain candidate diagnostic evidence, never actual allocation. An explicit Invoice CashFlow reference is used only when persisted allocation rows are absent.
 - A direct supplier Purchase CashFlow reference is explicit evidence.
 - Direct references use `reference_id` as authoritative when the attribute exists; `reference_code` is used only when ID is null. A malformed non-null ID is rejected without code fallback, a positive missing ID remains an ID miss, and an ID/code disagreement retains the ID result with a typed warning.
 - The current `cash_flows` schema has no `reference_id` column. No schema change was made; the resolver remains compatible with snapshots/models where that attribute exists and is covered with in-memory model fixtures.
@@ -77,9 +77,17 @@ The follow-up started from reviewed head `0d00e31e23173a44c19a43d11d08f403d31310
 - Duplicate IDs are computed from the complete material artifact before partner/risk/classification filters and `--limit`, so filtering cannot turn ambiguous input into executable evidence.
 - `OK`, alias-only, technical-only, and virtual-display-only input rows are skipped before material review output.
 - Input relative path and SHA-256 plus row/processing counters are recorded in both aggregate JSON files and `command.log`; SHA-256 is also included in summary CSV rows.
-- Input must be a JSON object with a `rows` array. Malformed/scalar/missing-row artifacts fail before output creation.
+- Input must be a JSON object with a `rows` array, and every row element must decode to an array. Malformed/scalar/missing-row artifacts and non-array row elements fail before service execution or output creation.
 - Existing input paths and the nearest existing output ancestor are canonicalized. Symlink/junction escapes outside `storage/app/audits` are rejected.
-- Output directory must be absent or completely empty. All required files are written to a same-filesystem staging directory and validated before one rename publishes the completed export. Non-empty output is never removed, merged, or overwritten; an existing empty directory may be atomically replaced.
+- Output directory must be absent or completely empty. All files are staged on the same filesystem and the completed staging directory is published by rename. If a pre-existing empty final directory exists, it is removed before rename; this creates a brief path-absence window but never publishes partial final files. Non-empty output is never removed, merged, or overwritten.
+
+### Final Acceptance Follow-up
+
+- Tests first reproduced both residual findings on `54a96a7a5eee5e7526a6bcaaddecc68cf58cbd75`: a zero/negative persisted allocation was classified as actual, and non-array row elements were silently discarded.
+- Non-positive persisted customer allocations now force `explicitly_allocated=false`, `allocation_confidence=unknown`, `allocated_amount=0`, and `warning=customer_allocation_amount_invalid`; the original candidate amount remains exported with deterministic validity flags.
+- Allocation warning precedence is deterministic: invalid amount, unavailable invoice, ownership mismatch, then aggregate over-allocation.
+- A non-array `rows[i]` now rejects the complete artifact with the sanitized `Invalid audit artifact.` contract before staging; the service is not called.
+- No persisted allocation or other business data is repaired or normalized by this classifier.
 
 ### Dual-role and Technical Rules
 
@@ -193,9 +201,10 @@ All four new PHP source/test files passed `php -l`. The local PHP installation e
 ```text
 Before hardening: 19 passed, 97 assertions
 Senior re-audit final focused run: 64 passed, 302 assertions
+Final acceptance follow-up: 66 passed, 322 assertions
 ```
 
-Coverage now includes original active/deleted receipts, current signed cancellation adjustment, exact/under/over/historical explicit reversal, plural match provenance, typed conflicts, generic adjustment rejection, null/invalid/missing/conflicting references, customer allocation ownership/availability/over-allocation, historical allocation exclusion, FIFO inference, artifact code/role mismatch, invalid schema/rows, missing partners, full-artifact duplicate guards before filters/limit, canonical symlink/junction rejection, atomic publish, SHA-256 provenance, non-empty output rejection, non-material guard, query-listener read-only proof, PII, deterministic output, DB snapshot, zero delta, and null voucher contracts.
+Coverage now includes original active/deleted receipts, current signed cancellation adjustment, exact/under/over/historical explicit reversal, plural match provenance, typed conflicts, generic adjustment rejection, null/invalid/missing/conflicting references, customer allocation ownership/availability/amount/over-allocation, historical allocation exclusion, FIFO inference, artifact code/role mismatch, invalid schema/rows, missing partners, full-artifact duplicate guards before filters/limit, canonical symlink/junction rejection, staged no-partial publish, SHA-256 provenance, non-empty output rejection, non-material guard, query-listener read-only proof, PII, deterministic output, DB snapshot, zero delta, and null voucher contracts.
 
 ### Regression
 
@@ -214,6 +223,7 @@ Five cancellation files were run explicitly at the PR16 base, PR17 pre-hardening
 938d1ecf: 15 passed, 14 failed, 1 skipped, 78 assertions
 0d00e31e: 15 passed, 14 failed, 1 skipped, 78 assertions
 6d4e0ead: 15 passed, 14 failed, 1 skipped, 78 assertions
+Final acceptance patched content: 15 passed, 14 failed, 1 skipped, 78 assertions
 
 Files:
 tests/Feature/Invoice/CancelInvoiceTest.php
@@ -231,7 +241,7 @@ PRE_EXISTING_BASELINE_FIXTURE_CONTRACT_DEBT
 1 skipped
 ```
 
-The failures occur because legacy HTTP fixtures do not pass the current invoice/cashflow cancellation permission and status contracts, so the cancel route returns before the expected mutation. The same first assertions fail at the base, pre-hardening, and reviewed head; PR17 command/service files are absent from the failing stack. This baseline regression debt is reported, not hidden, and invoice/cashflow controllers were not changed.
+The failures occur because legacy HTTP fixtures do not pass the current invoice/cashflow cancellation permission and status contracts, so the cancel route returns before the expected mutation. The final acceptance run retained the same 14 failing test names and first assertions as the recorded baseline; PR17 command/service files are absent from the failing stack. This baseline regression debt is reported, not hidden, and invoice/cashflow controllers were not changed.
 
 ### Local Manual QA
 
@@ -252,14 +262,20 @@ Manual QA used the isolated local import `kiot_audit_20260713_100928` in Docker,
 - Query-listener test detected no `INSERT`, `UPDATE`, `DELETE`, `REPLACE`, DDL, or truncate statement after fixture setup.
 - A second 38-row run had the same normalized summary/detail, queue bytes, and file set. Byte identity excludes `generated_at` and command-log runtime metadata.
 - MariaDB QA required a local-only `DB_COLLATION=utf8mb4_unicode_ci` session override because the application default collation is MySQL 8 specific; no schema or data was changed.
+- Final acceptance reran full `38/38`, CRITICAL first `5`, and one selected partner under `storage/app/audits/testing-step17-acceptance-20260714`; all completed with zero errors and every source status remained `UNRESOLVED`.
+- The final acceptance logical dump used stable dump options and retained SHA-256 `2813671cf2a1e48b2499bedb0fa9033d9595924130ea69449cde1284cd0f514a` before and after the imported-DB commands.
+- Final acceptance output had no PII/secret keys, absolute paths, delta fields, or voucher fields. Duplicate-before-limit, malformed row, non-positive allocation, non-empty output, symlink/junction, and query-listener gates also passed in the focused suite.
 
 The local import has 38 material rows while the supplied production artifact has 39. This is treated as a local snapshot-version difference; no conclusion about the missing production case is inferred.
 
 ### Repository Checks
 
 - `git diff --check`: pass.
+- PHP lint for the command, service, and two focused test files: pass; the local PHP installation still reports unrelated missing OCI/Firebird extension warnings.
 - Forbidden files: none staged.
 - Frontend build: not required; frontend is unchanged.
+
+The focused and regression evidence was rerun on isolated local database `kiot_pr17_acceptance`, initialized with the repository's existing migrations. An initial regression invocation against the populated imported QA database was excluded because fixed legacy fixture codes collided with existing imported rows; the required eight-file regression was then rerun on the isolated test database and passed `81/397`. No migration file was added or changed, and no production database or command was used.
 
 ## Known Limitations and Remaining Uncertainty
 

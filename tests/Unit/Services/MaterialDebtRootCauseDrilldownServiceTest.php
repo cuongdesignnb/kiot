@@ -421,6 +421,34 @@ class MaterialDebtRootCauseDrilldownServiceTest extends TestCase
         $this->assertSame('customer_allocation_exceeds_cashflow_amount', $evidence['warning']);
     }
 
+    public function test_non_positive_customer_allocation_is_not_actual_evidence(): void
+    {
+        foreach ([0, -100_000] as $amount) {
+            $partner = $this->partner();
+            $invoice = $this->invoice($partner, 'HD-NON-POSITIVE-ALLOCATION-'.abs($amount), 500_000);
+            $flow = $this->customerReceipt($partner, 'PT-NON-POSITIVE-ALLOCATION-'.abs($amount), 500_000);
+            CustomerPaymentAllocation::query()->create([
+                'cash_flow_id' => $flow->id,
+                'customer_id' => $partner->id,
+                'invoice_id' => $invoice->id,
+                'amount' => $amount,
+            ]);
+
+            $evidence = $this->invokeService('allocationEvidence', [
+                collect([$flow]), collect(), collect([$invoice]), collect(), null,
+            ])['customer_receipts'][0];
+
+            $this->assertFalse($evidence['explicitly_allocated']);
+            $this->assertSame('unknown', $evidence['allocation_confidence']);
+            $this->assertSame(0.0, $evidence['allocated_amount']);
+            $this->assertSame(500_000.0, $evidence['unallocated_amount']);
+            $this->assertSame('customer_allocation_amount_invalid', $evidence['warning']);
+            $this->assertSame((float) $amount, $evidence['candidate_documents'][0]['amount']);
+            $this->assertFalse($evidence['candidate_documents'][0]['valid_amount']);
+            $this->assertTrue($evidence['candidate_documents'][0]['invalid_amount']);
+        }
+    }
+
     public function test_cancelled_invoice_without_reversal_is_evidence_only_and_does_not_write(): void
     {
         $partner = $this->partner();

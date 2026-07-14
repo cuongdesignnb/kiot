@@ -107,9 +107,12 @@ class MaterialDebtRootCauseDrilldownCommand extends Command
             if ($inputBytes === false) {
                 throw new RuntimeException('Audit input cannot be read.');
             }
-        $payload = json_decode($inputBytes, true, flags: JSON_THROW_ON_ERROR);
+            $payload = json_decode($inputBytes, true, flags: JSON_THROW_ON_ERROR);
             if (! is_array($payload) || ! array_key_exists('rows', $payload) || ! is_array($payload['rows'])) {
                 throw new RuntimeException('Audit input has an invalid schema.');
+            }
+            if (collect($payload['rows'])->contains(fn ($row): bool => ! is_array($row))) {
+                throw new RuntimeException('Audit input contains an invalid row.');
             }
         } catch (Throwable) {
             $this->error('Invalid audit artifact.');
@@ -119,7 +122,6 @@ class MaterialDebtRootCauseDrilldownCommand extends Command
 
         $inputSha256 = hash('sha256', $inputBytes);
         $inputRows = collect($payload['rows'])
-            ->filter(fn ($row): bool => is_array($row))
             ->values()
             ->map(fn (array $row, int $index): array => array_merge($row, ['_input_index' => $index]));
         $materialRows = $inputRows->filter(fn (array $row): bool => $this->isMaterialRow($row))->values();
