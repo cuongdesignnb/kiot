@@ -14,6 +14,7 @@ use App\Models\Product;
 use App\Models\SerialImei;
 use App\Models\StockMovement;
 use App\Models\Branch;
+use App\Services\Debt\CanonicalPartnerDebtService;
 use App\Services\ProductSearchService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -883,7 +884,7 @@ class ReportController extends Controller
     // ═══════════════════════════════════════
     // 9. ĐỐI SOÁT CÔNG NỢ (Debt Reconciliation)
     // ═══════════════════════════════════════
-    public function debtReconciliation(Request $request)
+    public function debtReconciliation(Request $request, CanonicalPartnerDebtService $canonicalDebt)
     {
         $branchId = $request->input('branch_id');
         $dateFrom = $request->input('date_from')
@@ -930,15 +931,17 @@ class ReportController extends Controller
 
         $offsetsByPartner = $offsetQuery->get()->groupBy('customer_id');
 
-        $rows = $partners->map(function ($p) use ($offsetsByPartner) {
+        $rows = $partners->map(function ($p) use ($offsetsByPartner, $canonicalDebt) {
             $offsets = $offsetsByPartner->get($p->id, collect());
             $totalOffset = $offsets->where('status', 'active')->sum('amount');
             $autoOffset = $offsets->where('status', 'active')->where('is_auto', true)->sum('amount');
             $manualOffset = $offsets->where('status', 'active')->where('is_auto', false)->sum('amount');
             $cancelledOffset = $offsets->where('status', 'cancelled')->sum('amount');
-            $receivable = (float) $p->debt_amount;
-            $payable = (float) $p->supplier_debt_amount;
-            $net = $receivable - $payable;
+            $canonical = $canonicalDebt->calculate($p);
+            $receivable = $canonical['customer_balance'];
+            $payable = $canonical['supplier_balance'];
+            $net = $canonical['net_display_balance'];
+            $supplierScreen = $p->is_customer && $p->is_supplier ? -$net : $payable;
 
             return [
                 'id' => $p->id,
@@ -950,6 +953,10 @@ class ReportController extends Controller
                 'receivable' => $receivable,
                 'payable' => $payable,
                 'net' => $net,
+                'customer_receivable_balance' => $receivable,
+                'supplier_payable_balance' => $payable,
+                'customer_screen_debt' => $net,
+                'supplier_screen_debt' => $supplierScreen,
                 'total_offset' => (float) $totalOffset,
                 'auto_offset' => (float) $autoOffset,
                 'manual_offset' => (float) $manualOffset,
@@ -991,7 +998,7 @@ class ReportController extends Controller
         ]);
     }
 
-    public function exportDebtReconciliation(Request $request)
+    public function exportDebtReconciliation(Request $request, CanonicalPartnerDebtService $canonicalDebt)
     {
         $branchId = $request->input('branch_id');
         $dateFrom = $request->input('date_from')
@@ -1021,17 +1028,17 @@ class ReportController extends Controller
             ->groupBy('customer_id');
 
         $csvHeader = "Mã,Tên,SĐT,Nợ phải thu,Nợ phải trả,Đã cấn bằng,Còn lại\n";
-        $csvRows = $partners->map(function ($p) use ($offsetsByPartner) {
+        $csvRows = $partners->map(function ($p) use ($offsetsByPartner, $canonicalDebt) {
             $totalOffset = $offsetsByPartner->get($p->id, collect())->sum('amount');
-            $net = (float) $p->debt_amount - (float) $p->supplier_debt_amount;
+            $canonical = $canonicalDebt->calculate($p);
             return implode(',', [
                 $p->code,
                 '"' . str_replace('"', '""', $p->name) . '"',
                 $p->phone ?? '',
-                $p->debt_amount,
-                $p->supplier_debt_amount,
+                $canonical['customer_balance'],
+                $canonical['supplier_balance'],
                 $totalOffset,
-                $net,
+                $canonical['net_display_balance'],
             ]);
         })->implode("\n");
 

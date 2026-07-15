@@ -37,25 +37,31 @@ class SupplierDebtTimelineParityTest extends TestCase
     {
         $supplier = $this->supplier('NCC177466273054', 2_900_000);
         $base = Carbon::parse('2026-04-01 09:00:00');
+        $run = '-' . uniqid();
+        $genericPaymentA = 'PCPN260422188' . $run;
+        $genericPaymentB = 'PCPN260626688' . $run;
+        $directPaymentA = 'PC20260603141538' . $run;
+        $directPaymentB = 'PC20260626140446' . $run;
+        $latestPayment = 'PC20260626155948' . $run;
 
         foreach ([1_000_000, 2_000_000, 1_500_000, 1_140_000, 1_200_000, 1_300_000, 1_500_000] as $index => $amount) {
-            $this->purchase($supplier, 'PN-GEN-A-' . ($index + 1), $amount, $amount, $base->copy()->addDays($index));
+            $this->purchase($supplier, 'PN-GEN-A-' . ($index + 1) . $run, $amount, $amount, $base->copy()->addDays($index));
         }
 
-        $this->purchase($supplier, 'PN-GEN-B-1', 2_000_000, 2_000_000, $base->copy()->addDays(8));
-        $this->genericPayment($supplier, 'PCPN260422188', 11_640_000, $base->copy()->addDays(21));
+        $this->purchase($supplier, 'PN-GEN-B-1' . $run, 2_000_000, 2_000_000, $base->copy()->addDays(8));
+        $this->genericPayment($supplier, $genericPaymentA, 11_640_000, $base->copy()->addDays(21));
 
-        $this->purchase($supplier, 'PN-GEN-C-1', 3_240_000, 3_240_000, $base->copy()->addDays(40));
-        $this->genericPayment($supplier, 'PCPN260626688', 3_240_000, $base->copy()->addDays(86)->setTime(14, 6));
+        $this->purchase($supplier, 'PN-GEN-C-1' . $run, 3_240_000, 3_240_000, $base->copy()->addDays(40));
+        $this->genericPayment($supplier, $genericPaymentB, 3_240_000, $base->copy()->addDays(86)->setTime(14, 6));
 
-        $directA = $this->purchase($supplier, 'PN-DIRECT-13250', 13_250_000, 13_250_000, $base->copy()->addDays(57));
-        $this->directPurchasePayment($supplier, $directA, 'PC20260603141538', 13_250_000, $base->copy()->addDays(63)->setTime(14, 15));
+        $directA = $this->purchase($supplier, 'PN-DIRECT-13250' . $run, 13_250_000, 13_250_000, $base->copy()->addDays(57));
+        $this->directPurchasePayment($supplier, $directA, $directPaymentA, 13_250_000, $base->copy()->addDays(63)->setTime(14, 15));
 
-        $directB = $this->purchase($supplier, 'PN-DIRECT-11600', 11_600_000, 11_600_000, $base->copy()->addDays(75));
-        $this->directPurchasePayment($supplier, $directB, 'PC20260626140446', 11_600_000, $base->copy()->addDays(86)->setTime(14, 2));
+        $directB = $this->purchase($supplier, 'PN-DIRECT-11600' . $run, 11_600_000, 11_600_000, $base->copy()->addDays(75));
+        $this->directPurchasePayment($supplier, $directB, $directPaymentB, 11_600_000, $base->copy()->addDays(86)->setTime(14, 2));
 
-        $latest = $this->purchase($supplier, 'PN20260626155849', 5_800_000, 2_900_000, $base->copy()->addDays(86)->setTime(15, 58));
-        $this->directPurchasePayment($supplier, $latest, 'PC20260626155948', 2_900_000, $base->copy()->addDays(86)->setTime(15, 59));
+        $latest = $this->purchase($supplier, 'PN20260626155849' . $run, 5_800_000, 2_900_000, $base->copy()->addDays(86)->setTime(15, 58));
+        $this->directPurchasePayment($supplier, $latest, $latestPayment, 2_900_000, $base->copy()->addDays(86)->setTime(15, 59));
 
         $this->assertSame(45_530_000.0, (float) Purchase::where('supplier_id', $supplier->id)->sum('total_amount'));
         $this->assertSame(42_630_000.0, (float) Purchase::where('supplier_id', $supplier->id)->sum('paid_amount'));
@@ -78,12 +84,12 @@ class SupplierDebtTimelineParityTest extends TestCase
         $this->assertSame('inferred', $result['reconcile']['allocation_confidence']);
         $this->assertFalse((bool) $result['reconcile']['display_resolved']);
 
-        $this->assertNotNull($entries->firstWhere('code', 'PCPN260422188'));
-        $this->assertNotNull($entries->firstWhere('code', 'PCPN260626688'));
-        $this->assertSame(1, $entries->where('code', 'PCPN260422188')->count());
-        $this->assertSame(1, $entries->where('code', 'PCPN260626688')->count());
-        $this->assertFalse((bool) $entries->firstWhere('code', 'PCPN260422188')['allocation_is_actual']);
-        $this->assertSame('global_payment_only', $entries->firstWhere('code', 'PCPN260422188')['payment_allocation_confidence']);
+        $this->assertNotNull($entries->firstWhere('code', $genericPaymentA));
+        $this->assertNotNull($entries->firstWhere('code', $genericPaymentB));
+        $this->assertSame(1, $entries->where('code', $genericPaymentA)->count());
+        $this->assertSame(1, $entries->where('code', $genericPaymentB)->count());
+        $this->assertFalse((bool) $entries->firstWhere('code', $genericPaymentA)['allocation_is_actual']);
+        $this->assertSame('global_payment_only', $entries->firstWhere('code', $genericPaymentA)['payment_allocation_confidence']);
 
         $this->assertSame([], $entries
             ->filter(fn (array $entry) => str_starts_with((string) ($entry['code'] ?? ''), 'TTNH'))
@@ -91,9 +97,9 @@ class SupplierDebtTimelineParityTest extends TestCase
             ->values()
             ->all());
 
-        $this->assertNotNull($entries->firstWhere('code', 'PC20260603141538'));
-        $this->assertNotNull($entries->firstWhere('code', 'PC20260626140446'));
-        $this->assertNotNull($entries->firstWhere('code', 'PC20260626155948'));
+        $this->assertNotNull($entries->firstWhere('code', $directPaymentA));
+        $this->assertNotNull($entries->firstWhere('code', $directPaymentB));
+        $this->assertNotNull($entries->firstWhere('code', $latestPayment));
 
         $this->assertSame($snapshot, $this->readOnlySnapshot($supplier), 'Building supplier timeline must not mutate debt data.');
 

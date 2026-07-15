@@ -164,6 +164,19 @@ class PartnerDebtParityAuditServiceTest extends TestCase
         $this->assertContains('PURCHASE_PAYMENT_ALLOCATION_MISMATCH', $flags);
     }
 
+    public function test_allocation_missing_evidence_is_distinct_from_a_conflict(): void
+    {
+        $flags = $this->service->classify($this->baseline([
+            'has_invoice_receipt_allocation_evidence_missing' => true,
+            'has_purchase_payment_allocation_evidence_missing' => true,
+        ]));
+
+        $this->assertContains('INVOICE_RECEIPT_ALLOCATION_EVIDENCE_MISSING', $flags);
+        $this->assertContains('PURCHASE_PAYMENT_ALLOCATION_EVIDENCE_MISSING', $flags);
+        $this->assertNotContains('INVOICE_RECEIPT_ALLOCATION_MISMATCH', $flags);
+        $this->assertNotContains('PURCHASE_PAYMENT_ALLOCATION_MISMATCH', $flags);
+    }
+
     public function test_customer_parity_matches_ui_while_technical_ledger_is_evidence_only(): void
     {
         $partner = $this->partner();
@@ -282,6 +295,8 @@ class PartnerDebtParityAuditServiceTest extends TestCase
             'has_duplicate_supplier_payment' => false,
             'has_invoice_receipt_allocation_mismatch' => false,
             'has_purchase_payment_allocation_mismatch' => false,
+            'has_invoice_receipt_allocation_evidence_missing' => false,
+            'has_purchase_payment_allocation_evidence_missing' => false,
             'has_return_refund_duplicate' => false,
             'has_purchase_return_refund_mismatch' => false,
             'has_cancel_reversal_missing' => false,

@@ -239,13 +239,18 @@ class CustomerDebtDocumentTimelineTest extends TestCase
 
     public function test_sales_return_with_real_refund_does_not_create_virtual_pcth_fallback(): void
     {
+        $suffix = '-' . uniqid();
+        $invoiceCode = 'HD-REFUND-REAL-001' . $suffix;
+        $receiptCode = 'PT-REFUND-REAL-001' . $suffix;
+        $returnCode = 'TH2026062611405938' . $suffix;
+        $refundCode = 'PC2026062611405949' . $suffix;
         $customer = $this->createTestCustomer([
             'debt_amount' => 0,
         ]);
 
         $invoiceTime = Carbon::create(2026, 6, 26, 10, 0, 0);
         Invoice::create([
-            'code' => 'HD-REFUND-REAL-001',
+            'code' => $invoiceCode,
             'customer_id' => $customer->id,
             'status' => 'Hoàn thành',
             'total' => 38_000_000,
@@ -255,14 +260,14 @@ class CustomerDebtDocumentTimelineTest extends TestCase
         ]);
 
         CashFlow::create([
-            'code' => 'PT-REFUND-REAL-001',
+            'code' => $receiptCode,
             'type' => 'receipt',
             'amount' => 38_000_000,
             'target_type' => 'Khách hàng',
             'target_id' => $customer->id,
             'target_name' => $customer->name,
             'reference_type' => 'Invoice',
-            'reference_code' => 'HD-REFUND-REAL-001',
+            'reference_code' => $invoiceCode,
             'status' => 'active',
             'time' => $invoiceTime->copy()->addMinute(),
             'created_at' => $invoiceTime->copy()->addMinute(),
@@ -270,7 +275,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
 
         $returnTime = Carbon::create(2026, 6, 26, 11, 40, 59);
         $return = OrderReturn::create([
-            'code' => 'TH2026062611405938',
+            'code' => $returnCode,
             'customer_id' => $customer->id,
             'status' => 'Hoàn thành',
             'total' => 3_800_000,
@@ -280,7 +285,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
         ]);
 
         $refund = CashFlow::create([
-            'code' => 'PC2026062611405949',
+            'code' => $refundCode,
             'type' => 'payment',
             'amount' => 3_800_000,
             'target_type' => 'Khách hàng',
@@ -298,7 +303,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
 
         $this->assertNotNull($entries->firstWhere('code', $return->code));
         $this->assertNotNull($entries->firstWhere('code', $refund->code));
-        $this->assertNull($entries->firstWhere('code', 'PCTH2026062611405938'));
+        $this->assertNull($entries->firstWhere('code', 'PC' . $returnCode));
 
         $returnEntry = $entries->firstWhere('code', $return->code);
         $this->assertTrue((bool) $returnEntry['fallback_suppressed_by_real_refund']);
@@ -310,13 +315,17 @@ class CustomerDebtDocumentTimelineTest extends TestCase
 
     public function test_sales_return_with_real_refund_no_accent_target_type_does_not_create_virtual_pcth_fallback(): void
     {
+        $suffix = '-' . uniqid();
+        $invoiceCode = 'HD177927122018' . $suffix;
+        $returnCode = 'TH2026062611405938' . $suffix;
+        $refundCode = 'PC2026062611405949' . $suffix;
         $customer = $this->createTestCustomer([
             'debt_amount' => 0,
         ]);
 
         $invoiceTime = Carbon::create(2026, 6, 26, 10, 0, 0);
         Invoice::create([
-            'code' => 'HD177927122018',
+            'code' => $invoiceCode,
             'customer_id' => $customer->id,
             'status' => 'Hoàn thành',
             'total' => 38_000_000,
@@ -327,7 +336,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
 
         $returnTime = Carbon::create(2026, 6, 26, 11, 40, 59);
         OrderReturn::create([
-            'code' => 'TH2026062611405938',
+            'code' => $returnCode,
             'customer_id' => $customer->id,
             'status' => 'Hoàn thành',
             'total' => 3_800_000,
@@ -337,14 +346,14 @@ class CustomerDebtDocumentTimelineTest extends TestCase
         ]);
 
         CashFlow::create([
-            'code' => 'PC2026062611405949',
+            'code' => $refundCode,
             'type' => 'payment',
             'amount' => 3_800_000,
             'target_type' => 'Khach hang',
             'target_id' => $customer->id,
             'target_name' => $customer->name,
             'reference_type' => 'OrderReturn',
-            'reference_code' => 'TH2026062611405938',
+            'reference_code' => $returnCode,
             'status' => 'active',
             'time' => $returnTime,
             'created_at' => $returnTime,
@@ -353,13 +362,13 @@ class CustomerDebtDocumentTimelineTest extends TestCase
         $res = $this->service->build($customer);
         $entries = collect($res['entries']);
 
-        $this->assertNotNull($entries->firstWhere('code', 'TH2026062611405938'));
-        $this->assertNotNull($entries->firstWhere('code', 'PC2026062611405949'));
-        $this->assertNull($entries->firstWhere('code', 'PCTH2026062611405938'));
+        $this->assertNotNull($entries->firstWhere('code', $returnCode));
+        $this->assertNotNull($entries->firstWhere('code', $refundCode));
+        $this->assertNull($entries->firstWhere('code', 'PC' . $returnCode));
 
-        $returnEntry = $entries->firstWhere('code', 'TH2026062611405938');
+        $returnEntry = $entries->firstWhere('code', $returnCode);
         $this->assertTrue((bool) $returnEntry['fallback_suppressed_by_real_refund']);
-        $this->assertSame('PC2026062611405949', $returnEntry['real_refund_code']);
+        $this->assertSame($refundCode, $returnEntry['real_refund_code']);
         $this->assertSame('reference_type_and_code', $returnEntry['refund_match_strategy']);
 
         $this->assertSame(0.0, (float) $res['summary']['document_final_balance']);
@@ -496,10 +505,11 @@ class CustomerDebtDocumentTimelineTest extends TestCase
      */
     public function test_local_real_case_from_screenshot(): void
     {
+        $invoiceCode = 'HD178090993527-' . uniqid();
         $customer = $this->createTestCustomer();
         
         Invoice::create([
-            'code' => 'HD178090993527',
+            'code' => $invoiceCode,
             'customer_id' => $customer->id,
             'status' => 'Hoàn thành',
             'total' => 800000,
@@ -510,11 +520,11 @@ class CustomerDebtDocumentTimelineTest extends TestCase
         $res = $this->service->build($customer);
         $entries = collect($res['entries']);
 
-        $inv = $entries->firstWhere('code', 'HD178090993527');
+        $inv = $entries->firstWhere('code', $invoiceCode);
         $this->assertNotNull($inv);
         $this->assertSame(800000.0, (float) $inv['display_effect']);
 
-        $pay = $entries->firstWhere('code', 'TTHD178090993527');
+        $pay = $entries->firstWhere('code', 'TT' . $invoiceCode);
         $this->assertNotNull($pay);
         $this->assertSame(-500000.0, (float) $pay['display_effect']);
     }

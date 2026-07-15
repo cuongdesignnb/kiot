@@ -3,17 +3,18 @@
 namespace App\Support\Debt;
 
 use App\Models\Customer;
+use App\Services\Debt\CanonicalPartnerDebtService;
 
 class PartnerDebtDisplayBalance
 {
     public static function customerReceivable(Customer $partner): float
     {
-        return (float) ($partner->debt_amount ?? 0);
+        return self::canonical($partner)['customer_balance'];
     }
 
     public static function supplierPayable(Customer $partner): float
     {
-        return (float) ($partner->supplier_debt_amount ?? 0);
+        return self::canonical($partner)['supplier_balance'];
     }
 
     public static function isDualRole(Customer $partner): bool
@@ -23,24 +24,25 @@ class PartnerDebtDisplayBalance
 
     public static function customerScreen(Customer $partner): float
     {
-        return self::customerReceivable($partner) - self::supplierPayable($partner);
+        return self::canonical($partner)['net_display_balance'];
     }
 
     public static function supplierScreen(Customer $partner): float
     {
-        $payable = self::supplierPayable($partner);
+        $canonical = self::canonical($partner);
 
         return self::isDualRole($partner)
-            ? $payable - self::customerReceivable($partner)
-            : $payable;
+            ? -$canonical['net_display_balance']
+            : $canonical['supplier_balance'];
     }
 
     public static function aliases(Customer $partner): array
     {
-        $receivable = self::customerReceivable($partner);
-        $payable = self::supplierPayable($partner);
-        $customerScreen = self::customerScreen($partner);
-        $supplierScreen = self::supplierScreen($partner);
+        $canonical = self::canonical($partner);
+        $receivable = $canonical['customer_balance'];
+        $payable = $canonical['supplier_balance'];
+        $customerScreen = $canonical['net_display_balance'];
+        $supplierScreen = self::isDualRole($partner) ? -$customerScreen : $payable;
 
         return [
             'customer_receivable_balance' => $receivable,
@@ -62,5 +64,10 @@ class PartnerDebtDisplayBalance
     public static function responseAliases(Customer $partner): array
     {
         return self::aliases($partner);
+    }
+
+    private static function canonical(Customer $partner): array
+    {
+        return app(CanonicalPartnerDebtService::class)->calculate($partner);
     }
 }

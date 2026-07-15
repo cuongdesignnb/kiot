@@ -127,13 +127,14 @@ class SupplierDualRolePartnerTimelineTest extends TestCase
 
     public function test_partner_view_labels_customer_debt_adjustment_receipt_as_adjustment(): void
     {
+        $cashFlowCode = 'PT26070714010866-' . uniqid();
         $partner = $this->createDualRolePartner([
             'debt_amount' => 0,
             'supplier_debt_amount' => -2_700_000,
         ]);
 
         CashFlow::create([
-            'code' => 'PT26070714010866',
+            'code' => $cashFlowCode,
             'type' => 'receipt',
             'amount' => 47_400_000,
             'time' => Carbon::parse('2026-07-07 14:01:00'),
@@ -153,7 +154,7 @@ class SupplierDualRolePartnerTimelineTest extends TestCase
             ->getJson("/api/suppliers/{$partner->id}/debt-transactions?view=partner");
 
         $response->assertOk();
-        $entry = collect($response->json('entries'))->firstWhere('code', 'PT26070714010866');
+        $entry = collect($response->json('entries'))->firstWhere('code', $cashFlowCode);
 
         $this->assertNotNull($entry);
         $this->assertSame('DebtAdjustment', $entry['reference_type']);

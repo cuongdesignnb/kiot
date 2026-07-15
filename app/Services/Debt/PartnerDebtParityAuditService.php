@@ -44,6 +44,8 @@ class PartnerDebtParityAuditService
         'DUPLICATE_SUPPLIER_PAYMENT',
         'INVOICE_RECEIPT_ALLOCATION_MISMATCH',
         'PURCHASE_PAYMENT_ALLOCATION_MISMATCH',
+        'INVOICE_RECEIPT_ALLOCATION_EVIDENCE_MISSING',
+        'PURCHASE_PAYMENT_ALLOCATION_EVIDENCE_MISSING',
         'RETURN_REFUND_DUPLICATE',
         'PURCHASE_RETURN_REFUND_MISMATCH',
         'CANCEL_REVERSAL_MISSING',
@@ -90,6 +92,8 @@ class PartnerDebtParityAuditService
         'has_cancelled_invoice', 'has_cancel_reversal', 'has_customer_adjustment', 'has_supplier_adjustment',
         'has_opening_balance', 'has_virtual_opening', 'has_target_type_alias',
         'has_technical_ledger_exclusion', 'has_allocation_warning',
+        'has_invoice_receipt_allocation_mismatch', 'has_purchase_payment_allocation_mismatch',
+        'has_invoice_receipt_allocation_evidence_missing', 'has_purchase_payment_allocation_evidence_missing',
         'suspect_invoice_codes', 'suspect_receipt_codes', 'suspect_return_codes',
         'suspect_refund_codes', 'suspect_purchase_codes', 'suspect_supplier_payment_codes',
         'suspect_purchase_return_codes', 'suspect_adjustment_codes', 'suspect_fallback_codes',
@@ -218,6 +222,8 @@ class PartnerDebtParityAuditService
             'has_duplicate_supplier_payment' => 'DUPLICATE_SUPPLIER_PAYMENT',
             'has_invoice_receipt_allocation_mismatch' => 'INVOICE_RECEIPT_ALLOCATION_MISMATCH',
             'has_purchase_payment_allocation_mismatch' => 'PURCHASE_PAYMENT_ALLOCATION_MISMATCH',
+            'has_invoice_receipt_allocation_evidence_missing' => 'INVOICE_RECEIPT_ALLOCATION_EVIDENCE_MISSING',
+            'has_purchase_payment_allocation_evidence_missing' => 'PURCHASE_PAYMENT_ALLOCATION_EVIDENCE_MISSING',
             'has_return_refund_duplicate' => 'RETURN_REFUND_DUPLICATE',
             'has_purchase_return_refund_mismatch' => 'PURCHASE_RETURN_REFUND_MISMATCH',
             'has_cancel_reversal_missing' => 'CANCEL_REVERSAL_MISSING',
@@ -280,6 +286,7 @@ class PartnerDebtParityAuditService
             'CUSTOMER_DOCUMENT_VS_LEDGER', 'SUPPLIER_DOCUMENT_VS_LEDGER',
             'TARGET_TYPE_ALIAS_SUSPECT', 'TECHNICAL_LEDGER_EXCLUDED',
             'INVOICE_RECEIPT_ALLOCATION_MISMATCH', 'PURCHASE_PAYMENT_ALLOCATION_MISMATCH',
+            'INVOICE_RECEIPT_ALLOCATION_EVIDENCE_MISSING', 'PURCHASE_PAYMENT_ALLOCATION_EVIDENCE_MISSING',
         ];
 
         return array_intersect($medium, $flags) !== [] ? 'MEDIUM' : 'LOW';
@@ -520,7 +527,18 @@ class PartnerDebtParityAuditService
             'has_duplicate_customer_receipt' => $this->hasDuplicateCashFlow($partner, 'receipt'),
             'has_duplicate_supplier_payment' => $this->hasDuplicateCashFlow($partner, 'payment', true),
             'has_invoice_receipt_allocation_mismatch' => $entries->contains(fn (array $e): bool => (bool) ($e['receipt_allocation_mismatch'] ?? false)),
-            'has_purchase_payment_allocation_mismatch' => $entries->contains(fn (array $e): bool => (bool) ($e['payment_allocation_mismatch'] ?? false) || ($e['payment_allocation_confidence'] ?? '') === 'unknown'),
+            'has_purchase_payment_allocation_mismatch' => $entries->contains(fn (array $e): bool => (bool) ($e['payment_allocation_mismatch'] ?? false)),
+            'has_invoice_receipt_allocation_evidence_missing' => $entries->contains(
+                fn (array $e): bool => ($e['event_kind'] ?? '') === 'invoice_payment_fallback'
+                    || in_array($e['receipt_allocation_confidence'] ?? '', ['inferred', 'unknown'], true)
+            ),
+            'has_purchase_payment_allocation_evidence_missing' => $entries->contains(
+                fn (array $e): bool => in_array(
+                    $e['payment_allocation_confidence'] ?? $e['allocation_confidence'] ?? '',
+                    ['inferred', 'unknown', 'global_payment_only'],
+                    true,
+                )
+            ),
             'has_return_refund_duplicate' => $this->hasReturnRefundCollision($entries),
             'has_purchase_return_refund_mismatch' => $entries->contains(fn (array $e): bool => (bool) ($e['purchase_return_refund_mismatch'] ?? false)),
             'has_cancel_reversal_missing' => $missingCancelReversal,
@@ -679,6 +697,7 @@ class PartnerDebtParityAuditService
             'VIRTUAL_OPENING_REQUIRED', 'STORED_BALANCE_NO_HISTORY',
             'CUSTOMER_DOCUMENT_VS_LEDGER', 'SUPPLIER_DOCUMENT_VS_LEDGER',
             'PURCHASE_PAYMENT_ALLOCATION_MISMATCH', 'INVOICE_RECEIPT_ALLOCATION_MISMATCH',
+            'PURCHASE_PAYMENT_ALLOCATION_EVIDENCE_MISSING', 'INVOICE_RECEIPT_ALLOCATION_EVIDENCE_MISSING',
             'TARGET_TYPE_ALIAS_SUSPECT', 'TECHNICAL_LEDGER_EXCLUDED',
             'VIRTUAL_DISPLAY_ALIGNMENT_ONLY', 'OK',
         ];
