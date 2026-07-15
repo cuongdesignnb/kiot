@@ -14,3 +14,9 @@ Schedule::command('serial:sync-cost-from-tasks --recompute-products')
     ->withoutOverlapping()
     ->onOneServer()
     ->appendOutputTo(storage_path('logs/serial-sync-cost.log'));
+
+Schedule::command('debt:check-invariants --dry-run')
+    ->dailyAt('03:00')
+    ->withoutOverlapping()
+    ->onOneServer()
+    ->appendOutputTo(storage_path('logs/debt-integrity.log'));
