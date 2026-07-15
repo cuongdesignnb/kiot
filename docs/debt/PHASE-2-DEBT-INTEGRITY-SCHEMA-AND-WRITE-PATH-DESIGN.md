@@ -260,6 +260,15 @@ INDEX(source_type, source_id)
 UNIQUE(reverses_operation_id)
 ```
 
+MySQL cannot enforce `reverses_operation_id <> id` with a `CHECK`
+constraint because `id` is `AUTO_INCREMENT`. The schema therefore retains the
+unsigned bigint auto-increment primary key, the self foreign key with
+`ON DELETE RESTRICT`, and `UNIQUE(reverses_operation_id)`, without a trigger or
+generated-column workaround. Before any write path is enabled, the application
+service must prevent self-reversal and reversal cycles, validate committed and
+non-reversed state, and perform the reversal under row locks in one outer
+transaction.
+
 Controlled operation types include invoice, customer payment/return, purchase,
 supplier payment/return, adjustment, opening, offset, merge, repair invoice, and
 approved import create/reverse variants. Unknown strings are rejected by the
