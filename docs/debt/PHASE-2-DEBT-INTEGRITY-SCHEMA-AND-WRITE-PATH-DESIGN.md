@@ -283,7 +283,69 @@ commit. A committed operation cannot have a missing source when its operation
 type requires one, and source records referenced by financial evidence cannot be
 hard-deleted.
 
-### 5.2 `partner_debt_outbox_events`
+### 5.2 `partner_debt_operation_participants`
+
+`partner_debt_operations.partner_id` is only a nullable primary-partner shortcut.
+It is not the complete relation for a multi-partner operation. This table is the
+authoritative participant set for both single- and multi-partner operations.
+
+| Column | Proposed type/contract |
+|---|---|
+| `id` | unsigned bigint primary key |
+| `operation_id` | FK to `partner_debt_operations.id`, restrict delete |
+| `partner_id` | FK to `customers.id`, restrict delete |
+| `participant_role` | varchar(32), controlled application enum/registry |
+| `effect_role` | nullable `customer`, `supplier`, `both`, or `none` |
+| `customer_delta` | nullable decimal(15,2) signed cache/ledger effect |
+| `supplier_delta` | nullable decimal(15,2) signed cache/ledger effect |
+| timestamps | audit timestamps |
+
+Required keys:
+
+```text
+UNIQUE(operation_id, partner_id, participant_role)
+INDEX(partner_id, operation_id)
+INDEX(operation_id, effect_role)
+CHECK(effect_role != 'customer' OR (customer_delta IS NOT NULL AND supplier_delta IS NULL))
+CHECK(effect_role != 'supplier' OR (supplier_delta IS NOT NULL AND customer_delta IS NULL))
+CHECK(effect_role != 'both' OR (customer_delta IS NOT NULL AND supplier_delta IS NOT NULL))
+CHECK(effect_role != 'none' OR (customer_delta IS NOT NULL AND supplier_delta IS NOT NULL AND customer_delta = 0.00 AND supplier_delta = 0.00))
+```
+
+Controlled participant roles initially include:
+
+```text
+primary
+source
+target
+old_supplier
+new_supplier
+customer
+supplier
+```
+
+Unknown or PHP-class-derived role strings are rejected. `null` delta means that
+the role is not applicable to that participant; zero means a known neutral
+effect. For every committed operation, participant deltas must reconcile to the
+cache and ledger deltas written by that operation.
+
+Single-partner operations require non-null `partner_debt_operations.partner_id`
+and exactly one participant row, whose role is `primary` and partner matches the
+shortcut. Multi-partner operations may use the operation-type-defined primary
+shortcut or null, but every partner whose document, ledger, allocation, or cache
+is affected must have a participant row.
+For example, partner merge records `source` and `target`; supplier replacement
+records `old_supplier` and `new_supplier`. Metadata JSON cannot substitute for
+participant rows.
+
+Participants are inserted and validated inside the operation transaction and
+become immutable when it commits. The service validates that a non-null shortcut
+matches its `primary` participant. Reversal operations retain every affected
+partner, mirror the applicable participant roles, and record the exact negated
+deltas. Querying operations/incidents for a partner uses this table, not only the
+shortcut column.
+
+### 5.3 `partner_debt_outbox_events`
 
 | Column | Proposed type/contract |
 |---|---|
@@ -330,7 +392,7 @@ least 90 days and archived at least 365 days. Values are configurable and purge
 is allowed only through an approved retention job. Events are never deleted
 immediately after publish.
 
-### 5.3 `supplier_payment_allocations`
+### 5.4 `supplier_payment_allocations`
 
 | Column | Proposed type/contract |
 |---|---|
@@ -370,7 +432,7 @@ contract exists.
 
 Historical FIFO inference is never inserted into this table.
 
-### 5.4 Allocation reversal tables
+### 5.5 Allocation reversal tables
 
 Create both:
 
@@ -405,7 +467,7 @@ full reversal followed by a new correct operation. Original allocation rows are
 never updated or hard-deleted. Active state is derived from allocation minus its
 explicit reversal, not cash-flow status alone.
 
-### 5.5 `partner_debt_opening_balances`
+### 5.6 `partner_debt_opening_balances`
 
 | Column | Proposed type/contract |
 |---|---|
@@ -447,7 +509,7 @@ the approved row and the partner; only active rows participate. Approved/active
 rows are immutable. Reversal is full-only through a new operation. Virtual
 timeline residuals are never promoted automatically.
 
-### 5.6 Integrity incidents and immutable events
+### 5.7 Integrity incidents and immutable events
 
 `partner_debt_integrity_incidents` stores current state:
 
@@ -459,7 +521,7 @@ timeline residuals are never promoted automatically.
 | differences | customer/supplier decimal(15,2) |
 | fingerprint | char(64) |
 | evidence | PII-safe JSON |
-| recurrence | first/last detected timestamps, occurrence count |
+| recurrence | first/last detected timestamps, occurrence count, `last_event_sequence` |
 | acknowledgment/resolution | actor/timestamp/note |
 | suppression | reason, actor, `suppressed_until` |
 | baseline | baseline run/cutoff/checksum references |
@@ -486,6 +548,11 @@ observations/events and metrics; they do not become material drift alerts.
 |---|---|
 | `id` | unsigned bigint primary key |
 | `incident_id` | FK to incident, restrict delete |
+| `event_uuid` | char(36), unique public event identity |
+| `dedup_key` | char(64), unique deterministic retry identity |
+| `detection_run_id` | nullable char(36), stable controlled scan-run identity |
+| `source_operation_id` | nullable FK to operation, restrict delete |
+| `event_sequence` | unsigned integer, contiguous per incident |
 | `event_type` | `detected`, `redetected`, `acknowledged`, `resolved`, `reopened`, `suppressed`, `unsuppressed` |
 | `from_status`, `to_status` | nullable controlled states |
 | `classification`, `fingerprint` | immutable snapshot values |
@@ -496,16 +563,41 @@ observations/events and metrics; they do not become material drift alerts.
 | timestamps | audit timestamps |
 
 ```text
+UNIQUE(event_uuid)
+UNIQUE(dedup_key)
+UNIQUE(incident_id, event_sequence)
+INDEX(detection_run_id, incident_id)
 INDEX(incident_id, occurred_at, id)
 INDEX(event_type, occurred_at)
 ```
 
-The current-state row may change under lock; event rows never change. Batch
-upserts process sorted partner IDs in bounded transactions. Daily scheduling
-remains disabled until baseline, performance, recurrence, suppression, and event
-tests are accepted.
+`detection_run_id` is created once before a scan attempt processes any batch. It
+is stable across retries and is never derived from a timestamp alone. Detection
+events require it. Their versioned dedup input is:
 
-### 5.7 Additive hardening for `debt_offsets`
+```text
+SHA256(incident_id + event_type + fingerprint + detection_run_id + invariant_version)
+```
+
+Administrative events use:
+
+```text
+SHA256(incident_id + event_type + source_operation_id_or_explicit_idempotency_key)
+```
+
+The incident current-state update and event insert are one transaction: lock or
+uniquely create the incident row, calculate/check the dedup key, return the
+existing event without changing state/count when it exists, otherwise increment
+`last_event_sequence`, insert the next immutable event, update occurrence/status
+once, and commit. The unique dedup key serializes concurrent retries. A different
+approved detection run may append one `redetected`/`reopened` event and increment
+occurrence exactly once. Event rows never change.
+
+Batch upserts process sorted partner IDs in bounded transactions. Daily
+scheduling remains disabled until baseline, performance, recurrence,
+idempotency, suppression, and event tests are accepted.
+
+### 5.8 Additive hardening for `debt_offsets`
 
 Keep all legacy columns and add nullable fields first:
 
@@ -597,6 +689,11 @@ payment, and document rows are locked. Cache updates apply the signed operation
 delta exactly once. All outbox rows are inserted before commit. Direct external
 side effects are prohibited inside the transaction.
 
+Participant rows are written after all affected partner rows are locked and
+before domain effects are applied. A commit is rejected unless participant
+deltas reconcile to every cache/ledger effect; multi-partner metadata without the
+authoritative participant rows is invalid.
+
 ## 8. Complete write-path matrix
 
 All feature flags below default off. `op` in lock cells means the operation key
@@ -661,12 +758,14 @@ Additional current gaps that implementation must not hide:
 
 ## 10. Migration PR split and sequencing
 
-STEP 24 creates no migration. After separate approval, split implementation:
+This design review creates no migration. After separate approval, split
+implementation:
 
 ### PR A - operation/outbox foundation
 
 ```text
 partner_debt_operations
+partner_debt_operation_participants
 partner_debt_outbox_events
 ```
 
@@ -778,7 +877,15 @@ query growth is approximately O(batches), not O(partners * source queries).
 - retry after commit-before-response returns the existing result;
 - injected failure after every write step rolls back all effects;
 - bounded deadlock retry creates one effect;
-- unexpected stale pending raises an incident and is not stolen.
+- unexpected stale pending raises an incident and is not stolen;
+- a single-partner operation has exactly one matching `primary` participant;
+- partner merge records unique `source` and `target` participants;
+- supplier replacement records `old_supplier` and `new_supplier` participants;
+- duplicate operation/partner/role rows and partner hard-delete are restricted;
+- reversal participant evidence mirrors every affected partner and negates the
+  applicable deltas;
+- operation queries by any affected partner use participant indexes and return
+  multi-partner operations even when the shortcut points elsewhere.
 
 ### Allocations and reversals
 
@@ -801,6 +908,12 @@ query growth is approximately O(batches), not O(partners * source queries).
 - approved/active records cannot be edited/deleted;
 - same fingerprint reopens the same incident and appends immutable events;
 - different fingerprint creates a new incident;
+- retrying one detection run inserts one event and increments occurrence once;
+- concurrent requests with the same dedup key insert one event;
+- a new approved run appends one new `redetected` event;
+- a resolved recurrence reopens once for the same run;
+- acknowledge/resolve retries are idempotent by operation or explicit key;
+- event sequence increases contiguously while the incident row is locked;
 - suppression expiry and technical/insufficient non-material behavior;
 - debt offset equal-side, idempotency, source, apply, and full reversal rules;
 - legacy nullable rows remain readable and unchanged.
@@ -824,7 +937,9 @@ implementation evidence rather than guessed in this document:
 - outbox payload size/SLA and archive storage implementation;
 - exact business-timezone configuration source;
 - production DDL algorithm/lock behavior;
-- exact list of operation/event enum values in application code.
+- exact list of operation/event enum values in application code;
+- participant-index selectivity under production-like partner history;
+- incident-event retention, archive volume, and write-rate benchmark.
 
 ## 15. Final proposal status
 
@@ -832,6 +947,8 @@ implementation evidence rather than guessed in this document:
 SCHEMA_DISCOVERY_COMPLETE=yes
 MYSQL_CAPABILITY_REVIEWED=yes
 SEVEN_DECISIONS_CLOSED=yes
+MULTI_PARTNER_OPERATION_CONTRACT_COMPLETE=yes
+INCIDENT_EVENT_IDEMPOTENCY_CONTRACT_COMPLETE=yes
 WRITE_PATH_MATRIX_COMPLETE=yes
 DIRECT_CACHE_WRITES_IDENTIFIED=yes
 MIGRATION_PR_SPLIT=A/B/C/D
@@ -843,8 +960,8 @@ PHASE2_DATA_MUTATION=no
 APPLICATION_CODE_CHANGED=no
 PRODUCTION_ACCESSED=no
 READY_FOR_DESIGN_SENIOR_ACCEPTANCE=yes
-READY_TO_MARK_DESIGN_PR=no
-READY_TO_MERGE_DESIGN_PR=no
+READY_TO_MARK_DESIGN_PR=yes
+READY_TO_MERGE_DESIGN_PR=yes
 READY_FOR_MIGRATION_PR_A=no
 READY_FOR_CURRENT_DATA_CORRECTION=no
 ```
