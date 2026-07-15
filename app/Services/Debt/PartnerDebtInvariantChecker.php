@@ -4,6 +4,7 @@ namespace App\Services\Debt;
 
 use App\Models\Customer;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 
 class PartnerDebtInvariantChecker
 {
@@ -32,6 +33,8 @@ class PartnerDebtInvariantChecker
         'RETURN_REFUND_DUPLICATE',
         'PURCHASE_RETURN_REFUND_MISMATCH',
         'CANCEL_REVERSAL_MISSING',
+        'INVOICE_RECEIPT_ALLOCATION_MISMATCH',
+        'PURCHASE_PAYMENT_ALLOCATION_MISMATCH',
     ];
 
     private const INSUFFICIENT_FLAGS = [
@@ -39,8 +42,8 @@ class PartnerDebtInvariantChecker
         'STORED_BALANCE_NO_HISTORY',
         'HAS_DOCUMENTS_NO_LEDGER',
         'HAS_LEDGER_NO_DOCUMENTS',
-        'INVOICE_RECEIPT_ALLOCATION_MISMATCH',
-        'PURCHASE_PAYMENT_ALLOCATION_MISMATCH',
+        'INVOICE_RECEIPT_ALLOCATION_EVIDENCE_MISSING',
+        'PURCHASE_PAYMENT_ALLOCATION_EVIDENCE_MISSING',
     ];
 
     private const TECHNICAL_FLAGS = [
@@ -83,7 +86,16 @@ class PartnerDebtInvariantChecker
         ?int $limit = null,
         string $role = 'all',
         string $status = 'all',
+        bool $benchmark = false,
     ): array {
+        $queryCount = 0;
+        if ($benchmark) {
+            DB::listen(function () use (&$queryCount): void {
+                $queryCount++;
+            });
+        }
+        $startedAt = hrtime(true);
+        $slowestPartnerRuntimeMs = 0.0;
         $query = Customer::query()
             ->whereNull('merged_into_id')
             ->where(function (Builder $builder): void {
@@ -113,19 +125,33 @@ class PartnerDebtInvariantChecker
             if ($limit !== null && count($rows) >= $limit) {
                 break;
             }
+            $partnerStartedAt = hrtime(true);
             $rows[] = $this->check($partner);
+            $slowestPartnerRuntimeMs = max(
+                $slowestPartnerRuntimeMs,
+                (hrtime(true) - $partnerStartedAt) / 1_000_000,
+            );
         }
 
         $collection = collect($rows);
+        $totalChecked = $collection->count();
+        $runtimeMs = (hrtime(true) - $startedAt) / 1_000_000;
 
         return [
             'checked_at' => now()->toIso8601String(),
-            'total_checked' => $collection->count(),
+            'total_checked' => $totalChecked,
             'matched' => $collection->where('invariant_status', self::STATUS_OK)->count(),
             'drift_detected' => $collection->where('invariant_status', self::STATUS_DRIFT)->count(),
             'insufficient_evidence' => $collection->where('invariant_status', self::STATUS_INSUFFICIENT)->count(),
             'technical_warnings' => $collection->where('invariant_status', self::STATUS_TECHNICAL)->count(),
             'audit_errors' => $collection->where('invariant_status', self::STATUS_ERROR)->count(),
+            'benchmark' => $benchmark ? [
+                'query_count' => $queryCount,
+                'queries_per_partner' => $totalChecked > 0 ? $queryCount / $totalChecked : 0.0,
+                'runtime_ms' => $runtimeMs,
+                'peak_memory_mb' => memory_get_peak_usage(true) / 1024 / 1024,
+                'slowest_partner_runtime_ms' => $slowestPartnerRuntimeMs,
+            ] : null,
             'rows' => $rows,
         ];
     }

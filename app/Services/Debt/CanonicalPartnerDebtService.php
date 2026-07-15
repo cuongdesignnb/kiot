@@ -8,6 +8,8 @@ class CanonicalPartnerDebtService
 {
     private const SOURCE_VERSION = 'stored-cache-v1';
 
+    private const SOURCE_KIND = 'STORED_COMPATIBILITY_CACHE';
+
     /**
      * Return the single read contract for partner debt balances.
      *
@@ -23,6 +25,9 @@ class CanonicalPartnerDebtService
             'customer_balance' => $customerBalance,
             'supplier_balance' => $supplierBalance,
             'net_display_balance' => $customerBalance - $supplierBalance,
+            'source_kind' => self::SOURCE_KIND,
+            'is_canonical' => false,
+            'staleness_status' => 'UNKNOWN',
             'calculated_at' => now()->toIso8601String(),
             'source_version' => self::SOURCE_VERSION.':'.$this->fingerprint(
                 $partner,

@@ -941,6 +941,7 @@ class ReportController extends Controller
             $receivable = $canonical['customer_balance'];
             $payable = $canonical['supplier_balance'];
             $net = $canonical['net_display_balance'];
+            $supplierScreen = $p->is_customer && $p->is_supplier ? -$net : $payable;
 
             return [
                 'id' => $p->id,
@@ -952,6 +953,10 @@ class ReportController extends Controller
                 'receivable' => $receivable,
                 'payable' => $payable,
                 'net' => $net,
+                'customer_receivable_balance' => $receivable,
+                'supplier_payable_balance' => $payable,
+                'customer_screen_debt' => $net,
+                'supplier_screen_debt' => $supplierScreen,
                 'total_offset' => (float) $totalOffset,
                 'auto_offset' => (float) $autoOffset,
                 'manual_offset' => (float) $manualOffset,

@@ -32,7 +32,7 @@ class CheckPartnerDebtInvariantsCommandTest extends TestCase
     {
         Log::shouldReceive('warning')->never();
         $checker = Mockery::mock(PartnerDebtInvariantChecker::class);
-        $checker->shouldReceive('scan')->once()->with([], null, 'all', 'all')->andReturn($this->scanResult());
+        $checker->shouldReceive('scan')->once()->with([], null, 'all', 'all', false)->andReturn($this->scanResult());
         $this->app->instance(PartnerDebtInvariantChecker::class, $checker);
 
         $this->artisan('debt:check-invariants', ['--dry-run' => true])
@@ -50,7 +50,7 @@ class CheckPartnerDebtInvariantsCommandTest extends TestCase
                 Mockery::on(fn (array $context): bool => $context['partner_ids'] === [210]),
             );
         $checker = Mockery::mock(PartnerDebtInvariantChecker::class);
-        $checker->shouldReceive('scan')->once()->with([210], 1, 'dual', 'active')->andReturn($this->scanResult([
+        $checker->shouldReceive('scan')->once()->with([210], 1, 'dual', 'active', false)->andReturn($this->scanResult([
             'partner_id' => 210,
             'partner_code' => 'NCC210',
             'role' => 'dual_role',
@@ -76,7 +76,7 @@ class CheckPartnerDebtInvariantsCommandTest extends TestCase
     {
         Log::shouldReceive('warning')->never();
         $checker = Mockery::mock(PartnerDebtInvariantChecker::class);
-        $checker->shouldReceive('scan')->once()->with([], null, 'all', 'all')->andReturn($this->scanResult([
+        $checker->shouldReceive('scan')->once()->with([], null, 'all', 'all', false)->andReturn($this->scanResult([
             'partner_id' => 1,
             'partner_code' => 'KH001',
             'role' => 'customer_only',
@@ -120,6 +120,51 @@ class CheckPartnerDebtInvariantsCommandTest extends TestCase
             ->assertExitCode(2);
     }
 
+    public function test_allocation_mismatch_returns_material_drift_exit_code(): void
+    {
+        Log::shouldReceive('warning')->once();
+        $checker = Mockery::mock(PartnerDebtInvariantChecker::class);
+        $checker->shouldReceive('scan')->once()->with([], null, 'all', 'all', false)->andReturn($this->scanResult([
+            'partner_id' => 10,
+            'partner_code' => 'SANITIZED-010',
+            'role' => 'customer_only',
+            'invariant_status' => PartnerDebtInvariantChecker::STATUS_DRIFT,
+            'difference' => 500_000.0,
+            'root_cause' => 'INVOICE_RECEIPT_ALLOCATION_MISMATCH',
+            'risk_level' => 'MEDIUM',
+            'drift_detected' => true,
+            'audit_error' => null,
+        ]));
+        $this->app->instance(PartnerDebtInvariantChecker::class, $checker);
+
+        $this->artisan('debt:check-invariants', ['--dry-run' => true])
+            ->expectsOutputToContain('Material drift: 1')
+            ->assertExitCode(1);
+    }
+
+    public function test_allocation_missing_evidence_does_not_fail_the_command(): void
+    {
+        Log::shouldReceive('warning')->never();
+        $checker = Mockery::mock(PartnerDebtInvariantChecker::class);
+        $checker->shouldReceive('scan')->once()->with([], null, 'all', 'all', false)->andReturn($this->scanResult([
+            'partner_id' => 11,
+            'partner_code' => 'SANITIZED-011',
+            'role' => 'supplier_only',
+            'invariant_status' => PartnerDebtInvariantChecker::STATUS_INSUFFICIENT,
+            'difference' => 0.0,
+            'root_cause' => 'PURCHASE_PAYMENT_ALLOCATION_EVIDENCE_MISSING',
+            'risk_level' => 'MEDIUM',
+            'drift_detected' => false,
+            'audit_error' => null,
+        ]));
+        $this->app->instance(PartnerDebtInvariantChecker::class, $checker);
+
+        $this->artisan('debt:check-invariants', ['--dry-run' => true])
+            ->expectsOutputToContain('Insufficient evidence: 1')
+            ->expectsOutputToContain('Material drift: 0')
+            ->assertExitCode(0);
+    }
+
     public function test_command_exception_returns_system_error_exit_code(): void
     {
         Log::shouldReceive('error')->once()->with('Debt integrity scan failed', Mockery::type('array'));
@@ -155,7 +200,7 @@ class CheckPartnerDebtInvariantsCommandTest extends TestCase
         $this->assertFalse($command->getDefinition()->hasOption('apply'));
     }
 
-    public function test_daily_schedule_has_timezone_environment_and_overlap_guards(): void
+    public function test_production_debt_schedule_is_disabled(): void
     {
         $schedule = new Schedule(config('app.timezone'));
         ScheduleFacade::swap($schedule);
@@ -165,16 +210,30 @@ class CheckPartnerDebtInvariantsCommandTest extends TestCase
             fn ($event): bool => str_contains((string) $event->command, 'debt:check-invariants'),
         );
 
-        $this->assertNotNull($event, json_encode(
+        $this->assertNull($event, json_encode(
             collect($schedule->events())->pluck('command')->all(),
             JSON_UNESCAPED_SLASHES,
         ));
-        $this->assertSame('0 3 * * *', $event->expression);
-        $this->assertSame(config('app.timezone'), $event->timezone);
-        $this->assertSame(['production'], $event->environments);
-        $this->assertTrue($event->withoutOverlapping);
-        $this->assertSame(180, $event->expiresAt);
-        $this->assertTrue($event->onOneServer);
+    }
+
+    public function test_benchmark_mode_outputs_read_only_performance_metrics(): void
+    {
+        $checker = Mockery::mock(PartnerDebtInvariantChecker::class);
+        $result = $this->scanResult();
+        $result['benchmark'] = [
+            'query_count' => 21,
+            'queries_per_partner' => 21.0,
+            'runtime_ms' => 125.5,
+            'peak_memory_mb' => 48.0,
+            'slowest_partner_runtime_ms' => 120.25,
+        ];
+        $checker->shouldReceive('scan')->once()->with([], null, 'all', 'all', true)->andReturn($result);
+        $this->app->instance(PartnerDebtInvariantChecker::class, $checker);
+
+        $this->artisan('debt:check-invariants', ['--dry-run' => true, '--benchmark' => true])
+            ->expectsOutputToContain('Benchmark SQL queries: 21')
+            ->expectsOutputToContain('Benchmark runtime ms: 125.50')
+            ->assertExitCode(0);
     }
 
     private function scanResult(?array $drift = null): array

@@ -14,7 +14,8 @@ class CheckPartnerDebtInvariantsCommand extends Command
         {--partner-id=* : Limit the scan to one or more partner IDs}
         {--role=all : all, customer, supplier or dual}
         {--status=all : all, active or inactive}
-        {--limit= : Limit the number of checked partners}';
+        {--limit= : Limit the number of checked partners}
+        {--benchmark : Print query, runtime and memory metrics for a manual scan}';
 
     protected $description = 'Read-only debt invariant scan; never repairs or mutates debt data';
 
@@ -60,6 +61,7 @@ class CheckPartnerDebtInvariantsCommand extends Command
                 $limitOption === null ? null : (int) $limitOption,
                 $role,
                 $status,
+                (bool) $this->option('benchmark'),
             );
         } catch (Throwable $e) {
             Log::error('Debt integrity scan failed', ['exception' => $e]);
@@ -76,6 +78,14 @@ class CheckPartnerDebtInvariantsCommand extends Command
         $this->line('Insufficient evidence: '.$result['insufficient_evidence']);
         $this->line('Technical warnings: '.$result['technical_warnings']);
         $this->line('Audit errors: '.$result['audit_errors']);
+        if (is_array($result['benchmark'] ?? null)) {
+            $benchmark = $result['benchmark'];
+            $this->line('Benchmark SQL queries: '.$benchmark['query_count']);
+            $this->line('Benchmark queries/partner: '.number_format($benchmark['queries_per_partner'], 2));
+            $this->line('Benchmark runtime ms: '.number_format($benchmark['runtime_ms'], 2));
+            $this->line('Benchmark peak memory MB: '.number_format($benchmark['peak_memory_mb'], 2));
+            $this->line('Benchmark slowest partner ms: '.number_format($benchmark['slowest_partner_runtime_ms'], 2));
+        }
 
         if ($result['audit_errors'] > 0) {
             Log::error('Debt integrity scan completed with audit errors', [

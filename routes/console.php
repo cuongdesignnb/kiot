@@ -2,7 +2,6 @@
 
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schedule;
 
 Artisan::command('inspire', function () {
@@ -15,14 +14,3 @@ Schedule::command('serial:sync-cost-from-tasks --recompute-products')
     ->withoutOverlapping()
     ->onOneServer()
     ->appendOutputTo(storage_path('logs/serial-sync-cost.log'));
-
-Schedule::command('debt:check-invariants --dry-run')
-    ->dailyAt('03:00')
-    ->timezone(config('app.timezone'))
-    ->environments(['production'])
-    ->withoutOverlapping(180)
-    ->onOneServer()
-    ->appendOutputTo(storage_path('logs/debt-integrity.log'))
-    ->onFailure(function (): void {
-        Log::error('Scheduled debt invariant scan failed.');
-    });

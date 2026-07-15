@@ -33,6 +33,9 @@ class CanonicalPartnerDebtServiceTest extends TestCase
         $this->assertSame(12_300_000.0, $result['customer_balance']);
         $this->assertSame(2_700_000.0, $result['supplier_balance']);
         $this->assertSame(9_600_000.0, $result['net_display_balance']);
+        $this->assertSame('STORED_COMPATIBILITY_CACHE', $result['source_kind']);
+        $this->assertFalse($result['is_canonical']);
+        $this->assertSame('UNKNOWN', $result['staleness_status']);
         $this->assertSame('2026-07-15T09:30:00+07:00', $result['calculated_at']);
         $this->assertStringStartsWith('stored-cache-v1:', $result['source_version']);
     }

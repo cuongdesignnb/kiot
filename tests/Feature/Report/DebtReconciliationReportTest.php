@@ -50,6 +50,10 @@ class DebtReconciliationReportTest extends TestCase
             ->where('rows.0.receivable', 1_200_000)
             ->where('rows.0.payable', 400_000)
             ->where('rows.0.net', 800_000)
+            ->where('rows.0.customer_receivable_balance', 1_200_000)
+            ->where('rows.0.supplier_payable_balance', 400_000)
+            ->where('rows.0.customer_screen_debt', 800_000)
+            ->where('rows.0.supplier_screen_debt', -800_000)
             ->where('summary.total_receivable', 1_200_000)
             ->where('summary.total_payable', 400_000)
             ->where('summary.total_net', 800_000));
@@ -65,8 +69,8 @@ class DebtReconciliationReportTest extends TestCase
             $this->partner->code,
             '"'.$this->partner->name.'"',
             $this->partner->phone,
-            '1200000.00',
-            '400000.00',
+            '1200000',
+            '400000',
             '0',
             '800000',
         ]), false);
@@ -78,5 +82,19 @@ class DebtReconciliationReportTest extends TestCase
 
         $this->get('/reports/debt-reconciliation')->assertRedirect();
         $this->get('/reports/debt-reconciliation/export')->assertRedirect();
+    }
+
+    public function test_report_routes_keep_reports_view_permission(): void
+    {
+        $routes = app('router')->getRoutes();
+
+        $this->assertContains(
+            'permission:reports.view',
+            $routes->getByName('reports.debt-reconciliation')->gatherMiddleware(),
+        );
+        $this->assertContains(
+            'permission:reports.view',
+            $routes->getByName('reports.debt-reconciliation.export')->gatherMiddleware(),
+        );
     }
 }

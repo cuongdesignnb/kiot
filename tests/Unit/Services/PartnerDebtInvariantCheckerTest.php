@@ -104,11 +104,47 @@ class PartnerDebtInvariantCheckerTest extends TestCase
         $this->assertFalse($result['drift_detected']);
     }
 
-    public function test_allocation_warning_without_balance_mismatch_is_insufficient_evidence(): void
+    public function test_invoice_allocation_mismatch_is_material_drift(): void
+    {
+        $result = $this->checkWithAudit([
+            'primary_classification' => 'INVOICE_RECEIPT_ALLOCATION_MISMATCH',
+            'classification_flags' => ['INVOICE_RECEIPT_ALLOCATION_MISMATCH'],
+            'risk_level' => 'MEDIUM',
+        ]);
+
+        $this->assertSame(PartnerDebtInvariantChecker::STATUS_DRIFT, $result['invariant_status']);
+        $this->assertTrue($result['drift_detected']);
+    }
+
+    public function test_invoice_allocation_missing_evidence_is_insufficient(): void
+    {
+        $result = $this->checkWithAudit([
+            'primary_classification' => 'INVOICE_RECEIPT_ALLOCATION_EVIDENCE_MISSING',
+            'classification_flags' => ['INVOICE_RECEIPT_ALLOCATION_EVIDENCE_MISSING'],
+            'risk_level' => 'MEDIUM',
+        ]);
+
+        $this->assertSame(PartnerDebtInvariantChecker::STATUS_INSUFFICIENT, $result['invariant_status']);
+        $this->assertFalse($result['drift_detected']);
+    }
+
+    public function test_supplier_allocation_conflict_is_material_drift(): void
     {
         $result = $this->checkWithAudit([
             'primary_classification' => 'PURCHASE_PAYMENT_ALLOCATION_MISMATCH',
             'classification_flags' => ['PURCHASE_PAYMENT_ALLOCATION_MISMATCH'],
+            'risk_level' => 'MEDIUM',
+        ]);
+
+        $this->assertSame(PartnerDebtInvariantChecker::STATUS_DRIFT, $result['invariant_status']);
+        $this->assertTrue($result['drift_detected']);
+    }
+
+    public function test_supplier_allocation_missing_evidence_is_insufficient(): void
+    {
+        $result = $this->checkWithAudit([
+            'primary_classification' => 'PURCHASE_PAYMENT_ALLOCATION_EVIDENCE_MISSING',
+            'classification_flags' => ['PURCHASE_PAYMENT_ALLOCATION_EVIDENCE_MISSING'],
             'risk_level' => 'MEDIUM',
         ]);
 
