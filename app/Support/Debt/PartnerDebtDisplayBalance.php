@@ -58,8 +58,6 @@ class PartnerDebtDisplayBalance
             'supplier_list_debt_amount' => $supplierScreen,
             'is_dual_role' => self::isDualRole($partner),
             'is_dual_role_partner' => self::isDualRole($partner),
-            'debt_calculated_at' => $canonical['calculated_at'],
-            'debt_source_version' => $canonical['source_version'],
         ];
     }
 

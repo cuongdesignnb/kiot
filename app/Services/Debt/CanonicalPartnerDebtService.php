@@ -38,7 +38,6 @@ class CanonicalPartnerDebtService
             (string) ($partner->id ?? ''),
             number_format($customerBalance, 4, '.', ''),
             number_format($supplierBalance, 4, '.', ''),
-            (string) ($partner->updated_at?->format('Y-m-d H:i:s.u') ?? ''),
         ]);
 
         return substr(hash('sha256', $payload), 0, 16);

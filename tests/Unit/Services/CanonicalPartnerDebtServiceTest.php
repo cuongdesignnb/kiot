@@ -53,4 +53,27 @@ class CanonicalPartnerDebtServiceTest extends TestCase
 
         $this->assertNotSame($before, $after);
     }
+
+    public function test_cache_fingerprint_is_independent_of_optional_updated_at_hydration(): void
+    {
+        $withTimestamp = new Customer;
+        $withTimestamp->forceFill([
+            'id' => 10,
+            'debt_amount' => 100_000,
+            'supplier_debt_amount' => 25_000,
+            'updated_at' => Carbon::parse('2026-07-15 10:00:00'),
+        ]);
+        $withoutTimestamp = new Customer;
+        $withoutTimestamp->forceFill([
+            'id' => 10,
+            'debt_amount' => 100_000,
+            'supplier_debt_amount' => 25_000,
+        ]);
+        $service = app(CanonicalPartnerDebtService::class);
+
+        $this->assertSame(
+            $service->calculate($withTimestamp)['source_version'],
+            $service->calculate($withoutTimestamp)['source_version'],
+        );
+    }
 }
