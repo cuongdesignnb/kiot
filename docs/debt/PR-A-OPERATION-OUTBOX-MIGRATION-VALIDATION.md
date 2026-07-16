@@ -5,7 +5,8 @@
 - Branch: `feat/debt-integrity-pr-a-operation-outbox-schema`
 - Base branch: `production-customer-group`
 - Base SHA: `6a058abf051ea01b239b2af2fd1c949fde0c7517`
-- Validated implementation commit: `947d1ce1a4f0a68b8760d4522b771941b6a54609`
+- Initial implementation commit: `947d1ce1a4f0a68b8760d4522b771941b6a54609`
+- Corrected implementation commit: `4b5e36745c6eebdd0670f288bd112a5904a85593`
 - Authoritative design: `docs/debt/PHASE-2-DEBT-INTEGRITY-SCHEMA-AND-WRITE-PATH-DESIGN.md`
 - Scope: three additive tables, MySQL schema tests, design clarification, and this report
 - Application code, models, services, controllers, commands, jobs, workers, schedules, and feature flags changed: no
@@ -57,8 +58,19 @@ in batch 60 on the temporary clone. Each new table contained zero rows.
 - Lookup indexes: `pdop_partner_operation_idx`, `pdop_operation_effect_idx`.
 - Foreign keys: `pdop_operation_fk` RESTRICT, `pdop_partner_fk` RESTRICT.
 - Enforced CHECK constraint: `pdop_effect_shape_chk`.
-- The CHECK uses an explicit non-null branch so SQL three-valued logic cannot
-  accept a null effect role with non-null deltas.
+- Every non-null effect role explicitly enforces its required null shape. In
+  particular, `effect_role = 'none'` requires both deltas to be non-null and
+  exactly `0.00`, so SQL `UNKNOWN` cannot satisfy the CHECK.
+
+`PARTICIPANT_CHECK_THREE_VALUED_LOGIC_REVIEW=PASS`
+
+`NONE_EFFECT_NULL_DELTA_REJECTED=yes`
+
+The initial validation hardened the outer null-role branch but did not explicitly
+guard null deltas inside the `none` branch. Senior review identified this P1 gap
+before acceptance. Commit `4b5e36745c6eebdd0670f288bd112a5904a85593`
+added both `IS NOT NULL` predicates, exact `CHECK_CLAUSE` verification, and direct
+MySQL probes for `(NULL, 0.00)`, `(0.00, NULL)`, and `(NULL, NULL)`.
 
 ### `partner_debt_outbox_events`
 
@@ -107,11 +119,12 @@ database. No `migrate:fresh` command was used.
 | Gate | Result |
 |---|---|
 | Fresh migrate from zero | PASS |
-| Schema tests | PASS, 11 tests / 425 assertions |
+| Schema tests | PASS, 12 tests / 441 assertions |
+| Invalid `none` null probes | PASS, MySQL error 3819 from `pdop_effect_shape_chk` |
 | Rollback last three migrations | PASS |
 | PR A tables after rollback | 0 |
 | Remigrate | PASS |
-| Schema tests after remigrate | PASS, 11 tests / 425 assertions |
+| Schema tests after remigrate | PASS, 12 tests / 441 assertions |
 | Second migrate | PASS, `Nothing to migrate` |
 
 ## Production-like clone proof
@@ -133,7 +146,8 @@ three PR A tables, and remigrate recreated them.
 | Gate | Result |
 |---|---|
 | Clone migrate | PASS |
-| Clone schema tests | PASS, 11 tests / 425 assertions |
+| Clone schema tests | PASS, 12 tests / 441 assertions |
+| Invalid `none` null probes | PASS, MySQL error 3819 from `pdop_effect_shape_chk` |
 | Legacy row counts unchanged | yes |
 | Legacy data hashes unchanged | yes |
 | Legacy normalized schema hashes unchanged | yes |
@@ -152,20 +166,20 @@ clone baseline values were observed after migrate, rollback, and remigrate.
 
 | Table | Rows | Data SHA-256 | Normalized schema SHA-256 |
 |---|---:|---|---|
-| `customers` | 322 | `cf51cc91cdc2412e8fd8210236e03d42d132873716a3ba7834f2bc4b041979be` | `e62043e6abfa6cb361580d57639c32d8a4d62b35bac8a6b73207ad49e2cda78e` |
-| `users` | 6 | `2149ef4f0e6b4889a0947481f2ffe70ead45703e67795c61710d9a6dc9b9f62d` | `1510d99e23cc5b6f24ee6834e8705846583dabe51860dfb56d547cc1fe71a29f` |
-| `cash_flows` | 745 | `4e252d0f1eb28073c6a5dc01ea540a0a196ace910bcf8953b1c5b70a0ebfbc71` | `365623d359571eae05eccb474089ddce1525ffbfe32f8b80357d30d777a525dd` |
-| `invoices` | 381 | `c9fb4c919c929fcd6f7ca71ffa99c1e88dfaf081810884a4e9b83823058c1827` | `4d08860c8f0ba91878cf59897b4d2e6e568b3e328c50efc93b7d4c661c86ea21` |
-| `purchases` | 428 | `b83d6beb5d13bea34f27d462c2c3968732024937fc023e02eb83158e5e7a8889` | `5ec707f05487bace13b08f6c8c7f38fb2240c72ce15b76a7ff9de23392322748` |
-| `customer_debts` | 83 | `cf61ccbaf2fe25469f4fc24db2b6590ab17900056fb717e8ddb58da0d76ef991` | `106cca338f58fcc8e6ef1819b48befd273a10e5432f4c1e15af847a80313e173` |
-| `supplier_debt_transactions` | 233 | `d99e17a04b2679dd1dda8885baba9688e67be7e666e9551f6475ed44d6ce0e7b` | `c2fa4dbcf0b0d79b5d92ad44235b49184d1a5d920fede3ace3bd0376c344f46f` |
-| `customer_payment_allocations` | 3 | `9c650eee7a0135cb9d65741ac448e3e786627ff3e221b41154453e2bcc57d77a` | `11fb16ae7d65aa48abd1797c71f0c0a24d36897b9519bb9dc062cf11abd85ff0` |
-| `debt_offsets` | 1 | `8e18447cb2b404846aad3838b08566e5562d902919c314355a45cdeff94b74ed` | `35a2c6c3f6f5b405bc4aa55290a9abd6c992d3418be4d0f275182c4c61dd2db1` |
+| `customers` | 322 | `cf51cc91cdc2412e8fd8210236e03d42d132873716a3ba7834f2bc4b041979be` | `4c0f0eefa5d22e027829a4155f740e7052026901a3475ef2bcb050ead8a632f2` |
+| `users` | 6 | `2149ef4f0e6b4889a0947481f2ffe70ead45703e67795c61710d9a6dc9b9f62d` | `16baa2890e6943d97ba1d64025b8aebc86b1cca314139e3b787e0da1addadae0` |
+| `cash_flows` | 745 | `4e252d0f1eb28073c6a5dc01ea540a0a196ace910bcf8953b1c5b70a0ebfbc71` | `cc3f850af67e36c0b56727ea415cc5dc0101665a1cafb664fb5510705e49fe6d` |
+| `invoices` | 381 | `c9fb4c919c929fcd6f7ca71ffa99c1e88dfaf081810884a4e9b83823058c1827` | `33c0f3c8f5adfcb7ed29e3328131eebb897c7488af11ec05e513e9a1116bcbc4` |
+| `purchases` | 428 | `b83d6beb5d13bea34f27d462c2c3968732024937fc023e02eb83158e5e7a8889` | `f9f7d1b5377bb275466932ea292903ff7fadc965ad5864b8b5e74beae91cd62d` |
+| `customer_debts` | 83 | `cf61ccbaf2fe25469f4fc24db2b6590ab17900056fb717e8ddb58da0d76ef991` | `457965234719fea0f1acd2ee548481c0220ef3b3a886b1ed656254d1d0175f19` |
+| `supplier_debt_transactions` | 233 | `d99e17a04b2679dd1dda8885baba9688e67be7e666e9551f6475ed44d6ce0e7b` | `fc9979041d960d69e0e9c50a6f09cba51da7b1a5f9b2b9078dde283c51013c81` |
+| `customer_payment_allocations` | 3 | `9c650eee7a0135cb9d65741ac448e3e786627ff3e221b41154453e2bcc57d77a` | `7f6edbf16e6e9d3c943e0c580963ecc3c8cb20a2ce58eb058db0de918c90d24c` |
+| `debt_offsets` | 1 | `8e18447cb2b404846aad3838b08566e5562d902919c314355a45cdeff94b74ed` | `33277a38129e691a509fdc8f987cdefd246e40c211623672fc42f3285b5186e6` |
 
 ## Automated validation
 
 - PHP lint: PASS for all three migrations and the schema test.
-- Focused schema tests: PASS, 11 tests / 425 assertions.
+- Focused schema tests: PASS, 12 tests / 441 assertions.
 - Phase 1 debt regression: PASS, 73 tests / 401 assertions.
 - `git diff --check`: PASS.
 - Forbidden-file scan: PASS.
@@ -194,15 +208,19 @@ command, reconciliation report/export, and supplier timeline parity.
 - P1 blockers: 0.
 - P2 follow-up: application-level self-reversal and cycle prevention is required
   before enabling any operation write path.
-- Additional fix applied during validation: participant effect CHECK was hardened
-  against SQL three-valued logic, and CHECK enforcement metadata is read from
-  `information_schema.TABLE_CONSTRAINTS`.
+- P1 found and resolved before acceptance:
+  `PARTICIPANT_NONE_EFFECT_NULL_DELTA_CAN_PASS_CHECK`.
+- The exact `pdop_effect_shape_chk` clause is verified through
+  `information_schema.CHECK_CONSTRAINTS`; all three invalid `none` null shapes are
+  rejected with MySQL error 3819 and the expected constraint name.
 - Current data correction readiness: no; this PR does not inspect or mutate
   current debt balances.
-- Production migration/deployment readiness: not assessed in this step.
+- Senior acceptance decision: `ACCEPTED_FOR_MIGRATION_PR_A_SCHEMA_SCOPE`.
+- Production deployment is not part of this step; a separate production preflight
+  is still required before any migration is run.
 - Ready for PR A senior review: yes.
-- Ready to mark PR A ready: no.
-- Ready to merge PR A: no.
+- Ready to mark PR A ready: yes.
+- Ready to merge PR A: yes, using the exact reviewed head and a merge commit.
 - Ready for write-path application PR: no.
 
 ## Data safety declaration
