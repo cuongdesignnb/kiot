@@ -369,8 +369,8 @@ REPOSITORY=cuongdesignnb/kiot
 BRANCH=feat/debt-integrity-pr-d-debt-offset-hardening
 BASE_SHA=6ed1c198a38a2c8d31e2d67d6cc39e6662485700
 HEAD_BEFORE=6ed1c198a38a2c8d31e2d67d6cc39e6662485700
-HEAD_AFTER=see final Draft PR head
-WORKTREE_CLEAN=pending report commit
+HEAD_AFTER=see final Draft PR head (self-referential report commit recorded externally)
+WORKTREE_CLEAN=yes at handoff
 
 DUPLICATE_DISCOVERY=PASS
 NEAR_EQUIVALENT_HARDENING_FOUND=no
@@ -466,10 +466,10 @@ P1_BLOCKERS=0
 P2_FINDINGS=application workflow/invariants, legacy service risks, queue index, self/cycle guards, and production DDL preflight remain deferred
 FIXES_APPLIED=three additive failure-cleanup migrations plus MySQL/MariaDB schema and legacy compatibility tests
 
-NEW_COMMIT=4c4e494 implementation; final report commit pending
-COMMIT_PUSHED=pending
-PR_D_URL=pending
-PR_D_DRAFT=yes when opened
+NEW_COMMIT=4c4e494 implementation; dc4ae82 initial validation report
+COMMIT_PUSHED=yes
+PR_D_URL=https://github.com/cuongdesignnb/kiot/pull/23
+PR_D_DRAFT=yes
 PR_D_MERGED=no
 
 PRODUCTION_ACCESSED=no
