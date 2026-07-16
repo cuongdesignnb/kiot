@@ -220,6 +220,20 @@ class PartnerDebtOperationOutboxSchemaTest extends TestCase
             $this->assertNotNull($row, "Missing CHECK constraint {$constraint}.");
             $this->assertSame('YES', $row->ENFORCED, "CHECK {$constraint} is not enforced.");
         }
+
+        $clause = DB::table('information_schema.CHECK_CONSTRAINTS')
+            ->where('CONSTRAINT_SCHEMA', $this->databaseName())
+            ->where('CONSTRAINT_NAME', 'pdop_effect_shape_chk')
+            ->value('CHECK_CLAUSE');
+        $normalizedClause = strtolower(str_replace(['`', '_utf8mb4', "\\'"], ['', '', "'"], (string) $clause));
+        $normalizedClause = preg_replace('/\b0(?:\.0+)?\b/', '0', $normalizedClause) ?? $normalizedClause;
+        $normalizedClause = preg_replace('/[()\s]+/', ' ', $normalizedClause) ?? $normalizedClause;
+
+        $this->assertStringContainsString(
+            "effect_role = 'none' and customer_delta is not null and supplier_delta is not null "
+                .'and customer_delta = 0 and supplier_delta = 0',
+            trim($normalizedClause)
+        );
     }
 
     public function test_operation_primary_key_retains_auto_increment_without_the_incompatible_check(): void
@@ -326,7 +340,12 @@ class PartnerDebtOperationOutboxSchemaTest extends TestCase
             ['effect_role' => 'customer', 'customer_delta' => '1.00', 'supplier_delta' => '1.00'],
             ['effect_role' => 'supplier', 'customer_delta' => '1.00', 'supplier_delta' => null],
             ['effect_role' => 'both', 'customer_delta' => '1.00', 'supplier_delta' => null],
+            ['effect_role' => 'none', 'customer_delta' => null, 'supplier_delta' => '0.00'],
+            ['effect_role' => 'none', 'customer_delta' => '0.00', 'supplier_delta' => null],
+            ['effect_role' => 'none', 'customer_delta' => null, 'supplier_delta' => null],
             ['effect_role' => 'none', 'customer_delta' => '1.00', 'supplier_delta' => '0.00'],
+            ['effect_role' => 'none', 'customer_delta' => '-1.00', 'supplier_delta' => '0.00'],
+            ['effect_role' => 'none', 'customer_delta' => '0.00', 'supplier_delta' => '1.00'],
             ['effect_role' => 'unknown', 'customer_delta' => null, 'supplier_delta' => null],
         ];
         foreach ($invalidShapes as $index => $shape) {
@@ -346,6 +365,37 @@ class PartnerDebtOperationOutboxSchemaTest extends TestCase
         ));
         $this->assertQueryRejected(fn () => DB::table(self::OPERATIONS)->where('id', $operationId)->delete());
         $this->assertQueryRejected(fn () => DB::table('customers')->where('id', $customerId)->delete());
+    }
+
+    public function test_none_effect_null_deltas_are_rejected_by_the_named_mysql_check(): void
+    {
+        $operationId = $this->insertOperation();
+        $customerId = $this->insertCustomer();
+        $invalidNoneShapes = [
+            ['customer_delta' => null, 'supplier_delta' => '0.00'],
+            ['customer_delta' => '0.00', 'supplier_delta' => null],
+            ['customer_delta' => null, 'supplier_delta' => null],
+        ];
+
+        foreach ($invalidNoneShapes as $index => $shape) {
+            $this->assertCheckConstraintRejected(
+                fn () => $this->insertParticipant(
+                    $operationId,
+                    $customerId,
+                    "invalid_none_null_{$index}",
+                    ['effect_role' => 'none', ...$shape]
+                ),
+                'pdop_effect_shape_chk'
+            );
+        }
+
+        $this->assertSame(
+            0,
+            DB::table(self::PARTICIPANTS)
+                ->where('operation_id', $operationId)
+                ->where('participant_role', 'like', 'invalid_none_null_%')
+                ->count()
+        );
     }
 
     public function test_outbox_unique_checks_json_foreign_keys_and_nullable_lease_contract(): void
@@ -457,6 +507,20 @@ class PartnerDebtOperationOutboxSchemaTest extends TestCase
         }
 
         $this->fail('Expected MySQL to reject the write.');
+    }
+
+    private function assertCheckConstraintRejected(Closure $callback, string $constraint): void
+    {
+        try {
+            $callback();
+        } catch (QueryException $exception) {
+            $this->assertSame(3819, (int) ($exception->errorInfo[1] ?? 0));
+            $this->assertStringContainsString($constraint, $exception->getMessage());
+
+            return;
+        }
+
+        $this->fail("Expected MySQL CHECK {$constraint} to reject the write.");
     }
 
     /** @param array<string, mixed> $overrides */

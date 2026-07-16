@@ -321,6 +321,10 @@ CHECK(effect_role != 'both' OR (customer_delta IS NOT NULL AND supplier_delta IS
 CHECK(effect_role != 'none' OR (customer_delta IS NOT NULL AND supplier_delta IS NOT NULL AND customer_delta = 0.00 AND supplier_delta = 0.00))
 ```
 
+For `effect_role = 'none'`, both deltas are non-null and exactly `0.00`.
+The explicit null checks are required so SQL three-valued logic cannot allow an
+invalid `none` participant through an `UNKNOWN` CHECK result.
+
 Controlled participant roles initially include:
 
 ```text

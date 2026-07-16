@@ -86,6 +86,8 @@ return new class extends Migration
                         OR
                         (
                             `effect_role` = 'none'
+                            AND `customer_delta` IS NOT NULL
+                            AND `supplier_delta` IS NOT NULL
                             AND `customer_delta` = 0.00
                             AND `supplier_delta` = 0.00
                         )
