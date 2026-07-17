@@ -1,26 +1,24 @@
-# PR D Debt Release Runner Validation
+# PR D Debt Release Runner Final Validation
 
-## Scope
+## Scope And Revision
 
 ```text
 REPOSITORY=cuongdesignnb/kiot
+PR_URL=https://github.com/cuongdesignnb/kiot/pull/24
 BRANCH=feat/debt-release-runner-pr-d
+BASE_BRANCH=production-customer-group
 BASE_SHA=8de02595bf7b22ac5490f9f44a43602af85a7848
-HEAD_BEFORE=8de02595bf7b22ac5490f9f44a43602af85a7848
-HEAD_AFTER=reported by the Draft PR head after commit
+HEAD_BEFORE_STEP_36=5184be8086568ad5da03b85b35671678267d185e
+VALIDATED_IMPLEMENTATION_SHA=09031b436e061f6eafd642b541115efe97adba66
 RELEASE_ID=debt-pr-d
-PRODUCTION_ACCESSED=no
-MIGRATIONS_RUN_ON_PRODUCTION=no
-PRODUCTION_DATA_CHANGED=no
-PRODUCTION_DEPLOYED=no
 ```
 
-STEP 35 adds release automation only. It does not change a model, service,
-controller, route, frontend file, scheduler, production configuration or
-migration. It does not enable a debt workflow or create an operation/outbox
-record.
+STEP 36 changes release automation only. It does not modify a migration,
+model, service, controller, route, frontend file, scheduler or production
+configuration. It does not enable a debt write path, backfill data, create an
+operation/outbox row or correct a current balance.
 
-Changed files are restricted to:
+Changed implementation files remain restricted to:
 
 ```text
 scripts/debt-release/pr-d-release.sh
@@ -31,210 +29,235 @@ tests/Feature/Release/DebtReleaseRunnerTest.php
 docs/debt/PR-D-DEBT-RELEASE-RUNNER-VALIDATION.md
 ```
 
-## Architecture
+## P1 Closure
 
-The Bash wrapper has strict mode and only resolves the repository before
-executing the PHP core. The PHP core bootstraps Laravel so the runner uses the
-deployed database/config contract. Release-specific values live in the PR D
-manifest rather than procedural branches.
+### Process deadlines
 
-Supported subcommands:
-
-| Command | Contract |
-|---|---|
-| `doctor` | Read-only runtime, Git, dependency and DB connectivity report |
-| `preflight` | Read-only live checks plus backup and allowlisted temp restore |
-| `deploy` | Only mode allowed to migrate; exact manifest paths only |
-| `status` | Read-only migration/checkpoint state |
-| `cleanup` | Only allowlisted temp DBs and a stale filesystem lock |
-
-The exit contract is stable: `0`, `10`, `20`, `30`, `40`, `50`, `60`, `70`,
-`80`, and `90` for success, argument, Git, DB, dependency, lock, schema, data,
-smoke and partial-release outcomes respectively.
-
-## Safety Gates
+`NativeProcessExecutor` uses `proc_open(..., bypass_shell=true)`, non-blocking
+stdout/stderr drains and `hrtime()` deadlines. Timeout sends `SIGTERM`, waits a
+two-second grace period, then sends `SIGKILL` if the child remains alive. Pipes
+are closed and the child is reaped in `finally`.
 
 ```text
+PROCESS_TIMEOUT_IMPLEMENTED=yes
+GIT_PHP_TIMEOUT_SECONDS=30
+CURL_OUTER_TIMEOUT_SECONDS=30
+GZIP_TIMEOUT_SECONDS=60
+BACKUP_TIMEOUT_SECONDS=1800
+RESTORE_TIMEOUT_SECONDS=1800
+MIGRATION_TIMEOUT_SECONDS=180
+OPTIMIZE_CLEAR_TIMEOUT_SECONDS=120
+MAINTENANCE_TIMEOUT_SECONDS=60
+MIGRATION_TIMEOUT_BLOCKER=MIGRATION_<N>_TIMEOUT
+MIGRATION_TIMEOUT_EXIT_CODE=90
+AUTOMATIC_DDL_ROLLBACK=no
+```
+
+Linux tests prove child termination, `timedOut`, duration/signal evidence,
+maintenance recovery, partial report creation and lock release.
+
+### Fail-closed DDL visibility
+
+The DDL gate no longer converts visibility errors to zero activity. It requires
+global `PROCESS` visibility, readable `information_schema.innodb_trx`, readable
+`information_schema.processlist`, enabled Performance Schema and enabled
+`wait/lock/metadata/sql/mdl` instrumentation.
+
+The metadata query targets the current database and `debt_offsets`, excludes
+the runner's current thread, and counts granted and pending locks. The gate
+blocks on incomplete visibility, granted blockers, pending waiters, open/in-use
+tables, long target queries or old transactions.
+
+```text
+INNODB_TRX_VISIBILITY=required
+PROCESSLIST_VISIBILITY=required
+METADATA_LOCK_VISIBILITY=required
+DDL_VISIBILITY_FAIL_CLOSED=yes
+VISIBILITY_BLOCKER=DDL_RISK_VISIBILITY_INSUFFICIENT
+ACTIVITY_BLOCKER=DDL_ACTIVITY_DETECTED
+AUTOMATIC_SESSION_KILL=no
+```
+
+The MariaDB disposable engine initially had the metadata instrument disabled.
+The runner returned the visibility blocker. The test then enabled the
+instrument on that disposable server and reran the gate. A second connection
+held a transaction/metadata lock and both exact engines blocked DDL until that
+transaction was rolled back.
+
+### Consistent read-only snapshots
+
+Before every baseline, migration invariance check and postflight capture, all
+invariant tables plus `migrations` must exist as InnoDB. The same PDO connection
+runs:
+
+```sql
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY;
+-- all counts, hashes and financial aggregates
+ROLLBACK;
+```
+
+Rollback is in `finally`. Baseline and postflight reports record:
+
+```text
+DATA_SNAPSHOT_CONSISTENT=yes
+SNAPSHOT_READ_ONLY=yes
+SNAPSHOT_ROLLED_BACK=yes
+NON_TRANSACTIONAL_INVARIANT_TABLE=blocking
+```
+
+Two-connection tests on MySQL and MariaDB commit a fixture after the snapshot
+starts and prove that the runner retains the original view. The fixture is
+removed after the assertion.
+
+### Token, TTL and partial resume
+
+`--approval-token` is rejected. Fresh deploy reads the token without echo from
+`/dev/tty`. Tests may use `DEBT_RELEASE_APPROVAL_TOKEN`; the value is removed
+from the process environment immediately after read.
+
+Fresh deploy enforces TTL and a valid unconsumed token. The sidecar is marked
+consumed only after filesystem/database locks, Git/DB/doctor revalidation,
+maintenance entry, DDL visibility and baseline capture, immediately before
+migration 1.
+
+Partial resume requires `--resume-partial-ack`, a bound checkpoint and at least
+one migration that ran or one `migration_N_verified` stage. It may use an
+expired preflight and does not read/reuse the old token. It revalidates SHA,
+branch, worktree, DB fingerprint, report/backup hashes, DDL visibility,
+checkpoint/schema state and every completed stage.
+
+```text
+APPROVAL_TOKEN_CLI_ARGUMENT_REMOVED=yes
+APPROVAL_TOKEN_HIDDEN_INPUT=yes
+TOKEN_CONSUMPTION_STAGE=ddl_boundary_before_migration_1
+FRESH_DEPLOY_TTL_ENFORCED=yes
+TOKENLESS_FRESH_DEPLOY_BLOCKED=yes
+PARTIAL_RESUME_AFTER_TTL=yes
+PARTIAL_RESUME_WITHOUT_OLD_TOKEN=yes
+PARTIAL_RESUME_REQUIRES_ACK=yes
+PARTIAL_RESUME_SCHEMA_MISMATCH_BLOCKED=yes
+PARTIAL_RESUME_WITHOUT_CHECKPOINT_BLOCKED=yes
+SUCCESSFUL_CLOSEOUT_CANNOT_BE_RESUMED=yes
+```
+
+Final exact-engine validation exposed one follow-up defect: the blocked retry
+after a successful closeout overwrote the SUCCESS report with a PARTIAL report.
+Commit `09031b436e061f6eafd642b541115efe97adba66` fixes this by returning the
+closeout blocker without mutating the completed checkpoint/report. A dedicated
+unit assertion and both exact-engine runs prove preservation.
+
+### Raw SQL and controlled signals
+
+Linux startup uses `umask(0077)`. Backup and restore pre-create unique,
+allowlisted raw SQL files at mode `0600`, verify permissions before use and
+remove them in `finally`. Cleanup removes only strict
+`kiot-pr-d-raw-*.sql.tmp` matches. Final gzip backups and audit reports are not
+cleanup targets. Success and injected gzip failure are covered.
+
+The CLI installs `pcntl` handlers for `SIGINT`, `SIGTERM` and `SIGHUP`. A
+controlled signal terminates the active child, enters the same checkpoint and
+maintenance recovery path, releases both locks and exits `90`. No recovery is
+claimed for `SIGKILL`, host loss or power loss. Missing `pcntl` blocks doctor,
+preflight and deploy under this release policy.
+
+```text
+RAW_SQL_TEMP_MODE_0600=yes
+RAW_SQL_TEMP_SUCCESS_CLEANUP=yes
+RAW_SQL_TEMP_FAILURE_CLEANUP=yes
+STALE_RAW_TEMP_CLEANUP_ALLOWLIST=yes
+FINAL_BACKUP_RETAINED=yes
+AUDIT_REPORT_RETAINED=yes
+PCNTL_REQUIRED=yes
+SIGINT_TEST=PASS
+SIGTERM_TEST=PASS
+SIGHUP_TEST=PASS
+LOCKS_RELEASED_AFTER_CONTROLLED_SIGNAL=PASS
+```
+
+## Exact-engine Validation
+
+Disposable local databases only were used.
+
+| Engine | Version | Laravel driver | Full flow | Assertions | DDL visibility | Consistent snapshot | Invariance |
+|---|---|---|---|---:|---|---|---|
+| MySQL | 8.0.44 | `mysql` | PASS | 24 | PASS | PASS | PASS |
+| MariaDB | 10.11.10 | `mariadb` | PASS | 24 | PASS after test-only instrument enablement | PASS | PASS |
+
+Each full flow includes doctor, preflight, mode-`0600` backup, disposable
+restore, held-lock blocker, fresh deploy, all three exact migration paths,
+postflight, HTTP/log smoke, token consumption, successful-closeout retry block,
+raw-temp cleanup and retained final backup.
+
+## Regression Evidence
+
+```text
+RUNNER_LINUX_UNIT=PASS (35 tests, 148 assertions)
+MYSQL_RUNNER_FULL_FLOW=PASS (1 test, 24 assertions)
+MARIADB_RUNNER_FULL_FLOW=PASS (1 test, 24 assertions)
+MYSQL_PR_A_B_C_D_PLUS_RUNNER=PASS (82 tests, 1905 assertions)
+PHASE1_DEBT_REGRESSION=PASS (73 tests, 401 assertions)
+PHP_LINT=PASS
+PINT=PASS
+BASH_SYNTAX=PASS
+SHELLCHECK=not available in validation image
+GIT_DIFF_CHECK=PASS
+FORBIDDEN_FILE_SCAN=PASS
+SECRET_SCAN=PASS (no literal secret; client password is written only to ephemeral mode-0600 defaults file)
+FRONTEND_BUILD_REQUIRED=no
+GITHUB_ACTIONS_STATUS=not available
+```
+
+The Phase 1 set covers canonical balances, invariant checking, parity audit
+classification, raw screen fixtures, the read-only invariant command,
+reconciliation report/export and supplier timeline parity.
+
+## Operator Contract
+
+README contains the approved stage/preflight block and controlled deploy block.
+The production deploy command has no token argument. Partial resume is a
+separate recovery form with `--resume-partial-ack` and is valid only after the
+runner proves a partial migration state.
+
+```text
+PRODUCTION_COMMAND_COUNT_AFTER_MERGE=2
 STRICT_SHELL_MODE=yes
-FILESYSTEM_LOCK=yes (non-blocking flock)
-DATABASE_ADVISORY_LOCK=yes (GET_LOCK/RELEASE_LOCK)
+FILESYSTEM_LOCK=yes
+DATABASE_ADVISORY_LOCK=yes
 TEMP_DB_ALLOWLIST=yes
 REPORT_PATH_ALLOWLIST=yes
 BACKUP_PATH_ALLOWLIST=yes
-EXACT_MIGRATION_ALLOWLIST=yes (3 paths)
-SUBCOMMAND_HELP=yes (global and doctor/preflight/deploy forms)
-FILESYSTEM_LOCK_PATH=storage/app/audits/debt-release/.runner.lock
-STATUS_SAFE_RERUN_COMMAND=yes (token placeholder only)
-CLEANUP_STALE_CREDENTIALS=yes (strict filename allowlist)
-PREFLIGHT_EVIDENCE_COLLISION_GUARD=yes
-APPROVAL_TOKEN_BINDING=yes
-PREFLIGHT_TTL=360 minutes
+EXACT_MIGRATION_ALLOWLIST=yes
 MAINTENANCE_MODE_RECOVERY=yes
 CHECKPOINT_RESUME=yes
 AUTOMATIC_DDL_ROLLBACK=no
 AUTOMATIC_SESSION_KILL=no
 ```
 
-The approval token is random and printed once. Only a SHA-256 token hash and a
-binding hash over release ID, expected SHA, DB fingerprint, report hash and TTL
-are persisted. DB credentials use an ephemeral mode-`0600` client defaults
-file, are absent from process arguments and are redacted from JSON.
-
-The production manifest is fail-closed to:
+## Safety And Readiness
 
 ```text
-branch=production-customer-group
-previous production SHA=6ed1c198a38a2c8d31e2d67d6cc39e6662485700
-database-name SHA-256=f274e3270e7608fa98dfd67614230224914f1efd7f468b496cfe0c7376d11288
-engine=MariaDB 10.11.x
-FOREIGN_KEY_CHECKS=1
-CHECK_CONSTRAINT_CHECKS=1
-```
+P0_BLOCKERS=0
+P1_BLOCKERS_BEFORE=4
+P1_BLOCKERS_AFTER=0
+P2_FINDINGS=production preflight must prove PROCESS privilege, Performance Schema metadata-lock instrumentation and pcntl; external artifact signing/object backup/notifications remain future hardening
 
-No plain database name is included in runner output or reports.
-
-## Backup And Restore
-
-The runner inspects table engines before choosing consistency mode. An all-
-InnoDB database uses `--single-transaction`; otherwise the dump uses a global
-table lock. Dumps include schema/data, routines, events and triggers. Required
-proof is non-empty output, verified mode `0600`, SHA-256 and `gzip -t`.
-
-Restore uses an allowlisted temporary database and verifies table count,
-migration rows, customer/debt-offset counts, PR A/B/C table presence and PR D
-absence. The temp DB is dropped in `finally` and absence is queried afterward.
-Backups are retained; cleanup never removes a backup or audit report.
-
-## Baseline And Postflight
-
-The authoritative baseline is captured after maintenance mode begins, not from
-preflight. Data hashing is streaming, primary-key ordered, canonical JSON with
-stable columns and preserved string/decimal values. Schema hashes normalize
-only whitespace and the volatile `AUTO_INCREMENT=<counter>` value.
-
-For all invariant tables the runner records counts and schema/data hashes. For
-`debt_offsets`, the pre-PR-D columns receive a separate legacy-only data hash.
-Financial aggregates cover customers, cash flows, invoices, purchases,
-customer/supplier ledgers and offsets.
-
-Each migration is run through its exact `--path` and verified before checkpoint:
-
-1. 17 nullable/default-NULL columns, no backfill, legacy customer FK retained.
-2. Two unique keys and seven FKs with exact columns/targets/delete rules.
-3. Six named CHECK constraints with required clause tokens and checks enabled.
-
-Postflight requires non-target count/data/schema hashes unchanged, legacy
-offset count/hash unchanged, financial aggregates unchanged and exactly three
-new migration rows. No invalid write probe runs against the live database.
-
-## Checkpoint And Failure Evidence
-
-Atomic checkpoint stages are:
-
-```text
-initialized
-maintenance_entered
-baseline_captured
-migration_1_verified
-migration_2_verified
-migration_3_verified
-postflight_verified
-application_recovered
-smoke_verified
-closeout_written
-```
-
-A rerun reacquires both locks, revalidates Git/DB/report/backup, verifies every
-already-run stage and continues from the first incomplete stage. A checkpoint
-and database mismatch exits `90`. DDL is never automatically rolled back.
-Blocked preflight and partial deployment reports include the exact blocker;
-partial reports also record the last verified stage and maintenance recovery.
-
-## Automated Tests
-
-Runner unit/failure injection covers manifest and argument validation, required
-flags, SHA/branch/worktree/DB gates, dependencies, TTL, token and report binding,
-path/temp-DB allowlists, exact migration set, checkpoint progression/mismatch,
-resume, redaction, summary contract and cleanup. It also proves that migration
-paths cannot be substituted while retaining an allowlisted migration name, and
-that DDL risk is rechecked after maintenance mode starts and before baseline or
-migration work begins.
-
-Failure injection results:
-
-```text
-FAILURE_BACKUP=PASS (fail-fast)
-FAILURE_RESTORE=PASS (fail-fast)
-FAILURE_TOKEN=PASS
-FAILURE_STALE_PREFLIGHT=PASS
-FAILURE_FILESYSTEM_LOCK=PASS
-FAILURE_DATABASE_LOCK=PASS
-FAILURE_DEPLOY_START_DDL_RISK=PASS (maintenance recovered; no migration)
-FAILURE_PARTIAL_MIGRATION=PASS (stage 1 checkpoint; maintenance recovered)
-FAILURE_POSTFLIGHT=PASS
-FAILURE_SMOKE=PASS
-```
-
-Disposable full-run integration:
-
-| Engine | Version | Driver | Doctor | Preflight/backup/restore | Deploy | Second deploy | Invariance |
-|---|---|---|---|---|---|---|---|
-| MySQL | 8.0.44 | `mysql` | PASS | PASS | PASS | PASS safe resume/no-op | PASS |
-| MariaDB | 10.11.10 | `mariadb` | PASS | PASS | PASS | PASS safe resume/no-op | PASS |
-
-Both runs used test-prefixed local Docker databases and a test-injected DB
-fingerprint/engine contract. The production manifest was not relaxed. MySQL had
-one legacy `debt_offsets` row; all 17 new fields remained NULL. MariaDB had zero
-offset rows. Both had exactly three PR D migration rows after deploy.
-
-Final regression evidence:
-
-```text
-RUNNER_UNIT=PASS (22 tests, 88 assertions; integration group excluded)
-MYSQL_RUNNER_INTEGRATION=PASS (1 test, 9 assertions)
-MARIADB_RUNNER_INTEGRATION=PASS (1 test, 9 assertions)
-MYSQL_PR_A_B_C_D_PLUS_RUNNER=PASS (69 tests, 1845 assertions)
-PHASE1_DEBT_REGRESSION=PASS (73 tests, 401 assertions)
-```
-
-An initial Windows-host schema invocation failed because its configured MySQL
-port refused connections (`SQLSTATE[HY000] [2002]`). The same exact suite was
-rerun in the Docker MySQL 8 environment. The schema portion passed 47/47, and
-the final combined schema/runner suite passed 69/69. This was an execution
-environment failure, not a schema assertion failure.
-
-## Production Commands
-
-After merge there are exactly two operator command blocks: stage/preflight and
-controlled deploy. The templates are in `scripts/debt-release/README.md`. The
-runner itself does not pull/reset code and does not accept arbitrary migration
-paths.
-
-```text
-PRODUCTION_COMMAND_COUNT_AFTER_MERGE=2
+PRODUCTION_ACCESSED=no
+MIGRATIONS_RUN_ON_PRODUCTION=no
+PRODUCTION_DATA_CHANGED=no
+PRODUCTION_DEPLOYED=no
 BACKFILL=no
-WORKFLOW_STATUS_BACKFILLED=no
 WORKFLOW_ENABLED=no
 OPERATIONS_CREATED=no
 OUTBOX_CREATED=no
 CURRENT_DEBT_DATA_CHANGED=no
-```
 
-## Findings And Readiness
-
-```text
-P0_BLOCKERS=0
-P1_BLOCKERS=0
-P2_FINDINGS=remote artifact signing; external object backup; deployment-environment approval; notifications; cross-host coordination
-
-READY_FOR_RUNNER_SENIOR_REVIEW=yes
-READY_TO_MARK_RUNNER_PR=no
-READY_TO_MERGE_RUNNER_PR=no
-READY_FOR_PR_D_PRODUCTION_PREFLIGHT=no (requires merged runner SHA and owner approval)
+SENIOR_ACCEPTANCE_DECISION=ACCEPTED_FOR_CONTROLLED_RELEASE_RUNNER_SCOPE
+READY_FOR_PR_D_PRODUCTION_PREFLIGHT=yes after PR merge and Owner approval
 READY_FOR_PR_D_PRODUCTION_DEPLOY=no
 READY_FOR_DEBT_OFFSET_APPLICATION_PR=no
 READY_FOR_CURRENT_DATA_CORRECTION=no
 ```
 
-No production host, production database, production migration or deployment was
-used in STEP 35.
+No production host, production database, production command, migration or
+deployment was used in STEP 36.
