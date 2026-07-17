@@ -207,6 +207,138 @@ final class DebtReleaseRunnerTest extends TestCase
         ReleaseFiles::assertWithin(dirname($this->auditRoot).'/elsewhere/report.json', $this->auditRoot);
     }
 
+    public function test_ensure_directory_never_chmods_existing_paths_and_blocks_files_and_symlinks(): void
+    {
+        if (DIRECTORY_SEPARATOR === '\\') {
+            $this->markTestSkipped('POSIX directory modes and symlinks are validated in Linux/Docker.');
+        }
+
+        $root = dirname($this->auditRoot).'/directory-contract';
+        mkdir($root, 0750);
+        $existing = $root.'/existing';
+        mkdir($existing, 0711);
+        chmod($existing, 0711);
+
+        ReleaseFiles::ensureDirectory($existing, 0750);
+        clearstatcache(true, $existing);
+        $this->assertSame(0711, fileperms($existing) & 07777);
+
+        $created = $root.'/created';
+        ReleaseFiles::ensureDirectory($created, 0750);
+        clearstatcache(true, $created);
+        $this->assertSame(0750, fileperms($created) & 07777);
+
+        $file = $root.'/file';
+        file_put_contents($file, 'not a directory');
+        $this->assertSame(
+            'DIRECTORY_PATH_IS_NOT_DIRECTORY',
+            $this->captureFailure(fn () => ReleaseFiles::ensureDirectory($file, 0750))->blocker,
+        );
+
+        $link = $root.'/link';
+        if (! symlink($existing, $link)) {
+            $this->fail('Linux symlink fixture could not be created.');
+        }
+        $this->assertSame(
+            'DIRECTORY_SYMLINK_BLOCKED',
+            $this->captureFailure(fn () => ReleaseFiles::ensureDirectory($link.DIRECTORY_SEPARATOR, 0750))->blocker,
+        );
+        unlink($link);
+        clearstatcache(true, $existing);
+        $this->assertSame(0711, fileperms($existing) & 07777);
+    }
+
+    public function test_atomic_report_writes_preserve_existing_parent_metadata(): void
+    {
+        if (DIRECTORY_SEPARATOR === '\\') {
+            $this->markTestSkipped('POSIX directory metadata is validated in Linux/Docker.');
+        }
+
+        $directory = dirname($this->auditRoot).'/existing-report-parent';
+        mkdir($directory, 0711);
+        chmod($directory, 0711);
+        $before = $this->directoryMetadata($directory);
+
+        ReleaseFiles::atomicText($directory.'/report.txt', 'report');
+        ReleaseFiles::atomicJson($directory.'/report.json', ['pass' => true]);
+
+        $this->assertSame($before, $this->directoryMetadata($directory));
+    }
+
+    public function test_client_credential_is_exclusive_private_and_preserves_system_temp_metadata(): void
+    {
+        if (DIRECTORY_SEPARATOR === '\\') {
+            $this->markTestSkipped('System temp ownership and POSIX mode are validated in Linux/Docker.');
+        }
+
+        $directory = rtrim(sys_get_temp_dir(), '/\\');
+        $filename = 'debt-release-client-'.bin2hex(random_bytes(8)).'.cnf';
+        $content = "[client]\nuser=\"runner-test\"\npassword=\"credential-unit-secret\"\n";
+        $before = $this->directoryMetadata($directory);
+        $path = ReleaseFiles::writeExclusiveClientCredential($directory, $filename, $content);
+        try {
+            $this->assertMatchesRegularExpression('/^debt-release-client-[a-f0-9]{16}\.cnf$/', basename($path));
+            $this->assertSame($content, file_get_contents($path));
+            clearstatcache(true, $path);
+            $this->assertSame(0600, fileperms($path) & 0777);
+            $this->assertSame($before, $this->directoryMetadata($directory));
+            $this->assertStringNotContainsString('credential-unit-secret', implode("\n", $this->output));
+            $collision = $this->captureFailure(fn () => ReleaseFiles::writeExclusiveClientCredential(
+                $directory,
+                $filename,
+                '[client] collision',
+            ));
+            $this->assertSame('CLIENT_CREDENTIAL_CREATE_FAILED', $collision->blocker);
+            $this->assertSame($content, file_get_contents($path));
+        } finally {
+            @unlink($path);
+        }
+
+        $this->assertFileDoesNotExist($path);
+        $this->assertSame($before, $this->directoryMetadata($directory));
+    }
+
+    /** @dataProvider credentialFailureProvider */
+    public function test_client_credential_failure_removes_partial_file_and_preserves_parent(
+        string $stage,
+        string $blocker,
+    ): void {
+        if (DIRECTORY_SEPARATOR === '\\') {
+            $this->markTestSkipped('System temp ownership and POSIX mode are validated in Linux/Docker.');
+        }
+
+        $directory = rtrim(sys_get_temp_dir(), '/\\');
+        $filename = 'debt-release-client-'.bin2hex(random_bytes(8)).'.cnf';
+        $path = $directory.DIRECTORY_SEPARATOR.$filename;
+        $before = $this->directoryMetadata($directory);
+        $secret = 'credential-failure-secret';
+        $failure = $this->captureFailure(fn () => ReleaseFiles::writeExclusiveClientCredential(
+            $directory,
+            $filename,
+            "[client]\npassword=\"{$secret}\"\n",
+            static function (string $actualStage) use ($stage, $blocker): void {
+                if ($actualStage === $stage) {
+                    throw new ReleaseFailure($blocker, ExitCode::DEPENDENCY_BLOCKER);
+                }
+            },
+        ));
+
+        $this->assertSame($blocker, $failure->blocker);
+        $this->assertStringNotContainsString($secret, $failure->getMessage());
+        $this->assertFileDoesNotExist($path);
+        $this->assertSame($before, $this->directoryMetadata($directory));
+    }
+
+    public static function credentialFailureProvider(): array
+    {
+        return [
+            'create' => ['create', 'CLIENT_CREDENTIAL_CREATE_FAILED'],
+            'chmod' => ['chmod', 'CLIENT_CREDENTIAL_MODE_FAILED'],
+            'write' => ['write', 'CLIENT_CREDENTIAL_WRITE_FAILED'],
+            'flush' => ['flush', 'CLIENT_CREDENTIAL_FLUSH_FAILED'],
+        ];
+    }
+
     public function test_deploy_progresses_checkpoint_and_emits_final_summary_contract(): void
     {
         [$report, $token] = $this->successfulPreflightEvidence();
@@ -296,6 +428,7 @@ final class DebtReleaseRunnerTest extends TestCase
     {
         [$report, $token] = $this->successfulPreflightEvidence();
         $this->platform->ddlRiskPass = false;
+        $temporaryMetadata = $this->directoryMetadata(sys_get_temp_dir());
 
         $failure = $this->captureFailure(fn () => $this->deploy($report, $token));
 
@@ -307,6 +440,36 @@ final class DebtReleaseRunnerTest extends TestCase
         $reportData = ReleaseFiles::readJson(glob($this->auditRoot.'/debt-pr-d-production-deploy-*/deployment-report.json')[0]);
         $this->assertTrue($reportData['maintenance_recovered']);
         $this->assertStringNotContainsString('--approval-token', $reportData['safe_rerun_command']);
+        $this->assertSame($temporaryMetadata, $this->directoryMetadata(sys_get_temp_dir()));
+    }
+
+    /** @dataProvider migrationStageFailureProvider */
+    public function test_each_migration_stage_failure_preserves_temp_metadata_and_recovers_maintenance(int $stage): void
+    {
+        [$report, $token] = $this->successfulPreflightEvidence();
+        $temporaryMetadata = $this->directoryMetadata(sys_get_temp_dir());
+        $credentialFiles = $this->credentialFiles();
+        $this->platform->failMigrationAt = $stage;
+
+        $failure = $this->captureFailure(fn () => $this->deploy($report, $token));
+
+        $this->assertSame('MIGRATION_'.$stage.'_FAILED', $failure->blocker);
+        $this->assertSame(1, $this->platform->maintenanceUpCalls);
+        $failureReport = ReleaseFiles::readJson(glob($this->auditRoot.'/debt-pr-d-production-deploy-*/deployment-report.json')[0]);
+        $this->assertTrue($failureReport['maintenance_recovered']);
+        $this->assertTrue($failureReport['database_lock_released']);
+        $this->assertSame($temporaryMetadata, $this->directoryMetadata(sys_get_temp_dir()));
+        $this->assertSame($credentialFiles, $this->credentialFiles());
+        $this->assertSame([], glob($this->backupRoot.'/kiot-pr-d-raw-*.sql.tmp') ?: []);
+    }
+
+    public static function migrationStageFailureProvider(): array
+    {
+        return [
+            'stage 1' => [1],
+            'stage 2' => [2],
+            'stage 3' => [3],
+        ];
     }
 
     public function test_preflight_ddl_risk_uses_lock_blocker_exit_code(): void
@@ -338,6 +501,7 @@ final class DebtReleaseRunnerTest extends TestCase
 
     public function test_cleanup_drops_only_allowlisted_temporary_databases(): void
     {
+        $temporaryMetadata = $this->directoryMetadata(sys_get_temp_dir());
         $credential = sys_get_temp_dir().'/debt-release-client-'.bin2hex(random_bytes(8)).'.cnf';
         $rawSql = $this->backupRoot.'/kiot-pr-d-raw-20260717-080000-0123456789abcdef.sql.tmp';
         $finalBackup = $this->backupRoot.'/kiot-pr-d-db-backup-final.sql.gz';
@@ -354,6 +518,7 @@ final class DebtReleaseRunnerTest extends TestCase
             $this->assertFileDoesNotExist($rawSql);
             $this->assertFileExists($finalBackup);
             $this->assertFileExists($auditReport);
+            $this->assertSame($temporaryMetadata, $this->directoryMetadata(sys_get_temp_dir()));
         } finally {
             if (is_file($credential)) {
                 unlink($credential);
@@ -363,6 +528,16 @@ final class DebtReleaseRunnerTest extends TestCase
         $this->platform->tempDatabases = ['kiot_db'];
         $failure = $this->captureFailure(fn () => $this->runner()->execute('cleanup', []));
         $this->assertSame('UNSAFE_TEMP_DATABASE_NAME', $failure->blocker);
+    }
+
+    public function test_doctor_and_status_preserve_system_temp_metadata(): void
+    {
+        $temporaryMetadata = $this->directoryMetadata(sys_get_temp_dir());
+
+        $this->assertSame(0, $this->runner()->execute('doctor', []));
+        $this->assertSame(0, $this->runner()->execute('status', []));
+
+        $this->assertSame($temporaryMetadata, $this->directoryMetadata(sys_get_temp_dir()));
     }
 
     public function test_reports_redact_credentials_and_canonical_helpers_are_stable(): void
@@ -555,6 +730,10 @@ PHP;
             $this->markTestSkipped('Set DEBT_RUNNER_INTEGRATION=1 inside a disposable database container.');
         }
 
+        $systemTempMetadata = $this->directoryMetadata(sys_get_temp_dir());
+        $credentialFiles = $this->credentialFiles();
+        $auditRootMetadata = $this->directoryMetadata($this->auditRoot);
+        $backupRootMetadata = $this->directoryMetadata($this->backupRoot);
         $application = require $this->root.'/bootstrap/app.php';
         $application->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap();
         $databaseName = (string) config('database.connections.'.config('database.default').'.database');
@@ -572,6 +751,29 @@ PHP;
         $this->platform = new FakeReleasePlatform($this->manifest);
         $output = [];
         $integrationToken = '';
+
+        foreach (self::credentialFailureProvider() as [$stage, $blocker]) {
+            $credentialFailurePlatform = new NativeReleasePlatform(
+                $this->root,
+                $this->backupRoot,
+                new NativeProcessExecutor,
+                static function (string $actualStage) use ($stage, $blocker): void {
+                    if ($actualStage === $stage) {
+                        throw new ReleaseFailure($blocker, ExitCode::DEPENDENCY_BLOCKER);
+                    }
+                },
+            );
+            $failedCredentialBackup = $this->backupRoot.'/credential-'.$stage.'-failure.sql.gz';
+            $this->assertSame(
+                $blocker,
+                $this->captureFailure(fn () => $credentialFailurePlatform->createBackup($failedCredentialBackup))->blocker,
+            );
+            $this->assertFileDoesNotExist($failedCredentialBackup);
+            $this->assertSame($systemTempMetadata, $this->directoryMetadata(sys_get_temp_dir()));
+            $this->assertSame($credentialFiles, $this->credentialFiles());
+            $this->assertSame([], glob($this->backupRoot.'/kiot-pr-d-raw-*.sql.tmp') ?: []);
+        }
+
         $runner = new DebtReleaseRunner(
             $this->manifest,
             $this->root,
@@ -624,6 +826,21 @@ PHP;
             $this->assertTrue($ddlRisk['DDL_VISIBILITY_COMPLETE']);
             $this->assertTrue($ddlRisk['pass']);
 
+            $failedDump = $this->backupRoot.'/failed-dump.sql.gz';
+            $failingDumpPlatform = new NativeReleasePlatform(
+                $this->root,
+                $this->backupRoot,
+                new FailingMysqldumpProcessExecutor,
+            );
+            $this->assertSame(
+                'MYSQLDUMP_FAILED',
+                $this->captureFailure(fn () => $failingDumpPlatform->createBackup($failedDump))->blocker,
+            );
+            $this->assertFileDoesNotExist($failedDump);
+            $this->assertSame($systemTempMetadata, $this->directoryMetadata(sys_get_temp_dir()));
+            $this->assertSame($credentialFiles, $this->credentialFiles());
+            $this->assertSame([], glob($this->backupRoot.'/kiot-pr-d-raw-*.sql.tmp') ?: []);
+
             $failedBackup = $this->backupRoot.'/failed-backup.sql.gz';
             $failingBackupPlatform = new NativeReleasePlatform(
                 $this->root,
@@ -636,6 +853,24 @@ PHP;
             );
             $this->assertSame([], glob($this->backupRoot.'/kiot-pr-d-raw-*.sql.tmp') ?: []);
             $this->assertFileDoesNotExist($failedBackup);
+            $this->assertSame($systemTempMetadata, $this->directoryMetadata(sys_get_temp_dir()));
+            $this->assertSame($credentialFiles, $this->credentialFiles());
+
+            $restoreFailureBackup = $this->backupRoot.'/restore-failure-fixture.sql.gz';
+            $restoreFailureBackupResult = $platform->createBackup($restoreFailureBackup);
+            $failingRestorePlatform = new NativeReleasePlatform(
+                $this->root,
+                $this->backupRoot,
+                new FailingMysqlRestoreProcessExecutor,
+            );
+            $this->assertSame(
+                'RESTORE_IMPORT_FAILED',
+                $this->captureFailure(fn () => $failingRestorePlatform->restoreTest($restoreFailureBackup, $this->manifest))->blocker,
+            );
+            $this->assertTrue($restoreFailureBackupResult['pass']);
+            $this->assertSame($systemTempMetadata, $this->directoryMetadata(sys_get_temp_dir()));
+            $this->assertSame($credentialFiles, $this->credentialFiles());
+            $this->assertSame([], glob($this->backupRoot.'/kiot-pr-d-raw-*.sql.tmp') ?: []);
 
             $connection = config('database.connections.'.config('database.default'));
             $writer = new \PDO(
@@ -663,9 +898,13 @@ PHP;
             $writer->beginTransaction();
             $writer->query('SELECT * FROM debt_offsets LIMIT 1')->fetchAll();
             $lockedRisk = $platform->inspectDdlRisk($this->manifest);
-            $writer->rollBack();
             $this->assertFalse($lockedRisk['pass']);
             $this->assertGreaterThan(0, $lockedRisk['metadata_lock_blockers']);
+            $ddlFailure = $this->captureFailure(fn () => $runner->execute('preflight', ['expected-sha' => $expectedSha]));
+            $this->assertSame('DDL_ACTIVITY_DETECTED', $ddlFailure->blocker);
+            $this->assertSame($systemTempMetadata, $this->directoryMetadata(sys_get_temp_dir()));
+            $this->assertSame($credentialFiles, $this->credentialFiles());
+            $writer->rollBack();
             $this->assertSame(0, $runner->execute('preflight', ['expected-sha' => $expectedSha]));
             [$report] = glob($this->auditRoot.'/debt-pr-d-preflight-*/preflight-report.json');
             $tokenLine = current(array_filter($output, static fn (string $line) => str_starts_with($line, 'APPROVAL_TOKEN=')));
@@ -689,6 +928,10 @@ PHP;
             $this->assertTrue($deploymentReport['snapshot_rolled_back']);
             $this->assertSame([], glob($this->backupRoot.'/kiot-pr-d-raw-*.sql.tmp') ?: []);
             $this->assertNotSame([], glob($this->backupRoot.'/kiot-pr-d-db-backup-*.sql.gz') ?: []);
+            $this->assertSame($systemTempMetadata, $this->directoryMetadata(sys_get_temp_dir()));
+            $this->assertSame($credentialFiles, $this->credentialFiles());
+            $this->assertSame($auditRootMetadata, $this->directoryMetadata($this->auditRoot));
+            $this->assertSame($backupRootMetadata, $this->directoryMetadata($this->backupRoot));
         } finally {
             proc_terminate($server);
             proc_close($server);
@@ -760,6 +1003,29 @@ PHP;
         [$path] = glob($this->auditRoot.'/debt-pr-d-production-deploy-*/checkpoint.json');
 
         return ReleaseFiles::readJson($path);
+    }
+
+    /** @return array{mode:int, owner:int|false, group:int|false} */
+    private function directoryMetadata(string $directory): array
+    {
+        clearstatcache(true, $directory);
+        $permissions = fileperms($directory);
+        $this->assertNotFalse($permissions, 'Directory metadata must be readable: '.$directory);
+
+        return [
+            'mode' => $permissions & 07777,
+            'owner' => fileowner($directory),
+            'group' => filegroup($directory),
+        ];
+    }
+
+    /** @return list<string> */
+    private function credentialFiles(): array
+    {
+        $files = glob(rtrim(sys_get_temp_dir(), '/\\').DIRECTORY_SEPARATOR.'debt-release-client-*.cnf') ?: [];
+        sort($files);
+
+        return array_values($files);
     }
 
     private function captureFailure(callable $operation): ReleaseFailure
@@ -1012,6 +1278,40 @@ final class FailingGzipProcessExecutor implements ProcessExecutor
     ): ProcessResult {
         if (($command[0] ?? null) === 'gzip' && ($command[1] ?? null) === '-c') {
             return new ProcessResult(1, '', 'simulated gzip failure');
+        }
+
+        return (new NativeProcessExecutor)->run($command, $cwd, $stdinFile, $stdoutFile, $timeoutSeconds);
+    }
+}
+
+final class FailingMysqldumpProcessExecutor implements ProcessExecutor
+{
+    public function run(
+        array $command,
+        ?string $cwd = null,
+        ?string $stdinFile = null,
+        ?string $stdoutFile = null,
+        ?int $timeoutSeconds = null,
+    ): ProcessResult {
+        if (($command[0] ?? null) === 'mysqldump') {
+            return new ProcessResult(1, '', 'simulated mysqldump failure');
+        }
+
+        return (new NativeProcessExecutor)->run($command, $cwd, $stdinFile, $stdoutFile, $timeoutSeconds);
+    }
+}
+
+final class FailingMysqlRestoreProcessExecutor implements ProcessExecutor
+{
+    public function run(
+        array $command,
+        ?string $cwd = null,
+        ?string $stdinFile = null,
+        ?string $stdoutFile = null,
+        ?int $timeoutSeconds = null,
+    ): ProcessResult {
+        if (($command[0] ?? null) === 'mysql') {
+            return new ProcessResult(1, '', 'simulated mysql restore failure');
         }
 
         return (new NativeProcessExecutor)->run($command, $cwd, $stdinFile, $stdoutFile, $timeoutSeconds);
