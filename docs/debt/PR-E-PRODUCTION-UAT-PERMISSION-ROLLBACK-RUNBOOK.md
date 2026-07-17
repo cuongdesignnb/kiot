@@ -6,23 +6,27 @@
 TASK_CODE=RR-DEBT-OFFSET-PRODUCTION-UAT-01
 REPOSITORY=cuongdesignnb/kiot
 BASE_BRANCH=production-customer-group
-AUDITED_SHA=a026415717a66fe8ebcd0697981b0b28c43d3fe6
-DOCUMENT_SCOPE=read-only code audit and future operator runbook
+AUDITED_SHA=f47ef3a1419c9291faf72b730ee8d54b85ddec96
+DOCUMENT_SCOPE=production UAT permission backup emergency freeze reversal monitoring and rollback runbook
+PRODUCTION_SECURITY_DEPLOYMENT_VERIFIED=yes
 PRODUCTION_ACCESSED=no
 PRODUCTION_COMMAND_EXECUTED=no
 ```
 
-This document was produced from the exact deployed revision above. It does not
-authorize production access, permission changes, workflow enablement, migration,
-database correction, or financial UAT. Every production command below is for a
-future operator to run one at a time after the stated blockers and approval gates
-have been closed.
+This revision incorporates the supplied production deployment evidence for the
+exact SHA above; the Agent did not access production to re-check it. This document
+does not itself authorize workflow enablement, migration, database correction, or
+financial UAT. Every production command below is for a future operator to run one
+at a time after its stated approval gate has been satisfied.
 
 ## A. Executive status
 
 ```text
 PRODUCTION_CODE_DEPLOYED=yes
-PRODUCTION_SHA=a026415717a66fe8ebcd0697981b0b28c43d3fe6
+PRODUCTION_SHA=f47ef3a1419c9291faf72b730ee8d54b85ddec96
+
+DEBT_OFFSET_WORKFLOW_CODE_DEPLOYED=yes
+ROLE_USER_API_SECURITY_DEPLOYED=yes
 
 WORKFLOW_CURRENTLY_ENABLED=no
 EFFECTIVE_WRITE_MODE=legacy
@@ -32,26 +36,69 @@ SCHEMA_READY=yes
 FRONTEND_READY=yes
 ROUTES_READY=yes
 
-READY_FOR_PERMISSION_CONFIGURATION=no
+SAFE_PERMISSION_PATH_IDENTIFIED=yes
+PERMISSION_CONFIGURATION_STATUS=READY
+
+READY_FOR_PERMISSION_CONFIGURATION=yes
 READY_FOR_NON_FINANCIAL_UAT=no
 READY_FOR_FINANCIAL_WRITE_UAT=no
 READY_FOR_FULL_PRODUCTION_ENABLEMENT=no
 ```
 
-Blocking finding:
+The remaining operational gates are not complete:
 
 ```text
-PERMISSION_CONFIGURATION_STATUS=BLOCKED
-BLOCKER=ROLE_API_MISSING_AUTHENTICATION_AND_AUTHORIZATION
+UAT_ROLES_CONFIGURED=no
+UAT_ACTORS_SELECTED=no
+UAT_PARTNER_SELECTED=no
+UAT_AMOUNT_APPROVED=no
+FRESH_UAT_BACKUP_CREATED=no
+NON_FINANCIAL_UAT_COMPLETED=no
 ```
 
-The Settings UI contains a role editor, but `routes/api.php` exposes all
-`/api/roles` read and mutation routes without `auth:sanctum` or permission
-middleware. `App\Http\Controllers\Api\RoleController` also performs no
-authorization. The page route `/settings` is protected by `settings.view`, but
-that does not protect the API called by the page. Therefore the existing Admin UI
-cannot be classified as a safe production permission path. No production UAT may
-start until a separate reviewed code PR protects role and user administration.
+## Closed security blocker
+
+```text
+PREVIOUS_BLOCKER=ROLE_API_MISSING_AUTHENTICATION_AND_AUTHORIZATION
+SECURITY_PR_NUMBER=29
+SECURITY_PR_HEAD=8381ce3c122f6b08c925cb9c992ea752fe607064
+SECURITY_PR_MERGE_SHA=f47ef3a1419c9291faf72b730ee8d54b85ddec96
+SECURITY_PR_MERGED=yes
+SECURITY_CODE_DEPLOYED=yes
+PRODUCTION_ACCEPTANCE=PASS
+BLOCKER_STATUS=CLOSED
+```
+
+The protected Role/User administration APIs now require `auth:sanctum` and exact
+`roles.view/create/edit/delete` or `users.view/create/edit/delete` permission
+middleware. Unknown permission keys, wildcard or `role_id=null` escalation,
+non-admin management of Admin accounts, self-lock and self-delete are rejected.
+Stateful browser-session Sanctum remains supported. The supplied production smoke
+evidence reports HTTP `401` for unauthenticated Role and User API requests.
+
+Supplied production deployment evidence:
+
+```text
+PRODUCTION_SHA=f47ef3a1419c9291faf72b730ee8d54b85ddec96
+PRODUCTION_BRANCH=production-customer-group
+WORKTREE_CLEAN=yes
+ROLE_API_SECURITY=PASS
+USER_API_SECURITY=PASS
+ROLE_API_UNAUTHENTICATED_HTTP=401
+USER_API_UNAUTHENTICATED_HTTP=401
+ROLE_PERMISSION_MIDDLEWARE=PASS
+USER_PERMISSION_MIDDLEWARE=PASS
+PHP_LINT=PASS
+ROOT_HTTP=302
+LOGIN_HTTP=200
+MYSQL_SERVICE=active
+TMP_STATE=1777 root:root
+MIGRATION_EXECUTED=no
+DATABASE_CHANGED=no
+PERMISSION_CHANGED=no
+EFFECTIVE_WRITE_MODE=legacy
+WORKFLOW_ENABLED=no
+```
 
 Non-blocking, tracked finding:
 
@@ -177,34 +224,92 @@ Branch behavior when `Setting::get('customer_manage_by_branch', false)` is true:
 
 ## D. Safe permission configuration path
 
-| Candidate | Present | Safe at audited SHA | Decision |
+| Candidate | Present | Safe at production SHA hiện tại | Decision |
 |---|---:|---:|---|
-| Admin UI `/settings` -> `Người dùng` -> `Quản lý vai trò` | Yes | No | Blocked because its `/api/roles` backend lacks authentication and authorization. |
-| Existing Artisan command | Partial | No | `permissions:grant-sensitive` has a fixed unrelated permission list and cannot assign debt-offset least-privilege matrices. |
-| Seeder | General/test seeders exist | No | A production seeder is not an approved permission rollout path. |
-| Service/API | Role API exists | No | Current API is the blocker; no separately authorized service exists. |
-| Direct SQL | Technically possible | No | Explicitly prohibited. |
+| Admin UI `/settings` -> `Người dùng` -> `Quản lý vai trò` | Yes | Yes | Approved permission configuration path. |
+| Protected Role API | Yes | Yes | Backend authorization boundary. |
+| Protected User API | Yes | Yes | Backend authorization boundary. |
+| Existing Artisan command | Partial | No | Không dùng cho Debt Offset UAT. |
+| Seeder | Yes | No | Không dùng production. |
+| Direct SQL | Possible | No | Prohibited. |
 
 ```text
-SAFE_PERMISSION_PATH_IDENTIFIED=no
-PERMISSION_CONFIGURATION_STATUS=BLOCKED
-BLOCKER=NO_SAFE_PERMISSION_CONFIGURATION_PATH
+SAFE_PERMISSION_PATH_IDENTIFIED=yes
+SAFE_PERMISSION_PATH=ADMIN_UI_WITH_PROTECTED_ROLE_AND_USER_APIS
 MANUAL_SQL_NOT_ALLOWED=yes
+PRODUCTION_SEEDER_NOT_ALLOWED=yes
 ```
 
-Required separate remediation before permission rollout:
+Only an actual application Admin (`role_id=NULL` or a role containing `*`) may
+bootstrap the UAT role matrix. Do not use a non-admin account and do not grant `*`
+to any UAT actor.
 
-1. Protect role/user API routes with `auth:sanctum` and exact `roles.*`/`users.*`
-   permissions.
-2. Add authorization regression tests for unauthenticated, forbidden and allowed
-   actors.
-3. Review and merge that security PR separately.
-4. Only then use Admin UI `/settings` -> `Người dùng` -> `Quản lý vai trò` to
-   create or edit the five least-privilege UAT roles and assign four active users.
-5. Re-read each saved role and selected user through the protected application
-   UI/API. Confirm exact permissions, branch, status and no wildcard.
+### D1. Minimum UAT roles
 
-No permission changes are authorized by this runbook until that blocker is closed.
+| Role | Exact permissions |
+|---|---|
+| UAT Debt Offset Auditor | `debt_offsets.view` |
+| UAT Debt Offset Requester | `debt_offsets.view`, `debt_offsets.create`, `debt_offsets.submit`, `debt_offsets.void` |
+| UAT Debt Offset Approver | `debt_offsets.view`, `debt_offsets.approve`, `debt_offsets.reject` |
+| UAT Debt Offset Applier | `debt_offsets.view`, `debt_offsets.apply` |
+| UAT Debt Offset Reverser | `debt_offsets.view`, `debt_offsets.reverse` |
+
+Do not assign permissions outside this matrix without separate approval.
+
+### D2. Actor assignment
+
+```text
+UAT_REQUESTER_USER_ID=<to_be_selected>
+UAT_APPROVER_USER_ID=<to_be_selected>
+UAT_APPLIER_USER_ID=<to_be_selected>
+UAT_REVERSER_USER_ID=<to_be_selected>
+
+REQUESTER_DIFFERENT_FROM_APPROVER=yes
+APPLIER_SEPARATE_ACCOUNT=yes
+REVERSER_SEPARATE_ACCOUNT=yes
+ALL_ACTORS_ACTIVE=yes
+ALL_ACTORS_SAME_UAT_BRANCH=yes
+NO_ACTOR_HAS_WILDCARD=yes
+LEAST_PRIVILEGE=yes
+```
+
+### D3. Safe configuration and verification
+
+1. Confirm the production SHA and clean production worktree using the read-only
+   commands below.
+2. Sign in using an actual Admin account.
+3. Open `/settings` -> `Người dùng` -> `Quản lý vai trò`.
+4. Create or update only the approved UAT roles and assign the four selected active
+   users.
+5. Reload the Role list and reopen each role to verify its exact permissions.
+6. Reload the User list and reopen each actor to verify exact role, primary branch,
+   branch access and `active` status.
+7. Confirm no UAT actor is an Admin and no actor has wildcard permission.
+
+### D4. UAT readiness after permission configuration
+
+Permission configuration is ready, but non-financial production UAT remains
+blocked until all of the following are confirmed:
+
+```text
+ROLE_MATRIX_CONFIGURED=yes
+FOUR_UAT_ACTORS_SELECTED=yes
+ACTOR_PERMISSION_REVIEW=PASS
+ACTOR_BRANCH_REVIEW=PASS
+UAT_PARTNER_SELECTED=yes
+UAT_AMOUNT_APPROVED=yes
+FRESH_BACKUP_VERIFIED=yes
+EMERGENCY_DISABLED_COMMAND_READY=yes
+MAINTENANCE_WINDOW_APPROVED=yes
+```
+
+Financial UAT additionally requires:
+
+```text
+ROUND_1_PERMISSION_UAT=PASS
+ROUND_2_NON_FINANCIAL_UAT=PASS
+OWNER_FINANCIAL_UAT_APPROVAL=yes
+```
 
 ## E. Read-only production discovery commands
 
@@ -220,7 +325,7 @@ Purpose: confirm deployed source. Database write: no.
 git -C /www/wwwroot/kiot.cuongdesign.net rev-parse HEAD
 ```
 
-Expected: `a026415717a66fe8ebcd0697981b0b28c43d3fe6`.
+Expected: `f47ef3a1419c9291faf72b730ee8d54b85ddec96`.
 
 ### E2. Worktree state
 
@@ -342,6 +447,50 @@ stat -c 'TMP_OWNER=%U:%G TMP_MODE=%a' /tmp
 
 Expected: `TMP_OWNER=root:root TMP_MODE=1777`.
 
+### E13. Protected Role API middleware
+
+Purpose: verify Role API authentication and exact endpoint permissions. Database
+write: no.
+
+```bash
+php /www/wwwroot/kiot.cuongdesign.net/artisan route:list --path=api/roles -vv
+```
+
+Expected: every Role route includes `auth:sanctum`; endpoints show the exact
+`roles.view`, `roles.create`, `roles.edit`, or `roles.delete` middleware.
+
+### E14. Protected User API middleware
+
+Purpose: verify User API authentication and exact endpoint permissions. Database
+write: no.
+
+```bash
+php /www/wwwroot/kiot.cuongdesign.net/artisan route:list --path=api/users -vv
+```
+
+Expected: every User route includes `auth:sanctum`; endpoints show the exact
+`users.view`, `users.create`, `users.edit`, or `users.delete` middleware.
+
+### E15. Unauthenticated Role API smoke test
+
+Purpose: verify fail-closed authentication without a session. Database write: no.
+
+```bash
+curl -k -sS --resolve 'kiot.cuongdesign.net:443:127.0.0.1' -H 'Accept: application/json' -o /dev/null -w 'ROLE_API_UNAUTHENTICATED_HTTP=%{http_code}\n' 'https://kiot.cuongdesign.net/api/roles'
+```
+
+Expected: `ROLE_API_UNAUTHENTICATED_HTTP=401`.
+
+### E16. Unauthenticated User API smoke test
+
+Purpose: verify fail-closed authentication without a session. Database write: no.
+
+```bash
+curl -k -sS --resolve 'kiot.cuongdesign.net:443:127.0.0.1' -H 'Accept: application/json' -o /dev/null -w 'USER_API_UNAUTHENTICATED_HTTP=%{http_code}\n' 'https://kiot.cuongdesign.net/api/users'
+```
+
+Expected: `USER_API_UNAUTHENTICATED_HTTP=401`.
+
 ## F. Production UAT actor plan
 
 ```text
@@ -355,16 +504,18 @@ UAT_PARTNER_ID=<to_be_selected>
 UAT_AMOUNT=<business_approved_small_amount>
 
 REQUESTER_DIFFERENT_FROM_APPROVER=yes
-APPLIER_SEPARATE_RECOMMENDED=yes
-REVERSER_SEPARATE_RECOMMENDED=yes
-ACTORS_ACTIVE=yes
-ACTORS_SAME_UAT_BRANCH=yes
+APPLIER_SEPARATE_ACCOUNT=yes
+REVERSER_SEPARATE_ACCOUNT=yes
+ALL_ACTORS_ACTIVE=yes
+ALL_ACTORS_SAME_UAT_BRANCH=yes
+NO_ACTOR_HAS_WILDCARD=yes
 LEAST_PRIVILEGE=yes
 ```
 
-Do not hard-code production IDs in Git. Owner/BA selects the actors after the
-permission-path blocker is fixed. Capture a screenshot/export of each role's exact
-permissions and the users' branches before UAT.
+Do not hard-code production IDs in Git. Owner/BA selects the actors and approves
+the exact least-privilege role matrix before configuration. Capture a
+screenshot/export of each role's exact permissions and the users' branches before
+UAT.
 
 ## G. Production UAT partner plan
 
@@ -390,8 +541,9 @@ partner. Do not use SQL to manufacture eligibility.
 
 ## H. Three-round UAT
 
-No round may begin while the permission-path blocker remains open. Round 3 needs
-separate owner approval after Rounds 1 and 2 pass.
+No round may begin until the UAT roles, actors, branch access, partner, amount,
+backup and maintenance-window gates are confirmed. Round 3 needs separate owner
+approval after Rounds 1 and 2 pass.
 
 ### Round 1: permission and negative access, no financial transaction
 
@@ -546,9 +698,9 @@ Expected: UAT-created rows remain `pending`, attempts `0`.
 
 ## J. Backup gate
 
-Run only after permission blocker closure and owner approval. Commands are
-separate. They do not print resolved database credentials. Backup is outside the
-web root and no existing backup is deleted.
+Run only after the role matrix and actors are approved and the owner authorizes the
+UAT preparation window. Commands are separate. They do not print resolved database
+credentials. Backup is outside the web root and no existing backup is deleted.
 
 ### J1. Set a timestamp in the operator shell
 
@@ -643,9 +795,9 @@ GZIP_TEST=PASS
 
 ## K. Enablement plan
 
-Blocked until safe permission configuration exists and owner explicitly opens the
-UAT window. Run one command at a time and review output. No migration or database
-restart is part of enablement.
+Blocked until permission configuration is complete, all prerequisite checks pass,
+and the owner explicitly opens the UAT window. Run one command at a time and review
+output. No migration or database restart is part of enablement.
 
 ### K1. Back up `.env` without displaying it
 
@@ -869,6 +1021,9 @@ ROLLBACK_MERGE_COMMIT=a026415717a66fe8ebcd0697981b0b28c43d3fe6
 ROLLBACK_MAINLINE_PARENT=1
 ```
 
+This SHA intentionally identifies the PR #27 workflow-code merge to revert; it is
+not the current production SHA.
+
 Create the branch in a clean non-production checkout:
 
 ```bash
@@ -1007,14 +1162,19 @@ OUTBOX_STATUS=pending_attempts_0
 ## P. Go/No-Go checklist
 
 ```text
-[ ] Exact production SHA confirmed
-[ ] Worktree clean
-[ ] MariaDB/MySQL active
-[ ] /tmp remains 1777 root:root
+[x] Debt Offset workflow code deployed
+[x] Role/User API security merged
+[x] Role/User API security deployed
+[x] Role/User unauthenticated access returns 401
+[x] Exact Role/User middleware verified
+[x] Production remains legacy
+[x] MariaDB/MySQL active
+[x] /tmp remains 1777 root:root
 [ ] Fresh database backup verified
-[ ] Role API security blocker fixed and reviewed
-[ ] Permission roles configured through protected application path
-[ ] Four UAT actors confirmed
+[ ] UAT roles configured
+[ ] Four UAT actors selected
+[ ] Exact role permissions re-read and confirmed
+[ ] Actor branches confirmed
 [ ] UAT partner confirmed
 [ ] UAT amount approved
 [ ] No concurrent debt operation
@@ -1063,16 +1223,20 @@ WORKFLOW_UAT=FAIL
 INCIDENT_OPENED=yes
 ```
 
-Owner approval is mandatory before retaining `workflow`. Until the role API
-security blocker is fixed, the only approved current result is to remain in
-`legacy` without starting UAT.
+Owner approval is mandatory before retaining `workflow`. The security blocker is
+closed, but production remains in `legacy` until permission configuration and all
+subsequent UAT gates are completed and approved.
 
 ## R. Final readiness and findings
 
 ```text
 MODE_BEHAVIOR_AUDITED=yes
 PERMISSION_MATRIX_COMPLETE=yes
-SAFE_PERMISSION_PATH_IDENTIFIED=no
+
+ROLE_USER_API_SECURITY_MERGED=yes
+ROLE_USER_API_SECURITY_DEPLOYED=yes
+SAFE_PERMISSION_PATH_IDENTIFIED=yes
+
 NON_FINANCIAL_UAT_PLAN_COMPLETE=yes
 FINANCIAL_UAT_PLAN_COMPLETE=yes
 BACKUP_PLAN_COMPLETE=yes
@@ -1084,19 +1248,26 @@ MONITORING_PLAN_COMPLETE=yes
 OUTBOX_PUBLISHER_IMPLEMENTED=no
 OUTBOX_UAT_EXPECTATION_DOCUMENTED=yes
 
-P0_BLOCKERS=1
+P0_BLOCKERS=0
 P1_BLOCKERS=0
-P2_FINDINGS=2
+P2_FINDINGS=3
 
-P0_1=ROLE_API_MISSING_AUTHENTICATION_AND_AUTHORIZATION
 P2_1=OUTBOX_PUBLISHER_NOT_IMPLEMENTED
 P2_2=DISTINCT_APPLIER_AND_REVERSER_NOT_ENFORCED_BY_DEFAULT
+P2_3=ROLE_USER_ADMIN_UI_ACTION_VISIBILITY_NOT_FULLY_PERMISSION_GATED
 
-READY_FOR_PERMISSION_CONFIGURATION=no
+READY_FOR_PERMISSION_CONFIGURATION=yes
 READY_FOR_NON_FINANCIAL_PRODUCTION_UAT=no
 READY_FOR_FINANCIAL_PRODUCTION_UAT=no
 READY_FOR_FULL_WORKFLOW_ENABLEMENT=no
 ```
 
+P2 findings are non-blocking for permission configuration. Outbox events are
+expected to remain `pending` with `attempts=0`; no publisher is enabled. UAT uses
+separate Applier and Reverser accounts even though the application does not enforce
+that distinction by default. Settings UI action visibility may not mirror every
+exact permission, but the protected backend API remains the authoritative boundary
+and returns HTTP `403`; initial role configuration therefore uses an Admin account.
+
 No production command, data mutation, migration, permission change, mode change,
-worker enablement or deployment was performed while producing this runbook.
+worker enablement or deployment was performed while updating this runbook.
