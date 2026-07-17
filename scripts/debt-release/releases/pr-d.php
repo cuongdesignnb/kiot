@@ -11,6 +11,18 @@ return [
     'maintenance_required' => true,
     'database_advisory_lock' => 'kiot:debt-release:pr-d',
     'temp_database_pattern' => '/^test_kiot_pr_d_restore_[0-9]{8}_[0-9]{6}_[a-z0-9]{6,16}$/',
+    'raw_sql_temp_pattern' => '/^kiot-pr-d-raw-[0-9]{8}-[0-9]{6}-[a-f0-9]{16}\.sql\.tmp$/',
+    'signal_recovery_required' => true,
+    'process_timeouts_seconds' => [
+        'git_php' => 30,
+        'curl' => 30,
+        'gzip' => 60,
+        'backup' => 1800,
+        'restore' => 1800,
+        'migration' => 180,
+        'optimize_clear' => 120,
+        'maintenance' => 60,
+    ],
     'audit_directory_prefix' => 'debt-pr-d-',
     'backup_filename_prefix' => 'kiot-pr-d-db-backup-',
     'ddl_thresholds' => [

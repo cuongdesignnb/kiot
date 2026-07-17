@@ -50,55 +50,212 @@ final class ProcessResult
         public readonly int $exitCode,
         public readonly string $stdout = '',
         public readonly string $stderr = '',
+        public readonly bool $timedOut = false,
+        public readonly float $durationMs = 0.0,
+        public readonly ?int $terminationSignal = null,
     ) {}
 
     public function successful(): bool
     {
-        return $this->exitCode === 0;
+        return ! $this->timedOut && $this->exitCode === 0;
     }
 }
 
 interface ProcessExecutor
 {
     /** @param list<string> $command */
-    public function run(array $command, ?string $cwd = null, ?string $stdinFile = null, ?string $stdoutFile = null): ProcessResult;
+    public function run(array $command, ?string $cwd = null, ?string $stdinFile = null, ?string $stdoutFile = null, ?int $timeoutSeconds = null): ProcessResult;
 }
 
 final class NativeProcessExecutor implements ProcessExecutor
 {
-    public function run(array $command, ?string $cwd = null, ?string $stdinFile = null, ?string $stdoutFile = null): ProcessResult
+    /** @var resource|null */
+    private static $activeProcess = null;
+
+    public function run(array $command, ?string $cwd = null, ?string $stdinFile = null, ?string $stdoutFile = null, ?int $timeoutSeconds = null): ProcessResult
     {
-        $stderrPath = tempnam(sys_get_temp_dir(), 'debt-release-process-');
-        if ($stderrPath === false) {
-            return new ProcessResult(127, '', 'Unable to allocate process stderr file.');
-        }
         $descriptors = [
             0 => $stdinFile === null ? ['pipe', 'r'] : ['file', $stdinFile, 'r'],
             1 => $stdoutFile === null ? ['pipe', 'w'] : ['file', $stdoutFile, 'w'],
-            2 => ['file', $stderrPath, 'w'],
+            2 => ['pipe', 'w'],
         ];
         $pipes = [];
         $process = proc_open($command, $descriptors, $pipes, $cwd, null, ['bypass_shell' => true]);
         if (! is_resource($process)) {
-            @unlink($stderrPath);
-
             return new ProcessResult(127, '', 'Unable to start process.');
         }
-        try {
-            if ($stdinFile === null) {
-                fclose($pipes[0]);
-            }
-            $stdout = $stdoutFile === null ? (string) stream_get_contents($pipes[1]) : '';
-            if ($stdoutFile === null) {
-                fclose($pipes[1]);
-            }
-            $exitCode = proc_close($process);
-            $stderr = (string) file_get_contents($stderrPath);
-
-            return new ProcessResult($exitCode, $stdout, $stderr);
-        } finally {
-            @unlink($stderrPath);
+        self::$activeProcess = $process;
+        $started = hrtime(true);
+        $stdout = '';
+        $stderr = '';
+        $timedOut = false;
+        $terminationSignal = null;
+        $exitCode = -1;
+        if ($stdinFile === null && isset($pipes[0]) && is_resource($pipes[0])) {
+            fclose($pipes[0]);
         }
+        foreach ([1, 2] as $index) {
+            if (isset($pipes[$index]) && is_resource($pipes[$index])) {
+                stream_set_blocking($pipes[$index], false);
+            }
+        }
+        try {
+            while (true) {
+                if ($stdoutFile === null && isset($pipes[1]) && is_resource($pipes[1])) {
+                    $stdout .= (string) stream_get_contents($pipes[1]);
+                }
+                if (isset($pipes[2]) && is_resource($pipes[2])) {
+                    $stderr .= (string) stream_get_contents($pipes[2]);
+                }
+                $status = proc_get_status($process);
+                if (! $status['running']) {
+                    $exitCode = (int) $status['exitcode'];
+                    break;
+                }
+                if ($timeoutSeconds !== null && (hrtime(true) - $started) >= $timeoutSeconds * 1_000_000_000) {
+                    $timedOut = true;
+                    $terminationSignal = 15;
+                    proc_terminate($process, 15);
+                    $graceDeadline = hrtime(true) + 2_000_000_000;
+                    do {
+                        usleep(50_000);
+                        $status = proc_get_status($process);
+                    } while ($status['running'] && hrtime(true) < $graceDeadline);
+                    if ($status['running']) {
+                        $terminationSignal = 9;
+                        proc_terminate($process, 9);
+                    }
+                    break;
+                }
+                usleep(25_000);
+            }
+        } catch (Throwable $exception) {
+            self::terminateActiveChild();
+            throw $exception;
+        } finally {
+            foreach ([1, 2] as $index) {
+                if (isset($pipes[$index]) && is_resource($pipes[$index])) {
+                    $chunk = (string) stream_get_contents($pipes[$index]);
+                    $index === 1 ? $stdout .= $chunk : $stderr .= $chunk;
+                    fclose($pipes[$index]);
+                }
+            }
+            $closeCode = proc_close($process);
+            if ($exitCode < 0 && $closeCode >= 0) {
+                $exitCode = $closeCode;
+            }
+            self::$activeProcess = null;
+        }
+
+        return new ProcessResult(
+            $timedOut ? 124 : $exitCode,
+            $stdout,
+            $stderr,
+            $timedOut,
+            round((hrtime(true) - $started) / 1_000_000, 2),
+            $terminationSignal,
+        );
+    }
+
+    public static function terminateActiveChild(): void
+    {
+        if (is_resource(self::$activeProcess)) {
+            @proc_terminate(self::$activeProcess, 15);
+            $deadline = hrtime(true) + 2_000_000_000;
+            do {
+                usleep(50_000);
+                $status = @proc_get_status(self::$activeProcess);
+            } while (is_array($status) && ($status['running'] ?? false) && hrtime(true) < $deadline);
+            if (is_array($status) && ($status['running'] ?? false)) {
+                @proc_terminate(self::$activeProcess, 9);
+            }
+        }
+    }
+}
+
+final class SignalRecovery
+{
+    private static ?int $receivedSignal = null;
+
+    private static bool $handling = false;
+
+    public static function install(): bool
+    {
+        if (! function_exists('pcntl_async_signals') || ! function_exists('pcntl_signal')) {
+            return false;
+        }
+        pcntl_async_signals(true);
+        foreach ([SIGINT, SIGTERM, SIGHUP] as $signal) {
+            pcntl_signal($signal, static function (int $received): never {
+                if (self::$handling) {
+                    exit(ExitCode::PARTIAL_RELEASE);
+                }
+                self::$handling = true;
+                self::$receivedSignal = $received;
+                NativeProcessExecutor::terminateActiveChild();
+                throw new ReleaseFailure('SIGNAL_'.self::name($received).'_INTERRUPTED', ExitCode::PARTIAL_RELEASE);
+            });
+        }
+
+        return true;
+    }
+
+    public static function receivedSignal(): ?int
+    {
+        return self::$receivedSignal;
+    }
+
+    private static function name(int $signal): string
+    {
+        return match ($signal) {
+            SIGINT => 'SIGINT',
+            SIGTERM => 'SIGTERM',
+            SIGHUP => 'SIGHUP',
+            default => 'UNKNOWN',
+        };
+    }
+}
+
+final class ApprovalTokenInput
+{
+    public static function read(): string
+    {
+        $environment = getenv('DEBT_RELEASE_APPROVAL_TOKEN');
+        if (is_string($environment) && $environment !== '') {
+            putenv('DEBT_RELEASE_APPROVAL_TOKEN');
+            unset($_ENV['DEBT_RELEASE_APPROVAL_TOKEN'], $_SERVER['DEBT_RELEASE_APPROVAL_TOKEN']);
+
+            return $environment;
+        }
+        if (DIRECTORY_SEPARATOR === '\\' || ! is_readable('/dev/tty')) {
+            throw new ReleaseFailure('APPROVAL_TOKEN_TTY_REQUIRED', ExitCode::INVALID_ARGUMENTS);
+        }
+        $tty = fopen('/dev/tty', 'r+');
+        if ($tty === false) {
+            throw new ReleaseFailure('APPROVAL_TOKEN_TTY_REQUIRED', ExitCode::INVALID_ARGUMENTS);
+        }
+        $descriptors = [0 => $tty, 1 => $tty, 2 => $tty];
+        $disableEcho = proc_open(['stty', '-echo'], $descriptors, $pipes);
+        if (! is_resource($disableEcho) || proc_close($disableEcho) !== 0) {
+            fclose($tty);
+            throw new ReleaseFailure('APPROVAL_TOKEN_HIDDEN_INPUT_FAILED', ExitCode::INVALID_ARGUMENTS);
+        }
+        try {
+            fwrite($tty, 'Approval token: ');
+            $token = trim((string) fgets($tty));
+        } finally {
+            $enableEcho = proc_open(['stty', 'echo'], $descriptors, $pipes);
+            if (is_resource($enableEcho)) {
+                proc_close($enableEcho);
+            }
+            fwrite($tty, PHP_EOL);
+            fclose($tty);
+        }
+        if ($token === '') {
+            throw new ReleaseFailure('APPROVAL_TOKEN_REQUIRED', ExitCode::INVALID_ARGUMENTS);
+        }
+
+        return $token;
     }
 }
 
@@ -327,13 +484,25 @@ final class ManifestValidator
 {
     public static function validate(array $manifest, string $repositoryRoot): void
     {
-        foreach (['release_id', 'release_name', 'expected_previous_production_sha', 'expected_database_name_sha256', 'allowed_branch', 'database_engine', 'database_advisory_lock', 'preflight_ttl_minutes', 'migrations', 'new_columns', 'unique_indexes', 'foreign_keys', 'checks', 'legacy_offset_columns', 'invariant_table_groups'] as $key) {
+        foreach (['release_id', 'release_name', 'expected_previous_production_sha', 'expected_database_name_sha256', 'allowed_branch', 'database_engine', 'database_advisory_lock', 'preflight_ttl_minutes', 'raw_sql_temp_pattern', 'signal_recovery_required', 'process_timeouts_seconds', 'migrations', 'new_columns', 'unique_indexes', 'foreign_keys', 'checks', 'legacy_offset_columns', 'invariant_table_groups'] as $key) {
             if (! array_key_exists($key, $manifest)) {
                 throw new ReleaseFailure('MANIFEST_MISSING_'.strtoupper($key), ExitCode::DEPENDENCY_BLOCKER);
             }
         }
         if ($manifest['release_id'] !== 'debt-pr-d' || count($manifest['migrations']) !== 3) {
             throw new ReleaseFailure('MANIFEST_RELEASE_CONTRACT_INVALID', ExitCode::DEPENDENCY_BLOCKER);
+        }
+        if ($manifest['process_timeouts_seconds'] !== [
+            'git_php' => 30,
+            'curl' => 30,
+            'gzip' => 60,
+            'backup' => 1800,
+            'restore' => 1800,
+            'migration' => 180,
+            'optimize_clear' => 120,
+            'maintenance' => 60,
+        ]) {
+            throw new ReleaseFailure('PROCESS_TIMEOUT_CONTRACT_INVALID', ExitCode::DEPENDENCY_BLOCKER);
         }
         $expected = [
             '2026_07_17_000000_add_workflow_evidence_columns_to_debt_offsets',
@@ -363,9 +532,9 @@ final class CliArguments
 {
     private const COMMANDS = ['doctor', 'preflight', 'deploy', 'status', 'cleanup'];
 
-    private const VALUES = ['expected-sha', 'preflight-report', 'approval-token'];
+    private const VALUES = ['expected-sha', 'preflight-report'];
 
-    private const FLAGS = ['maintenance-window-ack', 'help'];
+    private const FLAGS = ['maintenance-window-ack', 'resume-partial-ack', 'help'];
 
     /** @param list<string> $argv */
     public static function parse(array $argv): array
@@ -417,6 +586,9 @@ final class DebtReleaseRunner
     /** @var callable(int):string */
     private $random;
 
+    /** @var callable():string */
+    private $tokenReader;
+
     public function __construct(
         private readonly array $manifest,
         private readonly string $repositoryRoot,
@@ -427,10 +599,12 @@ final class DebtReleaseRunner
         ?callable $output = null,
         ?callable $clock = null,
         ?callable $random = null,
+        ?callable $tokenReader = null,
     ) {
         $this->output = $output ?? static fn (string $line) => print $line.PHP_EOL;
         $this->clock = $clock ?? static fn () => new DateTimeImmutable('now');
         $this->random = $random ?? static fn (int $bytes) => bin2hex(random_bytes($bytes));
+        $this->tokenReader = $tokenReader ?? ApprovalTokenInput::read(...);
     }
 
     public function execute(string $command, array $options): int
@@ -460,6 +634,8 @@ final class DebtReleaseRunner
         ($this->output)('HEAD='.$git['head']);
         ($this->output)('WORKTREE_CLEAN='.($git['clean'] ? 'yes' : 'no'));
         ($this->output)('CONNECTED_DATABASE_SHA256='.$identity['database_sha256']);
+        ($this->output)('PCNTL_AVAILABLE='.(($doctor['pcntl_available'] ?? false) ? 'yes' : 'no'));
+        ($this->output)('SIGNAL_RECOVERY_AVAILABLE='.(($doctor['signal_recovery_available'] ?? false) ? 'yes' : 'no'));
 
         return ExitCode::SUCCESS;
     }
@@ -472,6 +648,12 @@ final class DebtReleaseRunner
         try {
             $git = $this->assertGitGate($expectedSha);
             $identity = $this->assertDatabaseGate();
+            $doctor = $this->platform->doctor($this->manifest);
+            $this->assertPassing($doctor, 'DEPENDENCY_DOCTOR_FAILED', ExitCode::DEPENDENCY_BLOCKER);
+            if (($this->manifest['signal_recovery_required'] ?? false)
+                && ($doctor['signal_recovery_available'] ?? false) !== true) {
+                throw new ReleaseFailure('SIGNAL_RECOVERY_UNAVAILABLE', ExitCode::DEPENDENCY_BLOCKER);
+            }
             $doctor = $this->platform->doctor($this->manifest);
             $this->assertPassing($doctor, 'DEPENDENCY_DOCTOR_FAILED', ExitCode::DEPENDENCY_BLOCKER);
             $risk = $this->platform->inspectDdlRisk($this->manifest);
@@ -578,17 +760,16 @@ final class DebtReleaseRunner
 
     private function deploy(array $options): int
     {
-        $this->assertAllowedOptions($options, ['expected-sha', 'preflight-report', 'approval-token', 'maintenance-window-ack']);
+        $this->assertAllowedOptions($options, ['expected-sha', 'preflight-report', 'maintenance-window-ack', 'resume-partial-ack']);
         $expectedSha = $this->requiredString($options, 'expected-sha');
         $reportOption = $this->requiredString($options, 'preflight-report');
-        $token = $this->requiredString($options, 'approval-token');
         if (($options['maintenance-window-ack'] ?? false) !== true) {
             throw new ReleaseFailure('MAINTENANCE_WINDOW_ACK_REQUIRED', ExitCode::INVALID_ARGUMENTS);
         }
 
         $reportPath = ReleaseFiles::assertWithin($reportOption, $this->auditRoot);
         $report = ReleaseFiles::readJson($reportPath);
-        $this->validatePreflightReport($report, $reportPath, $token, $expectedSha);
+        $preflightEvidence = $this->validatePreflightReport($report, $reportPath, $expectedSha);
 
         $this->fileLock->acquire();
         $dbLocked = false;
@@ -601,10 +782,43 @@ final class DebtReleaseRunner
         try {
             $git = $this->assertGitGate($expectedSha);
             $identity = $this->assertDatabaseGate();
-            $checkpoint = is_file($checkpointPath)
+            $checkpointExists = is_file($checkpointPath);
+            $checkpoint = $checkpointExists
                 ? ReleaseFiles::readJson($checkpointPath)
                 : $this->newCheckpoint($reportPath, $report, $expectedSha, $identity);
             $this->assertCheckpointIdentity($checkpoint, $expectedSha, $identity);
+            if (($checkpoint['preflight_report_path'] ?? '') !== $reportPath
+                || ($checkpoint['preflight_report_sha256'] ?? $preflightEvidence['report_sha256']) !== $preflightEvidence['report_sha256']) {
+                throw new ReleaseFailure('CHECKPOINT_PREFLIGHT_BINDING_MISMATCH', ExitCode::PARTIAL_RELEASE);
+            }
+            $migrationStatus = $this->platform->migrationStatus($this->manifest);
+            if (! $checkpointExists && (int) ($migrationStatus['ran_count'] ?? 0) > 0) {
+                throw new ReleaseFailure('PARTIAL_RESUME_CHECKPOINT_REQUIRED', ExitCode::PARTIAL_RELEASE);
+            }
+            $verifiedMigrationStages = array_intersect(
+                array_column($this->manifest['migrations'], 'stage'),
+                $checkpoint['completed_stages'] ?? [],
+            );
+            $isPartialResume = $checkpointExists
+                && ($verifiedMigrationStages !== [] || (int) ($migrationStatus['ran_count'] ?? 0) > 0);
+            if (($checkpoint['stage'] ?? '') === 'closeout_written') {
+                throw new ReleaseFailure('SUCCESSFUL_CLOSEOUT_CANNOT_BE_RESUMED', ExitCode::INVALID_ARGUMENTS);
+            }
+            if ($isPartialResume && ($options['resume-partial-ack'] ?? false) !== true) {
+                throw new ReleaseFailure('PARTIAL_RESUME_ACK_REQUIRED', ExitCode::INVALID_ARGUMENTS);
+            }
+            if (! $isPartialResume && ($options['resume-partial-ack'] ?? false) === true) {
+                throw new ReleaseFailure('PARTIAL_RESUME_NOT_AVAILABLE', ExitCode::INVALID_ARGUMENTS);
+            }
+            $token = null;
+            if (! $isPartialResume) {
+                $this->assertFreshPreflightAuthorization($report, $preflightEvidence['sidecar']);
+                $token = ($this->tokenReader)();
+                if (! hash_equals((string) ($preflightEvidence['sidecar']['token_sha256'] ?? ''), hash('sha256', $token))) {
+                    throw new ReleaseFailure('APPROVAL_TOKEN_INVALID', ExitCode::INVALID_ARGUMENTS);
+                }
+                unset($token);
+            }
             $this->writeCheckpoint($checkpointPath, $checkpoint, 'initialized');
 
             $dbLocked = $this->platform->acquireDatabaseLock((string) $this->manifest['database_advisory_lock']);
@@ -628,6 +842,10 @@ final class DebtReleaseRunner
             }
             $this->writeCheckpoint($checkpointPath, $checkpoint, 'baseline_captured');
 
+            if (! $isPartialResume) {
+                $this->consumeApprovalToken($preflightEvidence['sidecar_path'], $preflightEvidence['sidecar'], $checkpointPath, $checkpoint);
+            }
+
             $migrationResults = [];
             foreach ($this->manifest['migrations'] as $index => $migration) {
                 $stageNumber = $index + 1;
@@ -641,7 +859,8 @@ final class DebtReleaseRunner
                 if (! $ran) {
                     $result = $this->platform->runMigration((string) $migration['path']);
                     if (! $result->successful()) {
-                        throw new ReleaseFailure('MIGRATION_'.$stageNumber.'_FAILED', ExitCode::PARTIAL_RELEASE);
+                        $suffix = $result->timedOut ? '_TIMEOUT' : '_FAILED';
+                        throw new ReleaseFailure('MIGRATION_'.$stageNumber.$suffix, ExitCode::PARTIAL_RELEASE);
                     }
                 }
                 $verification = $this->platform->verifyMigrationStage($stageNumber, $this->manifest, $baseline);
@@ -688,6 +907,12 @@ final class DebtReleaseRunner
                 'checkpoint_stages' => $checkpoint['timestamps'] ?? [],
                 'migrations' => $migrationResults,
                 'postflight' => Redactor::redact($postflight),
+                'data_snapshot_consistent' => ($baseline['data_snapshot_consistent'] ?? false)
+                    && ($postflight['data_snapshot_consistent'] ?? false),
+                'snapshot_read_only' => ($baseline['snapshot_read_only'] ?? false)
+                    && ($postflight['snapshot_read_only'] ?? false),
+                'snapshot_rolled_back' => ($baseline['snapshot_rolled_back'] ?? false)
+                    && ($postflight['snapshot_rolled_back'] ?? false),
                 'smoke' => Redactor::redact($smoke),
                 'maintenance_recovered' => true,
                 'backfill' => false,
@@ -707,6 +932,11 @@ final class DebtReleaseRunner
             if (isset($checkpoint)) {
                 $checkpoint['blocker'] = $failure->blocker;
                 $checkpoint['failed_at'] = ($this->clock)()->format(DATE_ATOM);
+                if (SignalRecovery::receivedSignal() !== null) {
+                    $checkpoint['stage'] = 'interrupted';
+                    $checkpoint['interrupted_signal'] = SignalRecovery::receivedSignal();
+                    $checkpoint['timestamps']['interrupted'] = $checkpoint['failed_at'];
+                }
                 ReleaseFiles::atomicJson($checkpointPath, Redactor::redact($checkpoint));
             }
             $failureReportPath = $deploymentDirectory.'/deployment-report.json';
@@ -718,7 +948,15 @@ final class DebtReleaseRunner
                 'last_successful_stage' => $checkpoint['stage'] ?? 'none',
                 'maintenance_recovered' => ! $maintenanceEntered,
                 'safe_rerun_required' => true,
-                'safe_rerun_command' => $this->safeRerunCommand($reportPath, $expectedSha),
+                'safe_rerun_command' => $this->safeRerunCommand(
+                    $reportPath,
+                    $expectedSha,
+                    isset($checkpoint) && array_intersect(
+                        array_column($this->manifest['migrations'], 'stage'),
+                        $checkpoint['completed_stages'] ?? [],
+                    ) !== [],
+                ),
+                'interrupted_signal' => SignalRecovery::receivedSignal(),
                 'backfill' => false,
                 'current_debt_data_changed' => false,
                 'failed_at' => ($this->clock)()->format(DATE_ATOM),
@@ -801,10 +1039,17 @@ final class DebtReleaseRunner
         ($this->output)('CONNECTED_DATABASE_SHA256='.$identity['database_sha256']);
         ($this->output)('MIGRATIONS_RAN='.(string) ($migrationStatus['ran_count'] ?? 0).'/3');
         ($this->output)('LAST_STAGE='.($checkpoint['stage'] ?? 'none'));
-        if (is_array($checkpoint) && isset($checkpoint['preflight_report_path'], $checkpoint['expected_sha'])) {
+        if (is_array($checkpoint)
+            && ($checkpoint['stage'] ?? '') !== 'closeout_written'
+            && isset($checkpoint['preflight_report_path'], $checkpoint['expected_sha'])) {
+            $resume = array_intersect(
+                array_column($this->manifest['migrations'], 'stage'),
+                $checkpoint['completed_stages'] ?? [],
+            ) !== [];
             ($this->output)('SAFE_RERUN_COMMAND='.$this->safeRerunCommand(
                 (string) $checkpoint['preflight_report_path'],
                 (string) $checkpoint['expected_sha'],
+                $resume,
             ));
         }
 
@@ -826,6 +1071,7 @@ final class DebtReleaseRunner
                 $dropped[] = hash('sha256', $database);
             }
             $credentialsRemoved = $this->cleanupTemporaryCredentials();
+            $rawSqlRemoved = $this->cleanupRawSqlTemps();
         } finally {
             $this->fileLock->release();
         }
@@ -834,6 +1080,7 @@ final class DebtReleaseRunner
         ($this->output)('CLEANUP_STATUS=PASS');
         ($this->output)('TEMP_DATABASES_DROPPED='.count($dropped));
         ($this->output)('TEMP_CREDENTIAL_FILES_REMOVED='.$credentialsRemoved);
+        ($this->output)('STALE_RAW_SQL_TEMP_FILES_REMOVED='.$rawSqlRemoved);
         ($this->output)('STALE_LOCK_REMOVED='.($staleLock ? 'yes' : 'no'));
 
         return ExitCode::SUCCESS;
@@ -879,7 +1126,8 @@ final class DebtReleaseRunner
         return $identity;
     }
 
-    private function validatePreflightReport(array $report, string $reportPath, string $token, string $expectedSha): void
+    /** @return array{report_sha256:string,sidecar_path:string,sidecar:array<string,mixed>} */
+    private function validatePreflightReport(array $report, string $reportPath, string $expectedSha): array
     {
         if (($report['release_id'] ?? null) !== $this->manifest['release_id'] || ($report['status'] ?? null) !== 'PASS') {
             throw new ReleaseFailure('PREFLIGHT_REPORT_NOT_PASS', ExitCode::INVALID_ARGUMENTS);
@@ -887,18 +1135,11 @@ final class DebtReleaseRunner
         if (($report['expected_sha'] ?? null) !== $expectedSha) {
             throw new ReleaseFailure('PREFLIGHT_SHA_MISMATCH', ExitCode::GIT_BLOCKER);
         }
-        $expiresAt = DateTimeImmutable::createFromFormat(DATE_ATOM, (string) ($report['expires_at'] ?? ''));
-        if (! $expiresAt || ($this->clock)() > $expiresAt) {
-            throw new ReleaseFailure('PREFLIGHT_EXPIRED', ExitCode::INVALID_ARGUMENTS);
-        }
         $sidecarPath = dirname($reportPath).'/approval-token.sha256';
         $sidecar = ReleaseFiles::readJson($sidecarPath);
         $reportHash = hash_file('sha256', $reportPath);
         if ($reportHash === false || ! hash_equals((string) ($sidecar['report_sha256'] ?? ''), $reportHash)) {
             throw new ReleaseFailure('PREFLIGHT_REPORT_HASH_MISMATCH', ExitCode::INVALID_ARGUMENTS);
-        }
-        if (! hash_equals((string) ($sidecar['token_sha256'] ?? ''), hash('sha256', $token))) {
-            throw new ReleaseFailure('APPROVAL_TOKEN_INVALID', ExitCode::INVALID_ARGUMENTS);
         }
         if (! hash_equals((string) ($sidecar['binding_sha256'] ?? ''), hash('sha256', $this->approvalBinding($report, $reportHash)))) {
             throw new ReleaseFailure('APPROVAL_BINDING_INVALID', ExitCode::INVALID_ARGUMENTS);
@@ -910,6 +1151,33 @@ final class DebtReleaseRunner
         $backup = $report['backup'] ?? [];
         $backupVerification = $this->platform->verifyBackup((string) ($backup['path'] ?? ''), (string) ($backup['sha256'] ?? ''));
         $this->assertPassing($backupVerification, 'BACKUP_REVALIDATION_FAILED', ExitCode::DEPENDENCY_BLOCKER);
+
+        return ['report_sha256' => $reportHash, 'sidecar_path' => $sidecarPath, 'sidecar' => $sidecar];
+    }
+
+    private function assertFreshPreflightAuthorization(array $report, array $sidecar): void
+    {
+        $expiresAt = DateTimeImmutable::createFromFormat(DATE_ATOM, (string) ($report['expires_at'] ?? ''));
+        if (! $expiresAt || ($this->clock)() > $expiresAt) {
+            throw new ReleaseFailure('PREFLIGHT_EXPIRED', ExitCode::INVALID_ARGUMENTS);
+        }
+        if (isset($sidecar['consumed_at'])) {
+            throw new ReleaseFailure('APPROVAL_TOKEN_ALREADY_CONSUMED', ExitCode::INVALID_ARGUMENTS);
+        }
+    }
+
+    private function consumeApprovalToken(string $sidecarPath, array $sidecar, string $checkpointPath, array &$checkpoint): void
+    {
+        if (isset($sidecar['consumed_at'])) {
+            throw new ReleaseFailure('APPROVAL_TOKEN_ALREADY_CONSUMED', ExitCode::INVALID_ARGUMENTS);
+        }
+        $consumedAt = ($this->clock)()->format(DATE_ATOM);
+        $sidecar['consumed_at'] = $consumedAt;
+        $sidecar['consumption_stage'] = 'ddl_boundary_before_migration_1';
+        ReleaseFiles::atomicJson($sidecarPath, $sidecar, 0600);
+        $checkpoint['approval_consumed_at'] = $consumedAt;
+        $checkpoint['approval_consumption_stage'] = 'ddl_boundary_before_migration_1';
+        ReleaseFiles::atomicJson($checkpointPath, Redactor::redact($checkpoint));
     }
 
     private function approvalBinding(array $report, string $reportHash): string
@@ -931,6 +1199,7 @@ final class DebtReleaseRunner
             'expected_sha' => $expectedSha,
             'database_sha256' => $identity['database_sha256'],
             'preflight_report_path' => $reportPath,
+            'preflight_report_sha256' => hash_file('sha256', $reportPath),
             'deployment_directory' => $report['deployment_directory'] ?? null,
             'stage' => 'initialized',
             'completed_stages' => [],
@@ -1004,12 +1273,13 @@ final class DebtReleaseRunner
         ]).PHP_EOL;
     }
 
-    private function safeRerunCommand(string $reportPath, string $expectedSha): string
+    private function safeRerunCommand(string $reportPath, string $expectedSha, bool $resume = false): string
     {
         return sprintf(
-            'bash scripts/debt-release/pr-d-release.sh deploy --preflight-report %s --approval-token <REUSE_OPERATOR_TOKEN> --expected-sha %s --maintenance-window-ack',
+            'bash scripts/debt-release/pr-d-release.sh deploy --preflight-report %s --expected-sha %s --maintenance-window-ack%s',
             escapeshellarg($reportPath),
             escapeshellarg($expectedSha),
+            $resume ? ' --resume-partial-ack' : '',
         );
     }
 
@@ -1023,6 +1293,23 @@ final class DebtReleaseRunner
             }
             if (! unlink($path)) {
                 throw new ReleaseFailure('TEMP_CREDENTIAL_CLEANUP_FAILED', ExitCode::DEPENDENCY_BLOCKER);
+            }
+            $removed++;
+        }
+
+        return $removed;
+    }
+
+    private function cleanupRawSqlTemps(): int
+    {
+        $removed = 0;
+        $pattern = rtrim($this->backupRoot, '/\\').DIRECTORY_SEPARATOR.'kiot-pr-d-raw-*.sql.tmp';
+        foreach (glob($pattern) ?: [] as $path) {
+            if (! preg_match((string) $this->manifest['raw_sql_temp_pattern'], basename($path)) || ! is_file($path)) {
+                continue;
+            }
+            if (! unlink($path)) {
+                throw new ReleaseFailure('RAW_SQL_TEMP_CLEANUP_FAILED', ExitCode::DEPENDENCY_BLOCKER);
             }
             $removed++;
         }
@@ -1059,6 +1346,22 @@ final class DebtReleaseRunner
 
 class NativeReleasePlatform implements ReleasePlatform
 {
+    private const TIMEOUT_GIT_PHP = 30;
+
+    private const TIMEOUT_CURL = 30;
+
+    private const TIMEOUT_GZIP = 60;
+
+    private const TIMEOUT_BACKUP = 1800;
+
+    private const TIMEOUT_RESTORE = 1800;
+
+    private const TIMEOUT_MIGRATION = 180;
+
+    private const TIMEOUT_OPTIMIZE = 120;
+
+    private const TIMEOUT_MAINTENANCE = 60;
+
     private readonly ConnectionInterface $connection;
 
     private readonly PDO $pdo;
@@ -1088,9 +1391,11 @@ class NativeReleasePlatform implements ReleasePlatform
         $minimumBytes = max(2 * 1024 * 1024 * 1024, (int) ceil($databaseSize * 2.5));
         $freeBytes = @disk_free_space($this->backupRoot);
         $diskPass = $freeBytes !== false && $freeBytes >= $minimumBytes;
+        $signalRecoveryAvailable = function_exists('pcntl_signal') && function_exists('pcntl_async_signals');
+        $signalPass = ! ($manifest['signal_recovery_required'] ?? false) || $signalRecoveryAvailable;
 
         return [
-            'pass' => $missing === [] && $diskPass,
+            'pass' => $missing === [] && $diskPass && $signalPass,
             'missing_dependencies' => $missing,
             'sha256_provider' => self::findExecutable('sha256sum') !== null ? 'sha256sum' : 'php',
             'database_connectivity' => true,
@@ -1098,7 +1403,11 @@ class NativeReleasePlatform implements ReleasePlatform
             'backup_free_bytes' => $freeBytes,
             'minimum_free_bytes' => $minimumBytes,
             'migration_files_present' => count($manifest['migrations']) === 3,
-            'blocker' => $missing !== [] ? 'MISSING_DEPENDENCY' : ($diskPass ? null : 'INSUFFICIENT_BACKUP_DISK'),
+            'pcntl_available' => $signalRecoveryAvailable,
+            'signal_recovery_available' => $signalRecoveryAvailable,
+            'blocker' => $missing !== []
+                ? 'MISSING_DEPENDENCY'
+                : (! $diskPass ? 'INSUFFICIENT_BACKUP_DISK' : ($signalPass ? null : 'SIGNAL_RECOVERY_UNAVAILABLE')),
         ];
     }
 
@@ -1110,6 +1419,9 @@ class NativeReleasePlatform implements ReleasePlatform
         $ancestor = $this->process->run(
             ['git', 'merge-base', '--is-ancestor', (string) $manifest['expected_previous_production_sha'], trim($head)],
             $this->repositoryRoot,
+            null,
+            null,
+            self::TIMEOUT_GIT_PHP,
         );
 
         return [
@@ -1146,26 +1458,33 @@ class NativeReleasePlatform implements ReleasePlatform
             "SELECT ENGINE AS engine, TABLE_COLLATION AS collation, TABLE_ROWS AS estimated_rows, DATA_LENGTH AS data_length, INDEX_LENGTH AS index_length
              FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'debt_offsets'"
         );
-        $rowCount = (int) $this->scalar('SELECT COUNT(*) FROM debt_offsets');
         $openTableCount = 0;
         $openInUse = 0;
-        foreach ($this->pdo->query('SHOW OPEN TABLES')->fetchAll(PDO::FETCH_ASSOC) as $open) {
-            if (($open['Table'] ?? '') === 'debt_offsets') {
-                $openTableCount++;
-                $openInUse += (int) ($open['In_use'] ?? 0);
+        try {
+            foreach ($this->pdo->query('SHOW OPEN TABLES')->fetchAll(PDO::FETCH_ASSOC) as $open) {
+                if (($open['Table'] ?? '') === 'debt_offsets') {
+                    $openTableCount++;
+                    $openInUse += (int) ($open['In_use'] ?? 0);
+                }
             }
+        } catch (Throwable) {
+            $openInUse = 1;
         }
+        $hasProcessPrivilege = $this->hasProcessPrivilege();
+        $innodbTrxVisible = false;
         $activeTransactionCount = 0;
         $maxTransactionAge = 0;
         try {
             $transactionState = $this->row(
                 'SELECT COUNT(*) AS active_count, COALESCE(MAX(TIMESTAMPDIFF(SECOND, trx_started, NOW())), 0) AS max_age FROM information_schema.innodb_trx'
             );
+            $innodbTrxVisible = $hasProcessPrivilege;
             $activeTransactionCount = (int) ($transactionState['active_count'] ?? 0);
             $maxTransactionAge = (int) ($transactionState['max_age'] ?? 0);
         } catch (Throwable) {
-            // Lack of PROCESS privilege is recorded through metadata visibility below.
+            $innodbTrxVisible = false;
         }
+        $processlistVisible = false;
         $targetQueryCount = 0;
         $maxTargetQueryAge = 0;
         try {
@@ -1173,27 +1492,59 @@ class NativeReleasePlatform implements ReleasePlatform
                 "SELECT COUNT(*) AS target_count, COALESCE(MAX(TIME), 0) AS max_age
                  FROM information_schema.processlist WHERE ID <> CONNECTION_ID() AND INFO LIKE '%debt_offsets%'"
             );
+            $processlistVisible = $hasProcessPrivilege;
             $targetQueryCount = (int) ($queryState['target_count'] ?? 0);
             $maxTargetQueryAge = (int) ($queryState['max_age'] ?? 0);
         } catch (Throwable) {
-            // Conservative blocking still happens when another risk signal is present.
+            $processlistVisible = false;
         }
-        $metadataVisibility = true;
+        $metadataLocksVisible = false;
+        $metadataLocksTargetCount = 0;
+        $metadataLockWaiters = 0;
+        $metadataLockBlockers = 0;
         try {
-            $metadataVisibility = (int) $this->scalar(
-                "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'performance_schema' AND table_name = 'metadata_locks'"
+            $performanceSchemaEnabled = (int) $this->scalar('SELECT @@performance_schema') === 1;
+            $metadataInstrumentEnabled = (int) $this->scalar(
+                "SELECT COUNT(*) FROM performance_schema.setup_instruments
+                 WHERE NAME = 'wait/lock/metadata/sql/mdl' AND ENABLED = 'YES'"
             ) === 1;
+            $currentThread = $this->scalar(
+                'SELECT THREAD_ID FROM performance_schema.threads WHERE PROCESSLIST_ID = CONNECTION_ID()'
+            );
+            if (! $performanceSchemaEnabled || ! $metadataInstrumentEnabled || $currentThread === false) {
+                throw new RuntimeException('Performance Schema metadata lock visibility is unavailable.');
+            }
+            $lockState = $this->row(
+                "SELECT COUNT(*) AS target_count,
+                        COALESCE(SUM(CASE WHEN LOCK_STATUS = 'PENDING' THEN 1 ELSE 0 END), 0) AS waiter_count,
+                        COALESCE(SUM(CASE WHEN LOCK_STATUS = 'GRANTED' THEN 1 ELSE 0 END), 0) AS blocker_count
+                 FROM performance_schema.metadata_locks
+                 WHERE OBJECT_SCHEMA = DATABASE()
+                   AND OBJECT_NAME = 'debt_offsets'
+                   AND (OWNER_THREAD_ID IS NULL OR OWNER_THREAD_ID <> ".(int) $currentThread.')'
+            );
+            $metadataLocksTargetCount = (int) ($lockState['target_count'] ?? 0);
+            $metadataLockWaiters = (int) ($lockState['waiter_count'] ?? 0);
+            $metadataLockBlockers = (int) ($lockState['blocker_count'] ?? 0);
+            $metadataLocksVisible = $hasProcessPrivilege;
         } catch (Throwable) {
-            $metadataVisibility = false;
+            $metadataLocksVisible = false;
         }
-        $blocked = $openInUse > 0
+        $visibilityComplete = $innodbTrxVisible && $processlistVisible && $metadataLocksVisible;
+        $blocked = ! $visibilityComplete
+            || $metadataLockWaiters > 0
+            || $metadataLockBlockers > 0
+            || $openInUse > 0
             || $maxTransactionAge > (int) $manifest['ddl_thresholds']['active_transaction_seconds']
             || $maxTargetQueryAge > (int) $manifest['ddl_thresholds']['target_query_seconds'];
+        $blocker = ! $visibilityComplete
+            ? 'DDL_RISK_VISIBILITY_INSUFFICIENT'
+            : ($blocked ? 'DDL_ACTIVITY_DETECTED' : null);
 
         return [
             'pass' => ! $blocked,
             'maintenance_required' => true,
-            'row_count' => $rowCount,
+            'estimated_row_count' => (int) ($table['estimated_rows'] ?? 0),
             'engine' => $table['engine'] ?? null,
             'collation' => $table['collation'] ?? null,
             'data_length' => (int) ($table['data_length'] ?? 0),
@@ -1204,8 +1555,14 @@ class NativeReleasePlatform implements ReleasePlatform
             'max_active_transaction_seconds' => $maxTransactionAge,
             'target_query_count' => $targetQueryCount,
             'max_target_query_seconds' => $maxTargetQueryAge,
-            'metadata_lock_visibility' => $metadataVisibility,
-            'blocker' => $blocked ? 'DDL_ACTIVITY_DETECTED' : null,
+            'innodb_trx_visible' => $innodbTrxVisible,
+            'processlist_visible' => $processlistVisible,
+            'metadata_locks_visible' => $metadataLocksVisible,
+            'metadata_locks_target_count' => $metadataLocksTargetCount,
+            'metadata_lock_waiters' => $metadataLockWaiters,
+            'metadata_lock_blockers' => $metadataLockBlockers,
+            'DDL_VISIBILITY_COMPLETE' => $visibilityComplete,
+            'blocker' => $blocker,
         ];
     }
 
@@ -1217,7 +1574,7 @@ class NativeReleasePlatform implements ReleasePlatform
         )->fetchAll(PDO::FETCH_COLUMN);
         $allTransactional = count(array_diff(array_map('strtoupper', $engines), ['INNODB'])) === 0;
         $credentials = $this->writeClientDefaultsFile();
-        $sqlPath = $path.'.sql.tmp';
+        $sqlPath = $this->createSecureRawSqlTemp();
         $gzipPath = $path.'.tmp';
         try {
             $database = (string) $this->scalar('SELECT DATABASE()');
@@ -1238,11 +1595,19 @@ class NativeReleasePlatform implements ReleasePlatform
                 $command[] = '--lock-all-tables';
             }
             $command[] = $database;
-            $dump = $this->process->run($command, $this->repositoryRoot, null, $sqlPath);
+            $dump = $this->process->run($command, $this->repositoryRoot, null, $sqlPath, self::TIMEOUT_BACKUP);
+            clearstatcache(true, $sqlPath);
             if (! $dump->successful() || ! is_file($sqlPath) || filesize($sqlPath) === 0) {
-                throw new ReleaseFailure('MYSQLDUMP_FAILED', ExitCode::DEPENDENCY_BLOCKER);
+                throw new ReleaseFailure(
+                    'MYSQLDUMP_FAILED',
+                    ExitCode::DEPENDENCY_BLOCKER,
+                    'MYSQLDUMP_FAILED exit='.$dump->exitCode
+                        .' timed_out='.($dump->timedOut ? 'yes' : 'no')
+                        .' size='.(is_file($sqlPath) ? (string) filesize($sqlPath) : 'missing')
+                        .': '.substr(trim($dump->stderr), 0, 500),
+                );
             }
-            $gzip = $this->process->run(['gzip', '-c', $sqlPath], $this->repositoryRoot, null, $gzipPath);
+            $gzip = $this->process->run(['gzip', '-c', $sqlPath], $this->repositoryRoot, null, $gzipPath, self::TIMEOUT_GZIP);
             if (! $gzip->successful() || ! rename($gzipPath, $path)) {
                 throw new ReleaseFailure('BACKUP_GZIP_FAILED', ExitCode::DEPENDENCY_BLOCKER);
             }
@@ -1265,7 +1630,7 @@ class NativeReleasePlatform implements ReleasePlatform
     {
         $allowed = ReleaseFiles::assertWithin($path, $this->backupRoot);
         $sha = is_file($allowed) ? hash_file('sha256', $allowed) : false;
-        $gzip = is_file($allowed) ? $this->process->run(['gzip', '-t', $allowed], $this->repositoryRoot) : new ProcessResult(1);
+        $gzip = is_file($allowed) ? $this->process->run(['gzip', '-t', $allowed], $this->repositoryRoot, null, null, self::TIMEOUT_GZIP) : new ProcessResult(1);
         $permissions = fileperms($allowed);
         $mode = $permissions === false ? null : $permissions & 0777;
         $modePass = DIRECTORY_SEPARATOR === '\\' || $mode === 0600;
@@ -1288,12 +1653,12 @@ class NativeReleasePlatform implements ReleasePlatform
         $database = 'test_kiot_pr_d_restore_'.date('Ymd_His').'_'.substr(bin2hex(random_bytes(5)), 0, 10);
         self::assertTemporaryDatabaseName($database, $manifest);
         $credentials = $this->writeClientDefaultsFile();
-        $sqlPath = $backupPath.'.restore.sql.tmp';
+        $sqlPath = $this->createSecureRawSqlTemp();
         $created = false;
         try {
             $this->pdo->exec('CREATE DATABASE '.$this->quoteIdentifier($database).' CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
             $created = true;
-            $gunzip = $this->process->run(['gzip', '-dc', $backupPath], $this->repositoryRoot, null, $sqlPath);
+            $gunzip = $this->process->run(['gzip', '-dc', $backupPath], $this->repositoryRoot, null, $sqlPath, self::TIMEOUT_GZIP);
             if (! $gunzip->successful()) {
                 throw new ReleaseFailure('RESTORE_DECOMPRESSION_FAILED', ExitCode::DATABASE_BLOCKER);
             }
@@ -1301,6 +1666,8 @@ class NativeReleasePlatform implements ReleasePlatform
                 ['mysql', '--defaults-extra-file='.$credentials, ...$this->localDatabaseClientArguments(), '--default-character-set=utf8mb4', $database],
                 $this->repositoryRoot,
                 $sqlPath,
+                null,
+                self::TIMEOUT_RESTORE,
             );
             if (! $restore->successful()) {
                 throw new ReleaseFailure('RESTORE_IMPORT_FAILED', ExitCode::DATABASE_BLOCKER);
@@ -1355,6 +1722,13 @@ class NativeReleasePlatform implements ReleasePlatform
 
     public function captureBaseline(array $manifest): array
     {
+        $this->assertInvariantTablesTransactional($manifest);
+
+        return $this->withConsistentReadOnlySnapshot(fn (): array => $this->captureBaselineState($manifest));
+    }
+
+    private function captureBaselineState(array $manifest): array
+    {
         $tables = array_values(array_unique(array_merge(...array_values($manifest['invariant_table_groups']))));
         $tableState = [];
         foreach ($tables as $table) {
@@ -1399,7 +1773,7 @@ class NativeReleasePlatform implements ReleasePlatform
 
     public function maintenanceDown(): void
     {
-        $result = $this->process->run([PHP_BINARY, 'artisan', 'down', '--retry=60'], $this->repositoryRoot);
+        $result = $this->process->run([PHP_BINARY, 'artisan', 'down', '--retry=60'], $this->repositoryRoot, null, null, self::TIMEOUT_MAINTENANCE);
         if (! $result->successful()) {
             throw new ReleaseFailure('MAINTENANCE_DOWN_FAILED', ExitCode::PARTIAL_RELEASE);
         }
@@ -1407,7 +1781,7 @@ class NativeReleasePlatform implements ReleasePlatform
 
     public function maintenanceUp(): void
     {
-        $result = $this->process->run([PHP_BINARY, 'artisan', 'up'], $this->repositoryRoot);
+        $result = $this->process->run([PHP_BINARY, 'artisan', 'up'], $this->repositoryRoot, null, null, self::TIMEOUT_MAINTENANCE);
         if (! $result->successful()) {
             throw new ReleaseFailure('MAINTENANCE_UP_FAILED', ExitCode::PARTIAL_RELEASE);
         }
@@ -1415,7 +1789,7 @@ class NativeReleasePlatform implements ReleasePlatform
 
     public function optimizeClear(): void
     {
-        $result = $this->process->run([PHP_BINARY, 'artisan', 'optimize:clear'], $this->repositoryRoot);
+        $result = $this->process->run([PHP_BINARY, 'artisan', 'optimize:clear'], $this->repositoryRoot, null, null, self::TIMEOUT_OPTIMIZE);
         if (! $result->successful()) {
             throw new ReleaseFailure('OPTIMIZE_CLEAR_FAILED', ExitCode::PARTIAL_RELEASE);
         }
@@ -1428,7 +1802,7 @@ class NativeReleasePlatform implements ReleasePlatform
 
     public function runMigration(string $path): ProcessResult
     {
-        return $this->process->run([PHP_BINARY, 'artisan', 'migrate', '--path='.$path, '--force'], $this->repositoryRoot);
+        return $this->process->run([PHP_BINARY, 'artisan', 'migrate', '--path='.$path, '--force'], $this->repositoryRoot, null, null, self::TIMEOUT_MIGRATION);
     }
 
     public function verifyMigrationStage(int $stage, array $manifest, array $baseline): array
@@ -1487,37 +1861,41 @@ class NativeReleasePlatform implements ReleasePlatform
 
     public function comparePostflight(array $manifest, array $baseline): array
     {
-        $current = $this->captureBaseline($manifest);
-        foreach ($baseline['tables'] as $table => $before) {
-            $after = $current['tables'][$table] ?? null;
-            if ($after === null || $before['row_count'] !== $after['row_count']) {
-                return ['pass' => false, 'blocker' => 'TABLE_ROW_COUNT_CHANGED', 'table' => $table];
-            }
-            if ($table !== $manifest['target_table']
-                && ($before['data_sha256'] !== $after['data_sha256'] || $before['schema_sha256'] !== $after['schema_sha256'])) {
-                return ['pass' => false, 'blocker' => 'NON_TARGET_TABLE_CHANGED', 'table' => $table];
-            }
-        }
-        $invariance = $this->verifyBusinessInvariance($manifest, $baseline);
-        if (! $invariance['pass']) {
-            return $invariance;
-        }
-        if (($current['migrations']['ran_count'] ?? 0) !== 3) {
-            return ['pass' => false, 'blocker' => 'PR_D_MIGRATION_SET_INCOMPLETE'];
-        }
-        if (($current['migration_table']['row_count'] ?? 0) !== ($baseline['migration_table']['row_count'] ?? -3) + 3) {
-            return ['pass' => false, 'blocker' => 'UNEXPECTED_MIGRATION_ROWS_ADDED'];
-        }
+        $this->assertInvariantTablesTransactional($manifest);
 
-        return [
-            'pass' => true,
-            'non_target_data_unchanged' => true,
-            'non_target_schema_unchanged' => true,
-            'legacy_row_count_unchanged' => true,
-            'legacy_offset_hash_unchanged' => true,
-            'financial_aggregates_unchanged' => true,
-            'migration_rows_exact' => true,
-        ];
+        return $this->withConsistentReadOnlySnapshot(function () use ($manifest, $baseline): array {
+            $current = $this->captureBaselineState($manifest);
+            foreach ($baseline['tables'] as $table => $before) {
+                $after = $current['tables'][$table] ?? null;
+                if ($after === null || $before['row_count'] !== $after['row_count']) {
+                    return ['pass' => false, 'blocker' => 'TABLE_ROW_COUNT_CHANGED', 'table' => $table];
+                }
+                if ($table !== $manifest['target_table']
+                    && ($before['data_sha256'] !== $after['data_sha256'] || $before['schema_sha256'] !== $after['schema_sha256'])) {
+                    return ['pass' => false, 'blocker' => 'NON_TARGET_TABLE_CHANGED', 'table' => $table];
+                }
+            }
+            $invariance = $this->verifyBusinessInvarianceState($manifest, $baseline);
+            if (! $invariance['pass']) {
+                return $invariance;
+            }
+            if (($current['migrations']['ran_count'] ?? 0) !== 3) {
+                return ['pass' => false, 'blocker' => 'PR_D_MIGRATION_SET_INCOMPLETE'];
+            }
+            if (($current['migration_table']['row_count'] ?? 0) !== ($baseline['migration_table']['row_count'] ?? -3) + 3) {
+                return ['pass' => false, 'blocker' => 'UNEXPECTED_MIGRATION_ROWS_ADDED'];
+            }
+
+            return [
+                'pass' => true,
+                'non_target_data_unchanged' => true,
+                'non_target_schema_unchanged' => true,
+                'legacy_row_count_unchanged' => true,
+                'legacy_offset_hash_unchanged' => true,
+                'financial_aggregates_unchanged' => true,
+                'migration_rows_exact' => true,
+            ];
+        });
     }
 
     public function smoke(array $manifest, int $logOffset): array
@@ -1534,7 +1912,7 @@ class NativeReleasePlatform implements ReleasePlatform
             $result = $this->process->run([
                 'curl', '--silent', '--show-error', '--output', self::nullDevice(), '--write-out', '%{http_code}',
                 '--connect-timeout', '5', '--max-time', '15', '--resolve', $resolve, $baseUrl.$smoke['path'],
-            ], $this->repositoryRoot);
+            ], $this->repositoryRoot, null, null, self::TIMEOUT_CURL);
             $status = (int) trim($result->stdout);
             $results[] = ['path' => $smoke['path'], 'status' => $status];
             if (! $result->successful() || ! in_array($status, $smoke['statuses'], true)) {
@@ -1631,6 +2009,13 @@ class NativeReleasePlatform implements ReleasePlatform
 
     private function verifyBusinessInvariance(array $manifest, array $baseline): array
     {
+        $this->assertInvariantTablesTransactional($manifest);
+
+        return $this->withConsistentReadOnlySnapshot(fn (): array => $this->verifyBusinessInvarianceState($manifest, $baseline));
+    }
+
+    private function verifyBusinessInvarianceState(array $manifest, array $baseline): array
+    {
         $rowCount = (int) $this->scalar('SELECT COUNT(*) FROM debt_offsets');
         $legacyHash = $this->tableHash('debt_offsets', $manifest['legacy_offset_columns']);
         $aggregates = $this->financialAggregates($manifest);
@@ -1647,6 +2032,54 @@ class NativeReleasePlatform implements ReleasePlatform
         ];
     }
 
+    private function withConsistentReadOnlySnapshot(callable $callback): mixed
+    {
+        if ($this->pdo->inTransaction()) {
+            throw new ReleaseFailure('SNAPSHOT_TRANSACTION_ALREADY_OPEN', ExitCode::DATA_BLOCKER);
+        }
+        $started = false;
+        try {
+            $this->pdo->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+            $this->pdo->exec('START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY');
+            $started = true;
+            $result = $callback();
+        } finally {
+            if ($started) {
+                $this->pdo->exec('ROLLBACK');
+            }
+        }
+        if (is_array($result)) {
+            $result['data_snapshot_consistent'] = true;
+            $result['snapshot_read_only'] = true;
+            $result['snapshot_rolled_back'] = true;
+        }
+
+        return $result;
+    }
+
+    private function assertInvariantTablesTransactional(array $manifest): void
+    {
+        $tables = array_values(array_unique([
+            ...array_merge(...array_values($manifest['invariant_table_groups'])),
+            (string) $manifest['target_table'],
+            'migrations',
+        ]));
+        $placeholders = implode(',', array_fill(0, count($tables), '?'));
+        $statement = $this->pdo->prepare(
+            'SELECT TABLE_NAME, ENGINE FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN ('.$placeholders.')'
+        );
+        $statement->execute($tables);
+        $engines = [];
+        foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $engines[(string) $row['TABLE_NAME']] = strtoupper((string) $row['ENGINE']);
+        }
+        foreach ($tables as $table) {
+            if (($engines[$table] ?? null) !== 'INNODB') {
+                throw new ReleaseFailure('NON_TRANSACTIONAL_INVARIANT_TABLE', ExitCode::DATA_BLOCKER, $table);
+            }
+        }
+    }
+
     private function financialAggregates(array $manifest): array
     {
         $aggregates = [];
@@ -1657,6 +2090,23 @@ class NativeReleasePlatform implements ReleasePlatform
         }
 
         return $aggregates;
+    }
+
+    private function hasProcessPrivilege(): bool
+    {
+        try {
+            $grants = $this->pdo->query('SHOW GRANTS FOR CURRENT_USER()')->fetchAll(PDO::FETCH_COLUMN);
+            foreach ($grants as $grant) {
+                $normalized = strtoupper((string) $grant);
+                if (str_contains($normalized, 'ALL PRIVILEGES') || preg_match('/\bPROCESS\b/', $normalized) === 1) {
+                    return true;
+                }
+            }
+        } catch (Throwable) {
+            return false;
+        }
+
+        return false;
     }
 
     private function tableHash(string $table, ?array $columns = null): string
@@ -1804,6 +2254,29 @@ class NativeReleasePlatform implements ReleasePlatform
         return $path;
     }
 
+    private function createSecureRawSqlTemp(): string
+    {
+        ReleaseFiles::ensureDirectory($this->backupRoot, 0700);
+        $path = rtrim($this->backupRoot, '/\\').DIRECTORY_SEPARATOR
+            .'kiot-pr-d-raw-'.date('Ymd-His').'-'.bin2hex(random_bytes(8)).'.sql.tmp';
+        if (! preg_match('/^kiot-pr-d-raw-[0-9]{8}-[0-9]{6}-[a-f0-9]{16}\.sql\.tmp$/', basename($path))) {
+            throw new ReleaseFailure('RAW_SQL_TEMP_NAME_INVALID', ExitCode::DEPENDENCY_BLOCKER);
+        }
+        $handle = fopen($path, 'x+b');
+        if ($handle === false) {
+            throw new ReleaseFailure('RAW_SQL_TEMP_CREATE_FAILED', ExitCode::DEPENDENCY_BLOCKER);
+        }
+        fclose($handle);
+        @chmod($path, 0600);
+        $mode = fileperms($path);
+        if (DIRECTORY_SEPARATOR !== '\\' && ($mode === false || ($mode & 0777) !== 0600)) {
+            @unlink($path);
+            throw new ReleaseFailure('RAW_SQL_TEMP_MODE_INVALID', ExitCode::DEPENDENCY_BLOCKER);
+        }
+
+        return $path;
+    }
+
     /** @return list<string> */
     private function localDatabaseClientArguments(): array
     {
@@ -1863,7 +2336,7 @@ class NativeReleasePlatform implements ReleasePlatform
 
     private function mustProcess(array $command): ProcessResult
     {
-        $result = $this->process->run($command, $this->repositoryRoot);
+        $result = $this->process->run($command, $this->repositoryRoot, null, null, self::TIMEOUT_GIT_PHP);
         if (! $result->successful()) {
             throw new ReleaseFailure('PROCESS_FAILED', ExitCode::DEPENDENCY_BLOCKER, $command[0]);
         }
@@ -1873,7 +2346,7 @@ class NativeReleasePlatform implements ReleasePlatform
 
     private function processSupports(string $binary, string $option): bool
     {
-        $result = $this->process->run([$binary, '--help'], $this->repositoryRoot);
+        $result = $this->process->run([$binary, '--help'], $this->repositoryRoot, null, null, self::TIMEOUT_GIT_PHP);
 
         return $result->successful() && str_contains(strtolower($result->stdout), strtolower($option));
     }
@@ -1896,6 +2369,10 @@ final class DebtReleaseCli
     public static function run(array $argv): int
     {
         try {
+            if (DIRECTORY_SEPARATOR !== '\\') {
+                umask(0077);
+            }
+            SignalRecovery::install();
             $parsed = CliArguments::parse($argv);
             if ($parsed['command'] === 'help') {
                 self::help();
@@ -1948,7 +2425,7 @@ Debt Release Runner (debt-pr-d)
 Usage:
   bash scripts/debt-release/pr-d-release.sh doctor
   bash scripts/debt-release/pr-d-release.sh preflight --expected-sha <40-char-sha>
-  bash scripts/debt-release/pr-d-release.sh deploy --preflight-report <path> --approval-token <token> --expected-sha <40-char-sha> --maintenance-window-ack
+  bash scripts/debt-release/pr-d-release.sh deploy --preflight-report <path> --expected-sha <40-char-sha> --maintenance-window-ack [--resume-partial-ack]
   bash scripts/debt-release/pr-d-release.sh status
   bash scripts/debt-release/pr-d-release.sh cleanup
 

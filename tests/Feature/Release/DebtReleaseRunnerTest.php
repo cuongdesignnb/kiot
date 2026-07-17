@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Release;
 
 use DateTimeImmutable;
+use DebtRelease\ApprovalTokenInput;
 use DebtRelease\CliArguments;
 use DebtRelease\DebtReleaseRunner;
 use DebtRelease\ExitCode;
@@ -12,6 +13,7 @@ use DebtRelease\FileReleaseLock;
 use DebtRelease\ManifestValidator;
 use DebtRelease\NativeProcessExecutor;
 use DebtRelease\NativeReleasePlatform;
+use DebtRelease\ProcessExecutor;
 use DebtRelease\ProcessResult;
 use DebtRelease\Redactor;
 use DebtRelease\ReleaseFailure;
@@ -37,6 +39,8 @@ final class DebtReleaseRunnerTest extends TestCase
 
     private DateTimeImmutable $now;
 
+    private ?string $approvalToken = null;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -50,6 +54,7 @@ final class DebtReleaseRunnerTest extends TestCase
         $this->platform = new FakeReleasePlatform($this->manifest);
         $this->output = [];
         $this->now = new DateTimeImmutable('2026-07-17T08:00:00+07:00');
+        $this->approvalToken = null;
     }
 
     protected function tearDown(): void
@@ -89,6 +94,11 @@ final class DebtReleaseRunnerTest extends TestCase
         $parsed = CliArguments::parse(['runner', 'deploy', '--expected-sha', str_repeat('a', 40), '--maintenance-window-ack']);
         $this->assertSame('deploy', $parsed['command']);
         $this->assertTrue($parsed['options']['maintenance-window-ack']);
+        $this->assertTrue(CliArguments::parse(['runner', 'deploy', '--resume-partial-ack'])['options']['resume-partial-ack']);
+        $this->assertSame(
+            'INVALID_OR_DUPLICATE_OPTION',
+            $this->captureFailure(fn () => CliArguments::parse(['runner', 'deploy', '--approval-token', 'secret']))->blocker,
+        );
         foreach (['doctor', 'preflight', 'deploy'] as $command) {
             $this->assertSame('help', CliArguments::parse(['runner', $command, '--help'])['command']);
         }
@@ -219,8 +229,8 @@ final class DebtReleaseRunnerTest extends TestCase
         $this->output = [];
         $this->runner()->execute('status', []);
         $status = implode("\n", $this->output);
-        $this->assertStringContainsString('SAFE_RERUN_COMMAND=', $status);
-        $this->assertStringContainsString('<REUSE_OPERATOR_TOKEN>', $status);
+        $this->assertStringNotContainsString('SAFE_RERUN_COMMAND=', $status);
+        $this->assertStringNotContainsString('--approval-token', $status);
         $this->assertStringNotContainsString($token, $status);
     }
 
@@ -256,6 +266,7 @@ final class DebtReleaseRunnerTest extends TestCase
         $this->assertTrue($failureReport['maintenance_recovered']);
 
         $this->platform->failMigrationAt = null;
+        $this->now = $this->now->modify('+361 minutes');
         $this->deploy($report, $token);
         $this->assertSame(1, $this->platform->runCounts[1]);
         $this->assertSame(2, $this->platform->runCounts[2]);
@@ -295,7 +306,7 @@ final class DebtReleaseRunnerTest extends TestCase
         $this->assertSame(1, $this->platform->maintenanceUpCalls);
         $reportData = ReleaseFiles::readJson(glob($this->auditRoot.'/debt-pr-d-production-deploy-*/deployment-report.json')[0]);
         $this->assertTrue($reportData['maintenance_recovered']);
-        $this->assertStringContainsString('<REUSE_OPERATOR_TOKEN>', $reportData['safe_rerun_command']);
+        $this->assertStringNotContainsString('--approval-token', $reportData['safe_rerun_command']);
     }
 
     public function test_preflight_ddl_risk_uses_lock_blocker_exit_code(): void
@@ -328,12 +339,21 @@ final class DebtReleaseRunnerTest extends TestCase
     public function test_cleanup_drops_only_allowlisted_temporary_databases(): void
     {
         $credential = sys_get_temp_dir().'/debt-release-client-'.bin2hex(random_bytes(8)).'.cnf';
+        $rawSql = $this->backupRoot.'/kiot-pr-d-raw-20260717-080000-0123456789abcdef.sql.tmp';
+        $finalBackup = $this->backupRoot.'/kiot-pr-d-db-backup-final.sql.gz';
+        $auditReport = $this->auditRoot.'/retained-report.json';
         file_put_contents($credential, '[client]');
+        file_put_contents($rawSql, 'sensitive raw SQL');
+        file_put_contents($finalBackup, 'final backup');
+        file_put_contents($auditReport, '{}');
         $this->platform->tempDatabases = ['test_kiot_pr_d_restore_20260717_080000_abcdef'];
         try {
             $this->assertSame(0, $this->runner()->execute('cleanup', []));
             $this->assertSame($this->platform->tempDatabases, $this->platform->droppedDatabases);
             $this->assertFileDoesNotExist($credential);
+            $this->assertFileDoesNotExist($rawSql);
+            $this->assertFileExists($finalBackup);
+            $this->assertFileExists($auditReport);
         } finally {
             if (is_file($credential)) {
                 unlink($credential);
@@ -361,6 +381,170 @@ final class DebtReleaseRunnerTest extends TestCase
         );
     }
 
+    public function test_native_process_timeout_terminates_child_and_reports_duration(): void
+    {
+        if (DIRECTORY_SEPARATOR === '\\') {
+            $this->markTestSkipped('Native signal timeout is validated in Linux/Docker.');
+        }
+        $result = (new NativeProcessExecutor)->run([PHP_BINARY, '-r', 'sleep(30);'], $this->root, null, null, 1);
+
+        $this->assertTrue($result->timedOut);
+        $this->assertSame(124, $result->exitCode);
+        $this->assertContains($result->terminationSignal, [9, 15]);
+        $this->assertGreaterThanOrEqual(900, $result->durationMs);
+        $this->assertLessThan(5000, $result->durationMs);
+    }
+
+    public function test_native_process_writes_to_precreated_output_file_and_reaps_child(): void
+    {
+        $path = $this->backupRoot.'/process-output.tmp';
+        touch($path);
+        $result = (new NativeProcessExecutor)->run([PHP_BINARY, '-r', 'echo "fixture";'], $this->root, null, $path, 5);
+
+        $this->assertTrue($result->successful(), $result->stderr.' exit='.$result->exitCode);
+        $this->assertStringEndsWith('fixture', (string) file_get_contents($path));
+    }
+
+    public function test_non_interactive_token_environment_is_unset_after_read(): void
+    {
+        putenv('DEBT_RELEASE_APPROVAL_TOKEN=test-only-token');
+        $_ENV['DEBT_RELEASE_APPROVAL_TOKEN'] = 'test-only-token';
+        $_SERVER['DEBT_RELEASE_APPROVAL_TOKEN'] = 'test-only-token';
+
+        $this->assertSame('test-only-token', ApprovalTokenInput::read());
+        $this->assertFalse(getenv('DEBT_RELEASE_APPROVAL_TOKEN'));
+        $this->assertArrayNotHasKey('DEBT_RELEASE_APPROVAL_TOKEN', $_ENV);
+        $this->assertArrayNotHasKey('DEBT_RELEASE_APPROVAL_TOKEN', $_SERVER);
+    }
+
+    /** @dataProvider controlledSignalProvider */
+    public function test_controlled_signal_handler_maps_linux_signals_to_partial_release(int $signal, string $name): void
+    {
+        if (DIRECTORY_SEPARATOR === '\\' || ! function_exists('pcntl_signal') || ! function_exists('posix_kill')) {
+            $this->markTestSkipped('Controlled signal behavior requires Linux pcntl/posix.');
+        }
+        $runner = $this->root.'/scripts/debt-release/debt-release.php';
+        $code = <<<'PHP'
+require $argv[1];
+\DebtRelease\SignalRecovery::install();
+try {
+    posix_kill(getmypid(), (int) $argv[2]);
+    usleep(100000);
+} catch (\DebtRelease\ReleaseFailure $failure) {
+    echo $failure->blocker;
+    exit($failure->releaseExitCode);
+}
+exit(1);
+PHP;
+        $result = (new NativeProcessExecutor)->run([PHP_BINARY, '-r', $code, $runner, (string) $signal], $this->root, null, null, 5);
+
+        $this->assertSame(ExitCode::PARTIAL_RELEASE, $result->exitCode);
+        $this->assertStringContainsString('SIGNAL_'.$name.'_INTERRUPTED', $result->stdout);
+    }
+
+    public static function controlledSignalProvider(): array
+    {
+        return [
+            'SIGINT' => [2, 'SIGINT'],
+            'SIGTERM' => [15, 'SIGTERM'],
+            'SIGHUP' => [1, 'SIGHUP'],
+        ];
+    }
+
+    /** @dataProvider controlledSignalProvider */
+    public function test_controlled_signal_failure_recovers_maintenance_locks_and_checkpoint(int $signal, string $name): void
+    {
+        [$report, $token] = $this->successfulPreflightEvidence();
+        $this->platform->throwSignalAtMigration = 2;
+        $this->platform->throwSignalName = $name;
+
+        $failure = $this->captureFailure(fn () => $this->deploy($report, $token));
+
+        $this->assertSame('SIGNAL_'.$name.'_INTERRUPTED', $failure->blocker);
+        $this->assertSame(ExitCode::PARTIAL_RELEASE, $failure->releaseExitCode);
+        $this->assertSame(1, $this->platform->maintenanceUpCalls);
+        $this->assertContains('db_unlock', $this->platform->events);
+        $this->assertContains('migration_1_verified', $this->latestCheckpoint()['completed_stages']);
+        $reportData = ReleaseFiles::readJson(glob($this->auditRoot.'/debt-pr-d-production-deploy-*/deployment-report.json')[0]);
+        $this->assertTrue($reportData['maintenance_recovered']);
+        $this->assertTrue($reportData['database_lock_released']);
+    }
+
+    public function test_token_is_consumed_only_at_ddl_boundary_and_tokenless_fresh_is_blocked(): void
+    {
+        [$report, $token] = $this->successfulPreflightEvidence();
+        $this->approvalToken = null;
+        $failure = $this->captureFailure(fn () => $this->deploy($report, ''));
+        $this->assertSame('APPROVAL_TOKEN_REQUIRED_FOR_TEST', $failure->blocker);
+        $this->assertArrayNotHasKey('consumed_at', ReleaseFiles::readJson(dirname($report).'/approval-token.sha256'));
+
+        $this->approvalToken = $token;
+        $this->platform->ddlRiskPass = false;
+        $this->captureFailure(fn () => $this->deploy($report, $token));
+        $this->assertArrayNotHasKey('consumed_at', ReleaseFiles::readJson(dirname($report).'/approval-token.sha256'));
+
+        $this->platform->ddlRiskPass = true;
+        $this->deploy($report, $token);
+        $sidecar = ReleaseFiles::readJson(dirname($report).'/approval-token.sha256');
+        $this->assertSame('ddl_boundary_before_migration_1', $sidecar['consumption_stage']);
+        $this->assertArrayNotHasKey('approval_token', $sidecar);
+    }
+
+    public function test_partial_resume_requires_ack_and_successful_closeout_cannot_resume(): void
+    {
+        [$report, $token] = $this->successfulPreflightEvidence();
+        $this->platform->failMigrationAt = 2;
+        $this->captureFailure(fn () => $this->deploy($report, $token));
+        $this->platform->failMigrationAt = null;
+        $this->approvalToken = null;
+
+        $failure = $this->captureFailure(fn () => $this->runner()->execute('deploy', [
+            'preflight-report' => $report,
+            'expected-sha' => $this->platform->head,
+            'maintenance-window-ack' => true,
+        ]));
+        $this->assertSame('PARTIAL_RESUME_ACK_REQUIRED', $failure->blocker);
+
+        $this->now = $this->now->modify('+361 minutes');
+        $this->deploy($report, '');
+        $failure = $this->captureFailure(fn () => $this->runner()->execute('deploy', [
+            'preflight-report' => $report,
+            'expected-sha' => $this->platform->head,
+            'maintenance-window-ack' => true,
+            'resume-partial-ack' => true,
+        ]));
+        $this->assertSame('SUCCESSFUL_CLOSEOUT_CANNOT_BE_RESUMED', $failure->blocker);
+    }
+
+    public function test_migration_timeout_recovers_maintenance_and_writes_partial_evidence(): void
+    {
+        [$report, $token] = $this->successfulPreflightEvidence();
+        $this->platform->timeoutMigrationAt = 1;
+
+        $failure = $this->captureFailure(fn () => $this->deploy($report, $token));
+
+        $this->assertSame('MIGRATION_1_TIMEOUT', $failure->blocker);
+        $this->assertSame(ExitCode::PARTIAL_RELEASE, $failure->releaseExitCode);
+        $this->assertSame(1, $this->platform->maintenanceUpCalls);
+        $failureReport = ReleaseFiles::readJson(glob($this->auditRoot.'/debt-pr-d-production-deploy-*/deployment-report.json')[0]);
+        $this->assertTrue($failureReport['maintenance_recovered']);
+        $this->assertTrue($failureReport['database_lock_released']);
+    }
+
+    public function test_partial_resume_blocks_checkpoint_schema_mismatch(): void
+    {
+        [$report, $token] = $this->successfulPreflightEvidence();
+        $this->platform->failMigrationAt = 2;
+        $this->captureFailure(fn () => $this->deploy($report, $token));
+        $this->platform->failMigrationAt = null;
+        $this->platform->forgetMigration(1);
+
+        $failure = $this->captureFailure(fn () => $this->deploy($report, ''));
+
+        $this->assertSame('CHECKPOINT_DATABASE_STATE_MISMATCH', $failure->blocker);
+        $this->assertSame(ExitCode::PARTIAL_RELEASE, $failure->releaseExitCode);
+    }
+
     /** @group debt-release-integration */
     public function test_disposable_database_runs_preflight_deploy_and_safe_second_deploy(): void
     {
@@ -384,6 +568,7 @@ final class DebtReleaseRunnerTest extends TestCase
         );
         $this->platform = new FakeReleasePlatform($this->manifest);
         $output = [];
+        $integrationToken = '';
         $runner = new DebtReleaseRunner(
             $this->manifest,
             $this->root,
@@ -393,6 +578,11 @@ final class DebtReleaseRunnerTest extends TestCase
             $this->backupRoot,
             static function (string $line) use (&$output): void {
                 $output[] = $line;
+            },
+            null,
+            null,
+            static function () use (&$integrationToken): string {
+                return $integrationToken;
             },
         );
 
@@ -418,22 +608,84 @@ final class DebtReleaseRunnerTest extends TestCase
             $this->assertTrue($ready, 'Disposable HTTP server did not start: '.(string) @file_get_contents($serverLog));
             $expectedSha = $this->platform->head;
             $this->assertSame(0, $runner->execute('doctor', []));
+            $ddlRisk = $platform->inspectDdlRisk($this->manifest);
+            if (! $ddlRisk['DDL_VISIBILITY_COMPLETE']) {
+                $this->assertSame('DDL_RISK_VISIBILITY_INSUFFICIENT', $ddlRisk['blocker']);
+                \Illuminate\Support\Facades\DB::connection()->getPdo()->exec(
+                    "UPDATE performance_schema.setup_instruments
+                     SET ENABLED = 'YES', TIMED = 'YES'
+                     WHERE NAME = 'wait/lock/metadata/sql/mdl'"
+                );
+                $ddlRisk = $platform->inspectDdlRisk($this->manifest);
+            }
+            $this->assertTrue($ddlRisk['DDL_VISIBILITY_COMPLETE']);
+            $this->assertTrue($ddlRisk['pass']);
+
+            $failedBackup = $this->backupRoot.'/failed-backup.sql.gz';
+            $failingBackupPlatform = new NativeReleasePlatform(
+                $this->root,
+                $this->backupRoot,
+                new FailingGzipProcessExecutor,
+            );
+            $this->assertSame(
+                'BACKUP_GZIP_FAILED',
+                $this->captureFailure(fn () => $failingBackupPlatform->createBackup($failedBackup))->blocker,
+            );
+            $this->assertSame([], glob($this->backupRoot.'/kiot-pr-d-raw-*.sql.tmp') ?: []);
+            $this->assertFileDoesNotExist($failedBackup);
+
+            $connection = config('database.connections.'.config('database.default'));
+            $writer = new \PDO(
+                'mysql:host='.$connection['host'].';port='.$connection['port'].';dbname='.$connection['database'].';charset=utf8mb4',
+                $connection['username'],
+                $connection['password'],
+                [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION],
+            );
+            $snapshotMethod = new \ReflectionMethod(NativeReleasePlatform::class, 'withConsistentReadOnlySnapshot');
+            $fixture = 'debt_release_snapshot_fixture_'.bin2hex(random_bytes(4));
+            $snapshot = $snapshotMethod->invoke($platform, function () use ($writer, $fixture): array {
+                $pdo = \Illuminate\Support\Facades\DB::connection()->getPdo();
+                $before = (int) $pdo->query('SELECT COUNT(*) FROM migrations')->fetchColumn();
+                $statement = $writer->prepare('INSERT INTO migrations (migration, batch) VALUES (?, ?)');
+                $statement->execute([$fixture, 999999]);
+                $after = (int) $pdo->query('SELECT COUNT(*) FROM migrations')->fetchColumn();
+
+                return ['before' => $before, 'after' => $after];
+            });
+            $this->assertSame($snapshot['before'], $snapshot['after']);
+            $this->assertTrue($snapshot['snapshot_read_only']);
+            $this->assertTrue($snapshot['snapshot_rolled_back']);
+            $writer->prepare('DELETE FROM migrations WHERE migration = ?')->execute([$fixture]);
+
+            $writer->beginTransaction();
+            $writer->query('SELECT * FROM debt_offsets LIMIT 1')->fetchAll();
+            $lockedRisk = $platform->inspectDdlRisk($this->manifest);
+            $writer->rollBack();
+            $this->assertFalse($lockedRisk['pass']);
+            $this->assertGreaterThan(0, $lockedRisk['metadata_lock_blockers']);
             $this->assertSame(0, $runner->execute('preflight', ['expected-sha' => $expectedSha]));
             [$report] = glob($this->auditRoot.'/debt-pr-d-preflight-*/preflight-report.json');
             $tokenLine = current(array_filter($output, static fn (string $line) => str_starts_with($line, 'APPROVAL_TOKEN=')));
             $token = substr((string) $tokenLine, strlen('APPROVAL_TOKEN='));
+            $integrationToken = $token;
             $deployOptions = [
                 'preflight-report' => $report,
-                'approval-token' => $token,
                 'expected-sha' => $expectedSha,
                 'maintenance-window-ack' => true,
             ];
             $this->assertSame(0, $runner->execute('deploy', $deployOptions));
             $this->assertSame(3, $platform->migrationStatus($this->manifest)['ran_count']);
-            $this->assertSame(0, $runner->execute('deploy', $deployOptions));
+            $failure = $this->captureFailure(fn () => $runner->execute('deploy', $deployOptions + ['resume-partial-ack' => true]));
+            $this->assertSame('SUCCESSFUL_CLOSEOUT_CANNOT_BE_RESUMED', $failure->blocker);
             $this->assertSame(0, $runner->execute('status', []));
             $checkpoint = ReleaseFiles::readJson(glob($this->auditRoot.'/debt-pr-d-production-deploy-*/checkpoint.json')[0]);
             $this->assertSame('closeout_written', $checkpoint['stage']);
+            $deploymentReport = ReleaseFiles::readJson(glob($this->auditRoot.'/debt-pr-d-production-deploy-*/deployment-report.json')[0]);
+            $this->assertTrue($deploymentReport['data_snapshot_consistent']);
+            $this->assertTrue($deploymentReport['snapshot_read_only']);
+            $this->assertTrue($deploymentReport['snapshot_rolled_back']);
+            $this->assertSame([], glob($this->backupRoot.'/kiot-pr-d-raw-*.sql.tmp') ?: []);
+            $this->assertNotSame([], glob($this->backupRoot.'/kiot-pr-d-db-backup-*.sql.gz') ?: []);
         } finally {
             proc_terminate($server);
             proc_close($server);
@@ -455,6 +707,13 @@ final class DebtReleaseRunnerTest extends TestCase
             },
             fn (): DateTimeImmutable => $this->now,
             static fn (int $bytes): string => str_repeat('a', $bytes * 2),
+            function (): string {
+                if ($this->approvalToken === null || $this->approvalToken === '') {
+                    throw new ReleaseFailure('APPROVAL_TOKEN_REQUIRED_FOR_TEST', ExitCode::INVALID_ARGUMENTS);
+                }
+
+                return $this->approvalToken;
+            },
         );
     }
 
@@ -469,17 +728,28 @@ final class DebtReleaseRunnerTest extends TestCase
         [$report] = glob($this->auditRoot.'/debt-pr-d-preflight-*/preflight-report.json');
         $tokenLine = current(array_filter($this->output, static fn (string $line) => str_starts_with($line, 'APPROVAL_TOKEN=')));
 
-        return [$report, substr((string) $tokenLine, strlen('APPROVAL_TOKEN='))];
+        $this->approvalToken = substr((string) $tokenLine, strlen('APPROVAL_TOKEN='));
+
+        return [$report, $this->approvalToken];
     }
 
     private function deploy(string $report, string $token): int
     {
-        return $this->runner()->execute('deploy', [
+        $this->approvalToken = $token === '' ? null : $token;
+        $options = [
             'preflight-report' => $report,
-            'approval-token' => $token,
             'expected-sha' => $this->platform->head,
             'maintenance-window-ack' => true,
-        ]);
+        ];
+        $checkpoints = glob($this->auditRoot.'/debt-pr-d-production-deploy-*/checkpoint.json') ?: [];
+        if ($checkpoints !== []) {
+            $checkpoint = ReleaseFiles::readJson($checkpoints[0]);
+            if (array_intersect(array_column($this->manifest['migrations'], 'stage'), $checkpoint['completed_stages'] ?? []) !== []) {
+                $options['resume-partial-ack'] = true;
+            }
+        }
+
+        return $this->runner()->execute('deploy', $options);
     }
 
     private function latestCheckpoint(): array
@@ -528,6 +798,12 @@ final class FakeReleasePlatform implements ReleasePlatform
 
     public ?int $failMigrationAt = null;
 
+    public ?int $timeoutMigrationAt = null;
+
+    public ?int $throwSignalAtMigration = null;
+
+    public string $throwSignalName = 'SIGTERM';
+
     public int $backupCalls = 0;
 
     public int $migrationCalls = 0;
@@ -557,7 +833,12 @@ final class FakeReleasePlatform implements ReleasePlatform
     {
         $this->events[] = 'doctor';
 
-        return ['pass' => $this->doctorPass, 'blocker' => $this->doctorPass ? null : 'MISSING_DEPENDENCY'];
+        return [
+            'pass' => $this->doctorPass,
+            'pcntl_available' => true,
+            'signal_recovery_available' => true,
+            'blocker' => $this->doctorPass ? null : 'MISSING_DEPENDENCY',
+        ];
     }
 
     public function gitState(array $manifest): array
@@ -585,7 +866,13 @@ final class FakeReleasePlatform implements ReleasePlatform
     {
         $this->ddlRiskCalls++;
 
-        return ['pass' => $this->ddlRiskPass];
+        return [
+            'pass' => $this->ddlRiskPass,
+            'innodb_trx_visible' => true,
+            'processlist_visible' => true,
+            'metadata_locks_visible' => true,
+            'DDL_VISIBILITY_COMPLETE' => true,
+        ];
     }
 
     public function createBackup(string $path): array
@@ -654,6 +941,12 @@ final class FakeReleasePlatform implements ReleasePlatform
         if ($this->failMigrationAt === $stage) {
             return new ProcessResult(1, '', 'simulated');
         }
+        if ($this->timeoutMigrationAt === $stage) {
+            return new ProcessResult(124, '', 'timed out', true, 180000, 15);
+        }
+        if ($this->throwSignalAtMigration === $stage) {
+            throw new ReleaseFailure('SIGNAL_'.$this->throwSignalName.'_INTERRUPTED', ExitCode::PARTIAL_RELEASE);
+        }
         $this->ran[$this->manifest['migrations'][$stage - 1]['name']] = true;
 
         return new ProcessResult(0);
@@ -697,6 +990,28 @@ final class FakeReleasePlatform implements ReleasePlatform
     public function dropTemporaryDatabase(string $name, array $manifest): void
     {
         $this->droppedDatabases[] = $name;
+    }
+
+    public function forgetMigration(int $stage): void
+    {
+        unset($this->ran[$this->manifest['migrations'][$stage - 1]['name']]);
+    }
+}
+
+final class FailingGzipProcessExecutor implements ProcessExecutor
+{
+    public function run(
+        array $command,
+        ?string $cwd = null,
+        ?string $stdinFile = null,
+        ?string $stdoutFile = null,
+        ?int $timeoutSeconds = null,
+    ): ProcessResult {
+        if (($command[0] ?? null) === 'gzip' && ($command[1] ?? null) === '-c') {
+            return new ProcessResult(1, '', 'simulated gzip failure');
+        }
+
+        return (new NativeProcessExecutor)->run($command, $cwd, $stdinFile, $stdoutFile, $timeoutSeconds);
     }
 }
 

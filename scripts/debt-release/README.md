@@ -26,14 +26,13 @@ bash scripts/debt-release/pr-d-release.sh status
 bash scripts/debt-release/pr-d-release.sh cleanup
 ```
 
-Only `deploy` can alter the live schema. It requires a passing, unexpired
-preflight report, its one-time approval token, the same expected SHA and an
-explicit maintenance acknowledgement:
+Only `deploy` can alter the live schema. A fresh deploy requires a passing,
+unexpired preflight report, the same expected SHA, an explicit maintenance
+acknowledgement and the one-time token entered at the hidden `/dev/tty` prompt:
 
 ```bash
 bash scripts/debt-release/pr-d-release.sh deploy \
   --preflight-report <PATH> \
-  --approval-token <TOKEN> \
   --expected-sha <RUNNER_MERGE_SHA> \
   --maintenance-window-ack
 ```
@@ -50,7 +49,7 @@ approval token into a tracked file.
 
 ```bash
 cd /www/wwwroot/kiot.cuongdesign.net
-unset DB_DATABASE APP_CONFIG_CACHE
+unset DB_DATABASE APP_CONFIG_CACHE DEBT_RELEASE_APPROVAL_TOKEN
 git fetch origin production-customer-group
 git checkout production-customer-group
 git merge --ff-only origin/production-customer-group
@@ -62,10 +61,9 @@ The controlled deploy is the second and final operator command block:
 
 ```bash
 cd /www/wwwroot/kiot.cuongdesign.net
-unset DB_DATABASE APP_CONFIG_CACHE
+unset DB_DATABASE APP_CONFIG_CACHE DEBT_RELEASE_APPROVAL_TOKEN
 bash scripts/debt-release/pr-d-release.sh deploy \
   --preflight-report <PREFLIGHT_REPORT_PATH> \
-  --approval-token <APPROVAL_TOKEN_PRINTED_BY_PREFLIGHT> \
   --expected-sha <RUNNER_MERGE_SHA> \
   --maintenance-window-ack
 ```
@@ -74,9 +72,11 @@ bash scripts/debt-release/pr-d-release.sh deploy \
 
 Preflight verifies branch, exact SHA, clean worktree, production ancestry,
 database-name fingerprint, MariaDB 10.11, constraint settings, tools, free disk,
-DDL activity, backup and restore. The plain approval token is printed once. Only
-its SHA-256 and a binding to release, SHA, database fingerprint, report hash and
-TTL are stored.
+DDL activity, backup and restore. The plain approval token is printed once by
+preflight. Deploy reads it without echo from `/dev/tty`; `--approval-token` is
+rejected so it cannot leak through shell history or process arguments.
+Non-interactive tests may use `DEBT_RELEASE_APPROVAL_TOKEN`; the runner unsets
+it immediately after reading. Only its SHA-256 and binding are stored.
 
 Database client credentials are written to an ephemeral mode-`0600` defaults
 file. They are never passed as command arguments or written to reports. Reports
@@ -84,15 +84,29 @@ contain no plain database name, credentials, PII or row dumps.
 
 ## Maintenance And Resume
 
-Deploy acquires both locks, runs `artisan down --retry=60`, captures a fresh
-authoritative baseline, and applies exactly one allowlisted migration path at a
-time. Each verified stage is atomically checkpointed. A `finally` recovery runs
-`artisan up` after ordinary failures.
+Deploy acquires both locks, runs `artisan down --retry=60`, passes a fail-closed
+DDL visibility gate, and captures a fresh baseline in an InnoDB consistent
+read-only snapshot. The token is consumed only after baseline capture, at the
+DDL boundary immediately before migration 1. Each verified stage is atomically
+checkpointed. A `finally` recovery runs `artisan up` after ordinary failures
+and controlled `SIGINT`, `SIGTERM` or `SIGHUP` interruption.
 
-There is no automatic DDL rollback. If a stage fails, the runner exits `90`,
-preserves the exact last verified stage and requires the same deploy command to
-resume. Already-run migrations are skipped only after their schema contract and
-business-data invariants pass. A checkpoint/database mismatch is blocked.
+There is no automatic DDL rollback. If at least one stage ran or was verified,
+the runner exits `90`, preserves the exact last verified stage and requires:
+
+```bash
+bash scripts/debt-release/pr-d-release.sh deploy \
+  --preflight-report <PREFLIGHT_REPORT_PATH> \
+  --expected-sha <RUNNER_MERGE_SHA> \
+  --maintenance-window-ack \
+  --resume-partial-ack
+```
+
+A bound partial resume may use an expired preflight and does not reuse the old
+token, but it revalidates Git, DB, backup, DDL visibility, checkpoint/schema
+state and every completed stage. Tokenless fresh deploys, resume without a
+checkpoint, schema/checkpoint mismatch and resume after successful closeout are
+blocked.
 
 ## Evidence
 
@@ -116,8 +130,10 @@ storage/app/audits/debt-pr-d-production-deploy-*/
   deployment-summary.txt
 ```
 
-`cleanup` removes only allowlisted temporary restore databases and a stale
-filesystem lock. It never removes reports or backups.
+Raw SQL exists only in unique allowlisted mode-`0600` temporary files and is
+removed after success, failure or a controlled signal. `cleanup` removes only
+allowlisted temporary restore databases, stale raw SQL/client credential files
+and a stale filesystem lock. It never removes reports or final gzip backups.
 
 ## Exit Codes
 
