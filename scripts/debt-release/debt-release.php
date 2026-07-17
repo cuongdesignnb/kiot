@@ -372,38 +372,115 @@ final class ReleaseFiles
 {
     public static function ensureDirectory(string $path, int $mode): void
     {
-        if (! is_dir($path) && ! mkdir($path, $mode, true) && ! is_dir($path)) {
+        self::assertNoDirectorySymlink($path);
+        if (is_dir($path)) {
+            return;
+        }
+        if (file_exists($path)) {
+            throw new ReleaseFailure('DIRECTORY_PATH_IS_NOT_DIRECTORY', ExitCode::DEPENDENCY_BLOCKER);
+        }
+
+        $created = @mkdir($path, $mode, true);
+        if (! $created) {
+            self::assertNoDirectorySymlink($path);
+            if (is_dir($path)) {
+                return;
+            }
             throw new ReleaseFailure('AUDIT_DIRECTORY_CREATE_FAILED', ExitCode::DEPENDENCY_BLOCKER);
         }
-        @chmod($path, $mode);
+
+        self::assertNoDirectorySymlink($path);
+        if (DIRECTORY_SEPARATOR !== '\\' && ! @chmod($path, $mode)) {
+            @rmdir($path);
+            throw new ReleaseFailure('CREATED_DIRECTORY_MODE_FAILED', ExitCode::DEPENDENCY_BLOCKER);
+        }
+        if (DIRECTORY_SEPARATOR !== '\\') {
+            clearstatcache(true, $path);
+            $permissions = fileperms($path);
+            if ($permissions === false || ($permissions & 07777) !== $mode) {
+                @rmdir($path);
+                throw new ReleaseFailure('CREATED_DIRECTORY_MODE_INVALID', ExitCode::DEPENDENCY_BLOCKER);
+            }
+        }
     }
 
     public static function atomicJson(string $path, array $payload, int $mode = 0640): void
     {
-        self::ensureDirectory(dirname($path), 0750);
-        $tmp = $path.'.tmp';
         $json = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR).PHP_EOL;
-        if (file_put_contents($tmp, $json, LOCK_EX) === false) {
-            throw new ReleaseFailure('REPORT_WRITE_FAILED', ExitCode::DEPENDENCY_BLOCKER);
-        }
-        @chmod($tmp, $mode);
-        if (! rename($tmp, $path)) {
-            @unlink($tmp);
-            throw new ReleaseFailure('REPORT_ATOMIC_RENAME_FAILED', ExitCode::DEPENDENCY_BLOCKER);
-        }
+        self::atomicWrite($path, $json, $mode);
     }
 
     public static function atomicText(string $path, string $text, int $mode = 0640): void
     {
-        self::ensureDirectory(dirname($path), 0750);
-        $tmp = $path.'.tmp';
-        if (file_put_contents($tmp, $text, LOCK_EX) === false) {
-            throw new ReleaseFailure('REPORT_WRITE_FAILED', ExitCode::DEPENDENCY_BLOCKER);
+        self::atomicWrite($path, $text, $mode);
+    }
+
+    public static function writeExclusiveClientCredential(
+        string $directory,
+        string $filename,
+        string $content,
+        ?callable $failureInjector = null,
+    ): string {
+        if (is_link($directory)) {
+            throw new ReleaseFailure('SYSTEM_TEMP_DIRECTORY_SYMLINK_BLOCKED', ExitCode::DEPENDENCY_BLOCKER);
         }
-        @chmod($tmp, $mode);
-        if (! rename($tmp, $path)) {
-            @unlink($tmp);
-            throw new ReleaseFailure('REPORT_ATOMIC_RENAME_FAILED', ExitCode::DEPENDENCY_BLOCKER);
+        if (! is_dir($directory)) {
+            throw new ReleaseFailure('SYSTEM_TEMP_DIRECTORY_MISSING', ExitCode::DEPENDENCY_BLOCKER);
+        }
+        if (! is_writable($directory)) {
+            throw new ReleaseFailure('SYSTEM_TEMP_DIRECTORY_NOT_WRITABLE', ExitCode::DEPENDENCY_BLOCKER);
+        }
+        if (basename($filename) !== $filename || ! preg_match('/^debt-release-client-[a-f0-9]{16}\.cnf$/', $filename)) {
+            throw new ReleaseFailure('CLIENT_CREDENTIAL_FILENAME_INVALID', ExitCode::DEPENDENCY_BLOCKER);
+        }
+
+        $parentMetadata = self::directorySecurityMetadata($directory);
+        $path = rtrim($directory, '/\\').DIRECTORY_SEPARATOR.$filename;
+        $handle = null;
+        $created = false;
+        $success = false;
+        try {
+            self::injectFailure($failureInjector, 'create');
+            $handle = @fopen($path, 'x+b');
+            if ($handle === false) {
+                throw new ReleaseFailure('CLIENT_CREDENTIAL_CREATE_FAILED', ExitCode::DEPENDENCY_BLOCKER);
+            }
+            $created = true;
+
+            self::injectFailure($failureInjector, 'chmod');
+            if (DIRECTORY_SEPARATOR !== '\\' && ! @chmod($path, 0600)) {
+                throw new ReleaseFailure('CLIENT_CREDENTIAL_MODE_FAILED', ExitCode::DEPENDENCY_BLOCKER);
+            }
+
+            self::injectFailure($failureInjector, 'write');
+            self::writeAll($handle, $content, 'CLIENT_CREDENTIAL_WRITE_FAILED');
+
+            self::injectFailure($failureInjector, 'flush');
+            if (! fflush($handle)) {
+                throw new ReleaseFailure('CLIENT_CREDENTIAL_FLUSH_FAILED', ExitCode::DEPENDENCY_BLOCKER);
+            }
+
+            if (DIRECTORY_SEPARATOR !== '\\') {
+                clearstatcache(true, $path);
+                $permissions = fileperms($path);
+                if ($permissions === false || ($permissions & 0777) !== 0600) {
+                    throw new ReleaseFailure('CLIENT_CREDENTIAL_MODE_INVALID', ExitCode::DEPENDENCY_BLOCKER);
+                }
+            }
+            if (self::directorySecurityMetadata($directory) !== $parentMetadata) {
+                throw new ReleaseFailure('CLIENT_CREDENTIAL_PARENT_METADATA_CHANGED', ExitCode::DEPENDENCY_BLOCKER);
+            }
+
+            $success = true;
+
+            return $path;
+        } finally {
+            if (is_resource($handle)) {
+                fclose($handle);
+            }
+            if (! $success && $created) {
+                @unlink($path);
+            }
         }
     }
 
@@ -456,6 +533,98 @@ final class ReleaseFiles
         }
 
         return $prefix.implode('/', $parts);
+    }
+
+    private static function atomicWrite(string $path, string $content, int $mode): void
+    {
+        $directory = dirname($path);
+        self::ensureDirectory($directory, 0750);
+        $tmp = $path.'.'.bin2hex(random_bytes(8)).'.tmp';
+        $handle = @fopen($tmp, 'x+b');
+        if ($handle === false) {
+            throw new ReleaseFailure('REPORT_WRITE_FAILED', ExitCode::DEPENDENCY_BLOCKER);
+        }
+
+        $renamed = false;
+        try {
+            if (DIRECTORY_SEPARATOR !== '\\' && ! @chmod($tmp, $mode)) {
+                throw new ReleaseFailure('REPORT_MODE_FAILED', ExitCode::DEPENDENCY_BLOCKER);
+            }
+            self::writeAll($handle, $content, 'REPORT_WRITE_FAILED');
+            if (! fflush($handle)) {
+                throw new ReleaseFailure('REPORT_FLUSH_FAILED', ExitCode::DEPENDENCY_BLOCKER);
+            }
+            fclose($handle);
+            $handle = null;
+            if (! rename($tmp, $path)) {
+                throw new ReleaseFailure('REPORT_ATOMIC_RENAME_FAILED', ExitCode::DEPENDENCY_BLOCKER);
+            }
+            $renamed = true;
+        } finally {
+            if (is_resource($handle)) {
+                fclose($handle);
+            }
+            if (! $renamed) {
+                @unlink($tmp);
+            }
+        }
+    }
+
+    /** @param resource $handle */
+    private static function writeAll($handle, string $content, string $blocker): void
+    {
+        $offset = 0;
+        $length = strlen($content);
+        while ($offset < $length) {
+            $written = fwrite($handle, substr($content, $offset));
+            if ($written === false || $written === 0) {
+                throw new ReleaseFailure($blocker, ExitCode::DEPENDENCY_BLOCKER);
+            }
+            $offset += $written;
+        }
+    }
+
+    private static function assertNoDirectorySymlink(string $path): void
+    {
+        $candidate = rtrim($path, '/\\');
+        if ($candidate === '') {
+            $candidate = DIRECTORY_SEPARATOR;
+        } elseif (preg_match('/^[A-Za-z]:$/', $candidate)) {
+            $candidate .= DIRECTORY_SEPARATOR;
+        }
+        while (true) {
+            if (is_link($candidate)) {
+                throw new ReleaseFailure('DIRECTORY_SYMLINK_BLOCKED', ExitCode::DEPENDENCY_BLOCKER);
+            }
+            $parent = dirname($candidate);
+            if ($parent === $candidate) {
+                return;
+            }
+            $candidate = $parent;
+        }
+    }
+
+    /** @return array{mode:int, owner:int|false, group:int|false} */
+    private static function directorySecurityMetadata(string $directory): array
+    {
+        clearstatcache(true, $directory);
+        $permissions = fileperms($directory);
+        if ($permissions === false) {
+            throw new ReleaseFailure('SYSTEM_TEMP_DIRECTORY_METADATA_UNAVAILABLE', ExitCode::DEPENDENCY_BLOCKER);
+        }
+
+        return [
+            'mode' => $permissions & 07777,
+            'owner' => fileowner($directory),
+            'group' => filegroup($directory),
+        ];
+    }
+
+    private static function injectFailure(?callable $failureInjector, string $stage): void
+    {
+        if ($failureInjector !== null) {
+            $failureInjector($stage);
+        }
     }
 }
 
@@ -1371,13 +1540,18 @@ class NativeReleasePlatform implements ReleasePlatform
 
     private bool $databaseLockHeld = false;
 
+    /** @var null|callable(string):void */
+    private $credentialFailureInjector;
+
     public function __construct(
         private readonly string $repositoryRoot,
         private readonly string $backupRoot,
         private readonly ProcessExecutor $process,
+        ?callable $credentialFailureInjector = null,
     ) {
         $this->connection = DB::connection();
         $this->pdo = $this->connection->getPdo();
+        $this->credentialFailureInjector = $credentialFailureInjector;
     }
 
     public function doctor(array $manifest): array
@@ -2244,7 +2418,8 @@ class NativeReleasePlatform implements ReleasePlatform
     private function writeClientDefaultsFile(): string
     {
         $config = $this->connection->getConfig();
-        $path = rtrim(sys_get_temp_dir(), '/\\').DIRECTORY_SEPARATOR.'debt-release-client-'.bin2hex(random_bytes(8)).'.cnf';
+        $directory = rtrim(sys_get_temp_dir(), '/\\');
+        $filename = 'debt-release-client-'.bin2hex(random_bytes(8)).'.cnf';
         $lines = [
             '[client]',
             'host='.self::optionValue((string) ($config['host'] ?? '127.0.0.1')),
@@ -2252,9 +2427,13 @@ class NativeReleasePlatform implements ReleasePlatform
             'user='.self::optionValue((string) ($config['username'] ?? '')),
             'password='.self::optionValue((string) ($config['password'] ?? '')),
         ];
-        ReleaseFiles::atomicText($path, implode(PHP_EOL, $lines).PHP_EOL, 0600);
 
-        return $path;
+        return ReleaseFiles::writeExclusiveClientCredential(
+            $directory,
+            $filename,
+            implode(PHP_EOL, $lines).PHP_EOL,
+            $this->credentialFailureInjector,
+        );
     }
 
     private function createSecureRawSqlTemp(): string
