@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Exceptions\DebtOffsetWorkflowException;
 use App\Http\Requests\DebtOffsets\ApplyDebtOffsetRequest;
 use App\Http\Requests\DebtOffsets\ApproveDebtOffsetRequest;
 use App\Http\Requests\DebtOffsets\RejectDebtOffsetRequest;
@@ -12,8 +13,10 @@ use App\Http\Requests\DebtOffsets\UpdateDebtOffsetDraftRequest;
 use App\Http\Requests\DebtOffsets\VoidDebtOffsetRequest;
 use App\Models\Customer;
 use App\Models\DebtOffset;
+use App\Models\Setting;
 use App\Services\Debt\DebtOffsetWorkflowService;
 use App\Services\Debt\DebtOffsetWriteMode;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -37,6 +40,7 @@ final class DebtOffsetWorkflowController extends Controller
                 'rejecter:id,name',
             ])
             ->orderByDesc('id');
+        $this->applyReadBranchScope($query, $request);
 
         $status = trim((string) $request->input('status', ''));
         if ($status === 'legacy') {
@@ -83,6 +87,7 @@ final class DebtOffsetWorkflowController extends Controller
 
     public function show(Request $request, DebtOffset $debtOffset): JsonResponse
     {
+        $this->assertReadBranchScope($debtOffset, $request);
         $debtOffset->load([
             'customer:id,code,name,debt_amount,supplier_debt_amount,branch_id',
             'requester:id,name',
@@ -186,6 +191,49 @@ final class DebtOffsetWorkflowController extends Controller
     private function commandResponse(array $result): JsonResponse
     {
         return response()->json(['data' => $result]);
+    }
+
+    private function applyReadBranchScope(Builder $query, Request $request): void
+    {
+        $branchIds = $this->readBranchIds($request);
+        if ($branchIds === null) {
+            return;
+        }
+
+        $query->whereHas('customer', function (Builder $customerQuery) use ($branchIds): void {
+            $customerQuery->where(function (Builder $branchQuery) use ($branchIds): void {
+                $branchQuery->whereNull('branch_id');
+                if ($branchIds !== []) {
+                    $branchQuery->orWhereIn('branch_id', $branchIds);
+                }
+            });
+        });
+    }
+
+    private function assertReadBranchScope(DebtOffset $debtOffset, Request $request): void
+    {
+        $branchIds = $this->readBranchIds($request);
+        if ($branchIds === null) {
+            return;
+        }
+
+        $branchId = $debtOffset->customer()->value('branch_id');
+        if ($branchId !== null && ! in_array((int) $branchId, $branchIds, true)) {
+            throw DebtOffsetWorkflowException::forbidden(
+                'BRANCH_SCOPE_FORBIDDEN',
+                'Báº¡n khÃ´ng Ä‘Æ°á»£c xem phiáº¿u cáº¥n trá»« ngoÃ i pháº¡m vi chi nhÃ¡nh.'
+            );
+        }
+    }
+
+    private function readBranchIds(Request $request): ?array
+    {
+        $user = $request->user();
+        if (! Setting::get('customer_manage_by_branch', false) || $user->isAdmin()) {
+            return null;
+        }
+
+        return array_values(array_unique(array_map('intval', $user->getAccessibleBranchIds())));
     }
 
     private function resource(DebtOffset $offset): array

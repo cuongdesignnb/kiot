@@ -151,9 +151,9 @@ MARIADB_VERSION=10.11.10-MariaDB-ubu2204
 
 | Suite | Engine/driver | Result |
 |---|---|---|
-| PR E unit, workflow, permission, failure injection, concurrency | MySQL 8.0.44 / `mysql` | PASS, 58 tests, 333 assertions |
-| PR E unit, workflow, permission, failure injection, concurrency | MariaDB 10.11.10 / `mysql` | PASS, 58 tests, 333 assertions |
-| PR E unit, workflow, permission, failure injection, concurrency | MariaDB 10.11.10 / `mariadb` | PASS, 58 tests, 333 assertions |
+| PR E unit, workflow, permission, failure injection, concurrency | MySQL 8.0.44 / `mysql` | PASS, 62 tests, 366 assertions |
+| PR E unit, workflow, permission, failure injection, concurrency | MariaDB 10.11.10 / `mysql` | PASS, 62 tests, 366 assertions |
+| PR E unit, workflow, permission, failure injection, concurrency | MariaDB 10.11.10 / `mariadb` | PASS, 62 tests, 366 assertions |
 | PR A-D schema and rollback portability | MySQL 8.0.44 / `mysql` | PASS, 57 tests, 1774 assertions, 1 skipped |
 | Sapo parity, customer/supplier timelines, dual-role and permission | MySQL 8.0.44 / `mysql` | PASS, 75 tests, 429 assertions |
 | Phase 1 canonical debt, invariant, parity and audit command | MySQL 8.0.44 / `mysql` | PASS, 63 tests, 276 assertions |
@@ -242,6 +242,44 @@ FAILURE_INJECTION_ROLLBACK=PASS
 STALE_BALANCE_GUARD=PASS
 ```
 
+## Senior Review Amendment
+
+```text
+PREVIOUS_HEAD=418c63ba496e231b5fa1eafd2b45d27e13399313
+FINAL_HEAD_SHA=recorded in PR body and handoff
+
+P1_BRANCH_READ_SCOPE=RESOLVED
+P1_LEGACY_HISTORY_FILTER=RESOLVED
+P1_APPLY_REPLAY_AFTER_REVERSE=RESOLVED
+
+BRANCH_READ_INDEX_SCOPE=PASS
+BRANCH_READ_SHOW_SCOPE=PASS
+LEGACY_HISTORY_FINANCIAL_ONLY=PASS
+APPLY_REPLAY_AFTER_REVERSE=PASS
+NO_DUPLICATE_FINANCIAL_EFFECT=PASS
+PENDING_OPERATION_NOT_REPLAYED_AS_SUCCESS=PASS
+FAILED_OPERATION_NOT_REPLAYED_AS_SUCCESS=PASS
+SAME_KEY_DIFFERENT_HASH_REMAINS_409=PASS
+```
+
+Amendment files:
+
+```text
+app/Http/Controllers/DebtOffsetWorkflowController.php
+app/Http/Controllers/CustomerController.php
+app/Services/Debt/DebtOffsetWorkflowService.php
+tests/Feature/DebtOffsets/DebtOffsetWorkflowPermissionTest.php
+tests/Feature/DebtOffsets/DebtOffsetWorkflowTest.php
+docs/debt/PR-E-DEBT-OFFSET-WORKFLOW-WRITE-PATH-VALIDATION.md
+```
+
+The read API now derives branch scope only from the authenticated user and
+server-side partner data. A null partner branch remains visible for backward
+compatibility. The legacy customer history endpoint exposes only legacy,
+applied and reversed vouchers. Retrying an apply operation after its reversal
+returns an idempotent response with the current `reversed` offset resource and
+does not repeat any financial or audit evidence.
+
 ## Remaining risks and deferred work
 
 ```text
@@ -268,15 +306,47 @@ P2 findings:
 The commands below were run against disposable local databases only:
 
 ```text
-git fetch origin production-customer-group
-php -d variables_order=EGPCS <phpunit> -c phpunit.xml <PR-E suites>
-php -d variables_order=EGPCS <phpunit> -c phpunit.xml <PR-A-D schema suites>
-php -d variables_order=EGPCS <phpunit> -c phpunit.xml <timeline/Phase-1 suites>
-php -l <each changed/new PHP file>
-php <pint> --test <new PHP files>
+git -c safe.directory=D:/Kiot/kiotviet-clone.worktrees/debt-offset-workflow-write-path fetch origin production-customer-group feat/debt-offset-workflow-write-path
+
+$env:APP_BASE_PATH='D:\Kiot\kiotviet-clone.worktrees\debt-offset-workflow-write-path'
+$env:APP_KEY='base64:MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI='
+$env:DB_CONNECTION='mysql'
+$env:DB_HOST='127.0.0.1'
+$env:DB_PORT='3319'
+$env:DB_DATABASE='kiot_pr_e_mysql'
+$env:DB_USERNAME='root'
+$env:DB_PASSWORD='root'
+$env:DB_COLLATION='utf8mb4_0900_ai_ci'
+php -d variables_order=EGPCS D:\Kiot\kiotviet-clone.worktrees\debt-single-source-invariant\vendor\phpunit\phpunit\phpunit -c phpunit.xml tests/Unit/Domain/DebtOffset tests/Unit/Services/DebtOffsetWriteModeTest.php tests/Feature/DebtOffsets
+
+$env:DB_CONNECTION='mysql'
+$env:DB_PORT='3321'
+$env:DB_DATABASE='kiot_pr_e_mariadb'
+$env:DB_COLLATION='utf8mb4_unicode_ci'
+php -d variables_order=EGPCS D:\Kiot\kiotviet-clone.worktrees\debt-single-source-invariant\vendor\phpunit\phpunit\phpunit -c phpunit.xml tests/Unit/Domain/DebtOffset tests/Unit/Services/DebtOffsetWriteModeTest.php tests/Feature/DebtOffsets
+
+$env:DB_CONNECTION='mariadb'
+php -d variables_order=EGPCS D:\Kiot\kiotviet-clone.worktrees\debt-single-source-invariant\vendor\phpunit\phpunit\phpunit -c phpunit.xml tests/Unit/Domain/DebtOffset tests/Unit/Services/DebtOffsetWriteModeTest.php tests/Feature/DebtOffsets
+
+$env:DB_CONNECTION='mysql'
+$env:DB_PORT='3319'
+$env:DB_DATABASE='kiot_pr_e_regression_mysql'
+$env:DB_COLLATION='utf8mb4_0900_ai_ci'
+php -d variables_order=EGPCS D:\Kiot\kiotviet-clone.worktrees\debt-single-source-invariant\vendor\phpunit\phpunit\phpunit -c phpunit.xml tests/Unit/Migrations/DebtOffsetCheckRollbackDialectTest.php tests/Feature/Migrations/PartnerDebtOperationOutboxSchemaTest.php tests/Feature/Migrations/PartnerDebtAllocationEvidenceSchemaTest.php tests/Feature/Migrations/PartnerDebtOpeningIncidentSchemaTest.php tests/Feature/Migrations/DebtOffsetHardeningSchemaTest.php tests/Feature/Migrations/DebtOffsetRollbackPortabilityIntegrationTest.php
+
+php -d variables_order=EGPCS D:\Kiot\kiotviet-clone.worktrees\debt-single-source-invariant\vendor\phpunit\phpunit\phpunit -c phpunit.xml tests/Feature/CustomerDebt/SapoDebtParityTest.php tests/Feature/Customers/CustomerDebtDocumentTimelineTest.php tests/Feature/Customers/CustomerDualRoleListDebtColumnTest.php tests/Feature/Customers/DualRolePartnerDebtTimelineTest.php tests/Feature/Customers/HOTFIXFollowUpDebtOffsetMirrorTest.php tests/Feature/Suppliers/SupplierDebtDocumentTimelineTest.php tests/Feature/Suppliers/SupplierDebtTimelineParityTest.php tests/Feature/Suppliers/SupplierDualRoleListDebtColumnTest.php tests/Feature/Security/EmployeePermissionIsolationTest.php
+
+php -d variables_order=EGPCS D:\Kiot\kiotviet-clone.worktrees\debt-single-source-invariant\vendor\phpunit\phpunit\phpunit -c phpunit.xml tests/Unit/Services/CanonicalPartnerDebtServiceTest.php tests/Unit/Services/PartnerDebtInvariantCheckerTest.php tests/Unit/Services/PartnerDebtParityAuditServiceTest.php tests/Unit/Services/PartnerDebtScreenRawFixtureTest.php tests/Feature/Console/CheckPartnerDebtInvariantsCommandTest.php
+
+php -l app/Http/Controllers/DebtOffsetWorkflowController.php
+php -l app/Http/Controllers/CustomerController.php
+php -l app/Services/Debt/DebtOffsetWorkflowService.php
+php -l tests/Feature/DebtOffsets/DebtOffsetWorkflowPermissionTest.php
+php -l tests/Feature/DebtOffsets/DebtOffsetWorkflowTest.php
+php D:\Kiot\kiotviet-clone.worktrees\debt-single-source-invariant\vendor\bin\pint --test app/Http/Controllers/DebtOffsetWorkflowController.php app/Services/Debt/DebtOffsetWorkflowService.php tests/Feature/DebtOffsets/DebtOffsetWorkflowPermissionTest.php tests/Feature/DebtOffsets/DebtOffsetWorkflowTest.php
 npm run build
 git diff --check
-forbidden-file and secret scans over changed/new files
+git diff --name-only -- database/migrations resources/js config/debt.php
 ```
 
 Database settings used only local ports `3319` and `3321`. No production host,

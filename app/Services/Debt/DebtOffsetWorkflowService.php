@@ -696,7 +696,7 @@ final class DebtOffsetWorkflowService
                     'Idempotency-Key đã được dùng cho nội dung khác.'
                 );
             }
-            if ($existing->status !== 'committed' || ! is_array($existing->result)) {
+            if (! in_array($existing->status, ['committed', 'reversed'], true) || ! is_array($existing->result)) {
                 throw DebtOffsetWorkflowException::conflict(
                     'IDEMPOTENCY_KEY_REUSED',
                     'Lệnh cùng Idempotency-Key chưa có kết quả ổn định.'
@@ -727,6 +727,12 @@ final class DebtOffsetWorkflowService
     private function replayResult(PartnerDebtOperation $operation): array
     {
         $result = $operation->result;
+        if ($operation->operation_type === self::OPERATION_APPLY && $operation->status === 'reversed') {
+            $currentOffset = DebtOffset::query()->find($operation->source_id);
+            if ($currentOffset) {
+                $result['debt_offset'] = $this->resource($currentOffset);
+            }
+        }
         $result['idempotent_replay'] = true;
 
         return $result;

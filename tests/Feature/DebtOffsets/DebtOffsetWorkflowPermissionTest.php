@@ -155,6 +155,75 @@ class DebtOffsetWorkflowPermissionTest extends TestCase
             ->assertJsonPath('error_code', 'BRANCH_SCOPE_FORBIDDEN');
     }
 
+    public function test_branch_scope_filters_index_and_protects_show_without_hiding_null_branch(): void
+    {
+        Setting::set('customer_manage_by_branch', true);
+        $branchA = Branch::create(['name' => 'Read Branch A']);
+        $branchB = Branch::create(['name' => 'Read Branch B']);
+        $viewer = $this->userWith(['debt_offsets.view'], $branchA->id);
+        $accessible = $this->workflowOffset($this->partner($branchA->id), $viewer, 'accessible');
+        $withoutBranch = $this->workflowOffset($this->partner(), $viewer, 'null-branch');
+        $foreign = $this->workflowOffset($this->partner($branchB->id), $viewer, 'foreign');
+
+        $visibleCodes = collect($this->actingAs($viewer)->getJson('/debt-offsets')->assertOk()->json('offsets.data'))
+            ->pluck('code');
+        $this->assertTrue($visibleCodes->contains($accessible->code));
+        $this->assertTrue($visibleCodes->contains($withoutBranch->code));
+        $this->assertFalse($visibleCodes->contains($foreign->code));
+
+        $this->actingAs($viewer)->getJson("/debt-offsets/{$accessible->id}")
+            ->assertOk()
+            ->assertJsonPath('data.code', $accessible->code);
+        $this->actingAs($viewer)->getJson("/debt-offsets/{$withoutBranch->id}")
+            ->assertOk()
+            ->assertJsonPath('data.code', $withoutBranch->code);
+        $this->actingAs($viewer)->getJson("/debt-offsets/{$foreign->id}")
+            ->assertForbidden()
+            ->assertJsonPath('error_code', 'BRANCH_SCOPE_FORBIDDEN');
+
+        $admin = User::factory()->create(['role_id' => null, 'status' => 'active']);
+        $this->actingAs($admin)->getJson("/debt-offsets/{$foreign->id}")
+            ->assertOk()
+            ->assertJsonPath('data.code', $foreign->code);
+
+        Setting::set('customer_manage_by_branch', false);
+        $this->actingAs($viewer)->getJson("/debt-offsets/{$foreign->id}")
+            ->assertOk()
+            ->assertJsonPath('data.code', $foreign->code);
+    }
+
+    public function test_legacy_history_only_exposes_financial_offset_states(): void
+    {
+        $viewer = $this->userWith(['customers.view']);
+        $partner = $this->partner();
+        $included = [
+            $this->historyOffset($partner, null, 'active', 'legacy-active'),
+            $this->historyOffset($partner, null, 'cancelled', 'legacy-cancelled'),
+            $this->historyOffset($partner, 'applied', 'active', 'applied'),
+            $this->historyOffset($partner, 'reversed', 'cancelled', 'reversed'),
+        ];
+        $excluded = [
+            $this->historyOffset($partner, 'draft', 'pending', 'draft'),
+            $this->historyOffset($partner, 'pending_approval', 'pending', 'pending'),
+            $this->historyOffset($partner, 'approved', 'pending', 'approved'),
+            $this->historyOffset($partner, 'rejected', 'rejected', 'rejected'),
+            $this->historyOffset($partner, 'void', 'void', 'void'),
+        ];
+
+        $codes = collect($this->actingAs($viewer)
+            ->getJson("/customers/{$partner->id}/debt-offset-history")
+            ->assertOk()
+            ->json())
+            ->pluck('code');
+
+        foreach ($included as $offset) {
+            $this->assertTrue($codes->contains($offset->code), "Expected {$offset->code} in legacy history.");
+        }
+        foreach ($excluded as $offset) {
+            $this->assertFalse($codes->contains($offset->code), "Did not expect {$offset->code} in legacy history.");
+        }
+    }
+
     public function test_legacy_direct_endpoints_are_guarded_by_workflow_and_disabled_modes(): void
     {
         $user = $this->userWith(['customers.edit']);
@@ -214,6 +283,38 @@ class DebtOffsetWorkflowPermissionTest extends TestCase
             'debt_amount' => '5000000.00', 'supplier_debt_amount' => '5000000.00',
             'is_customer' => true, 'is_supplier' => true, 'status' => 'active', 'branch_id' => $branchId,
         ]);
+    }
+
+    private function workflowOffset(Customer $partner, User $actor, string $suffix): DebtOffset
+    {
+        return DebtOffset::create([
+            'code' => 'CB-READ-'.strtoupper($suffix).'-'.uniqid(),
+            'customer_id' => $partner->id,
+            'amount' => '100000.00',
+            'customer_amount' => '100000.00',
+            'supplier_amount' => '100000.00',
+            'is_auto' => false,
+            'user_id' => $actor->id,
+            'status' => 'pending',
+            'workflow_status' => 'draft',
+        ]);
+    }
+
+    private function historyOffset(Customer $partner, ?string $workflowStatus, string $status, string $suffix): DebtOffset
+    {
+        $attributes = [
+            'code' => 'CB-HISTORY-'.strtoupper($suffix).'-'.uniqid(),
+            'customer_id' => $partner->id,
+            'amount' => '100000.00',
+            'is_auto' => false,
+            'status' => $status,
+            'workflow_status' => $workflowStatus,
+        ];
+        if ($workflowStatus === 'rejected') {
+            $attributes['rejection_reason'] = 'Fixture rejected reason';
+        }
+
+        return DebtOffset::create($attributes);
     }
 
     private function key(string $suffix): string

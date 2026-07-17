@@ -243,6 +243,79 @@ class DebtOffsetWorkflowTest extends TestCase
         }
     }
 
+    public function test_apply_replay_after_reverse_returns_current_state_without_duplicate_effect(): void
+    {
+        [$service, $partner, $offset, $applier] = $this->approvedOffset('1500000');
+        $applyToken = $offset->versionToken();
+        $applyKey = $this->key('apply-before-reverse');
+        $applied = $service->apply($offset, $applier, $applyToken, $applyKey);
+        $offset = DebtOffset::findOrFail($applied['debt_offset']['id']);
+        $service->reverse(
+            $offset,
+            $applier,
+            'Reverse before apply retry',
+            $offset->versionToken(),
+            $this->key('reverse-before-apply-retry'),
+        );
+
+        $balancesBefore = [$partner->fresh()->debt_amount, $partner->fresh()->supplier_debt_amount];
+        $countsBefore = [
+            DebtOffset::count(),
+            CashFlow::count(),
+            SupplierDebtTransaction::count(),
+            PartnerDebtOperation::count(),
+            PartnerDebtOperationParticipant::count(),
+            PartnerDebtOutboxEvent::count(),
+            ActivityLog::count(),
+        ];
+
+        $replay = $service->apply($offset->fresh(), $applier, $applyToken, $applyKey);
+
+        $this->assertTrue($replay['idempotent_replay']);
+        $this->assertSame('reversed', $replay['debt_offset']['workflow_status']);
+        $this->assertSame($balancesBefore, [$partner->fresh()->debt_amount, $partner->fresh()->supplier_debt_amount]);
+        $this->assertSame($countsBefore, [
+            DebtOffset::count(),
+            CashFlow::count(),
+            SupplierDebtTransaction::count(),
+            PartnerDebtOperation::count(),
+            PartnerDebtOperationParticipant::count(),
+            PartnerDebtOutboxEvent::count(),
+            ActivityLog::count(),
+        ]);
+
+        try {
+            $service->apply($offset->fresh(), $applier, str_repeat('a', 64), $applyKey);
+            $this->fail('Same key with a different request hash must still be rejected.');
+        } catch (DebtOffsetWorkflowException $exception) {
+            $this->assertSame('IDEMPOTENCY_KEY_REUSED', $exception->errorCode);
+        }
+    }
+
+    public function test_pending_and_failed_operations_are_not_replayed_as_success(): void
+    {
+        [$service, $partner, $offset, $applier] = $this->approvedOffset('500000');
+        $token = $offset->versionToken();
+        $key = $this->key('non-terminal-replay');
+        $service->apply($offset, $applier, $token, $key);
+        $operation = PartnerDebtOperation::where('operation_type', 'debt_offset.apply')
+            ->where('idempotency_key', $key)
+            ->firstOrFail();
+
+        foreach (['pending', 'failed'] as $status) {
+            $operation->forceFill(['status' => $status])->save();
+            try {
+                $service->apply($offset->fresh(), $applier, $token, $key);
+                $this->fail("An operation in {$status} must not replay as success.");
+            } catch (DebtOffsetWorkflowException $exception) {
+                $this->assertSame('IDEMPOTENCY_KEY_REUSED', $exception->errorCode);
+            }
+        }
+
+        $this->assertSame('4500000.00', $partner->fresh()->debt_amount);
+        $this->assertSame(1, CashFlow::where('reference_code', $offset->code)->count());
+    }
+
     public function test_apply_and_reverse_appear_exactly_once_in_customer_and_supplier_timelines(): void
     {
         [$service, $partner, $offset, $applier] = $this->approvedOffset('2000000');

@@ -1232,6 +1232,10 @@ class CustomerController extends Controller
     public function debtOffsetHistory(Customer $customer)
     {
         $offsets = \App\Models\DebtOffset::where('customer_id', $customer->id)
+            ->where(function ($builder): void {
+                $builder->whereNull('workflow_status')
+                    ->orWhereIn('workflow_status', ['applied', 'reversed']);
+            })
             ->with('user:id,name')
             ->orderByDesc('created_at')
             ->get()
