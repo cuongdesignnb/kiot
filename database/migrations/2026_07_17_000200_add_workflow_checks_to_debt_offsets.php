@@ -114,12 +114,57 @@ return new class extends Migration
                 continue;
             }
 
-            $dropKeyword = DB::connection()->getDriverName() === 'mariadb'
-                ? 'DROP CONSTRAINT'
-                : 'DROP CHECK';
-
-            DB::statement("ALTER TABLE `debt_offsets` {$dropKeyword} `{$check}`");
+            $this->dropCheckConstraint($check);
         }
+    }
+
+    private function dropCheckConstraint(string $constraint): void
+    {
+        if (! in_array($constraint, self::CHECKS, true)) {
+            throw new RuntimeException('UNEXPECTED_PR_D_CHECK_CONSTRAINT');
+        }
+
+        $operation = $this->dropOperationForFamily($this->databaseFamily());
+        DB::statement("ALTER TABLE `debt_offsets` {$operation} `{$constraint}`");
+    }
+
+    private function databaseFamily(): string
+    {
+        $row = DB::selectOne('SELECT VERSION() AS version, @@version_comment AS version_comment');
+
+        return $this->databaseFamilyFromServerMetadata(
+            (string) ($row->version ?? ''),
+            (string) ($row->version_comment ?? ''),
+        );
+    }
+
+    private function databaseFamilyFromServerMetadata(string $version, string $versionComment = ''): string
+    {
+        $normalizedVersion = strtolower(trim($version));
+        $fingerprint = $normalizedVersion.' '.strtolower(trim($versionComment));
+
+        if (str_contains($fingerprint, 'mariadb')) {
+            return 'mariadb';
+        }
+
+        if (
+            str_contains($fingerprint, 'mysql')
+            || str_contains($fingerprint, 'percona')
+            || preg_match('/^(?:5\.[67]|8\.\d+|9\.\d+)\.\d+(?:[-+.]|$)/', $normalizedVersion) === 1
+        ) {
+            return 'mysql';
+        }
+
+        throw new RuntimeException('UNSUPPORTED_DATABASE_FAMILY_FOR_CHECK_ROLLBACK');
+    }
+
+    private function dropOperationForFamily(string $family): string
+    {
+        return match ($family) {
+            'mysql' => 'DROP CHECK',
+            'mariadb' => 'DROP CONSTRAINT',
+            default => throw new RuntimeException('UNSUPPORTED_DATABASE_FAMILY_FOR_CHECK_ROLLBACK'),
+        };
     }
 
     private function checkExists(string $name): bool
