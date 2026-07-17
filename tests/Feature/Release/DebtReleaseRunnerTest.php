@@ -514,6 +514,9 @@ PHP;
             'resume-partial-ack' => true,
         ]));
         $this->assertSame('SUCCESSFUL_CLOSEOUT_CANNOT_BE_RESUMED', $failure->blocker);
+        $closeoutReport = ReleaseFiles::readJson(glob($this->auditRoot.'/debt-pr-d-production-deploy-*/deployment-report.json')[0]);
+        $this->assertSame('SUCCESS', $closeoutReport['deployment_status']);
+        $this->assertArrayNotHasKey('blocker', $closeoutReport);
     }
 
     public function test_migration_timeout_recovers_maintenance_and_writes_partial_evidence(): void

@@ -929,6 +929,9 @@ final class DebtReleaseRunner
             $this->writeCheckpoint($checkpointPath, $checkpoint, 'closeout_written');
             $successfulReportPath = $deploymentReportPath;
         } catch (ReleaseFailure $failure) {
+            if ($failure->blocker === 'SUCCESSFUL_CLOSEOUT_CANNOT_BE_RESUMED') {
+                throw $failure;
+            }
             if (isset($checkpoint)) {
                 $checkpoint['blocker'] = $failure->blocker;
                 $checkpoint['failed_at'] = ($this->clock)()->format(DATE_ATOM);
