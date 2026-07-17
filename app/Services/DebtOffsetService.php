@@ -6,7 +6,9 @@ use App\Models\CashFlow;
 use App\Models\Customer;
 use App\Models\DebtOffset;
 use App\Models\SupplierDebtTransaction;
+use App\Services\Debt\DebtOffsetWriteMode;
 
+/** @deprecated Use DebtOffsetWorkflowService when debt.offsets.write_mode is workflow. */
 class DebtOffsetService
 {
     /**
@@ -17,6 +19,8 @@ class DebtOffsetService
      */
     public static function offsetDebts(Customer $person): ?array
     {
+        app(DebtOffsetWriteMode::class)->assertLegacyAllowed();
+
         return static::doOffset($person, true, null);
     }
 
@@ -30,6 +34,8 @@ class DebtOffsetService
      */
     public static function manualOffset(Customer $person, float $amount, ?string $note = null): ?array
     {
+        app(DebtOffsetWriteMode::class)->assertLegacyAllowed();
+
         return static::doOffset($person, false, $note, $amount);
     }
 
@@ -42,6 +48,8 @@ class DebtOffsetService
      */
     public static function cancelOffset(DebtOffset $debtOffset, ?string $reason = null): array
     {
+        app(DebtOffsetWriteMode::class)->assertLegacyAllowed();
+
         $person = $debtOffset->customer;
         $amount = (float) $debtOffset->amount;
 

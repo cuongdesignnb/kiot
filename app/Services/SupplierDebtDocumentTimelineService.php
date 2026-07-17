@@ -360,6 +360,10 @@ class SupplierDebtDocumentTimelineService
 
         // 7. Supplier offsets (CB / HCB)
         $offsets = DebtOffset::where('customer_id', $supplier->id)
+            ->where(function ($query): void {
+                $query->whereNull('workflow_status')
+                    ->orWhereIn('workflow_status', ['applied', 'reversed']);
+            })
             ->whereNotIn('code', $existingCodes)
             ->get();
 
@@ -391,7 +395,7 @@ class SupplierDebtDocumentTimelineService
                 'source' => 'document_first',
             ]));
 
-            if ($offset->status === 'cancelled') {
+            if ($offset->status === 'cancelled' && ! $offset->reversalVoucher()->exists()) {
                 $cancelCode = 'HCB' . str_pad($offset->id, 6, '0', STR_PAD_LEFT);
                 $entries->push($this->createEntry([
                     'id' => 'offset-cancel-' . $offset->id,
@@ -669,7 +673,12 @@ class SupplierDebtDocumentTimelineService
             }
 
             // Customer Offsets (CB / HCB)
-            $customerOffsets = DebtOffset::where('customer_id', $supplier->id)->get();
+            $customerOffsets = DebtOffset::where('customer_id', $supplier->id)
+                ->where(function ($query): void {
+                    $query->whereNull('workflow_status')
+                        ->orWhereIn('workflow_status', ['applied', 'reversed']);
+                })
+                ->get();
             foreach ($customerOffsets as $offset) {
                 $entries->push($this->createEntry([
                     'id' => 'cust-offset-' . $offset->id,
@@ -698,7 +707,7 @@ class SupplierDebtDocumentTimelineService
                     'source' => 'document_first',
                 ]));
 
-                if ($offset->status === 'cancelled') {
+                if ($offset->status === 'cancelled' && ! $offset->reversalVoucher()->exists()) {
                     $cancelCode = 'HCB' . str_pad($offset->id, 6, '0', STR_PAD_LEFT);
                     $entries->push($this->createEntry([
                         'id' => 'cust-offset-cancel-' . $offset->id,

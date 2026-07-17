@@ -46,6 +46,11 @@ class HandleInertiaRequests extends Middleware
                 'locked' => (bool) $request->attributes->get('branch_locked', false),
                 'branch_id' => $request->attributes->get('locked_branch_id'),
             ],
+            'debt_offsets' => [
+                'write_mode' => config('debt.offsets.write_mode', 'legacy'),
+                'require_distinct_approver' => (bool) config('debt.offsets.require_distinct_approver', true),
+                'require_distinct_applier' => (bool) config('debt.offsets.require_distinct_applier', false),
+            ],
             'flash' => [
                 'success' => fn() => $request->session()->get('success'),
                 'error' => fn() => $request->session()->get('error'),

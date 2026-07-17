@@ -1,7 +1,7 @@
 <script setup>
 import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, watch, reactive, computed } from "vue";
-import { Head, router, Link, useForm } from "@inertiajs/vue3";
+import { Head, router, Link, useForm, usePage } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
@@ -9,7 +9,9 @@ import DateRangeFilter from "@/Components/Filters/DateRangeFilter.vue";
 import DateTimePicker from "@/Components/DateTimePicker.vue";
 import CustomerGroupCombobox from "@/Components/CustomerGroupCombobox.vue";
 import MoneyInput from "@/Components/MoneyInput.vue";
+import DebtOffsetRequestModal from "@/Components/DebtOffsets/DebtOffsetRequestModal.vue";
 import { useFilters } from "@/composables/useFilters.js";
+import { usePermission } from "@/composables/usePermission";
 import { nowDatetimeLocal } from "@/utils/dateTime.js";
 import axios from "axios";
 
@@ -19,6 +21,15 @@ const props = defineProps({
     filterOptions: { type: Object, default: () => ({}) },
     summary: Object,
 });
+
+const page = usePage();
+const { can } = usePermission();
+const workflowOffsetPartner = ref(null);
+const workflowOffsetEnabled = computed(() => page.props.debt_offsets?.write_mode === "workflow");
+const canCreateWorkflowOffset = computed(() => workflowOffsetEnabled.value && can("debt_offsets.create"));
+const openWorkflowOffset = (customer) => { workflowOffsetPartner.value = customer; };
+const closeWorkflowOffset = () => { workflowOffsetPartner.value = null; };
+const refreshAfterWorkflowOffset = () => router.reload({ only: ["customers"], preserveScroll: true });
 
 // HOTFIX 24.4A-2 — triple-safe defensive guard: default object + spread + strict === true.
 const defaultCapabilities = {
@@ -1612,7 +1623,14 @@ const createdDateRange = computed({
                                         {{ customer.code }}
                                     </div>
                                 </td>
-                                <td class="px-4 py-3">{{ customer.name }}</td>
+                                <td class="px-4 py-3">
+                                    <div>{{ customer.name }}</div>
+                                    <button
+                                        v-if="canCreateWorkflowOffset && customer.is_supplier && Number(customer.debt_amount) > 0 && Number(customer.supplier_debt_amount) > 0"
+                                        class="mt-1 text-xs font-semibold text-blue-700 hover:underline"
+                                        @click.stop="openWorkflowOffset(customer)"
+                                    >Tạo yêu cầu cấn trừ</button>
+                                </td>
                                 <td class="px-4 py-3">{{ customer.phone }}</td>
                                 <td class="px-4 py-3 text-right">
                                     <div
@@ -4653,6 +4671,14 @@ const createdDateRange = computed({
                 </div>
             </div>
         </div>
+
+        <DebtOffsetRequestModal
+            :show="!!workflowOffsetPartner"
+            :partner="workflowOffsetPartner"
+            :can-submit="can('debt_offsets.submit')"
+            @close="closeWorkflowOffset"
+            @success="refreshAfterWorkflowOffset"
+        />
     </AppLayout>
 </template>
 

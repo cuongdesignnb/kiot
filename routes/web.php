@@ -23,6 +23,7 @@ use App\Http\Controllers\PurchaseReturnController;
 use App\Http\Controllers\SettingController;
 use App\Http\Controllers\TaskPageController;
 use App\Http\Controllers\ReportController;
+use App\Http\Controllers\DebtOffsetWorkflowController;
 
 // Auth routes (guest)
 Route::middleware('guest')->group(function () {
@@ -89,6 +90,28 @@ Route::get('/customers/{customer}/merge-preview', [CustomerController::class, 'm
 Route::post('/customers/{customer}/debt-offset', [CustomerController::class, 'debtOffset'])->middleware('permission:customers.edit');
 Route::post('/customers/{customer}/cancel-debt-offset/{debtOffset}', [CustomerController::class, 'cancelDebtOffset'])->middleware('permission:customers.edit');
 Route::get('/customers/{customer}/debt-offset-history', [CustomerController::class, 'debtOffsetHistory'])->middleware('permission:customers.view');
+
+// Controlled debt-offset workflow. Write mode is enforced again inside the domain service.
+Route::get('/debt-offsets', [DebtOffsetWorkflowController::class, 'index'])
+    ->name('debt-offsets.index')->middleware('permission:debt_offsets.view');
+Route::get('/debt-offsets/{debtOffset}', [DebtOffsetWorkflowController::class, 'show'])
+    ->name('debt-offsets.show')->middleware('permission:debt_offsets.view');
+Route::post('/customers/{customer}/debt-offsets', [DebtOffsetWorkflowController::class, 'store'])
+    ->name('debt-offsets.store')->middleware('permission:debt_offsets.create');
+Route::patch('/debt-offsets/{debtOffset}', [DebtOffsetWorkflowController::class, 'update'])
+    ->name('debt-offsets.update')->middleware('permission:debt_offsets.create');
+Route::post('/debt-offsets/{debtOffset}/submit', [DebtOffsetWorkflowController::class, 'submit'])
+    ->name('debt-offsets.submit')->middleware('permission:debt_offsets.submit');
+Route::post('/debt-offsets/{debtOffset}/approve', [DebtOffsetWorkflowController::class, 'approve'])
+    ->name('debt-offsets.approve')->middleware('permission:debt_offsets.approve');
+Route::post('/debt-offsets/{debtOffset}/reject', [DebtOffsetWorkflowController::class, 'reject'])
+    ->name('debt-offsets.reject')->middleware('permission:debt_offsets.reject');
+Route::post('/debt-offsets/{debtOffset}/apply', [DebtOffsetWorkflowController::class, 'apply'])
+    ->name('debt-offsets.apply')->middleware('permission:debt_offsets.apply');
+Route::post('/debt-offsets/{debtOffset}/reverse', [DebtOffsetWorkflowController::class, 'reverse'])
+    ->name('debt-offsets.reverse')->middleware('permission:debt_offsets.reverse');
+Route::post('/debt-offsets/{debtOffset}/void', [DebtOffsetWorkflowController::class, 'void'])
+    ->name('debt-offsets.void')->middleware('permission:debt_offsets.void');
 
 // Step 24.4A: Customer Group master data API
 Route::get('/customer-groups/options', [App\Http\Controllers\CustomerGroupController::class, 'options'])->name('customer-groups.options');
