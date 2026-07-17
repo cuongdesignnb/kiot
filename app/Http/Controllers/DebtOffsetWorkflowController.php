@@ -221,7 +221,7 @@ final class DebtOffsetWorkflowController extends Controller
         if ($branchId !== null && ! in_array((int) $branchId, $branchIds, true)) {
             throw DebtOffsetWorkflowException::forbidden(
                 'BRANCH_SCOPE_FORBIDDEN',
-                'Báº¡n khÃ´ng Ä‘Æ°á»£c xem phiáº¿u cáº¥n trá»« ngoÃ i pháº¡m vi chi nhÃ¡nh.'
+                'Bạn không được xem phiếu cấn trừ ngoài phạm vi chi nhánh.'
             );
         }
     }
