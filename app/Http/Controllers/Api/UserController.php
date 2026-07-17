@@ -3,13 +3,17 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Role;
 use App\Models\User;
+use App\Services\Security\RoleUserAdministrationGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
 
 class UserController extends Controller
 {
+    public function __construct(private readonly RoleUserAdministrationGuard $guard) {}
+
     public function index(Request $request)
     {
         $query = User::with(['role:id,name,display_name', 'branch:id,name'])
@@ -19,8 +23,8 @@ class UserController extends Controller
             $s = $request->search;
             $query->where(function ($q) use ($s) {
                 $q->where('name', 'like', "%{$s}%")
-                  ->orWhere('email', 'like', "%{$s}%")
-                  ->orWhere('phone', 'like', "%{$s}%");
+                    ->orWhere('email', 'like', "%{$s}%")
+                    ->orWhere('phone', 'like', "%{$s}%");
             });
         }
 
@@ -37,56 +41,73 @@ class UserController extends Controller
     public function store(Request $request)
     {
         $data = $request->validate([
-            'name'       => 'required|string|max:100',
-            'email'      => 'required|email|unique:users,email',
-            'password'   => 'required|string|min:6',
-            'phone'      => 'nullable|string|max:20',
-            'role_id'    => 'nullable|exists:roles,id',
-            'branch_id'  => 'nullable|exists:branches,id',
-            'status'     => 'nullable|in:active,locked',
+            'name' => 'required|string|max:100',
+            'email' => 'required|email|unique:users,email',
+            'password' => 'required|string|min:6',
+            'phone' => 'nullable|string|max:20',
+            'role_id' => 'nullable|exists:roles,id',
+            'branch_id' => 'nullable|exists:branches,id',
+            'status' => 'nullable|in:active,locked',
             'branch_ids' => 'nullable|array',
             'branch_ids.*' => 'exists:branches,id',
         ]);
 
+        $assignedRole = $this->resolveRole($data['role_id'] ?? null);
+        $this->guard->assertCanCreateUser($request->user(), $assignedRole);
+
         $user = User::create([
-            'name'      => $data['name'],
-            'email'     => $data['email'],
-            'password'  => Hash::make($data['password']),
-            'phone'     => $data['phone'] ?? null,
-            'role_id'   => $data['role_id'] ?? null,
+            'name' => $data['name'],
+            'email' => $data['email'],
+            'password' => Hash::make($data['password']),
+            'phone' => $data['phone'] ?? null,
+            'role_id' => $assignedRole?->id,
             'branch_id' => $data['branch_id'] ?? null,
-            'status'    => $data['status'] ?? 'active',
+            'status' => $data['status'] ?? 'active',
         ]);
 
-        if (!empty($data['branch_ids'])) {
-            $user->branchAccess()->sync($data['branch_ids']);
+        if (array_key_exists('branch_ids', $data)) {
+            $user->branchAccess()->sync($data['branch_ids'] ?? []);
         }
 
         $user->load(['role:id,name,display_name', 'branch:id,name']);
+
         return response()->json($user, 201);
     }
 
     public function update(Request $request, User $user)
     {
         $data = $request->validate([
-            'name'       => 'required|string|max:100',
-            'email'      => ['required', 'email', Rule::unique('users', 'email')->ignore($user->id)],
-            'password'   => 'nullable|string|min:6',
-            'phone'      => 'nullable|string|max:20',
-            'role_id'    => 'nullable|exists:roles,id',
-            'branch_id'  => 'nullable|exists:branches,id',
-            'status'     => 'nullable|in:active,locked',
+            'name' => 'required|string|max:100',
+            'email' => ['required', 'email', Rule::unique('users', 'email')->ignore($user->id)],
+            'password' => 'nullable|string|min:6',
+            'phone' => 'nullable|string|max:20',
+            'role_id' => 'nullable|exists:roles,id',
+            'branch_id' => 'nullable|exists:branches,id',
+            'status' => 'nullable|in:active,locked',
             'branch_ids' => 'nullable|array',
             'branch_ids.*' => 'exists:branches,id',
         ]);
 
-        $user->name      = $data['name'];
-        $user->email     = $data['email'];
-        $user->phone     = $data['phone'] ?? null;
-        $user->role_id   = $data['role_id'] ?? null;
-        $user->branch_id = $data['branch_id'] ?? null;
-        $user->status    = $data['status'] ?? 'active';
-        if (!empty($data['password'])) {
+        $roleId = array_key_exists('role_id', $data) ? $data['role_id'] : $user->role_id;
+        $assignedRole = $this->resolveRole($roleId);
+        $roleChanged = $this->roleChanged($user->role_id, $assignedRole?->id);
+        $status = $data['status'] ?? $user->status ?? 'active';
+
+        $this->guard->assertCanUpdateUser(
+            $request->user(),
+            $user,
+            $assignedRole,
+            $roleChanged,
+            $status
+        );
+
+        $user->name = $data['name'];
+        $user->email = $data['email'];
+        $user->phone = array_key_exists('phone', $data) ? $data['phone'] : $user->phone;
+        $user->role_id = $assignedRole?->id;
+        $user->branch_id = array_key_exists('branch_id', $data) ? $data['branch_id'] : $user->branch_id;
+        $user->status = $status;
+        if (! empty($data['password'])) {
             $user->password = Hash::make($data['password']);
         }
         $user->save();
@@ -96,16 +117,29 @@ class UserController extends Controller
         }
 
         $user->load(['role:id,name,display_name', 'branch:id,name']);
+
         return response()->json($user);
     }
 
-    public function destroy(User $user)
+    public function destroy(Request $request, User $user)
     {
-        if ($user->id === auth()->id()) {
-            return response()->json(['message' => 'Không thể xóa tài khoản đang đăng nhập.'], 422);
-        }
+        $this->guard->assertCanDeleteUser($request->user(), $user);
+
         $user->branchAccess()->detach();
         $user->delete();
+
         return response()->json(['message' => 'Đã xóa tài khoản.']);
+    }
+
+    private function resolveRole(int|string|null $roleId): ?Role
+    {
+        return $roleId === null ? null : Role::query()->findOrFail((int) $roleId);
+    }
+
+    private function roleChanged(int|string|null $currentRoleId, ?int $assignedRoleId): bool
+    {
+        return $currentRoleId === null
+            ? $assignedRoleId !== null
+            : (int) $currentRoleId !== $assignedRoleId;
     }
 }
