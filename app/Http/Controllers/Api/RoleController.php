@@ -4,33 +4,42 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Role;
+use App\Services\Security\RoleUserAdministrationGuard;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class RoleController extends Controller
 {
+    public function __construct(private readonly RoleUserAdministrationGuard $guard) {}
+
     public function index()
     {
         $roles = Role::withCount('users')->orderBy('is_system', 'desc')->orderBy('id')->get();
+
         return response()->json($roles);
     }
 
     public function show(Role $role)
     {
         $role->loadCount('users');
+
         return response()->json($role);
     }
 
     public function store(Request $request)
     {
         $data = $request->validate([
-            'name'         => 'required|string|max:50|unique:roles,name',
+            'name' => 'required|string|max:50|unique:roles,name',
             'display_name' => 'required|string|max:100',
-            'description'  => 'nullable|string|max:255',
-            'permissions'  => 'required|array',
-            'permissions.*' => 'string',
+            'description' => 'nullable|string|max:255',
+            'permissions' => 'required|array',
+            'permissions.*' => ['string', 'distinct', Rule::in($this->assignablePermissionKeys())],
         ]);
 
+        $this->guard->assertCanCreateRole($request->user(), $data['permissions']);
+
         $role = Role::create($data);
+
         return response()->json($role, 201);
     }
 
@@ -38,17 +47,22 @@ class RoleController extends Controller
     {
         $data = $request->validate([
             'display_name' => 'required|string|max:100',
-            'description'  => 'nullable|string|max:255',
-            'permissions'  => 'required|array',
-            'permissions.*' => 'string',
+            'description' => 'nullable|string|max:255',
+            'permissions' => 'required|array',
+            'permissions.*' => ['string', 'distinct', Rule::in($this->assignablePermissionKeys())],
         ]);
 
+        $this->guard->assertCanUpdateRole($request->user(), $role, $data['permissions']);
+
         $role->update($data);
+
         return response()->json($role);
     }
 
-    public function destroy(Role $role)
+    public function destroy(Request $request, Role $role)
     {
+        $this->guard->assertCanDeleteRole($request->user(), $role);
+
         if ($role->is_system) {
             return response()->json(['message' => 'Không thể xóa vai trò hệ thống.'], 422);
         }
@@ -56,6 +70,7 @@ class RoleController extends Controller
             return response()->json(['message' => 'Vai trò đang được gán cho người dùng, không thể xóa.'], 422);
         }
         $role->delete();
+
         return response()->json(['message' => 'Đã xóa vai trò.']);
     }
 
@@ -70,15 +85,23 @@ class RoleController extends Controller
     /**
      * Clone a role.
      */
-    public function duplicate(Role $role)
+    public function duplicate(Request $request, Role $role)
     {
+        $this->guard->assertCanDuplicateRole($request->user(), $role);
+
         $new = Role::create([
-            'name'         => $role->name . '_copy_' . time(),
-            'display_name' => $role->display_name . ' (Bản sao)',
-            'description'  => $role->description,
-            'permissions'  => $role->permissions,
-            'is_system'    => false,
+            'name' => $role->name.'_copy_'.time(),
+            'display_name' => $role->display_name.' (Bản sao)',
+            'description' => $role->description,
+            'permissions' => $role->permissions,
+            'is_system' => false,
         ]);
+
         return response()->json($new, 201);
+    }
+
+    private function assignablePermissionKeys(): array
+    {
+        return [...Role::getAllPermissionKeys(), '*'];
     }
 }
