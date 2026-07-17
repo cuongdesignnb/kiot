@@ -1162,6 +1162,8 @@ class CustomerController extends Controller
      */
     public function debtOffset(Request $request, Customer $customer)
     {
+        app(\App\Services\Debt\DebtOffsetWriteMode::class)->assertLegacyAllowed();
+
         $validated = $request->validate([
             'amount' => 'required|numeric|min:1',
             'note' => 'nullable|string|max:500',
@@ -1201,6 +1203,8 @@ class CustomerController extends Controller
      */
     public function cancelDebtOffset(Request $request, Customer $customer, \App\Models\DebtOffset $debtOffset)
     {
+        app(\App\Services\Debt\DebtOffsetWriteMode::class)->assertLegacyAllowed();
+
         $validated = $request->validate([
             'reason' => 'nullable|string|max:500',
         ]);
@@ -1228,6 +1232,10 @@ class CustomerController extends Controller
     public function debtOffsetHistory(Customer $customer)
     {
         $offsets = \App\Models\DebtOffset::where('customer_id', $customer->id)
+            ->where(function ($builder): void {
+                $builder->whereNull('workflow_status')
+                    ->orWhereIn('workflow_status', ['applied', 'reversed']);
+            })
             ->with('user:id,name')
             ->orderByDesc('created_at')
             ->get()

@@ -25,6 +25,7 @@ class CustomerDebtDocumentTimelineService
 
         $entries = collect();
         $purchases = collect();
+        $workflowOffsetsForConsolidation = collect();
         $excludedLedgerEntries = [];
         $includeTechnical = (bool) ($options['include_technical'] ?? $options['audit'] ?? false);
 
@@ -410,7 +411,12 @@ class CustomerDebtDocumentTimelineService
         }
 
         // 8. DebtOffsets for Customer (active non-dual-role)
-        $offsets = $isDualRole ? collect() : DebtOffset::where('customer_id', $customer->id)->get();
+        $offsets = $isDualRole ? collect() : DebtOffset::where('customer_id', $customer->id)
+            ->where(function ($query): void {
+                $query->whereNull('workflow_status')
+                    ->orWhereIn('workflow_status', ['applied', 'reversed']);
+            })
+            ->get();
         foreach ($offsets as $offset) {
             $entries->push($this->createEntry([
                 'id' => 'offset-' . $offset->id,
@@ -439,7 +445,7 @@ class CustomerDebtDocumentTimelineService
                 'source' => 'document_first',
             ]));
 
-            if ($offset->status === 'cancelled') {
+            if ($offset->status === 'cancelled' && ! $offset->reversalVoucher()->exists()) {
                 $cancelCode = 'HCB' . str_pad($offset->id, 6, '0', STR_PAD_LEFT);
                 $entries->push($this->createEntry([
                     'id' => 'offset-cancel-' . $offset->id,
@@ -686,7 +692,15 @@ class CustomerDebtDocumentTimelineService
             }
 
             // Supplier DebtOffsets
-            $supplierOffsets = DebtOffset::where('customer_id', $customer->id)->get();
+            $supplierOffsets = DebtOffset::where('customer_id', $customer->id)
+                ->where(function ($query): void {
+                    $query->whereNull('workflow_status')
+                        ->orWhereIn('workflow_status', ['applied', 'reversed']);
+                })
+                ->get();
+            $workflowOffsetsForConsolidation = $supplierOffsets
+                ->whereNotNull('workflow_status')
+                ->values();
             foreach ($supplierOffsets as $offset) {
                 $entries->push($this->createEntry([
                     'id' => 'sup-offset-' . $offset->id,
@@ -715,7 +729,7 @@ class CustomerDebtDocumentTimelineService
                     'source' => 'document_first',
                 ]));
 
-                if ($offset->status === 'cancelled') {
+                if ($offset->status === 'cancelled' && ! $offset->reversalVoucher()->exists()) {
                     $cancelCode = 'HCB' . str_pad($offset->id, 6, '0', STR_PAD_LEFT);
                     $entries->push($this->createEntry([
                         'id' => 'sup-offset-cancel-' . $offset->id,
@@ -746,6 +760,8 @@ class CustomerDebtDocumentTimelineService
                 }
             }
         }
+
+        $entries = $this->consolidateWorkflowOffsetEvidence($entries, $workflowOffsetsForConsolidation);
 
         // Dedup by non-null code: if we have a document-first entry and a ledger entry with the same code, prefer the document-first one.
         $deduped = [];
@@ -1122,6 +1138,44 @@ class CustomerDebtDocumentTimelineService
         }
 
         return [$displayType, $eventKind, $badgeLabel];
+    }
+
+    private function consolidateWorkflowOffsetEvidence(Collection $entries, Collection $workflowOffsets): Collection
+    {
+        foreach ($workflowOffsets as $offset) {
+            $code = (string) $offset->code;
+            $matching = $entries->filter(fn (array $entry): bool => (string) ($entry['code'] ?? '') === $code);
+            $voucher = $matching->first(fn (array $entry): bool => ($entry['id'] ?? null) === 'sup-offset-'.$offset->id);
+            if (! is_array($voucher)) {
+                continue;
+            }
+
+            $economicEvidence = $matching->reject(
+                fn (array $entry): bool => str_starts_with((string) ($entry['id'] ?? ''), 'sup-offset-')
+            );
+            $netEffect = (float) $economicEvidence->sum(
+                fn (array $entry): float => (float) ($entry['customer_display_effect'] ?? $entry['display_effect'] ?? 0)
+            );
+
+            $voucher['display_effect'] = $netEffect;
+            $voucher['customer_display_effect'] = $netEffect;
+            $voucher['customer_effect'] = $netEffect;
+            $voucher['evidence_consolidated'] = true;
+            $voucher['evidence_sources'] = $economicEvidence
+                ->map(fn (array $entry): array => [
+                    'id' => $entry['id'] ?? null,
+                    'reference_type' => $entry['reference_type'] ?? null,
+                    'reference_id' => $entry['reference_id'] ?? null,
+                ])
+                ->values()
+                ->all();
+
+            $entries = $entries
+                ->reject(fn (array $entry): bool => (string) ($entry['code'] ?? '') === $code)
+                ->push($voucher);
+        }
+
+        return $entries->values();
     }
 
     private function createEntry(array $data): array

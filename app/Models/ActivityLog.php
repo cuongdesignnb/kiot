@@ -78,6 +78,14 @@ class ActivityLog extends Model
     const ACTION_CUSTOMER_DEBT_PAYMENT = 'customer_debt_payment';
     const ACTION_CUSTOMER_DEBT_ADJUST  = 'customer_debt_adjust';
     const ACTION_CUSTOMER_DEBT_OFFSET  = 'customer_debt_offset';
+    const ACTION_DEBT_OFFSET_DRAFT_CREATE = 'debt_offset_draft_create';
+    const ACTION_DEBT_OFFSET_DRAFT_UPDATE = 'debt_offset_draft_update';
+    const ACTION_DEBT_OFFSET_SUBMIT = 'debt_offset_submit';
+    const ACTION_DEBT_OFFSET_APPROVE = 'debt_offset_approve';
+    const ACTION_DEBT_OFFSET_REJECT = 'debt_offset_reject';
+    const ACTION_DEBT_OFFSET_APPLY = 'debt_offset_apply';
+    const ACTION_DEBT_OFFSET_REVERSE = 'debt_offset_reverse';
+    const ACTION_DEBT_OFFSET_VOID = 'debt_offset_void';
 
     // Sổ quỹ
     const ACTION_CASHFLOW_CREATE = 'cashflow_create';
@@ -176,6 +184,14 @@ class ActivityLog extends Model
         'customer_debt_payment' => 'Thanh toán công nợ khách hàng',
         'customer_debt_adjust'  => 'Điều chỉnh công nợ khách hàng',
         'customer_debt_offset'  => 'Cấn trừ công nợ',
+        'debt_offset_draft_create' => 'Tạo bản nháp cấn trừ công nợ',
+        'debt_offset_draft_update' => 'Cập nhật bản nháp cấn trừ công nợ',
+        'debt_offset_submit' => 'Gửi yêu cầu cấn trừ công nợ',
+        'debt_offset_approve' => 'Duyệt yêu cầu cấn trừ công nợ',
+        'debt_offset_reject' => 'Từ chối yêu cầu cấn trừ công nợ',
+        'debt_offset_apply' => 'Áp dụng cấn trừ công nợ',
+        'debt_offset_reverse' => 'Đảo phiếu cấn trừ công nợ',
+        'debt_offset_void' => 'Hủy bản nháp cấn trừ công nợ',
         'cashflow_create'   => 'Tạo phiếu thu/chi',
         'cashflow_cancel'   => 'Hủy phiếu thu/chi',
         'cashflow_transfer' => 'Chuyển quỹ',
@@ -257,6 +273,14 @@ class ActivityLog extends Model
         'customer_debt_payment' => '💵',
         'customer_debt_adjust'  => '⚖️',
         'customer_debt_offset'  => '🔄',
+        'debt_offset_draft_create' => '⇄',
+        'debt_offset_draft_update' => '⇄',
+        'debt_offset_submit' => '⇄',
+        'debt_offset_approve' => '⇄',
+        'debt_offset_reject' => '⇄',
+        'debt_offset_apply' => '⇄',
+        'debt_offset_reverse' => '⇄',
+        'debt_offset_void' => '⇄',
         'cashflow_create'   => '💰',
         'cashflow_cancel'   => '🚫',
         'cashflow_transfer' => '🔄',

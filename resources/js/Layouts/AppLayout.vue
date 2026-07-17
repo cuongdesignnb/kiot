@@ -283,6 +283,12 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                         }"
                         >Khách hàng</Link
                     >
+                    <Link
+                        v-if="page.props.debt_offsets?.write_mode === 'workflow' && can('debt_offsets.view')"
+                        href="/debt-offsets"
+                        class="px-3 py-2 hover:bg-[#005bb5] rounded"
+                        :class="{ 'bg-[#005bb5]': $page.url.startsWith('/debt-offsets') }"
+                    >Cấn trừ công nợ</Link>
                     <div v-if="canAny(['employees.view'])" class="relative group">
                         <button
                             class="px-3 py-2 hover:bg-[#005bb5] rounded flex items-center gap-1"

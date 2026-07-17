@@ -320,6 +320,10 @@ class PartnerDebtLedgerService
         // SupplierDebtTransaction with the same code already supplied it.
         $existingCodes = $entries->pluck('code')->filter()->map(fn ($c) => (string) $c)->all();
         $offsets = DebtOffset::where('customer_id', $supplier->id)
+            ->where(function ($query): void {
+                $query->whereNull('workflow_status')
+                    ->orWhereIn('workflow_status', ['applied', 'reversed']);
+            })
             ->whereNotIn('code', $existingCodes)
             ->get();
         foreach ($offsets as $offset) {
@@ -346,7 +350,7 @@ class PartnerDebtLedgerService
                 'detail_available' => false,
             ]);
 
-            if ($offset->status === 'cancelled') {
+            if ($offset->status === 'cancelled' && ! $offset->reversalVoucher()->exists()) {
                 $cancelCode = 'HCB' . str_pad((string) $offset->id, 6, '0', STR_PAD_LEFT);
                 $entries->push([
                     'id' => 'offset-cancel-' . $offset->id,
@@ -445,7 +449,12 @@ class PartnerDebtLedgerService
         $hasSupplierColumn = Schema::hasColumn('customers', 'supplier_debt_amount');
         $isDualRole = (bool) ($customer->is_customer && ($hasSupplierColumn ? $customer->is_supplier : false));
 
-        $offsets = $isDualRole ? collect() : DebtOffset::where('customer_id', $customer->id)->get();
+        $offsets = $isDualRole ? collect() : DebtOffset::where('customer_id', $customer->id)
+            ->where(function ($query): void {
+                $query->whereNull('workflow_status')
+                    ->orWhereIn('workflow_status', ['applied', 'reversed']);
+            })
+            ->get();
         foreach ($offsets as $offset) {
             $combined->push($this->entry([
                 'id' => 'offset-' . $offset->id,
@@ -468,7 +477,7 @@ class PartnerDebtLedgerService
                 'detail_available' => false,
             ]));
 
-            if ($offset->status === 'cancelled') {
+            if ($offset->status === 'cancelled' && ! $offset->reversalVoucher()->exists()) {
                 $cancelCode = 'HCB' . str_pad($offset->id, 6, '0', STR_PAD_LEFT);
                 $combined->push($this->entry([
                     'id' => 'offset-cancel-' . $offset->id,
