@@ -1,8 +1,8 @@
 # All-partner debt parity and zero-drift validation
 
-**DEBT_PARITY_ZERO_DRIFT_STATUS=BLOCKED**
+**DEBT_PARITY_ZERO_DRIFT_STATUS=COMPLETE**
 
-**TASK_CODE=DEBT-PARITY-LATEST-BACKUP-CLOSURE-01**
+**TASK_CODE=PR30-FOUR-PROJECTION-FINAL-CLOSURE**
 
 **PR=#30**
 
@@ -12,11 +12,236 @@ changed, no deployment or merge was performed, and
 DEBT_OFFSET_WRITE_MODE=legacy remained in effect. The debt-offset
 workflow/outbox write path was not enabled.
 
-## P0 final-unblock clean revalidation (authoritative, 2026-07-18)
+## P0 four-projection final closure (authoritative, 2026-07-18)
 
-This is the authoritative result for the final-unblock request. It supersedes
-the earlier 331/332 and 332/332 clone claims retained below as investigation
-history. Revalidation started from the requested branch input head
+This is the current authoritative result. Clean revalidation found four stale
+stored projections. Expanded owner approval covered exactly partners 16, 72,
+78 and 148. A newly generated guarded plan was applied on two independent
+clones restored from the immutable backup. Both clones reached 332/332, the
+second apply changed zero rows on each clone, and production remained
+untouched. All older `BLOCKED` results below are retained only as investigation
+history.
+
+```text
+PR30_CLOSURE_STATUS=READY
+TASK_CODE=PR30-FOUR-PROJECTION-FINAL-CLOSURE
+PR_NUMBER=30
+PR_DRAFT=no
+PR_MERGED=no
+PREVIOUS_HEAD_SHA=71e251c66bec130688579b4703725f95488b2286
+FINAL_HEAD_SHA=the Git commit carrying this report; see PR metadata and final handoff
+
+APPROVED_PARTNER_IDS=16,72,78,148
+PLANNED_REPAIR_ROWS=4
+CLONE_1_FIRST_APPLY_ROWS_CHANGED=4
+CLONE_2_FIRST_APPLY_ROWS_CHANGED=4
+CLONE_1_SECOND_APPLY_ROWS_CHANGED=0
+CLONE_2_SECOND_APPLY_ROWS_CHANGED=0
+CLONE_1_PARITY=332/332
+CLONE_2_PARITY=332/332
+
+MATERIAL_DRIFT=0
+INSUFFICIENT_EVIDENCE=0
+TECHNICAL_WARNINGS=0
+DUPLICATE_WARNINGS=0
+RAW_TIMELINE_MISMATCHES=0
+AUDIT_ERRORS=0
+UNKNOWN_ROOT_CAUSES=0
+
+PR30_DEBT_IMPLEMENTATION_STATUS=COMPLETE
+CLONE_DEBT_REPAIR_VALIDATION=PASS
+PRODUCTION_DEBT_REPAIR_STATUS=NOT_APPLIED
+PRODUCTION_ACCESSED=no
+PRODUCTION_DATABASE_CHANGED=no
+PRODUCTION_DEPLOYED=no
+```
+
+### Immutable source and independent-clone gate
+
+- Backup: `backups/debt-parity-latest-20260718-151155/database.sql.zip`.
+- Backup SHA-256:
+  `026c7f510a5202eb7cf205150736c4fb2c9f0fc105a6ee4a274aa81cb91d2784`.
+- Engine and population: MariaDB 10.11.10, 332 customers.
+- Database fingerprint:
+  `3fadb19546b017496664b0f8e9bb4c808ebf2e280b3857460c27b3cea17ccecc`.
+- Clean schema hash on both clones:
+  `2b8f83c5fb8b7f753f007c83df6acbb559e6b4f80725c0ddc145f02d4e42dbd4`.
+- Clean table-count hash on both clones:
+  `cb2dddd15b1c311dd37abaf832ff84815ac1d882729828f73bbcb26417b8893e`.
+- Clean table-checksum hash on both clones:
+  `fabdd228273df4a78b6ee6ea2ac1323695012a33fa910b4c404c5f2cf3d82cc5`.
+- Clean projection-row hash on both clones:
+  `14745ece081970bb87928f2bcbe0bd7de58e1ed5cace2e917e256e1fb7ee9baf`.
+- Reconstructed historical-baseline projection hash on both clones:
+  `f96f1b4827e6d040dfb321db65acd190f3ff378dbfe716b4458a21af110eb8c4`.
+
+Clone 2 was restored directly from the immutable SQL, not copied from clone 1.
+Before repair, both current-head audits scanned 332 partners and produced 328
+`OK` rows plus exactly four material drifts, with no insufficient evidence,
+technical warning, duplicate warning, audit error, blocking flag, manual-review
+row, or unknown root cause.
+
+### Guarded plans and approved targets
+
+Clone 1 authoritative plan metadata:
+
+```text
+NEW_AUDIT_SHA256=52d1ba82b0be7b63023473242a51231154b35d8871ba6f16363fb8ad20db521f
+NEW_DATABASE_FINGERPRINT=3fadb19546b017496664b0f8e9bb4c808ebf2e280b3857460c27b3cea17ccecc
+NEW_PLAN_HASH=92e16d99fa0d80876cdc9f0bf15b8de897108b72826669250c95ae1230e753ca
+NEW_APPROVAL_HASH=a92001df7111752f1a2eb4ffc4514fbcbe33668ad054d0001d3d7ac3232c1707
+PLAN_FILE_SHA256=fdaef2a4ae38f612696d460de103502d6dd89a6c79fd255f1e8ccdb7c3adf773
+```
+
+Clone 2 independently regenerated its audit and plan. Its source audit SHA is
+`d92ae847b0d503934ce1b94d28ee16f00f7ea16420f06f46a3a79a4dbca4ca45`,
+plan hash is
+`a5aed0a6f34244e2d1551a32d307533cb60e688a26bfec50a8a61f3e4e85399f`,
+and approval hash is
+`d2acff25ef8cc7de06210a55bc823576cf337c4bde5a4ee2cc21bc02962b750a`.
+The expected audit-generation timestamp makes the raw audit and guarded hashes
+different. After removing that volatile provenance, the four repair rows have
+the same normalized hash on both clones:
+`b60f3d3f7040fad7d61dee0b26dc830d71c79940c3eac741f5addc7412775be1`.
+
+| Partner | Role | Customer before | Customer target | Supplier before/target |
+| --- | --- | ---: | ---: | ---: |
+| 16 `NCC177425584137` | dual-role | 17,200,000 | 8,600,000 | 10,640,000 |
+| 72 `KH177561736414` | customer-only | 4,940,000 | 2,370,000 | 0 |
+| 78 `KH177598487429` | dual-role | -14,000,000 | 0 | 0 |
+| 148 `KH177794725633` | customer-only | -1,010,000 | 0 | 0 |
+
+On each clone, dry-run selected four repairs, changed zero rows, and left the
+historical-baseline projection hash unchanged. Apply used the exact four-code
+allowlist and the approval hash belonging to that clone's regenerated plan.
+
+### Evidence, transaction, replay, and final values
+
+The financial evidence dossiers contain persisted business documents, active
+and cancelled/soft-deleted CashFlows, customer debt mirrors, supplier debt
+transactions, offset/reversal evidence, canonical and reference-only event
+lists, arithmetic, stored projections, and raw differences.
+
+- Partner 16 includes the persisted cancellation reversal and reduces customer
+  receivable to 8,600,000; supplier payable remains 10,640,000.
+- Partner 72 includes the persisted cancellation reversal omitted by the stale
+  projection and reduces receivable to 2,370,000.
+- Partner 78 has the exactly-once stream `+15,000,000` invoice,
+  `-1,000,000` real receipt, `-14,000,000` customer and supplier DebtOffset
+  effects, and `+14,000,000` purchase. Offset mirrors are reference-only, so
+  both canonical sides are zero.
+- Partner 148's payment mirror is reference-only because its source CashFlow is
+  cancelled and soft-deleted; no replacement payment or adjustment was made.
+
+Clone 1 operation `eb3ee1ca-9bf0-47c1-9922-34374d5cf7e1` and clone 2 operation
+`22a7bb40-d7f9-465e-a977-9e9a47bed25b` each committed one transaction with four
+participants and four ActivityLog rows. Domain table counts were unchanged:
+401 invoices, 442 purchases, 795 CashFlows, 100 customer-debt rows, 236
+supplier-debt transactions, one DebtOffset, 32 returns, and nine purchase
+returns. No synthetic customer, invoice, purchase, CashFlow, ledger adjustment,
+offset, or opening balance was created.
+
+```text
+ONE_DATABASE_TRANSACTION=yes
+PARTNER_ROWS_LOCKED=yes
+BEFORE_SNAPSHOTS=yes
+AFTER_SNAPSHOTS=yes
+OPERATION_PARTICIPANTS=4
+ACTIVITY_LOG=yes
+IDEMPOTENCY_KEY=yes
+```
+
+| Partner | Customer stored/canonical after | Supplier stored/canonical after | Difference | Warning |
+| --- | ---: | ---: | ---: | --- |
+| 16 | 8,600,000 / 8,600,000 | 10,640,000 / 10,640,000 | 0 | no |
+| 72 | 2,370,000 / 2,370,000 | 0 / 0 | 0 | no |
+| 78 | 0 / 0 | 0 / 0 | 0 | no |
+| 148 | 0 / 0 | 0 / 0 | 0 | no |
+
+The same plan replayed the original operation UUID on each clone with
+`ROWS_CHANGED=0`. Participant, ActivityLog, domain-table, table-count, and
+projection hashes were unchanged by replay.
+
+### Deterministic equivalence and orphan 55
+
+```text
+CLONE_1_FINAL_HASH=71b11d63a511a034e2bcff0ab89322c2a6d813fe2855c2cd223e16266eabbddb
+CLONE_2_FINAL_HASH=71b11d63a511a034e2bcff0ab89322c2a6d813fe2855c2cd223e16266eabbddb
+NORMALIZED_FINAL_AUDIT_HASH=cc10e52a7c15981e33513f5a3fc1cfd761c164771fc5ea27fa689f81561a59be
+DETERMINISTIC_REPLAY=PASS
+
+PARTNER_55_STATUS=legacy_orphan_excluded
+PARTNER_55_AFFECTS_CANONICAL_BALANCE=no
+PARTNER_55_SYNTHETIC_CUSTOMER_CREATED=no
+```
+
+The legacy orphan evidence is still only partner 55 from `cash_flows`, remains
+reference-only, and has the same normalized hash on both clones:
+`257da28d489ae33da4dbe8557db9184e1a8c999c8324e0b6fb867a8d3f115b6c`.
+
+### Final regression and lifecycle gates
+
+| Gate | Result |
+| --- | --- |
+| MariaDB 10.11.10 acceptance | 232 tests, 1,187 assertions, PASS |
+| MySQL 8.0.44 acceptance | 232 tests, 1,187 assertions, PASS |
+| Repair plan/apply/replay | Included on both engines, PASS |
+| DebtOffset exactly-once and failure injection | Included on both engines, PASS |
+| Cancellation/reversal | Included on both engines, PASS |
+| Cancelled/soft-deleted CashFlow exclusion | Included on both engines plus real-data dossier, PASS |
+| All changed PHP lint | 52 files, PASS |
+| All changed PHP Pint | 52 files, PASS |
+| Frontend build | Vite 5.4.21, 925 modules, PASS |
+| Git diff check | PASS |
+| Secret scan | PASS |
+
+The acceptance sets report zero new error, failure, or style error. Broader
+repository runs retained pre-existing or deliberately disabled workflow-route,
+old virtual-opening, worktree-worker, and unrelated UI assumptions; the
+targeted cross-engine set above covers the current reducer, audit, repair,
+replay, cancellation, offset exactly-once, mutation rollback, and CashFlow
+invalidation contracts. `DEBT_OFFSET_WRITE_MODE=legacy` remained unchanged.
+
+Both independent clone containers and the MySQL 8 regression container were
+stopped immediately after their DB-dependent phases. Volumes and ignored audit
+artifacts remain on disk for repeatable review. No merge or deployment was
+performed.
+
+```text
+PARTNER_16_STORED_AFTER=8600000
+PARTNER_16_CANONICAL_AFTER=8600000
+PARTNER_16_DIFFERENCE_AFTER=0
+
+PARTNER_72_STORED_AFTER=2370000
+PARTNER_72_CANONICAL_AFTER=2370000
+PARTNER_72_DIFFERENCE_AFTER=0
+PARTNER_72_WARNING_AFTER=no
+
+PARTNER_78_CUSTOMER_STORED_AFTER=0
+PARTNER_78_CUSTOMER_CANONICAL_AFTER=0
+PARTNER_78_SUPPLIER_STORED_AFTER=0
+PARTNER_78_SUPPLIER_CANONICAL_AFTER=0
+PARTNER_78_DIFFERENCE_AFTER=0
+
+PARTNER_148_STORED_AFTER=0
+PARTNER_148_CANONICAL_AFTER=0
+PARTNER_148_DIFFERENCE_AFTER=0
+
+MARIADB_TESTS=PASS
+MYSQL_TESTS=PASS
+FRONTEND_BUILD=PASS
+CHANGED_FILE_PINT=PASS
+PHP_LINT=PASS
+GIT_DIFF_CHECK=PASS
+SECRET_SCAN=PASS
+WORKTREE_CLEAN=yes-after-publication-commit
+```
+
+## P0 final-unblock clean revalidation (superseded history, 2026-07-18)
+
+This was the authoritative result for the earlier final-unblock request. It is
+now superseded by the approved four-projection closure above and is retained as
+investigation history. Revalidation started from the requested branch input head
 `181140387ead7b5d9e63c907cff8450635a73ff6` and the immutable backup, not from
 the previously exercised clone volume.
 
