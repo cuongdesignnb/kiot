@@ -12,10 +12,193 @@ changed, no deployment or merge was performed, and
 DEBT_OFFSET_WRITE_MODE=legacy remained in effect. The debt-offset
 workflow/outbox write path was not enabled.
 
-## Outcome
+## PR #30 final closure differential (2026-07-18)
 
-The latest supplied backup now reaches debt parity on two independent
-MariaDB restores:
+This section is the authoritative closure result. The sections after it retain
+the previously accepted repair evidence as validation history; they are not a
+claim that the current closure head still passes 332/332.
+
+```text
+PR30_CLOSURE_STATUS=BLOCKED
+PR_NUMBER=30
+PR_DRAFT=yes
+PR_MERGED=no
+BASE_SHA=0c35b3498437dd163f38625fee6df9b6342027ab
+PREVIOUS_PR_HEAD=6a640d48fc743077d649f4525fff019714a502d7
+
+PR30_DEBT_IMPLEMENTATION_STATUS=BLOCKED
+CLONE_DEBT_REPAIR_VALIDATION=FAIL
+PRODUCTION_DEBT_REPAIR_STATUS=NOT_APPLIED
+```
+
+### Full PHPUnit base-versus-PR comparison
+
+The base and previous PR head were run from clean detached worktrees against
+separate, freshly migrated MySQL 8.0.44 databases with the same PHP 8.2.29,
+PHPUnit 10.5.63, dependency tree, environment, memory limit, and command.
+Console counters are authoritative; PHPUnit's nested JUnit files contain only
+787 base and 802 PR testcase nodes even though the console completed 1,668 and
+1,683 tests respectively.
+
+| Counter | Base | Previous PR head |
+| --- | ---: | ---: |
+| Tests | 1,668 | 1,683 |
+| Assertions | 6,993 | 8,097 |
+| Errors | 132 | 52 |
+| Failures | 203 | 87 |
+| Skipped | 18 | 18 |
+| Risky | 1 | 1 |
+
+The exact method-level JUnit differential contained 212 base problem IDs and
+95 PR problem IDs:
+
+| Category | IDs | Action |
+| --- | ---: | --- |
+| PRE_EXISTING_BASELINE_FAILURE | 83 | Do not fix outside debt scope |
+| ORDER_DEPENDENT_SCHEMA_MUTATION | 12 | All passed independently on fresh schema |
+| NEW_PR30_REGRESSION remaining | 0 | Two independently proven regressions were fixed |
+| Base-only problem IDs | 129 | PR did not reproduce them |
+
+For the 83 common method-level problem IDs, the PR JUnit types are 39 errors
+and 44 failures. The 12 PR-only IDs are 5 errors and 7 failures; all 12 passed
+when run independently, so none is classified as a remaining PR regression.
+Nested suite aggregation explains why those method-level counts do not equal
+the console error/failure totals.
+
+The 12 order-dependent IDs are:
+
+1. `ApplyDebtFixPlanCommandTest::test_guarded_orphan_classification_is_audited_and_replays_without_duplicates`
+2. `SapoDebtParityTest::test_dual_role_net_zero_remains_zero_with_reference_only_marker`
+3. `SapoDebtParityTest::test_merge_marker_is_zero_and_does_not_double_customer_debt`
+4. `CustomerDualRoleListDebtColumnTest::test_customer_list_uses_customer_oriented_net_for_dual_role_partner`
+5. `CustomerPaymentDiscountTest::test_auto_debt_payment_without_receivable_invoice_keeps_cash_unallocated`
+6. `CustomerPaymentDiscountTest::test_create_discount_with_invoice_allocation`
+7. `CustomerPaymentDiscountTest::test_debt_payment_does_not_overcollect_discounted_amounts`
+8. `DualRoleDebtAdjustmentKiotStyleTest::test_customer_screen_adjustment_sets_dual_role_display_debt_not_raw_receivable`
+9. `DualRoleDebtAdjustmentKiotStyleTest::test_supplier_screen_adjustment_sets_dual_role_display_debt_not_raw_payable`
+10. `PartnerDebtMutationCoordinatorTest::test_fault_before_commit_rolls_back_projection_and_operation_log`
+11. `PartnerDebtMutationCoordinatorTest::test_same_key_and_payload_replays_without_a_second_write`
+12. `PartnerDebtMutationCoordinatorTest::test_same_key_with_a_different_payload_is_rejected`
+
+Every one of the 77 debt-related problem IDs from the full PR run was rerun
+independently. The 54 non-migration IDs passed in isolated PHPUnit processes;
+the 23 migration tests pass after the closure corrections. The remaining 18
+full-run problem IDs are outside debt scope and either reproduce on the base
+or are consequences of the repository's shared, order-mutated schema.
+
+Two PR regressions were proven with fresh targeted runs and fixed:
+
+- legacy DebtOffset CashFlow/document evidence and cancellation ledger mirrors
+  were counted more than once, making the new invariant coordinator reject a
+  valid legacy offset write;
+- a persisted sales return was made reference-only merely because an unrelated
+  customer ledger row existed, dropping its `-2,000,000` running-balance delta.
+
+Two outdated test assumptions were updated: the legacy offset fixture now has
+persisted invoice/purchase evidence, and MariaDB's physical `LONGTEXT` JSON
+representation is detected by server version rather than PDO driver name.
+The final targeted result is therefore:
+
+```text
+PRE_EXISTING_PHPUNIT_ERRORS=39
+PRE_EXISTING_PHPUNIT_FAILURES=44
+NEW_PR30_ERRORS=0
+NEW_PR30_FAILURES=0
+OUTDATED_DEBT_TESTS_UPDATED=2
+ORDER_DEPENDENT_TESTS=12
+```
+
+### Repository-wide Pint differential
+
+| Counter | Base | Previous PR head |
+| --- | ---: | ---: |
+| Files checked | 791 | 797 |
+| Pint errors | 2 | 2 |
+| Files with style violations | 549 | 513 |
+
+Normalized file comparison found zero newly failing PR files and 36 files
+that no longer fail. All 51 PHP files changed from the base through the
+closure head pass Pint and PHP lint.
+
+```text
+NEW_PR30_STYLE_ERRORS=0
+CHANGED_FILE_PINT=PASS
+PHP_LINT=PASS
+```
+
+### Closure regression gates
+
+| Engine/gate | Result |
+| --- | --- |
+| MySQL 8.0.44 PR-changed tests | 134 tests, 725 assertions, PASS |
+| MySQL 8.0.44 debt migration tests | 23 tests, 710 assertions, PASS |
+| MariaDB 10.11.10 PR-changed tests | 134 tests, 725 assertions, PASS |
+| MariaDB 10.11.10 debt migration tests | 23 tests, 698 assertions, PASS |
+| Frontend build | Vite 5.4.21, 925 modules, PASS |
+| Changed-file Pint | 51 files, PASS |
+| PHP lint | PASS |
+| Git diff check | PASS |
+| Added-line secret scan | PASS |
+
+The first MariaDB migration attempt used MySQL's
+`utf8mb4_0900_ai_ci` collation and failed before creating schema. Rerunning
+with `utf8mb4_unicode_ci` passed; this is classified `ENVIRONMENT_FAILURE`,
+not a PR regression. The first discarded baseline run also used an empty
+password environment value that PowerShell removed, producing 1,518 database
+authentication errors; the valid base/PR comparison uses a real null password
+contract and excludes that environment failure.
+
+### Current clone blocker
+
+The required post-change read-only clone-1 audit proves that the corrected
+DebtOffset exactly-once reducer changes one repaired projection:
+
+| Metric | Result |
+| --- | ---: |
+| Eligible/scanned | 332/332 |
+| Matched | 331 |
+| Material drift | 1 |
+| Insufficient evidence | 0 |
+| Technical warnings | 0 |
+| Audit errors | 0 |
+| Unknown root causes | 0 |
+
+Partner 78 (`KH177598487429`) now has canonical customer receivable `0`,
+stored customer projection `-14,000,000`, supplier payable `0`, and a raw
+difference of `14,000,000`. The previous 332/332 evidence was produced before
+the closure fix removed the DebtOffset document/CashFlow duplicate. Reverting
+that fix would restore the accepted clone count but would reintroduce the
+independently proven write-path regression. Updating the stored projection
+would violate the closure instruction not to change the 17 accepted repaired
+rows, so no clone data was changed and no repair was run.
+
+```text
+DEBT_PARTNER_PARITY=331/332
+DEBT_MISMATCHES=1
+UNKNOWN_ROOT_CAUSES=0
+MARIADB_DEBT_SUITE=PASS
+MYSQL8_DEBT_SUITE=PASS
+HTTP_DISPLAY_CONTRACT=PASS
+BROWSER_SCREENSHOT=NOT_AVAILABLE_DUE_TO_TOOL_POLICY
+BROWSER_SCREENSHOT_BLOCKER=no
+FRONTEND_BUILD=PASS
+GIT_DIFF_CHECK=PASS
+SECRET_SCAN=PASS
+PRODUCTION_ACCESSED=no
+PRODUCTION_DATABASE_CHANGED=no
+PRODUCTION_DEPLOYED=no
+```
+
+PR #30 must remain Draft. Clearing the blocker requires explicit authority to
+regenerate a repair plan for the corrected canonical fingerprint and update
+the affected clone projection; it must not be hidden by restoring duplicate
+counting. Production remains untouched and requires the separate reviewed,
+merged, deployed, freshly backed-up, fingerprint-approved process.
+
+## Historical accepted clone validation before closure fixes
+
+At previous PR head `6a640d48fc743077d649f4525fff019714a502d7`, the latest
+supplied backup reached debt parity on two independent MariaDB restores:
 
 | Acceptance metric | Clone 1 | Clone 2 |
 | --- | ---: | ---: |

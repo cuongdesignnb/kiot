@@ -344,6 +344,15 @@ class SupplierDebtDocumentTimelineService
         // second time.
         $offsets = $this->debtOffsetsForPartner((int) $supplier->id);
         $offsetCodes = $offsets->pluck('code')->filter()->map(fn ($code) => (string) $code)->all();
+        $offsetCancellationLedgerCodes = CashFlow::active()
+            ->where('target_id', $supplier->id)
+            ->where('type', 'payment')
+            ->where('reference_type', 'DebtOffsetCancel')
+            ->whereIn('reference_code', $offsetCodes)
+            ->pluck('code')
+            ->filter()
+            ->map(fn ($code) => (string) $code)
+            ->all();
         $supplierDebts = SupplierDebtTransaction::where('supplier_id', $supplier->id)->get();
         $existingCodes = $entries->pluck('code')->filter()->toArray();
 
@@ -364,7 +373,10 @@ class SupplierDebtDocumentTimelineService
                 continue;
             }
 
-            $isDocumentMirror = $refCode && in_array((string) $refCode, $offsetCodes, true);
+            $isDocumentMirror = $refCode && (
+                in_array((string) $refCode, $offsetCodes, true)
+                || in_array((string) $refCode, $offsetCancellationLedgerCodes, true)
+            );
             $isTech = $this->isTechnicalLedgerCode($refCode) || $isDocumentMirror;
             if ($isTech) {
                 $excludedLedgerEntries[] = [

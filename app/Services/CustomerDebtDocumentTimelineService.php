@@ -156,6 +156,7 @@ class CustomerDebtDocumentTimelineService
             ->where('type', 'receipt')
             ->get()
             ->filter(fn (CashFlow $cashFlow) => $this->isCustomerCashFlow($cashFlow))
+            ->reject(fn (CashFlow $cashFlow) => $this->isDebtOffsetEvidenceCashFlow($cashFlow))
             ->values();
 
         // Allocate real receipts first. Legacy DebtPayment vouchers may carry
@@ -352,6 +353,7 @@ class CustomerDebtDocumentTimelineService
             ->where('type', 'payment')
             ->get()
             ->filter(fn (CashFlow $cashFlow) => $this->isCustomerCashFlow($cashFlow))
+            ->reject(fn (CashFlow $cashFlow) => $this->isDebtOffsetEvidenceCashFlow($cashFlow))
             ->values();
 
         foreach ($payments as $cf) {
@@ -1457,6 +1459,41 @@ class CustomerDebtDocumentTimelineService
         $targetType = mb_strtolower(trim((string) BusinessStatus::repairText($cashFlow->target_type)));
 
         return in_array($targetType, ['khách hàng', 'khach hang', 'kh??ch h??ng', 'customer'], true);
+    }
+
+    /**
+     * Offset cash flows are persisted evidence for a DebtOffset document, not
+     * a second receivable event. Keep an orphan cash flow visible when its
+     * referenced document cannot be found.
+     */
+    private function isDebtOffsetEvidenceCashFlow(CashFlow $cashFlow): bool
+    {
+        if (! in_array((string) $cashFlow->reference_type, [
+            'DebtOffset',
+            DebtOffset::class,
+            'DebtOffsetCancel',
+        ], true)) {
+            return false;
+        }
+
+        return DebtOffset::query()
+            ->where('customer_id', (int) $cashFlow->target_id)
+            ->where(function ($query) use ($cashFlow): void {
+                $referenceId = (int) ($cashFlow->reference_id ?? 0);
+                $referenceCode = trim((string) ($cashFlow->reference_code ?? ''));
+
+                if ($referenceId > 0) {
+                    $query->whereKey($referenceId);
+                    if ($referenceCode !== '') {
+                        $query->orWhere('code', $referenceCode);
+                    }
+
+                    return;
+                }
+
+                $query->where('code', $referenceCode);
+            })
+            ->exists();
     }
 
     private function debtOffsetsForPartner(int $partnerId): Collection

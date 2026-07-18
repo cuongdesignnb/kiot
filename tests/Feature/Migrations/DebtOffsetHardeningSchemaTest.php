@@ -165,6 +165,7 @@ class DebtOffsetHardeningSchemaTest extends TestCase
             'is_customer' => true,
             'is_supplier' => true,
         ]);
+        $this->insertCanonicalDebtDocuments($manualPartnerId, 120.00, 100.00);
         $manualPartner = \App\Models\Customer::query()->findOrFail($manualPartnerId);
         $manual = DebtOffsetService::manualOffset($manualPartner, 40.00, 'Legacy manual compatibility');
         $this->assertSame(40.0, (float) $manual['offset_amount']);
@@ -186,6 +187,7 @@ class DebtOffsetHardeningSchemaTest extends TestCase
             'is_customer' => true,
             'is_supplier' => true,
         ]);
+        $this->insertCanonicalDebtDocuments($autoPartnerId, 90.00, 70.00);
         $autoPartner = \App\Models\Customer::query()->findOrFail($autoPartnerId);
         $auto = DebtOffsetService::offsetDebts($autoPartner);
         $this->assertSame(70.0, (float) $auto['offset_amount']);
@@ -392,7 +394,7 @@ class DebtOffsetHardeningSchemaTest extends TestCase
             $row = $rows->get($column);
             $this->assertNotNull($row, "Missing {$table}.{$column}.");
             $actualType = $this->normalizeColumnType((string) $row->COLUMN_TYPE);
-            if ($type === 'json' && DB::connection()->getDriverName() === 'mariadb') {
+            if ($type === 'json' && $this->isMariaDb()) {
                 $this->assertContains($actualType, ['json', 'longtext']);
             } else {
                 $this->assertSame($type, $actualType);
@@ -400,6 +402,17 @@ class DebtOffsetHardeningSchemaTest extends TestCase
             $this->assertSame($nullable ? 'YES' : 'NO', $row->IS_NULLABLE);
             $this->assertSame($default, $this->normalizeDefault($row->COLUMN_DEFAULT));
         }
+    }
+
+    private function isMariaDb(): bool
+    {
+        if (DB::connection()->getDriverName() === 'mariadb') {
+            return true;
+        }
+
+        $serverVersion = (string) DB::connection()->getPdo()->getAttribute(\PDO::ATTR_SERVER_VERSION);
+
+        return str_contains(strtolower($serverVersion), 'mariadb');
     }
 
     private function column(string $name): object
@@ -548,6 +561,37 @@ class DebtOffsetHardeningSchemaTest extends TestCase
             'created_at' => now(),
             'updated_at' => now(),
         ], $overrides));
+    }
+
+    private function insertCanonicalDebtDocuments(int $partnerId, float $receivable, float $payable): void
+    {
+        $token = (string) Str::uuid();
+        $now = now();
+
+        DB::table('invoices')->insert([
+            'code' => 'SCHEMA-HD-'.$token,
+            'customer_id' => $partnerId,
+            'subtotal' => $receivable,
+            'discount' => 0,
+            'total' => $receivable,
+            'customer_paid' => 0,
+            'status' => 'completed',
+            'transaction_date' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        DB::table('purchases')->insert([
+            'code' => 'SCHEMA-PN-'.$token,
+            'supplier_id' => $partnerId,
+            'total_amount' => $payable,
+            'discount' => 0,
+            'paid_amount' => 0,
+            'debt_amount' => $payable,
+            'status' => 'completed',
+            'purchase_date' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
     }
 
     private function insertUser(): int

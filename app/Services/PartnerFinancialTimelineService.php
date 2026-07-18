@@ -312,7 +312,10 @@ class PartnerFinancialTimelineService
                 continue;
             }
 
-            $affects = ! $hasCustomerLedger;
+            // An unrelated customer ledger row must not suppress a persisted
+            // return document. Only the exact return mirror handled above is
+            // reference-only; otherwise this document is canonical evidence.
+            $affects = true;
             $entries->push($this->entry([
                 'id' => 'oret-'.$return->id,
                 'code' => $return->code,
