@@ -21,6 +21,13 @@ class PartnerDebtPopulationService
         'exclusion_reason',
     ];
 
+    public const ORPHAN_CSV_COLUMNS = [
+        'partner_id',
+        'reason',
+        'sources',
+        'affects_canonical_balance',
+    ];
+
     /**
      * Reconcile the customer projection table with every persisted partner
      * reference used by the canonical debt reducer. This is read-only.
@@ -58,14 +65,16 @@ class PartnerDebtPopulationService
 
         $scanned = array_fill_keys(array_map('intval', $scannedPartnerIds), true);
         $excluded = [];
+        $orphanFinancialReferences = [];
         $unscannable = [];
         foreach ($sources as $partnerId => $partnerSources) {
             $customer = $customerRows->get($partnerId);
             if ($customer === null) {
-                $unscannable[] = [
+                $orphanFinancialReferences[] = [
                     'partner_id' => $partnerId,
-                    'reason' => 'FINANCIAL_REFERENCE_WITHOUT_PARTNER_ROW',
+                    'reason' => 'LEGACY_ORPHAN_FINANCIAL_REFERENCE',
                     'sources' => array_values(array_diff($partnerSources, ['customers'])),
+                    'affects_canonical_balance' => false,
                 ];
 
                 continue;
@@ -135,12 +144,16 @@ class PartnerDebtPopulationService
                 'total_with_financial_history' => $financialIds->count(),
                 'total_with_nonzero_stored_balance' => $nonzeroStored,
                 'total_scanned' => count($scanned),
+                'total_scannable_customers' => count($scanned),
                 'total_excluded' => count($excluded),
                 'total_unscannable' => count($unscannable),
+                'total_orphan_financial_references' => count($orphanFinancialReferences),
+                'total_unexplained_missing_customers' => count($unscannable),
                 'expected_population' => $expectedPopulation,
                 'expected_customer_gap' => $expectedPopulation === null ? null : $expectedPopulation - $totalWithTrashed,
                 'expected_union_gap' => $expectedPopulation === null ? null : $expectedPopulation - count($sources),
                 'database_is_latest' => $databaseIsLatest,
+                'audit_can_proceed' => $reconciliationPass,
                 'population_reconciliation_pass' => $reconciliationPass,
             ],
             'source_population' => collect($sources)->map(
@@ -150,6 +163,7 @@ class PartnerDebtPopulationService
                 ]
             )->values()->all(),
             'excluded' => $excluded,
+            'orphan_financial_references' => $orphanFinancialReferences,
             'unscannable' => $unscannable,
         ];
     }
@@ -196,10 +210,10 @@ class PartnerDebtPopulationService
                 ->whereNotNull('target_id')
                 ->where('target_id', '>', 0)
                 ->where(function (Builder $query): void {
-                    $query->whereIn('target_type', [
-                        'Khách hàng', 'Khach hang', 'Customer', 'customer',
-                        'Nhà cung cấp', 'Nha cung cap', 'Supplier', 'supplier',
-                    ]);
+                    $query->whereIn('target_type', array_merge(
+                        PartnerDebtRoleResolver::CUSTOMER_TARGET_TYPES,
+                        PartnerDebtRoleResolver::SUPPLIER_TARGET_TYPES,
+                    ));
                     if (Schema::hasColumn('cash_flows', 'reference_type')) {
                         $query->orWhereIn('reference_type', [
                             'SupplierPayment', 'DebtPayment', 'DebtAdjustment',

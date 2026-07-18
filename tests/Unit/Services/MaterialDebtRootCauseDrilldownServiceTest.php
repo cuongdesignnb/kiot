@@ -62,7 +62,7 @@ class MaterialDebtRootCauseDrilldownServiceTest extends TestCase
         $this->assertArrayNotHasKey('proposed_voucher', $detail);
     }
 
-    public function test_generic_supplier_payment_without_persisted_allocation_is_not_actual(): void
+    public function test_generic_supplier_payment_is_partner_evidence_without_false_allocation_blocker(): void
     {
         $partner = $this->partner(['is_customer' => false, 'is_supplier' => true]);
         $this->supplierPayment($partner, 'PCPN-UNALLOCATED', 1_000_000);
@@ -72,12 +72,11 @@ class MaterialDebtRootCauseDrilldownServiceTest extends TestCase
             'supplier_stored_vs_document_raw' => 1_000_000,
         ]));
         $evidence = collect($detail['allocation_evidence']['supplier_payments'])->firstWhere('cashflow_code', 'PCPN-UNALLOCATED');
-        $pattern = $this->pattern($detail, 'GENERIC_SUPPLIER_PAYMENT_UNALLOCATED');
 
         $this->assertNotNull($evidence);
         $this->assertFalse($evidence['explicitly_allocated']);
         $this->assertContains($evidence['allocation_confidence'], ['unknown', 'inferred']);
-        $this->assertNotSame('high', $pattern['confidence']);
+        $this->assertNull($this->pattern($detail, 'GENERIC_SUPPLIER_PAYMENT_UNALLOCATED'));
         $this->assertSame('UNRESOLVED', $detail['source_of_truth_status']);
     }
 
@@ -501,7 +500,7 @@ class MaterialDebtRootCauseDrilldownServiceTest extends TestCase
             'type' => 'adjustment',
             'amount' => -900_000,
             'debt_total' => 0,
-            'note' => 'Đảo công nợ do hủy hóa đơn ' . $invoice->code,
+            'note' => 'Đảo công nợ do hủy hóa đơn '.$invoice->code,
             'recorded_at' => now(),
         ]);
 
@@ -861,7 +860,7 @@ class MaterialDebtRootCauseDrilldownServiceTest extends TestCase
         $this->assertSame('UNRESOLVED', $detail['source_of_truth_status']);
     }
 
-    public function test_dual_role_inconsistency_is_flagged_without_netting_mutation(): void
+    public function test_dual_role_projection_drift_does_not_claim_screen_asymmetry(): void
     {
         $partner = $this->partner([
             'is_supplier' => true,
@@ -875,7 +874,7 @@ class MaterialDebtRootCauseDrilldownServiceTest extends TestCase
             'classification_flags' => ['DUAL_ROLE_NET_MISMATCH'],
         ]));
 
-        $this->assertNotNull($this->pattern($detail, 'DUAL_ROLE_NETTING_INCONSISTENCY'));
+        $this->assertNull($this->pattern($detail, 'DUAL_ROLE_NETTING_INCONSISTENCY'));
         $this->assertSame(900_000.0, $detail['stored_balance']['customer_screen']);
         $this->assertSame(-900_000.0, $detail['stored_balance']['supplier_screen']);
         $this->assertSame(0.0, $detail['stored_balance']['expected_symmetry']);
@@ -909,7 +908,7 @@ class MaterialDebtRootCauseDrilldownServiceTest extends TestCase
         $this->assertNotNull($this->pattern($detail, 'TECHNICAL_LEDGER_EXCLUDED'));
     }
 
-    public function test_unaccented_target_alias_is_preserved_as_evidence_and_not_normalized(): void
+    public function test_supported_unaccented_target_alias_is_preserved_without_false_warning(): void
     {
         $partner = $this->partner();
         CashFlow::query()->create([
@@ -926,10 +925,28 @@ class MaterialDebtRootCauseDrilldownServiceTest extends TestCase
 
         $detail = $this->service->drilldown($partner, $this->auditRow($partner));
 
-        $this->assertNotNull($this->pattern($detail, 'TARGET_TYPE_ALIAS_PRESENT'));
+        $this->assertNull($this->pattern($detail, 'TARGET_TYPE_ALIAS_PRESENT'));
         $this->assertSame('Khach hang', CashFlow::query()->where('code', 'PT-ALIAS-GENERIC')->value('target_type'));
         $this->assertSame('UNRESOLVED', $detail['source_of_truth_status']);
         $this->assertArrayNotHasKey('confirmed_data_error', $detail);
+    }
+
+    public function test_complete_document_evidence_confirms_stored_projection_drift(): void
+    {
+        $partner = $this->partner(['debt_amount' => 500_000]);
+        $this->invoice($partner, 'HD-PROJECTION-DRIFT', 1_000_000);
+
+        $detail = $this->service->drilldown($partner, $this->auditRow($partner, [
+            'customer_stored_vs_document_raw' => -500_000,
+            'customer_document_entry_count' => 1,
+        ]));
+
+        $this->assertSame(
+            MaterialDebtRootCauseDrilldownService::DETERMINISTIC_SOURCE_OF_TRUTH_STATUS,
+            $detail['source_of_truth_status'],
+        );
+        $this->assertNotNull($this->pattern($detail, 'STORED_PROJECTION_DRIFT_CONFIRMED'));
+        $this->assertSame([], $detail['missing_evidence']);
     }
 
     public function test_detail_json_whitelist_excludes_partner_pii_and_secrets(): void
@@ -986,9 +1003,9 @@ class MaterialDebtRootCauseDrilldownServiceTest extends TestCase
     private function partner(array $overrides = []): Customer
     {
         return Customer::query()->forceCreate(array_merge([
-            'code' => 'DRILLDOWN-' . uniqid(),
+            'code' => 'DRILLDOWN-'.uniqid(),
             'name' => 'Generic Drilldown Partner',
-            'phone' => '09' . random_int(10_000_000, 99_999_999),
+            'phone' => '09'.random_int(10_000_000, 99_999_999),
             'debt_amount' => 0,
             'supplier_debt_amount' => 0,
             'is_customer' => true,

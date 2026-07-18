@@ -11,6 +11,8 @@ use App\Models\OrderReturn;
 use App\Models\Purchase;
 use App\Models\PurchaseReturn;
 use App\Models\SupplierDebtTransaction;
+use App\Services\Debt\PartnerDebtRoleResolver;
+use App\Support\Debt\PartnerDebtDisplayBalance;
 use App\Support\Status\BusinessStatus;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -22,7 +24,7 @@ class SupplierDebtDocumentTimelineService
     public function build(Customer $supplier, array $options = []): array
     {
         $hasSupplierColumn = Schema::hasColumn('customers', 'supplier_debt_amount');
-        $isDualRole = (bool) ($supplier->is_supplier && ($hasSupplierColumn ? $supplier->is_customer : false));
+        $isDualRole = $hasSupplierColumn && PartnerDebtDisplayBalance::isDualRole($supplier);
         $usePartnerTimeline = $isDualRole && (string) ($options['view'] ?? '') === 'partner';
 
         $entries = collect();
@@ -83,7 +85,7 @@ class SupplierDebtDocumentTimelineService
             ->where(function ($q) use ($supplier, $purchaseCodes) {
                 $q->where(function ($q2) use ($supplier) {
                     $q2->where('target_id', $supplier->id)
-                        ->whereIn('target_type', ['Nha cung cap', 'Nhà cung cấp', 'NhÃ  cung cáº¥p']);
+                        ->whereIn('target_type', PartnerDebtRoleResolver::SUPPLIER_TARGET_TYPES);
                 })
                     ->orWhere(function ($q2) use ($supplier) {
                         $q2->where('reference_type', 'SupplierPayment')
@@ -183,7 +185,7 @@ class SupplierDebtDocumentTimelineService
                     'badge_title' => $mismatch ? 'Tổng phiếu chi thật không khớp số đã thanh toán trên hóa đơn nhập.' : null,
                     'is_real_voucher' => true,
                     'is_virtual_fallback' => false,
-                    'receipt_allocation_mismatch' => $mismatch,
+                    'payment_allocation_mismatch' => $mismatch,
                     'needs_manual_review' => $mismatch,
                     'source' => 'document_first',
                     'document_group_key' => $refCode,
@@ -521,7 +523,7 @@ class SupplierDebtDocumentTimelineService
             $customerReceipts = CashFlow::active()
                 ->where('type', 'receipt')
                 ->where('target_id', $supplier->id)
-                ->whereIn('target_type', ['Khách hàng', 'Khach hang', 'KhÃ¡ch hÃ ng'])
+                ->whereIn('target_type', PartnerDebtRoleResolver::CUSTOMER_TARGET_TYPES)
                 ->get();
 
             $receiptsByInvoice = [];
@@ -679,19 +681,23 @@ class SupplierDebtDocumentTimelineService
             $customerDebts = CustomerDebt::where('customer_id', $supplier->id)->get();
             foreach ($customerDebts as $debt) {
                 $refCode = $debt->ref_code;
-                if ($refCode && in_array($refCode, $existingCodes, true)) {
-                    continue;
-                }
-
-                $isDocumentMirror = $refCode && in_array((string) $refCode, $offsetCodes, true);
+                $isOffsetMirror = $refCode && in_array((string) $refCode, $offsetCodes, true);
+                $isDocumentMirror = $isOffsetMirror || $this->customerLedgerIsDocumentEvidence(
+                    $debt,
+                    $invoices,
+                    $customerReceipts,
+                    $orderReturns,
+                );
                 $isTech = $this->isTechnicalLedgerCode($refCode) || $isDocumentMirror;
                 if ($isTech) {
                     $excludedLedgerEntries[] = [
                         'code' => $refCode,
                         'amount' => (float) $debt->amount,
-                        'reason' => $isDocumentMirror
+                        'reason' => $isOffsetMirror
                             ? 'debt_offset_ledger_mirror_excluded'
-                            : 'technical_ledger_excluded_from_document_timeline',
+                            : ($isDocumentMirror
+                                ? 'customer_document_ledger_mirror_excluded'
+                                : 'technical_ledger_excluded_from_document_timeline'),
                         'source' => 'customer_debts',
                     ];
 
@@ -715,9 +721,11 @@ class SupplierDebtDocumentTimelineService
                     'supplier_display_effect' => $isTech ? 0.0 : -(float) $debt->amount,
                     'affects_document_balance' => ! $isTech,
                     'excluded_from_document_balance' => $isTech,
-                    'excluded_reason' => $isDocumentMirror
+                    'excluded_reason' => $isOffsetMirror
                         ? 'debt_offset_document_is_canonical'
-                        : ($isTech ? 'technical_ledger_merge_or_opening' : null),
+                        : ($isDocumentMirror
+                            ? 'customer_document_is_canonical'
+                            : ($isTech ? 'technical_ledger_merge_or_opening' : null)),
                     'affects_canonical_balance' => ! $isTech,
                     'time' => $businessTime,
                     'display_time' => $businessTime,
@@ -1437,6 +1445,28 @@ class SupplierDebtDocumentTimelineService
         $purchase = $purchases->firstWhere('code', $purchaseCode);
 
         return $purchase !== null && (float) ($purchase->paid_amount ?? 0) > 0.01;
+    }
+
+    private function customerLedgerIsDocumentEvidence(
+        CustomerDebt $debt,
+        Collection $invoices,
+        Collection $cashFlows,
+        Collection $orderReturns,
+    ): bool {
+        $code = (string) ($debt->ref_code ?? '');
+        if ($code === '') {
+            return false;
+        }
+
+        return match ((string) $debt->type) {
+            'sale' => $invoices->contains(fn (Invoice $invoice): bool => (string) $invoice->code === $code),
+            'payment' => $cashFlows->contains(fn (CashFlow $cashFlow): bool => (string) $cashFlow->code === $code
+                || (string) $cashFlow->reference_code === $code
+            ) || $invoices->contains(fn (Invoice $invoice): bool => $code === 'TTHD'.preg_replace('/^HD/', '', (string) $invoice->code)
+            ),
+            'return' => $orderReturns->contains(fn (OrderReturn $return): bool => (string) $return->code === $code),
+            default => false,
+        };
     }
 
     private function withCompatibilityAliases(array $entry): array

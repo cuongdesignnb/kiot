@@ -172,6 +172,11 @@ class AuditDebtParityCommand extends Command
             ['partner_id', 'partner_code', 'reason', 'sources', 'stored_customer_debt', 'stored_supplier_debt'],
             $population['unscannable'] ?? [],
         );
+        $this->writePopulationCsv(
+            $directory.DIRECTORY_SEPARATOR.'population-orphan-financial-references.csv',
+            PartnerDebtPopulationService::ORPHAN_CSV_COLUMNS,
+            $population['orphan_financial_references'] ?? [],
+        );
     }
 
     private function writePopulationCsv(string $path, array $columns, array $rows): void

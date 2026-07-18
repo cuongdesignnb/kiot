@@ -4,6 +4,7 @@ namespace App\Support\Debt;
 
 use App\Models\Customer;
 use App\Services\Debt\CanonicalPartnerDebtService;
+use App\Services\Debt\PartnerDebtRoleResolver;
 
 class PartnerDebtDisplayBalance
 {
@@ -19,7 +20,7 @@ class PartnerDebtDisplayBalance
 
     public static function isDualRole(Customer $partner): bool
     {
-        return (bool) (($partner->is_customer ?? false) && ($partner->is_supplier ?? false));
+        return PartnerDebtRoleResolver::isDualRole($partner);
     }
 
     public static function customerScreen(Customer $partner): float

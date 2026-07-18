@@ -12,6 +12,7 @@ use App\Models\OrderReturn;
 use App\Models\Purchase;
 use App\Models\PurchaseReturn;
 use App\Models\SupplierDebtTransaction;
+use App\Services\Debt\PartnerDebtRoleResolver;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Schema;
@@ -876,7 +877,7 @@ class PartnerDebtLedgerService
     private function realInvoiceReceiptsByCode(Customer $customer): Collection
     {
         return CashFlow::active()
-            ->where('target_type', 'Khách hàng')
+            ->whereIn('target_type', PartnerDebtRoleResolver::CUSTOMER_TARGET_TYPES)
             ->where('target_id', $customer->id)
             ->where('type', 'receipt')
             ->where('reference_type', 'Invoice')
@@ -1213,7 +1214,7 @@ class PartnerDebtLedgerService
         $invoiceCodes = $invoices->pluck('code')->filter()->all();
 
         $regularEntries = CashFlow::query()
-            ->where('target_type', 'Khách hàng')
+            ->whereIn('target_type', PartnerDebtRoleResolver::CUSTOMER_TARGET_TYPES)
             ->where('target_id', $customer->id)
             ->where('type', 'receipt')
             ->whereNotIn('reference_type', ['DebtOffset', 'DebtOffsetCancel'])
@@ -1964,9 +1965,12 @@ class PartnerDebtLedgerService
                 $displayEffect = $this->customerDisplayEffect($entry);
                 $displayBalanceEffect = $this->customerDisplayBalanceEffect($entry);
                 $ledgerEffect = $this->customerLedgerEffect($entry);
+                $affectsBalance = (bool) ($entry['affects_debt_balance'] ?? true);
 
-                if (($entry['affects_debt_balance'] ?? true) === true) {
+                if ($affectsBalance) {
                     $ledgerRunning += $ledgerEffect;
+                } else {
+                    $displayBalanceEffect = 0.0;
                 }
 
                 $displayRunning += $displayBalanceEffect;
@@ -2002,6 +2006,8 @@ class PartnerDebtLedgerService
 
                 if ($affects) {
                     $ledgerRunning += $ledgerEffect;
+                } else {
+                    $displayBalanceEffect = 0.0;
                 }
 
                 $displayRunning += $displayBalanceEffect;
@@ -2057,6 +2063,8 @@ class PartnerDebtLedgerService
             || CashFlow::query()
                 ->where('reference_type', 'SupplierPayment')
                 ->where('reference_code', $code)
+                ->where('target_id', $transaction->supplier_id)
+                ->whereIn('target_type', PartnerDebtRoleResolver::SUPPLIER_TARGET_TYPES)
                 ->exists();
     }
 

@@ -7,6 +7,7 @@ use App\Models\Customer;
 use App\Models\PartnerDebtOperation;
 use App\Models\PartnerDebtOperationParticipant;
 use App\Services\Debt\CanonicalPartnerDebtService;
+use App\Services\Debt\LegacyOrphanFinancialReferenceService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -30,8 +31,10 @@ class ApplyDebtFixPlanCommand extends Command
 
     protected $description = 'Dry-run by default; guarded apply updates only stored projections backed by canonical events';
 
-    public function handle(CanonicalPartnerDebtService $canonical): int
-    {
+    public function handle(
+        CanonicalPartnerDebtService $canonical,
+        LegacyOrphanFinancialReferenceService $orphanEvidence,
+    ): int {
         $path = (string) ($this->option('plan-json') ?? '');
         if ($path === '') {
             $this->error('Missing --plan-json.');
@@ -68,12 +71,14 @@ class ApplyDebtFixPlanCommand extends Command
 
         $rows = $this->selectedRows($rows);
         $repairs = collect($rows)->where('proposed_action_type', 'UPDATE_STORED_PROJECTION')->values();
+        $orphanMarks = collect($rows)->where('proposed_action_type', 'MARK_LEGACY_ORPHAN_EXCLUDED')->values();
         $blocked = collect($rows)->filter(fn (array $row): bool => (array) ($row['blocking_flags'] ?? []) !== []);
         $preview = [
             'mode' => $this->option('apply') ? 'apply' : 'dry-run',
             'plan_hash' => $expectedPlanHash,
             'selected_count' => count($rows),
             'repair_count' => $repairs->count(),
+            'orphan_classification_count' => $orphanMarks->count(),
             'manual_review_count' => $blocked->count(),
             'rows_changed' => 0,
         ];
@@ -94,8 +99,8 @@ class ApplyDebtFixPlanCommand extends Command
 
             return self::FAILURE;
         }
-        if ($repairs->isEmpty()) {
-            $this->error('Selected plan has no safe stored-projection repair.');
+        if ($repairs->isEmpty() && $orphanMarks->isEmpty()) {
+            $this->error('Selected plan has no safe stored-projection repair or orphan classification.');
 
             return self::FAILURE;
         }
@@ -104,11 +109,22 @@ class ApplyDebtFixPlanCommand extends Command
 
             return self::FAILURE;
         }
+        if ($orphanMarks->isNotEmpty() && ! Schema::hasTable('activity_logs')) {
+            $this->error('Activity log schema is required to classify legacy orphan evidence.');
 
-        $selectionHash = hash('sha256', json_encode($repairs->pluck('partner_id')->sort()->values(), JSON_THROW_ON_ERROR));
+            return self::FAILURE;
+        }
+
+        $selectionHash = hash('sha256', json_encode(
+            collect($rows)->map(fn (array $row): string => implode(':', [
+                (string) ($row['proposed_action_type'] ?? ''),
+                (string) ($row['partner_id'] ?? ''),
+            ]))->sort()->values(),
+            JSON_THROW_ON_ERROR,
+        ));
         $idempotencyKey = 'debt-repair:'.$expectedPlanHash.':'.substr($selectionHash, 0, 16);
         $existing = PartnerDebtOperation::query()
-            ->where('operation_type', 'debt.repair_projection')
+            ->where('operation_type', 'debt.repair_plan')
             ->where('idempotency_key', $idempotencyKey)
             ->first();
         if ($existing && $existing->status === 'committed') {
@@ -121,7 +137,15 @@ class ApplyDebtFixPlanCommand extends Command
             return self::SUCCESS;
         }
 
-        $result = DB::transaction(function () use ($repairs, $canonical, $idempotencyKey, $expectedPlanHash, $payload): array {
+        $result = DB::transaction(function () use (
+            $repairs,
+            $orphanMarks,
+            $canonical,
+            $orphanEvidence,
+            $idempotencyKey,
+            $expectedPlanHash,
+            $payload,
+        ): array {
             $locked = Customer::query()
                 ->whereKey($repairs->pluck('partner_id')->map(fn ($id) => (int) $id)->all())
                 ->orderBy('id')
@@ -162,15 +186,49 @@ class ApplyDebtFixPlanCommand extends Command
                 ];
             }
 
+            $orphanChanges = [];
+            foreach ($orphanMarks->sortBy('partner_id') as $row) {
+                $partnerId = (int) ($row['partner_id'] ?? 0);
+                $currentEvidence = $orphanEvidence->snapshot($partnerId);
+                if ($partnerId < 1
+                    || (bool) $currentEvidence['customer_exists']
+                    || (int) $currentEvidence['source_count'] < 1
+                    || ! hash_equals(
+                        (string) ($row['orphan_evidence_hash'] ?? ''),
+                        (string) $currentEvidence['evidence_hash'],
+                    )
+                    || (bool) ($row['canonical_target']['affects_canonical_balance'] ?? true)
+                    || (bool) ($row['canonical_target']['affects_any_partner_balance'] ?? true)) {
+                    throw new RuntimeException("Legacy orphan evidence changed for partner ID {$partnerId}.");
+                }
+
+                $orphanChanges[] = [
+                    'partner_id' => $partnerId,
+                    'classification' => 'LEGACY_ORPHAN_EXCLUDED_WITH_AUDIT_TRAIL',
+                    'source_count' => (int) $currentEvidence['source_count'],
+                    'evidence_hash' => (string) $currentEvidence['evidence_hash'],
+                    'event_identities' => collect($currentEvidence['sources'])
+                        ->pluck('event_identity')->values()->all(),
+                    'affects_canonical_balance' => false,
+                    'affects_any_partner_balance' => false,
+                ];
+            }
+
             $operation = PartnerDebtOperation::query()->create([
                 'operation_uuid' => (string) Str::uuid(),
                 'partner_id' => null,
-                'operation_type' => 'debt.repair_projection',
+                'operation_type' => 'debt.repair_plan',
                 'idempotency_key' => $idempotencyKey,
                 'request_hash' => $expectedPlanHash,
                 'request_hash_version' => 1,
                 'status' => 'committed',
-                'result' => ['rows_changed' => count($changes), 'changes' => $changes],
+                'source_type' => count($orphanChanges) === 1 ? 'LegacyOrphanFinancialReference' : null,
+                'source_id' => count($orphanChanges) === 1 ? $orphanChanges[0]['partner_id'] : null,
+                'result' => [
+                    'rows_changed' => count($changes) + count($orphanChanges),
+                    'projection_changes' => $changes,
+                    'orphan_classifications' => $orphanChanges,
+                ],
                 'attempt_count' => 1,
                 'initiated_at' => now(),
                 'committed_at' => now(),
@@ -178,6 +236,7 @@ class ApplyDebtFixPlanCommand extends Command
                     'plan_hash' => $expectedPlanHash,
                     'report_hash' => $payload['source_report_sha256'] ?? null,
                     'database_fingerprint' => $payload['database_fingerprint'] ?? null,
+                    'population_report_hash' => $payload['population_report_sha256'] ?? null,
                 ],
             ]);
 
@@ -203,7 +262,27 @@ class ApplyDebtFixPlanCommand extends Command
                 }
             }
 
-            return ['operation_uuid' => $operation->operation_uuid, 'rows_changed' => count($changes)];
+            foreach ($orphanChanges as $orphanChange) {
+                ActivityLog::query()->create([
+                    'action' => 'partner_debt_orphan_excluded',
+                    'description' => 'Classified immutable legacy orphan financial references outside canonical partner balances.',
+                    'subject_type' => 'LegacyOrphanFinancialReference',
+                    'subject_id' => $orphanChange['partner_id'],
+                    'properties' => $orphanChange + [
+                        'operation_uuid' => $operation->operation_uuid,
+                        'plan_hash' => $expectedPlanHash,
+                        'report_hash' => $payload['source_report_sha256'] ?? null,
+                        'population_report_hash' => $payload['population_report_sha256'] ?? null,
+                    ],
+                ]);
+            }
+
+            return [
+                'operation_uuid' => $operation->operation_uuid,
+                'rows_changed' => count($changes) + count($orphanChanges),
+                'projection_rows_changed' => count($changes),
+                'orphan_classifications_created' => count($orphanChanges),
+            ];
         }, 3);
 
         $this->line(json_encode($result + ['result' => 'APPLIED'], JSON_PRETTY_PRINT));

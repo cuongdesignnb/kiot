@@ -11,6 +11,8 @@ use App\Models\OrderReturn;
 use App\Models\Purchase;
 use App\Models\PurchaseReturn;
 use App\Models\SupplierDebtTransaction;
+use App\Services\Debt\PartnerDebtRoleResolver;
+use App\Support\Debt\PartnerDebtDisplayBalance;
 use App\Support\Status\BusinessStatus;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -21,7 +23,7 @@ class CustomerDebtDocumentTimelineService
     public function build(Customer $customer, array $options = []): array
     {
         $hasSupplierColumn = Schema::hasColumn('customers', 'supplier_debt_amount');
-        $isDualRole = (bool) ($customer->is_customer && ($hasSupplierColumn ? $customer->is_supplier : false));
+        $isDualRole = $hasSupplierColumn && PartnerDebtDisplayBalance::isDualRole($customer);
         $domainOnly = (bool) ($options['domain_only'] ?? false);
 
         $entries = collect();
@@ -1447,14 +1449,14 @@ class CustomerDebtDocumentTimelineService
 
     private function customerCashFlowTargetTypes(): array
     {
-        return ['Khách hàng', 'Khach hang'];
+        return PartnerDebtRoleResolver::CUSTOMER_TARGET_TYPES;
     }
 
     private function isCustomerCashFlow(CashFlow $cashFlow): bool
     {
         $targetType = mb_strtolower(trim((string) BusinessStatus::repairText($cashFlow->target_type)));
 
-        return in_array($targetType, ['khách hàng', 'khach hang'], true);
+        return in_array($targetType, ['khách hàng', 'khach hang', 'kh??ch h??ng', 'customer'], true);
     }
 
     private function debtOffsetsForPartner(int $partnerId): Collection

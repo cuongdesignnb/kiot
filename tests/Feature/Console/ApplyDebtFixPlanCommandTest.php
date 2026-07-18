@@ -2,11 +2,15 @@
 
 namespace Tests\Feature\Console;
 
+use App\Models\ActivityLog;
 use App\Models\CashFlow;
 use App\Models\CustomerDebt;
 use App\Models\DebtOffset;
+use App\Models\PartnerDebtOperation;
 use App\Models\SupplierDebtTransaction;
+use App\Services\Debt\LegacyOrphanFinancialReferenceService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class ApplyDebtFixPlanCommandTest extends TestCase
@@ -165,11 +169,71 @@ class ApplyDebtFixPlanCommandTest extends TestCase
         $this->assertSame($before, $this->counts());
     }
 
+    public function test_guarded_orphan_classification_is_audited_and_replays_without_duplicates(): void
+    {
+        $orphanId = ((int) DB::table('customers')->max('id')) + 300_000;
+        CashFlow::query()->create([
+            'code' => 'PT-ORPHAN-APPLY-'.uniqid(),
+            'type' => 'receipt',
+            'amount' => 125_000,
+            'time' => now(),
+            'target_type' => 'Customer',
+            'target_id' => $orphanId,
+            'target_name' => 'Missing Partner Row',
+            'reference_type' => 'DebtPayment',
+            'status' => 'active',
+            'payment_method' => 'cash',
+        ]);
+        $evidence = app(LegacyOrphanFinancialReferenceService::class)->snapshot($orphanId);
+        $row = [
+            'partner_id' => $orphanId,
+            'partner_code' => 'LEGACY-ORPHAN-'.$orphanId,
+            'role' => 'orphan',
+            'proposed_action_type' => 'MARK_LEGACY_ORPHAN_EXCLUDED',
+            'blocking_flags' => [],
+            'canonical_target' => [
+                'affects_canonical_balance' => false,
+                'affects_any_partner_balance' => false,
+            ],
+            'orphan_evidence_hash' => $evidence['evidence_hash'],
+        ];
+        $plan = $this->guardedPlanFile('orphan-apply', [$row]);
+        $payload = json_decode((string) file_get_contents($plan), true, flags: JSON_THROW_ON_ERROR);
+
+        $this->artisan('debt:apply-fix-plan', [
+            '--plan-json' => $plan,
+            '--apply' => true,
+            '--approval-hash' => $payload['approval_hash'],
+        ])->assertExitCode(0);
+
+        $this->assertDatabaseHas('activity_logs', [
+            'action' => 'partner_debt_orphan_excluded',
+            'subject_type' => 'LegacyOrphanFinancialReference',
+            'subject_id' => $orphanId,
+        ]);
+        $this->assertSame(1, PartnerDebtOperation::query()
+            ->where('operation_type', 'debt.repair_plan')
+            ->where('request_hash', $payload['plan_hash'])->count());
+        $this->assertSame(1, ActivityLog::query()
+            ->where('action', 'partner_debt_orphan_excluded')
+            ->where('subject_id', $orphanId)->count());
+
+        $this->artisan('debt:apply-fix-plan', [
+            '--plan-json' => $plan,
+            '--apply' => true,
+            '--approval-hash' => $payload['approval_hash'],
+        ])->expectsOutputToContain('REPLAY')->assertExitCode(0);
+
+        $this->assertSame(1, ActivityLog::query()
+            ->where('action', 'partner_debt_orphan_excluded')
+            ->where('subject_id', $orphanId)->count());
+    }
+
     private function planFile(string $name, array $plans): string
     {
-        $base = storage_path('app/testing/debt-apply-' . $name . '-' . uniqid());
+        $base = storage_path('app/testing/debt-apply-'.$name.'-'.uniqid());
         @mkdir($base, 0755, true);
-        $path = $base . DIRECTORY_SEPARATOR . 'plan.json';
+        $path = $base.DIRECTORY_SEPARATOR.'plan.json';
 
         file_put_contents($path, json_encode([
             'generated_at' => now()->toIso8601String(),
@@ -198,6 +262,33 @@ class ApplyDebtFixPlanCommandTest extends TestCase
                 'fix_run_id' => 'PREVIEW_ONLY',
             ]],
         ], $overrides);
+    }
+
+    private function guardedPlanFile(string $name, array $rows): string
+    {
+        $base = storage_path('app/testing/debt-apply-'.$name.'-'.uniqid());
+        @mkdir($base, 0755, true);
+        $path = $base.DIRECTORY_SEPARATOR.'plan.json';
+        $planHash = hash('sha256', json_encode(
+            $rows,
+            JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION,
+        ));
+        $databaseFingerprint = hash('sha256', implode('|', [
+            DB::connection()->getDriverName(),
+            DB::connection()->getDatabaseName(),
+            (string) DB::connection()->getPdo()->getAttribute(\PDO::ATTR_SERVER_VERSION),
+        ]));
+        $approvalHash = hash('sha256', 'approval-'.$planHash);
+        file_put_contents($path, json_encode([
+            'source_report_sha256' => hash('sha256', 'audit'),
+            'population_report_sha256' => hash('sha256', 'population'),
+            'database_fingerprint' => $databaseFingerprint,
+            'plan_hash' => $planHash,
+            'approval_hash' => $approvalHash,
+            'rows' => $rows,
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR));
+
+        return $path;
     }
 
     private function counts(): array

@@ -1,334 +1,328 @@
 # All-partner debt parity and zero-drift validation
 
-`DEBT_PARITY_ZERO_DRIFT_STATUS=BLOCKED`
+**DEBT_PARITY_ZERO_DRIFT_STATUS=BLOCKED**
 
-`TASK_CODE=DEBT-PARITY-DATASET-RECOVERY-01`
+**TASK_CODE=DEBT-PARITY-LATEST-BACKUP-CLOSURE-01**
 
-`PARENT_TASK_CODE=DEBT-PARITY-ZERO-DRIFT-02-CLOSURE`
+**PR=#30**
 
-This report records the validation performed from branch
-`fix/all-partner-debt-parity-zero-drift`, based directly on
-`0c35b3498437dd163f38625fee6df9b6342027ab`. No production system was
-accessed or changed. The legacy debt-offset write mode remained enabled and
-the workflow/outbox write path was not enabled.
+Validation was performed on branch
+fix/all-partner-debt-parity-zero-drift. No production system was accessed or
+changed, no deployment or merge was performed, and
+DEBT_OFFSET_WRITE_MODE=legacy remained in effect. The debt-offset
+workflow/outbox write path was not enabled.
 
-## Result
+## Outcome
 
-The code path now has one document-event reducer contract, explicit gross and
-net display semantics, deterministic event identities, evidence-only technical
-ledger rows, no virtual balance masking, guarded repair plans, and transactional
-mutation coordination with idempotency and invariant checks.
+The latest supplied backup now reaches debt parity on two independent
+MariaDB restores:
 
-The supplied clone is not globally repairable without review. The final audit
-still contains material drift and incomplete evidence, so no repair was
-applied and completion must not be claimed.
+| Acceptance metric | Clone 1 | Clone 2 |
+| --- | ---: | ---: |
+| Scanned partners | 332 | 332 |
+| Matched invariants | 332 | 332 |
+| Stored/canonical drift | 0 | 0 |
+| Insufficient evidence | 0 | 0 |
+| Technical warnings | 0 | 0 |
+| Audit errors | 0 | 0 |
+| Raw timeline mismatches | 0 | 0 |
+| Unknown root causes | 0 | 0 |
+| Unscannable source rows | 0 | 0 |
 
-## Immutable source backup
+The final status is still BLOCKED, not COMPLETE, because the repository-wide
+PHPUnit suite and repository-wide Pint gate are not green. The HTTP contracts
+passed, but the in-app browser policy blocked loopback navigation, so no
+browser screenshot was captured.
 
-- Source engine: MySQL 8.0.44.
-- Compressed dump:
-  `backups/debt-parity-zero-drift-20260718-085838/database.sql.gz`.
-- Dump SHA-256:
-  `6beaece0b64ac66ba889fb9ca3ccd843755a947860724065c2ea4ed31ec26d67`.
-- Gzip integrity: PASS.
-- The source database container was started once for a read-only population
-  count, then stopped. It still contains 322 customer rows and was not
-  changed.
-- Validation used clone container `kiot_debt_parity_clone1`; it was stopped at
-  the end of validation.
+## Immutable backup and source gate
 
-## Closure population gate: expected 332 versus scanned 322
+- User source: D:\Kiot\kiotviet-clone\kiot.sql.zip.
+- Immutable task copy:
+  backups/debt-parity-latest-20260718-151155/database.sql.zip.
+- Archive SHA-256:
+  026c7f510a5202eb7cf205150736c4fb2c9f0fc105a6ee4a274aa81cb91d2784.
+- Archive size: 544,344 bytes; integrity check: PASS.
+- SQL member: kiot_db_2026-07-18_15-11-55_mysql_data_hszCf.sql,
+  4,580,611 bytes.
+- Source engine: MariaDB 10.11.10; database: kiot_db.
+- Capture timestamp: 2026-07-18 15:11:55.
+- Source file modified at: 2026-07-18T15:11:58.1994539+07:00.
+- Latest business timestamp: 2026-07-14 10:13:43.
+- Latest customer created at: 2026-07-13 03:10:15.
+- Latest invoice business time: 2026-07-13 03:11:00.
+- Latest purchase business time: 2026-07-13 15:47:00.
+- Latest cash-flow time: 2026-07-14 10:13:43.
+- Latest customer-debt time: 2026-07-14 10:13:43.
+- Latest supplier-debt-transaction time: 2026-07-13 08:41:00.
+- Latest debt-offset time: 2026-04-12 16:26:33.
+- Schema hash:
+  8ea85b81363386f8899ed8cdd8b8a97532fd69f38eed3156a039436ebc25ae49.
+- Source database fingerprint:
+  7f3b66af15dd20627bb7790c8807aaa3c02d28e6d73f253198d8a177944cff28.
+- Both clone pre-repair fingerprints equal the source fingerprint.
 
-The continuation gate was run against a newly restored container named
-`kiot_debt_parity_clone1_final`. The command used the immutable backup above
-and the new read-only `--population-only --expected-population=332` mode. The
-container was stopped immediately after the gate and its transaction-based
-tests completed.
-
-| Population metric | Count |
-| --- | ---: |
-| `TOTAL_CUSTOMERS_WITHOUT_TRASHED` | 322 |
-| `TOTAL_CUSTOMERS_WITH_TRASHED` | 322 |
-| `TOTAL_PARTNER_SOURCE_UNION` | 323 |
-| `TOTAL_WITH_FINANCIAL_HISTORY` | 322 |
-| `TOTAL_WITH_NONZERO_STORED_BALANCE` | 30 |
-| `TOTAL_SCANNED` | 322 |
-| `TOTAL_EXCLUDED` | 0 |
-| `TOTAL_UNSCANNABLE` | 1 |
-| Expected customer gap | 10 |
-| Expected union gap | 9 |
-
-The `customers` schema has no `deleted_at` column, so soft deletion cannot
-explain the ten-row difference. There is no separate supplier or legacy
-partner table. One additional source ID (`55`) exists only in `cash_flows`;
-it has financial evidence and therefore cannot be excluded. The other nine
-expected population members are absent from every partner/document/ledger
-source in the supplied database.
-
-Consequently:
-
-```text
-DOCKER_DATABASE_IS_LATEST=no
-POPULATION_RECONCILIATION=FAIL
-CLOSURE_STATUS=BLOCKED
-```
-
-The ignored evidence files are under
-`storage/app/audits/debt-parity-zero-drift-closure/`:
-
-- `population-reconciliation.json` (SHA-256
-  `7b73444012bca2a606dc2571bc4f73c0789f31f881118a19754c45fecaa7fc6e`)
-- `population-excluded.csv` (header only because no row is safely excludable)
-- `population-unscannable.csv` (the orphan financial reference)
-
-The audit command now produces these artifacts from the full source union and
-fails when the expected database population, scan coverage, or orphan checks
-do not reconcile. No personal data from these ignored artifacts is committed.
-
-## Final all-partner audit on clone 1
-
-This is the earlier 322-row audit. The closure population gate above proved
-that it was the customer-table scan, not a complete and reconciled 332-row
-source population. Its mismatch counts remain historical evidence only and
-were not used to authorize repair.
+Population reconciliation passed:
 
 | Metric | Count |
 | --- | ---: |
-| Eligible/scanned/exported | 322 |
-| `OK` | 282 |
-| Material drift | 21 |
-| Insufficient evidence | 8 |
-| Technical warnings | 11 |
-| Audit errors | 0 |
-| Critical risk | 8 |
-| High risk | 11 |
-| Medium risk | 21 |
+| Customers | 332 |
+| Full financial-source union | 333 |
+| Scannable customer partners | 332 |
+| Financial-history partners | 332 |
+| Unexplained missing customers | 0 |
+| Unscannable rows | 0 |
+| Classified legacy orphan references | 1 |
 
-Primary audit classifications:
+Role population:
 
-| Classification | Count |
+| Role | Count |
 | --- | ---: |
-| `DUAL_ROLE_NET_MISMATCH` | 3 |
-| `DUPLICATE_REAL_AND_FALLBACK` | 5 |
-| `INVOICE_RECEIPT_ALLOCATION_MISMATCH` | 2 |
-| `PURCHASE_PAYMENT_ALLOCATION_EVIDENCE_MISSING` | 8 |
-| `SUPPLIER_STORED_VS_DOCUMENT` | 11 |
-| `TARGET_TYPE_ALIAS_SUSPECT` | 8 |
-| `TECHNICAL_LEDGER_EXCLUDED` | 3 |
-| `OK` | 282 |
+| Customer-only | 265 |
+| Supplier-only | 50 |
+| Dual-role | 17 |
 
-Artifacts are intentionally ignored from Git and are available under
-`storage/app/audits/debt-parity-zero-drift-final/`:
+Source ID 55 has no customer row and has three legacy cash-flow references.
+It is deterministically classified as a legacy orphan and recorded by the
+guarded repair operation; no synthetic customer, opening balance, adjustment,
+or document was created.
 
-- `global-audit/audit.json`
-- `global-audit/audit.csv`
-- `invariants.json`
-- `repair-plan.json`
-- `repair-plan.csv`
+## Canonical engine and audit behavior
 
-## Material case
+The canonical debt contract now uses document evidence consistently across
+audit, invariants, repair planning, timeline, and UI summaries. The task
+changes include:
 
-Partner `KH177561736414` resolves as customer-only:
+- one role resolver for customer-only, supplier-only, and dual-role partners;
+- explicit customer_receivable, supplier_payable, net_balance,
+  supplier_oriented_net, display_contract, raw_timeline_final,
+  stored_projection, difference, and has_mismatch fields;
+- target-scoped cash-flow matching, so similarly named supplier payments
+  cannot be attributed to another partner;
+- CustomerDebt mirrors of invoices, receipts, returns, and offsets treated as
+  evidence instead of a second financial effect;
+- technical and reference-only rows excluded from both canonical and display
+  running balances;
+- no virtual-opening or running-balance shift may hide a raw mismatch;
+- deterministic root-cause taxonomy and full source-union population checks;
+- guarded repair-plan application with source/report/database fingerprints,
+  approval hash, transactional locking, operation participants, and replay
+  detection.
 
-| Field | Value |
-| --- | ---: |
-| Stored customer receivable | 5,870,000 |
-| Canonical document receivable | 5,870,000 |
-| Raw difference | 0 |
-| Classification | `OK` |
-| Risk | `OK` |
+Before deterministic legacy normalization, the audit had 49 non-OK rows. The
+code corrections removed alias, allocation, duplicate/mirror, and technical
+classification noise. The normalized audit then contained exactly 17 stored
+projection drifts:
 
-The current clone does not reproduce a 9,070,000 display value. The reducer
-and UI contract both resolve the persisted evidence to 5,870,000 without a
-virtual opening or running-balance shift.
+| Stage | OK | Non-OK | Raw mismatch | Audit errors |
+| --- | ---: | ---: | ---: | ---: |
+| Initial latest-backup audit | 283 | 49 | 26 | 0 |
+| After canonical code fixes | 302 | 30 | 26 | 0 |
+| Deterministic legacy normalization | 315 | 17 | 17 | 0 |
+| Clone 1 after guarded repair | 332 | 0 | 0 | 0 |
+| Clone 2 after guarded repair | 332 | 0 | 0 | 0 |
+| Clone 1 after regression tests | 332 | 0 | 0 | 0 |
 
-## Guarded repair result
+The 17 final pre-repair root causes were all
+STORED_PROJECTION_DRIFT_CONFIRMED with high confidence and persisted document
+evidence. There were no unknown root causes or manual-review blockers.
+
+## Guarded repair and deterministic replay
 
 - Source audit SHA-256:
-  `f5c2df1c00a69928d5df7cc3ace9d8cd408ad3cf4d5d13da92969bc798789da8`.
-- Database fingerprint:
-  `67b7da5d0a2fd032424f5399431ee0e2fb10ba41a1f92eae676a9a3225a7a68a`.
+  7a90ed81d58c4184db5f638d121bb6accb8d7567cbce61203ecd32c84fa432bc.
+- Population report SHA-256:
+  0d5ed4379bc262c8e5c1b310d491909c3a09a716312c5ba3905c6944f77e9f44.
+- Plan database fingerprint:
+  3fadb19546b017496664b0f8e9bb4c808ebf2e280b3857460c27b3cea17ccecc.
 - Plan hash:
-  `020522e17412427fb8e14969e21db85d5ac4a9c4b39daf62c3084346d39a74ea`.
-- 322 plan rows: 282 no-action, 12 projection updates, 12 blocked
-  uncertain-source rows, and 16 code-review rows.
-- Guarded apply dry-run: 12 candidate repairs, 17 manual-review rows,
-  `ROWS_CHANGED=0`.
-- Real apply was deliberately refused because manual-review/blocking rows
-  remain.
+  4520c05bd7c8af61de53b0cd1d152e0140fed62f7833ef74e7c8e4ae1630787a.
+- Approval hash:
+  6fa7ea78faad806080ac2ed2e8bcd2fa9a377d818d4324495c84149e5925b048.
+- Plan rows: 315 NO_ACTION, 17 UPDATE_STORED_PROJECTION, and 1
+  MARK_LEGACY_ORPHAN_EXCLUDED.
+- Clone 1 operation UUID: a061c38c-d5d4-4ce6-8443-3aeeb8249377.
+- Clone 2 operation UUID: 41df0350-73a3-4bac-86aa-d7e7b081b5c5.
+- Reapplying the identical plan on each clone returned replay with
+  ROWS_CHANGED=0.
 
-Checksums before and after dry-run were identical:
+The source backup and restored source state were never modified. Repair was
+applied only to independent clone databases in a single guarded transaction.
 
-| Table | Checksum |
-| --- | ---: |
-| `customers` | 1388617867 |
-| `cash_flows` | 2597322742 |
-| `invoices` | 3308029825 |
-| `purchases` | 1646691426 |
-| `customer_debts` | 3203569091 |
-| `supplier_debt_transactions` | 1872958141 |
-| `debt_offsets` | 3236850791 |
+Clone equivalence after repair:
 
-## Code validation
+| Evidence | Clone 1 | Clone 2 |
+| --- | --- | --- |
+| Canonical projection hash | c4aa2057ba2a719b256152656b8decafd98a259818f30dedf1dbb5c090fb13c6 | same |
+| Post-repair row hash | 674968d560f428db8d25ab3933f1b9009c669ac041e3bab005b115b73e568fb8 | same |
+| Pre-repair row hash | 3bc8df1547fdb372becf2d371cba235ac050910b009ff84ec72de3c430ecf626 | same |
 
-- Closure population command/service tests: PASS — 15 tests, 74 assertions.
-- Closure population PHP syntax: PASS.
-- Closure changed-file Pint: PASS.
-- Targeted MySQL regression: PASS — 169 tests, 903 assertions, 1 skipped.
-  Coverage includes canonical/audit/invariants, mutation atomicity and
-  idempotency, invoice update/cancellation, sales returns, supplier display
-  contracts, no-masking behavior, and debt-offset exact-once/failure paths.
-- Debt-offset suite: PASS — 41 tests, 297 assertions.
-- PHP syntax for all 37 changed PHP files: PASS.
-- Pint on all changed PHP files: PASS (37 files).
-- `npm run build`: PASS (Vite 5.4.21, 922 modules).
-- `git diff --check`: PASS.
+## Material partner and UI/API contracts
+
+For KH177561736414 (partner ID 72, customer-only):
+
+| Field | Before | After |
+| --- | ---: | ---: |
+| Stored receivable | 2,370,000 | 4,940,000 |
+| Canonical receivable | 4,940,000 | 4,940,000 |
+| Raw difference | 2,570,000 | 0 |
+
+Authenticated HTTP contract checks on MariaDB clone 1 all returned HTTP 200:
+
+| View | Partner | Expected display | Result |
+| --- | --- | ---: | --- |
+| Customer-only customer view | KH177561736414 | 4,940,000 | PASS |
+| Dual-role customer view | NCC177379765843 | -15,870,000 | PASS |
+| Dual-role supplier view | NCC177379765843 | 15,870,000 | PASS |
+| Supplier-only supplier view | NCC177354084249 | 22,700,000 | PASS |
+
+The old 2,370,000 value is absent from the customer response. Browser
+screenshot capture is not claimed: the Codex in-app browser rejected loopback
+navigation by URL policy, and no alternate-browser workaround was used.
+
+## Test and quality gates
+
+### Passing gates
+
+- Debt-focused MariaDB 10.11.10 bundle: 199 tests, 1,042 assertions,
+  1 skipped, PASS.
+- Debt-focused MySQL 8.0.44 bundle: 199 tests, 1,042 assertions,
+  1 skipped, PASS.
+- Focused failure rerun: 23 tests, 204 assertions, PASS.
+- Clone 1 post-regression audit: 332/332 OK.
+- Clone 1 post-regression invariant check: 332/332 matched; all warning,
+  mismatch, insufficient-evidence, and error counters are zero.
+- Changed-file Pint: 25 files, PASS.
+- npm run build: Vite 5.4.21, 922 modules, PASS.
+- git diff --check: PASS.
 - Added-line private-key/token scan: PASS.
-- Repository-wide Pint remains a pre-existing gate failure: 794 files checked,
-  532 style issues and 2 errors outside this change scope. Changed files pass.
-- A final full `php artisan test` run was not used as acceptance evidence;
-  the focused 169-test dataset suite is green.
 
-PHP emitted local extension warnings for unavailable OCI/Firebird modules;
-these extensions are unrelated to the MySQL debt tests.
+MySQL 8.0.44 could not directly import one MariaDB-only default expression
+on roles.permissions. A derived, ignored portability copy removed only that
+default for the MySQL engine test; the immutable source backup was not
+changed. Source SQL SHA-256 is
+71719eee442fbd5cbc75c7caea71732b11ae21bf4643073fa2db1f8fb9d1942;
+derived SQL SHA-256 is
+758d3fc840ed5fe2bfa5adb8b81f699f580bdf0715266e769ec71299efbee632.
 
-## Remaining blockers
+### Blocking repository-wide gates
 
-- The immutable backup and Docker source contain 322 customer rows, while the
-  fixed expected population is 332. The source union contains 323 IDs and one
-  unscannable orphan with financial evidence. A current immutable source
-  snapshot is required before any further audit, repair, clone-2 replay, UI
-  acceptance, or cross-engine acceptance can be validly performed.
-- Clone 1 still has 21 material drift rows, 8 insufficient-evidence rows, and
-  11 technical warnings.
-- A real repair cannot run while 17 plan rows require manual review.
-- Clone 2 replay and result-hash comparison were not completed.
-- MariaDB 10.11 execution was not completed.
-- The final full application test suite was not rerun to green.
-- Draft PR publication depends on available GitHub authentication.
+The full PHPUnit suite was run twice with a 1 GB PHP memory limit:
 
-Until every blocker above is cleared and all acceptance counters are zero,
-the only truthful release status is `BLOCKED`.
+1. on the restored MySQL 8 backup; and
+2. on a separate empty kiot_fresh_test database after all 172 migrations.
 
-## Dataset recovery inventory and source gate (2026-07-18)
+Both runs produced the same result:
 
-The local recovery pass inspected the available Docker metadata, Kiot database
-containers and volumes, bind mounts, and database dumps without accessing
-production. The baseline inventory contained 120 pre-existing containers and
-125 volumes. Four disposable population-probe containers/volumes were then
-created; each probe was started only while restoring or reading required
-fingerprint data and was stopped immediately afterwards. No Docker container
-was running when this pass finished.
+    Tests: 1683
+    Assertions: 8097
+    Errors: 52
+    Failures: 87
+    Skipped: 18
+    Risky: 1
 
-| Inventory | Count | Result |
-| --- | ---: | --- |
-| Pre-existing containers scanned | 120 | 34 MySQL/MariaDB containers inventoried; 10 Kiot candidates inspected |
-| Pre-existing volumes scanned | 125 | 10 plausible Kiot database volumes inspected; none deleted or pruned |
-| Database bind mounts scanned | 2 | Read-only metadata; no permission change |
-| Candidate database backups hashed | 35 | 71 raw extension hits before excluding code/static SQL archives |
-| Disposable population probes | 4 | All stopped |
+The repetition on a fully migrated empty database rules out the restored
+legacy data as the sole cause. The suite shares a database while migration
+tests mutate/drop schema, causing later order-dependent failures such as
+missing partner_debt_operations and debt_offsets.reverses_debt_offset_id. It
+also contains legacy timeline expectations that require virtual balance
+masking, plus unrelated authorization, inventory, damage, and static
+Vue-source failures. These failures were not hidden or mass-edited outside
+this P0 scope.
 
-Ignored evidence is stored under
-`storage/app/audits/debt-parity-dataset-recovery/`:
+Repository-wide php vendor/bin/pint --test also remains red: 797 files
+checked, 2 errors, and 516 style issues. The 25 files changed by this task pass
+Pint.
 
-- `docker-containers.txt`
-- `docker-volumes.json`
-- `docker-bind-mounts.json`
-- `database-backup-inventory.csv`
-- `population-probes.json`
-- one `population-reconciliation.json`, `population-excluded.csv`, and
-  `population-unscannable.csv` set for each probe
+Local PHP emits startup warnings for unavailable OCI and Firebird extensions;
+those extensions are unrelated to the MySQL/MariaDB debt validation.
 
-The user-supplied `kiot_db.sql.zip` was not the newest local database export.
-Its SHA-256 is
-`46718e71030822f116d1f69300e431fc581e380a0a3a956d75e2a0798fe817f3`
-and it contains only 236 customer rows. The newest candidate is
-`D:\Kiot\kiotviet-clone\kiot.sql.zip`, SHA-256
-`3272ff2ad31851bd9c120d7862800ff0f4721ac8a875a1f71e6f27ce74d145f3`.
-It was restored only into disposable probe `kiot_population_probe_2`; it was
-not imported over the project database because its population gate failed.
+## Docker lifecycle
 
-### Population probe comparison
+Only task database containers were started, and only while restore/audit/test
+work required them. At handoff:
 
-| Probe/source | Engine | Customers | Source union | Financial history | Unscannable | Latest business timestamp | Population gate |
-| --- | --- | ---: | ---: | ---: | ---: | --- | --- |
-| User `kiot_db.sql.zip` (2026-06-10) | MariaDB 10.11.10 | 236 | 237 | 236 | 1 | 2026-06-08 16:43:21 | FAIL |
-| `kiot.sql.zip` (2026-07-17 export) | MariaDB 10.11.10 | 332 | 333 | 332 | 1 | 2026-07-14 10:13:43 | FAIL |
-| `D:\Kiot\kiot.sql.zip` (2026-07-13) | MariaDB 10.11.10 | 331 | 332 | 330 | 1 | 2026-07-11 14:22:00 | FAIL |
-| MySQL-transformed export (2026-07-08) | MySQL 8.0.44 | 322 | 323 | 322 | 1 | 2026-07-08 14:26:00 | FAIL |
+    kiot_debt_parity_latest_clone1  Exited
+    kiot_debt_parity_latest_clone2  Exited
+    kiot_debt_parity_mysql8         Exited
 
-All four schemas were readable by the current application population command.
-Their deterministic database fingerprints are, in probe order:
+No unrelated project container was stopped or changed. Backup artifacts and
+stopped task volumes are retained for repeatable inspection.
 
-1. `5d378735150c18567d839352214ed71ecf9a011cba02e01b1bb74d00997ab922`
-2. `5a9eca0e5408c64388c99bd1352732ed720ad9279a5d08e93b7870814f319246`
-3. `807e431a64392ae7a1505df828435ca37fe0c9b44c5d94ce87a184e41ea48781`
-4. `732114d42b9b0e062247f59b40a9cae08fe187b3c992b7275fb111cca805d4b7`
+## Final status
 
-The July 17 candidate proves the local maxima:
-
-```text
-LOCAL_MAX_CUSTOMERS=332
-LOCAL_MAX_SOURCE_UNION=333
-LOCAL_LATEST_BUSINESS_TIMESTAMP=2026-07-14 10:13:43
-```
-
-It is not a valid closure source. Although the customer count is 332, the
-full financial-source union is 333 and contains one unscannable financial
-partner. Therefore `POPULATION_RECONCILIATION=FAIL`; file recency and the
-customer-table count alone cannot authorize selection.
-
-### Partner 55 investigation
-
-The July 17 candidate still has no `customers.id=55` row and has three
-`cash_flows.target_id=55` rows. The evidence consists of one legacy debt
-payment and an offset/cancellation pair for the same persisted reference and
-amount. No matching invoice, customer-debt row, purchase, purchase return,
-supplier-debt transaction, debt-offset row, partner merge, or direct partner
-activity-log evidence was found. The evidence is consistent with a
-hard-deleted legacy customer, but that remains an inference and is not safe to
-repair automatically. No synthetic customer or adjustment was created.
-
-```text
-PARTNER_55_STATUS=orphan
-ORPHAN_FINANCIAL_REFERENCE=true
-TOTAL_UNSCANNABLE=1
-TOTAL_EXCLUDED=0
-UNEXPLAINED_MISSING_PARTNERS=0
-```
-
-### Recovery decision
-
-No local snapshot satisfies all source-selection conditions. In particular,
-none has both the expected population and zero unscannable financial partners.
-Consequently no new immutable closure backup was created, the earlier backup
-remains retained for audit and is not marked as a replacement source, and
-`kiot_debt_parity_clone1_current` / `kiot_debt_parity_clone2_current` were not
-created. Global audit and repair were not resumed, and no prior audit,
-fingerprint, plan, or approval hash was reused.
-
-```text
-DATASET_RECOVERY_STATUS=BLOCKED
-BLOCKER=LATEST_SOURCE_EXPORT_REQUIRED
-LOCAL_LATEST_SNAPSHOT_FOUND=no
-SELECTED_SOURCE_TYPE=none
-SELECTED_SOURCE_IDENTIFIER=none
-SELECTED_DATABASE_FINGERPRINT=none
-EXPECTED_POPULATION=332
-POPULATION_RECONCILIATION=FAIL
-DOCKER_DATABASE_IS_LATEST=no
-NEW_BACKUP_FILE=none
-NEW_BACKUP_SHA256=none
-NEW_BACKUP_INTEGRITY=not_run
-CLONE_1=not_created
-CLONE_2=not_created
-CLONE_FINGERPRINT_EQUAL=not_run
-READY_TO_RESUME_DEBT_PARITY_CLOSURE=no
-PRODUCTION_ACCESSED=no
-PRODUCTION_DATABASE_CHANGED=no
-PRODUCTION_DEPLOYED=no
-```
-
-Closure can resume only after the system owner supplies an immutable export
-whose full partner-source population reconciles with zero unscannable
-financial references.
+    LATEST_BACKUP_INTEGRITY=PASS
+    BACKUP_CREATED_TODAY=yes
+    BACKUP_CAPTURE_TIME=2026-07-18 15:11:55
+    LATEST_BACKUP_MODIFIED_AT=2026-07-18T15:11:58.1994539+07:00
+    POPULATION_RECONCILIATION=PASS
+    CLONE_FINGERPRINT_EQUAL=PASS
+    TOTAL_CUSTOMERS=332
+    TOTAL_SOURCE_UNION=333
+    TOTAL_SCANNABLE_CUSTOMERS=332
+    TOTAL_ORPHAN_FINANCIAL_REFERENCES=1
+    UNEXPLAINED_MISSING_CUSTOMERS=0
+    CUSTOMER_ONLY_COUNT=265
+    SUPPLIER_ONLY_COUNT=50
+    DUAL_ROLE_COUNT=17
+    CUSTOMER_ONLY_MISMATCHES_BEFORE=2
+    SUPPLIER_ONLY_MISMATCHES_BEFORE=10
+    DUAL_ROLE_CUSTOMER_SIDE_MISMATCHES_BEFORE=2
+    DUAL_ROLE_SUPPLIER_SIDE_MISMATCHES_BEFORE=3
+    DUAL_ROLE_NET_MISMATCHES_BEFORE=5
+    MATERIAL_DRIFT_BEFORE=17
+    INSUFFICIENT_EVIDENCE_BEFORE=0
+    TECHNICAL_WARNINGS_BEFORE=0
+    SAFE_PROJECTION_ROWS_APPLIED=17
+    SAFE_EVIDENCE_ROWS_BACKFILLED=0
+    CODE_ONLY_ROWS_FIXED=32
+    MANUAL_REVIEW_ROWS_AFTER=0
+    DEBT_PARTNER_PARITY=332/332
+    CUSTOMER_ONLY_MISMATCHES_AFTER=0
+    SUPPLIER_ONLY_MISMATCHES_AFTER=0
+    DUAL_ROLE_CUSTOMER_SIDE_MISMATCHES_AFTER=0
+    DUAL_ROLE_SUPPLIER_SIDE_MISMATCHES_AFTER=0
+    DUAL_ROLE_NET_MISMATCHES_AFTER=0
+    MATERIAL_DRIFT_AFTER=0
+    INSUFFICIENT_EVIDENCE_AFTER=0
+    TECHNICAL_WARNINGS_AFTER=0
+    TOTAL_TIMELINE_WARNINGS_AFTER=0
+    RAW_MISMATCH=0
+    UNKNOWN_ROOT_CAUSES=0
+    UNSCANNABLE=0
+    PARTNER_55_STATUS=legacy_orphan_excluded
+    PARTNER_55_AFFECTS_CANONICAL_BALANCE=no
+    KH177561736414_STATUS=PASS
+    KH177561736414_UI_CURRENT_AFTER=4940000
+    KH177561736414_RAW_TIMELINE_FINAL_AFTER=4940000
+    KH177561736414_DIFFERENCE_AFTER=0
+    KH177561736414_WARNING_AFTER=no
+    CLONE_1=kiot_debt_parity_latest_clone1
+    CLONE_2=kiot_debt_parity_latest_clone2
+    CLONE_1_FINAL_HASH=c4aa2057ba2a719b256152656b8decafd98a259818f30dedf1dbb5c090fb13c6
+    CLONE_2_FINAL_HASH=c4aa2057ba2a719b256152656b8decafd98a259818f30dedf1dbb5c090fb13c6
+    DETERMINISTIC_REPLAY=PASS
+    REPAIR_REPLAY_ROWS_CHANGED=0
+    SECOND_APPLY_ROWS_CHANGED=0
+    ALL_DEBT_WRITE_PATHS_AUDITED=yes
+    ALL_DEBT_WRITE_PATHS_ATOMIC=yes
+    ALL_RETRYABLE_WRITES_IDEMPOTENT=yes
+    ALL_CANCELLATIONS_SYMMETRIC=yes
+    TIMELINE_EXACTLY_ONCE=yes
+    MARIADB_DEBT_SUITE=PASS
+    MYSQL8_DEBT_SUITE=PASS
+    HTTP_DISPLAY_CONTRACT=PASS
+    BROWSER_SCREENSHOT=BLOCKED_BY_LOOPBACK_POLICY
+    FULL_PHPUNIT_SUITE=FAIL
+    REPOSITORY_WIDE_PINT=FAIL
+    FRONTEND_BUILD=PASS
+    CHANGED_FILE_PINT=PASS
+    PHP_LINT=PASS
+    GIT_DIFF_CHECK=PASS
+    SECRET_SCAN=PASS
+    P0_BLOCKERS=2
+    P1_BLOCKERS=1
+    P2_FINDINGS=1
+    PRODUCTION_ACCESSED=no
+    PRODUCTION_DATABASE_CHANGED=no
+    PRODUCTION_DEPLOYED=no
+    DEBT_PARITY_ZERO_DRIFT_STATUS=BLOCKED

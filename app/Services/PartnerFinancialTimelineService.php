@@ -12,6 +12,8 @@ use App\Models\OrderReturn;
 use App\Models\Purchase;
 use App\Models\PurchaseReturn;
 use App\Models\SupplierDebtTransaction;
+use App\Services\Debt\PartnerDebtRoleResolver;
+use App\Support\Debt\PartnerDebtDisplayBalance;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Schema;
@@ -21,7 +23,7 @@ class PartnerFinancialTimelineService
     public function buildForCustomer(Customer $customer): array
     {
         $hasSupplierColumn = Schema::hasColumn('customers', 'supplier_debt_amount');
-        $isDualRole = (bool) ($customer->is_customer && ($hasSupplierColumn ? $customer->is_supplier : false));
+        $isDualRole = $hasSupplierColumn && PartnerDebtDisplayBalance::isDualRole($customer);
 
         $customerDebts = CustomerDebt::query()
             ->where('customer_id', $customer->id)
@@ -350,7 +352,7 @@ class PartnerFinancialTimelineService
         $invoiceCodes = $invoices->pluck('code')->filter()->all();
 
         return CashFlow::query()
-            ->where('target_type', 'Khách hàng')
+            ->whereIn('target_type', PartnerDebtRoleResolver::CUSTOMER_TARGET_TYPES)
             ->where('target_id', $customer->id)
             ->where('type', 'receipt')
             ->whereNotIn('reference_type', ['DebtOffset', 'DebtOffsetCancel'])
@@ -588,9 +590,12 @@ class PartnerFinancialTimelineService
             ->map(function ($entry) use (&$ledgerRunning, &$displayRunning) {
                 $displayBalanceEffect = $this->customerDisplayBalanceEffect($entry);
                 $ledgerEffect = $this->customerLedgerEffect($entry);
+                $affectsBalance = (bool) ($entry['affects_debt_balance'] ?? true);
 
-                if (($entry['affects_debt_balance'] ?? true) === true) {
+                if ($affectsBalance) {
                     $ledgerRunning += $ledgerEffect;
+                } else {
+                    $displayBalanceEffect = 0.0;
                 }
 
                 $displayRunning += $displayBalanceEffect;
@@ -1067,6 +1072,8 @@ class PartnerFinancialTimelineService
             || CashFlow::query()
                 ->where('reference_type', 'SupplierPayment')
                 ->where('reference_code', $code)
+                ->where('target_id', $transaction->supplier_id)
+                ->whereIn('target_type', PartnerDebtRoleResolver::SUPPLIER_TARGET_TYPES)
                 ->exists();
     }
 

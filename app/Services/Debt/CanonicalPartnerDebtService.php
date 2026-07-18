@@ -85,8 +85,7 @@ class CanonicalPartnerDebtService
         bool $isCanonical,
         array $events,
     ): array {
-        $isCustomer = (bool) ($partner->is_customer ?? false);
-        $isSupplier = (bool) ($partner->is_supplier ?? false);
+        [$isCustomer, $isSupplier] = PartnerDebtRoleResolver::sides($partner);
         $isDualRole = $isCustomer && $isSupplier;
         $netBalance = $customerReceivable - $supplierPayable;
         $supplierOrientedNet = $supplierPayable - $customerReceivable;

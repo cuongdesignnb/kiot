@@ -83,11 +83,12 @@ class AuditDebtParityCommandTest extends TestCase
         $this->assertSame(4_300_000.0, (float) $customer->fresh()->debt_amount);
     }
 
-    public function test_target_type_alias_is_reported_without_mutation(): void
+    public function test_supported_unaccented_target_type_is_not_reported_as_suspect(): void
     {
         $customer = $this->customer();
+        $code = 'PT-ALIAS-'.uniqid();
         CashFlow::query()->insert([
-            'code' => 'PT-ALIAS-'.uniqid(),
+            'code' => $code,
             'type' => 'receipt',
             'amount' => 100_000,
             'time' => now(),
@@ -109,9 +110,9 @@ class AuditDebtParityCommandTest extends TestCase
         ])->assertExitCode(0);
 
         $row = json_decode((string) file_get_contents($json), true, flags: JSON_THROW_ON_ERROR)['rows'][0];
-        $this->assertTrue($row['has_target_type_alias']);
-        $this->assertContains('TARGET_TYPE_ALIAS_SUSPECT', $row['classification_flags']);
-        $this->assertDatabaseHas('cash_flows', ['code' => $row['suspect_receipt_codes'][0] ?? 'PT-ALIAS-NOT-REQUIRED']);
+        $this->assertFalse($row['has_target_type_alias']);
+        $this->assertNotContains('TARGET_TYPE_ALIAS_SUSPECT', $row['classification_flags']);
+        $this->assertDatabaseHas('cash_flows', ['code' => $code, 'target_type' => 'Khach hang']);
     }
 
     public function test_output_outside_audit_directory_is_rejected(): void
@@ -318,6 +319,7 @@ class AuditDebtParityCommandTest extends TestCase
             ],
             'source_population' => [],
             'excluded' => [],
+            'orphan_financial_references' => [],
             'unscannable' => [[
                 'partner_id' => 55,
                 'partner_code' => '',
@@ -339,6 +341,7 @@ class AuditDebtParityCommandTest extends TestCase
 
         $this->assertFileExists($directory.'/population-reconciliation.json');
         $this->assertFileExists($directory.'/population-excluded.csv');
+        $this->assertFileExists($directory.'/population-orphan-financial-references.csv');
         $this->assertFileExists($directory.'/population-unscannable.csv');
         $payload = json_decode(
             (string) file_get_contents($directory.'/population-reconciliation.json'),
@@ -376,9 +379,11 @@ class AuditDebtParityCommandTest extends TestCase
         );
     }
 
-    public function test_population_service_blocks_orphan_financial_reference(): void
+    public function test_population_service_reports_orphan_without_blocking_complete_customer_scan(): void
     {
         $scannedIds = Customer::query()->pluck('id')->all();
+        $baseline = $this->app->make(PartnerDebtPopulationService::class)->reconcile($scannedIds);
+        $baselineOrphanCount = (int) $baseline['summary']['total_orphan_financial_references'];
         $orphanId = ((int) Customer::query()->max('id')) + 100_000;
         CashFlow::query()->insert([
             'code' => 'PT-ORPHAN-'.uniqid(),
@@ -397,8 +402,15 @@ class AuditDebtParityCommandTest extends TestCase
 
         $result = $this->app->make(PartnerDebtPopulationService::class)->reconcile($scannedIds);
 
-        $this->assertFalse($result['summary']['population_reconciliation_pass']);
-        $this->assertNotNull(collect($result['unscannable'])->firstWhere('partner_id', $orphanId));
+        $this->assertTrue($result['summary']['population_reconciliation_pass']);
+        $this->assertTrue($result['summary']['audit_can_proceed']);
+        $this->assertSame($baselineOrphanCount + 1, $result['summary']['total_orphan_financial_references']);
+        $this->assertSame(0, $result['summary']['total_unexplained_missing_customers']);
+        $this->assertSame(Customer::query()->count(), $result['summary']['total_scannable_customers']);
+        $orphan = collect($result['orphan_financial_references'])->firstWhere('partner_id', $orphanId);
+        $this->assertNotNull($orphan);
+        $this->assertFalse($orphan['affects_canonical_balance']);
+        $this->assertEmpty($result['unscannable']);
     }
 
     private function customer(array $overrides = []): Customer

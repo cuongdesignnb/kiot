@@ -213,9 +213,6 @@ class PartnerDebtInvariantChecker
 
     private function role(Customer $partner): string
     {
-        $customer = (bool) ($partner->is_customer ?? false);
-        $supplier = (bool) ($partner->is_supplier ?? false);
-
-        return $customer && $supplier ? 'dual_role' : ($supplier ? 'supplier_only' : 'customer_only');
+        return PartnerDebtRoleResolver::role($partner);
     }
 }

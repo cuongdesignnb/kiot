@@ -801,7 +801,7 @@ class SupplierController extends Controller
         }
 
         $hasSupplierColumn = \Illuminate\Support\Facades\Schema::hasColumn('customers', 'supplier_debt_amount');
-        $isDualRole = (bool) $supplier->is_customer;
+        $isDualRole = PartnerDebtDisplayBalance::isDualRole($supplier);
         $usePartnerTimeline = $isDualRole && (string) $request->input('view', '') === 'partner';
 
         $mode = $request->query('mode', 'document');

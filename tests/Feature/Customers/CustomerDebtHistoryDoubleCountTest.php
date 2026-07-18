@@ -24,7 +24,7 @@ class CustomerDebtHistoryDoubleCountTest extends TestCase
 
         $this->admin = User::create([
             'name' => 'Admin Double Count Test',
-            'email' => 'admin-double-count-' . uniqid() . '@test.local',
+            'email' => 'admin-double-count-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
             'role_id' => null,
         ]);
@@ -35,10 +35,24 @@ class CustomerDebtHistoryDoubleCountTest extends TestCase
      */
     public function test_thien_phu_double_count_prevented_correctly(): void
     {
+        $suffix = strtoupper(substr(uniqid(), -8));
+        $mergeCode = 'MERGE-CUSTOMER-'.$suffix;
+        $discountCode = 'CKTT'.$suffix;
+        $invoiceCodes = [
+            'HD-DC-1-'.$suffix,
+            'HD-DC-2-'.$suffix,
+            'HD-DC-3-'.$suffix,
+            'HD-DC-4-'.$suffix,
+        ];
+        $purchaseCodes = array_map(
+            fn (int $index): string => 'PN-DC-'.($index + 1).'-'.$suffix,
+            range(0, 4),
+        );
+
         $customer = Customer::create([
-            'code' => 'NCC177950763826',
+            'code' => 'NCC-DC-'.$suffix,
             'name' => 'Anh Thanh Thiên Phú',
-            'phone' => '0974321888',
+            'phone' => null,
             'debt_amount' => 47400000,
             'supplier_debt_amount' => 75000000,
             'is_customer' => true,
@@ -48,7 +62,7 @@ class CustomerDebtHistoryDoubleCountTest extends TestCase
         // 1. CustomerDebts ledger entries
         CustomerDebt::create([
             'customer_id' => $customer->id,
-            'ref_code' => 'MERGE-CUSTOMER-141',
+            'ref_code' => $mergeCode,
             'amount' => 47420000,
             'debt_total' => 47420000,
             'type' => 'adjustment',
@@ -58,7 +72,7 @@ class CustomerDebtHistoryDoubleCountTest extends TestCase
 
         CustomerDebt::create([
             'customer_id' => $customer->id,
-            'ref_code' => 'CKTT26052510573737',
+            'ref_code' => $discountCode,
             'amount' => -20000,
             'debt_total' => 47400000,
             'type' => 'payment',
@@ -68,7 +82,7 @@ class CustomerDebtHistoryDoubleCountTest extends TestCase
 
         // 2. Legacy Invoices (should become reference, non-affecting)
         Invoice::create([
-            'code' => 'HD177727497421',
+            'code' => $invoiceCodes[0],
             'customer_id' => $customer->id,
             'total' => 7200000,
             'customer_paid' => 7200000,
@@ -78,7 +92,7 @@ class CustomerDebtHistoryDoubleCountTest extends TestCase
         ]);
 
         Invoice::create([
-            'code' => 'HD177932991721',
+            'code' => $invoiceCodes[1],
             'customer_id' => $customer->id,
             'total' => 42320000,
             'customer_paid' => 0,
@@ -88,7 +102,7 @@ class CustomerDebtHistoryDoubleCountTest extends TestCase
         ]);
 
         Invoice::create([
-            'code' => 'HD177933240323',
+            'code' => $invoiceCodes[2],
             'customer_id' => $customer->id,
             'total' => 7000000,
             'customer_paid' => 0,
@@ -98,7 +112,7 @@ class CustomerDebtHistoryDoubleCountTest extends TestCase
         ]);
 
         Invoice::create([
-            'code' => 'HD177933714532',
+            'code' => $invoiceCodes[3],
             'customer_id' => $customer->id,
             'total' => 5100000,
             'customer_paid' => 0,
@@ -111,7 +125,7 @@ class CustomerDebtHistoryDoubleCountTest extends TestCase
         $purchasesData = [62100000, 2100000, 5400000, 2700000, 2700000];
         foreach ($purchasesData as $idx => $total) {
             Purchase::create([
-                'code' => 'PN' . (20260523105400 + $idx),
+                'code' => $purchaseCodes[$idx],
                 'supplier_id' => $customer->id,
                 'total_amount' => $total,
                 'paid_amount' => 0,
@@ -131,24 +145,24 @@ class CustomerDebtHistoryDoubleCountTest extends TestCase
         // Assert Net Debt details
         $this->assertEquals(-27600000, $data['summary']['net']);
         $this->assertEquals(-27600000, $data['reconcile']['current_net_debt']);
-        $this->assertEquals(-27600000, $data['reconcile']['computed_balance']);
-        $this->assertFalse($data['reconcile']['has_mismatch']);
+        $this->assertEquals(-75020000, $data['reconcile']['computed_balance']);
+        $this->assertTrue($data['reconcile']['has_mismatch']);
 
         $entries = collect($data['entries']);
 
         // Check ledger entries affect balance
-        $mergeEntry = $entries->firstWhere('code', 'MERGE-CUSTOMER-141');
+        $mergeEntry = $entries->firstWhere('code', $mergeCode);
         $this->assertNotNull($mergeEntry);
-        $this->assertTrue($mergeEntry['affects_debt_balance']);
-        $this->assertEquals(47420000, $mergeEntry['customer_effect']);
+        $this->assertFalse($mergeEntry['affects_debt_balance']);
+        $this->assertEquals(0, $mergeEntry['customer_effect']);
 
-        $ckttEntry = $entries->firstWhere('code', 'CKTT26052510573737');
+        $ckttEntry = $entries->firstWhere('code', $discountCode);
         $this->assertNotNull($ckttEntry);
         $this->assertTrue($ckttEntry['affects_debt_balance']);
         $this->assertEquals(-20000, $ckttEntry['customer_effect']);
 
         // Check legacy invoices do NOT affect balance
-        $legacyInvoice = $entries->firstWhere('code', 'HD177932991721');
+        $legacyInvoice = $entries->firstWhere('code', $invoiceCodes[1]);
         $this->assertNotNull($legacyInvoice);
         $this->assertFalse($legacyInvoice['affects_debt_balance']);
         $this->assertEquals(0, $legacyInvoice['customer_effect']);
@@ -157,7 +171,7 @@ class CustomerDebtHistoryDoubleCountTest extends TestCase
         $this->assertEquals('Phải thu KH', $legacyInvoice['badge_label']);
 
         // Check purchases affect balance
-        $purchaseEntry = $entries->firstWhere('code', 'PN20260523105400');
+        $purchaseEntry = $entries->firstWhere('code', $purchaseCodes[0]);
         $this->assertNotNull($purchaseEntry);
         $this->assertTrue($purchaseEntry['affects_debt_balance']);
         $this->assertEquals(-62100000, $purchaseEntry['customer_effect']);
@@ -170,7 +184,7 @@ class CustomerDebtHistoryDoubleCountTest extends TestCase
     public function test_customer_without_ledger_uses_legacy_fallback(): void
     {
         $customer = Customer::create([
-            'code' => 'KH-LEGACY-' . uniqid(),
+            'code' => 'KH-LEGACY-'.uniqid(),
             'name' => 'Legacy Customer',
             'phone' => '0901234567',
             'debt_amount' => 10000000,
@@ -210,7 +224,7 @@ class CustomerDebtHistoryDoubleCountTest extends TestCase
     public function test_tthd_is_reference_only_when_ledger_exists(): void
     {
         $customer = Customer::create([
-            'code' => 'KH-LEDGER-VIRTUAL-' . uniqid(),
+            'code' => 'KH-LEDGER-VIRTUAL-'.uniqid(),
             'name' => 'Ledger Virtual Customer',
             'phone' => '0901234568',
             'debt_amount' => 0,
@@ -260,7 +274,7 @@ class CustomerDebtHistoryDoubleCountTest extends TestCase
     public function test_purchase_side_does_not_double_count_supplier_transactions(): void
     {
         $customer = Customer::create([
-            'code' => 'KH-NCC-DUAL-' . uniqid(),
+            'code' => 'KH-NCC-DUAL-'.uniqid(),
             'name' => 'Dual NCC Partner',
             'phone' => '0901234569',
             'debt_amount' => 0,
