@@ -219,7 +219,7 @@ class CustomerController extends Controller
     {
         $this->configureCustomerFilters();
 
-        $query = Customer::with('branch');
+        $query = Customer::with('branch')->where('is_customer', true);
 
         $hasSupplierDebtColumn = Schema::hasColumn('customers', 'supplier_debt_amount');
 
@@ -307,7 +307,8 @@ class CustomerController extends Controller
             ->get(['id', 'name'])
             ->map(fn ($g) => ['value' => $g->name, 'label' => $g->name]);
 
-        $legacyGroups = Customer::whereNotNull('customer_group')
+        $legacyGroups = Customer::where('is_customer', true)
+            ->whereNotNull('customer_group')
             ->where('customer_group', '!=', '')
             ->distinct()->pluck('customer_group')
             ->diff($masterGroups->pluck('value'))
@@ -319,12 +320,12 @@ class CustomerController extends Controller
         // Creators: users who have created customers
         $creators = $capabilities['supportsCreatedByFilter']
             ? \App\Models\User::select('id', 'name')
-                ->whereIn('id', Customer::whereNotNull('created_by')->distinct()->pluck('created_by'))
+                ->whereIn('id', Customer::where('is_customer', true)->whereNotNull('created_by')->distinct()->pluck('created_by'))
                 ->orderBy('name')->get()
             : collect();
 
         // Delivery areas (distinct cities from customers)
-        $deliveryCities = Customer::whereNotNull('city')->where('city', '!=', '')
+        $deliveryCities = Customer::where('is_customer', true)->whereNotNull('city')->where('city', '!=', '')
             ->distinct()->orderBy('city')->pluck('city')
             ->map(fn ($c) => ['value' => $c, 'label' => $c])->values();
 
@@ -567,10 +568,11 @@ class CustomerController extends Controller
      */
     public function debtHistory(Request $request, Customer $customer)
     {
-        $mode = $request->query('mode');
-        if ($mode === null) {
-            $mode = $request->expectsJson() ? 'legacy' : 'document';
+        if (! (bool) $customer->is_customer) {
+            abort(404);
         }
+
+        $mode = (string) $request->query('mode', 'document');
 
         if ($mode === 'legacy') {
             $ledger = app(\App\Services\PartnerDebtLedgerService::class)->buildCustomerNetLedger($customer);
@@ -704,6 +706,11 @@ class CustomerController extends Controller
             'customer_debt_adjustment',
             $payloadHash,
             function (Customer $lockedCustomer) use ($validated): array {
+                if (! (bool) $lockedCustomer->is_customer) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'customer_id' => 'Doi tac khong co vai tro khach hang da duoc luu.',
+                    ]);
+                }
                 $targetDebt = (float) $validated['amount'];
                 $currentReceivable = (float) $lockedCustomer->debt_amount;
                 $currentDebt = PartnerDebtDisplayBalance::customerScreen($lockedCustomer);
@@ -881,7 +888,7 @@ class CustomerController extends Controller
     {
         $this->configureCustomerFilters();
 
-        $query = Customer::with('branch');
+        $query = Customer::with('branch')->where('is_customer', true);
         $this->applyAdvancedCustomerFilters($query, $request);
         $customers = $query->get();
 
@@ -894,6 +901,10 @@ class CustomerController extends Controller
 
     public function exportDebtHistory(Customer $customer, Request $request)
     {
+        if (! (bool) $customer->is_customer) {
+            abort(404);
+        }
+
         // HOTFIX FOLLOW-UP — export must include ALL entries; bypass the
         // pagination layer added to debtHistory() for the UI tab.
         $mode = $request->query('mode', 'document');

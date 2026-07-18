@@ -3,20 +3,23 @@
 namespace App\Services;
 
 use App\Models\Customer;
-use App\Models\Invoice;
 use App\Models\CustomerPaymentDiscount;
 use App\Models\CustomerPaymentDiscountAllocation;
-use App\Services\CustomerDebtService;
-use Illuminate\Support\Facades\DB;
+use App\Models\Invoice;
+use App\Services\Debt\PartnerDebtMutationCoordinator;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class CustomerPaymentDiscountService
 {
+    public function __construct(private readonly PartnerDebtMutationCoordinator $coordinator) {}
+
     public function getInvoiceDiscountAllocatedAmount(int $invoiceId): float
     {
         return (float) CustomerPaymentDiscountAllocation::query()
             ->where('invoice_id', $invoiceId)
-            ->whereHas('discount', fn($q) => $q->where('status', 'active'))
+            ->whereHas('discount', fn ($q) => $q->where('status', 'active'))
             ->sum('amount');
     }
 
@@ -27,6 +30,7 @@ class CustomerPaymentDiscountService
         }
 
         $allocated = $this->getInvoiceDiscountAllocatedAmount($invoice->id);
+
         return max(0.0, (float) $invoice->total - (float) $invoice->customer_paid - $allocated);
     }
 
@@ -40,14 +44,18 @@ class CustomerPaymentDiscountService
         return $this->getCustomerReceivableInvoices($customer);
     }
 
-    public function create(Customer $customer, array $payload): CustomerPaymentDiscount
+    public function create(Customer $customer, array $payload, ?string $idempotencyKey = null): CustomerPaymentDiscount
     {
-        return DB::transaction(function () use ($customer, $payload) {
+        $mutation = function (Customer $customer) use ($payload): CustomerPaymentDiscount {
+            if (! (bool) $customer->is_customer) {
+                throw ValidationException::withMessages([
+                    'customer_id' => 'Doi tac khong co vai tro khach hang da duoc luu.',
+                ]);
+            }
             app(PartnerTransactionGuard::class)->assertCanTransact(
                 (int) $customer->id,
                 'customer_id'
             );
-            $customer = Customer::lockForUpdate()->findOrFail($customer->id);
 
             $currentDebt = (float) $customer->debt_amount;
             if ($currentDebt <= 0) {
@@ -72,12 +80,12 @@ class CustomerPaymentDiscountService
 
                 foreach ($allocations as $alloc) {
                     $resolved = $receivableInvoices->get((int) $alloc['invoice_id']);
-                    if (!$resolved) {
+                    if (! $resolved) {
                         throw new \InvalidArgumentException("Hóa đơn ID {$alloc['invoice_id']} không hợp lệ hoặc đã hủy.");
                     }
 
                     $invoice = Invoice::find($resolved['id']);
-                    if (!$invoice) {
+                    if (! $invoice) {
                         throw new \InvalidArgumentException("Hóa đơn ID {$alloc['invoice_id']} không hợp lệ hoặc đã hủy.");
                     }
 
@@ -101,12 +109,12 @@ class CustomerPaymentDiscountService
             }
 
             // Generate code
-            $code = 'CKTT' . date('ymdHis') . rand(10, 99);
+            $code = 'CKTT'.date('ymdHis').rand(10, 99);
             while (CustomerPaymentDiscount::where('code', $code)->exists()) {
-                $code = 'CKTT' . date('ymdHis') . rand(10, 99);
+                $code = 'CKTT'.date('ymdHis').rand(10, 99);
             }
 
-            $discountAt = !empty($payload['discount_at']) ? Carbon::parse($payload['discount_at']) : now();
+            $discountAt = ! empty($payload['discount_at']) ? Carbon::parse($payload['discount_at']) : now();
 
             $discount = CustomerPaymentDiscount::create([
                 'code' => $code,
@@ -140,38 +148,69 @@ class CustomerPaymentDiscountService
             app(CustomerDebtService::class)->recordAdjustment(
                 $customer->id,
                 -$amount,
-                'Chiết khấu thanh toán ' . $discount->code . ($discount->note ? ' - ' . $discount->note : ''),
+                'Chiết khấu thanh toán '.$discount->code.($discount->note ? ' - '.$discount->note : ''),
                 ['ref_code' => $discount->code]
             );
 
             return $discount;
-        });
+        };
+
+        return $this->coordinator->execute(
+            (int) $customer->id,
+            'customer_payment_discount_create',
+            hash('sha256', json_encode([
+                'customer_id' => (int) $customer->id,
+                'payload' => $payload,
+            ], JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION)),
+            fn (Customer $lockedCustomer): CustomerPaymentDiscount => DB::transaction(
+                fn (): CustomerPaymentDiscount => $mutation($lockedCustomer),
+            ),
+            $idempotencyKey,
+        );
     }
 
-    public function cancel(CustomerPaymentDiscount $discount, ?string $reason): void
-    {
-        DB::transaction(function () use ($discount, $reason) {
-            $discount = CustomerPaymentDiscount::lockForUpdate()->findOrFail($discount->id);
-            if ($discount->isCancelled()) {
-                throw new \InvalidArgumentException('Phiếu chiết khấu này đã được hủy trước đó.');
-            }
+    public function cancel(
+        CustomerPaymentDiscount $discount,
+        ?string $reason,
+        ?string $idempotencyKey = null,
+    ): void {
+        $this->coordinator->execute(
+            (int) $discount->customer_id,
+            'customer_payment_discount_cancel',
+            hash('sha256', json_encode([
+                'discount_id' => (int) $discount->id,
+                'reason' => $reason,
+            ], JSON_UNESCAPED_UNICODE)),
+            function (Customer $lockedCustomer) use ($discount, $reason): void {
+                if (! (bool) $lockedCustomer->is_customer) {
+                    throw ValidationException::withMessages([
+                        'customer_id' => 'Doi tac khong co vai tro khach hang da duoc luu.',
+                    ]);
+                }
 
-            $customer = Customer::lockForUpdate()->findOrFail($discount->customer_id);
+                DB::transaction(function () use ($discount, $reason, $lockedCustomer): void {
+                    $discount = CustomerPaymentDiscount::lockForUpdate()->findOrFail($discount->id);
+                    if ($discount->isCancelled()) {
+                        throw new \InvalidArgumentException('Phiếu chiết khấu này đã được hủy trước đó.');
+                    }
 
-            $discount->update([
-                'status' => 'cancelled',
-                'cancelled_at' => now(),
-                'cancelled_by' => auth()->id(),
-                'cancel_reason' => $reason,
-            ]);
+                    $discount->update([
+                        'status' => 'cancelled',
+                        'cancelled_at' => now(),
+                        'cancelled_by' => auth()->id(),
+                        'cancel_reason' => $reason,
+                    ]);
 
-            // Revert into ledger (as signed positive adjustment)
-            app(CustomerDebtService::class)->recordAdjustment(
-                $customer->id,
-                (float) $discount->amount,
-                'Hủy chiết khấu thanh toán ' . $discount->code . ($reason ? ' - ' . $reason : ''),
-                ['ref_code' => $discount->code]
-            );
-        });
+                    // Revert into ledger (as signed positive adjustment)
+                    app(CustomerDebtService::class)->recordAdjustment(
+                        $lockedCustomer->id,
+                        (float) $discount->amount,
+                        'Hủy chiết khấu thanh toán '.$discount->code.($reason ? ' - '.$reason : ''),
+                        ['ref_code' => $discount->code]
+                    );
+                });
+            },
+            $idempotencyKey,
+        );
     }
 }

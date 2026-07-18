@@ -16,6 +16,7 @@ use App\Models\Setting;
 use App\Models\StockMovement;
 use App\Models\User;
 use App\Services\CustomerDebtService;
+use App\Services\Debt\PartnerDebtMutationCoordinator;
 use App\Services\InvoiceSaleService;
 use App\Services\InvoiceUpdateService;
 use App\Services\StockMovementService;
@@ -277,18 +278,11 @@ class InvoiceController extends Controller
                 'allow_oversell' => Setting::get('inventory_allow_oversell', false),
                 'cashflow_payment_method' => $validated['payment_method'] ?? 'cash',
                 'cashflow_description_extra' => '',
+                'idempotency_key' => $request->header('Idempotency-Key'),
                 // stock_movement_branch_id để service mặc định lấy invoice.branch_id
             ];
 
             $invoice = app(InvoiceSaleService::class)->createSale($payload, $context);
-
-            // Step 24.0: audit log invoice create
-            \App\Models\ActivityLog::log(
-                \App\Models\ActivityLog::ACTION_INVOICE_CREATE,
-                "Tạo hóa đơn {$invoice->code}",
-                $invoice,
-                ['total' => (float) $invoice->total]
-            );
 
             return redirect()->route('invoices.index')->with('success', 'Hóa đơn đã được tạo thành công.');
         } catch (\Illuminate\Validation\ValidationException $e) {
@@ -366,7 +360,7 @@ class InvoiceController extends Controller
         ]);
         $cancelReason = trim($validated['cancel_reason'] ?? '') ?: 'Huy hoa don';
         // RR-01 Guard: Không cho hủy lặp — idempotent check
-        if ($invoice->status === 'Đã hủy') {
+        if ($invoice->status === 'Đã hủy' && ! $request->header('Idempotency-Key')) {
             return back()->with('error', 'Hóa đơn này đã được hủy trước đó.');
         }
 
@@ -395,148 +389,181 @@ class InvoiceController extends Controller
         }
 
         try {
-            DB::beginTransaction();
-
-            $invoice->load('items');
-
-            // Restore stock & serials for each item
-            foreach ($invoice->items as $item) {
-                $product = \App\Models\Product::find($item->product_id);
-                if (! $product) {
-                    continue;
-                }
-                if (! $product->tracksInventory()) {
-                    continue;
+            $cancelMutation = function () use ($invoice, $cancelReason, $isOverdue, $validated): Invoice {
+                $invoice = Invoice::query()->lockForUpdate()->findOrFail($invoice->id);
+                if ($invoice->status === 'Đã hủy') {
+                    throw new \InvalidArgumentException('Hóa đơn này đã được hủy trước đó.');
                 }
 
-                $qtyBack = (int) $item->quantity;
-                $costAtSale = $this->invoiceItemCostSnapshot($invoice, $item, $product);
+                $invoice->load('items');
 
-                // BQ DI ĐỘNG: phục hồi tồn ở cost lúc bán
-                \App\Services\MovingAvgCostingService::applySaleReturn(
-                    $product,
-                    $qtyBack,
-                    $costAtSale
-                );
-                $product->refresh();
-
-                // Restore serials back to in_stock. Per-IMEI cost_price KHÔNG đổi
-                // (giá nhập gốc của IMEI). BQ đã được service applySaleReturn xử lý.
-                if ($product->has_serial) {
-                    $serials = SerialImei::where('invoice_id', $invoice->id)
-                        ->where('product_id', $product->id)
-                        ->where('status', 'sold')
-                        ->get();
-                    foreach ($serials as $serial) {
-                        $serial->status = 'in_stock';
-                        $serial->sold_at = null;
-                        $serial->invoice_id = null;
-                        $serial->sold_cost_price = null;
-                        $serial->save();
+                // Restore stock & serials for each item
+                foreach ($invoice->items as $item) {
+                    $product = \App\Models\Product::find($item->product_id);
+                    if (! $product) {
+                        continue;
                     }
+                    if (! $product->tracksInventory()) {
+                        continue;
+                    }
+
+                    $qtyBack = (int) $item->quantity;
+                    $costAtSale = $this->invoiceItemCostSnapshot($invoice, $item, $product);
+
+                    // BQ DI ĐỘNG: phục hồi tồn ở cost lúc bán
+                    \App\Services\MovingAvgCostingService::applySaleReturn(
+                        $product,
+                        $qtyBack,
+                        $costAtSale
+                    );
                     $product->refresh();
-                    $product->recomputeFromSerials();
-                }
 
-                // Phase 4 — Ghi sổ cái: hoàn nhập do hủy hóa đơn
-                StockMovementService::record(
-                    $product,
-                    StockMovementService::TYPE_IN_INVOICE_RETURN,
-                    $qtyBack,
-                    $costAtSale,
-                    $invoice,
-                    [
-                        'branch_id' => $invoice->branch_id ?? null,
-                        'ref_code' => $invoice->code,
-                        'moved_at' => now(),
-                        'note' => 'Hủy hóa đơn '.$invoice->code,
-                    ]
-                );
-            }
-            // Make the original document/cash evidence non-canonical before
-            // recording its reversal, while keeping every write inside the
-            // existing transaction for rollback safety.
-            $relatedCashFlows = CashFlow::withTrashed()
-                ->where('reference_type', 'Invoice')
-                ->where('reference_code', $invoice->code)
-                ->where(function ($q) {
-                    $q->whereNull('status')->orWhere('status', '!=', 'cancelled');
-                })
-                ->get();
-            foreach ($relatedCashFlows as $cashFlow) {
-                $cashFlow->forceFill([
-                    'status' => 'cancelled',
-                    'cancel_reason' => $cancelReason,
-                    'cancelled_by' => auth()->id(),
-                    'cancelled_at' => now(),
-                ])->save();
-                if (! $cashFlow->trashed()) {
-                    $cashFlow->delete();
-                }
-            }
-            $cancelledCashFlowCount = $relatedCashFlows->count();
-            $invoice->status = 'cancelled';
-            $invoice->cancel_reason = $cancelReason;
-            $invoice->cancelled_by = auth()->id();
-            $invoice->cancelled_at = now();
-            $invoice->save();
-
-            if ($invoice->customer_id) {
-                $customer = \App\Models\Customer::find($invoice->customer_id);
-                if ($customer) {
-                    // Hủy hóa đơn: hoàn lại debt (bao gồm cả overpayment negative)
-                    // RR-06: ghi ledger qua service thay vì decrement trực tiếp.
-                    $debtAmount = $invoice->total - ($invoice->customer_paid ?? 0);
-                    if ($debtAmount != 0) {
-                        app(CustomerDebtService::class)->recordInvoiceBalanceReversal(
-                            $customer->id,
-                            (float) $debtAmount,
-                            $invoice,
-                            "Đảo công nợ do hủy hóa đơn {$invoice->code}",
-                            ['ref_code' => $invoice->code, 'type' => 'adjustment']
-                        );
+                    // Restore serials back to in_stock. Per-IMEI cost_price KHÔNG đổi
+                    // (giá nhập gốc của IMEI). BQ đã được service applySaleReturn xử lý.
+                    if ($product->has_serial) {
+                        $serials = SerialImei::where('invoice_id', $invoice->id)
+                            ->where('product_id', $product->id)
+                            ->where('status', 'sold')
+                            ->get();
+                        foreach ($serials as $serial) {
+                            $serial->status = 'in_stock';
+                            $serial->sold_at = null;
+                            $serial->invoice_id = null;
+                            $serial->sold_cost_price = null;
+                            $serial->save();
+                        }
+                        $product->refresh();
+                        $product->recomputeFromSerials();
                     }
-                    $customer->decrement('total_spent', $invoice->total);
+
+                    // Phase 4 — Ghi sổ cái: hoàn nhập do hủy hóa đơn
+                    StockMovementService::record(
+                        $product,
+                        StockMovementService::TYPE_IN_INVOICE_RETURN,
+                        $qtyBack,
+                        $costAtSale,
+                        $invoice,
+                        [
+                            'branch_id' => $invoice->branch_id ?? null,
+                            'ref_code' => $invoice->code,
+                            'moved_at' => now(),
+                            'note' => 'Hủy hóa đơn '.$invoice->code,
+                        ]
+                    );
                 }
-            }
+                // Make the original document/cash evidence non-canonical before
+                // recording its reversal, while keeping every write inside the
+                // existing transaction for rollback safety.
+                $relatedCashFlows = CashFlow::withTrashed()
+                    ->where('reference_type', 'Invoice')
+                    ->where('reference_code', $invoice->code)
+                    ->where(function ($q) {
+                        $q->whereNull('status')->orWhere('status', '!=', 'cancelled');
+                    })
+                    ->get();
+                foreach ($relatedCashFlows as $cashFlow) {
+                    $cashFlow->forceFill([
+                        'status' => 'cancelled',
+                        'cancel_reason' => $cancelReason,
+                        'cancelled_by' => auth()->id(),
+                        'cancelled_at' => now(),
+                    ])->save();
+                    if (! $cashFlow->trashed()) {
+                        $cashFlow->delete();
+                    }
+                }
+                $cancelledCashFlowCount = $relatedCashFlows->count();
+                app(PartnerDebtMutationCoordinator::class)->checkpoint('evidence');
+                $invoice->status = 'cancelled';
+                $invoice->cancel_reason = $cancelReason;
+                $invoice->cancelled_by = auth()->id();
+                $invoice->cancelled_at = now();
+                $invoice->save();
+                app(PartnerDebtMutationCoordinator::class)->checkpoint('document');
 
-            // RR-01: Đổi trạng thái hóa đơn — KHÔNG xóa vật lý (giữ items cho audit trail)
-            $invoice->status = 'Đã hủy';
-            $invoice->cancel_reason = $cancelReason;
-            $invoice->cancelled_by = auth()->id();
-            $invoice->cancelled_at = now();
-            $invoice->save();
+                if ($invoice->customer_id) {
+                    $customer = \App\Models\Customer::find($invoice->customer_id);
+                    if ($customer) {
+                        // Hủy hóa đơn: hoàn lại debt (bao gồm cả overpayment negative)
+                        // RR-06: ghi ledger qua service thay vì decrement trực tiếp.
+                        $debtAmount = $invoice->total - ($invoice->customer_paid ?? 0);
+                        if ($debtAmount != 0) {
+                            app(CustomerDebtService::class)->recordInvoiceBalanceReversal(
+                                $customer->id,
+                                (float) $debtAmount,
+                                $invoice,
+                                "Đảo công nợ do hủy hóa đơn {$invoice->code}",
+                                ['ref_code' => $invoice->code, 'type' => 'adjustment']
+                            );
+                        }
+                        $customer->decrement('total_spent', $invoice->total);
+                    }
+                }
 
-            DB::commit();
+                // RR-01: Đổi trạng thái hóa đơn — KHÔNG xóa vật lý (giữ items cho audit trail)
+                $invoice->status = 'Đã hủy';
+                $invoice->cancel_reason = $cancelReason;
+                $invoice->cancelled_by = auth()->id();
+                $invoice->cancelled_at = now();
+                $invoice->save();
+                app(PartnerDebtMutationCoordinator::class)->checkpoint('projection');
 
-            // Step 24.0: audit log invoice cancel
-            \App\Models\ActivityLog::log(
-                \App\Models\ActivityLog::ACTION_INVOICE_CANCEL,
-                "Hủy hóa đơn {$invoice->code}",
-                $invoice,
-                [
-                    'total' => (float) $invoice->total,
-                    'cancel_reason' => $cancelReason,
-                    'cancelled_cash_flows' => $cancelledCashFlowCount,
-                ]
-            );
-
-            // Step 24.3: log override if applicable
-            if ($isOverdue && ! empty($validated['time_lock_override_reason'])) {
+                // Step 24.0: audit log invoice cancel
                 \App\Models\ActivityLog::log(
-                    \App\Models\ActivityLog::ACTION_INVOICE_CANCEL_TIME_LOCK_OVERRIDE,
-                    "Hủy hóa đơn {$invoice->code} quá hạn (override)",
+                    \App\Models\ActivityLog::ACTION_INVOICE_CANCEL,
+                    "Hủy hóa đơn {$invoice->code}",
                     $invoice,
                     [
                         'total' => (float) $invoice->total,
-                        'reason' => $validated['time_lock_override_reason'],
+                        'cancel_reason' => $cancelReason,
+                        'cancelled_cash_flows' => $cancelledCashFlowCount,
                     ]
                 );
+
+                // Step 24.3: log override if applicable
+                if ($isOverdue && ! empty($validated['time_lock_override_reason'])) {
+                    \App\Models\ActivityLog::log(
+                        \App\Models\ActivityLog::ACTION_INVOICE_CANCEL_TIME_LOCK_OVERRIDE,
+                        "Hủy hóa đơn {$invoice->code} quá hạn (override)",
+                        $invoice,
+                        [
+                            'total' => (float) $invoice->total,
+                            'reason' => $validated['time_lock_override_reason'],
+                        ]
+                    );
+                }
+
+                return $invoice;
+            };
+
+            $payloadHash = hash('sha256', json_encode([
+                'invoice_id' => (int) $invoice->id,
+                'cancel_reason' => $cancelReason,
+                'override_reason' => $validated['time_lock_override_reason'] ?? null,
+            ], JSON_UNESCAPED_UNICODE));
+            $customerId = (int) ($invoice->customer_id ?? 0);
+            if ($customerId > 0) {
+                app(PartnerDebtMutationCoordinator::class)->execute(
+                    $customerId,
+                    'invoice_cancel',
+                    $payloadHash,
+                    function (\App\Models\Customer $lockedCustomer) use ($cancelMutation): Invoice {
+                        if (! (bool) $lockedCustomer->is_customer) {
+                            throw \Illuminate\Validation\ValidationException::withMessages([
+                                'customer_id' => 'Doi tac khong co vai tro khach hang da duoc luu.',
+                            ]);
+                        }
+
+                        return DB::transaction($cancelMutation);
+                    },
+                    $request->header('Idempotency-Key'),
+                );
+            } else {
+                DB::transaction($cancelMutation);
             }
 
             return redirect()->route('invoices.index')->with('success', 'Hóa đơn đã được hủy thành công. Tồn kho và công nợ đã hoàn lại.');
-        } catch (\Exception $e) {
-            DB::rollBack();
+        } catch (\Throwable $e) {
 
             return back()->with('error', 'Có lỗi xảy ra: '.$e->getMessage());
         }

@@ -385,6 +385,8 @@ const shouldShowDebtReconcileWarning = (reconcile) =>
     reconcile?.severity === "warning" || reconcile?.user_warning === true;
 const shouldShowDebtReconcileInfo = (reconcile) =>
     reconcile?.severity === "info" && !!reconcile?.message;
+const shouldShowRoleIntegrityWarning = (payload) =>
+    !!payload?.role_integrity_status && payload.role_integrity_status !== "OK";
 
 const supplierRows = computed(() => {
     if (Array.isArray(props.suppliers?.data)) return props.suppliers.data;
@@ -1440,6 +1442,12 @@ const submitActivate = (supplier) => {
                                         <template v-if="getSupplierTab(supplier.id) === 'debt'">
                                             <div v-if="supplierDataLoading[supplier.id]" class="text-center py-8 text-gray-400">Đang tải...</div>
                                             <template v-else>
+                                                <div
+                                                    v-if="shouldShowRoleIntegrityWarning(supplierDebt[supplier.id])"
+                                                    class="mb-3 p-3 bg-orange-50 border border-orange-200 text-orange-800 rounded text-xs"
+                                                >
+                                                    Vai trò đã lưu không khớp bằng chứng nghiệp vụ ({{ supplierDebt[supplier.id]?.role_integrity_status }}). Cần duyệt kế hoạch sửa vai trò riêng; hệ thống không tự đổi vai trò.
+                                                </div>
                                                 <div
                                                     v-if="shouldShowDebtReconcileWarning(supplierDebt[supplier.id]?.reconcile)"
                                                     class="mb-3 p-3 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded text-xs flex items-center gap-2"

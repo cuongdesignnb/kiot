@@ -1,6 +1,7 @@
 <script setup>
 import { formatVND as formatCurrency } from '@/utils/money';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
+import { ref } from 'vue';
 
 const page = usePage();
 const props = defineProps({
@@ -8,6 +9,7 @@ const props = defineProps({
 });
 
 const ret = props.purchaseReturn;
+const cancelIdempotencyKey = ref('');
 
 
 const getReturnedSerials = (item) => (ret.returned_serials || []).filter(s => s.product_id === item.product_id);
@@ -23,7 +25,11 @@ const statusClass = (status) => ({
 
 const cancelReturn = () => {
     if (!confirm(`Bạn có chắc muốn hủy phiếu trả hàng ${ret.code}? Tồn kho và công nợ sẽ được hoàn lại.`)) return;
-    router.delete(`/purchase-returns/${ret.id}`);
+    cancelIdempotencyKey.value ||= crypto.randomUUID();
+    router.delete(`/purchase-returns/${ret.id}`, {
+        headers: { 'Idempotency-Key': cancelIdempotencyKey.value },
+        onSuccess: () => { cancelIdempotencyKey.value = ''; },
+    });
 };
 </script>
 

@@ -2,12 +2,10 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
-use Inertia\Inertia;
-use App\Models\Product;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\InvoiceItemSerial;
+use App\Models\Product;
 use App\Models\ReturnItem;
 use App\Models\SerialImei;
 use App\Services\InvoiceSaleService;
@@ -16,6 +14,8 @@ use App\Services\ProductSearchService;
 use App\Services\SerialAvailabilityService;
 use App\Support\Customers\CustomerGroupSnapshot;
 use App\Support\Reports\SellerResolver;
+use Illuminate\Http\Request;
+use Inertia\Inertia;
 
 class PosController extends Controller
 {
@@ -46,19 +46,19 @@ class PosController extends Controller
     private function resolveSellerForPos(?string $sellerKey, ?int $legacyEmployeeId): array
     {
         // Prefer explicit seller_key; fall back to legacy employee_id.
-        if (!$sellerKey && $legacyEmployeeId) {
-            $sellerKey = 'employee:' . $legacyEmployeeId;
+        if (! $sellerKey && $legacyEmployeeId) {
+            $sellerKey = 'employee:'.$legacyEmployeeId;
         }
-        if (!$sellerKey) {
+        if (! $sellerKey) {
             return [null, null];
         }
 
         if (preg_match('/^admin_user:(\d+)$/', $sellerKey, $m)) {
             $userId = (int) $m[1];
             $user = \App\Models\User::find($userId);
-            if (!$user
+            if (! $user
                 || ($user->status ?? 'active') !== 'active'
-                || !$user->isAdmin()) {
+                || ! $user->isAdmin()) {
                 throw new \InvalidArgumentException(
                     'admin_user không hợp lệ. Chỉ chấp nhận tài khoản quản trị hệ thống đang hoạt động.'
                 );
@@ -69,9 +69,10 @@ class PosController extends Controller
                 ->where('is_active', true)->first();
             if ($linked) {
                 throw new \InvalidArgumentException(
-                    'Tài khoản admin này đã có nhân viên active. Hãy chọn employee:' . $linked->id . '.'
+                    'Tài khoản admin này đã có nhân viên active. Hãy chọn employee:'.$linked->id.'.'
                 );
             }
+
             return [null, $user->name];
         }
 
@@ -79,11 +80,12 @@ class PosController extends Controller
             $empId = (int) $m[1];
             $emp = \App\Models\Employee::where('id', $empId)
                 ->where('is_active', true)->first();
-            if (!$emp) {
+            if (! $emp) {
                 throw new \InvalidArgumentException(
                     'Nhân viên không tồn tại hoặc đã ngưng hoạt động.'
                 );
             }
+
             return [$emp->id, $emp->name];
         }
 
@@ -110,7 +112,7 @@ class PosController extends Controller
             ->withCount([
                 'serials as repairing_count' => function ($q) {
                     $q->where('status', 'in_stock')
-                      ->whereIn('repair_status', ['not_started', 'repairing']);
+                        ->whereIn('repair_status', ['not_started', 'repairing']);
                 },
             ])
             ->limit(20)->get();
@@ -160,7 +162,7 @@ class PosController extends Controller
             ->get(['id', 'serial_number', 'product_id', 'status', 'repair_status']);
 
         return response()->json(
-            $serials->map(fn($s) => [
+            $serials->map(fn ($s) => [
                 'id' => (int) $s->id,
                 'serial_number' => $s->serial_number,
                 'product_id' => (int) $s->product_id,
@@ -198,7 +200,7 @@ class PosController extends Controller
             try {
                 [$sellerId, $sellerName] = $this->resolveSellerForPos(
                     $validated['seller_key'] ?? null,
-                    !empty($validated['employee_id']) ? (int) $validated['employee_id'] : null
+                    ! empty($validated['employee_id']) ? (int) $validated['employee_id'] : null
                 );
             } catch (\InvalidArgumentException $e) {
                 return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
@@ -209,66 +211,68 @@ class PosController extends Controller
 
             // 24.6C: combine user note + bank transfer info — never overwrite user note.
             $userNote = trim((string) ($validated['note'] ?? ''));
-            $bankNote = $isTransfer && !empty($bankInfo) ? 'Chuyển khoản: ' . $bankInfo : '';
-            $noteParts = array_values(array_filter([$userNote, $bankNote], fn($v) => $v !== ''));
+            $bankNote = $isTransfer && ! empty($bankInfo) ? 'Chuyển khoản: '.$bankInfo : '';
+            $noteParts = array_values(array_filter([$userNote, $bankNote], fn ($v) => $v !== ''));
             $finalNote = count($noteParts) ? implode("\n", $noteParts) : null;
 
             // RR-02: build normalized payload + context, gọi InvoiceSaleService
             $payload = [
-                'customer_id'    => $validated['customer_id'] ?? null,
-                'branch_id'      => null, // POS legacy: không set branch
-                'subtotal'       => $validated['subtotal'],
-                'discount'       => $validated['discount'],
-                'total'          => $validated['total'],
-                'customer_paid'  => $validated['customer_paid'],
+                'customer_id' => $validated['customer_id'] ?? null,
+                'branch_id' => null, // POS legacy: không set branch
+                'subtotal' => $validated['subtotal'],
+                'discount' => $validated['discount'],
+                'total' => $validated['total'],
+                'customer_paid' => $validated['customer_paid'],
                 'payment_method' => $paymentMethod,
-                'note'           => $finalNote,
-                'items'          => array_map(function ($it) {
+                'note' => $finalNote,
+                'items' => array_map(function ($it) {
                     return [
                         'product_id' => $it['product_id'],
-                        'quantity'   => $it['quantity'],
-                        'price'      => $it['price'],
-                        'discount'   => $it['discount'] ?? 0,
+                        'quantity' => $it['quantity'],
+                        'price' => $it['price'],
+                        'discount' => $it['discount'] ?? 0,
                         'serial_ids' => $it['serial_ids'] ?? [],
                     ];
                 }, $validated['items']),
             ];
 
             $context = [
-                'source'                         => 'pos',
-                'code_prefix'                    => 'HD' . time(),
-                'default_status'                 => 'Hoàn thành',
-                'sales_channel'                  => 'Bán trực tiếp',
-                'seller_id'                      => $sellerId,
-                'seller_name'                    => $sellerName,
-                'created_by_name'                => auth()->user()?->name ?? 'POS',
-                'transaction_date'               => $validated['sale_time'] ?? null,
-                'validate_before_purchase_date'  => false,
-                'validate_stock_setting'         => false,
-                'allow_oversell'                 => \App\Models\Setting::get('inventory_allow_oversell', true),
-                'cashflow_payment_method'        => $paymentMethod,
-                'cashflow_description_extra'     => $isTransfer && !empty($bankInfo)
-                    ? ' - CK: ' . $bankInfo
+                'source' => 'pos',
+                'code_prefix' => 'HD'.time(),
+                'default_status' => 'Hoàn thành',
+                'sales_channel' => 'Bán trực tiếp',
+                'seller_id' => $sellerId,
+                'seller_name' => $sellerName,
+                'created_by_name' => auth()->user()?->name ?? 'POS',
+                'transaction_date' => $validated['sale_time'] ?? null,
+                'validate_before_purchase_date' => false,
+                'validate_stock_setting' => false,
+                'allow_oversell' => \App\Models\Setting::get('inventory_allow_oversell', true),
+                'cashflow_payment_method' => $paymentMethod,
+                'cashflow_description_extra' => $isTransfer && ! empty($bankInfo)
+                    ? ' - CK: '.$bankInfo
                     : '',
-                'stock_movement_branch_id'       => null,
+                'stock_movement_branch_id' => null,
+                'idempotency_key' => $request->header('Idempotency-Key'),
             ];
 
             $invoice = app(InvoiceSaleService::class)->createSale($payload, $context);
 
             return response()->json([
-                'success'      => true,
+                'success' => true,
                 'invoice_code' => $invoice->code,
-                'message'      => 'Thanh toán thành công!',
+                'message' => 'Thanh toán thành công!',
             ]);
         } catch (\Illuminate\Validation\ValidationException $e) {
             throw $e;
         } catch (\Exception $e) {
             \Illuminate\Support\Facades\Log::error('POS Checkout Error', [
                 'message' => $e->getMessage(),
-                'file'    => $e->getFile(),
-                'line'    => $e->getLine(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
             ]);
-            return response()->json(['success' => false, 'message' => 'Có lỗi xảy ra: ' . $e->getMessage()], 500);
+
+            return response()->json(['success' => false, 'message' => 'Có lỗi xảy ra: '.$e->getMessage()], 500);
         }
     }
 
@@ -313,7 +317,7 @@ class PosController extends Controller
             try {
                 [$sellerId, $sellerName] = $this->resolveSellerForPos(
                     $validated['seller_key'] ?? null,
-                    !empty($validated['employee_id']) ? (int) $validated['employee_id'] : null
+                    ! empty($validated['employee_id']) ? (int) $validated['employee_id'] : null
                 );
             } catch (\InvalidArgumentException $e) {
                 return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
@@ -326,6 +330,7 @@ class PosController extends Controller
                     'seller_name' => $sellerName,
                     'created_by_name' => auth()->user()?->name ?? 'POS',
                 ],
+                'idempotency_key' => $request->header('Idempotency-Key'),
             ]);
 
             return response()->json([
@@ -349,7 +354,7 @@ class PosController extends Controller
                 'errors' => $e->errors(),
             ], 422);
         } catch (\Throwable $e) {
-            $debugId = 'pos-exchange-' . now()->format('YmdHis') . '-' . substr((string) \Illuminate\Support\Str::uuid(), 0, 8);
+            $debugId = 'pos-exchange-'.now()->format('YmdHis').'-'.substr((string) \Illuminate\Support\Str::uuid(), 0, 8);
 
             \Illuminate\Support\Facades\Log::error('POS Return Exchange Error', [
                 'debug_id' => $debugId,
@@ -369,7 +374,7 @@ class PosController extends Controller
                 'debug_id' => $debugId,
                 'message' => app()->environment('production')
                     ? "Không tạo được phiếu đổi hàng. Mã lỗi: {$debugId}"
-                    : 'Không tạo được phiếu đổi hàng: ' . $e->getMessage(),
+                    : 'Không tạo được phiếu đổi hàng: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -386,7 +391,7 @@ class PosController extends Controller
             'total' => 'required|numeric',
             'customer_id' => 'nullable|exists:customers,id',
             'employee_id' => 'nullable|exists:employees,id',
-            'seller_key'  => 'nullable|string',
+            'seller_key' => 'nullable|string',
             'sale_time' => 'nullable',
             'note' => 'nullable|string|max:1000',
             'items' => 'required|array',
@@ -414,14 +419,14 @@ class PosController extends Controller
             try {
                 [, $sellerName] = $this->resolveSellerForPos(
                     $validated['seller_key'] ?? null,
-                    !empty($validated['employee_id']) ? (int) $validated['employee_id'] : null
+                    ! empty($validated['employee_id']) ? (int) $validated['employee_id'] : null
                 );
             } catch (\InvalidArgumentException $e) {
                 return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
             }
 
             $orderData = [
-                'code' => 'DH' . time() . rand(10, 99),
+                'code' => 'DH'.time().rand(10, 99),
                 'customer_id' => $customer?->id,
                 'branch_id' => null,
                 'created_by_name' => auth()->user()?->name ?? 'Admin',
@@ -439,7 +444,7 @@ class PosController extends Controller
             $orderData = CustomerGroupSnapshot::applyToAttributes($orderData, $orderData['customer_id'] ?? null, 'orders');
             $order = \App\Models\Order::create($orderData);
 
-            if (!empty($validated['sale_time'])) {
+            if (! empty($validated['sale_time'])) {
                 $order->update(['created_at' => \Carbon\Carbon::parse($validated['sale_time'])]);
             }
 
@@ -447,23 +452,24 @@ class PosController extends Controller
                 $subtotal = ($item['quantity'] * $item['price']);
                 $order->items()->create([
                     'product_id' => $item['product_id'],
-                    'qty'        => $item['quantity'],
-                    'price'      => $item['price'],
-                    'discount'   => 0,
-                    'subtotal'   => $subtotal,
+                    'qty' => $item['quantity'],
+                    'price' => $item['price'],
+                    'discount' => 0,
+                    'subtotal' => $subtotal,
                 ]);
             }
 
             return response()->json([
                 'success' => true,
                 'order_code' => $order->code,
-                'message' => 'Đặt hàng thành công! Mã: ' . $order->code,
+                'message' => 'Đặt hàng thành công! Mã: '.$order->code,
             ]);
         } catch (\Exception $e) {
             \Illuminate\Support\Facades\Log::error('POS Quick Order Error', [
                 'message' => $e->getMessage(),
             ]);
-            return response()->json(['success' => false, 'message' => 'Có lỗi: ' . $e->getMessage()], 500);
+
+            return response()->json(['success' => false, 'message' => 'Có lỗi: '.$e->getMessage()], 500);
         }
     }
 
@@ -480,8 +486,8 @@ class PosController extends Controller
         $customers = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
             ->where(function ($q) use ($search) {
                 $q->where('name', 'LIKE', "%{$search}%")
-                  ->orWhere('phone', 'LIKE', "%{$search}%")
-                  ->orWhere('code', 'LIKE', "%{$search}%");
+                    ->orWhere('phone', 'LIKE', "%{$search}%")
+                    ->orWhere('code', 'LIKE', "%{$search}%");
             })
             ->orderBy('name')
             ->limit(10)
@@ -528,7 +534,7 @@ class PosController extends Controller
         ]);
 
         if (empty($validated['code'])) {
-            $validated['code'] = 'KH' . time() . rand(10, 99);
+            $validated['code'] = 'KH'.time().rand(10, 99);
         }
 
         $validated['is_supplier'] = $request->input('is_supplier', false);
@@ -571,26 +577,26 @@ class PosController extends Controller
         if ($search !== '') {
             $query->where(function ($q) use ($search, $productSearch) {
                 $q->where('code', 'LIKE', "%{$search}%")
-                  ->orWhereHas('customer', function ($cq) use ($search) {
-                      $cq->where('name', 'LIKE', "%{$search}%")
-                         ->orWhere('phone', 'LIKE', "%{$search}%")
-                         ->orWhere('code', 'LIKE', "%{$search}%");
-                  })
-                  ->orWhereHas('items.product', function ($pq) use ($search, $productSearch) {
-                      $productSearch->apply($pq, $search, ['include_serials' => false]);
-                  })
-                  ->orWhereHas('items.serials', function ($sq) use ($search) {
-                      $sq->where('serial_number', 'LIKE', "%{$search}%")
-                         ->orWhereHas('serial', function ($ssq) use ($search) {
-                             $ssq->where('serial_number', 'LIKE', "%{$search}%");
-                         });
-                  })
-                  ->orWhereExists(function ($sq) use ($search) {
-                      $sq->selectRaw('1')
-                         ->from('serial_imeis')
-                         ->whereColumn('serial_imeis.invoice_id', 'invoices.id')
-                         ->where('serial_imeis.serial_number', 'LIKE', "%{$search}%");
-                  });
+                    ->orWhereHas('customer', function ($cq) use ($search) {
+                        $cq->where('name', 'LIKE', "%{$search}%")
+                            ->orWhere('phone', 'LIKE', "%{$search}%")
+                            ->orWhere('code', 'LIKE', "%{$search}%");
+                    })
+                    ->orWhereHas('items.product', function ($pq) use ($search, $productSearch) {
+                        $productSearch->apply($pq, $search, ['include_serials' => false]);
+                    })
+                    ->orWhereHas('items.serials', function ($sq) use ($search) {
+                        $sq->where('serial_number', 'LIKE', "%{$search}%")
+                            ->orWhereHas('serial', function ($ssq) use ($search) {
+                                $ssq->where('serial_number', 'LIKE', "%{$search}%");
+                            });
+                    })
+                    ->orWhereExists(function ($sq) use ($search) {
+                        $sq->selectRaw('1')
+                            ->from('serial_imeis')
+                            ->whereColumn('serial_imeis.invoice_id', 'invoices.id')
+                            ->where('serial_imeis.serial_number', 'LIKE', "%{$search}%");
+                    });
             });
         }
 
@@ -599,17 +605,17 @@ class PosController extends Controller
         return response()->json(
             $invoices->map(function (Invoice $inv) {
                 return [
-                    'id'               => $inv->id,
-                    'code'             => $inv->code,
-                    'status'           => $inv->status,
-                    'total'            => (float) $inv->total,
-                    'customer_paid'    => (float) ($inv->customer_paid ?? 0),
+                    'id' => $inv->id,
+                    'code' => $inv->code,
+                    'status' => $inv->status,
+                    'total' => (float) $inv->total,
+                    'customer_paid' => (float) ($inv->customer_paid ?? 0),
                     'transaction_date' => optional($inv->transaction_date ?? $inv->created_at)->toIso8601String(),
-                    'created_at'       => optional($inv->created_at)->toIso8601String(),
-                    'customer_id'      => $inv->customer_id,
-                    'customer_name'    => $inv->customer?->name,
-                    'customer_phone'   => $inv->customer?->phone,
-                    'branch_id'        => $inv->branch_id,
+                    'created_at' => optional($inv->created_at)->toIso8601String(),
+                    'customer_id' => $inv->customer_id,
+                    'customer_name' => $inv->customer?->name,
+                    'customer_phone' => $inv->customer?->phone,
+                    'branch_id' => $inv->branch_id,
                 ];
             })->values()
         );
@@ -655,8 +661,7 @@ class PosController extends Controller
                 ->whereHas('orderReturn', function ($q) use ($invoice) {
                     $q->where('invoice_id', $invoice->id)->where('status', '!=', 'Đã hủy');
                 })
-                ->pluck('serial_ids')
-            as $row
+                ->pluck('serial_ids') as $row
         ) {
             $arr = is_array($row) ? $row : (json_decode($row ?? '[]', true) ?: []);
             foreach ($arr as $sid) {
@@ -681,18 +686,18 @@ class PosController extends Controller
                     ->get()
                     ->map(function (InvoiceItemSerial $link) use ($line, $returnedSerialIds) {
                         $serial = $link->serial;
-                        if (!$serial || (int) $serial->product_id !== (int) $line->product_id) {
+                        if (! $serial || (int) $serial->product_id !== (int) $line->product_id) {
                             return null;
                         }
-                        if ($serial->status !== 'sold' && !isset($returnedSerialIds[$serial->id])) {
+                        if ($serial->status !== 'sold' && ! isset($returnedSerialIds[$serial->id])) {
                             return null;
                         }
 
                         return [
-                            'id'                => $serial->id,
-                            'serial_number'     => $serial->serial_number ?: $link->serial_number,
-                            'status'            => $serial->status,
-                            'already_returned'  => isset($returnedSerialIds[$serial->id]),
+                            'id' => $serial->id,
+                            'serial_number' => $serial->serial_number ?: $link->serial_number,
+                            'status' => $serial->status,
+                            'already_returned' => isset($returnedSerialIds[$serial->id]),
                         ];
                     })
                     ->filter()
@@ -705,10 +710,10 @@ class PosController extends Controller
                     ->get(['id', 'serial_number', 'status'])
                     ->map(function ($s) use ($returnedSerialIds) {
                         return [
-                            'id'                => $s->id,
-                            'serial_number'     => $s->serial_number,
-                            'status'            => $s->status,
-                            'already_returned'  => isset($returnedSerialIds[$s->id]),
+                            'id' => $s->id,
+                            'serial_number' => $s->serial_number,
+                            'status' => $s->status,
+                            'already_returned' => isset($returnedSerialIds[$s->id]),
                         ];
                     })
                     ->values();
@@ -721,33 +726,33 @@ class PosController extends Controller
             }
 
             return [
-                'invoice_item_id'      => $line->id,
-                'product_id'           => $line->product_id,
-                'product_code'         => $product?->sku,
-                'product_name'         => $product?->name ?: ('#' . $line->product_id),
-                'has_serial'           => $hasSerial,
-                'sold_qty'             => $sold,
+                'invoice_item_id' => $line->id,
+                'product_id' => $line->product_id,
+                'product_code' => $product?->sku,
+                'product_name' => $product?->name ?: ('#'.$line->product_id),
+                'has_serial' => $hasSerial,
+                'sold_qty' => $sold,
                 'already_returned_qty' => $alreadyReturned,
-                'remaining_qty'        => $remaining,
-                'price'                => (float) $line->price,
-                'discount'             => (float) ($line->discount ?? 0),
-                'serials'              => $serials,
+                'remaining_qty' => $remaining,
+                'price' => (float) $line->price,
+                'discount' => (float) ($line->discount ?? 0),
+                'serials' => $serials,
             ];
         })->values();
 
         return response()->json([
             'invoice' => [
-                'id'             => $invoice->id,
-                'code'           => $invoice->code,
-                'status'         => $invoice->status,
-                'total'          => (float) $invoice->total,
-                'discount'       => (float) ($invoice->discount ?? 0),
-                'fee'            => (float) ($invoice->fee ?? 0),
-                'customer_paid'  => (float) ($invoice->customer_paid ?? 0),
-                'customer_id'    => $invoice->customer_id,
-                'customer_name'  => $invoice->customer?->name,
+                'id' => $invoice->id,
+                'code' => $invoice->code,
+                'status' => $invoice->status,
+                'total' => (float) $invoice->total,
+                'discount' => (float) ($invoice->discount ?? 0),
+                'fee' => (float) ($invoice->fee ?? 0),
+                'customer_paid' => (float) ($invoice->customer_paid ?? 0),
+                'customer_id' => $invoice->customer_id,
+                'customer_name' => $invoice->customer?->name,
                 'customer_phone' => $invoice->customer?->phone,
-                'branch_id'      => $invoice->branch_id,
+                'branch_id' => $invoice->branch_id,
             ],
             'items' => $items,
         ]);
@@ -764,10 +769,10 @@ class PosController extends Controller
         }
 
         $suppliers = \App\Models\Supplier::where(function ($q) use ($search) {
-                $q->where('name', 'LIKE', "%{$search}%")
-                  ->orWhere('phone', 'LIKE', "%{$search}%")
-                  ->orWhere('code', 'LIKE', "%{$search}%");
-            })
+            $q->where('name', 'LIKE', "%{$search}%")
+                ->orWhere('phone', 'LIKE', "%{$search}%")
+                ->orWhere('code', 'LIKE', "%{$search}%");
+        })
             ->orderBy('name')
             ->limit(10)
             ->get(['id', 'code', 'name', 'phone', 'debt_amount']);

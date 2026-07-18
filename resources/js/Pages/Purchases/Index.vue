@@ -162,6 +162,7 @@ const printPurchase = (order) => {
     window.open(`/purchases/${order.id}/print`, "_blank", "width=400,height=600");
 };
 
+const cancelIdempotencyKeys = new Map();
 const cancelPurchase = (order) => {
     if (!confirm(`Bạn có chắc muốn hủy phiếu nhập hàng ${order.code}?`)) return;
     const cancelReason = window.prompt('Nhập lý do hủy phiếu nhập:');
@@ -170,9 +171,13 @@ const cancelPurchase = (order) => {
         alert('Lý do hủy phải có ít nhất 5 ký tự.');
         return;
     }
+    const idempotencyKey = cancelIdempotencyKeys.get(order.id) || crypto.randomUUID();
+    cancelIdempotencyKeys.set(order.id, idempotencyKey);
     router.delete(`/purchases/${order.id}`, {
         data: { cancel_reason: cancelReason.trim() },
+        headers: { 'Idempotency-Key': idempotencyKey },
         preserveState: false,
+        onSuccess: () => { cancelIdempotencyKeys.delete(order.id); },
     });
 };
 </script>

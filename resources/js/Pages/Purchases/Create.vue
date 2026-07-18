@@ -524,6 +524,7 @@ const projectedSupplierCredit = computed(() => Math.max(0, -projectedSupplierBal
 // nhưng map sang `currentPurchaseDebt` để vẫn clamp ≥ 0 (đúng với label
 // "Tính vào công nợ" cũ).
 const debtAmount = currentPurchaseDebt;
+const submitIdempotencyKey = ref('');
 
 const save = () => {
     if (items.value.length === 0) {
@@ -536,6 +537,7 @@ const save = () => {
     }
 
     submitRef.value = true;
+    submitIdempotencyKey.value ||= crypto.randomUUID();
     
     router.post('/purchases', {
         code: props.purchaseCode,
@@ -563,8 +565,10 @@ const save = () => {
             warranty_months: item.warranty_months || 0,
         }))
     }, {
+        headers: { 'Idempotency-Key': submitIdempotencyKey.value },
         onSuccess: () => {
             clearBrowserDraft();
+            submitIdempotencyKey.value = '';
         },
         onError: (errors) => {
             const firstError = firstErrorMessage(errors);

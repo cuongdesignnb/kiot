@@ -181,11 +181,13 @@ const cancellingInvoice = ref(null);
 const cancelReason = ref('');
 const cancelError = ref('');
 const cancelSubmitting = ref(false);
+const cancelIdempotencyKey = ref('');
 
 const cancelInvoice = (invoice) => {
     cancellingInvoice.value = invoice;
     cancelReason.value = '';
     cancelError.value = '';
+    cancelIdempotencyKey.value = crypto.randomUUID();
     showCancelModal.value = true;
 };
 
@@ -214,6 +216,7 @@ const submitCancelInvoice = () => {
         data: inv.requires_override_reason
             ? { cancel_reason: trimmedReason, time_lock_override_reason: trimmedReason }
             : { cancel_reason: trimmedReason },
+        headers: { "Idempotency-Key": cancelIdempotencyKey.value },
         preserveScroll: true,
         onSuccess: () => {
             showCancelModal.value = false;

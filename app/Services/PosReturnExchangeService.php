@@ -2,8 +2,10 @@
 
 namespace App\Services;
 
+use App\Models\Customer;
 use App\Models\Invoice;
 use App\Models\Product;
+use App\Services\Debt\PartnerDebtMutationCoordinator;
 use App\Support\Status\BusinessStatus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -12,13 +14,13 @@ class PosReturnExchangeService
 {
     public function __construct(
         private OrderReturnCreationService $returns,
-        private InvoiceSaleService $sales
-    ) {
-    }
+        private InvoiceSaleService $sales,
+        private PartnerDebtMutationCoordinator $coordinator,
+    ) {}
 
     public function create(array $payload, array $context = []): array
     {
-        return DB::transaction(function () use ($payload, $context) {
+        $mutation = function () use ($payload, $context) {
             $sourceInvoice = Invoice::lockForUpdate()->findOrFail($payload['invoice_id']);
             if (BusinessStatus::isCancelled($sourceInvoice->status)) {
                 throw ValidationException::withMessages([
@@ -64,7 +66,7 @@ class PosReturnExchangeService
                 'fee' => $returnCalc['fee_amount'],
                 'total' => $returnTotal,
                 'paid_to_customer' => $refundToCustomer,
-                'note' => $payload['note'] ?? ('Doi hang tu hoa don ' . $sourceInvoice->code),
+                'note' => $payload['note'] ?? ('Doi hang tu hoa don '.$sourceInvoice->code),
                 'items' => $payload['return']['items'] ?? [],
             ];
 
@@ -81,13 +83,13 @@ class PosReturnExchangeService
                 'total' => $exchangeTotal,
                 'customer_paid' => $customerPays,
                 'payment_method' => $payload['payment_method'] ?? 'cash',
-                'note' => trim(($payload['note'] ?? '') . "\nDoi hang tu phieu {$return->code}, hoa don goc {$sourceInvoice->code}"),
+                'note' => trim(($payload['note'] ?? '')."\nDoi hang tu phieu {$return->code}, hoa don goc {$sourceInvoice->code}"),
                 'items' => $exchange['items'],
             ];
 
             $invoice = $this->sales->createSale($exchangePayload, array_merge([
                 'source' => 'pos_exchange',
-                'code_prefix' => 'HD' . time(),
+                'code_prefix' => 'HD'.time(),
                 'default_status' => 'Hoàn thành',
                 'sales_channel' => 'Đổi hàng POS',
                 'created_by_name' => auth()->user()?->name ?? 'POS',
@@ -96,8 +98,8 @@ class PosReturnExchangeService
                 'validate_stock_setting' => false,
                 'allow_oversell' => false,
                 'cashflow_payment_method' => $payload['payment_method'] ?? 'cash',
-                'cashflow_description_extra' => !empty($payload['bank_account_info'])
-                    ? ' - CK: ' . $payload['bank_account_info']
+                'cashflow_description_extra' => ! empty($payload['bank_account_info'])
+                    ? ' - CK: '.$payload['bank_account_info']
                     : '',
                 'stock_movement_branch_id' => $payload['branch_id'] ?? $sourceInvoice->branch_id,
             ], $context['sale_context'] ?? []));
@@ -114,7 +116,29 @@ class PosReturnExchangeService
                     'refund_to_customer' => $refundToCustomer,
                 ],
             ];
-        });
+        };
+
+        $sourceInvoice = Invoice::query()->findOrFail($payload['invoice_id']);
+        $customerId = (int) ($payload['customer_id'] ?? $sourceInvoice->customer_id ?? 0);
+        if ($customerId <= 0) {
+            return DB::transaction($mutation);
+        }
+
+        return $this->coordinator->execute(
+            $customerId,
+            'pos_return_exchange',
+            hash('sha256', json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION)),
+            function (Customer $lockedCustomer) use ($mutation): array {
+                if (! (bool) $lockedCustomer->is_customer) {
+                    throw ValidationException::withMessages([
+                        'customer_id' => 'Doi tac khong co vai tro khach hang da duoc luu.',
+                    ]);
+                }
+
+                return DB::transaction($mutation);
+            },
+            isset($context['idempotency_key']) ? (string) $context['idempotency_key'] : null,
+        );
     }
 
     private function calculateExchange(array $exchange): array
@@ -134,7 +158,7 @@ class PosReturnExchangeService
             $price = (float) ($item['price'] ?? 0);
             $discount = (float) ($item['discount'] ?? 0);
             $product = Product::lockForUpdate()->find((int) ($item['product_id'] ?? 0));
-            if (!$product) {
+            if (! $product) {
                 throw ValidationException::withMessages([
                     'exchange.items' => 'Hang doi khong ton tai.',
                 ]);
@@ -166,7 +190,7 @@ class PosReturnExchangeService
                     'exchange.items' => "San pham '{$product->name}' co serial hang doi bi trung.",
                 ]);
             }
-            if ($product->isService() && !empty($serialIds)) {
+            if ($product->isService() && ! empty($serialIds)) {
                 throw ValidationException::withMessages([
                     'exchange.items' => "Sản phẩm '{$product->name}' là dịch vụ, không quản lý Serial/IMEI.",
                 ]);
@@ -213,12 +237,12 @@ class PosReturnExchangeService
     {
         $returnNote = trim((string) ($return->note ?? ''));
         $return->update([
-            'note' => trim($returnNote . "\nHoa don doi: {$invoice->code}"),
+            'note' => trim($returnNote."\nHoa don doi: {$invoice->code}"),
         ]);
 
         $invoiceNote = trim((string) ($invoice->note ?? ''));
         $invoice->update([
-            'note' => trim($invoiceNote . "\nPhieu tra hang: {$return->code}; hoa don goc: {$sourceInvoice->code}"),
+            'note' => trim($invoiceNote."\nPhieu tra hang: {$return->code}; hoa don goc: {$sourceInvoice->code}"),
         ]);
     }
 }

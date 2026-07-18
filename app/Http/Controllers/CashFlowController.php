@@ -6,11 +6,15 @@ use App\Enums\PaymentMethod;
 use App\Models\ActivityLog;
 use App\Models\BankAccount;
 use App\Models\CashFlow;
+use App\Models\Customer;
 use App\Services\CustomerPaymentService;
+use App\Services\Debt\PartnerDebtMutationCoordinator;
+use App\Services\Debt\PartnerDebtRoleResolver;
 use App\Services\LockPeriodService;
 use App\Support\BusinessDateTime;
 use App\Support\Filters\FilterableIndex;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 
 class CashFlowController extends Controller
@@ -107,7 +111,7 @@ class CashFlowController extends Controller
 
     public function store(Request $request)
     {
-        $request->validate([
+        $validated = $request->validate([
             'type' => 'required|in:receipt,payment',
             'amount' => 'required|numeric|min:0',
             'time' => 'nullable|date',
@@ -139,23 +143,67 @@ class CashFlowController extends Controller
         $txDate = BusinessDateTime::forCreate($request->input('time'));
         app(LockPeriodService::class)->assertNotLocked($txDate, 'cashflow_create');
 
-        $cashFlow = CashFlow::create([
-            'code' => $prefix.date('ymdHis').rand(10, 99),
-            'type' => $request->type,
-            'amount' => $request->amount,
-            'time' => $txDate,
-            'category' => $request->category,
-            'target_type' => $request->target_type,
-            'target_id' => $request->target_id,
-            'target_name' => $targetPartner?->name ?? $request->target_name,
-            'accounting_result' => $request->has('accounting_result') ? $request->accounting_result : true,
-            'payment_method' => $request->payment_method ?? 'cash',
-            'bank_account_id' => $request->payment_method !== 'cash' ? $request->bank_account_id : null,
-            'description' => $request->description,
-        ]);
+        $createCashFlow = function (?Customer $lockedPartner = null) use ($request, $targetPartner, $txDate, $prefix): CashFlow {
+            $cashFlow = CashFlow::create([
+                'code' => $prefix.date('ymdHis').rand(10, 99),
+                'type' => $request->type,
+                'amount' => $request->amount,
+                'time' => $txDate,
+                'category' => $request->category,
+                'target_type' => $request->target_type,
+                'target_id' => $request->target_id,
+                'target_name' => $targetPartner?->name ?? $request->target_name,
+                'accounting_result' => $request->has('accounting_result') ? $request->accounting_result : true,
+                'payment_method' => $request->payment_method ?? 'cash',
+                'bank_account_id' => $request->payment_method !== 'cash' ? $request->bank_account_id : null,
+                'description' => $request->description,
+            ]);
+            app(PartnerDebtMutationCoordinator::class)->checkpoint('document');
 
-        $typeLabel = $request->type === 'receipt' ? 'thu' : 'chi';
-        ActivityLog::log('cashflow_create', "Tạo phiếu {$typeLabel} {$cashFlow->code}, số tiền: ".number_format($cashFlow->amount), $cashFlow);
+            if ($lockedPartner) {
+                $isCustomer = in_array((string) $request->target_type, PartnerDebtRoleResolver::CUSTOMER_TARGET_TYPES, true);
+                $isSupplier = in_array((string) $request->target_type, PartnerDebtRoleResolver::SUPPLIER_TARGET_TYPES, true);
+                if ($isCustomer && ! (bool) $lockedPartner->is_customer) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'target_id' => 'Doi tac khong co vai tro khach hang da duoc luu.',
+                    ]);
+                }
+                if ($isSupplier && ! (bool) $lockedPartner->is_supplier) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'target_id' => 'Doi tac khong co vai tro nha cung cap da duoc luu.',
+                    ]);
+                }
+
+                $amount = (float) $cashFlow->amount;
+                if ($isCustomer) {
+                    $lockedPartner->debt_amount = (float) $lockedPartner->debt_amount
+                        + ($cashFlow->type === 'receipt' ? -$amount : $amount);
+                } elseif ($isSupplier) {
+                    $lockedPartner->supplier_debt_amount = (float) $lockedPartner->supplier_debt_amount
+                        + ($cashFlow->type === 'payment' ? -$amount : $amount);
+                }
+                $lockedPartner->save();
+                app(PartnerDebtMutationCoordinator::class)->checkpoint('projection');
+            }
+
+            $typeLabel = $request->type === 'receipt' ? 'thu' : 'chi';
+            ActivityLog::log('cashflow_create', "Tạo phiếu {$typeLabel} {$cashFlow->code}, số tiền: ".number_format($cashFlow->amount), $cashFlow);
+
+            return $cashFlow;
+        };
+
+        $targetPartnerId = (int) ($targetPartner?->id ?? 0);
+        $cashFlow = $targetPartnerId > 0
+            ? app(PartnerDebtMutationCoordinator::class)->execute(
+                $targetPartnerId,
+                'standalone_cash_flow_create',
+                hash('sha256', json_encode($validated, JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION)),
+                fn (Customer $lockedPartner): CashFlow => DB::transaction(
+                    fn (): CashFlow => $createCashFlow($lockedPartner),
+                ),
+                $request->header('Idempotency-Key'),
+            )
+            : DB::transaction(fn (): CashFlow => $createCashFlow());
 
         if ($request->boolean('_print')) {
             return redirect()->back()->with(['success' => 'Tạo phiếu thành công', 'print_id' => $cashFlow->id]);
@@ -275,18 +323,6 @@ class CashFlowController extends Controller
                 ? response()->json(['success' => false, 'status' => $status, 'message' => $message], 422)
                 : back()->with('error', $message);
         }
-
-        ActivityLog::log(
-            'cashflow_cancel',
-            "Huy phieu {$cashFlow->code}, so tien: ".number_format($cashFlow->amount),
-            $cashFlow,
-            [
-                'amount' => (float) $cashFlow->amount,
-                'reference_type' => $cashFlow->reference_type,
-                'reference_code' => $cashFlow->reference_code,
-                'cancel_reason' => $request->input('cancel_reason'),
-            ]
-        );
 
         if ($request->wantsJson()) {
             return response()->json([

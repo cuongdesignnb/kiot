@@ -3,18 +3,15 @@
 namespace App\Services\Debt;
 
 use App\Models\Customer;
-use App\Services\CustomerDebtDocumentTimelineService;
-use App\Services\SupplierDebtDocumentTimelineService;
 
 class CanonicalPartnerDebtService
 {
-    private const SOURCE_VERSION = 'canonical-document-reducer-v2';
+    private const SOURCE_VERSION = 'canonical-partner-event-reducer-v3';
 
     private const SOURCE_KIND = 'VALID_BUSINESS_DOCUMENTS';
 
     public function __construct(
-        private readonly CustomerDebtDocumentTimelineService $customerTimeline,
-        private readonly SupplierDebtDocumentTimelineService $supplierTimeline,
+        private readonly CanonicalPartnerDebtEventService $events,
     ) {}
 
     /**
@@ -42,22 +39,16 @@ class CanonicalPartnerDebtService
             );
         }
 
-        $customer = $this->customerTimeline->build($partner, [
-            'domain_only' => true,
-            'canonical' => true,
-        ]);
-        $supplier = $this->supplierTimeline->build($partner, [
-            'canonical' => true,
-        ]);
-
-        $customerReceivable = (float) ($customer['summary']['raw_document_final_balance'] ?? 0);
-        $supplierPayable = (float) ($supplier['summary']['raw_document_final_balance'] ?? 0);
-        $events = collect($customer['entries'] ?? [])
-            ->concat($supplier['entries'] ?? [])
-            ->filter(fn (array $entry) => (bool) ($entry['affects_canonical_balance'] ?? true))
-            ->map(fn (array $entry) => [
-                'identity' => (string) ($entry['event_identity'] ?? ''),
-                'delta' => (float) ($entry['display_effect'] ?? $entry['amount'] ?? 0),
+        $stream = $this->events->build($partner);
+        $affecting = $stream->where('affects_balance', true);
+        $customerReceivable = (float) $affecting->sum('customer_delta');
+        $supplierPayable = (float) $affecting->sum('supplier_delta');
+        $events = $stream
+            ->map(fn (array $event) => [
+                'identity' => (string) $event['event_identity'],
+                'customer_delta' => (float) $event['customer_delta'],
+                'supplier_delta' => (float) $event['supplier_delta'],
+                'affects_balance' => (bool) $event['affects_balance'],
             ])
             ->sortBy('identity')
             ->values()

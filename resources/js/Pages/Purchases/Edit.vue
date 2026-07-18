@@ -349,6 +349,7 @@ const projectedSupplierCredit = computed(() => Math.max(0, -projectedSupplierBal
 
 // Alias kept for templates / submit logic that already reads `debtAmount`.
 const debtAmount = currentPurchaseDebt;
+const submitIdempotencyKey = ref('');
 
 const save = () => {
     formError.value = '';
@@ -361,6 +362,7 @@ const save = () => {
         formError.value = 'Vui lòng chọn nhà cung cấp.';
         return;
     }
+    submitIdempotencyKey.value ||= crypto.randomUUID();
 
     router.put(`/purchases/${props.purchase.id}`, {
         status: status.value,
@@ -384,9 +386,13 @@ const save = () => {
             warranty_months: item.warranty_months || 0,
         }))
     }, {
+        headers: { 'Idempotency-Key': submitIdempotencyKey.value },
         preserveScroll: true,
         onStart: () => {
             submitRef.value = true;
+        },
+        onSuccess: () => {
+            submitIdempotencyKey.value = '';
         },
         onError: (errors) => {
             const firstError = Object.values(errors || {})[0];

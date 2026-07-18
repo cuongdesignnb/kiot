@@ -247,14 +247,7 @@ class PartnerDebtMutationCoordinator
 
     private function replayResult(PartnerDebtOperation $operation): mixed
     {
-        $returnValue = $operation->result['return_value'] ?? null;
-        if (is_array($returnValue) && isset($returnValue['model'], $returnValue['id'])) {
-            $model = (string) $returnValue['model'];
-
-            return $model::query()->find($returnValue['id']);
-        }
-
-        return $returnValue;
+        return $this->restoreSerializableResult($operation->result['return_value'] ?? null);
     }
 
     private function serializableResult(mixed $result): mixed
@@ -263,7 +256,25 @@ class PartnerDebtMutationCoordinator
             return ['model' => $result::class, 'id' => $result->getKey()];
         }
 
-        return is_scalar($result) || is_array($result) || $result === null ? $result : null;
+        if (is_array($result)) {
+            return array_map(fn (mixed $value): mixed => $this->serializableResult($value), $result);
+        }
+
+        return is_scalar($result) || $result === null ? $result : null;
+    }
+
+    private function restoreSerializableResult(mixed $result): mixed
+    {
+        if (! is_array($result)) {
+            return $result;
+        }
+        if (isset($result['model'], $result['id']) && is_a((string) $result['model'], \Illuminate\Database\Eloquent\Model::class, true)) {
+            $model = (string) $result['model'];
+
+            return $model::query()->findOrFail($result['id']);
+        }
+
+        return array_map(fn (mixed $value): mixed => $this->restoreSerializableResult($value), $result);
     }
 
     private function snapshot(Customer $partner): array

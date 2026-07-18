@@ -15,6 +15,7 @@ use App\Support\Customers\CustomerGroupSnapshot;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 
 /**
  * STEP 24.3 — Invoice Update Engine with Impact Safety.
@@ -490,7 +491,17 @@ class InvoiceUpdateService
                 'invoice_id' => (int) $invoice->id,
                 'payload' => $payload,
             ], JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION)),
-            fn () => DB::transaction($applyUpdate),
+            function ($partners) use ($applyUpdate): Invoice {
+                foreach ($partners as $partner) {
+                    if (! (bool) $partner->is_customer) {
+                        throw ValidationException::withMessages([
+                            'customer_id' => 'Doi tac khong co vai tro khach hang da duoc luu.',
+                        ]);
+                    }
+                }
+
+                return DB::transaction($applyUpdate);
+            },
             isset($context['idempotency_key']) ? (string) $context['idempotency_key'] : null,
         );
     }

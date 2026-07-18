@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\ActivityLog;
 use App\Models\CashFlow;
 use App\Models\Customer;
 use App\Models\Invoice;
@@ -11,10 +12,12 @@ use App\Models\Product;
 use App\Models\Purchase;
 use App\Models\SerialImei;
 use App\Models\Setting;
+use App\Services\Debt\PartnerDebtMutationCoordinator;
 use App\Support\BusinessDateTime;
 use App\Support\Customers\CustomerGroupSnapshot;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 /**
  * RR-02: Service dùng chung cho luồng bán hàng (Invoice + POS).
@@ -29,18 +32,20 @@ use Illuminate\Support\Facades\DB;
  */
 class InvoiceSaleService
 {
+    public function __construct(private readonly PartnerDebtMutationCoordinator $coordinator) {}
+
     /**
      * Tạo Invoice + items + serials + stock + costing + movement + debt + cashflow.
      *
-     * @param array $payload Normalized payload (xem design mục 4)
-     * @param array $context Controller-specific overrides (xem design mục 5)
+     * @param  array  $payload  Normalized payload (xem design mục 4)
+     * @param  array  $context  Controller-specific overrides (xem design mục 5)
      * @return Invoice Invoice đã load('items.product')
      *
      * @throws \Exception Out of stock, serial invalid, before purchase date.
      */
     public function createSale(array $payload, array $context = []): Invoice
     {
-        return DB::transaction(function () use ($payload, $context) {
+        $createSale = function () use ($payload, $context) {
             $transactionDate = BusinessDateTime::forCreate($context['transaction_date'] ?? null);
             $context['transaction_date'] = $transactionDate;
 
@@ -54,13 +59,13 @@ class InvoiceSaleService
             // chạy TRƯỚC khi tạo bất kỳ record nào để tránh orphan Invoice/InvoiceItem.
             $this->assertSerialSelectionComplete($payload['items']);
 
-            if (!empty($context['validate_before_purchase_date'])) {
+            if (! empty($context['validate_before_purchase_date'])) {
                 $this->assertNotBeforePurchaseDate(
                     $payload['items'],
                     $transactionDate
                 );
             }
-            if (!empty($context['validate_stock_setting'])) {
+            if (! empty($context['validate_stock_setting'])) {
                 $this->assertSufficientStockBySetting($payload['items']);
             }
 
@@ -72,8 +77,8 @@ class InvoiceSaleService
                 $txDate = $transactionDate;
                 $updateFields = [
                     'transaction_date' => $txDate,
-                    'lock_started_at'  => now(),
-                    'created_at'       => $txDate,
+                    'lock_started_at' => now(),
+                    'created_at' => $txDate,
                 ];
                 $invoice->update($updateFields);
             } else {
@@ -86,8 +91,12 @@ class InvoiceSaleService
             foreach ($payload['items'] as $item) {
                 $this->processItem($invoice, $item, $allowOversell, $context);
             }
+            $this->coordinator->checkpoint('document');
 
             // ─── 4. Customer debt + dual-role ───
+            $this->createCashFlowIfPaid($invoice, $payload, $context);
+            $this->coordinator->checkpoint('evidence');
+
             $this->updateCustomerDebt(
                 $payload['customer_id'] ?? null,
                 (float) $payload['total'],
@@ -96,13 +105,55 @@ class InvoiceSaleService
             );
 
             // ─── 5. CashFlow ───
-            $this->createCashFlowIfPaid($invoice, $payload, $context);
+            $this->coordinator->checkpoint('projection');
 
             // ─── 6. STEP 23.7B: Auto-generate warranty records (in-transaction → rollback-safe) ───
             app(WarrantyGenerationService::class)->generateForInvoice($invoice);
 
+            ActivityLog::log(
+                ActivityLog::ACTION_INVOICE_CREATE,
+                "Tao hoa don {$invoice->code}",
+                $invoice,
+                ['total' => (float) $invoice->total],
+            );
+
             return $invoice->load('items.product');
-        });
+        };
+
+        $customerId = (int) ($payload['customer_id'] ?? 0);
+        if ($customerId <= 0) {
+            return DB::transaction($createSale);
+        }
+
+        $payloadHash = hash('sha256', json_encode([
+            'payload' => $payload,
+            'context' => collect($context)->only([
+                'source',
+                'default_status',
+                'sales_channel',
+                'seller_id',
+                'transaction_date',
+                'is_delivery',
+                'delivery_partner',
+                'delivery_fee',
+            ])->all(),
+        ], JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION));
+
+        return $this->coordinator->execute(
+            $customerId,
+            'invoice_sale_create',
+            $payloadHash,
+            function (Customer $lockedCustomer) use ($createSale): Invoice {
+                if (! (bool) $lockedCustomer->is_customer) {
+                    throw ValidationException::withMessages([
+                        'customer_id' => 'Doi tac khong co vai tro khach hang da duoc luu.',
+                    ]);
+                }
+
+                return DB::transaction($createSale);
+            },
+            isset($context['idempotency_key']) ? (string) $context['idempotency_key'] : null,
+        );
     }
 
     /**
@@ -113,20 +164,20 @@ class InvoiceSaleService
         $code = $this->generateUniqueInvoiceCode($context);
 
         $attrs = [
-            'code'             => $code,
-            'customer_id'      => $payload['customer_id'] ?? null,
-            'branch_id'        => $payload['branch_id'] ?? null,
-            'status'           => $context['default_status'] ?? 'Hoàn thành',
-            'subtotal'         => $payload['subtotal'],
-            'discount'         => $payload['discount'] ?? 0,
-            'total'            => $payload['total'],
-            'customer_paid'    => $payload['customer_paid'] ?? 0,
-            'note'             => $payload['note'] ?? null,
-            'created_by_name'  => $context['created_by_name'] ?? auth()->user()?->name ?? 'Admin',
-            'is_delivery'      => $context['is_delivery'] ?? false,
+            'code' => $code,
+            'customer_id' => $payload['customer_id'] ?? null,
+            'branch_id' => $payload['branch_id'] ?? null,
+            'status' => $context['default_status'] ?? 'Hoàn thành',
+            'subtotal' => $payload['subtotal'],
+            'discount' => $payload['discount'] ?? 0,
+            'total' => $payload['total'],
+            'customer_paid' => $payload['customer_paid'] ?? 0,
+            'note' => $payload['note'] ?? null,
+            'created_by_name' => $context['created_by_name'] ?? auth()->user()?->name ?? 'Admin',
+            'is_delivery' => $context['is_delivery'] ?? false,
             'delivery_partner' => $context['delivery_partner'] ?? null,
-            'delivery_fee'     => $context['delivery_fee'] ?? 0,
-            'payment_method'   => $payload['payment_method'] ?? 'cash',
+            'delivery_fee' => $context['delivery_fee'] ?? 0,
+            'payment_method' => $payload['payment_method'] ?? 'cash',
         ];
 
         // Optional fields chỉ set khi có giá trị (không ghi đè default schema)
@@ -153,17 +204,17 @@ class InvoiceSaleService
 
     private function generateUniqueInvoiceCode(array $context): string
     {
-        $prefix = $context['code_prefix'] ?? ('HD' . date('YmdHis'));
+        $prefix = $context['code_prefix'] ?? ('HD'.date('YmdHis'));
 
         for ($attempt = 0; $attempt < 10; $attempt++) {
-            $code = $prefix . random_int(10, 99);
+            $code = $prefix.random_int(10, 99);
 
-            if (!Invoice::where('code', $code)->exists()) {
+            if (! Invoice::where('code', $code)->exists()) {
                 return $code;
             }
         }
 
-        return $prefix . random_int(1000, 9999);
+        return $prefix.random_int(1000, 9999);
     }
 
     /**
@@ -173,24 +224,24 @@ class InvoiceSaleService
     private function processItem(Invoice $invoice, array $item, bool $allowOversell, array $context): void
     {
         $product = Product::lockForUpdate()->find($item['product_id']);
-        if (!$product) {
+        if (! $product) {
             return;
         }
 
         $isService = $product->isService();
         $serialIds = $item['serial_ids'] ?? [];
 
-        if ($isService && !empty($serialIds)) {
+        if ($isService && ! empty($serialIds)) {
             throw new \Exception("Sản phẩm '{$product->name}' là dịch vụ, không quản lý Serial/IMEI.");
         }
 
         // Validate stock / serial
-        if (!$isService && $product->has_serial && !empty($serialIds)) {
+        if (! $isService && $product->has_serial && ! empty($serialIds)) {
             $this->assertSerialsValid($product, $serialIds);
-        } elseif (!$isService && !$allowOversell && $product->stock_quantity < $item['quantity']) {
+        } elseif (! $isService && ! $allowOversell && $product->stock_quantity < $item['quantity']) {
             throw new \Exception(
                 "Sản phẩm [{$product->sku}] {$product->name} không đủ tồn kho "
-                . "(Còn: {$product->stock_quantity}). Không cho phép tồn kho âm."
+                ."(Còn: {$product->stock_quantity}). Không cho phép tồn kho âm."
             );
         }
 
@@ -200,7 +251,7 @@ class InvoiceSaleService
         // ─── Bước A: Tạo InvoiceItem TRƯỚC ───
         $serialStr = null;
         $soldSerials = collect();
-        if (!$isService && $product->has_serial && !empty($serialIds)) {
+        if (! $isService && $product->has_serial && ! empty($serialIds)) {
             $soldSerials = SerialImei::whereIn('id', $serialIds)
                 ->where('product_id', $product->id)
                 ->get();
@@ -209,13 +260,13 @@ class InvoiceSaleService
 
         $invoiceItem = $invoice->items()->create([
             'product_id' => $item['product_id'],
-            'quantity'   => $item['quantity'],
-            'price'      => $item['price'],
+            'quantity' => $item['quantity'],
+            'price' => $item['price'],
             'cost_price' => $snapshotCostPrice,
-            'discount'   => $item['discount'] ?? 0,
-            'subtotal'   => ($item['price'] * $item['quantity']) - ($item['discount'] ?? 0),
-            'note'       => $item['note'] ?? null,
-            'serial'     => $serialStr,
+            'discount' => $item['discount'] ?? 0,
+            'subtotal' => ($item['price'] * $item['quantity']) - ($item['discount'] ?? 0),
+            'note' => $item['note'] ?? null,
+            'serial' => $serialStr,
         ]);
 
         // ─── Bước B: Tạo InvoiceItemSerial với invoice_item_id THẬT ───
@@ -223,14 +274,14 @@ class InvoiceSaleService
         foreach ($soldSerials as $serial) {
             InvoiceItemSerial::create([
                 'invoice_item_id' => $invoiceItem->id,
-                'serial_imei_id'  => $serial->id,
-                'serial_number'   => $serial->serial_number,
-                'cost_price'      => $snapshotCostPrice,
+                'serial_imei_id' => $serial->id,
+                'serial_number' => $serial->serial_number,
+                'cost_price' => $snapshotCostPrice,
             ]);
 
-            $serial->status          = 'sold';
-            $serial->sold_at         = $invoice->transaction_date ?? $invoice->created_at ?? now();
-            $serial->invoice_id      = $invoice->id;
+            $serial->status = 'sold';
+            $serial->sold_at = $invoice->transaction_date ?? $invoice->created_at ?? now();
+            $serial->invoice_id = $invoice->id;
             $serial->sold_cost_price = $snapshotCostPrice;
             $serial->save();
         }
@@ -257,9 +308,9 @@ class InvoiceSaleService
                 'branch_id' => array_key_exists('stock_movement_branch_id', $context)
                     ? $context['stock_movement_branch_id']
                     : ($invoice->branch_id ?? null),
-                'ref_code'  => $invoice->code,
-                'moved_at'  => $invoice->transaction_date ?? $invoice->created_at ?? now(),
-                'note'      => 'Xuất bán hóa đơn ' . $invoice->code,
+                'ref_code' => $invoice->code,
+                'moved_at' => $invoice->transaction_date ?? $invoice->created_at ?? now(),
+                'note' => 'Xuất bán hóa đơn '.$invoice->code,
             ]
         );
     }
@@ -270,21 +321,16 @@ class InvoiceSaleService
      */
     private function updateCustomerDebt(?int $customerId, float $total, float $customerPaid, ?Invoice $invoice = null): void
     {
-        if (!$customerId) {
+        if (! $customerId) {
             return;
         }
 
         $customer = Customer::find($customerId);
-        if (!$customer) {
+        if (! $customer) {
             return;
         }
 
         // Auto-enable dual-role: bán cho NCC làm họ thành cả khách hàng
-        if ($customer->is_supplier && !$customer->is_customer) {
-            $customer->is_customer = true;
-            $customer->save();
-        }
-
         $debtAmount = $total - $customerPaid;
         if (abs($debtAmount) >= 0.01) {
             // RR-06: ledger ghi qua service. Service tự update customers.debt_amount + tạo customer_debts row.
@@ -309,26 +355,26 @@ class InvoiceSaleService
             return;
         }
 
-        $customer = !empty($payload['customer_id']) ? Customer::find($payload['customer_id']) : null;
+        $customer = ! empty($payload['customer_id']) ? Customer::find($payload['customer_id']) : null;
         $customerName = $customer?->name ?? 'Khách lẻ';
         $extraDesc = $context['cashflow_description_extra'] ?? '';
 
         CashFlow::create([
-            'code'           => 'PT' . date('YmdHis') . rand(10, 99),
-            'type'           => 'receipt',
-            'amount'         => $customerPaid,
-            'time'           => $invoice->transaction_date ?? $invoice->created_at ?? now(),
-            'category'       => 'Thu tiền khách trả',
-            'target_type'    => 'Khách hàng',
-            'target_id'      => $customer?->id,
-            'target_name'    => $customerName,
+            'code' => 'PT'.date('YmdHis').rand(10, 99),
+            'type' => 'receipt',
+            'amount' => $customerPaid,
+            'time' => $invoice->transaction_date ?? $invoice->created_at ?? now(),
+            'category' => 'Thu tiền khách trả',
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer?->id,
+            'target_name' => $customerName,
             'reference_type' => 'Invoice',
             'reference_code' => $invoice->code,
             'payment_method' => $context['cashflow_payment_method']
                 ?? ($payload['payment_method'] ?? 'cash'),
-            'description'    => 'Thu tiền hóa đơn ' . $invoice->code
-                . ($customer ? " - {$customer->name}" : '')
-                . $extraDesc,
+            'description' => 'Thu tiền hóa đơn '.$invoice->code
+                .($customer ? " - {$customer->name}" : '')
+                .$extraDesc,
         ]);
     }
 
@@ -348,7 +394,7 @@ class InvoiceSaleService
                 if ($earliest && $txDate->lt($earliest)) {
                     throw new \Exception(
                         "Không thể bán sản phẩm '{$product->name}' trước ngày nhập hàng đầu tiên ("
-                        . $earliest->format('d/m/Y H:i') . ')'
+                        .$earliest->format('d/m/Y H:i').')'
                     );
                 }
             }
@@ -384,27 +430,27 @@ class InvoiceSaleService
     {
         foreach ($items as $item) {
             $productId = (int) ($item['product_id'] ?? 0);
-            $qty       = (int) ($item['quantity'] ?? 0);
+            $qty = (int) ($item['quantity'] ?? 0);
             if ($productId <= 0 || $qty <= 0) {
                 continue;
             }
             $product = Product::find($productId);
-            if (!$product || !$product->tracksInventory() || !$product->has_serial) {
+            if (! $product || ! $product->tracksInventory() || ! $product->has_serial) {
                 continue;
             }
             $serialIds = array_values(array_filter(array_map('intval', (array) ($item['serial_ids'] ?? []))));
             if (count($serialIds) !== $qty) {
                 throw new \Exception(
                     "Sản phẩm '{$product->name}' (Serial/IMEI) cần chọn đủ "
-                    . "{$qty} mã, hiện đã chọn " . count($serialIds) . '.'
+                    ."{$qty} mã, hiện đã chọn ".count($serialIds).'.'
                 );
             }
             $blocked = app(SerialAvailabilityService::class)
                 ->findBlockedIds($serialIds, $product->id);
-            if (!empty($blocked)) {
+            if (! empty($blocked)) {
                 throw new \Exception(
                     "Sản phẩm '{$product->name}': có serial không hợp lệ hoặc đã bán/đang sửa "
-                    . '(' . implode(',', $blocked) . ').'
+                    .'('.implode(',', $blocked).').'
                 );
             }
         }
@@ -425,7 +471,7 @@ class InvoiceSaleService
         if ($availableCount < count($serialIds)) {
             throw new \Exception(
                 "Sản phẩm [{$product->sku}] {$product->name} - một số Serial/IMEI "
-                . 'đã bán hoặc không tồn tại.'
+                .'đã bán hoặc không tồn tại.'
             );
         }
     }

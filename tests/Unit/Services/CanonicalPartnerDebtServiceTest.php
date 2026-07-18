@@ -40,7 +40,7 @@ class CanonicalPartnerDebtServiceTest extends TestCase
         $this->assertSame(9_600_000.0, $result['raw_timeline_final']);
         $this->assertFalse($result['has_mismatch']);
         $this->assertSame('2026-07-15T09:30:00+07:00', $result['calculated_at']);
-        $this->assertStringStartsWith('canonical-document-reducer-v2:', $result['source_version']);
+        $this->assertStringStartsWith('canonical-partner-event-reducer-v3:', $result['source_version']);
     }
 
     public function test_snapshot_fingerprint_changes_when_a_balance_changes(): void

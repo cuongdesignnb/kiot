@@ -124,6 +124,7 @@ const sidebarConfig = computed(() => [
 
 const isModalOpen = ref(false);
 const modalType = ref("receipt"); // receipt or payment
+const createIdempotencyKey = ref('');
 
 const form = useForm({
     id: null,
@@ -358,6 +359,7 @@ const openModal = (type, flow = null) => {
         categoryDropdownOpen.value = false;
         categorySearch.value = "";
     } else {
+        createIdempotencyKey.value = crypto.randomUUID();
         modalType.value = type;
         form.id = null;
         form.type = type;
@@ -392,7 +394,9 @@ const submitForm = () => {
         });
     } else {
         form.post("/cash-flows", {
+            headers: { "Idempotency-Key": createIdempotencyKey.value },
             onSuccess: () => {
+                createIdempotencyKey.value = '';
                 closeModal();
             },
         });
@@ -416,7 +420,9 @@ const submitFormAndPrint = () => {
     } else {
         form.transform((data) => ({ ...data, _print: true }));
         form.post("/cash-flows", {
+            headers: { "Idempotency-Key": createIdempotencyKey.value },
             onSuccess: (page) => {
+                createIdempotencyKey.value = '';
                 closeModal();
                 const printId = page.props.flash?.print_id;
                 if (printId) {

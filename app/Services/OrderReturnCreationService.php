@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\ActivityLog;
 use App\Models\CashFlow;
+use App\Models\Customer;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\InvoiceItemSerial;
@@ -69,6 +70,16 @@ class OrderReturnCreationService
             $this->recordCustomerImpact($return, $payload, $context);
             $this->recordCashFlow($return, $payload, $context, $returnDate);
 
+            ActivityLog::log(
+                ActivityLog::ACTION_RETURN_CREATE,
+                "Tao phieu tra hang {$return->code}",
+                $return,
+                [
+                    'total' => (float) $return->total,
+                    'business_time' => optional($return->created_at)->toDateTimeString(),
+                ],
+            );
+
             return $return->load('items.product', 'invoice');
         };
 
@@ -78,20 +89,18 @@ class OrderReturnCreationService
                 $customerId,
                 'customer_return_create',
                 hash('sha256', json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION)),
-                fn () => DB::transaction($createReturn),
+                function (Customer $lockedCustomer) use ($createReturn): OrderReturn {
+                    if (! (bool) $lockedCustomer->is_customer) {
+                        throw ValidationException::withMessages([
+                            'customer_id' => 'Doi tac khong co vai tro khach hang da duoc luu.',
+                        ]);
+                    }
+
+                    return DB::transaction($createReturn);
+                },
                 isset($context['idempotency_key']) ? (string) $context['idempotency_key'] : null,
             )
             : DB::transaction($createReturn);
-
-        ActivityLog::log(
-            ActivityLog::ACTION_RETURN_CREATE,
-            "Tao phieu tra hang {$createdReturn->code}",
-            $createdReturn,
-            [
-                'total' => (float) $createdReturn->total,
-                'business_time' => optional($createdReturn->created_at)->toDateTimeString(),
-            ]
-        );
 
         return $createdReturn;
     }
