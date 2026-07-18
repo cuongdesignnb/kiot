@@ -2,7 +2,9 @@
 
 `DEBT_PARITY_ZERO_DRIFT_STATUS=BLOCKED`
 
-`TASK_CODE=DEBT-PARITY-ZERO-DRIFT-02-CLOSURE`
+`TASK_CODE=DEBT-PARITY-DATASET-RECOVERY-01`
+
+`PARENT_TASK_CODE=DEBT-PARITY-ZERO-DRIFT-02-CLOSURE`
 
 This report records the validation performed from branch
 `fix/all-partner-debt-parity-zero-drift`, based directly on
@@ -207,3 +209,126 @@ these extensions are unrelated to the MySQL debt tests.
 
 Until every blocker above is cleared and all acceptance counters are zero,
 the only truthful release status is `BLOCKED`.
+
+## Dataset recovery inventory and source gate (2026-07-18)
+
+The local recovery pass inspected the available Docker metadata, Kiot database
+containers and volumes, bind mounts, and database dumps without accessing
+production. The baseline inventory contained 120 pre-existing containers and
+125 volumes. Four disposable population-probe containers/volumes were then
+created; each probe was started only while restoring or reading required
+fingerprint data and was stopped immediately afterwards. No Docker container
+was running when this pass finished.
+
+| Inventory | Count | Result |
+| --- | ---: | --- |
+| Pre-existing containers scanned | 120 | 34 MySQL/MariaDB containers inventoried; 10 Kiot candidates inspected |
+| Pre-existing volumes scanned | 125 | 10 plausible Kiot database volumes inspected; none deleted or pruned |
+| Database bind mounts scanned | 2 | Read-only metadata; no permission change |
+| Candidate database backups hashed | 35 | 71 raw extension hits before excluding code/static SQL archives |
+| Disposable population probes | 4 | All stopped |
+
+Ignored evidence is stored under
+`storage/app/audits/debt-parity-dataset-recovery/`:
+
+- `docker-containers.txt`
+- `docker-volumes.json`
+- `docker-bind-mounts.json`
+- `database-backup-inventory.csv`
+- `population-probes.json`
+- one `population-reconciliation.json`, `population-excluded.csv`, and
+  `population-unscannable.csv` set for each probe
+
+The user-supplied `kiot_db.sql.zip` was not the newest local database export.
+Its SHA-256 is
+`46718e71030822f116d1f69300e431fc581e380a0a3a956d75e2a0798fe817f3`
+and it contains only 236 customer rows. The newest candidate is
+`D:\Kiot\kiotviet-clone\kiot.sql.zip`, SHA-256
+`3272ff2ad31851bd9c120d7862800ff0f4721ac8a875a1f71e6f27ce74d145f3`.
+It was restored only into disposable probe `kiot_population_probe_2`; it was
+not imported over the project database because its population gate failed.
+
+### Population probe comparison
+
+| Probe/source | Engine | Customers | Source union | Financial history | Unscannable | Latest business timestamp | Population gate |
+| --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| User `kiot_db.sql.zip` (2026-06-10) | MariaDB 10.11.10 | 236 | 237 | 236 | 1 | 2026-06-08 16:43:21 | FAIL |
+| `kiot.sql.zip` (2026-07-17 export) | MariaDB 10.11.10 | 332 | 333 | 332 | 1 | 2026-07-14 10:13:43 | FAIL |
+| `D:\Kiot\kiot.sql.zip` (2026-07-13) | MariaDB 10.11.10 | 331 | 332 | 330 | 1 | 2026-07-11 14:22:00 | FAIL |
+| MySQL-transformed export (2026-07-08) | MySQL 8.0.44 | 322 | 323 | 322 | 1 | 2026-07-08 14:26:00 | FAIL |
+
+All four schemas were readable by the current application population command.
+Their deterministic database fingerprints are, in probe order:
+
+1. `5d378735150c18567d839352214ed71ecf9a011cba02e01b1bb74d00997ab922`
+2. `5a9eca0e5408c64388c99bd1352732ed720ad9279a5d08e93b7870814f319246`
+3. `807e431a64392ae7a1505df828435ca37fe0c9b44c5d94ce87a184e41ea48781`
+4. `732114d42b9b0e062247f59b40a9cae08fe187b3c992b7275fb111cca805d4b7`
+
+The July 17 candidate proves the local maxima:
+
+```text
+LOCAL_MAX_CUSTOMERS=332
+LOCAL_MAX_SOURCE_UNION=333
+LOCAL_LATEST_BUSINESS_TIMESTAMP=2026-07-14 10:13:43
+```
+
+It is not a valid closure source. Although the customer count is 332, the
+full financial-source union is 333 and contains one unscannable financial
+partner. Therefore `POPULATION_RECONCILIATION=FAIL`; file recency and the
+customer-table count alone cannot authorize selection.
+
+### Partner 55 investigation
+
+The July 17 candidate still has no `customers.id=55` row and has three
+`cash_flows.target_id=55` rows. The evidence consists of one legacy debt
+payment and an offset/cancellation pair for the same persisted reference and
+amount. No matching invoice, customer-debt row, purchase, purchase return,
+supplier-debt transaction, debt-offset row, partner merge, or direct partner
+activity-log evidence was found. The evidence is consistent with a
+hard-deleted legacy customer, but that remains an inference and is not safe to
+repair automatically. No synthetic customer or adjustment was created.
+
+```text
+PARTNER_55_STATUS=orphan
+ORPHAN_FINANCIAL_REFERENCE=true
+TOTAL_UNSCANNABLE=1
+TOTAL_EXCLUDED=0
+UNEXPLAINED_MISSING_PARTNERS=0
+```
+
+### Recovery decision
+
+No local snapshot satisfies all source-selection conditions. In particular,
+none has both the expected population and zero unscannable financial partners.
+Consequently no new immutable closure backup was created, the earlier backup
+remains retained for audit and is not marked as a replacement source, and
+`kiot_debt_parity_clone1_current` / `kiot_debt_parity_clone2_current` were not
+created. Global audit and repair were not resumed, and no prior audit,
+fingerprint, plan, or approval hash was reused.
+
+```text
+DATASET_RECOVERY_STATUS=BLOCKED
+BLOCKER=LATEST_SOURCE_EXPORT_REQUIRED
+LOCAL_LATEST_SNAPSHOT_FOUND=no
+SELECTED_SOURCE_TYPE=none
+SELECTED_SOURCE_IDENTIFIER=none
+SELECTED_DATABASE_FINGERPRINT=none
+EXPECTED_POPULATION=332
+POPULATION_RECONCILIATION=FAIL
+DOCKER_DATABASE_IS_LATEST=no
+NEW_BACKUP_FILE=none
+NEW_BACKUP_SHA256=none
+NEW_BACKUP_INTEGRITY=not_run
+CLONE_1=not_created
+CLONE_2=not_created
+CLONE_FINGERPRINT_EQUAL=not_run
+READY_TO_RESUME_DEBT_PARITY_CLOSURE=no
+PRODUCTION_ACCESSED=no
+PRODUCTION_DATABASE_CHANGED=no
+PRODUCTION_DEPLOYED=no
+```
+
+Closure can resume only after the system owner supplies an immutable export
+whose full partner-source population reconciles with zero unscannable
+financial references.
