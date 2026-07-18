@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Services\Debt\PartnerDebtInvariantChecker;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -11,6 +12,9 @@ class CheckPartnerDebtInvariantsCommand extends Command
 {
     protected $signature = 'debt:check-invariants
         {--dry-run : Required read-only gate}
+        {--all-partners : Include missing-role, merged, inactive and zero-projection rows}
+        {--fail-on-mismatch : Exit non-zero when material drift exists}
+        {--output= : JSON file or directory under storage/app/audits}
         {--partner-id=* : Limit the scan to one or more partner IDs}
         {--role=all : all, customer, supplier or dual}
         {--status=all : all, active or inactive}
@@ -56,13 +60,17 @@ class CheckPartnerDebtInvariantsCommand extends Command
         }
 
         try {
-            $result = $checker->scan(
+            $arguments = [
                 $partnerIds,
                 $limitOption === null ? null : (int) $limitOption,
                 $role,
                 $status,
                 (bool) $this->option('benchmark'),
-            );
+            ];
+            if ($this->option('all-partners')) {
+                $arguments[] = true;
+            }
+            $result = $checker->scan(...$arguments);
         } catch (Throwable $e) {
             Log::error('Debt integrity scan failed', ['exception' => $e]);
             $this->error('Debt integrity scan failed. No debt data was changed.');
@@ -70,6 +78,11 @@ class CheckPartnerDebtInvariantsCommand extends Command
             return self::INVALID;
         }
         $driftRows = collect($result['rows'])->where('drift_detected', true)->values();
+        if ($output = $this->option('output')) {
+            $path = $this->outputPath((string) $output);
+            File::ensureDirectoryExists(dirname($path));
+            file_put_contents($path, json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+        }
 
         $this->info('Read-only: yes');
         $this->line('Total checked: '.$result['total_checked']);
@@ -123,5 +136,25 @@ class CheckPartnerDebtInvariantsCommand extends Command
         }
 
         return self::SUCCESS;
+    }
+
+    private function outputPath(string $path): string
+    {
+        $normalized = str_replace('\\', '/', $path);
+        if (str_contains($normalized, '..')) {
+            throw new \RuntimeException('Invariant output cannot traverse parent directories.');
+        }
+        $absolute = preg_match('/^[A-Za-z]:\//', $normalized) === 1
+            ? $normalized
+            : str_replace('\\', '/', base_path($normalized));
+        $root = rtrim(str_replace('\\', '/', storage_path('app/audits')), '/');
+        if (! str_starts_with($absolute, $root.'/')) {
+            throw new \RuntimeException('Invariant output must be under storage/app/audits.');
+        }
+        if (! str_ends_with(mb_strtolower($absolute), '.json')) {
+            $absolute = rtrim($absolute, '/').'/invariants.json';
+        }
+
+        return str_replace('/', DIRECTORY_SEPARATOR, $absolute);
     }
 }

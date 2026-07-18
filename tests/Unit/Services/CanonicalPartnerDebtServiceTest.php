@@ -15,7 +15,7 @@ class CanonicalPartnerDebtServiceTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_it_keeps_customer_and_supplier_balances_separate_and_returns_net_display(): void
+    public function test_unpersisted_partner_snapshot_keeps_sides_separate_without_claiming_canonical_evidence(): void
     {
         Carbon::setTestNow('2026-07-15 09:30:00');
         $partner = new Customer;
@@ -33,14 +33,17 @@ class CanonicalPartnerDebtServiceTest extends TestCase
         $this->assertSame(12_300_000.0, $result['customer_balance']);
         $this->assertSame(2_700_000.0, $result['supplier_balance']);
         $this->assertSame(9_600_000.0, $result['net_display_balance']);
-        $this->assertSame('STORED_COMPATIBILITY_CACHE', $result['source_kind']);
+        $this->assertSame('UNPERSISTED_PARTNER_SNAPSHOT', $result['source_kind']);
         $this->assertFalse($result['is_canonical']);
-        $this->assertSame('UNKNOWN', $result['staleness_status']);
+        $this->assertSame('ALIGNED', $result['staleness_status']);
+        $this->assertSame('net_balance', $result['display_contract']);
+        $this->assertSame(9_600_000.0, $result['raw_timeline_final']);
+        $this->assertFalse($result['has_mismatch']);
         $this->assertSame('2026-07-15T09:30:00+07:00', $result['calculated_at']);
-        $this->assertStringStartsWith('stored-cache-v1:', $result['source_version']);
+        $this->assertStringStartsWith('canonical-document-reducer-v2:', $result['source_version']);
     }
 
-    public function test_cache_fingerprint_changes_when_a_stored_balance_changes(): void
+    public function test_snapshot_fingerprint_changes_when_a_balance_changes(): void
     {
         $partner = new Customer;
         $partner->forceFill([
@@ -57,7 +60,7 @@ class CanonicalPartnerDebtServiceTest extends TestCase
         $this->assertNotSame($before, $after);
     }
 
-    public function test_cache_fingerprint_is_independent_of_optional_updated_at_hydration(): void
+    public function test_snapshot_fingerprint_is_independent_of_optional_updated_at_hydration(): void
     {
         $withTimestamp = new Customer;
         $withTimestamp->forceFill([

@@ -15,15 +15,15 @@ class PurchaseCreateSupplierDebtDisplayContractTest extends TestCase
     {
         $admin = User::create([
             'name' => 'Admin Purchase Display Contract',
-            'email' => 'admin-purchase-display-contract-' . uniqid() . '@test.local',
+            'email' => 'admin-purchase-display-contract-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
             'role_id' => null,
         ]);
 
         $partner = Customer::create([
-            'code' => 'NCC-PICKER-CONTRACT-' . uniqid(),
+            'code' => 'NCC-PICKER-CONTRACT-'.uniqid(),
             'name' => 'Purchase Picker Display Contract',
-            'phone' => '09' . random_int(10000000, 99999999),
+            'phone' => '09'.random_int(10000000, 99999999),
             'debt_amount' => 205_000,
             'supplier_debt_amount' => 205_000,
             'is_customer' => true,
@@ -39,14 +39,16 @@ class PurchaseCreateSupplierDebtDisplayContractTest extends TestCase
 
         $this->assertNotNull($row);
         $this->assertSame(205_000.0, (float) $row['supplier_debt_amount']);
-        $this->assertSame(205_000.0, (float) $row['customer_receivable_balance']);
-        $this->assertSame(205_000.0, (float) $row['supplier_payable_balance']);
+        $this->assertSame(0.0, (float) $row['customer_receivable_balance']);
+        $this->assertSame(0.0, (float) $row['supplier_payable_balance']);
         $this->assertSame(0.0, (float) $row['supplier_screen_debt']);
         $this->assertSame(0.0, (float) $row['supplier_oriented_balance']);
         $this->assertSame(0.0, (float) $row['supplier_picker_display_balance']);
+        $this->assertTrue($row['debt_has_mismatch']);
+        $this->assertSame('net_balance', $row['debt_display_contract']);
 
         $searchResponse = $this->actingAs($admin)
-            ->getJson('/api/suppliers/search?search=' . urlencode($partner->code));
+            ->getJson('/api/suppliers/search?search='.urlencode($partner->code));
         $searchResponse->assertOk();
 
         $searchRow = collect($searchResponse->json())->firstWhere('id', $partner->id);
@@ -54,21 +56,22 @@ class PurchaseCreateSupplierDebtDisplayContractTest extends TestCase
         $this->assertSame(205_000.0, (float) $searchRow['supplier_debt_amount']);
         $this->assertSame(0.0, (float) $searchRow['supplier_oriented_balance']);
         $this->assertSame(0.0, (float) $searchRow['supplier_picker_display_balance']);
+        $this->assertTrue($searchRow['debt_has_mismatch']);
     }
 
     public function test_purchase_create_supplier_picker_keeps_raw_payable_for_supplier_only(): void
     {
         $admin = User::create([
             'name' => 'Admin Purchase Supplier Only Contract',
-            'email' => 'admin-purchase-supplier-only-contract-' . uniqid() . '@test.local',
+            'email' => 'admin-purchase-supplier-only-contract-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
             'role_id' => null,
         ]);
 
         $supplier = Customer::create([
-            'code' => 'NCC-PICKER-ONLY-' . uniqid(),
+            'code' => 'NCC-PICKER-ONLY-'.uniqid(),
             'name' => 'Purchase Picker Supplier Only',
-            'phone' => '09' . random_int(10000000, 99999999),
+            'phone' => '09'.random_int(10000000, 99999999),
             'debt_amount' => 0,
             'supplier_debt_amount' => 600_000,
             'is_customer' => false,
@@ -84,8 +87,10 @@ class PurchaseCreateSupplierDebtDisplayContractTest extends TestCase
 
         $this->assertNotNull($row);
         $this->assertSame(600_000.0, (float) $row['supplier_debt_amount']);
-        $this->assertSame(600_000.0, (float) $row['supplier_screen_debt']);
-        $this->assertSame(600_000.0, (float) $row['supplier_oriented_balance']);
-        $this->assertSame(600_000.0, (float) $row['supplier_picker_display_balance']);
+        $this->assertSame(0.0, (float) $row['supplier_screen_debt']);
+        $this->assertSame(0.0, (float) $row['supplier_oriented_balance']);
+        $this->assertSame(0.0, (float) $row['supplier_picker_display_balance']);
+        $this->assertTrue($row['debt_has_mismatch']);
+        $this->assertSame('supplier_payable', $row['debt_display_contract']);
     }
 }

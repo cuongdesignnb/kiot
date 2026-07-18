@@ -6,9 +6,11 @@ use App\Console\Commands\AuditDebtParityCommand;
 use App\Models\CashFlow;
 use App\Models\Customer;
 use App\Services\Debt\PartnerDebtParityAuditService;
-use Illuminate\Foundation\Testing\DatabaseTransactions;
+use App\Services\Debt\PartnerDebtPopulationService;
 use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 use Tests\TestCase;
 
 class AuditDebtParityCommandTest extends TestCase
@@ -16,6 +18,8 @@ class AuditDebtParityCommandTest extends TestCase
     use DatabaseTransactions;
 
     private array $files = [];
+
+    private array $directories = [];
 
     protected function setUp(): void
     {
@@ -29,6 +33,9 @@ class AuditDebtParityCommandTest extends TestCase
     {
         foreach ($this->files as $file) {
             @unlink($file);
+        }
+        foreach ($this->directories as $directory) {
+            File::deleteDirectory($directory);
         }
         parent::tearDown();
     }
@@ -76,11 +83,12 @@ class AuditDebtParityCommandTest extends TestCase
         $this->assertSame(4_300_000.0, (float) $customer->fresh()->debt_amount);
     }
 
-    public function test_target_type_alias_is_reported_without_mutation(): void
+    public function test_supported_unaccented_target_type_is_not_reported_as_suspect(): void
     {
         $customer = $this->customer();
+        $code = 'PT-ALIAS-'.uniqid();
         CashFlow::query()->insert([
-            'code' => 'PT-ALIAS-' . uniqid(),
+            'code' => $code,
             'type' => 'receipt',
             'amount' => 100_000,
             'time' => now(),
@@ -102,9 +110,9 @@ class AuditDebtParityCommandTest extends TestCase
         ])->assertExitCode(0);
 
         $row = json_decode((string) file_get_contents($json), true, flags: JSON_THROW_ON_ERROR)['rows'][0];
-        $this->assertTrue($row['has_target_type_alias']);
-        $this->assertContains('TARGET_TYPE_ALIAS_SUSPECT', $row['classification_flags']);
-        $this->assertDatabaseHas('cash_flows', ['code' => $row['suspect_receipt_codes'][0] ?? 'PT-ALIAS-NOT-REQUIRED']);
+        $this->assertFalse($row['has_target_type_alias']);
+        $this->assertNotContains('TARGET_TYPE_ALIAS_SUSPECT', $row['classification_flags']);
+        $this->assertDatabaseHas('cash_flows', ['code' => $code, 'target_type' => 'Khach hang']);
     }
 
     public function test_output_outside_audit_directory_is_rejected(): void
@@ -283,12 +291,134 @@ class AuditDebtParityCommandTest extends TestCase
             ->assertExitCode(1);
     }
 
+    public function test_all_partner_output_writes_population_gate_artifacts(): void
+    {
+        $this->customer();
+        $directory = storage_path('app/audits/testing-'.uniqid().'-population');
+        $this->directories[] = $directory;
+
+        $population = \Mockery::mock(PartnerDebtPopulationService::class);
+        $population->shouldReceive('reconcile')->once()->with(
+            \Mockery::on(fn (array $ids): bool => count($ids) >= 1),
+            332,
+        )->andReturn([
+            'summary' => [
+                'total_customers_without_trashed' => 322,
+                'total_customers_with_trashed' => 322,
+                'total_partner_source_union' => 323,
+                'total_with_financial_history' => 300,
+                'total_with_nonzero_stored_balance' => 20,
+                'total_scanned' => 1,
+                'total_excluded' => 0,
+                'total_unscannable' => 1,
+                'expected_population' => 332,
+                'expected_customer_gap' => 10,
+                'expected_union_gap' => 9,
+                'database_is_latest' => false,
+                'population_reconciliation_pass' => false,
+            ],
+            'source_population' => [],
+            'excluded' => [],
+            'orphan_financial_references' => [],
+            'unscannable' => [[
+                'partner_id' => 55,
+                'partner_code' => '',
+                'reason' => 'FINANCIAL_REFERENCE_WITHOUT_PARTNER_ROW',
+                'sources' => ['cash_flows'],
+                'stored_customer_debt' => null,
+                'stored_supplier_debt' => null,
+            ]],
+        ]);
+        $this->app->instance(PartnerDebtPopulationService::class, $population);
+
+        $this->artisan('debt:audit-parity', [
+            '--dry-run' => true,
+            '--all-partners' => true,
+            '--population-only' => true,
+            '--expected-population' => '332',
+            '--output' => $directory,
+        ])->expectsOutputToContain('database_is_latest: no')->assertExitCode(1);
+
+        $this->assertFileExists($directory.'/population-reconciliation.json');
+        $this->assertFileExists($directory.'/population-excluded.csv');
+        $this->assertFileExists($directory.'/population-orphan-financial-references.csv');
+        $this->assertFileExists($directory.'/population-unscannable.csv');
+        $payload = json_decode(
+            (string) file_get_contents($directory.'/population-reconciliation.json'),
+            true,
+            flags: JSON_THROW_ON_ERROR,
+        );
+        $this->assertFalse($payload['summary']['population_reconciliation_pass']);
+        $this->assertSame(10, $payload['summary']['expected_customer_gap']);
+
+        $handle = fopen($directory.'/population-excluded.csv', 'rb');
+        $headers = fgetcsv($handle);
+        fclose($handle);
+        $headers[0] = preg_replace('/^\xEF\xBB\xBF/', '', $headers[0]);
+        $this->assertSame(PartnerDebtPopulationService::EXCLUDED_CSV_COLUMNS, $headers);
+    }
+
+    public function test_population_service_only_excludes_zero_balance_rows_without_history(): void
+    {
+        $excluded = $this->customer([
+            'debt_amount' => 0,
+            'supplier_debt_amount' => 0,
+            'is_customer' => false,
+            'is_supplier' => false,
+        ]);
+        $scannedIds = Customer::query()->whereKeyNot($excluded->id)->pluck('id')->all();
+
+        $result = $this->app->make(PartnerDebtPopulationService::class)->reconcile($scannedIds);
+
+        $row = collect($result['excluded'])->firstWhere('partner_id', $excluded->id);
+        $this->assertNotNull($row);
+        $this->assertSame(0, $row['document_count']);
+        $this->assertSame(
+            'ZERO_STORED_BALANCE_AND_NO_FINANCIAL_HISTORY_OR_LEDGER',
+            $row['exclusion_reason'],
+        );
+    }
+
+    public function test_population_service_reports_orphan_without_blocking_complete_customer_scan(): void
+    {
+        $scannedIds = Customer::query()->pluck('id')->all();
+        $baseline = $this->app->make(PartnerDebtPopulationService::class)->reconcile($scannedIds);
+        $baselineOrphanCount = (int) $baseline['summary']['total_orphan_financial_references'];
+        $orphanId = ((int) Customer::query()->max('id')) + 100_000;
+        CashFlow::query()->insert([
+            'code' => 'PT-ORPHAN-'.uniqid(),
+            'type' => 'receipt',
+            'amount' => 100_000,
+            'time' => now(),
+            'target_type' => 'Customer',
+            'target_id' => $orphanId,
+            'target_name' => 'Missing Partner Row',
+            'reference_type' => 'DebtPayment',
+            'status' => 'active',
+            'payment_method' => 'cash',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $result = $this->app->make(PartnerDebtPopulationService::class)->reconcile($scannedIds);
+
+        $this->assertTrue($result['summary']['population_reconciliation_pass']);
+        $this->assertTrue($result['summary']['audit_can_proceed']);
+        $this->assertSame($baselineOrphanCount + 1, $result['summary']['total_orphan_financial_references']);
+        $this->assertSame(0, $result['summary']['total_unexplained_missing_customers']);
+        $this->assertSame(Customer::query()->count(), $result['summary']['total_scannable_customers']);
+        $orphan = collect($result['orphan_financial_references'])->firstWhere('partner_id', $orphanId);
+        $this->assertNotNull($orphan);
+        $this->assertFalse($orphan['affects_canonical_balance']);
+        $this->assertEmpty($result['unscannable']);
+    }
+
     private function customer(array $overrides = []): Customer
     {
         return Customer::query()->forceCreate(array_merge([
-            'code' => 'PARITY-' . uniqid(),
+            'code' => 'PARITY-'.uniqid(),
             'name' => 'Generic Parity Partner',
-            'phone' => '09' . random_int(10000000, 99999999),
+            'phone' => '09'.random_int(10000000, 99999999),
             'debt_amount' => 0,
             'supplier_debt_amount' => 0,
             'is_customer' => true,
@@ -299,7 +429,7 @@ class AuditDebtParityCommandTest extends TestCase
 
     private function path(string $name): string
     {
-        $path = storage_path('app/audits/testing-' . uniqid() . '-' . $name);
+        $path = storage_path('app/audits/testing-'.uniqid().'-'.$name);
         $this->files[] = $path;
 
         return $path;

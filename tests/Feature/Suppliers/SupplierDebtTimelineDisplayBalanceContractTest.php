@@ -17,15 +17,15 @@ class SupplierDebtTimelineDisplayBalanceContractTest extends TestCase
     {
         $admin = User::create([
             'name' => 'Admin Supplier Display Contract',
-            'email' => 'admin-supplier-display-contract-' . uniqid() . '@test.local',
+            'email' => 'admin-supplier-display-contract-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
             'role_id' => null,
         ]);
 
         $partner = Customer::create([
-            'code' => 'NCC-DISPLAY-CONTRACT-' . uniqid(),
+            'code' => 'NCC-DISPLAY-CONTRACT-'.uniqid(),
             'name' => 'Supplier Display Contract',
-            'phone' => '09' . random_int(10000000, 99999999),
+            'phone' => '09'.random_int(10000000, 99999999),
             'debt_amount' => 205_000,
             'supplier_debt_amount' => 205_000,
             'is_customer' => true,
@@ -53,16 +53,17 @@ class SupplierDebtTimelineDisplayBalanceContractTest extends TestCase
         $purchase = $entries->firstWhere('code', 'PN-DISPLAY-CONTRACT');
 
         $this->assertNotNull($purchase);
-        $this->assertSame(0.0, (float) $summary['current_debt']);
-        $this->assertSame(0.0, (float) $summary['supplier_oriented_balance']);
-        $this->assertSame(0.0, (float) $summary['display_balance_target']);
-        $this->assertSame(0.0, (float) $summary['display_balance_final']);
+        $this->assertSame(205_000.0, (float) $summary['current_debt']);
+        $this->assertSame(205_000.0, (float) $summary['supplier_oriented_balance']);
+        $this->assertSame(205_000.0, (float) $summary['display_balance_target']);
+        $this->assertSame(205_000.0, (float) $summary['display_balance_final']);
         $this->assertSame(205_000.0, (float) $summary['raw_document_final_balance']);
-        $this->assertTrue((bool) $summary['has_virtual_display_alignment']);
+        $this->assertFalse((bool) $summary['has_virtual_display_alignment']);
         $this->assertFalse((bool) $summary['has_virtual_opening_balance']);
-        $this->assertFalse((bool) $response->json('reconcile.user_warning'));
-        $this->assertSame(0.0, (float) $purchase['supplier_display_running_balance']);
-        $this->assertSame(0.0, (float) $purchase['running_balance']);
+        $this->assertTrue((bool) $response->json('reconcile.user_warning'));
+        $this->assertTrue((bool) $response->json('reconcile.has_mismatch'));
+        $this->assertSame(205_000.0, (float) $purchase['supplier_display_running_balance']);
+        $this->assertSame(205_000.0, (float) $purchase['running_balance']);
         $this->assertNull($entries->firstWhere('event_kind', 'virtual_opening_balance'));
     }
 }

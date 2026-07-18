@@ -2,13 +2,11 @@
 
 namespace Tests\Feature\Invoices;
 
-use App\Models\User;
-use App\Models\Customer;
-use App\Models\Product;
-use App\Models\Invoice;
 use App\Models\CashFlow;
-use App\Models\CustomerDebt;
-use App\Services\CustomerDebtService;
+use App\Models\Customer;
+use App\Models\Invoice;
+use App\Models\Product;
+use App\Models\User;
 use App\Services\InvoiceSaleService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
@@ -21,7 +19,7 @@ class CancelInvoicePaymentDebtFlowTest extends TestCase
     {
         return User::create([
             'name' => 'Admin Test Cancel Invoice',
-            'email' => 'admin-cancel-inv-' . uniqid() . '@test.local',
+            'email' => 'admin-cancel-inv-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
             'status' => 'active',
         ]);
@@ -30,7 +28,7 @@ class CancelInvoicePaymentDebtFlowTest extends TestCase
     private function customer(): Customer
     {
         return Customer::create([
-            'code' => 'KH-TEST-' . uniqid(),
+            'code' => 'KH-TEST-'.uniqid(),
             'name' => 'Test Customer',
             'phone' => '0987654321',
             'is_customer' => true,
@@ -40,7 +38,7 @@ class CancelInvoicePaymentDebtFlowTest extends TestCase
     private function product(): Product
     {
         return Product::create([
-            'sku' => 'SP-TEST-' . uniqid(),
+            'sku' => 'SP-TEST-'.uniqid(),
             'name' => 'Test Product',
             'cost_price' => 100000,
             'retail_price' => 150000,
@@ -68,8 +66,8 @@ class CancelInvoicePaymentDebtFlowTest extends TestCase
                     'quantity' => 2,
                     'price' => 150000,
                     'discount' => 25000,
-                ]
-            ]
+                ],
+            ],
         ];
 
         $context = [
@@ -128,8 +126,8 @@ class CancelInvoicePaymentDebtFlowTest extends TestCase
                     'product_id' => $product->id,
                     'quantity' => 1,
                     'price' => 150000,
-                ]
-            ]
+                ],
+            ],
         ];
 
         $context = [
@@ -178,8 +176,8 @@ class CancelInvoicePaymentDebtFlowTest extends TestCase
                     'product_id' => $product->id,
                     'quantity' => 1,
                     'price' => 200000,
-                ]
-            ]
+                ],
+            ],
         ];
 
         $context = [
@@ -208,13 +206,20 @@ class CancelInvoicePaymentDebtFlowTest extends TestCase
         $entries = $data['entries'];
 
         // Kiểm tra xem dòng ledger đảo công nợ có type="Hủy hóa đơn"
-        $reversalLedger = collect($entries)->first(fn($e) => $e['type_raw'] === 'invoice_cancel_reversal');
+        $reversalLedger = collect($entries)->first(fn ($e) => $e['type_raw'] === 'invoice_cancel_reversal');
         $this->assertNotNull($reversalLedger);
         $this->assertEquals('Hủy hóa đơn', $reversalLedger['type']);
-        $this->assertEquals(-150000, $reversalLedger['amount']);
+        // Canonical cancellation is the exact inverse of each original
+        // event: reverse the sale total, then restore the cancelled receipt.
+        $this->assertEquals(-200000, $reversalLedger['amount']);
+        $paymentReversal = collect($entries)->first(
+            fn ($e) => $e['type_raw'] === 'invoice_payment_cancel_reversal'
+        );
+        $this->assertNotNull($paymentReversal);
+        $this->assertEquals(50000, $paymentReversal['amount']);
 
         // Vì hóa đơn đã hủy, legacy entries của nó không được hiển thị (đã lọc bỏ)
-        $legacyInv = collect($entries)->first(fn($e) => $e['source'] === 'legacy' && $e['code'] === $invoice->code);
+        $legacyInv = collect($entries)->first(fn ($e) => $e['source'] === 'legacy' && $e['code'] === $invoice->code);
         $this->assertNull($legacyInv);
     }
 
@@ -230,7 +235,7 @@ class CancelInvoicePaymentDebtFlowTest extends TestCase
             'subtotal' => 100000,
             'total' => 100000,
             'customer_paid' => 0,
-            'items' => [['product_id' => $product->id, 'quantity' => 1, 'price' => 100000]]
+            'items' => [['product_id' => $product->id, 'quantity' => 1, 'price' => 100000]],
         ], [
             'created_by_name' => $admin->name,
             'validate_before_purchase_date' => false,
@@ -244,7 +249,7 @@ class CancelInvoicePaymentDebtFlowTest extends TestCase
             'subtotal' => 200000,
             'total' => 200000,
             'customer_paid' => 0,
-            'items' => [['product_id' => $product->id, 'quantity' => 1, 'price' => 200000]]
+            'items' => [['product_id' => $product->id, 'quantity' => 1, 'price' => 200000]],
         ], [
             'created_by_name' => $admin->name,
             'validate_before_purchase_date' => false,
@@ -267,9 +272,9 @@ class CancelInvoicePaymentDebtFlowTest extends TestCase
         $paymentResponse = $this->actingAs($admin)->post("/customers/{$customer->id}/debt-payment", [
             'mode' => 'manual',
             'allocations' => [
-                ['invoice_id' => $invCancelled->id, 'amount' => 50000]
+                ['invoice_id' => $invCancelled->id, 'amount' => 50000],
             ],
-            'note' => 'Trả nợ cho hóa đơn đã hủy'
+            'note' => 'Trả nợ cho hóa đơn đã hủy',
         ]);
 
         // Check it throws/returns error

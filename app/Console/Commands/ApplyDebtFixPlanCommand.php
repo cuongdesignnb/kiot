@@ -2,250 +2,438 @@
 
 namespace App\Console\Commands;
 
-use App\Models\CashFlow;
-use App\Models\CustomerDebt;
-use App\Models\DebtOffset;
-use App\Models\SupplierDebtTransaction;
+use App\Models\ActivityLog;
+use App\Models\Customer;
+use App\Models\PartnerDebtOperation;
+use App\Models\PartnerDebtOperationParticipant;
+use App\Services\Debt\CanonicalPartnerDebtService;
+use App\Services\Debt\LegacyOrphanFinancialReferenceService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
+use RuntimeException;
 
 class ApplyDebtFixPlanCommand extends Command
 {
     protected $signature = 'debt:apply-fix-plan
-        {--plan-json= : Required plan JSON}
-        {--dry-run : Preview write operations only}
-        {--apply : Actually write DB}
-        {--fix-run-id= : Required unique run id}
-        {--confirm-code= : Required confirmation code}
-        {--group= : Only apply one fix group}
-        {--partner-code=* : Only apply allowlisted partner codes}
-        {--limit= : Limit rows}
-        {--backup-confirmed : Confirm DB backup exists}
-        {--rollback-export= : Export rollback JSON}';
+        {--plan-json= : Required guarded plan JSON}
+        {--dry-run : Explicit compatibility alias for the default dry-run mode}
+        {--apply : Apply projection repairs; omitted means dry-run}
+        {--approval-hash= : Required with --apply}
+        {--fix-run-id= : Legacy preview guard}
+        {--confirm-code= : Legacy preview confirmation}
+        {--group= : Legacy fix-group filter}
+        {--partner-code=* : Optional allowlist from the approved plan}
+        {--limit= : Optional positive row limit}
+        {--backup-confirmed : Legacy backup acknowledgement}
+        {--rollback-export= : Legacy rollback preview export}';
 
-    protected $description = 'Guarded debt fix plan apply preview. Real DB writes are disabled in this step';
+    protected $description = 'Dry-run by default; guarded apply updates only stored projections backed by canonical events';
 
-    private const ALLOWED_GROUPS = [
-        'A_OPENING_BALANCE_REVIEW',
-        'B_DOCUMENTS_NO_LEDGER',
-    ];
+    public function handle(
+        CanonicalPartnerDebtService $canonical,
+        LegacyOrphanFinancialReferenceService $orphanEvidence,
+    ): int {
+        $path = (string) ($this->option('plan-json') ?? '');
+        if ($path === '') {
+            $this->error('Missing --plan-json.');
 
-    private const BLOCKED_GROUPS = [
-        'C_LEDGER_DOCUMENT_MISMATCH',
-        'D_CUSTOMER_ONLY_REVIEW',
-        'E_DUAL_ROLE_ORIENTATION_REVIEW',
-        'F_STORED_BALANCE_OPENING_CANDIDATE',
-        'X_PLAN_INPUT_MISMATCH',
-        'Z_NEEDS_MANUAL_REVIEW',
-    ];
+            return self::FAILURE;
+        }
+        if (! is_file($path)) {
+            $this->error('Plan file not found: '.$path);
 
-    public function handle(): int
-    {
-        $guard = $this->validateGuards();
-        if (!$guard['ok']) {
-            $this->error($guard['message']);
             return self::FAILURE;
         }
 
-        $payload = $this->readPlan((string) $this->option('plan-json'));
-        $plans = $this->selectedPlans($payload['plans'] ?? []);
-        $guard = $this->validatePlan($plans);
-        if (!$guard['ok']) {
-            $this->error($guard['message']);
+        $payload = json_decode((string) file_get_contents($path), true, flags: JSON_THROW_ON_ERROR);
+        if (! isset($payload['plan_hash'], $payload['database_fingerprint'])) {
+            return $this->handleLegacyPreview($payload);
+        }
+        if ($this->option('dry-run') && $this->option('apply')) {
+            $this->error('--dry-run and --apply cannot be used together.');
+
+            return self::FAILURE;
+        }
+        $rows = array_values((array) ($payload['rows'] ?? $payload['plans'] ?? []));
+        $expectedPlanHash = hash('sha256', json_encode($rows, JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION));
+        if (! hash_equals((string) ($payload['plan_hash'] ?? ''), $expectedPlanHash)) {
+            $this->error('Plan hash mismatch. Regenerate the plan from the immutable audit report.');
+
+            return self::FAILURE;
+        }
+        if (! hash_equals((string) ($payload['database_fingerprint'] ?? ''), $this->databaseFingerprint())) {
+            $this->error('Database fingerprint mismatch. This plan belongs to another database/engine.');
+
             return self::FAILURE;
         }
 
-        $preview = $this->previewPayload($payload, $plans);
+        $rows = $this->selectedRows($rows);
+        $repairs = collect($rows)->where('proposed_action_type', 'UPDATE_STORED_PROJECTION')->values();
+        $orphanMarks = collect($rows)->where('proposed_action_type', 'MARK_LEGACY_ORPHAN_EXCLUDED')->values();
+        $blocked = collect($rows)->filter(fn (array $row): bool => (array) ($row['blocking_flags'] ?? []) !== []);
+        $preview = [
+            'mode' => $this->option('apply') ? 'apply' : 'dry-run',
+            'plan_hash' => $expectedPlanHash,
+            'selected_count' => count($rows),
+            'repair_count' => $repairs->count(),
+            'orphan_classification_count' => $orphanMarks->count(),
+            'manual_review_count' => $blocked->count(),
+            'rows_changed' => 0,
+        ];
 
-        if ($export = $this->option('rollback-export')) {
-            $this->writeJsonFile((string) $export, $preview);
-            $this->info('Rollback preview exported: ' . $export);
+        if (! $this->option('apply')) {
+            $this->line(json_encode($preview, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+
+            return self::SUCCESS;
         }
 
-        $this->line(json_encode($preview, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{}');
+        if (! hash_equals((string) ($payload['approval_hash'] ?? ''), (string) ($this->option('approval-hash') ?? ''))) {
+            $this->error('Invalid --approval-hash.');
 
-        if ($this->option('apply')) {
-            $this->error('Apply mode is fail-safe in this step. No data was modified.');
             return self::FAILURE;
         }
+        if ($blocked->isNotEmpty()) {
+            $this->error('Selected plan still contains manual-review evidence; nothing was applied.');
+
+            return self::FAILURE;
+        }
+        if ($repairs->isEmpty() && $orphanMarks->isEmpty()) {
+            $this->error('Selected plan has no safe stored-projection repair or orphan classification.');
+
+            return self::FAILURE;
+        }
+        if (! Schema::hasTable('partner_debt_operations') || ! Schema::hasTable('partner_debt_operation_participants')) {
+            $this->error('Debt operation schema is not installed. Run approved migrations on the clone first.');
+
+            return self::FAILURE;
+        }
+        if ($orphanMarks->isNotEmpty() && ! Schema::hasTable('activity_logs')) {
+            $this->error('Activity log schema is required to classify legacy orphan evidence.');
+
+            return self::FAILURE;
+        }
+
+        $selectionHash = hash('sha256', json_encode(
+            collect($rows)->map(fn (array $row): string => implode(':', [
+                (string) ($row['proposed_action_type'] ?? ''),
+                (string) ($row['partner_id'] ?? ''),
+            ]))->sort()->values(),
+            JSON_THROW_ON_ERROR,
+        ));
+        $idempotencyKey = 'debt-repair:'.$expectedPlanHash.':'.substr($selectionHash, 0, 16);
+        $existing = PartnerDebtOperation::query()
+            ->where('operation_type', 'debt.repair_plan')
+            ->where('idempotency_key', $idempotencyKey)
+            ->first();
+        if ($existing && $existing->status === 'committed') {
+            $this->line(json_encode([
+                'result' => 'REPLAY',
+                'operation_uuid' => $existing->operation_uuid,
+                'rows_changed' => 0,
+            ], JSON_PRETTY_PRINT));
+
+            return self::SUCCESS;
+        }
+
+        $result = DB::transaction(function () use (
+            $repairs,
+            $orphanMarks,
+            $canonical,
+            $orphanEvidence,
+            $idempotencyKey,
+            $expectedPlanHash,
+            $payload,
+        ): array {
+            $locked = Customer::query()
+                ->whereKey($repairs->pluck('partner_id')->map(fn ($id) => (int) $id)->all())
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get()
+                ->keyBy('id');
+            $changes = [];
+
+            foreach ($repairs->sortBy('partner_id') as $row) {
+                $partner = $locked->get((int) $row['partner_id']);
+                if (! $partner || (string) $partner->code !== (string) $row['partner_code']) {
+                    throw new RuntimeException('Partner identity changed for plan row '.($row['partner_id'] ?? '?'));
+                }
+                $before = (array) $row['before_snapshot'];
+                if (abs((float) $partner->debt_amount - (float) $before['customer_receivable']) > 1.0
+                    || abs((float) $partner->supplier_debt_amount - (float) $before['supplier_payable']) > 1.0) {
+                    throw new RuntimeException('Stored projection changed after plan generation for '.$partner->code);
+                }
+
+                $currentCanonical = $canonical->calculate($partner);
+                $target = (array) $row['canonical_target'];
+                if (abs((float) $currentCanonical['customer_receivable'] - (float) $target['customer_receivable']) > 1.0
+                    || abs((float) $currentCanonical['supplier_payable'] - (float) $target['supplier_payable']) > 1.0) {
+                    throw new RuntimeException('Canonical evidence changed after plan generation for '.$partner->code);
+                }
+
+                $partner->forceFill([
+                    'debt_amount' => (float) $target['customer_receivable'],
+                    'supplier_debt_amount' => (float) $target['supplier_payable'],
+                ])->save();
+                $changes[] = [
+                    'partner_id' => (int) $partner->id,
+                    'partner_code' => (string) $partner->code,
+                    'before' => $before,
+                    'after' => $target,
+                    'customer_delta' => (float) $target['customer_receivable'] - (float) $before['customer_receivable'],
+                    'supplier_delta' => (float) $target['supplier_payable'] - (float) $before['supplier_payable'],
+                ];
+            }
+
+            $orphanChanges = [];
+            foreach ($orphanMarks->sortBy('partner_id') as $row) {
+                $partnerId = (int) ($row['partner_id'] ?? 0);
+                $currentEvidence = $orphanEvidence->snapshot($partnerId);
+                if ($partnerId < 1
+                    || (bool) $currentEvidence['customer_exists']
+                    || (int) $currentEvidence['source_count'] < 1
+                    || ! hash_equals(
+                        (string) ($row['orphan_evidence_hash'] ?? ''),
+                        (string) $currentEvidence['evidence_hash'],
+                    )
+                    || (bool) ($row['canonical_target']['affects_canonical_balance'] ?? true)
+                    || (bool) ($row['canonical_target']['affects_any_partner_balance'] ?? true)) {
+                    throw new RuntimeException("Legacy orphan evidence changed for partner ID {$partnerId}.");
+                }
+
+                $orphanChanges[] = [
+                    'partner_id' => $partnerId,
+                    'classification' => 'LEGACY_ORPHAN_EXCLUDED_WITH_AUDIT_TRAIL',
+                    'source_count' => (int) $currentEvidence['source_count'],
+                    'evidence_hash' => (string) $currentEvidence['evidence_hash'],
+                    'event_identities' => collect($currentEvidence['sources'])
+                        ->pluck('event_identity')->values()->all(),
+                    'affects_canonical_balance' => false,
+                    'affects_any_partner_balance' => false,
+                ];
+            }
+
+            $operation = PartnerDebtOperation::query()->create([
+                'operation_uuid' => (string) Str::uuid(),
+                'partner_id' => null,
+                'operation_type' => 'debt.repair_plan',
+                'idempotency_key' => $idempotencyKey,
+                'request_hash' => $expectedPlanHash,
+                'request_hash_version' => 1,
+                'status' => 'committed',
+                'source_type' => count($orphanChanges) === 1 ? 'LegacyOrphanFinancialReference' : null,
+                'source_id' => count($orphanChanges) === 1 ? $orphanChanges[0]['partner_id'] : null,
+                'result' => [
+                    'rows_changed' => count($changes) + count($orphanChanges),
+                    'projection_changes' => $changes,
+                    'orphan_classifications' => $orphanChanges,
+                ],
+                'attempt_count' => 1,
+                'initiated_at' => now(),
+                'committed_at' => now(),
+                'metadata' => [
+                    'plan_hash' => $expectedPlanHash,
+                    'report_hash' => $payload['source_report_sha256'] ?? null,
+                    'database_fingerprint' => $payload['database_fingerprint'] ?? null,
+                    'population_report_hash' => $payload['population_report_sha256'] ?? null,
+                ],
+            ]);
+
+            foreach ($changes as $change) {
+                $effectRole = abs($change['customer_delta']) > 1.0 && abs($change['supplier_delta']) > 1.0
+                    ? 'both'
+                    : (abs($change['supplier_delta']) > 1.0 ? 'supplier' : 'customer');
+                PartnerDebtOperationParticipant::query()->create([
+                    'operation_id' => $operation->id,
+                    'partner_id' => $change['partner_id'],
+                    'participant_role' => 'projection_repair',
+                    'effect_role' => $effectRole,
+                    'customer_delta' => in_array($effectRole, ['customer', 'both'], true) ? $change['customer_delta'] : null,
+                    'supplier_delta' => in_array($effectRole, ['supplier', 'both'], true) ? $change['supplier_delta'] : null,
+                ]);
+                if (Schema::hasTable('activity_logs')) {
+                    ActivityLog::log(
+                        'partner_debt_projection_repair',
+                        'Applied approved canonical partner debt projection repair.',
+                        Customer::find($change['partner_id']),
+                        $change + ['operation_uuid' => $operation->operation_uuid],
+                    );
+                }
+            }
+
+            foreach ($orphanChanges as $orphanChange) {
+                ActivityLog::query()->create([
+                    'action' => 'partner_debt_orphan_excluded',
+                    'description' => 'Classified immutable legacy orphan financial references outside canonical partner balances.',
+                    'subject_type' => 'LegacyOrphanFinancialReference',
+                    'subject_id' => $orphanChange['partner_id'],
+                    'properties' => $orphanChange + [
+                        'operation_uuid' => $operation->operation_uuid,
+                        'plan_hash' => $expectedPlanHash,
+                        'report_hash' => $payload['source_report_sha256'] ?? null,
+                        'population_report_hash' => $payload['population_report_sha256'] ?? null,
+                    ],
+                ]);
+            }
+
+            return [
+                'operation_uuid' => $operation->operation_uuid,
+                'rows_changed' => count($changes) + count($orphanChanges),
+                'projection_rows_changed' => count($changes),
+                'orphan_classifications_created' => count($orphanChanges),
+            ];
+        }, 3);
+
+        $this->line(json_encode($result + ['result' => 'APPLIED'], JSON_PRETTY_PRINT));
 
         return self::SUCCESS;
     }
 
-    private function validateGuards(): array
+    /**
+     * Preserve the previous proposal-only contract for old plan artifacts.
+     * Legacy payloads can never enter the P0 projection-repair write path.
+     */
+    private function handleLegacyPreview(array $payload): int
     {
-        $planJson = (string) ($this->option('plan-json') ?? '');
-        if ($planJson === '') {
-            return $this->failed('Missing --plan-json.');
-        }
-        if (!file_exists($planJson)) {
-            return $this->failed('Plan file not found: ' . $planJson);
-        }
-
         $dryRun = (bool) $this->option('dry-run');
         $apply = (bool) $this->option('apply');
-        if (!$dryRun && !$apply) {
-            return $this->failed('Pass exactly one mode: --dry-run or --apply.');
+        if (! $dryRun && ! $apply) {
+            $this->error('Pass exactly one mode: --dry-run or --apply.');
+
+            return self::FAILURE;
         }
         if ($dryRun && $apply) {
-            return $this->failed('Pass only one mode. --dry-run and --apply cannot be used together.');
+            $this->error('Pass only one mode. --dry-run and --apply cannot be used together.');
+
+            return self::FAILURE;
         }
 
         if ($apply) {
             $fixRunId = (string) ($this->option('fix-run-id') ?? '');
             $confirmCode = (string) ($this->option('confirm-code') ?? '');
             if ($fixRunId === '') {
-                return $this->failed('--apply requires --fix-run-id.');
+                $this->error('--apply requires --fix-run-id.');
+
+                return self::FAILURE;
             }
             if ($confirmCode === '') {
-                return $this->failed('--apply requires --confirm-code.');
+                $this->error('--apply requires --confirm-code.');
+
+                return self::FAILURE;
             }
-            if ($confirmCode !== 'CONFIRM-DEBT-FIX-' . $fixRunId) {
-                return $this->failed('--confirm-code must equal CONFIRM-DEBT-FIX-{fix_run_id}.');
+            if (! hash_equals('CONFIRM-DEBT-FIX-'.$fixRunId, $confirmCode)) {
+                $this->error('--confirm-code must equal CONFIRM-DEBT-FIX-{fix_run_id}.');
+
+                return self::FAILURE;
             }
-            if (!$this->option('backup-confirmed')) {
-                return $this->failed('--apply requires --backup-confirmed.');
+            if (! $this->option('backup-confirmed')) {
+                $this->error('--apply requires --backup-confirmed.');
+
+                return self::FAILURE;
             }
             if ((string) ($this->option('rollback-export') ?? '') === '') {
-                return $this->failed('--apply requires --rollback-export.');
+                $this->error('--apply requires --rollback-export.');
+
+                return self::FAILURE;
+            }
+            if ((array) $this->option('partner-code') === []) {
+                $this->error('--apply requires at least one --partner-code allowlist entry.');
+
+                return self::FAILURE;
             }
         }
 
-        return ['ok' => true, 'message' => null];
-    }
-
-    private function validatePlan(array $plans): array
-    {
-        if (!$plans) {
-            return $this->failed('No plan rows selected.');
-        }
-
-        $partnerAllowlist = array_map('strval', (array) $this->option('partner-code'));
-        $requestedGroup = (string) ($this->option('group') ?? '');
-
-        if ($this->option('apply') && !$partnerAllowlist) {
-            return $this->failed('--apply requires at least one --partner-code allowlist entry.');
-        }
-
-        foreach ($plans as $plan) {
-            $group = (string) ($plan['fix_group'] ?? '');
-            $code = (string) ($plan['code'] ?? '');
-
-            if (($plan['classification'] ?? '') === 'PLAN_INPUT_MISMATCH' || $group === 'X_PLAN_INPUT_MISMATCH') {
-                return $this->failed('Plan has PLAN_INPUT_MISMATCH. Rerun audit/inspect/plan from the same snapshot.');
-            }
-            if (in_array($group, self::BLOCKED_GROUPS, true)) {
-                return $this->failed('Blocked fix group cannot be applied: ' . $group);
-            }
-            if (!in_array($group, self::ALLOWED_GROUPS, true)) {
-                return $this->failed('Fix group is not in allowlist: ' . $group);
-            }
-            if ($requestedGroup !== '' && $group !== $requestedGroup) {
-                return $this->failed('Selected plan contains group outside --group: ' . $group);
-            }
-            if ($this->option('apply') && !in_array($code, $partnerAllowlist, true)) {
-                return $this->failed('Partner is not in --partner-code allowlist: ' . $code);
-            }
-            if ($this->option('apply') && empty($plan['proposed_write_operations'])) {
-                return $this->failed('Plan has empty proposed_write_operations for partner: ' . $code);
-            }
-        }
-
-        return ['ok' => true, 'message' => null];
-    }
-
-    private function readPlan(string $path): array
-    {
-        $payload = json_decode((string) file_get_contents($path), true);
-        if (!is_array($payload)) {
-            throw new \RuntimeException('Plan JSON is invalid: ' . $path);
-        }
-
-        return $payload;
-    }
-
-    private function selectedPlans(array $plans): array
-    {
         $group = (string) ($this->option('group') ?? '');
         $codes = array_map('strval', (array) $this->option('partner-code'));
-        $limit = $this->option('limit') !== null ? max(1, (int) $this->option('limit')) : null;
-        $selected = [];
+        $limit = $this->option('limit') === null ? null : max(1, (int) $this->option('limit'));
+        $plans = collect((array) ($payload['plans'] ?? []))
+            ->when($group !== '', fn ($rows) => $rows->where('fix_group', $group))
+            ->when($codes !== [], fn ($rows) => $rows->filter(
+                fn (array $row): bool => in_array((string) ($row['code'] ?? ''), $codes, true),
+            ))
+            ->when($limit !== null, fn ($rows) => $rows->take($limit))
+            ->values();
+        if ($plans->isEmpty()) {
+            $this->error('No plan rows selected.');
 
-        foreach ($plans as $plan) {
-            if ($group !== '' && (string) ($plan['fix_group'] ?? '') !== $group) {
-                continue;
-            }
-            if ($codes && !in_array((string) ($plan['code'] ?? ''), $codes, true)) {
-                continue;
-            }
-
-            $selected[] = $plan;
-            if ($limit !== null && count($selected) >= $limit) {
-                break;
-            }
+            return self::FAILURE;
         }
 
-        return $selected;
-    }
-
-    private function previewPayload(array $payload, array $plans): array
-    {
-        return [
-            'generated_at' => now()->toIso8601String(),
-            'dry_run' => (bool) $this->option('dry-run'),
-            'apply_requested' => (bool) $this->option('apply'),
-            'apply_enabled' => false,
-            'fail_safe' => true,
-            'message' => 'Preview only. Real DB writes are disabled in this step.',
-            'fix_run_id' => $this->option('fix-run-id') ?: 'PREVIEW_ONLY',
-            'plan_snapshot_id' => $payload['input_snapshot_id'] ?? null,
-            'selected_count' => count($plans),
-            'selected_groups' => array_values(array_unique(array_map(fn (array $plan) => (string) ($plan['fix_group'] ?? ''), $plans))),
-            'selected_partner_codes' => array_values(array_map(fn (array $plan) => (string) ($plan['code'] ?? ''), $plans)),
-            'write_operations_preview' => array_values(array_merge(...array_map(
-                fn (array $plan) => array_map(
-                    fn (array $operation) => $operation + [
-                        'partner_code' => $plan['code'] ?? null,
-                        'fix_group' => $plan['fix_group'] ?? null,
-                    ],
-                    $plan['proposed_write_operations'] ?? []
-                ),
-                $plans
-            ))),
-            'rollback_preview' => [
-                'required' => true,
-                'old_values_exported' => false,
-                'reason' => 'No real DB write is performed in this step.',
-            ],
-            'data_safety' => [
-                'migration' => false,
-                'backfill' => false,
-                'update_old_data' => false,
-                'delete' => false,
-                'recalculate' => false,
-                'write_db' => false,
-                'customer_debts_count' => CustomerDebt::count(),
-                'supplier_debt_transactions_count' => SupplierDebtTransaction::count(),
-                'cash_flows_count' => CashFlow::count(),
-                'debt_offsets_count' => DebtOffset::count(),
-            ],
+        $allowedGroups = ['A_OPENING_BALANCE_REVIEW', 'B_DOCUMENTS_NO_LEDGER'];
+        $blockedGroups = [
+            'C_LEDGER_DOCUMENT_MISMATCH',
+            'D_CUSTOMER_ONLY_REVIEW',
+            'E_DUAL_ROLE_ORIENTATION_REVIEW',
+            'F_STORED_BALANCE_OPENING_CANDIDATE',
+            'X_PLAN_INPUT_MISMATCH',
+            'Z_NEEDS_MANUAL_REVIEW',
         ];
+        foreach ($plans as $plan) {
+            $fixGroup = (string) ($plan['fix_group'] ?? '');
+            if (($plan['classification'] ?? '') === 'PLAN_INPUT_MISMATCH' || $fixGroup === 'X_PLAN_INPUT_MISMATCH') {
+                $this->error('Plan has PLAN_INPUT_MISMATCH. Rerun audit/inspect/plan from the same snapshot.');
+
+                return self::FAILURE;
+            }
+            if (in_array($fixGroup, $blockedGroups, true)) {
+                $this->error('Blocked fix group cannot be applied: '.$fixGroup);
+
+                return self::FAILURE;
+            }
+            if (! in_array($fixGroup, $allowedGroups, true)) {
+                $this->error('Fix group is not in allowlist: '.$fixGroup);
+
+                return self::FAILURE;
+            }
+        }
+
+        $preview = [
+            'dry_run' => $dryRun,
+            'apply_requested' => $apply,
+            'apply_enabled' => false,
+            'selected_count' => $plans->count(),
+            'selected_partner_codes' => $plans->pluck('code')->values()->all(),
+            'rows_changed' => 0,
+        ];
+        if ($rollbackPath = (string) ($this->option('rollback-export') ?? '')) {
+            $directory = dirname($rollbackPath);
+            if (! is_dir($directory)) {
+                mkdir($directory, 0755, true);
+            }
+            file_put_contents($rollbackPath, json_encode($preview, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+        }
+        $this->line(json_encode($preview, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+
+        if ($apply) {
+            $this->error('Apply mode is fail-safe for legacy plans. No data was modified.');
+
+            return self::FAILURE;
+        }
+
+        return self::SUCCESS;
     }
 
-    private function writeJsonFile(string $path, array $payload): void
+    private function selectedRows(array $rows): array
     {
-        $dir = dirname($path);
-        if (!is_dir($dir)) {
-            @mkdir($dir, 0755, true);
-        }
-        if (!is_dir($dir)) {
-            throw new \RuntimeException("Cannot prepare rollback export directory: {$dir}");
-        }
+        $codes = array_map('strval', (array) $this->option('partner-code'));
+        $limit = $this->option('limit') === null ? null : max(1, (int) $this->option('limit'));
+        $selected = collect($rows)
+            ->when($codes !== [], fn ($items) => $items->whereIn('partner_code', $codes))
+            ->sortBy('partner_id')
+            ->values();
 
-        file_put_contents($path, json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+        return ($limit === null ? $selected : $selected->take($limit))->all();
     }
 
-    private function failed(string $message): array
+    private function databaseFingerprint(): string
     {
-        return ['ok' => false, 'message' => $message];
+        $connection = DB::connection();
+
+        return hash('sha256', implode('|', [
+            $connection->getDriverName(),
+            $connection->getDatabaseName(),
+            (string) $connection->getPdo()->getAttribute(\PDO::ATTR_SERVER_VERSION),
+        ]));
     }
 }

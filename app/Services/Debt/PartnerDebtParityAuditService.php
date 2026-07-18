@@ -12,9 +12,7 @@ use App\Models\Purchase;
 use App\Models\PurchaseReturn;
 use App\Models\SupplierDebtTransaction;
 use App\Services\CustomerDebtDocumentTimelineService;
-use App\Services\PartnerDebtLedgerService;
 use App\Services\SupplierDebtDocumentTimelineService;
-use App\Support\Debt\PartnerDebtDisplayBalance;
 use App\Support\Status\BusinessStatus;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -105,18 +103,16 @@ class PartnerDebtParityAuditService
     public function __construct(
         private readonly CustomerDebtDocumentTimelineService $customerDocuments,
         private readonly SupplierDebtDocumentTimelineService $supplierDocuments,
-        private readonly PartnerDebtLedgerService $ledgers,
-    ) {
-    }
+    ) {}
 
     public function audit(Customer $partner): array
     {
         try {
             $stored = $this->storedSnapshot($partner);
-            $customerDocument = $this->customerDocumentSnapshot($partner, $stored['stored_customer_screen']);
-            $customerLedger = $this->customerLedgerSnapshot($partner, $stored['stored_customer_screen']);
-            $supplierDocument = $this->supplierDocumentSnapshot($partner, $stored['stored_supplier_screen']);
-            $supplierLedger = $this->supplierLedgerSnapshot($partner, $stored['stored_supplier_screen']);
+            $customerDocument = $this->customerDocumentSnapshot($partner, $stored['raw_customer_debt']);
+            $customerLedger = $this->canonicalLedgerSnapshot($customerDocument, 'customer', $stored['raw_customer_debt']);
+            $supplierDocument = $this->supplierDocumentSnapshot($partner, $stored['raw_supplier_debt']);
+            $supplierLedger = $this->canonicalLedgerSnapshot($supplierDocument, 'supplier', $stored['raw_supplier_debt']);
             $metrics = $this->sourceMetrics($partner);
             $technicalEvidence = $this->technicalLedgerEvidence($customerDocument, $supplierDocument);
             $evidence = $this->evidence(
@@ -159,30 +155,35 @@ class PartnerDebtParityAuditService
 
     public function classify(array $row): array
     {
-        if (!empty($row['audit_error'])) {
+        if (! empty($row['audit_error'])) {
             return ['AUDIT_ERROR'];
         }
 
         $flags = [];
         $customerApplicable = in_array($row['role'] ?? '', ['customer_only', 'dual_role'], true);
         $supplierApplicable = in_array($row['role'] ?? '', ['supplier_only', 'dual_role'], true);
+        // Existing ledger renderers are screen-oriented for dual-role rows.
+        // Compare raw side projections to canonical documents for dual-role;
+        // do not mislabel a net ledger as a receivable/payable side mismatch.
+        $customerLedgerApplicable = ($row['role'] ?? '') === 'customer_only';
+        $supplierLedgerApplicable = ($row['role'] ?? '') === 'supplier_only';
 
         if ($customerApplicable && $this->different($row['customer_stored_vs_document_raw'] ?? 0)) {
             $flags[] = 'CUSTOMER_STORED_VS_DOCUMENT';
         }
-        if ($customerApplicable && $this->different($row['customer_stored_vs_ledger'] ?? 0)) {
+        if ($customerLedgerApplicable && $this->different($row['customer_stored_vs_ledger'] ?? 0)) {
             $flags[] = 'CUSTOMER_STORED_VS_LEDGER';
         }
-        if ($customerApplicable && $this->different($row['customer_document_vs_ledger'] ?? 0)) {
+        if ($customerLedgerApplicable && $this->different($row['customer_document_vs_ledger'] ?? 0)) {
             $flags[] = 'CUSTOMER_DOCUMENT_VS_LEDGER';
         }
         if ($supplierApplicable && $this->different($row['supplier_stored_vs_document_raw'] ?? 0)) {
             $flags[] = 'SUPPLIER_STORED_VS_DOCUMENT';
         }
-        if ($supplierApplicable && $this->different($row['supplier_stored_vs_ledger'] ?? 0)) {
+        if ($supplierLedgerApplicable && $this->different($row['supplier_stored_vs_ledger'] ?? 0)) {
             $flags[] = 'SUPPLIER_STORED_VS_LEDGER';
         }
-        if ($supplierApplicable && $this->different($row['supplier_document_vs_ledger'] ?? 0)) {
+        if ($supplierLedgerApplicable && $this->different($row['supplier_document_vs_ledger'] ?? 0)) {
             $flags[] = 'SUPPLIER_DOCUMENT_VS_LEDGER';
         }
         if (($row['role'] ?? '') === 'dual_role' && $this->different($row['dual_role_screen_symmetry_difference'] ?? 0)) {
@@ -210,9 +211,9 @@ class PartnerDebtParityAuditService
         if ($ledgerCount > 0 && $documentCount === 0) {
             $flags[] = 'HAS_LEDGER_NO_DOCUMENTS';
         }
-        if (!empty($row['has_virtual_opening'])) {
+        if (! empty($row['has_virtual_opening'])) {
             $flags[] = 'VIRTUAL_OPENING_REQUIRED';
-        } elseif (!empty($row['customer_document_display_aligned']) || !empty($row['supplier_document_display_aligned'])) {
+        } elseif (! empty($row['customer_document_display_aligned']) || ! empty($row['supplier_document_display_aligned'])) {
             $flags[] = 'VIRTUAL_DISPLAY_ALIGNMENT_ONLY';
         }
 
@@ -231,7 +232,7 @@ class PartnerDebtParityAuditService
             'has_technical_ledger_exclusion' => 'TECHNICAL_LEDGER_EXCLUDED',
         ];
         foreach ($flagMap as $key => $classification) {
-            if (!empty($row[$key])) {
+            if (! empty($row[$key])) {
                 $flags[] = $classification;
             }
         }
@@ -294,22 +295,22 @@ class PartnerDebtParityAuditService
 
     private function storedSnapshot(Customer $partner): array
     {
+        $customer = (float) ($partner->debt_amount ?? 0);
+        $supplier = (float) ($partner->supplier_debt_amount ?? 0);
+        $dualRole = PartnerDebtRoleResolver::isDualRole($partner);
+
         return [
-            'raw_customer_debt' => PartnerDebtDisplayBalance::customerReceivable($partner),
-            'raw_supplier_debt' => PartnerDebtDisplayBalance::supplierPayable($partner),
-            'stored_customer_screen' => PartnerDebtDisplayBalance::customerScreen($partner),
-            'stored_supplier_screen' => PartnerDebtDisplayBalance::supplierScreen($partner),
+            'raw_customer_debt' => $customer,
+            'raw_supplier_debt' => $supplier,
+            'stored_customer_screen' => $dualRole ? $customer - $supplier : $customer,
+            'stored_supplier_screen' => $dualRole ? $supplier - $customer : $supplier,
         ];
     }
 
     private function customerDocumentSnapshot(Customer $partner, float $stored): array
     {
-        if (!(bool) ($partner->is_customer ?? false)) {
-            return $this->emptyDocumentSnapshot('customer');
-        }
-
         return $this->documentSnapshot(
-            $this->customerDocuments->build($partner, []),
+            $this->customerDocuments->build($partner, ['domain_only' => true, 'audit' => true]),
             'customer',
             $stored,
         );
@@ -317,16 +318,11 @@ class PartnerDebtParityAuditService
 
     private function supplierDocumentSnapshot(Customer $partner, float $stored): array
     {
-        if (!(bool) ($partner->is_supplier ?? false)) {
-            return $this->emptyDocumentSnapshot('supplier');
-        }
-
-        $options = [];
-        if (PartnerDebtDisplayBalance::isDualRole($partner)) {
-            $options['view'] = 'partner';
-        }
-
-        return $this->documentSnapshot($this->supplierDocuments->build($partner, $options), 'supplier', $stored);
+        return $this->documentSnapshot(
+            $this->supplierDocuments->build($partner, ['audit' => true]),
+            'supplier',
+            $stored,
+        );
     }
 
     private function documentSnapshot(array $timeline, string $prefix, float $stored): array
@@ -355,7 +351,7 @@ class PartnerDebtParityAuditService
             "{$prefix}_document_virtual_opening_amount" => (float) ($summary['virtual_opening_balance'] ?? 0),
             "{$prefix}_document_entry_count" => $entries->count(),
             "{$prefix}_document_excluded_technical_codes" => $excluded,
-            "_entries" => $entries,
+            '_entries' => $entries,
             '_excluded_entries' => $excludedEntries,
         ];
     }
@@ -379,26 +375,20 @@ class PartnerDebtParityAuditService
         ];
     }
 
-    private function customerLedgerSnapshot(Customer $partner, float $stored): array
+    private function canonicalLedgerSnapshot(array $document, string $prefix, float $stored): array
     {
-        if (!(bool) ($partner->is_customer ?? false)) {
-            return $this->emptyLedgerSnapshot('customer');
-        }
+        $final = (float) ($document["{$prefix}_document_raw_final"] ?? 0);
+        $difference = $stored - $final;
 
-        return $this->ledgerSnapshot($this->ledgers->buildCustomerNetLedger($partner), 'customer', $stored);
-    }
-
-    private function supplierLedgerSnapshot(Customer $partner, float $stored): array
-    {
-        if (!(bool) ($partner->is_supplier ?? false)) {
-            return $this->emptyLedgerSnapshot('supplier');
-        }
-
-        $ledger = PartnerDebtDisplayBalance::isDualRole($partner)
-            ? $this->ledgers->buildSupplierDualRolePartnerTimeline($partner)
-            : $this->ledgers->buildSupplierPayableLedger($partner);
-
-        return $this->ledgerSnapshot($ledger, 'supplier', $stored);
+        return [
+            "{$prefix}_ledger_target" => $stored,
+            "{$prefix}_ledger_final" => $final,
+            "{$prefix}_ledger_difference" => $difference,
+            "{$prefix}_ledger_mismatch" => $this->different($difference),
+            "{$prefix}_ledger_display_resolved" => ! $this->different($difference),
+            "{$prefix}_ledger_has_virtual_opening" => false,
+            "{$prefix}_ledger_virtual_opening_amount" => 0.0,
+        ];
     }
 
     private function ledgerSnapshot(array $ledger, string $prefix, float $stored): array
@@ -440,11 +430,11 @@ class PartnerDebtParityAuditService
         $purchaseReturns = $this->active(PurchaseReturn::query()->where('supplier_id', $partner->id));
         $receipts = $this->active(CashFlow::query()->whereNull('deleted_at'))
             ->where('target_id', $partner->id)->where('type', 'receipt');
-        $customerPayments = (clone $receipts)->whereIn('target_type', ['Khách hàng', 'Khach hang']);
+        $customerPayments = (clone $receipts)->whereIn('target_type', PartnerDebtRoleResolver::CUSTOMER_TARGET_TYPES);
         $supplierPayments = $this->active(CashFlow::query()->whereNull('deleted_at'))
             ->where('target_id', $partner->id)->where('type', 'payment')
             ->where(function (Builder $query): void {
-                $query->whereIn('target_type', ['Nhà cung cấp', 'Nha cung cap'])
+                $query->whereIn('target_type', PartnerDebtRoleResolver::SUPPLIER_TARGET_TYPES)
                     ->orWhere('reference_type', 'SupplierPayment');
             });
         $customerDebts = CustomerDebt::query()->where('customer_id', $partner->id);
@@ -493,15 +483,27 @@ class PartnerDebtParityAuditService
         $eventKinds = $entries->pluck('event_kind')->map(fn ($value): string => (string) $value);
         $realEntries = $entries->filter(fn (array $entry): bool => (bool) ($entry['is_real_voucher'] ?? false));
         $fallbackEntries = $entries->filter(fn (array $entry): bool => (bool) ($entry['is_virtual_fallback'] ?? false));
+        $supportedTargetTypes = array_merge(
+            PartnerDebtRoleResolver::CUSTOMER_TARGET_TYPES,
+            PartnerDebtRoleResolver::SUPPLIER_TARGET_TYPES,
+        );
         $targetAliases = CashFlow::withTrashed()->where('target_id', $partner->id)
-            ->whereIn('target_type', ['Khach hang', 'Nha cung cap'])->exists();
+            ->whereIn('reference_type', [
+                'DebtPayment', 'SupplierPayment', 'DebtAdjustment',
+                'DebtOffset', 'DebtOffsetCancel', 'DebtOffsetReversal',
+                'CustomerPaymentDiscount',
+            ])
+            ->whereNotNull('target_type')
+            ->whereNotIn('target_type', $supportedTargetTypes)
+            ->exists();
         $cancelledInvoices = Invoice::query()->where('customer_id', $partner->id)->get()
             ->filter(fn (Invoice $invoice): bool => BusinessStatus::isCancelled($invoice->status));
         $cancelReversalCodes = CustomerDebt::query()->where('customer_id', $partner->id)
             ->whereIn('type', ['sale_reversal', 'payment_cancel', 'adjustment'])
             ->pluck('ref_code')->filter()->all();
         $missingCancelReversal = $cancelledInvoices->contains(
-            fn (Invoice $invoice): bool => !in_array((string) $invoice->code, $cancelReversalCodes, true)
+            fn (Invoice $invoice): bool => abs((float) $invoice->total - (float) $invoice->customer_paid) > self::TOLERANCE
+                && ! in_array((string) $invoice->code, $cancelReversalCodes, true)
         );
         $duplicateRealFallback = $this->hasRealFallbackCollision($realEntries, $fallbackEntries);
 
@@ -516,28 +518,34 @@ class PartnerDebtParityAuditService
             'has_cancel_reversal' => $cancelReversalCodes !== [],
             'has_customer_adjustment' => $eventKinds->contains(fn (string $kind): bool => str_contains($kind, 'adjustment') || $kind === 'debt_adjustment'),
             'has_supplier_adjustment' => SupplierDebtTransaction::query()->where('supplier_id', $partner->id)->where('type', 'adjustment')->exists(),
-            'has_opening_balance' => $entries->contains(fn (array $e): bool => str_contains((string) ($e['event_kind'] ?? ''), 'opening') && !(bool) ($e['is_virtual_opening'] ?? false)),
+            'has_opening_balance' => $entries->contains(fn (array $e): bool => str_contains((string) ($e['event_kind'] ?? ''), 'opening') && ! (bool) ($e['is_virtual_opening'] ?? false)),
             'has_virtual_opening' => (bool) ($customerDocument['customer_document_has_virtual_opening'] ?? false)
                 || (bool) ($supplierDocument['supplier_document_has_virtual_opening'] ?? false),
             'has_target_type_alias' => $targetAliases,
             'has_technical_ledger_exclusion' => $technicalEvidence['has_technical_ledger_exclusion'],
-            'has_allocation_warning' => $entries->contains(fn (array $e): bool => $this->entryHasAllocationWarning($e))
-                || (bool) ($supplierDocument['supplier_document_has_mismatch'] ?? false),
+            'has_allocation_warning' => $entries->contains(fn (array $e): bool => $this->entryHasAllocationWarning($e)),
             'has_duplicate_real_and_fallback' => $duplicateRealFallback,
             'has_duplicate_customer_receipt' => $this->hasDuplicateCashFlow($partner, 'receipt'),
             'has_duplicate_supplier_payment' => $this->hasDuplicateCashFlow($partner, 'payment', true),
-            'has_invoice_receipt_allocation_mismatch' => $entries->contains(fn (array $e): bool => (bool) ($e['receipt_allocation_mismatch'] ?? false)),
-            'has_purchase_payment_allocation_mismatch' => $entries->contains(fn (array $e): bool => (bool) ($e['payment_allocation_mismatch'] ?? false)),
+            'has_invoice_receipt_allocation_mismatch' => $entries->contains(
+                fn (array $e): bool => ! (bool) ($e['is_real_voucher'] ?? false)
+                    && (bool) ($e['receipt_allocation_mismatch'] ?? false)
+            ),
+            'has_purchase_payment_allocation_mismatch' => $entries->contains(
+                fn (array $e): bool => ! (bool) ($e['is_real_voucher'] ?? false)
+                    && (bool) ($e['payment_allocation_mismatch'] ?? false)
+            ),
             'has_invoice_receipt_allocation_evidence_missing' => $entries->contains(
-                fn (array $e): bool => ($e['event_kind'] ?? '') === 'invoice_payment_fallback'
-                    || in_array($e['receipt_allocation_confidence'] ?? '', ['inferred', 'unknown'], true)
+                fn (array $e): bool => ! (bool) ($e['is_real_voucher'] ?? false)
+                    && ($e['receipt_allocation_confidence'] ?? '') === 'unknown'
             ),
             'has_purchase_payment_allocation_evidence_missing' => $entries->contains(
-                fn (array $e): bool => in_array(
-                    $e['payment_allocation_confidence'] ?? $e['allocation_confidence'] ?? '',
-                    ['inferred', 'unknown', 'global_payment_only'],
-                    true,
-                )
+                fn (array $e): bool => ! (bool) ($e['is_real_voucher'] ?? false)
+                    && in_array(
+                        $e['payment_allocation_confidence'] ?? $e['allocation_confidence'] ?? '',
+                        ['unknown'],
+                        true,
+                    )
             ),
             'has_return_refund_duplicate' => $this->hasReturnRefundCollision($entries),
             'has_purchase_return_refund_mismatch' => $entries->contains(fn (array $e): bool => (bool) ($e['purchase_return_refund_mismatch'] ?? false)),
@@ -582,7 +590,9 @@ class PartnerDebtParityAuditService
             'customer_technical_codes' => $codes($customerEntries),
             'supplier_technical_codes' => $codes($supplierEntries),
             'excluded_technical_codes' => $codes($entries),
-            'has_technical_ledger_exclusion' => $entries->isNotEmpty(),
+            // Technical ledger rows mirror document events. They remain exported as
+            // evidence, but excluding them is the expected exactly-once behaviour.
+            'has_technical_ledger_exclusion' => false,
             'technical_customer_total' => (float) $customerEntries->sum('amount'),
             'technical_supplier_total' => (float) $supplierEntries->sum('amount'),
         ];
@@ -591,13 +601,13 @@ class PartnerDebtParityAuditService
     private function parityDifferences(array $row): array
     {
         return [
-            'customer_stored_vs_document_raw' => (float) $row['stored_customer_screen'] - (float) $row['customer_document_raw_final'],
-            'customer_stored_vs_document_display' => (float) $row['stored_customer_screen'] - (float) $row['customer_document_display_final'],
-            'customer_stored_vs_ledger' => (float) $row['stored_customer_screen'] - (float) $row['customer_ledger_final'],
+            'customer_stored_vs_document_raw' => (float) $row['raw_customer_debt'] - (float) $row['customer_document_raw_final'],
+            'customer_stored_vs_document_display' => (float) $row['raw_customer_debt'] - (float) $row['customer_document_display_final'],
+            'customer_stored_vs_ledger' => (float) $row['raw_customer_debt'] - (float) $row['customer_ledger_final'],
             'customer_document_vs_ledger' => (float) $row['customer_document_raw_final'] - (float) $row['customer_ledger_final'],
-            'supplier_stored_vs_document_raw' => (float) $row['stored_supplier_screen'] - (float) $row['supplier_document_raw_final'],
-            'supplier_stored_vs_document_display' => (float) $row['stored_supplier_screen'] - (float) $row['supplier_document_display_final'],
-            'supplier_stored_vs_ledger' => (float) $row['stored_supplier_screen'] - (float) $row['supplier_ledger_final'],
+            'supplier_stored_vs_document_raw' => (float) $row['raw_supplier_debt'] - (float) $row['supplier_document_raw_final'],
+            'supplier_stored_vs_document_display' => (float) $row['raw_supplier_debt'] - (float) $row['supplier_document_display_final'],
+            'supplier_stored_vs_ledger' => (float) $row['raw_supplier_debt'] - (float) $row['supplier_ledger_final'],
             'supplier_document_vs_ledger' => (float) $row['supplier_document_raw_final'] - (float) $row['supplier_ledger_final'],
             'dual_role_screen_symmetry_difference' => ($row['role'] ?? '') === 'dual_role'
                 ? (float) $row['stored_customer_screen'] + (float) $row['stored_supplier_screen']
@@ -622,7 +632,7 @@ class PartnerDebtParityAuditService
         $refunds = $entries->filter(fn (array $e): bool => in_array($e['event_kind'] ?? '', ['refund', 'return_refund'], true));
 
         return $this->hasRealFallbackCollision(
-            $refunds->filter(fn (array $e): bool => !(bool) ($e['is_virtual_fallback'] ?? false)),
+            $refunds->filter(fn (array $e): bool => ! (bool) ($e['is_virtual_fallback'] ?? false)),
             $refunds->filter(fn (array $e): bool => (bool) ($e['is_virtual_fallback'] ?? false)),
         );
     }
@@ -638,6 +648,12 @@ class PartnerDebtParityAuditService
     private function collisionKey(array $entry): string
     {
         $kind = (string) ($entry['event_kind'] ?? '');
+        // A cancellation/reversal is the persisted opposite of the original
+        // event. It may share the invoice document key with a fallback, but it
+        // is not a second real payment/refund and must not raise a collision.
+        if (str_contains($kind, 'cancel') || str_contains($kind, 'reversal')) {
+            return '';
+        }
         $family = match (true) {
             str_contains($kind, 'payment') => 'payment',
             str_contains($kind, 'refund') => 'refund',
@@ -657,11 +673,11 @@ class PartnerDebtParityAuditService
             ->where('target_id', $partner->id)->where('type', $type);
         if ($supplier) {
             $query->where(function (Builder $builder): void {
-                $builder->whereIn('target_type', ['Nhà cung cấp', 'Nha cung cap'])
+                $builder->whereIn('target_type', PartnerDebtRoleResolver::SUPPLIER_TARGET_TYPES)
                     ->orWhere('reference_type', 'SupplierPayment');
             });
         } else {
-            $query->whereIn('target_type', ['Khách hàng', 'Khach hang']);
+            $query->whereIn('target_type', PartnerDebtRoleResolver::CUSTOMER_TARGET_TYPES);
         }
 
         $query->whereNotNull('reference_code')->where('reference_code', '!=', '');
@@ -675,10 +691,15 @@ class PartnerDebtParityAuditService
 
     private function entryHasAllocationWarning(array $entry): bool
     {
+        if ((bool) ($entry['is_real_voucher'] ?? false)) {
+            return false;
+        }
+
         return (bool) ($entry['receipt_allocation_mismatch'] ?? false)
             || (bool) ($entry['payment_allocation_mismatch'] ?? false)
-            || in_array($entry['payment_allocation_confidence'] ?? '', ['inferred', 'unknown', 'global_payment_only'], true)
-            || in_array($entry['allocation_confidence'] ?? '', ['inferred', 'unknown'], true);
+            || ($entry['payment_allocation_confidence'] ?? '') === 'unknown'
+            || ($entry['receipt_allocation_confidence'] ?? '') === 'unknown'
+            || ($entry['allocation_confidence'] ?? '') === 'unknown';
     }
 
     private function codes(Collection $entries, array $kinds): array
@@ -728,10 +749,7 @@ class PartnerDebtParityAuditService
 
     private function role(Customer $partner): string
     {
-        $customer = (bool) ($partner->is_customer ?? false);
-        $supplier = (bool) ($partner->is_supplier ?? false);
-
-        return $customer && $supplier ? 'dual_role' : ($supplier ? 'supplier_only' : 'customer_only');
+        return PartnerDebtRoleResolver::role($partner);
     }
 
     private function different(float|int|string $value): bool

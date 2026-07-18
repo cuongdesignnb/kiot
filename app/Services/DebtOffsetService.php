@@ -7,6 +7,8 @@ use App\Models\Customer;
 use App\Models\DebtOffset;
 use App\Models\SupplierDebtTransaction;
 use App\Services\Debt\DebtOffsetWriteMode;
+use App\Services\Debt\PartnerDebtMutationCoordinator;
+use App\Support\Status\BusinessStatus;
 
 /** @deprecated Use DebtOffsetWorkflowService when debt.offsets.write_mode is workflow. */
 class DebtOffsetService
@@ -15,50 +17,98 @@ class DebtOffsetService
      * Tự động đối trừ công nợ giữa KH và NCC cho cùng 1 người.
      * Gọi sau mỗi lần thay đổi debt_amount hoặc supplier_debt_amount.
      *
-     * @return array|null  Thông tin đối trừ hoặc null nếu không cần
+     * @return array|null Thông tin đối trừ hoặc null nếu không cần
      */
     public static function offsetDebts(Customer $person): ?array
     {
         app(DebtOffsetWriteMode::class)->assertLegacyAllowed();
 
-        return static::doOffset($person, true, null);
+        return app(PartnerDebtMutationCoordinator::class)->execute(
+            (int) $person->id,
+            'legacy_debt_offset_auto',
+            hash('sha256', 'auto|'.(int) $person->id),
+            fn (Customer $lockedPartner): ?array => static::doOffset($lockedPartner, true, null),
+        );
     }
 
     /**
      * Cấn bằng công nợ thủ công - user chỉ định số tiền.
      *
-     * @param  Customer  $person
-     * @param  float     $amount  Số tiền cấn bằng (phải <= min(receivable, payable))
-     * @param  string|null $note  Ghi chú
-     * @return array|null
+     * @param  float  $amount  Số tiền cấn bằng (phải <= min(receivable, payable))
+     * @param  string|null  $note  Ghi chú
      */
-    public static function manualOffset(Customer $person, float $amount, ?string $note = null): ?array
-    {
+    public static function manualOffset(
+        Customer $person,
+        float $amount,
+        ?string $note = null,
+        ?string $idempotencyKey = null,
+    ): ?array {
         app(DebtOffsetWriteMode::class)->assertLegacyAllowed();
 
-        return static::doOffset($person, false, $note, $amount);
+        $payloadHash = hash('sha256', json_encode([
+            'partner_id' => (int) $person->id,
+            'amount' => $amount,
+            'note' => $note,
+        ], JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION));
+
+        return app(PartnerDebtMutationCoordinator::class)->execute(
+            (int) $person->id,
+            'legacy_debt_offset_manual',
+            $payloadHash,
+            fn (Customer $lockedPartner): ?array => static::doOffset($lockedPartner, false, $note, $amount),
+            $idempotencyKey,
+        );
     }
 
     /**
      * Hủy cấn bằng - tạo bút toán đảo.
      *
-     * @param  DebtOffset  $debtOffset
-     * @param  string|null $reason  Lý do hủy
-     * @return array
+     * @param  string|null  $reason  Lý do hủy
      */
-    public static function cancelOffset(DebtOffset $debtOffset, ?string $reason = null): array
-    {
+    public static function cancelOffset(
+        DebtOffset $debtOffset,
+        ?string $reason = null,
+        ?string $idempotencyKey = null,
+    ): array {
         app(DebtOffsetWriteMode::class)->assertLegacyAllowed();
+        $payloadHash = hash('sha256', json_encode([
+            'debt_offset_id' => (int) $debtOffset->id,
+            'reason' => $reason,
+        ], JSON_UNESCAPED_UNICODE));
 
+        return app(PartnerDebtMutationCoordinator::class)->execute(
+            (int) $debtOffset->customer_id,
+            'legacy_debt_offset_cancel',
+            $payloadHash,
+            function () use ($debtOffset, $reason): array {
+                $lockedOffset = DebtOffset::query()->lockForUpdate()->findOrFail($debtOffset->id);
+
+                return static::cancelOffsetLocked($lockedOffset, $reason);
+            },
+            $idempotencyKey,
+        );
+    }
+
+    private static function cancelOffsetLocked(DebtOffset $debtOffset, ?string $reason = null): array
+    {
         $person = $debtOffset->customer;
         $amount = (float) $debtOffset->amount;
+        if (BusinessStatus::isCancelled($debtOffset->status)) {
+            return [
+                'cancelled_amount' => $amount,
+                'remaining_customer_debt' => (float) $person->debt_amount,
+                'remaining_supplier_debt' => (float) $person->supplier_debt_amount,
+                'replayed' => true,
+            ];
+        }
 
         // Hủy cấn bằng = tăng lại cả 2 bên nợ
         $person->debt_amount = (float) $person->debt_amount + $amount;
         $person->supplier_debt_amount = (float) $person->supplier_debt_amount + $amount;
         $person->save();
+        app(PartnerDebtMutationCoordinator::class)->checkpoint('projection');
 
-        $code = 'HCB' . str_pad((DebtOffset::max('id') ?? 0) + 1, 6, '0', STR_PAD_LEFT);
+        $code = 'HCB'.str_pad((DebtOffset::max('id') ?? 0) + 1, 6, '0', STR_PAD_LEFT);
 
         // CashFlow đảo (payment = chi ra = tăng nợ phải thu lại)
         CashFlow::create([
@@ -72,8 +122,9 @@ class DebtOffsetService
             'target_name' => $person->name,
             'reference_type' => 'DebtOffsetCancel',
             'reference_code' => $debtOffset->code,
-            'description' => "Hủy đối trừ công nợ {$debtOffset->code}: {$person->name} - " . number_format($amount) . '₫',
+            'description' => "Hủy đối trừ công nợ {$debtOffset->code}: {$person->name} - ".number_format($amount).'₫',
         ]);
+        app(PartnerDebtMutationCoordinator::class)->checkpoint('document');
 
         // SupplierDebtTransaction đảo (tăng nợ phải trả lại)
         SupplierDebtTransaction::create([
@@ -85,6 +136,7 @@ class DebtOffsetService
             'note' => "Hủy đối trừ công nợ {$debtOffset->code}: {$person->name}",
             'user_id' => auth()->id(),
         ]);
+        app(PartnerDebtMutationCoordinator::class)->checkpoint('evidence');
 
         // Đánh dấu cancelled
         $debtOffset->update([
@@ -108,7 +160,7 @@ class DebtOffsetService
     {
         $person->refresh();
 
-        if (!$person->is_customer || !$person->is_supplier) {
+        if (! $person->is_customer || ! $person->is_supplier) {
             return null;
         }
 
@@ -134,8 +186,9 @@ class DebtOffsetService
         $person->debt_amount = $customerDebt - $offsetAmount;
         $person->supplier_debt_amount = $supplierDebt - $offsetAmount;
         $person->save();
+        app(PartnerDebtMutationCoordinator::class)->checkpoint('projection');
 
-        $code = 'CB' . str_pad((DebtOffset::max('id') ?? 0) + 1, 6, '0', STR_PAD_LEFT);
+        $code = 'CB'.str_pad((DebtOffset::max('id') ?? 0) + 1, 6, '0', STR_PAD_LEFT);
 
         // Tạo DebtOffset record
         DebtOffset::create([
@@ -151,6 +204,7 @@ class DebtOffsetService
             'user_id' => auth()->id(),
             'status' => 'active',
         ]);
+        app(PartnerDebtMutationCoordinator::class)->checkpoint('document');
 
         // CashFlow cho phía KH (giảm nợ phải thu)
         CashFlow::create([
@@ -164,7 +218,7 @@ class DebtOffsetService
             'target_name' => $person->name,
             'reference_type' => 'DebtOffset',
             'reference_code' => $code,
-            'description' => ($isAuto ? 'Tự động đối trừ' : 'Cấn bằng thủ công') . " NCC↔KH: {$person->name} - " . number_format($offsetAmount) . '₫',
+            'description' => ($isAuto ? 'Tự động đối trừ' : 'Cấn bằng thủ công')." NCC↔KH: {$person->name} - ".number_format($offsetAmount).'₫',
         ]);
 
         // SupplierDebtTransaction cho phía NCC (giảm nợ phải trả)
@@ -174,9 +228,10 @@ class DebtOffsetService
             'type' => 'offset',
             'amount' => -$offsetAmount,
             'debt_remain' => $person->supplier_debt_amount,
-            'note' => ($isAuto ? 'Tự động đối trừ' : 'Cấn bằng thủ công') . " KH↔NCC: {$person->name}",
+            'note' => ($isAuto ? 'Tự động đối trừ' : 'Cấn bằng thủ công')." KH↔NCC: {$person->name}",
             'user_id' => auth()->id(),
         ]);
+        app(PartnerDebtMutationCoordinator::class)->checkpoint('evidence');
 
         return [
             'offset_amount' => $offsetAmount,

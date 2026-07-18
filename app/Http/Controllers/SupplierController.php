@@ -2,20 +2,22 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Customer;
-use App\Models\Purchase;
-use App\Models\OrderReturn;
-use App\Models\PurchaseReturn;
 use App\Models\CashFlow;
-use App\Models\Invoice;
+use App\Models\Customer;
 use App\Models\DebtOffset;
+use App\Models\Invoice;
+use App\Models\PartnerDebtOperation;
+use App\Models\Purchase;
+use App\Models\PurchaseReturn;
 use App\Models\SupplierDebtTransaction;
+use App\Services\Debt\PartnerDebtMutationCoordinator;
 use App\Support\Debt\PartnerDebtDisplayBalance;
 use App\Support\Filters\FilterableIndex;
 use Illuminate\Http\Request;
-use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
-use App\Services\DebtOffsetService;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
+use Inertia\Inertia;
 
 class SupplierController extends Controller
 {
@@ -89,7 +91,7 @@ class SupplierController extends Controller
             'filters' => $filters,
             'summary' => $summary,
             'filterOptions' => [
-                'groups' => $groups->map(fn($g) => ['value' => $g, 'label' => $g])->values(),
+                'groups' => $groups->map(fn ($g) => ['value' => $g, 'label' => $g])->values(),
                 'partnerTypes' => [
                     ['value' => 'supplier_only', 'label' => 'Chỉ nhà cung cấp'],
                     ['value' => 'both', 'label' => 'Vừa là khách, vừa là NCC'],
@@ -120,7 +122,7 @@ class SupplierController extends Controller
         ]);
 
         if (empty($validated['code'])) {
-            $validated['code'] = 'NCC' . time() . rand(10, 99);
+            $validated['code'] = 'NCC'.time().rand(10, 99);
         }
 
         $validated['is_supplier'] = true;
@@ -148,30 +150,30 @@ class SupplierController extends Controller
      */
     public function update(Request $request, Customer $supplier)
     {
-        if (!$supplier->is_supplier) {
+        if (! $supplier->is_supplier) {
             abort(404);
         }
 
         $validated = $request->validate([
-            'name'            => 'required|string|max:255',
-            'code'            => 'nullable|string|max:255|unique:customers,code,' . $supplier->id,
-            'phone'           => 'nullable|string|max:255|unique:customers,phone,' . $supplier->id,
-            'phone2'          => 'nullable|string|max:255',
-            'email'           => 'nullable|email|max:255',
-            'address'         => 'nullable|string',
-            'city'            => 'nullable|string|max:255',
-            'district'        => 'nullable|string|max:255',
-            'ward'            => 'nullable|string|max:255',
-            'customer_group'  => 'nullable|string|max:255',
-            'tax_code'        => 'nullable|string|max:255',
-            'note'            => 'nullable|string',
-            'invoice_name'    => 'nullable|string|max:255',
+            'name' => 'required|string|max:255',
+            'code' => 'nullable|string|max:255|unique:customers,code,'.$supplier->id,
+            'phone' => 'nullable|string|max:255|unique:customers,phone,'.$supplier->id,
+            'phone2' => 'nullable|string|max:255',
+            'email' => 'nullable|email|max:255',
+            'address' => 'nullable|string',
+            'city' => 'nullable|string|max:255',
+            'district' => 'nullable|string|max:255',
+            'ward' => 'nullable|string|max:255',
+            'customer_group' => 'nullable|string|max:255',
+            'tax_code' => 'nullable|string|max:255',
+            'note' => 'nullable|string',
+            'invoice_name' => 'nullable|string|max:255',
             'invoice_address' => 'nullable|string',
-            'invoice_email'   => 'nullable|email|max:255',
-            'invoice_phone'   => 'nullable|string|max:255',
-            'bank_name'       => 'nullable|string|max:255',
-            'bank_account'    => 'nullable|string|max:255',
-            'is_customer'     => 'sometimes|boolean',
+            'invoice_email' => 'nullable|email|max:255',
+            'invoice_phone' => 'nullable|string|max:255',
+            'bank_name' => 'nullable|string|max:255',
+            'bank_account' => 'nullable|string|max:255',
+            'is_customer' => 'sometimes|boolean',
         ]);
 
         // Force is_supplier=true. Never let edit form clear it.
@@ -188,7 +190,7 @@ class SupplierController extends Controller
      */
     public function deactivate(Customer $supplier)
     {
-        if (!$supplier->is_supplier) {
+        if (! $supplier->is_supplier) {
             abort(404);
         }
 
@@ -202,7 +204,7 @@ class SupplierController extends Controller
      */
     public function activate(Customer $supplier)
     {
-        if (!$supplier->is_supplier) {
+        if (! $supplier->is_supplier) {
             abort(404);
         }
 
@@ -229,11 +231,11 @@ class SupplierController extends Controller
 
         if ($q !== '') {
             $query->where(function ($w) use ($q) {
-                $like = '%' . $q . '%';
+                $like = '%'.$q.'%';
                 $w->where('name', 'like', $like)
-                  ->orWhere('code', 'like', $like)
-                  ->orWhere('phone', 'like', $like)
-                  ->orWhere('phone2', 'like', $like);
+                    ->orWhere('code', 'like', $like)
+                    ->orWhere('phone', 'like', $like)
+                    ->orWhere('phone2', 'like', $like);
             });
         }
 
@@ -259,7 +261,7 @@ class SupplierController extends Controller
             'address' => 'nullable|string',
         ]);
 
-        $validated['code'] = 'NCC' . time() . rand(10, 99);
+        $validated['code'] = 'NCC'.time().rand(10, 99);
         $validated['is_supplier'] = true;
         $validated['is_customer'] = false;
 
@@ -296,7 +298,7 @@ class SupplierController extends Controller
 
         return \App\Services\CsvService::export(
             ['Mã NCC', 'Tên NCC', 'Điện thoại', 'Email', 'Địa chỉ', 'Phường/Xã', 'Quận/Huyện', 'Tỉnh/TP', 'Công nợ NCC', 'Ghi chú'],
-            $suppliers->map(fn($s) => [$s->code, $s->name, $s->phone, $s->email, $s->address, $s->ward, $s->district, $s->city, $s->supplier_debt_amount, $s->note]),
+            $suppliers->map(fn ($s) => [$s->code, $s->name, $s->phone, $s->email, $s->address, $s->ward, $s->district, $s->city, $s->supplier_debt_amount, $s->note]),
             'nha_cung_cap.csv'
         );
     }
@@ -339,10 +341,10 @@ class SupplierController extends Controller
             ->map(fn ($e) => $this->normalizeSupplierDebtExportEntry(is_array($e) ? $e : (array) $e))
             ->all();
 
-        if ($mode === 'legacy' && !$request->hasAny(['date_preset', 'date_from', 'date_to', 'include_detail', 'columns', 'format', 'view'])) {
+        if ($mode === 'legacy' && ! $request->hasAny(['date_preset', 'date_from', 'date_to', 'include_detail', 'columns', 'format', 'view'])) {
             return \App\Services\CsvService::export(
                 ['Mã chứng từ', 'Loại', 'Giá trị', 'Còn nợ', 'Ngày', 'Ghi chú'],
-                collect($entries)->map(fn($t) => [
+                collect($entries)->map(fn ($t) => [
                     $t['code'],
                     $t['type_label'],
                     $t['amount'],
@@ -360,27 +362,27 @@ class SupplierController extends Controller
         // built-in `date` rule because that one parses `01/04/2026` as
         // US-format (Jan 4) on PHP, which silently flips day↔month.
         $validated = $request->validate([
-            'date_preset'    => 'nullable|string|in:today,this_week,last_7_days,last_30_days,this_month,last_month,this_quarter,this_year,all,custom',
-            'date_from'      => ['nullable', 'string', 'regex:#^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/\d{4})$#'],
-            'date_to'        => ['nullable', 'string', 'regex:#^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/\d{4})$#'],
+            'date_preset' => 'nullable|string|in:today,this_week,last_7_days,last_30_days,this_month,last_month,this_quarter,this_year,all,custom',
+            'date_from' => ['nullable', 'string', 'regex:#^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/\d{4})$#'],
+            'date_to' => ['nullable', 'string', 'regex:#^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/\d{4})$#'],
             'include_detail' => 'nullable|in:0,1,true,false',
-            'columns'        => 'nullable|array',
-            'columns.*'      => 'string|in:unit,quantity,unit_price,discount,vat,cost,line_total,note',
-            'format'         => 'nullable|string|in:csv,xlsx',
-            'mode'           => 'nullable|string|in:document,legacy',
-            'view'           => 'nullable|string|in:partner',
+            'columns' => 'nullable|array',
+            'columns.*' => 'string|in:unit,quantity,unit_price,discount,vat,cost,line_total,note',
+            'format' => 'nullable|string|in:csv,xlsx',
+            'mode' => 'nullable|string|in:document,legacy',
+            'view' => 'nullable|string|in:partner',
         ], [
             'date_from.regex' => 'Ngày bắt đầu phải có định dạng dd/mm/yyyy hoặc YYYY-MM-DD.',
-            'date_to.regex'   => 'Ngày kết thúc phải có định dạng dd/mm/yyyy hoặc YYYY-MM-DD.',
+            'date_to.regex' => 'Ngày kết thúc phải có định dạng dd/mm/yyyy hoặc YYYY-MM-DD.',
         ]);
 
         // Reject impossible calendar dates (e.g. 31/02/2026) — the regex
         // above is intentionally permissive about ranges.
         foreach (['date_from', 'date_to'] as $k) {
-            if (!empty($validated[$k]) && $this->parseExportDate($validated[$k]) === null) {
+            if (! empty($validated[$k]) && $this->parseExportDate($validated[$k]) === null) {
                 return response()->json([
                     'message' => "Ngày {$k} không hợp lệ.",
-                    'errors'  => [$k => ["Ngày {$k} không hợp lệ."]],
+                    'errors' => [$k => ["Ngày {$k} không hợp lệ."]],
                 ], 422);
             }
         }
@@ -393,7 +395,7 @@ class SupplierController extends Controller
         }
 
         $includeDetail = in_array((string) ($validated['include_detail'] ?? '0'), ['1', 'true'], true);
-        $selectedCols  = array_values($validated['columns'] ?? []);
+        $selectedCols = array_values($validated['columns'] ?? []);
 
         // HOTFIX 24.17B — Excel branch: render KiotViet-style workbook
         // from the same full ledger. The Excel service computes
@@ -401,8 +403,8 @@ class SupplierController extends Controller
         // entries OUTSIDE / INSIDE the window — it never recomputes
         // debt_remain, so the ledger contract is preserved.
         if (($validated['format'] ?? '') === 'xlsx') {
-            $supplier = \App\Models\Customer::find($id) ?? new \App\Models\Customer(['name' => 'NCC #' . $id, 'code' => '', 'phone' => '']);
-            $service  = new \App\Services\Exports\SupplierDebtExcelExportService(
+            $supplier = \App\Models\Customer::find($id) ?? new \App\Models\Customer(['name' => 'NCC #'.$id, 'code' => '', 'phone' => '']);
+            $service = new \App\Services\Exports\SupplierDebtExcelExportService(
                 is_array($entries) ? $entries : collect($entries)->toArray(),
                 $supplier,
                 $from,
@@ -410,30 +412,40 @@ class SupplierController extends Controller
                 $includeDetail,
                 $selectedCols
             );
+
             return $service->download("cong_no_ncc_{$id}.xlsx");
         }
 
         // Filter theo business/display time (debt_remain đã được tính ở full ledger).
         $filtered = collect($entries)->filter(function ($t) use ($from, $to) {
-            if (!$from && !$to) return true;
+            if (! $from && ! $to) {
+                return true;
+            }
             $ts = $this->supplierDebtEntryExportCarbon($t);
-            if (!$ts) return false;
-            if ($from && $ts->lessThan($from)) return false;
-            if ($to && $ts->greaterThan($to)) return false;
+            if (! $ts) {
+                return false;
+            }
+            if ($from && $ts->lessThan($from)) {
+                return false;
+            }
+            if ($to && $ts->greaterThan($to)) {
+                return false;
+            }
+
             return true;
         })->values();
 
         $headers = ['Thời gian', 'Mã chứng từ', 'Loại', 'Giá trị', 'Nợ cần trả nhà cung cấp', 'Ghi chú'];
 
         $detailColumnMap = [
-            'unit'       => 'ĐVT',
-            'quantity'   => 'Số lượng',
+            'unit' => 'ĐVT',
+            'quantity' => 'Số lượng',
             'unit_price' => 'Đơn giá',
-            'discount'   => 'Giảm giá',
-            'vat'        => 'VAT',
-            'cost'       => 'Giá nhập/trả',
+            'discount' => 'Giảm giá',
+            'vat' => 'VAT',
+            'cost' => 'Giá nhập/trả',
             'line_total' => 'Thành tiền',
-            'note'       => 'Ghi chú dòng',
+            'note' => 'Ghi chú dòng',
         ];
         $appendDetailCols = $includeDetail
             ? array_values(array_intersect_key($detailColumnMap, array_flip($selectedCols)))
@@ -457,7 +469,9 @@ class SupplierController extends Controller
                 foreach ($this->loadDebtExportDetailLines($t) as $line) {
                     $detail = [];
                     foreach ($selectedCols as $col) {
-                        if (!array_key_exists($col, $detailColumnMap)) continue;
+                        if (! array_key_exists($col, $detailColumnMap)) {
+                            continue;
+                        }
                         $detail[] = $line[$col] ?? '';
                     }
                     $rows->push(array_merge(
@@ -517,7 +531,7 @@ class SupplierController extends Controller
     private function supplierDebtEntryExportCarbon(array $entry): ?\Carbon\Carbon
     {
         $raw = $this->supplierDebtEntryExportRawTime($entry);
-        if (!$raw) {
+        if (! $raw) {
             return null;
         }
 
@@ -531,7 +545,7 @@ class SupplierController extends Controller
     private function supplierDebtEntryExportTime(array $entry): string
     {
         $raw = $this->supplierDebtEntryExportRawTime($entry);
-        if (!$raw) {
+        if (! $raw) {
             return '';
         }
 
@@ -558,6 +572,7 @@ class SupplierController extends Controller
                 return [$now->copy()->startOfMonth(), $now->copy()->endOfMonth()];
             case 'last_month':
                 $lm = $now->copy()->subMonthNoOverflow();
+
                 return [$lm->copy()->startOfMonth(), $lm->copy()->endOfMonth()];
             case 'this_quarter':
                 return [$now->copy()->startOfQuarter(), $now->copy()->endOfQuarter()];
@@ -566,6 +581,7 @@ class SupplierController extends Controller
             case 'custom':
                 $f = $this->parseExportDate($from);
                 $t = $this->parseExportDate($to);
+
                 return [$f ? $f->startOfDay() : null, $t ? $t->endOfDay() : null];
             case 'all':
             default:
@@ -581,67 +597,83 @@ class SupplierController extends Controller
      */
     private function parseExportDate(?string $value): ?\Carbon\Carbon
     {
-        if (!$value) return null;
+        if (! $value) {
+            return null;
+        }
         $value = trim($value);
         if (preg_match('#^(\d{4})-(\d{1,2})-(\d{1,2})$#', $value, $m)) {
-            $y = (int) $m[1]; $mo = (int) $m[2]; $d = (int) $m[3];
+            $y = (int) $m[1];
+            $mo = (int) $m[2];
+            $d = (int) $m[3];
         } elseif (preg_match('#^(\d{1,2})/(\d{1,2})/(\d{4})$#', $value, $m)) {
-            $d = (int) $m[1]; $mo = (int) $m[2]; $y = (int) $m[3];
+            $d = (int) $m[1];
+            $mo = (int) $m[2];
+            $y = (int) $m[3];
         } else {
             return null;
         }
-        if (!checkdate($mo, $d, $y)) return null;
+        if (! checkdate($mo, $d, $y)) {
+            return null;
+        }
+
         return \Carbon\Carbon::create($y, $mo, $d, 0, 0, 0);
     }
 
     private function loadDebtExportDetailLines(array $entry): array
     {
         $id = $entry['id'] ?? '';
-        if (!is_string($id) || !str_contains($id, '-')) return [];
+        if (! is_string($id) || ! str_contains($id, '-')) {
+            return [];
+        }
 
         [$prefix, $rawId] = explode('-', $id, 2);
         $rawId = (int) $rawId;
-        if ($rawId <= 0) return [];
+        if ($rawId <= 0) {
+            return [];
+        }
 
         if (in_array($prefix, ['pur', 'purchase'], true)) {
             $items = \App\Models\PurchaseItem::where('purchase_id', $rawId)->get();
-            return $items->map(fn($i) => [
-                'unit'       => '',
-                'quantity'   => $i->quantity ?? 0,
+
+            return $items->map(fn ($i) => [
+                'unit' => '',
+                'quantity' => $i->quantity ?? 0,
                 'unit_price' => $i->price ?? 0,
-                'discount'   => $i->discount ?? 0,
-                'vat'        => '',
-                'cost'       => $i->price ?? 0,
+                'discount' => $i->discount ?? 0,
+                'vat' => '',
+                'cost' => $i->price ?? 0,
                 'line_total' => $i->subtotal ?? 0,
-                'note'       => $i->product_name ?? $i->product_code ?? '',
+                'note' => $i->product_name ?? $i->product_code ?? '',
             ])->all();
         }
 
         if (in_array($prefix, ['pret', 'purchase_return'], true)) {
             $items = \App\Models\PurchaseReturnItem::where('purchase_return_id', $rawId)->get();
-            return $items->map(fn($i) => [
-                'unit'       => '',
-                'quantity'   => $i->quantity ?? 0,
+
+            return $items->map(fn ($i) => [
+                'unit' => '',
+                'quantity' => $i->quantity ?? 0,
                 'unit_price' => $i->price ?? 0,
-                'discount'   => '',
-                'vat'        => '',
-                'cost'       => $i->price ?? 0,
+                'discount' => '',
+                'vat' => '',
+                'cost' => $i->price ?? 0,
                 'line_total' => $i->subtotal ?? 0,
-                'note'       => $i->product_name ?? $i->product_code ?? '',
+                'note' => $i->product_name ?? $i->product_code ?? '',
             ])->all();
         }
 
         if (in_array($prefix, ['inv', 'invoice'], true)) {
             $items = \App\Models\InvoiceItem::where('invoice_id', $rawId)->get();
-            return $items->map(fn($i) => [
-                'unit'       => '',
-                'quantity'   => $i->quantity ?? 0,
+
+            return $items->map(fn ($i) => [
+                'unit' => '',
+                'quantity' => $i->quantity ?? 0,
                 'unit_price' => $i->price ?? 0,
-                'discount'   => $i->discount ?? 0,
-                'vat'        => '',
-                'cost'       => $i->price ?? 0,
+                'discount' => $i->discount ?? 0,
+                'vat' => '',
+                'cost' => $i->price ?? 0,
                 'line_total' => ($i->price ?? 0) * ($i->quantity ?? 0) - ($i->discount ?? 0),
-                'note'       => $i->product_name ?? '',
+                'note' => $i->product_name ?? '',
             ])->all();
         }
 
@@ -655,7 +687,7 @@ class SupplierController extends Controller
 
         return \App\Services\CsvService::export(
             ['Mã phiếu', 'Thời gian', 'Loại phiếu', 'Người tạo', 'Chi nhánh', 'Tổng tiền', 'Trạng thái'],
-            collect($data)->map(fn($p) => [
+            collect($data)->map(fn ($p) => [
                 $p['code'],
                 $p['transaction_at_display'] ?? $p['date'] ?? '',
                 $p['type_label'] ?? '',
@@ -673,13 +705,16 @@ class SupplierController extends Controller
         [$headers, $rows] = \App\Services\CsvService::parse($request);
         $count = 0;
         foreach ($rows as $row) {
-            if (count($row) < 2 || empty(trim($row[1] ?? ''))) continue;
+            if (count($row) < 2 || empty(trim($row[1] ?? ''))) {
+                continue;
+            }
             Customer::updateOrCreate(
                 ['code' => trim($row[0])],
                 ['name' => trim($row[1]), 'phone' => trim($row[2] ?? ''), 'email' => trim($row[3] ?? ''), 'address' => trim($row[4] ?? ''), 'ward' => trim($row[5] ?? ''), 'district' => trim($row[6] ?? ''), 'city' => trim($row[7] ?? ''), 'note' => trim($row[9] ?? ''), 'is_supplier' => true, 'is_customer' => false]
             );
             $count++;
         }
+
         return back()->with('success', "Đã nhập {$count} nhà cung cấp từ file.");
     }
 
@@ -748,7 +783,7 @@ class SupplierController extends Controller
 
         $histories = $purchases
             ->merge($purchaseReturns)
-            ->sortByDesc(fn($item) => $item['transaction_at'] ? \Carbon\Carbon::parse($item['transaction_at'])->timestamp : 0)
+            ->sortByDesc(fn ($item) => $item['transaction_at'] ? \Carbon\Carbon::parse($item['transaction_at'])->timestamp : 0)
             ->values();
 
         return response()->json($histories);
@@ -761,12 +796,12 @@ class SupplierController extends Controller
     public function debtTransactions($id, Request $request)
     {
         $supplier = Customer::findOrFail($id);
-        if (!$supplier->is_supplier) {
+        if (! $supplier->is_supplier) {
             abort(404);
         }
 
         $hasSupplierColumn = \Illuminate\Support\Facades\Schema::hasColumn('customers', 'supplier_debt_amount');
-        $isDualRole = (bool) $supplier->is_customer;
+        $isDualRole = PartnerDebtDisplayBalance::isDualRole($supplier);
         $usePartnerTimeline = $isDualRole && (string) $request->input('view', '') === 'partner';
 
         $mode = $request->query('mode', 'document');
@@ -797,19 +832,19 @@ class SupplierController extends Controller
             $offset = ($currentPage - 1) * $perPage;
             $pagedEntries = $allEntries->slice($offset, $perPage)->values();
             $pagination = [
-                'total'        => $total,
-                'per_page'     => $perPage,
+                'total' => $total,
+                'per_page' => $perPage,
                 'current_page' => $currentPage,
-                'last_page'    => $lastPage,
-                'from'         => $total === 0 ? 0 : $offset + 1,
-                'to'           => min($offset + $perPage, $total),
+                'last_page' => $lastPage,
+                'from' => $total === 0 ? 0 : $offset + 1,
+                'to' => min($offset + $perPage, $total),
             ];
         }
 
         $pagedEntries = $pagedEntries
             ->map(function ($entry) {
                 $entry = is_array($entry) ? $entry : (array) $entry;
-                if (!array_key_exists('affects_debt_balance', $entry)) {
+                if (! array_key_exists('affects_debt_balance', $entry)) {
                     $entry['affects_debt_balance'] = ! (bool) (
                         $entry['reference_only']
                         ?? $entry['is_reference_only']
@@ -844,33 +879,33 @@ class SupplierController extends Controller
             'summary' => [
                 // Canonical receivable/payable/net keys (HOTFIX FOLLOW-UP)
                 'customer_receivable_balance' => $customerDebt,
-                'supplier_payable_balance'    => $supplierDebt,
-                'partner_net_position'        => $netDebt,
-                'supplier_oriented_balance'   => $supplierOrientedBalance,
-                'current_debt'                => (float) ($ledgerSummary['current_debt'] ?? $supplierOrientedBalance),
-                'has_debt_offset_voucher'     => $hasDebtOffsetVoucher,
-                'is_actual_offset'            => false,
-                'is_net_view'                 => $usePartnerTimeline,
+                'supplier_payable_balance' => $supplierDebt,
+                'partner_net_position' => $netDebt,
+                'supplier_oriented_balance' => $supplierOrientedBalance,
+                'current_debt' => $usePartnerTimeline ? $supplierOrientedBalance : $supplierDebt,
+                'has_debt_offset_voucher' => $hasDebtOffsetVoucher,
+                'is_actual_offset' => false,
+                'is_net_view' => $usePartnerTimeline,
                 'is_supplier_tab_partner_timeline' => $usePartnerTimeline,
-                'display_mode'                => $usePartnerTimeline
+                'display_mode' => $usePartnerTimeline
                     ? (string) ($ledgerSummary['display_mode'] ?? 'supplier_partner_timeline')
                     : 'supplier_payable',
-                'legacy_display_mode'         => $usePartnerTimeline
+                'legacy_display_mode' => $usePartnerTimeline
                     ? (string) ($ledgerSummary['legacy_display_mode'] ?? 'partner_net_timeline')
                     : null,
-                'orientation'                 => $usePartnerTimeline ? 'supplier' : 'supplier',
-                'supplier_partner_balance'    => $usePartnerTimeline ? $supplierOrientedBalance : null,
-                'supplier_screen_balance'     => $usePartnerTimeline ? $supplierOrientedBalance : null,
-                'balance_label'               => 'Nợ cần trả nhà cung cấp',
-                'display_timeline_mode'       => (bool) ($ledgerSummary['display_timeline_mode'] ?? true),
+                'orientation' => $usePartnerTimeline ? 'supplier' : 'supplier',
+                'supplier_partner_balance' => $usePartnerTimeline ? $supplierOrientedBalance : null,
+                'supplier_screen_balance' => $usePartnerTimeline ? $supplierOrientedBalance : null,
+                'balance_label' => 'Nợ cần trả nhà cung cấp',
+                'display_timeline_mode' => (bool) ($ledgerSummary['display_timeline_mode'] ?? true),
                 'has_virtual_opening_balance' => (bool) ($ledgerSummary['has_virtual_opening_balance'] ?? false),
-                'virtual_opening_balance'     => (float) ($ledgerSummary['virtual_opening_balance'] ?? 0.0),
-                'display_balance_target'      => (float) ($ledgerSummary['display_balance_target'] ?? $supplierOrientedBalance),
-                'display_balance_final'       => (float) ($ledgerSummary['display_balance_final'] ?? $ledger['closing_balance'] ?? 0.0),
-                'raw_document_final_balance'  => (float) ($ledgerSummary['raw_document_final_balance'] ?? $ledgerSummary['document_final_balance_before_alignment'] ?? $ledgerSummary['document_final_balance'] ?? 0.0),
+                'virtual_opening_balance' => (float) ($ledgerSummary['virtual_opening_balance'] ?? 0.0),
+                'display_balance_target' => $usePartnerTimeline ? $supplierOrientedBalance : $supplierDebt,
+                'display_balance_final' => (float) ($ledgerSummary['display_balance_final'] ?? $ledger['closing_balance'] ?? 0.0),
+                'raw_document_final_balance' => (float) ($ledgerSummary['raw_document_final_balance'] ?? $ledgerSummary['document_final_balance_before_alignment'] ?? $ledgerSummary['document_final_balance'] ?? 0.0),
                 'document_final_balance_before_alignment' => (float) ($ledgerSummary['document_final_balance_before_alignment'] ?? $ledgerSummary['document_final_balance'] ?? 0.0),
-                'display_alignment_amount'    => (float) ($ledgerSummary['display_alignment_amount'] ?? 0.0),
-                'display_aligned'             => (bool) ($ledgerSummary['display_aligned'] ?? false),
+                'display_alignment_amount' => (float) ($ledgerSummary['display_alignment_amount'] ?? 0.0),
+                'display_aligned' => (bool) ($ledgerSummary['display_aligned'] ?? false),
                 'has_virtual_display_alignment' => (bool) ($ledgerSummary['has_virtual_display_alignment'] ?? false),
 
                 // Backward-compatible keys (existing FE/tests still read these)
@@ -881,12 +916,13 @@ class SupplierController extends Controller
                 'net_debt_amount' => $netDebt,
             ],
         ];
-        if (!empty($ledger['reconcile'])) {
+        if (! empty($ledger['reconcile'])) {
             $response['reconcile'] = $ledger['reconcile'];
         }
         if ($pagination !== null) {
             $response['pagination'] = $pagination;
         }
+
         return response()->json($response);
     }
 
@@ -920,8 +956,11 @@ class SupplierController extends Controller
 
         // 1) Phiếu nhập
         if ($purchase = Purchase::where('code', $code)->first()) {
-            if ((int) $purchase->supplier_id !== (int) $supplier->id) return $notFound();
+            if ((int) $purchase->supplier_id !== (int) $supplier->id) {
+                return $notFound();
+            }
             $purchase->load(['supplier', 'items.product', 'user', 'employee']);
+
             return response()->json([
                 'success' => true, 'type' => 'purchase', 'title' => 'Phiếu nhập hàng', 'code' => $purchase->code,
                 'data' => [
@@ -942,8 +981,11 @@ class SupplierController extends Controller
 
         // 2) Trả hàng nhập
         if ($return = PurchaseReturn::where('code', $code)->first()) {
-            if ((int) $return->supplier_id !== (int) $supplier->id) return $notFound();
+            if ((int) $return->supplier_id !== (int) $supplier->id) {
+                return $notFound();
+            }
             $return->loadMissing(['items.product']);
+
             return response()->json([
                 'success' => true, 'type' => 'purchase_return', 'title' => 'Trả hàng nhập', 'code' => $return->code,
                 'data' => [
@@ -964,6 +1006,7 @@ class SupplierController extends Controller
             $offset = \App\Models\DebtOffset::where('code', $offsetCode)->first();
             if ($offset && (int) $offset->customer_id === (int) $supplier->id) {
                 $isCancel = str_starts_with($code, 'HCB');
+
                 return response()->json([
                     'success' => true, 'type' => 'offset', 'title' => $isCancel ? 'Hủy điều chỉnh công nợ' : 'Điều chỉnh công nợ', 'code' => $code,
                     'data' => [
@@ -973,6 +1016,7 @@ class SupplierController extends Controller
                     ],
                 ]);
             }
+
             return $notFound();
         }
 
@@ -980,15 +1024,18 @@ class SupplierController extends Controller
         if ($cashFlow = CashFlow::where('code', $code)->first()) {
             $belongs = ((int) $cashFlow->target_id === (int) $supplier->id)
                 || in_array($cashFlow->reference_code, Purchase::where('supplier_id', $supplier->id)->pluck('code')->all(), true);
-            if (!$belongs) return $notFound();
+            if (! $belongs) {
+                return $notFound();
+            }
             $cashFlow->load('bankAccount');
+
             return response()->json([
                 'success' => true, 'type' => 'cashflow', 'title' => $cashFlow->type === 'payment' ? 'Phiếu chi' : 'Phiếu thu', 'code' => $cashFlow->code,
                 'data' => [
                     'id' => $cashFlow->id, 'code' => $cashFlow->code, 'type' => $cashFlow->type, 'amount' => (float) $cashFlow->amount,
                     'time' => $cashFlow->time ? \Carbon\Carbon::parse($cashFlow->time)->format('d/m/Y H:i') : '',
                     'category' => $cashFlow->category, 'target_name' => $cashFlow->target_name, 'payment_method' => $cashFlow->payment_method,
-                    'bank_account_name' => $cashFlow->bankAccount ? ($cashFlow->bankAccount->bank_name . ' - ' . $cashFlow->bankAccount->account_number) : null,
+                    'bank_account_name' => $cashFlow->bankAccount ? ($cashFlow->bankAccount->bank_name.' - '.$cashFlow->bankAccount->account_number) : null,
                     'reference_type' => $cashFlow->reference_type, 'reference_code' => $cashFlow->reference_code,
                     'description' => $cashFlow->description, 'status' => $cashFlow->status,
                 ],
@@ -997,8 +1044,11 @@ class SupplierController extends Controller
 
         // 5) Invoice (dual-role HD)
         if ($invoice = Invoice::where('code', $code)->first()) {
-            if ((int) $invoice->customer_id !== (int) $supplier->id) return $notFound();
+            if ((int) $invoice->customer_id !== (int) $supplier->id) {
+                return $notFound();
+            }
             $invoice->load(['items.product']);
+
             return response()->json([
                 'success' => true, 'type' => 'invoice', 'title' => 'Hóa đơn', 'code' => $invoice->code,
                 'data' => [
@@ -1039,93 +1089,106 @@ class SupplierController extends Controller
             'allocations.*.amount' => 'required_with:allocations|numeric|min:0',
             'date' => 'nullable|date',
         ]);
-
-        $supplier = Customer::findOrFail($id);
-        app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
-            (int) $supplier->id,
-            'supplier_id'
-        );
-        $currentDebt = $this->calculateDebt($id);
-        $totalPay = abs($data['amount']);
+        $totalPay = abs((float) $data['amount']);
         $mode = $data['mode'] ?? 'auto';
-        $paidAt = !empty($data['date']) ? \Carbon\Carbon::parse($data['date']) : now();
+        $paidAt = ! empty($data['date']) ? \Carbon\Carbon::parse($data['date']) : now();
+        $payloadHash = hash('sha256', json_encode([
+            'supplier_id' => (int) $id,
+            'amount' => $totalPay,
+            'mode' => $mode,
+            'allocations' => $data['allocations'] ?? [],
+            'note' => $data['note'] ?? null,
+            'date' => $data['date'] ?? null,
+        ], JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION));
 
-        DB::transaction(function () use ($id, $supplier, $currentDebt, $totalPay, $mode, $data, $paidAt) {
-            app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
-                (int) $id,
-                'supplier_id'
-            );
-            $code = 'PCPN' . date('ymd') . rand(100, 999);
-
-            // Create SupplierDebtTransaction
-            $tx = SupplierDebtTransaction::create([
-                'supplier_id' => $id,
-                'code' => $code,
-                'type' => 'payment',
-                'amount' => -$totalPay,
-                'debt_remain' => $currentDebt - $totalPay,
-                'note' => $data['note'] ?? 'Thanh toan cong no',
-                'user_id' => auth()->id(),
-            ]);
-            if (!empty($data['date'])) {
-                $tx->created_at = $paidAt;
-                $tx->save();
-            }
-
-            // Create CashFlow phieu chi
-            $cf = CashFlow::create([
-                'code' => $code,
-                'type' => 'payment',
-                'amount' => $totalPay,
-                'time' => $paidAt,
-                'category' => 'Chi thanh toan NCC',
-                'target_type' => 'Nha cung cap',
-                'target_id' => $id,
-                'target_name' => $supplier->name,
-                'reference_type' => 'SupplierPayment',
-                'reference_code' => $code,
-                'payment_method' => 'cash',
-                'description' => "Chi thanh toan cong no NCC {$supplier->name}: " . number_format($totalPay) . "d",
-            ]);
-            if (!empty($data['date'])) {
-                $cf->created_at = $paidAt;
-                $cf->save();
-            }
-
-            // Allocate into purchases
-            if ($mode === 'manual' && !empty($data['allocations'])) {
-                foreach ($data['allocations'] as $alloc) {
-                    if ($alloc['amount'] <= 0) continue;
-                    $purchase = Purchase::find($alloc['purchase_id']);
-                    if ($purchase && $purchase->supplier_id == $id) {
-                        $purchase->increment('paid_amount', $alloc['amount']);
-                        $purchase->decrement('debt_amount', $alloc['amount']);
-                    }
+        $result = app(PartnerDebtMutationCoordinator::class)->execute(
+            (int) $id,
+            'supplier_payment_collect',
+            $payloadHash,
+            function (Customer $supplier, ?PartnerDebtOperation $operation) use (
+                $id,
+                $totalPay,
+                $mode,
+                $data,
+                $paidAt,
+            ): array {
+                app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
+                    (int) $supplier->id,
+                    'supplier_id',
+                );
+                $currentDebt = (float) $supplier->supplier_debt_amount;
+                $code = 'PCPN'.date('ymdHis').random_int(100, 999);
+                $cashFlow = CashFlow::create([
+                    'code' => $code,
+                    'type' => 'payment',
+                    'amount' => $totalPay,
+                    'time' => $paidAt,
+                    'category' => 'Chi thanh toán NCC',
+                    'target_type' => 'Nhà cung cấp',
+                    'target_id' => $id,
+                    'target_name' => $supplier->name,
+                    'reference_type' => 'SupplierPayment',
+                    'reference_code' => $code,
+                    'payment_method' => 'cash',
+                    'description' => "Chi thanh toán công nợ NCC {$supplier->name}: ".number_format($totalPay).'đ',
+                ]);
+                if (! empty($data['date'])) {
+                    $cashFlow->created_at = $paidAt;
+                    $cashFlow->save();
                 }
-            } else {
-                // Auto-allocate: oldest first
-                $remaining = $totalPay;
-                $purchases = Purchase::where('supplier_id', $id)
-                    ->where('status', 'completed')
-                    ->where('debt_amount', '>', 0)
-                    ->orderBy('purchase_date')
-                    ->orderBy('created_at')
-                    ->get();
+                app(PartnerDebtMutationCoordinator::class)->checkpoint('document');
 
-                foreach ($purchases as $purchase) {
-                    if ($remaining <= 0) break;
-                    $payThis = min($remaining, $purchase->debt_amount);
-                    $purchase->increment('paid_amount', $payThis);
-                    $purchase->decrement('debt_amount', $payThis);
-                    $remaining -= $payThis;
+                $allocations = $this->supplierPaymentAllocations(
+                    (int) $id,
+                    $totalPay,
+                    $mode,
+                    (array) ($data['allocations'] ?? []),
+                );
+                foreach ($allocations as $allocation) {
+                    $purchase = Purchase::query()->lockForUpdate()->findOrFail($allocation['purchase_id']);
+                    $purchase->increment('paid_amount', $allocation['amount']);
+                    $purchase->decrement('debt_amount', $allocation['amount']);
+                    $this->persistSupplierPaymentAllocation(
+                        $cashFlow,
+                        $purchase,
+                        (float) $allocation['amount'],
+                        $mode,
+                        $paidAt,
+                        $operation,
+                    );
                 }
-            }
 
-            // Update cached debt
-            $supplier->update(['supplier_debt_amount' => $currentDebt - $totalPay]);
-        });
+                SupplierDebtTransaction::create([
+                    'supplier_id' => $id,
+                    'code' => $code,
+                    'type' => 'payment',
+                    'amount' => -$totalPay,
+                    'debt_remain' => $currentDebt - $totalPay,
+                    'note' => $data['note'] ?? 'Thanh toán công nợ',
+                    'user_id' => auth()->id(),
+                    'created_at' => $paidAt,
+                ]);
+                app(PartnerDebtMutationCoordinator::class)->checkpoint('evidence');
 
-        return response()->json(['success' => true, 'message' => 'Da ghi thanh toan.']);
+                $supplier->update(['supplier_debt_amount' => $currentDebt - $totalPay]);
+                app(PartnerDebtMutationCoordinator::class)->checkpoint('projection');
+
+                return [
+                    'payment_id' => (int) $cashFlow->id,
+                    'payment_code' => (string) $cashFlow->code,
+                    'allocated_amount' => (float) collect($allocations)->sum('amount'),
+                    'payable_before' => $currentDebt,
+                    'payable_after' => $currentDebt - $totalPay,
+                ];
+            },
+            $request->header('Idempotency-Key'),
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Đã ghi thanh toán.',
+            'payment' => $result,
+        ]);
     }
 
     /**
@@ -1140,7 +1203,7 @@ class SupplierController extends Controller
             ->orderBy('created_at')
             ->get(['id', 'code', 'total_amount', 'paid_amount', 'debt_amount', 'purchase_date', 'created_at']);
 
-        return response()->json($purchases->map(fn($p) => [
+        return response()->json($purchases->map(fn ($p) => [
             'id' => $p->id,
             'code' => $p->code,
             'total' => $p->total_amount,
@@ -1156,71 +1219,172 @@ class SupplierController extends Controller
     public function adjustDebt(Request $request, $id)
     {
         $data = $request->validate([
-            'amount' => 'required|numeric', // Giá trị nợ cuối mong muốn
+            'amount' => 'required|numeric',
             'note' => 'nullable|string',
-            'type' => 'nullable|string', // 'adjustment' or 'discount'
+            'type' => 'nullable|string|in:adjustment,discount',
             'date' => 'nullable|date',
         ]);
+        $payloadHash = hash('sha256', json_encode([
+            'supplier_id' => (int) $id,
+            'amount' => (float) $data['amount'],
+            'note' => $data['note'] ?? null,
+            'type' => $data['type'] ?? 'adjustment',
+            'date' => $data['date'] ?? null,
+        ], JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION));
 
-        $supplier = Customer::findOrFail($id);
-        $currentRawPayable = (float) $supplier->supplier_debt_amount;
-        $currentDebt = $currentRawPayable;
-        $type = $data['type'] ?? 'adjustment';
-        $adjustedAt = !empty($data['date']) ? \Carbon\Carbon::parse($data['date']) : now();
+        $result = app(PartnerDebtMutationCoordinator::class)->execute(
+            (int) $id,
+            'supplier_debt_adjustment',
+            $payloadHash,
+            function (Customer $supplier) use ($id, $data): array {
+                app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
+                    (int) $supplier->id,
+                    'supplier_id',
+                );
+                $currentRawPayable = (float) $supplier->supplier_debt_amount;
+                $type = $data['type'] ?? 'adjustment';
+                $adjustedAt = ! empty($data['date']) ? \Carbon\Carbon::parse($data['date']) : now();
 
-        if ($type === 'discount') {
-            // Chiết khấu: giữ logic cũ — amount là số tiền chiết khấu
-            $amount = -abs($data['amount']);
-            $code = 'CKNCC' . date('ymd') . rand(100, 999);
+                if ($type === 'discount') {
+                    $delta = -abs((float) $data['amount']);
+                    $targetRawPayable = $currentRawPayable + $delta;
+                    $code = 'CKNCC'.date('ymdHis').random_int(100, 999);
+                    $note = $data['note'] ?? 'Chiết khấu thanh toán';
+                } else {
+                    $targetDebt = (float) $data['amount'];
+                    $currentDebt = PartnerDebtDisplayBalance::supplierScreen($supplier);
+                    $targetRawPayable = PartnerDebtDisplayBalance::isDualRole($supplier)
+                        ? $targetDebt + (float) ($supplier->debt_amount ?? 0)
+                        : $targetDebt;
+                    $delta = $targetRawPayable - $currentRawPayable;
+                    if (abs($delta) < 0.01) {
+                        return ['changed' => false];
+                    }
+                    $code = 'DCNCC'.date('ymdHis').random_int(100, 999);
+                    $note = ($data['note'] ?? 'Điều chỉnh công nợ')
+                        .' | '.number_format($currentDebt).' → '.number_format($targetDebt);
+                }
 
-            $tx = SupplierDebtTransaction::create([
-                'supplier_id' => $id,
-                'code' => $code,
-                'type' => $type,
-                'amount' => $amount,
-                'debt_remain' => $currentDebt + $amount,
-                'note' => $data['note'] ?? 'Chiết khấu thanh toán',
-                'user_id' => auth()->id(),
-            ]);
-            if (!empty($data['date'])) {
-                $tx->created_at = $adjustedAt;
-                $tx->save();
+                SupplierDebtTransaction::create([
+                    'supplier_id' => $id,
+                    'code' => $code,
+                    'type' => $type,
+                    'amount' => $delta,
+                    'debt_remain' => $targetRawPayable,
+                    'note' => $note,
+                    'user_id' => auth()->id(),
+                    'created_at' => $adjustedAt,
+                ]);
+                app(PartnerDebtMutationCoordinator::class)->checkpoint('evidence');
+                $supplier->update(['supplier_debt_amount' => $targetRawPayable]);
+                app(PartnerDebtMutationCoordinator::class)->checkpoint('projection');
+
+                return ['changed' => true, 'payable_after' => $targetRawPayable];
+            },
+            $request->header('Idempotency-Key'),
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => $result['changed'] ? 'Đã cập nhật công nợ.' : 'Công nợ không thay đổi.',
+        ]);
+    }
+
+    private function supplierPaymentAllocations(
+        int $supplierId,
+        float $paymentAmount,
+        string $mode,
+        array $requested,
+    ): array {
+        $remaining = $paymentAmount;
+        $allocations = [];
+        $seen = [];
+
+        if ($mode === 'manual') {
+            foreach ($requested as $row) {
+                $purchaseId = (int) ($row['purchase_id'] ?? 0);
+                $amount = (float) ($row['amount'] ?? 0);
+                if ($amount < 0.01) {
+                    continue;
+                }
+                if (isset($seen[$purchaseId])) {
+                    throw ValidationException::withMessages([
+                        'allocations' => 'Mỗi phiếu nhập chỉ được phân bổ một lần.',
+                    ]);
+                }
+                $seen[$purchaseId] = true;
+                $purchase = Purchase::query()
+                    ->where('supplier_id', $supplierId)
+                    ->whereKey($purchaseId)
+                    ->lockForUpdate()
+                    ->first();
+                if (! $purchase || $amount > (float) $purchase->debt_amount + 0.01) {
+                    throw ValidationException::withMessages([
+                        'allocations' => 'Phân bổ vượt công nợ còn lại của phiếu nhập.',
+                    ]);
+                }
+                if ($amount > $remaining + 0.01) {
+                    throw ValidationException::withMessages([
+                        'allocations' => 'Tổng phân bổ vượt số tiền thanh toán.',
+                    ]);
+                }
+                $allocations[] = ['purchase_id' => $purchaseId, 'amount' => $amount];
+                $remaining -= $amount;
             }
 
-            $supplier->update(['supplier_debt_amount' => $currentDebt + $amount]);
-        } else {
-            // Điều chỉnh: amount = nợ cuối mong muốn
-            $targetDebt = (float) $data['amount'];
-            $currentDebt = PartnerDebtDisplayBalance::supplierScreen($supplier);
-            $targetRawPayable = PartnerDebtDisplayBalance::isDualRole($supplier)
-                ? $targetDebt + (float) ($supplier->debt_amount ?? 0)
-                : $targetDebt;
-            $diff = $targetRawPayable - $currentRawPayable;
-
-            if (abs($diff) < 0.01) {
-                return response()->json(['success' => true, 'message' => 'Công nợ không thay đổi.']);
-            }
-
-            $code = 'DCNCC' . date('ymd') . rand(100, 999);
-
-            $tx = SupplierDebtTransaction::create([
-                'supplier_id' => $id,
-                'code' => $code,
-                'type' => 'adjustment',
-                'amount' => $diff,
-                'debt_remain' => $targetRawPayable,
-                'note' => ($data['note'] ?? 'Điều chỉnh công nợ') . ' | ' . number_format($currentDebt) . ' → ' . number_format($targetDebt),
-                'user_id' => auth()->id(),
-            ]);
-            if (!empty($data['date'])) {
-                $tx->created_at = $adjustedAt;
-                $tx->save();
-            }
-
-            $supplier->update(['supplier_debt_amount' => $targetRawPayable]);
+            return $allocations;
         }
 
-        return response()->json(['success' => true, 'message' => 'Đã cập nhật công nợ.']);
+        $purchases = Purchase::query()
+            ->where('supplier_id', $supplierId)
+            ->where('status', 'completed')
+            ->where('debt_amount', '>', 0)
+            ->orderBy('purchase_date')
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+        foreach ($purchases as $purchase) {
+            if ($remaining < 0.01) {
+                break;
+            }
+            $amount = min($remaining, (float) $purchase->debt_amount);
+            if ($amount >= 0.01) {
+                $allocations[] = ['purchase_id' => (int) $purchase->id, 'amount' => $amount];
+                $remaining -= $amount;
+            }
+        }
+
+        return $allocations;
+    }
+
+    private function persistSupplierPaymentAllocation(
+        CashFlow $cashFlow,
+        Purchase $purchase,
+        float $amount,
+        string $mode,
+        \Carbon\Carbon $allocatedAt,
+        ?PartnerDebtOperation $operation,
+    ): void {
+        if (! Schema::hasTable('supplier_payment_allocations')) {
+            return;
+        }
+        if (! $operation) {
+            throw new \RuntimeException('Supplier allocation evidence requires a debt operation.');
+        }
+
+        DB::table('supplier_payment_allocations')->insert([
+            'payment_id' => $cashFlow->id,
+            'purchase_id' => $purchase->id,
+            'supplier_id' => $purchase->supplier_id,
+            'amount' => $amount,
+            'allocation_source' => $mode === 'manual' ? 'manual' : 'auto',
+            'idempotency_key' => $operation->operation_uuid.':purchase:'.$purchase->id,
+            'operation_id' => $operation->id,
+            'allocated_at' => $allocatedAt,
+            'created_by' => auth()->id(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
     }
 
     // Private helpers
@@ -1237,7 +1401,9 @@ class SupplierController extends Controller
         $lastTx = SupplierDebtTransaction::where('supplier_id', $supplierId)
             ->orderByDesc('id')
             ->first();
-        if ($lastTx) return $lastTx->debt_remain;
+        if ($lastTx) {
+            return $lastTx->debt_remain;
+        }
 
         // Final fallback: sum from purchases
         return Purchase::where('supplier_id', $supplierId)
@@ -1247,7 +1413,9 @@ class SupplierController extends Controller
 
     private function seedDebtTransactions($supplierId)
     {
-        if (SupplierDebtTransaction::where('supplier_id', $supplierId)->exists()) return;
+        if (SupplierDebtTransaction::where('supplier_id', $supplierId)->exists()) {
+            return;
+        }
 
         $purchases = Purchase::where('supplier_id', $supplierId)
             ->where('status', 'completed')

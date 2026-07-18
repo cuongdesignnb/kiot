@@ -14,3 +14,11 @@ Schedule::command('serial:sync-cost-from-tasks --recompute-products')
     ->withoutOverlapping()
     ->onOneServer()
     ->appendOutputTo(storage_path('logs/serial-sync-cost.log'));
+
+// Read-only drift detector. It never invokes reconcile/apply and a mismatch
+// is surfaced as a non-zero scheduler result for operations alerting.
+Schedule::command('debt:audit-parity --dry-run --all-partners --include-special-status --fail-on-mismatch --output=storage/app/audits/scheduled-debt-parity/latest')
+    ->dailyAt('03:00')
+    ->withoutOverlapping()
+    ->onOneServer()
+    ->appendOutputTo(storage_path('logs/debt-parity-audit.log'));

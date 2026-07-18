@@ -11,17 +11,17 @@ class SupplierDebtVirtualOpeningTimelineTest extends TestCase
 {
     use DatabaseTransactions;
 
-    public function test_supplier_with_balance_but_no_history_gets_read_only_virtual_opening_row(): void
+    public function test_supplier_with_balance_but_no_history_exposes_drift_without_virtual_opening(): void
     {
         $admin = User::create([
             'name' => 'Admin Supplier Virtual Opening',
-            'email' => 'admin-supplier-virtual-opening-' . uniqid() . '@test.local',
+            'email' => 'admin-supplier-virtual-opening-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
             'role_id' => null,
         ]);
 
         $supplier = Customer::create([
-            'code' => 'NCC-VIRTUAL-OPENING-' . uniqid(),
+            'code' => 'NCC-VIRTUAL-OPENING-'.uniqid(),
             'name' => 'Supplier Virtual Opening',
             'debt_amount' => 0,
             'supplier_debt_amount' => 500_000,
@@ -33,26 +33,18 @@ class SupplierDebtVirtualOpeningTimelineTest extends TestCase
             ->getJson("/api/suppliers/{$supplier->id}/debt-transactions?per_page=100&page=1");
 
         $response->assertOk()
-            ->assertJsonPath('summary.has_virtual_opening_balance', true)
-            ->assertJsonPath('summary.virtual_opening_balance', 500_000)
-            ->assertJsonPath('summary.display_balance_target', 500_000)
-            ->assertJsonPath('summary.display_balance_final', 500_000)
+            ->assertJsonPath('summary.has_virtual_opening_balance', false)
+            ->assertJsonPath('summary.virtual_opening_balance', 0)
+            ->assertJsonPath('summary.display_balance_target', 0)
+            ->assertJsonPath('summary.display_balance_final', 0)
             ->assertJsonPath('reconcile.ledger_mismatch', true)
-            ->assertJsonPath('reconcile.display_resolved', true)
-            ->assertJsonPath('reconcile.has_mismatch', false)
-            ->assertJsonPath('reconcile.severity', 'info')
-            ->assertJsonPath('reconcile.user_warning', false);
+            ->assertJsonPath('reconcile.display_resolved', false)
+            ->assertJsonPath('reconcile.has_mismatch', true)
+            ->assertJsonPath('reconcile.severity', 'warning')
+            ->assertJsonPath('reconcile.user_warning', true);
 
         $entries = collect($response->json('entries'));
-        $this->assertCount(1, $entries);
+        $this->assertCount(0, $entries);
 
-        $opening = $entries->first();
-        $this->assertTrue($opening['is_virtual_opening']);
-        $this->assertSame('virtual_opening_balance', $opening['event_kind']);
-        $this->assertEquals(500_000, $opening['supplier_display_effect']);
-        $this->assertEquals(500_000, $opening['supplier_display_running_balance']);
-        $this->assertEquals(500_000, $opening['supplier_running_balance']);
-        $this->assertEquals('Số dư đầu kỳ', $opening['badge_label']);
-        $this->assertNotEquals('Đã hạch toán', $opening['badge_label']);
     }
 }

@@ -6,12 +6,11 @@ use App\Models\ActivityLog;
 use App\Models\CashFlow;
 use App\Models\Customer;
 use App\Models\Invoice;
-use App\Models\InvoiceItem;
-use App\Models\InvoiceItemSerial;
 use App\Models\Product;
 use App\Models\SerialImei;
 use App\Models\Setting;
 use App\Models\Warranty;
+use App\Services\Debt\PartnerDebtMutationCoordinator;
 use App\Support\Customers\CustomerGroupSnapshot;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -28,6 +27,8 @@ use Illuminate\Support\Facades\Schema;
  */
 class InvoiceUpdateService
 {
+    public function __construct(private readonly PartnerDebtMutationCoordinator $coordinator) {}
+
     /**
      * Build change plan: detect what changed between current invoice and payload.
      */
@@ -36,12 +37,12 @@ class InvoiceUpdateService
         $invoice->loadMissing('items');
 
         $plan = [
-            'date_changed'      => false,
-            'header_changed'    => false,
+            'date_changed' => false,
+            'header_changed' => false,
             'financial_changed' => false,
-            'items_changed'     => false,
-            'serial_changed'    => false,
-            'customer_changed'  => false,
+            'items_changed' => false,
+            'serial_changed' => false,
+            'customer_changed' => false,
         ];
 
         // 1. Date changed
@@ -51,7 +52,7 @@ class InvoiceUpdateService
                 : Carbon::parse($invoice->created_at);
             $newTxDate = Carbon::parse($payload['transaction_date']);
 
-            if (!$oldTxDate->copy()->seconds(0)->equalTo($newTxDate->copy()->seconds(0))) {
+            if (! $oldTxDate->copy()->seconds(0)->equalTo($newTxDate->copy()->seconds(0))) {
                 $plan['date_changed'] = true;
             }
         }
@@ -90,20 +91,20 @@ class InvoiceUpdateService
         }
 
         // 5. Items changed + serial changed
-        $oldItems = $invoice->items->map(fn($i) => [
+        $oldItems = $invoice->items->map(fn ($i) => [
             'product_id' => (int) $i->product_id,
-            'quantity'   => round((float) $i->quantity, 2),
-            'price'      => round((float) $i->price, 2),
-            'discount'   => round((float) ($i->discount ?? 0), 2),
-            'note'       => (string) ($i->note ?? ''),
+            'quantity' => round((float) $i->quantity, 2),
+            'price' => round((float) $i->price, 2),
+            'discount' => round((float) ($i->discount ?? 0), 2),
+            'note' => (string) ($i->note ?? ''),
         ])->sortBy('product_id')->values()->toArray();
 
-        $newItems = collect($payload['items'] ?? [])->map(fn($i) => [
+        $newItems = collect($payload['items'] ?? [])->map(fn ($i) => [
             'product_id' => (int) $i['product_id'],
-            'quantity'   => round((float) $i['quantity'], 2),
-            'price'      => round((float) $i['price'], 2),
-            'discount'   => round((float) ($i['discount'] ?? 0), 2),
-            'note'       => (string) ($i['note'] ?? ''),
+            'quantity' => round((float) $i['quantity'], 2),
+            'price' => round((float) $i['price'], 2),
+            'discount' => round((float) ($i['discount'] ?? 0), 2),
+            'note' => (string) ($i['note'] ?? ''),
         ])->sortBy('product_id')->values()->toArray();
 
         if ($oldItems !== $newItems) {
@@ -115,7 +116,7 @@ class InvoiceUpdateService
             ->where('status', 'sold')
             ->pluck('id')->sort()->values()->toArray();
         $newSerialIds = collect($payload['items'] ?? [])
-            ->pluck('serial_ids')->flatten()->filter()->map(fn($v) => (int) $v)
+            ->pluck('serial_ids')->flatten()->filter()->map(fn ($v) => (int) $v)
             ->sort()->values()->toArray();
         if ($oldSerialIds !== $newSerialIds) {
             $plan['serial_changed'] = true;
@@ -123,11 +124,11 @@ class InvoiceUpdateService
 
         // Derived
         $plan['only_date_changed'] = $plan['date_changed']
-            && !$plan['header_changed']
-            && !$plan['financial_changed']
-            && !$plan['items_changed']
-            && !$plan['serial_changed']
-            && !$plan['customer_changed'];
+            && ! $plan['header_changed']
+            && ! $plan['financial_changed']
+            && ! $plan['items_changed']
+            && ! $plan['serial_changed']
+            && ! $plan['customer_changed'];
 
         $plan['content_changed'] = $plan['items_changed']
             || $plan['serial_changed']
@@ -144,7 +145,7 @@ class InvoiceUpdateService
     public function validateLockAndPermissions(Invoice $invoice, array $payload, array $context): ?string
     {
         // E-invoice block — absolute, even with override
-        if (Setting::get('block_edit_cancel_einvoice', false) && !empty($invoice->einvoice_code)) {
+        if (Setting::get('block_edit_cancel_einvoice', false) && ! empty($invoice->einvoice_code)) {
             return 'Không thể sửa hóa đơn đã xuất hóa đơn điện tử.';
         }
 
@@ -156,22 +157,22 @@ class InvoiceUpdateService
 
         if ($isOverdue) {
             $hasOverride = $user && $user->hasPermission('invoices.override_time_lock');
-            if (!$hasOverride) {
+            if (! $hasOverride) {
                 return "Đã quá thời gian cho phép chỉnh sửa ({$orderChangeTime} giờ). Cần quyền override.";
             }
             $reason = $context['time_lock_override_reason'] ?? null;
-            if (!$reason || strlen(trim($reason)) < 5) {
+            if (! $reason || strlen(trim($reason)) < 5) {
                 return 'Cần nhập lý do override (ít nhất 5 ký tự).';
             }
         }
 
         if ($changePlan['date_changed']) {
             $hasDatePerm = $user && $user->hasPermission('invoices.change_transaction_date');
-            if (!$hasDatePerm) {
+            if (! $hasDatePerm) {
                 return 'Cần quyền invoices.change_transaction_date để đổi ngày hóa đơn.';
             }
             $reason = $context['transaction_date_change_reason'] ?? null;
-            if (!$reason || strlen(trim($reason)) < 5) {
+            if (! $reason || strlen(trim($reason)) < 5) {
                 return 'Cần nhập lý do đổi ngày hóa đơn (ít nhất 5 ký tự).';
             }
         }
@@ -219,7 +220,7 @@ class InvoiceUpdateService
             $newTxDate = Carbon::parse($payload['transaction_date']);
             $oldTxDate = $invoice->transaction_date ?? $invoice->created_at;
 
-            if (!Schema::hasColumn('invoices', 'transaction_date')) {
+            if (! Schema::hasColumn('invoices', 'transaction_date')) {
                 throw new \RuntimeException('Không thể đổi ngày bán vì thiếu cột transaction_date.');
             }
 
@@ -254,7 +255,7 @@ class InvoiceUpdateService
      */
     private function applyContentUpdate(Invoice $invoice, array $payload, array $changePlan, array $context): Invoice
     {
-        return DB::transaction(function () use ($invoice, $payload, $changePlan, $context) {
+        $applyUpdate = function () use ($invoice, $payload, $changePlan, $context) {
             $invoice->load('items');
 
             // --- Pre-flight validations ---
@@ -283,8 +284,8 @@ class InvoiceUpdateService
             SerialImei::where('invoice_id', $invoice->id)
                 ->where('status', 'sold')
                 ->update([
-                    'status'     => 'in_stock',
-                    'sold_at'    => null,
+                    'status' => 'in_stock',
+                    'sold_at' => null,
                     'invoice_id' => null,
                 ]);
 
@@ -296,7 +297,7 @@ class InvoiceUpdateService
                     if ((int) $oldCustomerId !== (int) $newCustomerId) {
                         // Customer changed — full reverse old
                         if (abs($oldDebt) >= 0.01) {
-                            app(CustomerDebtService::class)->recordInvoiceBalanceReversal(
+                            $this->recordInvoiceOwnerTransfer(
                                 $oldCustomer->id,
                                 $oldDebt,
                                 $invoice,
@@ -317,16 +318,16 @@ class InvoiceUpdateService
                 : ($invoice->transaction_date ?? $invoice->created_at);
 
             $updateData = [
-                'customer_id'    => $payload['customer_id'] ?? $invoice->customer_id,
-                'branch_id'      => $payload['branch_id'] ?? $invoice->branch_id,
-                'subtotal'       => $payload['subtotal'],
-                'discount'       => $payload['discount'] ?? 0,
-                'total'          => $payload['total'],
-                'customer_paid'  => $payload['customer_paid'] ?? 0,
-                'note'           => $payload['note'] ?? null,
-                'is_delivery'    => $payload['is_delivery'] ?? false,
+                'customer_id' => $payload['customer_id'] ?? $invoice->customer_id,
+                'branch_id' => $payload['branch_id'] ?? $invoice->branch_id,
+                'subtotal' => $payload['subtotal'],
+                'discount' => $payload['discount'] ?? 0,
+                'total' => $payload['total'],
+                'customer_paid' => $payload['customer_paid'] ?? 0,
+                'note' => $payload['note'] ?? null,
+                'is_delivery' => $payload['is_delivery'] ?? false,
                 'delivery_partner' => $payload['delivery_partner'] ?? null,
-                'delivery_fee'   => $payload['delivery_fee'] ?? 0,
+                'delivery_fee' => $payload['delivery_fee'] ?? 0,
                 'payment_method' => $payload['payment_method'] ?? 'Tiền mặt',
                 'price_book_name' => $payload['price_book_name'] ?? $invoice->price_book_name,
             ];
@@ -349,11 +350,11 @@ class InvoiceUpdateService
                 $serialStr = null;
                 $soldSerials = collect();
 
-                if ($isService && !empty($serialIds)) {
+                if ($isService && ! empty($serialIds)) {
                     throw new \Exception("Sản phẩm '{$product->name}' là dịch vụ, không quản lý Serial/IMEI.");
                 }
 
-                if ($product && $product->tracksInventory() && $product->has_serial && !empty($serialIds)) {
+                if ($product && $product->tracksInventory() && $product->has_serial && ! empty($serialIds)) {
                     $serialIds = is_array($serialIds) ? $serialIds : [$serialIds];
                     $soldSerials = SerialImei::whereIn('id', $serialIds)
                         ->where('product_id', $product->id)
@@ -370,17 +371,17 @@ class InvoiceUpdateService
 
                 $invoice->items()->create([
                     'product_id' => $item['product_id'],
-                    'quantity'   => $item['quantity'],
-                    'price'      => $item['price'],
+                    'quantity' => $item['quantity'],
+                    'price' => $item['price'],
                     'cost_price' => $snapshotCostPrice,
-                    'discount'   => $item['discount'] ?? 0,
-                    'subtotal'   => ($item['price'] * $item['quantity']) - ($item['discount'] ?? 0),
-                    'note'       => $item['note'] ?? null,
-                    'serial'     => $serialStr,
+                    'discount' => $item['discount'] ?? 0,
+                    'subtotal' => ($item['price'] * $item['quantity']) - ($item['discount'] ?? 0),
+                    'note' => $item['note'] ?? null,
+                    'serial' => $serialStr,
                 ]);
 
                 if ($product && $product->tracksInventory()) {
-                    if (!$allowOversell && $product->stock_quantity < $item['quantity']) {
+                    if (! $allowOversell && $product->stock_quantity < $item['quantity']) {
                         throw new \Exception("Sản phẩm [{$product->sku}] {$product->name} không đủ tồn kho (Còn: {$product->stock_quantity})");
                     }
                     MovingAvgCostingService::applySale($product, (int) $item['quantity']);
@@ -439,18 +440,18 @@ class InvoiceUpdateService
             if ($newPaid > 0) {
                 $customer = $newCustomerId ? Customer::find($newCustomerId) : null;
                 CashFlow::create([
-                    'code'           => 'PT' . date('YmdHis') . rand(10, 99),
-                    'type'           => 'receipt',
-                    'amount'         => $newPaid,
-                    'time'           => $newTxDate,
-                    'category'       => 'Thu tiền khách trả',
-                    'target_type'    => 'Khách hàng',
-                    'target_id'      => $customer?->id,
-                    'target_name'    => $customer?->name ?? 'Khách lẻ',
+                    'code' => 'PT'.date('YmdHis').rand(10, 99),
+                    'type' => 'receipt',
+                    'amount' => $newPaid,
+                    'time' => $newTxDate,
+                    'category' => 'Thu tiền khách trả',
+                    'target_type' => 'Khách hàng',
+                    'target_id' => $customer?->id,
+                    'target_name' => $customer?->name ?? 'Khách lẻ',
                     'reference_type' => 'Invoice',
                     'reference_code' => $invoice->code,
                     'payment_method' => $payload['payment_method'] ?? 'cash',
-                    'description'    => 'Thu tiền hóa đơn ' . $invoice->code . ($customer ? " - {$customer->name}" : ''),
+                    'description' => 'Thu tiền hóa đơn '.$invoice->code.($customer ? " - {$customer->name}" : ''),
                 ]);
             }
 
@@ -470,7 +471,28 @@ class InvoiceUpdateService
             ]);
 
             return $invoice->refresh();
-        });
+        };
+
+        $partnerIds = collect([$invoice->customer_id, $payload['customer_id'] ?? $invoice->customer_id])
+            ->filter()
+            ->map(fn ($id): int => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+        if ($partnerIds === []) {
+            return DB::transaction($applyUpdate);
+        }
+
+        return $this->coordinator->executeForPartners(
+            $partnerIds,
+            'invoice_content_update',
+            hash('sha256', json_encode([
+                'invoice_id' => (int) $invoice->id,
+                'payload' => $payload,
+            ], JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION)),
+            fn () => DB::transaction($applyUpdate),
+            isset($context['idempotency_key']) ? (string) $context['idempotency_key'] : null,
+        );
     }
 
     private function preflightContentValidation(Invoice $invoice, array $payload, array $context): void
@@ -481,7 +503,7 @@ class InvoiceUpdateService
 
         foreach ($payload['items'] as $item) {
             $product = Product::find($item['product_id']);
-            if (!$product) {
+            if (! $product) {
                 throw new \Exception("Sản phẩm ID {$item['product_id']} không tồn tại.");
             }
             if ((float) $item['quantity'] <= 0) {
@@ -492,19 +514,19 @@ class InvoiceUpdateService
             }
 
             $serialIds = $item['serial_ids'] ?? [];
-            if ($product->isService() && !empty($serialIds)) {
+            if ($product->isService() && ! empty($serialIds)) {
                 throw new \Exception("Sản phẩm '{$product->name}' là dịch vụ, không quản lý Serial/IMEI.");
             }
-            if ($product->tracksInventory() && $product->has_serial && !empty($serialIds)) {
+            if ($product->tracksInventory() && $product->has_serial && ! empty($serialIds)) {
                 if (count($serialIds) !== (int) $item['quantity']) {
-                    throw new \Exception("Sản phẩm '{$product->name}' cần chọn đủ {$item['quantity']} serial, hiện có " . count($serialIds) . '.');
+                    throw new \Exception("Sản phẩm '{$product->name}' cần chọn đủ {$item['quantity']} serial, hiện có ".count($serialIds).'.');
                 }
                 if (count($serialIds) !== count(array_unique($serialIds))) {
                     throw new \Exception("Sản phẩm '{$product->name}' có serial trùng lặp.");
                 }
                 foreach ($serialIds as $sid) {
                     $serial = SerialImei::find($sid);
-                    if (!$serial || (int) $serial->product_id !== (int) $product->id) {
+                    if (! $serial || (int) $serial->product_id !== (int) $product->id) {
                         throw new \Exception("Serial ID {$sid} không thuộc sản phẩm '{$product->name}'.");
                     }
                     // Allow if serial belongs to this invoice (keeping same serial)
@@ -521,6 +543,19 @@ class InvoiceUpdateService
                 }
             }
         }
+    }
+
+    private function recordInvoiceOwnerTransfer(
+        int $customerId,
+        float $oldDebt,
+        Invoice $invoice,
+        string $note,
+        array $metadata,
+    ): void {
+        unset($invoice, $note, $metadata);
+        $customer = Customer::query()->findOrFail($customerId);
+        $customer->debt_amount = (float) $customer->debt_amount - $oldDebt;
+        $customer->save();
     }
 
     private function updateWarrantyDatesIfSafe(Invoice $invoice, Carbon $newDate): void
@@ -561,14 +596,14 @@ class InvoiceUpdateService
     private function logActivity(Invoice $invoice, array $changePlan, array $context, array $extra = []): void
     {
         $properties = array_merge([
-            'change_plan'     => $changePlan,
+            'change_plan' => $changePlan,
             'affected_tables' => $this->affectedTables($changePlan),
         ], $extra);
 
-        if (!empty($context['time_lock_override_reason'])) {
+        if (! empty($context['time_lock_override_reason'])) {
             $properties['time_lock_override_reason'] = $context['time_lock_override_reason'];
         }
-        if (!empty($context['transaction_date_change_reason'])) {
+        if (! empty($context['transaction_date_change_reason'])) {
             $properties['transaction_date_change_reason'] = $context['transaction_date_change_reason'];
         }
 
@@ -586,7 +621,7 @@ class InvoiceUpdateService
         $lockRef = $invoice->lock_started_at ?? $invoice->created_at;
         $orderChangeTime = Setting::get('order_change_time', 24);
         $isOverdue = Carbon::parse($lockRef)->diffInHours(now()) > $orderChangeTime;
-        if ($isOverdue && !empty($context['time_lock_override_reason'])) {
+        if ($isOverdue && ! empty($context['time_lock_override_reason'])) {
             ActivityLog::log(
                 'invoice_update_time_lock_override',
                 "Sửa hóa đơn {$invoice->code} quá hạn (override)",
@@ -616,6 +651,7 @@ class InvoiceUpdateService
             $tables[] = 'cash_flows';
             $tables[] = 'warranties';
         }
+
         return array_unique($tables);
     }
 }

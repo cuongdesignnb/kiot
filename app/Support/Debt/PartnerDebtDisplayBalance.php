@@ -4,6 +4,7 @@ namespace App\Support\Debt;
 
 use App\Models\Customer;
 use App\Services\Debt\CanonicalPartnerDebtService;
+use App\Services\Debt\PartnerDebtRoleResolver;
 
 class PartnerDebtDisplayBalance
 {
@@ -19,7 +20,7 @@ class PartnerDebtDisplayBalance
 
     public static function isDualRole(Customer $partner): bool
     {
-        return (bool) (($partner->is_customer ?? false) && ($partner->is_supplier ?? false));
+        return PartnerDebtRoleResolver::isDualRole($partner);
     }
 
     public static function customerScreen(Customer $partner): float
@@ -58,6 +59,11 @@ class PartnerDebtDisplayBalance
             'supplier_list_debt_amount' => $supplierScreen,
             'is_dual_role' => self::isDualRole($partner),
             'is_dual_role_partner' => self::isDualRole($partner),
+            'debt_display_contract' => $canonical['display_contract'],
+            'debt_raw_timeline_final' => $canonical['raw_timeline_final'],
+            'debt_stored_projection' => $canonical['stored_projection'],
+            'debt_difference' => $canonical['difference'],
+            'debt_has_mismatch' => $canonical['has_mismatch'],
         ];
     }
 

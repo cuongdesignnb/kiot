@@ -3,12 +3,13 @@
 namespace App\Http\Controllers;
 
 use App\Enums\ReturnStatus;
-use App\Models\OrderReturn;
-use App\Models\Setting;
 use App\Models\CashFlow;
+use App\Models\OrderReturn;
 use App\Models\ReturnItem;
 use App\Models\SerialImei;
+use App\Models\Setting;
 use App\Services\CustomerDebtService;
+use App\Services\Debt\PartnerDebtMutationCoordinator;
 use App\Services\DebtOffsetService;
 use App\Services\OrderReturnCreationService;
 use App\Services\ReturnTotalCalculator;
@@ -18,7 +19,6 @@ use App\Support\Filters\FilterableIndex;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
-use Carbon\Carbon;
 
 class OrderReturnController extends Controller
 {
@@ -28,8 +28,8 @@ class OrderReturnController extends Controller
     {
         $this->searchable = ['code', 'note', 'created_by_name', 'seller_name'];
         $this->searchableRelations = [
-            'customer'      => ['name', 'phone', 'code'],
-            'invoice'       => ['code'],
+            'customer' => ['name', 'phone', 'code'],
+            'invoice' => ['code'],
             'items.product' => ['name', 'code', 'barcode'],
         ];
         $this->sortable = ['code', 'created_at', 'subtotal', 'total', 'paid_to_customer', 'status'];
@@ -59,12 +59,14 @@ class OrderReturnController extends Controller
         foreach ($returns->items() as $ret) {
             foreach ($ret->items as $it) {
                 if (is_array($it->serial_ids)) {
-                    foreach ($it->serial_ids as $sid) $allSerialIds[] = $sid;
+                    foreach ($it->serial_ids as $sid) {
+                        $allSerialIds[] = $sid;
+                    }
                 }
             }
         }
         $serialMap = [];
-        if (!empty($allSerialIds)) {
+        if (! empty($allSerialIds)) {
             $serialMap = SerialImei::whereIn('id', array_unique($allSerialIds))
                 ->get(['id', 'serial_number'])
                 ->keyBy('id');
@@ -76,7 +78,7 @@ class OrderReturnController extends Controller
                     foreach ($it->serial_ids as $sid) {
                         $s = $serialMap[$sid] ?? null;
                         $list[] = [
-                            'id'            => (int) $sid,
+                            'id' => (int) $sid,
                             'serial_number' => $s?->serial_number,
                         ];
                     }
@@ -97,7 +99,7 @@ class OrderReturnController extends Controller
                 'salesChannels' => OrderReturn::query()
                     ->whereNotNull('sales_channel')->where('sales_channel', '!=', '')
                     ->distinct()->orderBy('sales_channel')->pluck('sales_channel')
-                    ->map(fn($c) => ['value' => $c, 'label' => $c])->values(),
+                    ->map(fn ($c) => ['value' => $c, 'label' => $c])->values(),
             ],
         ]);
     }
@@ -110,11 +112,13 @@ class OrderReturnController extends Controller
         $allSerialIds = [];
         foreach ($return->items as $it) {
             if (is_array($it->serial_ids)) {
-                foreach ($it->serial_ids as $sid) $allSerialIds[] = $sid;
+                foreach ($it->serial_ids as $sid) {
+                    $allSerialIds[] = $sid;
+                }
             }
         }
         $serialMap = [];
-        if (!empty($allSerialIds)) {
+        if (! empty($allSerialIds)) {
             $serialMap = SerialImei::whereIn('id', array_unique($allSerialIds))
                 ->get(['id', 'serial_number'])
                 ->keyBy('id');
@@ -147,11 +151,12 @@ class OrderReturnController extends Controller
                         foreach ($item->serial_ids as $sid) {
                             $s = $serialMap[$sid] ?? null;
                             $serials[] = [
-                                'id'            => (int) $sid,
+                                'id' => (int) $sid,
                                 'serial_number' => $s?->serial_number,
                             ];
                         }
                     }
+
                     return [
                         'product_code' => $item->product->code ?? '',
                         'product_name' => $item->product->name ?? '',
@@ -198,27 +203,28 @@ class OrderReturnController extends Controller
         // the canonical net refund. Legacy payloads (no fee_type) default to
         // 'amount' and the existing `fee` column is treated as VND.
         $calculated = app(ReturnTotalCalculator::class)->calculate([
-            'items'            => $validated['items'],
-            'subtotal'         => $validated['subtotal'] ?? null,
-            'discount'         => $validated['discount'] ?? 0,
-            'fee_type'         => $validated['fee_type'] ?? null,
-            'fee_value'        => $validated['fee_value'] ?? null,
-            'fee'              => $validated['fee'] ?? null,
+            'items' => $validated['items'],
+            'subtotal' => $validated['subtotal'] ?? null,
+            'discount' => $validated['discount'] ?? 0,
+            'fee_type' => $validated['fee_type'] ?? null,
+            'fee_value' => $validated['fee_value'] ?? null,
+            'fee' => $validated['fee'] ?? null,
             'paid_to_customer' => $validated['paid_to_customer'] ?? null,
         ]);
         // Override the validated bag with backend-canonical values so every
         // downstream OrderReturn::create / debt / cashflow uses the same numbers.
-        $validated['subtotal']         = $calculated['subtotal'];
-        $validated['discount']         = $calculated['discount'];
-        $validated['fee']              = $calculated['fee_amount'];
-        $validated['fee_type']         = $calculated['fee_type'];
-        $validated['fee_value']        = $calculated['fee_value'];
-        $validated['total']            = $calculated['total_refund'];
+        $validated['subtotal'] = $calculated['subtotal'];
+        $validated['discount'] = $calculated['discount'];
+        $validated['fee'] = $calculated['fee_amount'];
+        $validated['fee_type'] = $calculated['fee_type'];
+        $validated['fee_value'] = $calculated['fee_value'];
+        $validated['total'] = $calculated['total_refund'];
         $validated['paid_to_customer'] = $calculated['paid_to_customer'];
 
         $createdReturn = app(OrderReturnCreationService::class)->create($validated, [
             'created_by_name' => auth()->user()?->name ?? 'Admin',
             'order_date' => $validated['order_date'] ?? null,
+            'idempotency_key' => $request->header('Idempotency-Key'),
         ]);
 
         if ($request->expectsJson()) {
@@ -235,7 +241,7 @@ class OrderReturnController extends Controller
         return redirect()->route('returns.index')->with('success', 'Phiếu trả hàng đã được tạo thành công.');
 
         // ── RR-11: Validate qty trả vs qty đã bán ──────────────────────
-        if (!empty($validated['invoice_id'])) {
+        if (! empty($validated['invoice_id'])) {
             $invoice = \App\Models\Invoice::find($validated['invoice_id']);
 
             // Không cho trả hàng trên invoice đã hủy
@@ -263,7 +269,7 @@ class OrderReturnController extends Controller
                     $alreadyReturned = ReturnItem::where('product_id', $productId)
                         ->whereHas('orderReturn', function ($q) use ($invoice) {
                             $q->where('invoice_id', $invoice->id)
-                              ->where('status', '!=', 'Đã hủy');
+                                ->where('status', '!=', 'Đã hủy');
                         })
                         ->sum('quantity');
 
@@ -289,7 +295,7 @@ class OrderReturnController extends Controller
         $seenSerialIds = [];
         foreach ($validated['items'] as $item) {
             $product = \App\Models\Product::find($item['product_id']);
-            if (!$product || !$product->has_serial) {
+            if (! $product || ! $product->has_serial) {
                 continue;
             }
             $qty = (int) $item['qty'];
@@ -298,7 +304,7 @@ class OrderReturnController extends Controller
             if (count($serialIds) !== $qty) {
                 throw \Illuminate\Validation\ValidationException::withMessages([
                     'items' => "Sản phẩm '{$product->name}' (Serial/IMEI) yêu cầu chọn đúng "
-                        . "{$qty} mã, hiện đã chọn " . count($serialIds) . '.',
+                        ."{$qty} mã, hiện đã chọn ".count($serialIds).'.',
                 ]);
             }
 
@@ -316,14 +322,14 @@ class OrderReturnController extends Controller
             $serialQuery = SerialImei::whereIn('id', $serialIds)
                 ->where('product_id', $product->id)
                 ->where('status', 'sold');
-            if (!empty($validated['invoice_id'])) {
+            if (! empty($validated['invoice_id'])) {
                 $serialQuery->where('invoice_id', $validated['invoice_id']);
             }
             $validCount = $serialQuery->count();
             if ($validCount !== count($serialIds)) {
                 throw \Illuminate\Validation\ValidationException::withMessages([
                     'items' => "Sản phẩm '{$product->name}': có serial không hợp lệ "
-                        . '(không thuộc hóa đơn này hoặc chưa từng bán).',
+                        .'(không thuộc hóa đơn này hoặc chưa từng bán).',
                 ]);
             }
         }
@@ -334,7 +340,7 @@ class OrderReturnController extends Controller
             $returnDate = BusinessDateTime::forCreate($validated['order_date'] ?? null);
 
             // Check return time limit
-            if (Setting::get('return_time_limit_enabled', false) && !empty($validated['invoice_id'])) {
+            if (Setting::get('return_time_limit_enabled', false) && ! empty($validated['invoice_id'])) {
                 $invoice = \App\Models\Invoice::find($validated['invoice_id']);
                 if ($invoice) {
                     $limitDays = Setting::get('return_time_limit_days', 7);
@@ -348,7 +354,7 @@ class OrderReturnController extends Controller
             }
 
             $returnPayload = [
-                'code' => 'TH' . date('YmdHis') . rand(10, 99),
+                'code' => 'TH'.date('YmdHis').rand(10, 99),
                 'invoice_id' => $validated['invoice_id'] ?? null,
                 'customer_id' => $validated['customer_id'] ?? null,
                 'branch_id' => $validated['branch_id'] ?? null,
@@ -375,7 +381,7 @@ class OrderReturnController extends Controller
 
             foreach ($validated['items'] as $item) {
                 $product = \App\Models\Product::lockForUpdate()->find($item['product_id']);
-                if (!$product) {
+                if (! $product) {
                     continue;
                 }
 
@@ -383,9 +389,9 @@ class OrderReturnController extends Controller
                 $invoiceItem = null;
 
                 // Tìm invoice_item gốc để lấy cost_price_at_sale
-                if (!empty($item['invoice_item_id'])) {
+                if (! empty($item['invoice_item_id'])) {
                     $invoiceItem = \App\Models\InvoiceItem::find($item['invoice_item_id']);
-                } elseif (!empty($validated['invoice_id'])) {
+                } elseif (! empty($validated['invoice_id'])) {
                     $invoiceItem = \App\Models\InvoiceItem::where('invoice_id', $validated['invoice_id'])
                         ->where('product_id', $product->id)
                         ->orderBy('id')
@@ -395,7 +401,7 @@ class OrderReturnController extends Controller
                 // Xác định serial cần khôi phục (nếu hàng serial)
                 $restoredSerials = collect();
                 if ($product->tracksInventory() && $product->has_serial) {
-                    if (!empty($item['serial_ids'])) {
+                    if (! empty($item['serial_ids'])) {
                         $restoredSerials = SerialImei::whereIn('id', $item['serial_ids'])
                             ->where('product_id', $product->id)
                             ->where('status', 'sold')
@@ -404,7 +410,7 @@ class OrderReturnController extends Controller
                         // Lấy theo invoice_item_serials nếu có
                         $linkSerialIds = \App\Models\InvoiceItemSerial::where('invoice_item_id', $invoiceItem->id)
                             ->pluck('serial_imei_id')->filter()->all();
-                        if (!empty($linkSerialIds)) {
+                        if (! empty($linkSerialIds)) {
                             $restoredSerials = SerialImei::whereIn('id', $linkSerialIds)
                                 ->where('status', 'sold')
                                 ->limit($qty)->get();
@@ -412,7 +418,7 @@ class OrderReturnController extends Controller
                     }
 
                     // Fallback cuối cùng: lấy theo invoice_id + product_id (legacy data)
-                    if ($restoredSerials->isEmpty() && !empty($validated['invoice_id'])) {
+                    if ($restoredSerials->isEmpty() && ! empty($validated['invoice_id'])) {
                         $restoredSerials = SerialImei::where('invoice_id', $validated['invoice_id'])
                             ->where('product_id', $product->id)
                             ->where('status', 'sold')
@@ -442,10 +448,10 @@ class OrderReturnController extends Controller
                     'discount' => $item['discount'] ?? 0,
                     'import_price' => $item['price'],
                     'cost_price' => $restoredCostPerUnit,
-                    'serial_ids' => !empty($serialIdsForItem) ? $serialIdsForItem : null,
+                    'serial_ids' => ! empty($serialIdsForItem) ? $serialIdsForItem : null,
                 ]);
 
-                if (!$product->tracksInventory()) {
+                if (! $product->tracksInventory()) {
                     continue;
                 }
 
@@ -483,11 +489,11 @@ class OrderReturnController extends Controller
                         'branch_id' => $return->branch_id ?? null,
                         'ref_code' => $return->code,
                         'moved_at' => $returnDate,
-                        'note' => 'Khách trả hàng phiếu ' . $return->code,
+                        'note' => 'Khách trả hàng phiếu '.$return->code,
                     ]
                 );
             }
-            if (!empty($validated['customer_id'])) {
+            if (! empty($validated['customer_id'])) {
                 $customer = \App\Models\Customer::find($validated['customer_id']);
                 if ($customer) {
                     // RR-06: ghi ledger qua service. Trả hàng luôn giảm nợ KH; debt có thể âm = ta nợ KH.
@@ -502,10 +508,10 @@ class OrderReturnController extends Controller
             }
 
             // Record cash flow with correct field names matching CashFlow $fillable
-            $customer = !empty($validated['customer_id']) ? \App\Models\Customer::find($validated['customer_id']) : null;
+            $customer = ! empty($validated['customer_id']) ? \App\Models\Customer::find($validated['customer_id']) : null;
             if ($return->paid_to_customer > 0) {
                 CashFlow::create([
-                    'code' => 'PC' . date('YmdHis') . rand(10, 99),
+                    'code' => 'PC'.date('YmdHis').rand(10, 99),
                     'type' => 'payment',
                     'amount' => $return->paid_to_customer,
                     'time' => $returnDate,
@@ -516,7 +522,7 @@ class OrderReturnController extends Controller
                     'reference_type' => 'OrderReturn',
                     'reference_code' => $return->code,
                     'payment_method' => 'cash',
-                    'description' => "Chi trả hàng khách cho phiếu {$return->code}" . ($customer ? " - {$customer->name}" : ''),
+                    'description' => "Chi trả hàng khách cho phiếu {$return->code}".($customer ? " - {$customer->name}" : ''),
                 ]);
             }
 
@@ -527,10 +533,10 @@ class OrderReturnController extends Controller
                 $returnDate = \Carbon\Carbon::parse(request()->order_date);
 
                 // Validate: ngày trả hàng không được trước ngày hóa đơn gốc
-                if (!empty($validated['invoice_id'])) {
+                if (! empty($validated['invoice_id'])) {
                     $invoice = \App\Models\Invoice::find($validated['invoice_id']);
                     if ($invoice && $returnDate->lt($invoice->created_at)) {
-                        throw new \Exception("Ngày trả hàng không thể trước ngày hóa đơn gốc (" . $invoice->created_at->format('d/m/Y H:i') . ").");
+                        throw new \Exception('Ngày trả hàng không thể trước ngày hóa đơn gốc ('.$invoice->created_at->format('d/m/Y H:i').').');
                     }
                 }
 
@@ -561,7 +567,7 @@ class OrderReturnController extends Controller
 
         return \App\Services\CsvService::export(
             ['Mã trả hàng', 'Thời gian', 'Mã hóa đơn', 'Khách hàng', 'Tổng tiền trả', 'Đã trả khách', 'Trạng thái', 'Ghi chú'],
-            $returns->map(fn($r) => [$r->code, $r->created_at?->format('d/m/Y H:i'), $r->invoice?->code, $r->customer?->name, $r->total, $r->paid_to_customer, $r->status, $r->note]),
+            $returns->map(fn ($r) => [$r->code, $r->created_at?->format('d/m/Y H:i'), $r->invoice?->code, $r->customer?->name, $r->total, $r->paid_to_customer, $r->status, $r->note]),
             'tra_hang.csv'
         );
     }
@@ -569,6 +575,7 @@ class OrderReturnController extends Controller
     public function print(\App\Models\OrderReturn $return)
     {
         $return->load(['items.product', 'invoice', 'customer']);
+
         return view('prints.return', compact('return'));
     }
 
@@ -585,7 +592,7 @@ class OrderReturnController extends Controller
             return back()->with('error', 'Phiếu trả hàng đã bị hủy trước đó.');
         }
 
-        DB::transaction(function () use ($return) {
+        $cancelReturn = function () use ($return) {
             $return->load('items.product');
 
             // 1. Rollback stock: trừ lại tồn kho đã cộng (đảo ngược applySaleReturn)
@@ -605,13 +612,13 @@ class OrderReturnController extends Controller
                     // chọn nhầm serial khác đang in_stock (chưa từng thuộc invoice).
                     if ($item->product->has_serial && $return->invoice_id) {
                         $serialIds = is_array($item->serial_ids) ? $item->serial_ids : [];
-                        if (!empty($serialIds)) {
+                        if (! empty($serialIds)) {
                             SerialImei::whereIn('id', $serialIds)
                                 ->where('product_id', $item->product_id)
                                 ->update([
-                                    'status'          => 'sold',
-                                    'sold_at'         => now(),
-                                    'invoice_id'      => $return->invoice_id,
+                                    'status' => 'sold',
+                                    'sold_at' => now(),
+                                    'invoice_id' => $return->invoice_id,
                                     'sold_cost_price' => (float) ($item->cost_price ?: 0) ?: null,
                                 ]);
                         }
@@ -630,7 +637,7 @@ class OrderReturnController extends Controller
                             'branch_id' => $return->branch_id ?? null,
                             'ref_code' => $return->code,
                             'moved_at' => now(),
-                            'note' => 'Hủy phiếu trả hàng ' . $return->code,
+                            'note' => 'Hủy phiếu trả hàng '.$return->code,
                         ]
                     );
                 }
@@ -679,7 +686,19 @@ class OrderReturnController extends Controller
 
             // 4. Mark return as cancelled
             $return->update(['status' => 'Đã hủy']);
-        });
+        };
+
+        if ($return->customer_id) {
+            app(PartnerDebtMutationCoordinator::class)->execute(
+                (int) $return->customer_id,
+                'customer_return_cancel',
+                hash('sha256', 'return_cancel|'.(int) $return->id),
+                fn () => DB::transaction($cancelReturn),
+                request()->header('Idempotency-Key'),
+            );
+        } else {
+            DB::transaction($cancelReturn);
+        }
 
         // Step 24.0: audit log return cancel
         \App\Models\ActivityLog::log(
@@ -693,6 +712,6 @@ class OrderReturnController extends Controller
             return response()->json(['success' => true, 'message' => 'Đã hủy phiếu trả hàng.']);
         }
 
-        return back()->with('success', 'Đã hủy phiếu trả hàng ' . $return->code);
+        return back()->with('success', 'Đã hủy phiếu trả hàng '.$return->code);
     }
 }

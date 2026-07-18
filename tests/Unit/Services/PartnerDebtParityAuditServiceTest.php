@@ -2,11 +2,13 @@
 
 namespace Tests\Unit\Services;
 
+use App\Models\CashFlow;
 use App\Models\Customer;
 use App\Models\CustomerDebt;
 use App\Models\Invoice;
 use App\Models\SupplierDebtTransaction;
 use App\Services\CustomerDebtDocumentTimelineService;
+use App\Services\Debt\CanonicalPartnerDebtService;
 use App\Services\Debt\PartnerDebtParityAuditService;
 use App\Services\SupplierDebtDocumentTimelineService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -153,6 +155,25 @@ class PartnerDebtParityAuditServiceTest extends TestCase
         $this->assertContains('TARGET_TYPE_ALIAS_SUSPECT', $flags);
     }
 
+    public function test_cancel_reversal_is_not_a_real_payment_collision_with_invoice_fallback(): void
+    {
+        $partner = $this->partner();
+        Invoice::query()->create([
+            'code' => 'HD-CANCEL-FALLBACK-'.uniqid(),
+            'customer_id' => $partner->id,
+            'status' => 'Đã hủy',
+            'total' => 1_000_000,
+            'customer_paid' => 1_000_000,
+            'transaction_date' => now(),
+        ]);
+
+        $audit = $this->service->audit($partner);
+
+        $this->assertFalse($audit['has_duplicate_real_and_fallback']);
+        $this->assertNotContains('DUPLICATE_REAL_AND_FALLBACK', $audit['classification_flags']);
+        $this->assertSame(0.0, (float) $audit['customer_document_raw_final']);
+    }
+
     public function test_allocation_warnings_have_explicit_classifications(): void
     {
         $flags = $this->service->classify($this->baseline([
@@ -198,8 +219,8 @@ class PartnerDebtParityAuditServiceTest extends TestCase
         );
         $this->assertContains('MERGE-CUSTOMER-AUDIT-1', $audit['customer_technical_codes']);
         $this->assertContains('MERGE-CUSTOMER-AUDIT-1', $audit['excluded_technical_codes']);
-        $this->assertTrue($audit['has_technical_ledger_exclusion']);
-        $this->assertContains('TECHNICAL_LEDGER_EXCLUDED', $audit['classification_flags']);
+        $this->assertFalse($audit['has_technical_ledger_exclusion']);
+        $this->assertNotContains('TECHNICAL_LEDGER_EXCLUDED', $audit['classification_flags']);
         $this->assertSame(2_000_000.0, $audit['technical_customer_total']);
     }
 
@@ -224,8 +245,54 @@ class PartnerDebtParityAuditServiceTest extends TestCase
         );
         $this->assertContains('OPENING-BALANCE-SUPPLIER-AUDIT-1', $audit['supplier_technical_codes']);
         $this->assertContains('OPENING-BALANCE-SUPPLIER-AUDIT-1', $audit['excluded_technical_codes']);
-        $this->assertTrue($audit['has_technical_ledger_exclusion']);
+        $this->assertFalse($audit['has_technical_ledger_exclusion']);
+        $this->assertNotContains('TECHNICAL_LEDGER_EXCLUDED', $audit['classification_flags']);
         $this->assertSame(3_000_000.0, $audit['technical_supplier_total']);
+    }
+
+    public function test_persisted_customer_evidence_upgrades_supplier_flag_to_dual_role(): void
+    {
+        $partner = $this->partner([
+            'is_customer' => false,
+            'is_supplier' => true,
+        ]);
+        Invoice::query()->create([
+            'code' => 'HD-ROLE-EVIDENCE-'.uniqid(),
+            'customer_id' => $partner->id,
+            'status' => 'Hoàn thành',
+            'total' => 1_200_000,
+            'customer_paid' => 1_200_000,
+            'transaction_date' => now(),
+        ]);
+
+        $audit = $this->service->audit($partner);
+        $canonical = app(CanonicalPartnerDebtService::class)->calculate($partner);
+
+        $this->assertSame('dual_role', $audit['role']);
+        $this->assertSame('net_balance', $canonical['display_contract']);
+    }
+
+    public function test_legacy_question_mark_customer_target_remains_canonical_evidence(): void
+    {
+        $partner = $this->partner();
+        CashFlow::query()->create([
+            'code' => 'PT-LEGACY-TARGET-'.uniqid(),
+            'type' => 'receipt',
+            'amount' => 100_000,
+            'time' => now(),
+            'target_type' => 'Kh??ch h??ng',
+            'target_id' => $partner->id,
+            'target_name' => 'Generic Partner',
+            'reference_type' => 'DebtPayment',
+            'status' => 'active',
+            'payment_method' => 'cash',
+        ]);
+
+        $audit = $this->service->audit($partner);
+
+        $this->assertSame(-100_000.0, (float) $audit['customer_document_raw_final']);
+        $this->assertFalse($audit['has_target_type_alias']);
+        $this->assertNotContains('TARGET_TYPE_ALIAS_SUSPECT', $audit['classification_flags']);
     }
 
     public function test_dual_role_supplier_parity_uses_partner_view(): void
@@ -236,7 +303,7 @@ class PartnerDebtParityAuditServiceTest extends TestCase
             'supplier_debt_amount' => 0,
         ]);
         Invoice::query()->create([
-            'code' => 'HD-DUAL-PARITY-' . uniqid(),
+            'code' => 'HD-DUAL-PARITY-'.uniqid(),
             'customer_id' => $partner->id,
             'status' => 'Hoàn thành',
             'total' => 500_000,
@@ -248,16 +315,20 @@ class PartnerDebtParityAuditServiceTest extends TestCase
         $audit = $this->service->audit($partner);
 
         $this->assertSame('supplier_partner_timeline', $ui['summary']['display_mode']);
-        $this->assertSame(
-            (float) $ui['summary']['raw_document_final_balance'],
-            (float) $audit['supplier_document_raw_final'],
-        );
+        $canonical = app(CanonicalPartnerDebtService::class)->calculate($partner);
+
+        // The supplier-side audit remains a gross payable projection. The
+        // dual-role supplier screen is explicitly supplier-oriented net.
+        $this->assertSame(-500_000.0, (float) $ui['summary']['raw_document_final_balance']);
+        $this->assertSame(0.0, (float) $audit['supplier_document_raw_final']);
+        $this->assertSame(0.0, (float) $canonical['supplier_payable']);
+        $this->assertSame(-500_000.0, (float) $canonical['supplier_oriented_net']);
     }
 
     private function partner(array $overrides = []): Customer
     {
         return Customer::query()->create(array_merge([
-            'code' => 'PARITY-SERVICE-' . uniqid(),
+            'code' => 'PARITY-SERVICE-'.uniqid(),
             'name' => 'Generic Parity Service Partner',
             'phone' => '0900000000',
             'debt_amount' => 0,

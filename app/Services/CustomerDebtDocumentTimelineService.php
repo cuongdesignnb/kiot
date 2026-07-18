@@ -2,16 +2,18 @@
 
 namespace App\Services;
 
-use App\Models\Customer;
-use App\Models\Invoice;
 use App\Models\CashFlow;
+use App\Models\Customer;
+use App\Models\CustomerDebt;
+use App\Models\DebtOffset;
+use App\Models\Invoice;
 use App\Models\OrderReturn;
 use App\Models\Purchase;
 use App\Models\PurchaseReturn;
-use App\Models\CustomerDebt;
-use App\Models\DebtOffset;
 use App\Models\SupplierDebtTransaction;
+use App\Services\Debt\PartnerDebtRoleResolver;
 use App\Support\Debt\PartnerDebtDisplayBalance;
+use App\Support\Status\BusinessStatus;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Schema;
@@ -21,7 +23,8 @@ class CustomerDebtDocumentTimelineService
     public function build(Customer $customer, array $options = []): array
     {
         $hasSupplierColumn = Schema::hasColumn('customers', 'supplier_debt_amount');
-        $isDualRole = (bool) ($customer->is_customer && ($hasSupplierColumn ? $customer->is_supplier : false));
+        $isDualRole = $hasSupplierColumn && PartnerDebtDisplayBalance::isDualRole($customer);
+        $domainOnly = (bool) ($options['domain_only'] ?? false);
 
         $entries = collect();
         $purchases = collect();
@@ -31,17 +34,15 @@ class CustomerDebtDocumentTimelineService
 
         // 1. Invoices
         $invoices = Invoice::where('customer_id', $customer->id)
-            ->where(function($q) {
-                $q->whereNull('status')->orWhere('status', '!=', 'Đã hủy');
-            })
-            ->get();
+            ->get()
+            ->values();
 
         $invoiceCodes = $invoices->pluck('code')->filter()->toArray();
 
         foreach ($invoices as $invoice) {
             $businessTime = $invoice->transaction_date ?: $invoice->created_at;
             $entries->push($this->createEntry([
-                'id' => 'invoice-' . $invoice->id,
+                'id' => 'invoice-'.$invoice->id,
                 'code' => $invoice->code,
                 'display_type' => 'Bán hàng',
                 'event_kind' => 'customer_sale',
@@ -80,48 +81,148 @@ class CustomerDebtDocumentTimelineService
                     'must_display_invoice_total' => true,
                 ],
             ]));
+
+            if (BusinessStatus::isCancelled($invoice->status)) {
+                $cancelledAt = $invoice->cancelled_at ?: $invoice->updated_at ?: $businessTime;
+                $entries->push($this->createEntry([
+                    'id' => 'invoice-cancel-'.$invoice->id,
+                    'code' => 'HUY-'.$invoice->code,
+                    'display_type' => 'Hủy hóa đơn',
+                    'type_raw' => 'invoice_cancel_reversal',
+                    'event_kind' => 'invoice_cancel_reversal',
+                    'domain' => 'customer',
+                    'document_amount' => (float) $invoice->total,
+                    'amount' => -(float) $invoice->total,
+                    'display_effect' => -(float) $invoice->total,
+                    'customer_display_effect' => -(float) $invoice->total,
+                    'time' => $cancelledAt,
+                    'display_time' => $cancelledAt,
+                    'created_at' => $cancelledAt,
+                    'reference_type' => 'Invoice',
+                    'reference_id' => $invoice->id,
+                    'reference_code' => $invoice->code,
+                    'reversal_of' => 'customer|invoices|'.$invoice->id.'|customer_sale|receivable',
+                    'is_real_voucher' => true,
+                    'is_virtual_fallback' => false,
+                    'source' => 'document_first',
+                    'document_group_key' => $invoice->code,
+                    'document_group_type' => 'invoice',
+                    'document_group_parent_code' => $invoice->code,
+                    'document_group_time' => $businessTime,
+                    'document_group_sequence' => 90,
+                    'sort_group_key' => $invoice->code,
+                    'sort_group_time' => $businessTime,
+                    'sort_group_sequence' => 90,
+                ]));
+
+                if ((float) $invoice->customer_paid > 0.01) {
+                    $entries->push($this->createEntry([
+                        'id' => 'invoice-payment-cancel-'.$invoice->id,
+                        'code' => 'HUY-TT-'.$invoice->code,
+                        'display_type' => 'Hủy thanh toán hóa đơn',
+                        'type_raw' => 'invoice_payment_cancel_reversal',
+                        'event_kind' => 'invoice_payment_cancel_reversal',
+                        'domain' => 'customer',
+                        'document_amount' => (float) $invoice->customer_paid,
+                        'amount' => (float) $invoice->customer_paid,
+                        'display_effect' => +(float) $invoice->customer_paid,
+                        'customer_display_effect' => +(float) $invoice->customer_paid,
+                        'time' => $cancelledAt,
+                        'display_time' => $cancelledAt,
+                        'created_at' => $cancelledAt,
+                        'reference_type' => 'Invoice',
+                        'reference_id' => $invoice->id,
+                        'reference_code' => $invoice->code,
+                        'reversal_of' => 'customer|invoices|'.$invoice->id.'|invoice_payment|receivable',
+                        'is_real_voucher' => true,
+                        'is_virtual_fallback' => false,
+                        'source' => 'document_first',
+                        'document_group_key' => $invoice->code,
+                        'document_group_type' => 'invoice',
+                        'document_group_parent_code' => $invoice->code,
+                        'document_group_time' => $businessTime,
+                        'document_group_sequence' => 91,
+                        'sort_group_key' => $invoice->code,
+                        'sort_group_time' => $businessTime,
+                        'sort_group_sequence' => 91,
+                    ]));
+                }
+            }
         }
 
         // 2. Receipt CashFlows (both linked and standalone)
         $receipts = CashFlow::active()
             ->where('target_id', $customer->id)
-            ->whereIn('target_type', $this->customerCashFlowTargetTypes())
             ->where('type', 'receipt')
-            ->get();
+            ->get()
+            ->filter(fn (CashFlow $cashFlow) => $this->isCustomerCashFlow($cashFlow))
+            ->reject(fn (CashFlow $cashFlow) => $this->isDebtOffsetEvidenceCashFlow($cashFlow))
+            ->values();
 
-        // Group receipts by invoice code if linked
+        // Allocate real receipts first. Legacy DebtPayment vouchers may carry
+        // multiple invoice allocations in reference_code (HD...:amount; ...).
         $receiptsByInvoice = [];
         $standaloneReceipts = [];
 
         foreach ($receipts as $cf) {
-            $refCode = $cf->reference_code;
+            $refCode = (string) $cf->reference_code;
             if ($cf->reference_type === 'Invoice' && $refCode && in_array($refCode, $invoiceCodes, true)) {
-                $receiptsByInvoice[$refCode][] = $cf;
-            } else {
-                $standaloneReceipts[] = $cf;
+                $receiptsByInvoice[$refCode][] = [
+                    'cash_flow' => $cf,
+                    'amount' => (float) $cf->amount,
+                    'strategy' => 'direct_invoice_reference',
+                ];
+
+                continue;
+            }
+
+            $allocated = 0.0;
+            foreach ($this->legacyInvoiceAllocations($refCode) as $invoiceCode => $amount) {
+                if (! in_array($invoiceCode, $invoiceCodes, true) || $amount <= 0.01) {
+                    continue;
+                }
+
+                $receiptsByInvoice[$invoiceCode][] = [
+                    'cash_flow' => $cf,
+                    'amount' => $amount,
+                    'strategy' => 'legacy_reference_allocation',
+                ];
+                $allocated += $amount;
+            }
+
+            $unallocated = max(0.0, (float) $cf->amount - $allocated);
+            if ($unallocated > 0.01) {
+                $standaloneReceipts[] = [
+                    'cash_flow' => $cf,
+                    'amount' => $unallocated,
+                    'allocated_amount' => $allocated,
+                ];
             }
         }
 
         // Emit linked receipts
-        foreach ($receiptsByInvoice as $refCode => $cfs) {
+        foreach ($receiptsByInvoice as $refCode => $allocations) {
             $invoice = $invoices->firstWhere('code', $refCode);
             $invoicePaid = $invoice ? (float) $invoice->customer_paid : 0.0;
-            $receiptTotal = (float) collect($cfs)->sum('amount');
+            $receiptTotal = (float) collect($allocations)->sum('amount');
             $mismatch = abs($receiptTotal - $invoicePaid) > 0.01;
- 
-            foreach ($cfs as $index => $cf) {
+
+            foreach ($allocations as $index => $allocation) {
+                /** @var CashFlow $cf */
+                $cf = $allocation['cash_flow'];
+                $allocatedAmount = (float) $allocation['amount'];
                 $businessTime = $cf->time ?: $cf->created_at;
                 $invoiceTime = $invoice ? ($invoice->transaction_date ?: $invoice->created_at) : ($cf->time ?: $cf->created_at);
                 $entries->push($this->createEntry([
-                    'id' => 'cash_flow-' . $cf->id,
+                    'id' => 'cash-flow-allocation-'.$cf->id.'-'.$refCode,
                     'code' => $cf->code,
                     'display_type' => 'Thanh toán hóa đơn',
                     'event_kind' => 'invoice_payment',
                     'domain' => 'customer',
-                    'document_amount' => (float) $cf->amount,
-                    'amount' => (float) $cf->amount,
-                    'display_effect' => -(float) $cf->amount,
-                    'customer_display_effect' => -(float) $cf->amount,
+                    'document_amount' => $allocatedAmount,
+                    'amount' => $allocatedAmount,
+                    'display_effect' => -$allocatedAmount,
+                    'customer_display_effect' => -$allocatedAmount,
                     'time' => $businessTime,
                     'display_time' => $businessTime,
                     'created_at' => $cf->created_at,
@@ -131,7 +232,7 @@ class CustomerDebtDocumentTimelineService
                     'parent_document_code' => $refCode,
                     'payment_for_code' => $refCode,
                     'linked_document_code' => $refCode,
-                    'linked_document_label' => 'Thanh toán cho ' . $refCode,
+                    'linked_document_label' => 'Thanh toán cho '.$refCode,
                     'detail_available' => true,
                     'detail_modal_type' => 'cash_flow',
                     'detail_reference_id' => $cf->id,
@@ -140,6 +241,9 @@ class CustomerDebtDocumentTimelineService
                     'badge_title' => $mismatch ? 'Tổng phiếu thu thật không khớp số đã thanh toán trên hóa đơn.' : null,
                     'is_real_voucher' => true,
                     'is_virtual_fallback' => false,
+                    'source_table' => 'cash_flows',
+                    'source_id' => $cf->id.':'.$refCode,
+                    'allocation_strategy' => $allocation['strategy'],
                     'receipt_allocation_mismatch' => $mismatch,
                     'needs_manual_review' => $mismatch,
                     'source' => 'document_first',
@@ -155,68 +259,73 @@ class CustomerDebtDocumentTimelineService
             }
         }
 
-        // 3. Fallback Payment from invoice.customer_paid
+        // 3. Fallback only for the part of invoice.customer_paid that has no
+        // persisted cash-flow allocation. Never count real and fallback twice.
         foreach ($invoices as $invoice) {
-            if ((float) $invoice->customer_paid > 0) {
-                $hasRealReceipt = isset($receiptsByInvoice[$invoice->code]) && count($receiptsByInvoice[$invoice->code]) > 0;
-                if (!$hasRealReceipt) {
-                    $businessTime = $invoice->transaction_date ?: $invoice->created_at;
-                    $entries->push($this->createEntry([
-                        'id' => 'invpay-fallback-' . $invoice->id,
-                        'code' => 'TTHD' . preg_replace('/^HD/', '', $invoice->code),
-                        'display_type' => 'Thanh toán hóa đơn',
-                        'event_kind' => 'invoice_payment', // wait, must be invoice_payment for display sequencing
-                        'domain' => 'customer',
-                        'document_amount' => (float) $invoice->customer_paid,
-                        'amount' => (float) $invoice->customer_paid,
-                        'display_effect' => -(float) $invoice->customer_paid,
-                        'customer_display_effect' => -(float) $invoice->customer_paid,
-                        'time' => $businessTime,
-                        'display_time' => $businessTime,
-                        'created_at' => $invoice->created_at,
-                        'reference_type' => 'Invoice',
-                        'reference_id' => $invoice->id,
-                        'reference_code' => $invoice->code,
-                        'parent_document_code' => $invoice->code,
-                        'payment_for_code' => $invoice->code,
-                        'linked_document_code' => $invoice->code,
-                        'linked_document_label' => 'Thanh toán cho ' . $invoice->code,
-                        'is_virtual_fallback' => true,
-                        'is_virtual_payment' => true,
-                        'is_real_voucher' => false,
-                        'detail_available' => false,
-                        'detail_modal_type' => 'none',
-                        'badge_label' => 'Tạm tính',
-                        'badge_title' => 'Tạm tính từ hóa đơn — chưa tìm thấy phiếu thu thật.',
-                        'source' => 'document_first',
-                        'document_group_key' => $invoice->code,
-                        'document_group_type' => 'invoice',
-                        'document_group_parent_code' => $invoice->code,
-                        'document_group_time' => $businessTime,
-                        'document_group_sequence' => 20,
-                        'sort_group_key' => $invoice->code,
-                        'sort_group_time' => $businessTime,
-                        'sort_group_sequence' => 20,
-                    ]));
-                }
+            $realAllocated = (float) collect($receiptsByInvoice[$invoice->code] ?? [])->sum('amount');
+            $fallbackAmount = max(0.0, (float) $invoice->customer_paid - $realAllocated);
+            if ($fallbackAmount > 0.01) {
+                $businessTime = $invoice->transaction_date ?: $invoice->created_at;
+                $entries->push($this->createEntry([
+                    'id' => 'invpay-fallback-'.$invoice->id,
+                    'code' => 'TTHD'.preg_replace('/^HD/', '', $invoice->code),
+                    'display_type' => 'Thanh toán hóa đơn',
+                    'event_kind' => 'invoice_payment', // wait, must be invoice_payment for display sequencing
+                    'domain' => 'customer',
+                    'document_amount' => $fallbackAmount,
+                    'amount' => $fallbackAmount,
+                    'display_effect' => -$fallbackAmount,
+                    'customer_display_effect' => -$fallbackAmount,
+                    'time' => $businessTime,
+                    'display_time' => $businessTime,
+                    'created_at' => $invoice->created_at,
+                    'reference_type' => 'Invoice',
+                    'reference_id' => $invoice->id,
+                    'reference_code' => $invoice->code,
+                    'parent_document_code' => $invoice->code,
+                    'payment_for_code' => $invoice->code,
+                    'linked_document_code' => $invoice->code,
+                    'linked_document_label' => 'Thanh toán cho '.$invoice->code,
+                    'is_virtual_fallback' => true,
+                    'is_virtual_payment' => true,
+                    'is_real_voucher' => false,
+                    'detail_available' => false,
+                    'detail_modal_type' => 'none',
+                    'badge_label' => 'Tạm tính',
+                    'badge_title' => 'Tạm tính từ hóa đơn — chưa tìm thấy phiếu thu thật.',
+                    'source' => 'document_first',
+                    'document_group_key' => $invoice->code,
+                    'document_group_type' => 'invoice',
+                    'document_group_parent_code' => $invoice->code,
+                    'document_group_time' => $businessTime,
+                    'document_group_sequence' => 20,
+                    'sort_group_key' => $invoice->code,
+                    'sort_group_time' => $businessTime,
+                    'sort_group_sequence' => 20,
+                    'fallback_for_unallocated_amount' => true,
+                    'real_allocated_amount' => $realAllocated,
+                ]));
             }
         }
 
         // 4. Standalone Receipts (including DebtAdjustment if it's type receipt)
-        foreach ($standaloneReceipts as $cf) {
+        foreach ($standaloneReceipts as $receipt) {
+            /** @var CashFlow $cf */
+            $cf = $receipt['cash_flow'];
+            $canonicalAmount = (float) $receipt['amount'];
             $businessTime = $cf->time ?: $cf->created_at;
             $isAdjustment = $cf->reference_type === 'DebtAdjustment';
-            
+
             $entries->push($this->createEntry([
-                'id' => 'cash_flow-' . $cf->id,
+                'id' => 'cash_flow-'.$cf->id,
                 'code' => $cf->code,
                 'display_type' => $isAdjustment ? 'Điều chỉnh công nợ' : 'Khách thanh toán',
                 'event_kind' => $isAdjustment ? 'debt_adjustment' : 'customer_payment',
                 'domain' => 'customer',
-                'document_amount' => (float) $cf->amount,
-                'amount' => (float) $cf->amount,
-                'display_effect' => -(float) $cf->amount,
-                'customer_display_effect' => -(float) $cf->amount,
+                'document_amount' => $canonicalAmount,
+                'amount' => $canonicalAmount,
+                'display_effect' => -$canonicalAmount,
+                'customer_display_effect' => -$canonicalAmount,
                 'time' => $businessTime,
                 'display_time' => $businessTime,
                 'created_at' => $cf->created_at,
@@ -233,6 +342,7 @@ class CustomerDebtDocumentTimelineService
                 'is_virtual_fallback' => false,
                 'is_virtual_display_adjustment' => $isAdjustment,
                 'is_debt_adjustment_cashflow' => $isAdjustment,
+                'allocated_amount' => (float) $receipt['allocated_amount'],
                 'source' => 'document_first',
             ]));
         }
@@ -240,16 +350,18 @@ class CustomerDebtDocumentTimelineService
         // 5. Payment CashFlows targeting Khách hàng (Refunds or DebtAdjustment if type payment)
         $payments = CashFlow::active()
             ->where('target_id', $customer->id)
-            ->whereIn('target_type', $this->customerCashFlowTargetTypes())
             ->where('type', 'payment')
-            ->get();
+            ->get()
+            ->filter(fn (CashFlow $cashFlow) => $this->isCustomerCashFlow($cashFlow))
+            ->reject(fn (CashFlow $cashFlow) => $this->isDebtOffsetEvidenceCashFlow($cashFlow))
+            ->values();
 
         foreach ($payments as $cf) {
             $businessTime = $cf->time ?: $cf->created_at;
             $isAdjustment = $cf->reference_type === 'DebtAdjustment';
-            
+
             $entries->push($this->createEntry([
-                'id' => 'cash_flow-' . $cf->id,
+                'id' => 'cash_flow-'.$cf->id,
                 'code' => $cf->code,
                 'display_type' => $isAdjustment ? 'Điều chỉnh công nợ' : 'Hoàn tiền khách',
                 'event_kind' => $isAdjustment ? 'debt_adjustment' : 'refund',
@@ -280,10 +392,9 @@ class CustomerDebtDocumentTimelineService
 
         // 6. Sales Returns (OrderReturns)
         $returns = OrderReturn::where('customer_id', $customer->id)
-            ->where(function($q) {
-                $q->whereNull('status')->orWhere('status', '!=', 'Đã hủy');
-            })
-            ->get();
+            ->get()
+            ->reject(fn (OrderReturn $return) => BusinessStatus::isCancelled($return->status))
+            ->values();
 
         foreach ($returns as $return) {
             $businessTime = ($return->return_date ?? null) ?: $return->created_at;
@@ -292,7 +403,7 @@ class CustomerDebtDocumentTimelineService
                 : null;
 
             $entries->push($this->createEntry([
-                'id' => 'return-' . $return->id,
+                'id' => 'return-'.$return->id,
                 'code' => $return->code,
                 'display_type' => 'Trả hàng bán',
                 'event_kind' => 'sales_return',
@@ -325,10 +436,10 @@ class CustomerDebtDocumentTimelineService
             // Synthesise virtual refund only when no real refund cashflow is
             // present. If a PC... voucher already exists, the cashflow row
             // above is the source of truth; adding PCTH... would double count.
-            if ((float) $return->paid_to_customer > 0 && !$realRefund) {
+            if ((float) $return->paid_to_customer > 0 && ! $realRefund) {
                 $entries->push($this->createEntry([
-                    'id' => 'refund-fallback-' . $return->id,
-                    'code' => 'PCTH' . preg_replace('/^TH/', '', $return->code),
+                    'id' => 'refund-fallback-'.$return->id,
+                    'code' => 'PCTH'.preg_replace('/^TH/', '', $return->code),
                     'display_type' => 'Hoàn tiền khách',
                     'event_kind' => 'refund',
                     'domain' => 'customer',
@@ -355,34 +466,61 @@ class CustomerDebtDocumentTimelineService
 
         $adjustmentDebts = CustomerDebt::where('customer_id', $customer->id)->get();
         $existingCodes = $entries->pluck('code')->filter()->toArray();
+        $paymentLedgerCodes = $adjustmentDebts
+            ->filter(fn (CustomerDebt $debt): bool => (string) $debt->type === 'payment')
+            ->pluck('ref_code')
+            ->map(fn ($code): string => trim((string) $code))
+            ->filter()
+            ->unique()
+            ->values();
+        $invalidatedCashFlowMirrorCodes = $paymentLedgerCodes->isEmpty()
+            ? collect()
+            : CashFlow::withTrashed()
+                ->where('target_id', $customer->id)
+                ->where('type', 'receipt')
+                ->whereIn('code', $paymentLedgerCodes->all())
+                ->get()
+                ->filter(fn (CashFlow $cashFlow): bool => $this->isCustomerCashFlow($cashFlow))
+                ->filter(fn (CashFlow $cashFlow): bool => $cashFlow->trashed()
+                    || BusinessStatus::isCancelled($cashFlow->status))
+                ->pluck('code')
+                ->map(fn ($code): string => trim((string) $code))
+                ->filter()
+                ->flip();
 
         foreach ($adjustmentDebts as $debt) {
             $refCode = $debt->ref_code;
-            
+
             // Skip if this code has already been fetched via document-first
             if ($refCode && in_array($refCode, $existingCodes, true)) {
                 continue;
             }
 
-            if ($this->isTechnicalLedgerCode($refCode) && !$includeTechnical) {
+            $invalidatedCashFlowMirror = (string) $debt->type === 'payment'
+                && $invalidatedCashFlowMirrorCodes->has(trim((string) $refCode));
+            $isTech = $this->isTechnicalLedgerCode($refCode) || $invalidatedCashFlowMirror;
+            if ($isTech) {
                 $excludedLedgerEntries[] = [
                     'code' => $refCode,
                     'amount' => (float) $debt->amount,
-                    'reason' => 'technical_ledger_excluded_from_document_timeline',
+                    'reason' => $invalidatedCashFlowMirror
+                        ? 'cancelled_cash_flow_ledger_mirror_reference_only'
+                        : 'technical_ledger_excluded_from_document_timeline',
                     'source' => 'customer_debts',
                 ];
-                continue;
-            }
 
-            $isTech = false;
+                if (! $includeTechnical) {
+                    continue;
+                }
+            }
 
             $businessTime = $debt->recorded_at ?: $debt->created_at;
             [$displayType, $eventKind, $badgeLabel] = $this->classifyCustomerDebt($debt);
             $typeRaw = $eventKind === 'invoice_cancel_reversal' ? 'invoice_cancel_reversal' : $debt->type;
 
             $entries->push($this->createEntry([
-                'id' => 'customer_debt-' . $debt->id,
-                'code' => $refCode ?: ('DC' . $debt->id),
+                'id' => 'customer_debt-'.$debt->id,
+                'code' => $refCode ?: ('DC'.$debt->id),
                 'display_type' => $displayType,
                 'type_raw' => $typeRaw,
                 'event_kind' => $eventKind,
@@ -391,9 +529,14 @@ class CustomerDebtDocumentTimelineService
                 'amount' => (float) $debt->amount,
                 'display_effect' => (float) $debt->amount,
                 'customer_display_effect' => $isTech ? 0.0 : (float) $debt->amount,
-                'affects_document_balance' => !$isTech,
+                'affects_document_balance' => ! $isTech,
                 'excluded_from_document_balance' => $isTech,
-                'excluded_reason' => $isTech ? 'technical_ledger_merge_or_opening' : null,
+                'excluded_reason' => $isTech
+                    ? ($invalidatedCashFlowMirror
+                        ? 'cancelled_cash_flow_ledger_mirror_reference_only'
+                        : 'technical_ledger_merge_or_opening')
+                    : null,
+                'affects_canonical_balance' => ! $isTech,
                 'time' => $businessTime,
                 'display_time' => $businessTime,
                 'created_at' => $debt->created_at,
@@ -411,15 +554,12 @@ class CustomerDebtDocumentTimelineService
         }
 
         // 8. DebtOffsets for Customer (active non-dual-role)
-        $offsets = $isDualRole ? collect() : DebtOffset::where('customer_id', $customer->id)
-            ->where(function ($query): void {
-                $query->whereNull('workflow_status')
-                    ->orWhereIn('workflow_status', ['applied', 'reversed']);
-            })
-            ->get();
+        $offsets = ($isDualRole && ! $domainOnly)
+            ? collect()
+            : $this->debtOffsetsForPartner((int) $customer->id);
         foreach ($offsets as $offset) {
             $entries->push($this->createEntry([
-                'id' => 'offset-' . $offset->id,
+                'id' => 'offset-'.$offset->id,
                 'code' => $offset->code,
                 'display_type' => 'Điều chỉnh',
                 'event_kind' => 'debt_offset',
@@ -446,9 +586,9 @@ class CustomerDebtDocumentTimelineService
             ]));
 
             if ($offset->status === 'cancelled' && ! $offset->reversalVoucher()->exists()) {
-                $cancelCode = 'HCB' . str_pad($offset->id, 6, '0', STR_PAD_LEFT);
+                $cancelCode = 'HCB'.str_pad($offset->id, 6, '0', STR_PAD_LEFT);
                 $entries->push($this->createEntry([
-                    'id' => 'offset-cancel-' . $offset->id,
+                    'id' => 'offset-cancel-'.$offset->id,
                     'code' => $cancelCode,
                     'display_type' => 'Hủy cấn bằng',
                     'event_kind' => 'debt_offset_cancel',
@@ -477,7 +617,7 @@ class CustomerDebtDocumentTimelineService
         }
 
         // 9. Dual-role Supplier Mirror
-        if ($isDualRole) {
+        if ($isDualRole && ! $domainOnly) {
             // Purchases
             $purchases = Purchase::where('supplier_id', $customer->id)
                 ->where('status', '!=', 'cancelled')
@@ -487,7 +627,7 @@ class CustomerDebtDocumentTimelineService
             foreach ($purchases as $p) {
                 $businessTime = $p->purchase_date ?: $p->created_at;
                 $entries->push($this->createEntry([
-                    'id' => 'sup-purchase-' . $p->id,
+                    'id' => 'sup-purchase-'.$p->id,
                     'code' => $p->code,
                     'display_type' => 'Nhập hàng',
                     'event_kind' => 'purchase',
@@ -520,16 +660,16 @@ class CustomerDebtDocumentTimelineService
                 ->where(function ($q) use ($customer, $purchaseCodes) {
                     $q->where(function ($q2) use ($customer) {
                         $q2->where('target_id', $customer->id)
-                           ->whereIn('target_type', ['Nha cung cap', 'Nhà cung cấp']);
+                            ->whereIn('target_type', ['Nha cung cap', 'Nhà cung cấp', 'NhÃ  cung cáº¥p']);
                     })
-                    ->orWhere(function ($q2) use ($customer) {
-                        $q2->where('reference_type', 'SupplierPayment')
-                           ->where('target_id', $customer->id);
-                    })
-                    ->orWhere(function ($q2) use ($purchaseCodes) {
-                        $q2->where('reference_type', 'Purchase')
-                           ->whereIn('reference_code', $purchaseCodes);
-                    });
+                        ->orWhere(function ($q2) use ($customer) {
+                            $q2->where('reference_type', 'SupplierPayment')
+                                ->where('target_id', $customer->id);
+                        })
+                        ->orWhere(function ($q2) use ($purchaseCodes) {
+                            $q2->where('reference_type', 'Purchase')
+                                ->whereIn('reference_code', $purchaseCodes);
+                        });
                 })
                 ->get();
 
@@ -539,10 +679,10 @@ class CustomerDebtDocumentTimelineService
                 if ($cf->reference_type === 'Purchase' && $refCode && in_array($refCode, $purchaseCodes, true)) {
                     $paymentsByPurchase[$refCode][] = $cf;
                 }
-                
+
                 $businessTime = $cf->time ?: $cf->created_at;
                 $entries->push($this->createEntry([
-                    'id' => 'sup-payment-' . $cf->id,
+                    'id' => 'sup-payment-'.$cf->id,
                     'code' => $cf->code,
                     'display_type' => 'Thanh toán NCC',
                     'event_kind' => 'supplier_payment',
@@ -579,16 +719,16 @@ class CustomerDebtDocumentTimelineService
                             $hasRealPayment = true;
                             break;
                         }
-                        if ($cf->code === 'PCPN' . preg_replace('/^PN/', '', $p->code) || $cf->code === 'TTNH' . preg_replace('/^PN/', '', $p->code)) {
+                        if ($cf->code === 'PCPN'.preg_replace('/^PN/', '', $p->code) || $cf->code === 'TTNH'.preg_replace('/^PN/', '', $p->code)) {
                             $hasRealPayment = true;
                             break;
                         }
                     }
-                    if (!$hasRealPayment) {
+                    if (! $hasRealPayment) {
                         $businessTime = $p->purchase_date ?: $p->created_at;
                         $entries->push($this->createEntry([
-                            'id' => 'sup-purpay-fallback-' . $p->id,
-                            'code' => 'TTNH' . preg_replace('/^PN/', '', $p->code),
+                            'id' => 'sup-purpay-fallback-'.$p->id,
+                            'code' => 'TTNH'.preg_replace('/^PN/', '', $p->code),
                             'display_type' => 'Thanh toán NCC',
                             'event_kind' => 'supplier_payment_fallback',
                             'domain' => 'supplier',
@@ -622,7 +762,7 @@ class CustomerDebtDocumentTimelineService
             foreach ($purchaseReturns as $pr) {
                 $businessTime = $pr->return_date ?: $pr->created_at;
                 $entries->push($this->createEntry([
-                    'id' => 'sup-return-' . $pr->id,
+                    'id' => 'sup-return-'.$pr->id,
                     'code' => $pr->code,
                     'display_type' => 'Trả hàng nhập',
                     'event_kind' => 'purchase_return',
@@ -666,10 +806,10 @@ class CustomerDebtDocumentTimelineService
                 ];
 
                 $entries->push($this->createEntry([
-                    'id' => 'sup-stx-' . $stx->id,
+                    'id' => 'sup-stx-'.$stx->id,
                     'code' => $stx->code,
                     'display_type' => $typeLabels[$stx->type] ?? $stx->type,
-                    'event_kind' => 'supplier_mirror_' . $stx->type,
+                    'event_kind' => 'supplier_mirror_'.$stx->type,
                     'domain' => 'supplier',
                     'document_amount' => abs((float) $stx->amount),
                     'amount' => (float) $stx->amount,
@@ -692,18 +832,13 @@ class CustomerDebtDocumentTimelineService
             }
 
             // Supplier DebtOffsets
-            $supplierOffsets = DebtOffset::where('customer_id', $customer->id)
-                ->where(function ($query): void {
-                    $query->whereNull('workflow_status')
-                        ->orWhereIn('workflow_status', ['applied', 'reversed']);
-                })
-                ->get();
-            $workflowOffsetsForConsolidation = $supplierOffsets
-                ->whereNotNull('workflow_status')
-                ->values();
+            $supplierOffsets = $this->debtOffsetsForPartner((int) $customer->id);
+            $workflowOffsetsForConsolidation = Schema::hasColumn('debt_offsets', 'workflow_status')
+                ? $supplierOffsets->whereNotNull('workflow_status')->values()
+                : collect();
             foreach ($supplierOffsets as $offset) {
                 $entries->push($this->createEntry([
-                    'id' => 'sup-offset-' . $offset->id,
+                    'id' => 'sup-offset-'.$offset->id,
                     'code' => $offset->code,
                     'display_type' => 'Điều chỉnh',
                     'event_kind' => 'debt_offset',
@@ -730,9 +865,9 @@ class CustomerDebtDocumentTimelineService
                 ]));
 
                 if ($offset->status === 'cancelled' && ! $offset->reversalVoucher()->exists()) {
-                    $cancelCode = 'HCB' . str_pad($offset->id, 6, '0', STR_PAD_LEFT);
+                    $cancelCode = 'HCB'.str_pad($offset->id, 6, '0', STR_PAD_LEFT);
                     $entries->push($this->createEntry([
-                        'id' => 'sup-offset-cancel-' . $offset->id,
+                        'id' => 'sup-offset-cancel-'.$offset->id,
                         'code' => $cancelCode,
                         'display_type' => 'Hủy cấn bằng',
                         'event_kind' => 'debt_offset_cancel',
@@ -763,26 +898,13 @@ class CustomerDebtDocumentTimelineService
 
         $entries = $this->consolidateWorkflowOffsetEvidence($entries, $workflowOffsetsForConsolidation);
 
-        // Dedup by non-null code: if we have a document-first entry and a ledger entry with the same code, prefer the document-first one.
+        // Canonical identity is source based. Codes are human labels and may
+        // legitimately collide across models, so they must never drive dedup.
         $deduped = [];
         foreach ($entries as $entry) {
-            $code = $entry['code'];
-            if ($code) {
-                if (!isset($deduped[$code])) {
-                    $deduped[$code] = $entry;
-                } else {
-                    $existing = $deduped[$code];
-                    if (($existing['source'] ?? '') === 'ledger' && ($entry['source'] ?? '') === 'document_first') {
-                        $deduped[$code] = $entry;
-                    } elseif (($existing['source'] ?? '') === 'document_first' && ($entry['source'] ?? '') === 'ledger') {
-                        // Keep the existing document-first entry
-                    } else {
-                        // If both are ledger or both are document-first, keep both by using a unique key
-                        $deduped[$code . '-' . $entry['id']] = $entry;
-                    }
-                }
-            } else {
-                $deduped[] = $entry;
+            $identity = (string) ($entry['event_identity'] ?? $entry['id']);
+            if (! isset($deduped[$identity])) {
+                $deduped[$identity] = $entry;
             }
         }
 
@@ -827,7 +949,7 @@ class CustomerDebtDocumentTimelineService
             $entry['display_order'] = $displayOrder;
 
             // Keep setting group metadata for backward compatibility (but not sorting)
-            if (!isset($entry['sort_group_time']) || !isset($entry['sort_group_key'])) {
+            if (! isset($entry['sort_group_time']) || ! isset($entry['sort_group_key'])) {
                 $sortGroupTime = $ownTimeCarbon;
                 $sortGroupKey = $entry['code'] ?: $entry['id'];
                 $sortGroupSequence = (int) ($entry['display_sequence'] ?? 50);
@@ -907,6 +1029,7 @@ class CustomerDebtDocumentTimelineService
             if (($entry['affects_document_balance'] ?? true) === false) {
                 $entry['customer_display_running_balance'] = $running;
                 $entry['running_balance'] = $running;
+
                 return $entry;
             }
 
@@ -951,77 +1074,29 @@ class CustomerDebtDocumentTimelineService
             $time = $entry['time'] ?? null;
             $displayTime = $entry['display_time'] ?? null;
             $createdAt = $entry['created_at'] ?? null;
-            
+
             $entry['time'] = $time instanceof Carbon ? $time->toDateTimeString() : (string) $time;
             $entry['display_time'] = $displayTime instanceof Carbon ? $displayTime->toDateTimeString() : (string) $displayTime;
             $entry['created_at'] = $createdAt instanceof Carbon ? $createdAt->toDateTimeString() : (string) $createdAt;
-            
+
             return $entry;
         });
 
-        // Stored balances & reconciliation
-        $storedCustomerDebt = PartnerDebtDisplayBalance::customerReceivable($customer);
-        $storedSupplierDebt = $hasSupplierColumn ? PartnerDebtDisplayBalance::supplierPayable($customer) : 0.0;
-        $storedNet = $hasSupplierColumn
-            ? PartnerDebtDisplayBalance::customerScreen($customer)
+        // Stored projection is evidence to compare, never an input used to
+        // translate running balances or manufacture an opening event.
+        $storedCustomerDebt = (float) ($customer->debt_amount ?? 0);
+        $storedSupplierDebt = $hasSupplierColumn ? (float) ($customer->supplier_debt_amount ?? 0) : 0.0;
+        $storedNet = ($isDualRole && ! $domainOnly)
+            ? $storedCustomerDebt - $storedSupplierDebt
             : $storedCustomerDebt;
 
         $rawDocumentFinalBalance = $documentFinalBalance;
-        $displayAdjustment = $storedNet - $rawDocumentFinalBalance;
-        $canResolveByDisplayAlignment = $isDualRole || abs($storedNet) >= abs($rawDocumentFinalBalance);
-        $hasDisplayAlignment = $displayEntries->isNotEmpty()
-            && abs($displayAdjustment) > 1.0
-            && $canResolveByDisplayAlignment;
-        $virtualOpening = null;
-
-        if ($hasDisplayAlignment) {
-            $displayEntries = $displayEntries
-                ->map(fn (array $entry) => $this->shiftCustomerDisplayRunningAliases($entry, $displayAdjustment))
-                ->values();
-        }
-
-        if ($displayEntries->isEmpty() && abs($storedNet) > 1.0) {
-            $openingTime = $customer->created_at instanceof Carbon ? $customer->created_at : Carbon::now()->startOfDay();
-            $virtualOpening = $this->createEntry([
-                'id' => 'virtual-opening-customer-' . $customer->id,
-                'code' => 'OPENING-BALANCE-' . $customer->id,
-                'display_type' => 'Số dư đầu kỳ',
-                'event_kind' => 'virtual_opening_balance',
-                'domain' => 'customer',
-                'document_amount' => abs($storedNet),
-                'amount' => $storedNet,
-                'display_effect' => $storedNet,
-                'customer_display_effect' => $storedNet,
-                'customer_effect' => $storedNet,
-                'customer_display_running_balance' => $storedNet,
-                'customer_running_balance' => $storedNet,
-                'running_balance' => $storedNet,
-                'debt_remain' => $storedNet,
-                'time' => $openingTime,
-                'display_time' => $openingTime,
-                'created_at' => $openingTime,
-                'reference_type' => 'Customer',
-                'reference_id' => $customer->id,
-                'reference_code' => $customer->code,
-                'badge_label' => 'Số dư đầu kỳ',
-                'badge_title' => 'Read-only display row for stored customer balance when no documents exist.',
-                'is_real_voucher' => false,
-                'is_virtual_fallback' => true,
-                'is_virtual_opening' => true,
-                'source' => 'virtual_opening_balance',
-                'source_ledger' => 'virtual_opening_balance',
-            ]);
-
-            $displayEntries = collect([$virtualOpening]);
-        }
-
-        $displayFinalBalance = ($hasDisplayAlignment || $virtualOpening) ? $storedNet : $rawDocumentFinalBalance;
-
+        $displayFinalBalance = $rawDocumentFinalBalance;
         $difference = $rawDocumentFinalBalance - $storedNet;
         $rawMismatch = abs($difference) > 1.0;
-        $isMismatch = $rawMismatch && !$hasDisplayAlignment && !$virtualOpening;
+        $isMismatch = $rawMismatch;
 
-        $severity = ($hasDisplayAlignment || $virtualOpening) ? 'info' : 'ok';
+        $severity = 'ok';
         $message = null;
         if ($isMismatch) {
             $severity = 'warning';
@@ -1047,11 +1122,11 @@ class CustomerDebtDocumentTimelineService
                 'net' => $storedNet,
                 'display_balance_target' => $storedNet,
                 'display_balance_final' => $displayFinalBalance,
-                'display_alignment_amount' => $hasDisplayAlignment ? $displayAdjustment : 0.0,
-                'display_aligned' => $hasDisplayAlignment,
-                'has_virtual_display_alignment' => $hasDisplayAlignment,
-                'has_virtual_opening_balance' => (bool) $virtualOpening,
-                'virtual_opening_balance' => (float) ($virtualOpening['customer_display_effect'] ?? 0.0),
+                'display_alignment_amount' => 0.0,
+                'display_aligned' => false,
+                'has_virtual_display_alignment' => false,
+                'has_virtual_opening_balance' => false,
+                'virtual_opening_balance' => 0.0,
             ],
             'reconcile' => [
                 'severity' => $severity,
@@ -1062,19 +1137,19 @@ class CustomerDebtDocumentTimelineService
                 'raw_document_balance' => $rawDocumentFinalBalance,
                 'difference' => $difference,
                 // Alignment keys
-                'computed_balance' => $storedNet,
+                'computed_balance' => $rawDocumentFinalBalance,
                 'has_mismatch' => $isMismatch,
                 'raw_has_mismatch' => $rawMismatch,
-                'ledger_mismatch' => (bool) $virtualOpening,
-                'display_resolved' => !$isMismatch,
+                'ledger_mismatch' => false,
+                'display_resolved' => ! $isMismatch,
                 'display_balance_target' => $storedNet,
                 'display_balance_final' => $displayFinalBalance,
-                'display_alignment_amount' => $hasDisplayAlignment ? $displayAdjustment : 0.0,
-                'display_aligned' => $hasDisplayAlignment,
-                'has_virtual_display_alignment' => $hasDisplayAlignment,
-                'has_virtual_opening_balance' => (bool) $virtualOpening,
+                'display_alignment_amount' => 0.0,
+                'display_aligned' => false,
+                'has_virtual_display_alignment' => false,
+                'has_virtual_opening_balance' => false,
                 'excluded_ledger_entries' => $excludedLedgerEntries,
-            ]
+            ],
         ];
     }
 
@@ -1092,6 +1167,7 @@ class CustomerDebtDocumentTimelineService
             if (str_starts_with($refCode, 'CKTT')) {
                 return [$amount > 0 ? 'Hủy chiết khấu thanh toán' : 'Chiết khấu thanh toán', $amount > 0 ? 'payment_discount_cancel' : 'payment_discount', 'Chiết khấu'];
             }
+
             return ['Khách thanh toán', 'customer_payment', 'Thanh toán'];
         }
         if ($type === 'return') {
@@ -1110,6 +1186,7 @@ class CustomerDebtDocumentTimelineService
             if (str_starts_with($refCode, 'CKTT')) {
                 return [$amount > 0 ? 'Hủy chiết khấu thanh toán' : 'Chiết khấu thanh toán', $amount > 0 ? 'payment_discount_cancel' : 'payment_discount', 'Chiết khấu'];
             }
+
             return ['Điều chỉnh công nợ', 'customer_adjustment', 'Điều chỉnh'];
         }
         if ($type === 'offset') {
@@ -1180,14 +1257,15 @@ class CustomerDebtDocumentTimelineService
 
     private function createEntry(array $data): array
     {
-        if (!array_key_exists('type', $data) && array_key_exists('display_type', $data)) {
+        if (! array_key_exists('type', $data) && array_key_exists('display_type', $data)) {
             $data['type'] = $data['display_type'];
         }
 
-        return array_merge([
+        $entry = array_merge([
             'id' => null,
             'code' => null,
             'display_type' => null,
+            'type_raw' => null,
             'event_kind' => null,
             'domain' => null,
             'document_group_key' => null,
@@ -1218,8 +1296,101 @@ class CustomerDebtDocumentTimelineService
             'badge_title' => null,
             'is_real_voucher' => true,
             'is_virtual_fallback' => false,
+            'affects_canonical_balance' => true,
             'display_sequence' => $this->getDisplaySequence($data),
         ], $data);
+
+        $isCashFlow = ($entry['detail_modal_type'] ?? null) === 'cash_flow'
+            || str_contains(str_replace('_', '-', (string) $entry['id']), 'cash-flow');
+        $sourceTable = (string) ($entry['source_table'] ?? ($isCashFlow
+            ? 'cash_flows'
+            : $this->sourceTableForReference($entry['reference_type'])));
+        $sourceId = (string) ($entry['source_id'] ?? ($isCashFlow
+            ? ($entry['detail_reference_id'] ?? $entry['reference_id'] ?? $entry['id'])
+            : ($entry['reference_id'] ?? $entry['id'])));
+        $effectSide = (string) ($entry['effect_side'] ?? ($entry['domain'] === 'supplier' ? 'payable' : 'receivable'));
+        $entry['source_table'] = $sourceTable;
+        $entry['source_id'] = $sourceId;
+        $entry['effect_side'] = $effectSide;
+        $entry['event_identity'] = implode('|', [
+            (string) $entry['domain'],
+            $sourceTable,
+            $sourceId,
+            (string) $entry['event_kind'],
+            $effectSide,
+        ]);
+
+        return $entry;
+    }
+
+    /** @return array<string, float> */
+    private function legacyInvoiceAllocations(string $reference): array
+    {
+        $allocations = [];
+        if ($reference === '') {
+            return $allocations;
+        }
+
+        preg_match_all('/(HD[A-Z0-9_-]+)\s*:\s*([0-9][0-9.,]*)/iu', $reference, $matches, PREG_SET_ORDER);
+        foreach ($matches as $match) {
+            $invoiceCode = (string) $match[1];
+            $amount = $this->parseLegacyMoney((string) $match[2]);
+            if ($amount > 0.01) {
+                $allocations[$invoiceCode] = ($allocations[$invoiceCode] ?? 0.0) + $amount;
+            }
+        }
+
+        return $allocations;
+    }
+
+    private function parseLegacyMoney(string $value): float
+    {
+        $normalized = preg_replace('/[^0-9.,]/', '', trim($value)) ?? '';
+        if ($normalized === '') {
+            return 0.0;
+        }
+
+        $lastDot = strrpos($normalized, '.');
+        $lastComma = strrpos($normalized, ',');
+        $separator = null;
+        if ($lastDot !== false && $lastComma !== false) {
+            $candidate = $lastDot > $lastComma ? '.' : ',';
+            $fractionLength = strlen($normalized) - max($lastDot, $lastComma) - 1;
+            $separator = $fractionLength > 0 && $fractionLength <= 2 ? $candidate : null;
+        } elseif ($lastDot !== false || $lastComma !== false) {
+            $candidate = $lastDot !== false ? '.' : ',';
+            $position = $lastDot !== false ? $lastDot : $lastComma;
+            $fractionLength = strlen($normalized) - $position - 1;
+            if (substr_count($normalized, $candidate) === 1 && $fractionLength > 0 && $fractionLength <= 2) {
+                $separator = $candidate;
+            }
+        }
+
+        if ($separator === null) {
+            return (float) str_replace([',', '.'], '', $normalized);
+        }
+
+        $thousandsSeparator = $separator === '.' ? ',' : '.';
+        $normalized = str_replace($thousandsSeparator, '', $normalized);
+        if ($separator === ',') {
+            $normalized = str_replace(',', '.', $normalized);
+        }
+
+        return (float) $normalized;
+    }
+
+    private function sourceTableForReference(?string $referenceType): string
+    {
+        return match ((string) $referenceType) {
+            'Invoice' => 'invoices',
+            'OrderReturn' => 'order_returns',
+            'Purchase' => 'purchases',
+            'PurchaseReturn' => 'purchase_returns',
+            'CustomerDebt' => 'customer_debts',
+            'SupplierDebtTransaction' => 'supplier_debt_transactions',
+            'DebtOffset', 'DebtOffsetCancel' => 'debt_offsets',
+            default => 'cash_flows',
+        };
     }
 
     private function findRealRefundCashFlowForReturn(OrderReturn $return, Collection $payments): ?array
@@ -1278,7 +1449,7 @@ class CustomerDebtDocumentTimelineService
         }
 
         $returnTime = $return->return_date ?: $return->created_at;
-        if (!$returnTime) {
+        if (! $returnTime) {
             return null;
         }
 
@@ -1286,12 +1457,12 @@ class CustomerDebtDocumentTimelineService
         $fuzzy = $candidates
             ->filter(function (CashFlow $cashFlow) use ($returnAt) {
                 $code = strtoupper((string) ($cashFlow->code ?? ''));
-                if (!str_starts_with($code, 'PC')) {
+                if (! str_starts_with($code, 'PC')) {
                     return false;
                 }
 
                 $flowTime = $cashFlow->time ?: $cashFlow->created_at;
-                if (!$flowTime) {
+                if (! $flowTime) {
                     return false;
                 }
 
@@ -1299,6 +1470,7 @@ class CustomerDebtDocumentTimelineService
             })
             ->sortBy(function (CashFlow $cashFlow) use ($returnAt) {
                 $flowTime = $cashFlow->time ?: $cashFlow->created_at;
+
                 return abs(Carbon::parse($flowTime)->diffInSeconds($returnAt, false));
             })
             ->first();
@@ -1308,7 +1480,62 @@ class CustomerDebtDocumentTimelineService
 
     private function customerCashFlowTargetTypes(): array
     {
-        return ['Khách hàng', 'Khach hang'];
+        return PartnerDebtRoleResolver::CUSTOMER_TARGET_TYPES;
+    }
+
+    private function isCustomerCashFlow(CashFlow $cashFlow): bool
+    {
+        $targetType = mb_strtolower(trim((string) BusinessStatus::repairText($cashFlow->target_type)));
+
+        return in_array($targetType, ['khách hàng', 'khach hang', 'kh??ch h??ng', 'customer'], true);
+    }
+
+    /**
+     * Offset cash flows are persisted evidence for a DebtOffset document, not
+     * a second receivable event. Keep an orphan cash flow visible when its
+     * referenced document cannot be found.
+     */
+    private function isDebtOffsetEvidenceCashFlow(CashFlow $cashFlow): bool
+    {
+        if (! in_array((string) $cashFlow->reference_type, [
+            'DebtOffset',
+            DebtOffset::class,
+            'DebtOffsetCancel',
+        ], true)) {
+            return false;
+        }
+
+        return DebtOffset::query()
+            ->where('customer_id', (int) $cashFlow->target_id)
+            ->where(function ($query) use ($cashFlow): void {
+                $referenceId = (int) ($cashFlow->reference_id ?? 0);
+                $referenceCode = trim((string) ($cashFlow->reference_code ?? ''));
+
+                if ($referenceId > 0) {
+                    $query->whereKey($referenceId);
+                    if ($referenceCode !== '') {
+                        $query->orWhere('code', $referenceCode);
+                    }
+
+                    return;
+                }
+
+                $query->where('code', $referenceCode);
+            })
+            ->exists();
+    }
+
+    private function debtOffsetsForPartner(int $partnerId): Collection
+    {
+        $query = DebtOffset::where('customer_id', $partnerId);
+        if (Schema::hasColumn('debt_offsets', 'workflow_status')) {
+            $query->where(function ($workflow): void {
+                $workflow->whereNull('workflow_status')
+                    ->orWhereIn('workflow_status', ['applied', 'reversed']);
+            });
+        }
+
+        return $query->get();
     }
 
     private function shiftCustomerDisplayRunningAliases(array $entry, float $amount): array
@@ -1343,26 +1570,23 @@ class CustomerDebtDocumentTimelineService
         if (in_array($kind, ['invoice_payment', 'invoice_payment_fallback', 'supplier_payment', 'supplier_payment_fallback', 'customer_payment'], true)) {
             return 20;
         }
+
         return 50;
     }
 
     private function isTechnicalLedgerCode(?string $code): bool
     {
-        if (!$code) {
+        if (! $code) {
             return false;
         }
 
-        return str_starts_with($code, 'MERGE-CUSTOMER-')
-            || str_starts_with($code, 'MERGE-SUPPLIER-')
-            || str_starts_with($code, 'MERGE-PARTNER-')
-            || str_starts_with($code, 'OPENING-BALANCE-')
-            || str_starts_with($code, 'OPENING-BALANCE-SUPPLIER-');
+        return str_starts_with($code, 'MERGE')
+            || str_starts_with($code, 'OPENING');
     }
-
 
     private function normalizeSortableTime($value): string
     {
-        if (!$value) {
+        if (! $value) {
             return '';
         }
 

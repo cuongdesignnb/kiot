@@ -7,12 +7,16 @@ use App\Models\CashFlow;
 use App\Models\Customer;
 use App\Models\CustomerDebt;
 use App\Models\PartnerMerge;
+use App\Services\Debt\PartnerDebtMutationCoordinator;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class PartnerMergeService
 {
+    public function __construct(private readonly PartnerDebtMutationCoordinator $coordinator) {}
+
     public function preview(Customer $source, Customer $target): array
     {
         $this->assertMergeable($source, $target);
@@ -49,110 +53,113 @@ class PartnerMergeService
         ];
     }
 
-    public function merge(Customer $source, Customer $target): array
+    public function merge(Customer $source, Customer $target, ?string $idempotencyKey = null): array
     {
         $this->assertMergeable($source, $target);
 
-        return DB::transaction(function () use ($source, $target) {
-            $partners = Customer::query()
-                ->whereIn('id', [$source->id, $target->id])
-                ->orderBy('id')
-                ->lockForUpdate()
-                ->get()
-                ->keyBy('id');
-            $lockedSource = $partners->get($source->id);
-            $lockedTarget = $partners->get($target->id);
+        return $this->coordinator->executeForPartners(
+            [(int) $source->id, (int) $target->id],
+            'partner_merge',
+            hash('sha256', 'merge|'.(int) $source->id.'|'.(int) $target->id),
+            function (Collection $partners) use ($source, $target): array {
+                $lockedSource = $partners->get($source->id);
+                $lockedTarget = $partners->get($target->id);
 
-            if (!$lockedSource || !$lockedTarget) {
-                throw ValidationException::withMessages([
-                    'merge_with_id' => 'Không tìm thấy đối tác để gộp.',
-                ]);
-            }
-            $this->assertMergeable($lockedSource, $lockedTarget);
+                if (! $lockedSource || ! $lockedTarget) {
+                    throw ValidationException::withMessages([
+                        'merge_with_id' => 'Không tìm thấy đối tác để gộp.',
+                    ]);
+                }
+                $this->assertMergeable($lockedSource, $lockedTarget);
 
-            $markerCode = $this->markerCode($lockedSource->id, $lockedTarget->id);
-            if (PartnerMerge::where('ref_code', $markerCode)->exists()) {
-                throw ValidationException::withMessages([
-                    'merge_with_id' => 'Đối tác đã được gộp.',
-                ]);
-            }
+                $markerCode = $this->markerCode($lockedSource->id, $lockedTarget->id);
+                if (PartnerMerge::where('ref_code', $markerCode)->exists()) {
+                    throw ValidationException::withMessages([
+                        'merge_with_id' => 'Đối tác đã được gộp.',
+                    ]);
+                }
 
-            $preview = $this->preview($lockedSource, $lockedTarget);
-            PartnerMerge::create([
-                'ref_code' => $markerCode,
-                'source_partner_id' => $lockedSource->id,
-                'target_partner_id' => $lockedTarget->id,
-                'source_debt_amount' => $lockedSource->debt_amount,
-                'source_supplier_debt_amount' => $lockedSource->supplier_debt_amount,
-                'target_debt_amount_before' => $lockedTarget->debt_amount,
-                'target_supplier_debt_amount_before' => $lockedTarget->supplier_debt_amount,
-                'source_total_spent_before' => $lockedSource->total_spent,
-                'source_total_returns_before' => $lockedSource->total_returns,
-                'source_total_bought_before' => $lockedSource->total_bought,
-                'target_total_spent_before' => $lockedTarget->total_spent,
-                'target_total_returns_before' => $lockedTarget->total_returns,
-                'target_total_bought_before' => $lockedTarget->total_bought,
-                'target_debt_amount_after' => $preview['after']['debt_amount'],
-                'target_supplier_debt_amount_after' => $preview['after']['supplier_debt_amount'],
-                'target_total_spent_after' => $preview['after']['total_spent'],
-                'target_total_returns_after' => $preview['after']['total_returns'],
-                'target_total_bought_after' => $preview['after']['total_bought'],
-                'merged_by' => auth()->id(),
-                'merged_at' => now(),
-            ]);
-
-            $this->transferRelations($lockedSource->id, $lockedTarget->id, $lockedTarget->name);
-
-            $lockedTarget->forceFill([
-                'debt_amount' => $preview['after']['debt_amount'],
-                'supplier_debt_amount' => $preview['after']['supplier_debt_amount'],
-                'total_spent' => $preview['after']['total_spent'],
-                'total_returns' => $preview['after']['total_returns'],
-                'total_bought' => $preview['after']['total_bought'],
-                'is_customer' => (bool) ($lockedTarget->is_customer || $lockedSource->is_customer),
-                'is_supplier' => (bool) ($lockedTarget->is_supplier || $lockedSource->is_supplier),
-            ])->save();
-
-            CustomerDebt::firstOrCreate(
-                [
-                    'customer_id' => $lockedTarget->id,
+                $preview = $this->preview($lockedSource, $lockedTarget);
+                PartnerMerge::create([
                     'ref_code' => $markerCode,
-                    'type' => 'merge_marker',
-                ],
-                [
-                    'amount' => 0,
-                    'debt_total' => (float) $lockedTarget->debt_amount,
-                    'note' => "Gộp hồ sơ {$lockedSource->code} vào {$lockedTarget->code}",
-                    'created_by' => auth()->id(),
-                    'recorded_at' => now(),
-                ]
-            );
-
-            $lockedSource->forceFill([
-                'debt_amount' => 0,
-                'supplier_debt_amount' => 0,
-                'total_spent' => 0,
-                'total_returns' => 0,
-                'total_bought' => 0,
-                'status' => 'inactive',
-                'merged_into_id' => $lockedTarget->id,
-                'merged_at' => now(),
-            ])->save();
-
-            ActivityLog::log(
-                'partner_merge',
-                "Gộp đối tác {$lockedSource->code} vào {$lockedTarget->code}",
-                $lockedTarget,
-                [
                     'source_partner_id' => $lockedSource->id,
-                    'marker_code' => $markerCode,
-                    'before' => $preview['before'],
-                    'after' => $preview['after'],
-                ]
-            );
+                    'target_partner_id' => $lockedTarget->id,
+                    'source_debt_amount' => $lockedSource->debt_amount,
+                    'source_supplier_debt_amount' => $lockedSource->supplier_debt_amount,
+                    'target_debt_amount_before' => $lockedTarget->debt_amount,
+                    'target_supplier_debt_amount_before' => $lockedTarget->supplier_debt_amount,
+                    'source_total_spent_before' => $lockedSource->total_spent,
+                    'source_total_returns_before' => $lockedSource->total_returns,
+                    'source_total_bought_before' => $lockedSource->total_bought,
+                    'target_total_spent_before' => $lockedTarget->total_spent,
+                    'target_total_returns_before' => $lockedTarget->total_returns,
+                    'target_total_bought_before' => $lockedTarget->total_bought,
+                    'target_debt_amount_after' => $preview['after']['debt_amount'],
+                    'target_supplier_debt_amount_after' => $preview['after']['supplier_debt_amount'],
+                    'target_total_spent_after' => $preview['after']['total_spent'],
+                    'target_total_returns_after' => $preview['after']['total_returns'],
+                    'target_total_bought_after' => $preview['after']['total_bought'],
+                    'merged_by' => auth()->id(),
+                    'merged_at' => now(),
+                ]);
+                $this->coordinator->checkpoint('document');
 
-            return $preview;
-        });
+                $this->transferRelations($lockedSource->id, $lockedTarget->id, $lockedTarget->name);
+
+                $lockedTarget->forceFill([
+                    'debt_amount' => $preview['after']['debt_amount'],
+                    'supplier_debt_amount' => $preview['after']['supplier_debt_amount'],
+                    'total_spent' => $preview['after']['total_spent'],
+                    'total_returns' => $preview['after']['total_returns'],
+                    'total_bought' => $preview['after']['total_bought'],
+                    'is_customer' => (bool) ($lockedTarget->is_customer || $lockedSource->is_customer),
+                    'is_supplier' => (bool) ($lockedTarget->is_supplier || $lockedSource->is_supplier),
+                ])->save();
+
+                CustomerDebt::firstOrCreate(
+                    [
+                        'customer_id' => $lockedTarget->id,
+                        'ref_code' => $markerCode,
+                        'type' => 'merge_marker',
+                    ],
+                    [
+                        'amount' => 0,
+                        'debt_total' => (float) $lockedTarget->debt_amount,
+                        'note' => "Gộp hồ sơ {$lockedSource->code} vào {$lockedTarget->code}",
+                        'created_by' => auth()->id(),
+                        'recorded_at' => now(),
+                    ]
+                );
+                $this->coordinator->checkpoint('evidence');
+
+                $lockedSource->forceFill([
+                    'debt_amount' => 0,
+                    'supplier_debt_amount' => 0,
+                    'total_spent' => 0,
+                    'total_returns' => 0,
+                    'total_bought' => 0,
+                    'status' => 'inactive',
+                    'merged_into_id' => $lockedTarget->id,
+                    'merged_at' => now(),
+                ])->save();
+                $this->coordinator->checkpoint('projection');
+
+                ActivityLog::log(
+                    'partner_merge',
+                    "Gộp đối tác {$lockedSource->code} vào {$lockedTarget->code}",
+                    $lockedTarget,
+                    [
+                        'source_partner_id' => $lockedSource->id,
+                        'marker_code' => $markerCode,
+                        'before' => $preview['before'],
+                        'after' => $preview['after'],
+                    ]
+                );
+
+                return $preview;
+            },
+            $idempotencyKey,
+        );
     }
 
     private function assertMergeable(Customer $source, Customer $target): void

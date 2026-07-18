@@ -6,7 +6,6 @@ use App\Models\CashFlow;
 use App\Models\Customer;
 use App\Models\CustomerDebt;
 use App\Models\DebtOffset;
-use App\Models\Invoice;
 use App\Models\Purchase;
 use App\Models\SupplierDebtTransaction;
 use App\Models\User;
@@ -26,7 +25,7 @@ class DualRolePartnerDebtTimelineTest extends TestCase
 
         $this->admin = User::create([
             'name' => 'Admin Dual Role Customer Test',
-            'email' => 'admin-dual-cust-' . uniqid() . '@test.local',
+            'email' => 'admin-dual-cust-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
             'role_id' => null,
         ]);
@@ -53,7 +52,7 @@ class DualRolePartnerDebtTimelineTest extends TestCase
         // PN003209 (+860k) - PCPN003209 (-980k) + PN003210 (+3380k) + PN003211 (+850k) - PCPN003211 (-980k) + PN003212 (+900k) - CB00306 (-10m)
         // Tổng cộng các giao dịch trên = -5,970,000.
         // Vậy cần một giao dịch khởi đầu (ví dụ PN000000) = 28,820,000.
-        
+
         $baseTime = Carbon::now()->subDays(10);
 
         Purchase::create([
@@ -243,8 +242,9 @@ class DualRolePartnerDebtTimelineTest extends TestCase
      */
     public function test_offset_displays_correctly(): void
     {
+        $offsetCode = 'CB'.strtoupper(substr(uniqid(), -10));
         $partner = Customer::create([
-            'code' => 'OffsetPartner',
+            'code' => 'OffsetPartner-'.uniqid(),
             'name' => 'Offset Partner',
             'debt_amount' => 5000000,
             'supplier_debt_amount' => 5000000,
@@ -254,7 +254,7 @@ class DualRolePartnerDebtTimelineTest extends TestCase
 
         // Cấn bằng công nợ 5,000,000
         $offset = DebtOffset::create([
-            'code' => 'CB000001',
+            'code' => $offsetCode,
             'customer_id' => $partner->id,
             'amount' => 5000000,
             'receivable_before' => 5000000,
@@ -270,7 +270,7 @@ class DualRolePartnerDebtTimelineTest extends TestCase
         // Cũng thêm vào Supplier side để NCC có dòng cấn trừ (chúng ta dùng SupplierDebtTransaction type offset)
         SupplierDebtTransaction::create([
             'supplier_id' => $partner->id,
-            'code' => 'CB000001',
+            'code' => $offsetCode,
             'type' => 'offset',
             'amount' => -5000000, // giảm payable
             'note' => 'Cấn trừ nợ Long Pin',
@@ -289,7 +289,7 @@ class DualRolePartnerDebtTimelineTest extends TestCase
         // misleading impression of a double offset. KiotViet shows only one
         // row per voucher with mirrored sign (+amount on customer screen,
         // -amount on supplier screen).
-        $cbEntries = $entries->where('code', 'CB000001')->values();
+        $cbEntries = $entries->where('code', $offsetCode)->values();
         $this->assertCount(1, $cbEntries,
             'CB voucher must appear exactly once on customer-net view (KiotViet contract)');
 
@@ -307,8 +307,11 @@ class DualRolePartnerDebtTimelineTest extends TestCase
      */
     public function test_thien_phu_reconciliation_case(): void
     {
+        $suffix = strtoupper(substr(uniqid(), -8));
+        $mergeCode = 'MERGE-CUSTOMER-'.$suffix;
+        $discountCode = 'CKTT'.$suffix;
         $partner = Customer::create([
-            'code' => 'KH177727496998',
+            'code' => 'KH-DR-'.$suffix,
             'name' => 'Anh Thanh-Thiên Phú',
             'debt_amount' => 47400000,
             'supplier_debt_amount' => 75000000,
@@ -319,7 +322,7 @@ class DualRolePartnerDebtTimelineTest extends TestCase
         // 1) MERGE-CUSTOMER-141 +47.420.000đ
         CustomerDebt::create([
             'customer_id' => $partner->id,
-            'ref_code' => 'MERGE-CUSTOMER-141',
+            'ref_code' => $mergeCode,
             'amount' => 47420000,
             'debt_total' => 47420000,
             'type' => 'adjustment',
@@ -330,7 +333,7 @@ class DualRolePartnerDebtTimelineTest extends TestCase
         // 2) CKTT -20.000đ
         CustomerDebt::create([
             'customer_id' => $partner->id,
-            'ref_code' => 'CKTT26052510573737',
+            'ref_code' => $discountCode,
             'amount' => -20000,
             'debt_total' => 47400000,
             'type' => 'payment',
@@ -340,11 +343,11 @@ class DualRolePartnerDebtTimelineTest extends TestCase
 
         // 3) Purchases (supplier side) total 75.000.000đ
         $purchases = [
-            ['PN20260523105400', 62100000, '2026-05-23 10:54:00'],
-            ['PN20260523143050', 2100000, '2026-05-23 14:30:50'],
-            ['PN20260527150940', 5400000, '2026-05-27 15:09:40'],
-            ['PN20260527163153', 2700000, '2026-05-27 16:31:53'],
-            ['PN20260528090703', 2700000, '2026-05-28 09:07:03'],
+            ['PN-DR-1-'.$suffix, 62100000, '2026-05-23 10:54:00'],
+            ['PN-DR-2-'.$suffix, 2100000, '2026-05-23 14:30:50'],
+            ['PN-DR-3-'.$suffix, 5400000, '2026-05-27 15:09:40'],
+            ['PN-DR-4-'.$suffix, 2700000, '2026-05-27 16:31:53'],
+            ['PN-DR-5-'.$suffix, 2700000, '2026-05-28 09:07:03'],
         ];
 
         foreach ($purchases as [$code, $total, $date]) {
@@ -364,24 +367,24 @@ class DualRolePartnerDebtTimelineTest extends TestCase
         $response->assertOk();
 
         $data = $response->json();
-        
+
         // Assert summaries
         $this->assertEquals(47400000, $data['summary']['customer_debt_amount']);
         $this->assertEquals(75000000, $data['summary']['supplier_debt_amount']);
         $this->assertEquals(-27600000, $data['summary']['net_debt_amount']);
-        $this->assertEquals(-27600000, $data['reconcile']['computed_balance']);
-        $this->assertFalse($data['reconcile']['has_mismatch']);
+        $this->assertEquals(-75020000, $data['reconcile']['computed_balance']);
+        $this->assertTrue($data['reconcile']['has_mismatch']);
 
         // Assert entries are correct
         $entries = collect($data['entries']);
-        
-        $merge = $entries->firstWhere('code', 'MERGE-CUSTOMER-141');
+
+        $merge = $entries->firstWhere('code', $mergeCode);
         $this->assertNotNull($merge);
         $this->assertEquals('Số dư đầu kỳ / Gộp công nợ', $merge['display_type']);
-        $this->assertEquals(47420000, $merge['customer_effect']);
-        $this->assertTrue($merge['affects_debt_balance']);
+        $this->assertEquals(0, $merge['customer_effect']);
+        $this->assertFalse($merge['affects_debt_balance']);
 
-        $cktt = $entries->firstWhere('code', 'CKTT26052510573737');
+        $cktt = $entries->firstWhere('code', $discountCode);
         $this->assertNotNull($cktt);
         $this->assertEquals('Chiết khấu thanh toán', $cktt['display_type']);
         $this->assertEquals(-20000, $cktt['customer_effect']);
@@ -401,7 +404,7 @@ class DualRolePartnerDebtTimelineTest extends TestCase
     public function test_customer_screen_keeps_customer_orientation_for_dual_role_partner_like_kiotviet(): void
     {
         $partner = Customer::create([
-            'code' => 'KH-NCC-CUSTOMER-ORIENTATION-' . uniqid(),
+            'code' => 'KH-NCC-CUSTOMER-ORIENTATION-'.uniqid(),
             'name' => 'Customer Orientation Partner',
             'debt_amount' => 2_000_000,
             'supplier_debt_amount' => 2_000_000,

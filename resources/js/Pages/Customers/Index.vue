@@ -457,7 +457,7 @@ const debtModal = ref({
     customerName: "",
     currentDebt: 0,
 });
-const debtForm = reactive({ amount: 0, note: "", mode: "auto", date: "" });
+const debtForm = reactive({ amount: 0, note: "", mode: "auto", date: "", idempotencyKey: "" });
 const outstandingInvoices = ref([]);
 const loadingInvoices = ref(false);
 const debtPaymentResult = ref(null);
@@ -476,6 +476,7 @@ const openDebtModal = async (customer, type) => {
     debtForm.mode = "auto";
     // Mặc định ngày điều chỉnh = hiện tại (YYYY-MM-DDTHH:mm cho datetime-local)
     debtForm.date = nowDatetimeLocal();
+    debtForm.idempotencyKey = crypto.randomUUID();
     outstandingInvoices.value = [];
     debtPaymentResult.value = null;
 
@@ -518,7 +519,7 @@ const submitDebtModal = async () => {
                     allocations,
                     note: debtForm.note,
                     date: debtForm.date,
-                });
+                }, { headers: { "Idempotency-Key": debtForm.idempotencyKey } });
                 debtPaymentResult.value = response.data.payment;
                 await loadDebtHistory(customerId);
                 router.reload({ only: ["customers"], preserveScroll: true });
@@ -538,7 +539,7 @@ const submitDebtModal = async () => {
                 amount: Number(debtForm.amount) || 0,
                 note: debtForm.note,
                 date: debtForm.date,
-            });
+            }, { headers: { "Idempotency-Key": debtForm.idempotencyKey } });
             debtPaymentResult.value = response.data.payment;
             await loadDebtHistory(customerId);
             router.reload({ only: ["customers"], preserveScroll: true });
@@ -727,6 +728,7 @@ const mergeModal = reactive({
     preview: null,
     previewLoading: false,
     previewError: '',
+    idempotencyKey: '',
 });
 
 let mergeSearchTimeout;
@@ -740,6 +742,7 @@ const openMergeModal = (customer) => {
     mergeModal.preview = null;
     mergeModal.previewLoading = false;
     mergeModal.previewError = '';
+    mergeModal.idempotencyKey = crypto.randomUUID();
 };
 
 const searchMergeTarget = () => {
@@ -793,6 +796,7 @@ const submitMerge = () => {
     router.post(`/customers/${mergeModal.source.id}/merge`, {
         merge_with_id: mergeModal.selected.id,
     }, {
+        headers: { "Idempotency-Key": mergeModal.idempotencyKey },
         onSuccess: () => {
             mergeModal.show = false;
             mergeModal.source = null;
@@ -814,7 +818,7 @@ const offsetModal = reactive({
     maxOffset: 0,
     submitting: false,
 });
-const offsetForm = reactive({ amount: 0, note: '' });
+const offsetForm = reactive({ amount: 0, note: '', idempotencyKey: '' });
 
 const openOffsetModal = (customer) => {
     offsetModal.show = true;
@@ -826,6 +830,7 @@ const openOffsetModal = (customer) => {
     offsetModal.submitting = false;
     offsetForm.amount = offsetModal.maxOffset;
     offsetForm.note = '';
+    offsetForm.idempotencyKey = crypto.randomUUID();
 };
 
 const submitOffset = async () => {
@@ -839,10 +844,14 @@ const submitOffset = async () => {
     }
     offsetModal.submitting = true;
     try {
-        await axios.post(`/customers/${offsetModal.customerId}/debt-offset`, {
-            amount: Number(offsetForm.amount) || 0,
-            note: offsetForm.note,
-        });
+        await axios.post(
+            `/customers/${offsetModal.customerId}/debt-offset`,
+            {
+                amount: Number(offsetForm.amount) || 0,
+                note: offsetForm.note,
+            },
+            { headers: { "Idempotency-Key": offsetForm.idempotencyKey } },
+        );
         offsetModal.show = false;
         await loadDebtHistory(offsetModal.customerId);
         await loadOffsetHistory(offsetModal.customerId);
@@ -866,11 +875,21 @@ const loadOffsetHistory = async (customerId) => {
     }
 };
 
+const offsetCancellationKeys = new Map();
+
 const cancelOffset = async (customerId, offsetId) => {
     const reason = prompt('Lý do hủy cấn bằng (không bắt buộc):');
     if (reason === null) return; // user cancelled prompt
     try {
-        await axios.post(`/customers/${customerId}/cancel-debt-offset/${offsetId}`, { reason });
+        const idempotencyKey =
+            offsetCancellationKeys.get(offsetId) || crypto.randomUUID();
+        offsetCancellationKeys.set(offsetId, idempotencyKey);
+        await axios.post(
+            `/customers/${customerId}/cancel-debt-offset/${offsetId}`,
+            { reason },
+            { headers: { "Idempotency-Key": idempotencyKey } },
+        );
+        offsetCancellationKeys.delete(offsetId);
         await loadDebtHistory(customerId);
         await loadOffsetHistory(customerId);
         router.reload({ only: ['customers'], preserveScroll: true });

@@ -8,21 +8,50 @@ class DebtReconciliationPlanService
         'partner_id', 'partner_code', 'role', 'risk_level', 'primary_classification',
         'proposed_action_type', 'customer_delta', 'supplier_delta', 'proposed_voucher',
         'confidence', 'requires_backup', 'requires_manual_approval', 'rollback_strategy',
-        'evidence_required', 'status',
+        'evidence_required', 'status', 'source_report_sha256', 'database_fingerprint', 'approval_hash',
     ];
 
-    public function generate(array $auditRows): array
+    public function generate(array $auditRows, string $sourceReportSha256 = '', string $databaseFingerprint = ''): array
     {
-        return array_map(fn (array $row): array => $this->planRow($row), $auditRows);
+        return array_map(
+            fn (array $row): array => $this->planRow($row, $sourceReportSha256, $databaseFingerprint),
+            $auditRows,
+        );
     }
 
-    public function planRow(array $row): array
+    public function planRow(array $row, string $sourceReportSha256 = '', string $databaseFingerprint = ''): array
     {
         $classification = (string) ($row['primary_classification'] ?? 'AUDIT_ERROR');
         $flags = array_values(array_filter((array) ($row['classification_flags'] ?? [$classification])));
         $action = $this->action($classification, $flags);
 
-        return [
+        $beforeCustomer = (float) ($row['raw_customer_debt'] ?? 0);
+        $beforeSupplier = (float) ($row['raw_supplier_debt'] ?? 0);
+        $targetCustomer = (float) ($row['customer_document_raw_final'] ?? $beforeCustomer);
+        $targetSupplier = (float) ($row['supplier_document_raw_final'] ?? $beforeSupplier);
+        $blockingFlags = array_values(array_intersect($flags, [
+            'AUDIT_ERROR', 'DUPLICATE_REAL_AND_FALLBACK', 'DUPLICATE_CUSTOMER_RECEIPT',
+            'DUPLICATE_SUPPLIER_PAYMENT', 'RETURN_REFUND_DUPLICATE', 'CANCEL_REVERSAL_MISSING',
+            'INVOICE_RECEIPT_ALLOCATION_MISMATCH', 'PURCHASE_PAYMENT_ALLOCATION_MISMATCH',
+            'INVOICE_RECEIPT_ALLOCATION_EVIDENCE_MISSING', 'PURCHASE_PAYMENT_ALLOCATION_EVIDENCE_MISSING',
+        ]));
+        $hasProjectionDifference = abs($targetCustomer - $beforeCustomer) > PartnerDebtParityAuditService::TOLERANCE
+            || abs($targetSupplier - $beforeSupplier) > PartnerDebtParityAuditService::TOLERANCE;
+        if ($hasProjectionDifference && $blockingFlags === []) {
+            $action = [
+                'type' => 'UPDATE_STORED_PROJECTION',
+                'customer_delta' => $targetCustomer - $beforeCustomer,
+                'supplier_delta' => $targetSupplier - $beforeSupplier,
+                'voucher' => null,
+                'confidence' => 'high',
+                'requires_backup' => true,
+                'requires_manual_approval' => true,
+                'rollback_strategy' => 'Restore the exact before projection in the same guarded transaction.',
+                'evidence_required' => ['Canonical document event stream.', 'Source report SHA-256.', 'Approval hash.'],
+            ];
+        }
+
+        $plan = [
             'partner_id' => (int) ($row['partner_id'] ?? 0),
             'partner_code' => (string) ($row['partner_code'] ?? ''),
             'role' => (string) ($row['role'] ?? ''),
@@ -39,7 +68,29 @@ class DebtReconciliationPlanService
             'rollback_strategy' => $action['rollback_strategy'],
             'evidence_required' => $action['evidence_required'],
             'status' => 'PROPOSED',
+            'before_snapshot' => [
+                'customer_receivable' => $beforeCustomer,
+                'supplier_payable' => $beforeSupplier,
+                'partner_code' => (string) ($row['partner_code'] ?? ''),
+                'role' => (string) ($row['role'] ?? ''),
+            ],
+            'canonical_target' => [
+                'customer_receivable' => $targetCustomer,
+                'supplier_payable' => $targetSupplier,
+            ],
+            'event_evidence' => [
+                'customer_codes' => (array) ($row['suspect_invoice_codes'] ?? []),
+                'supplier_codes' => (array) ($row['suspect_purchase_codes'] ?? []),
+                'adjustment_codes' => (array) ($row['suspect_adjustment_codes'] ?? []),
+            ],
+            'blocking_flags' => $blockingFlags,
+            'source_report_sha256' => $sourceReportSha256,
+            'database_fingerprint' => $databaseFingerprint,
         ];
+
+        $plan['approval_hash'] = hash('sha256', json_encode($plan, JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION));
+
+        return $plan;
     }
 
     private function action(string $classification, array $flags): array
