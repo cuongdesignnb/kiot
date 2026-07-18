@@ -6,12 +6,12 @@ use App\Models\CashFlow;
 use App\Models\Customer;
 use App\Models\CustomerDebt;
 use App\Models\CustomerPaymentDiscount;
+use App\Models\DebtOffset;
 use App\Models\Invoice;
 use App\Models\OrderReturn;
 use App\Models\Purchase;
 use App\Models\PurchaseReturn;
 use App\Models\SupplierDebtTransaction;
-use App\Models\DebtOffset;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Schema;
@@ -44,7 +44,7 @@ class PartnerFinancialTimelineService
 
         $ledgerCodes = $ledgerEntries->pluck('code')->filter()->map(fn ($code) => (string) $code)->all();
         $legacyFiltered = $legacyEntries
-            ->filter(fn ($entry) => !in_array((string) ($entry['code'] ?? ''), $ledgerCodes, true))
+            ->filter(fn ($entry) => ! in_array((string) ($entry['code'] ?? ''), $ledgerCodes, true))
             ->values();
 
         $combined = $ledgerEntries
@@ -55,7 +55,6 @@ class PartnerFinancialTimelineService
         $customerDebt = (float) ($customer->debt_amount ?? 0);
         $supplierDebt = $hasSupplierColumn ? (float) ($customer->supplier_debt_amount ?? 0) : 0.0;
         $netDebt = $customerDebt - $supplierDebt;
-        $combined = $this->injectCustomerVirtualOpeningBalance($combined, $customer, $netDebt);
         [$computedEntries, $ledgerBalance] = $this->computeRunningBalance($combined);
         $displayFinalBalance = (float) ($computedEntries->sortBy(fn ($entry) => $this->timestamp($entry))->last()['customer_display_running_balance'] ?? 0.0);
         $virtualOpening = $computedEntries->firstWhere('is_virtual_opening', true);
@@ -77,16 +76,16 @@ class PartnerFinancialTimelineService
             'summary' => array_merge([
                 // Canonical receivable/payable/net keys (HOTFIX FOLLOW-UP)
                 'customer_receivable_balance' => $customerDebt,
-                'supplier_payable_balance'    => $supplierDebt,
-                'partner_net_position'        => $netDebt,
-                'has_debt_offset_voucher'     => $this->hasActiveDebtOffsetVoucher($customer),
-                'is_actual_offset'            => false,
-                'is_net_view'                 => true,
-                'display_timeline_mode'        => true,
-                'has_virtual_opening_balance'  => $hasVirtualOpening,
-                'virtual_opening_balance'      => (float) ($virtualOpening['customer_display_effect'] ?? 0.0),
-                'display_balance_target'       => $netDebt,
-                'display_balance_final'        => $displayFinalBalance,
+                'supplier_payable_balance' => $supplierDebt,
+                'partner_net_position' => $netDebt,
+                'has_debt_offset_voucher' => $this->hasActiveDebtOffsetVoucher($customer),
+                'is_actual_offset' => false,
+                'is_net_view' => true,
+                'display_timeline_mode' => true,
+                'has_virtual_opening_balance' => $hasVirtualOpening,
+                'virtual_opening_balance' => (float) ($virtualOpening['customer_display_effect'] ?? 0.0),
+                'display_balance_target' => $netDebt,
+                'display_balance_final' => $displayFinalBalance,
 
                 // Backward-compatible keys (FE + existing tests still read these)
                 'net' => $netDebt,
@@ -173,7 +172,7 @@ class PartnerFinancialTimelineService
             $businessTime = $this->normalizeDisplayTime($invoice->transaction_date, $invoice->created_at);
 
             $entries->push($this->entry([
-                'id' => 'inv-' . $invoice->id,
+                'id' => 'inv-'.$invoice->id,
                 'code' => $invoice->code,
                 'display_type' => 'Bán hàng',
                 'event_kind' => 'customer_sale',
@@ -186,7 +185,7 @@ class PartnerFinancialTimelineService
                 'customer_display_effect' => (float) $invoice->total,
                 'customer_balance_effect' => $hasCustomerLedger ? 0.0 : (float) $invoice->total,
                 'customer_effect' => $hasCustomerLedger ? 0.0 : (float) $invoice->total,
-                'affects_debt_balance' => !$hasCustomerLedger,
+                'affects_debt_balance' => ! $hasCustomerLedger,
                 'is_reference_only' => $hasCustomerLedger,
                 'source' => $hasCustomerLedger ? 'reference' : 'legacy',
                 'badge_label' => $hasCustomerLedger ? 'Phải thu KH' : 'Chứng từ cũ',
@@ -204,8 +203,8 @@ class PartnerFinancialTimelineService
 
             if ((float) $invoice->customer_paid > 0) {
                 $entries->push($this->entry([
-                    'id' => 'invpay-' . $invoice->id,
-                    'code' => 'TTHD' . preg_replace('/^HD/', '', (string) $invoice->code),
+                    'id' => 'invpay-'.$invoice->id,
+                    'code' => 'TTHD'.preg_replace('/^HD/', '', (string) $invoice->code),
                     'display_type' => 'Thanh toán hóa đơn',
                     'event_kind' => 'invoice_payment',
                     'domain' => 'customer',
@@ -217,7 +216,7 @@ class PartnerFinancialTimelineService
                     'customer_display_effect' => -(float) $invoice->customer_paid,
                     'customer_balance_effect' => $hasCustomerLedger ? 0.0 : -(float) $invoice->customer_paid,
                     'customer_effect' => $hasCustomerLedger ? 0.0 : -(float) $invoice->customer_paid,
-                    'affects_debt_balance' => !$hasCustomerLedger,
+                    'affects_debt_balance' => ! $hasCustomerLedger,
                     'is_reference_only' => $hasCustomerLedger,
                     'source' => $hasCustomerLedger ? 'reference' : 'legacy',
                     'badge_label' => 'Thanh toán',
@@ -252,7 +251,7 @@ class PartnerFinancialTimelineService
             ->map(fn ($code) => (string) $code)
             ->all();
         $ledgerReturnIds = $customerDebts
-            ->filter(fn ($debt) => $debt->type === 'return' && !empty($debt->order_return_id))
+            ->filter(fn ($debt) => $debt->type === 'return' && ! empty($debt->order_return_id))
             ->pluck('order_return_id')
             ->map(fn ($id) => (int) $id)
             ->all();
@@ -279,7 +278,7 @@ class PartnerFinancialTimelineService
 
             if ($hasLedgerReturn) {
                 $entries->push($this->entry([
-                    'id' => 'oret-ref-' . $return->id,
+                    'id' => 'oret-ref-'.$return->id,
                     'code' => $return->code,
                     'display_type' => 'Trả hàng bán',
                     'event_kind' => 'sales_return',
@@ -307,12 +306,13 @@ class PartnerFinancialTimelineService
                     'reference_code' => $return->code,
                     'detail_available' => true,
                 ]));
+
                 continue;
             }
 
-            $affects = !$hasCustomerLedger;
+            $affects = ! $hasCustomerLedger;
             $entries->push($this->entry([
-                'id' => 'oret-' . $return->id,
+                'id' => 'oret-'.$return->id,
                 'code' => $return->code,
                 'display_type' => 'Trả hàng bán',
                 'event_kind' => 'sales_return',
@@ -326,7 +326,7 @@ class PartnerFinancialTimelineService
                 'customer_balance_effect' => $affects ? -(float) $return->total : 0.0,
                 'customer_effect' => $affects ? -(float) $return->total : 0.0,
                 'affects_debt_balance' => $affects,
-                'is_reference_only' => !$affects,
+                'is_reference_only' => ! $affects,
                 'source' => $affects ? 'legacy' : 'reference',
                 'badge_label' => $affects ? 'Chứng từ cũ' : 'Cần đối soát',
                 'badge_title' => $affects ? null : 'Có phiếu trả hàng nhưng chưa thấy ledger công nợ tương ứng',
@@ -357,13 +357,13 @@ class PartnerFinancialTimelineService
             ->orderBy('created_at')
             ->get()
             ->filter(function ($cashFlow) use ($invoiceCodes) {
-                return !($cashFlow->reference_type === 'Invoice' && in_array($cashFlow->reference_code, $invoiceCodes, true));
+                return ! ($cashFlow->reference_type === 'Invoice' && in_array($cashFlow->reference_code, $invoiceCodes, true));
             })
             ->map(function ($cashFlow) use ($hasCustomerLedger) {
                 $businessTime = $this->normalizeDisplayTime($cashFlow->time, $cashFlow->created_at);
 
                 return $this->entry([
-                    'id' => 'cf-' . $cashFlow->id,
+                    'id' => 'cf-'.$cashFlow->id,
                     'code' => $cashFlow->code,
                     'display_type' => $cashFlow->reference_type === 'OrderReturn' ? 'Trả hàng bán' : 'Khách thanh toán',
                     'event_kind' => $cashFlow->reference_type === 'OrderReturn' ? 'sales_return' : 'customer_payment',
@@ -376,7 +376,7 @@ class PartnerFinancialTimelineService
                     'customer_display_effect' => -(float) $cashFlow->amount,
                     'customer_balance_effect' => $hasCustomerLedger ? 0.0 : -(float) $cashFlow->amount,
                     'customer_effect' => $hasCustomerLedger ? 0.0 : -(float) $cashFlow->amount,
-                    'affects_debt_balance' => !$hasCustomerLedger,
+                    'affects_debt_balance' => ! $hasCustomerLedger,
                     'is_reference_only' => $hasCustomerLedger,
                     'source' => $hasCustomerLedger ? 'reference' : 'legacy',
                     'badge_label' => $cashFlow->reference_type === 'OrderReturn' ? 'Trả hàng' : 'Thanh toán',
@@ -408,7 +408,7 @@ class PartnerFinancialTimelineService
             $businessTime = $this->normalizeDisplayTime($purchase->purchase_date, $purchase->created_at);
 
             $entries->push($this->entry([
-                'id' => 'pur-' . $purchase->id,
+                'id' => 'pur-'.$purchase->id,
                 'code' => $purchase->code,
                 'display_type' => 'Nhập hàng',
                 'event_kind' => 'supplier_purchase',
@@ -439,8 +439,8 @@ class PartnerFinancialTimelineService
 
             if ((float) $purchase->paid_amount > 0) {
                 $entries->push($this->entry([
-                    'id' => 'purpay-' . $purchase->id,
-                    'code' => 'TTNH' . preg_replace('/^PN/', '', (string) $purchase->code),
+                    'id' => 'purpay-'.$purchase->id,
+                    'code' => 'TTNH'.preg_replace('/^PN/', '', (string) $purchase->code),
                     'display_type' => 'Thanh toán NCC',
                     'event_kind' => 'supplier_payment',
                     'domain' => 'supplier',
@@ -480,7 +480,7 @@ class PartnerFinancialTimelineService
             $businessTime = $this->normalizeDisplayTime($return->return_date, $return->created_at);
 
             $entries->push($this->entry([
-                'id' => 'pret-' . $return->id,
+                'id' => 'pret-'.$return->id,
                 'code' => $return->code,
                 'display_type' => 'Trả hàng nhập',
                 'event_kind' => 'purchase_return',
@@ -535,13 +535,13 @@ class PartnerFinancialTimelineService
                     && $this->looksLikeStandaloneSupplierPayment($transaction)
                     && $purchasePaidTotal <= 0;
 
-                if (!$canAffect) {
+                if (! $canAffect) {
                     $customerEffect = 0.0;
                     $supplierEffect = null;
                 }
 
                 return $this->entry([
-                    'id' => 'stx-' . $transaction->id,
+                    'id' => 'stx-'.$transaction->id,
                     'code' => $transaction->code,
                     'display_type' => $displayType,
                     'event_kind' => $eventKind,
@@ -558,7 +558,7 @@ class PartnerFinancialTimelineService
                     'customer_effect' => $customerEffect,
                     'supplier_effect' => $supplierEffect,
                     'affects_debt_balance' => $canAffect,
-                    'is_reference_only' => !$canAffect,
+                    'is_reference_only' => ! $canAffect,
                     'source' => $canAffect ? 'ledger' : 'reference',
                     'badge_label' => 'Thanh toán NCC',
                     'badge_title' => $canAffect ? null : 'Chứng từ tham chiếu, không cộng lại số dư công nợ.',
@@ -583,7 +583,7 @@ class PartnerFinancialTimelineService
         $displayRunning = 0.0;
 
         $computed = $entries
-            ->sortBy(fn ($entry) => $this->timestamp($entry) . '-' . ($entry['id'] ?? ''))
+            ->sortBy(fn ($entry) => $this->timestamp($entry).'-'.($entry['id'] ?? ''))
             ->values()
             ->map(function ($entry) use (&$ledgerRunning, &$displayRunning) {
                 $displayBalanceEffect = $this->customerDisplayBalanceEffect($entry);
@@ -617,7 +617,7 @@ class PartnerFinancialTimelineService
     ): array {
         $ledgerMismatch = abs($ledgerBalance - $storedBalance) >= 0.01;
         $displayMismatch = abs($displayBalanceFinal - $displayBalanceTarget) >= 0.01;
-        $displayResolved = !$displayMismatch;
+        $displayResolved = ! $displayMismatch;
 
         $severity = 'ok';
         $message = null;
@@ -625,7 +625,7 @@ class PartnerFinancialTimelineService
 
         if ($displayMismatch) {
             $severity = 'warning';
-            $message = 'Lịch sử công nợ đang lệch với ' . $balanceLabel . '. Cần đối soát dữ liệu trước khi cập nhật.';
+            $message = 'Lịch sử công nợ đang lệch với '.$balanceLabel.'. Cần đối soát dữ liệu trước khi cập nhật.';
             $userWarning = true;
         } elseif ($ledgerMismatch && $hasVirtualOpeningBalance) {
             $severity = 'info';
@@ -659,7 +659,7 @@ class PartnerFinancialTimelineService
         $settlementMeta = $settlementMetaByDebtId[$debt->id] ?? null;
 
         $entry = $this->entry([
-            'id' => 'ldg-' . $debt->id,
+            'id' => 'ldg-'.$debt->id,
             'code' => $debt->ref_code,
             'display_type' => $displayType,
             'event_kind' => $eventKind,
@@ -709,6 +709,20 @@ class PartnerFinancialTimelineService
             $entry['can_cancel'] = $eventKind === 'payment_discount' && $discount->status === 'active';
         }
 
+        if ($eventKind === 'opening_balance') {
+            $entry['display_effect'] = 0.0;
+            $entry['financial_effect'] = 0.0;
+            $entry['balance_effect'] = 0.0;
+            $entry['customer_display_effect'] = 0.0;
+            $entry['customer_display_balance_effect'] = 0.0;
+            $entry['customer_balance_effect'] = 0.0;
+            $entry['customer_effect'] = 0.0;
+            $entry['affects_debt_balance'] = false;
+            $entry['affects_canonical_balance'] = false;
+            $entry['is_reference_only'] = true;
+            $entry['source'] = 'reference';
+        }
+
         return $entry;
     }
 
@@ -725,6 +739,7 @@ class PartnerFinancialTimelineService
             if (str_starts_with($refCode, 'CKTT')) {
                 return [(float) $debt->amount > 0 ? 'Hủy chiết khấu thanh toán' : 'Chiết khấu thanh toán', (float) $debt->amount > 0 ? 'payment_discount_cancel' : 'payment_discount'];
             }
+
             return ['Khách thanh toán', 'customer_payment'];
         }
         if ($type === 'return') {
@@ -740,6 +755,7 @@ class PartnerFinancialTimelineService
             if (str_starts_with($refCode, 'CKTT')) {
                 return [(float) $debt->amount > 0 ? 'Hủy chiết khấu thanh toán' : 'Chiết khấu thanh toán', (float) $debt->amount > 0 ? 'payment_discount_cancel' : 'payment_discount'];
             }
+
             return ['Điều chỉnh công nợ', 'customer_adjustment'];
         }
 
@@ -929,7 +945,7 @@ class PartnerFinancialTimelineService
                 && abs($this->customerDisplayEffect($entry)) >= 0.01;
         });
 
-        if ($entries->isNotEmpty() && abs($targetBalance) < 0.01 && !$hasReferenceOnlyFinancialEntry) {
+        if ($entries->isNotEmpty() && abs($targetBalance) < 0.01 && ! $hasReferenceOnlyFinancialEntry) {
             return $entries->values();
         }
 
@@ -940,8 +956,8 @@ class PartnerFinancialTimelineService
         $businessTime = $this->virtualOpeningTime($entries);
 
         $opening = $this->entry([
-            'id' => 'virtual-opening-customer-' . $customer->id,
-            'code' => 'OPENING-BALANCE-' . $customer->id,
+            'id' => 'virtual-opening-customer-'.$customer->id,
+            'code' => 'OPENING-BALANCE-'.$customer->id,
             'display_type' => 'Số dư đầu kỳ / Điều chỉnh hiển thị',
             'event_kind' => 'virtual_opening_balance',
             'domain' => 'adjustment',
@@ -966,7 +982,7 @@ class PartnerFinancialTimelineService
             'created_at' => $businessTime,
             'reference_type' => 'VirtualOpeningBalance',
             'reference_id' => $customer->id,
-            'reference_code' => 'OPENING-BALANCE-' . $customer->id,
+            'reference_code' => 'OPENING-BALANCE-'.$customer->id,
             'detail_available' => false,
         ]);
 
@@ -977,7 +993,7 @@ class PartnerFinancialTimelineService
     {
         $first = $entries
             ->map(fn ($entry) => is_array($entry) ? $entry : (array) $entry)
-            ->filter(fn ($entry) => !empty($this->entryDisplayTime($entry)))
+            ->filter(fn ($entry) => ! empty($this->entryDisplayTime($entry)))
             ->sortBy(fn ($entry) => $this->timestamp($entry))
             ->first();
 
@@ -1013,18 +1029,19 @@ class PartnerFinancialTimelineService
         }
 
         $note = (string) $debt->note;
+
         return str_contains($note, 'Tat toan tien da tra khach cho phieu tra')
             || str_contains($note, 'Bo sung tat toan tien da tra khach cho phieu tra');
     }
 
     private function matchesReturnSettlement(CustomerDebt $returnDebt, CustomerDebt $settlementDebt): bool
     {
-        if (!empty($returnDebt->order_return_id) && !empty($settlementDebt->order_return_id)
+        if (! empty($returnDebt->order_return_id) && ! empty($settlementDebt->order_return_id)
             && (int) $returnDebt->order_return_id === (int) $settlementDebt->order_return_id) {
             return true;
         }
 
-        return !empty($returnDebt->ref_code) && !empty($settlementDebt->ref_code)
+        return ! empty($returnDebt->ref_code) && ! empty($settlementDebt->ref_code)
             && (string) $returnDebt->ref_code === (string) $settlementDebt->ref_code;
     }
 
@@ -1073,6 +1090,7 @@ class PartnerFinancialTimelineService
         }
 
         $parsed = strtotime((string) $value);
+
         return $parsed ? date('YmdHis', $parsed) : '00000000000000';
     }
 }

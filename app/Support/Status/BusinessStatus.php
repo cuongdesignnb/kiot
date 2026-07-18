@@ -13,7 +13,7 @@ final class BusinessStatus
             return null;
         }
 
-        $value = trim(mb_strtolower($status));
+        $value = trim(mb_strtolower((string) self::repairText($status)));
         $ascii = self::ascii($value);
         $key = str_replace([' ', '-'], '_', $ascii);
 
@@ -78,7 +78,7 @@ final class BusinessStatus
     public static function notCancelledSql(string $column): string
     {
         $values = collect(self::cancelledDatabaseValues())
-            ->map(fn (string $value) => "'" . str_replace("'", "''", mb_strtolower(trim($value))) . "'")
+            ->map(fn (string $value) => "'".str_replace("'", "''", mb_strtolower(trim($value)))."'")
             ->implode(', ');
 
         return "({$column} IS NULL OR LOWER(TRIM({$column})) NOT IN ({$values}))";
@@ -94,6 +94,33 @@ final class BusinessStatus
         $normalized = self::normalize($status);
 
         return in_array($normalized, ['completed', 'returned'], true);
+    }
+
+    /**
+     * Undo the historical UTF-8-as-Windows-1252 mojibake found in cloned
+     * voucher/status columns. This is read-only normalization; source values
+     * remain untouched and therefore auditable.
+     */
+    public static function repairText(?string $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return $value;
+        }
+
+        $repaired = $value;
+        for ($attempt = 0; $attempt < 2; $attempt++) {
+            if (preg_match('/(?:Ã|Ä|Â|áº|á»)/u', $repaired) !== 1) {
+                break;
+            }
+
+            $candidate = @mb_convert_encoding($repaired, 'Windows-1252', 'UTF-8');
+            if ($candidate === $repaired || ! mb_check_encoding($candidate, 'UTF-8')) {
+                break;
+            }
+            $repaired = $candidate;
+        }
+
+        return $repaired;
     }
 
     private static function ascii(string $value): string

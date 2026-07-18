@@ -87,6 +87,7 @@ class PartnerDebtInvariantChecker
         string $role = 'all',
         string $status = 'all',
         bool $benchmark = false,
+        bool $allPartners = false,
     ): array {
         $queryCount = 0;
         if ($benchmark) {
@@ -96,15 +97,16 @@ class PartnerDebtInvariantChecker
         }
         $startedAt = hrtime(true);
         $slowestPartnerRuntimeMs = 0.0;
-        $query = Customer::query()
-            ->whereNull('merged_into_id')
-            ->where(function (Builder $builder): void {
-                $builder->where('is_customer', true)
-                    ->orWhere('is_supplier', true)
-                    ->orWhere('debt_amount', '!=', 0)
-                    ->orWhere('supplier_debt_amount', '!=', 0);
-            })
-            ->orderBy('id');
+        $query = Customer::query()->orderBy('id');
+        if (! $allPartners) {
+            $query->whereNull('merged_into_id')
+                ->where(function (Builder $builder): void {
+                    $builder->where('is_customer', true)
+                        ->orWhere('is_supplier', true)
+                        ->orWhere('debt_amount', '!=', 0)
+                        ->orWhere('supplier_debt_amount', '!=', 0);
+                });
+        }
 
         if ($partnerIds !== []) {
             $query->whereKey($partnerIds);

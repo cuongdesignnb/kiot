@@ -25,7 +25,7 @@ class PartnerFinancialTimelineTest extends TestCase
 
         $this->admin = User::create([
             'name' => 'Admin Partner Timeline Test',
-            'email' => 'admin-partner-timeline-' . uniqid() . '@test.local',
+            'email' => 'admin-partner-timeline-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
             'role_id' => null,
         ]);
@@ -34,7 +34,7 @@ class PartnerFinancialTimelineTest extends TestCase
     public function test_thien_phu_timeline_matches_net_debt(): void
     {
         $customer = Customer::create([
-            'code' => 'KH-THIEN-PHU-' . uniqid(),
+            'code' => 'KH-THIEN-PHU-'.uniqid(),
             'name' => 'Thiên Phú',
             'phone' => '0974321888',
             'debt_amount' => 47400000,
@@ -103,12 +103,15 @@ class PartnerFinancialTimelineTest extends TestCase
         $entries = collect($data['entries']);
 
         $this->assertEquals(-27600000, $data['summary']['net']);
-        $this->assertEquals(-27600000, $data['reconcile']['computed_balance']);
-        $this->assertFalse($data['reconcile']['has_mismatch']);
+        $this->assertEquals(-75020000, $data['reconcile']['computed_balance']);
+        $this->assertTrue($data['reconcile']['has_mismatch']);
+        $this->assertTrue($data['reconcile']['user_warning']);
+        $this->assertFalse($data['reconcile']['has_virtual_opening_balance']);
 
         $merge = $entries->firstWhere('code', 'MERGE-CUSTOMER-141');
         $this->assertEquals('Số dư đầu kỳ / Gộp công nợ', $merge['display_type']);
-        $this->assertTrue($merge['affects_debt_balance']);
+        $this->assertFalse($merge['affects_debt_balance']);
+        $this->assertEquals(0, $merge['customer_effect']);
 
         $discount = $entries->firstWhere('code', 'CKTT26052510573737');
         $this->assertEquals('Chiết khấu thanh toán', $discount['display_type']);
@@ -202,7 +205,7 @@ class PartnerFinancialTimelineTest extends TestCase
             'recorded_at' => Carbon::parse('2026-05-24 11:00:00'),
         ]);
 
-        $entry = collect($this->getDebtHistory($customer)['entries'])->firstWhere('id', 'ldg-' . CustomerDebt::latest('id')->first()->id);
+        $entry = collect($this->getDebtHistory($customer)['entries'])->firstWhere('id', 'ldg-'.CustomerDebt::latest('id')->first()->id);
 
         $this->assertEquals('Trả hàng bán', $entry['display_type']);
         $this->assertEquals(-3000000, $entry['customer_effect']);
@@ -365,11 +368,11 @@ class PartnerFinancialTimelineTest extends TestCase
 
         $this->assertEquals(-10000000, $purchase['customer_effect']);
         $this->assertEquals(-10000000, $purchase['balance']);
-        $this->assertEquals(5000000, $merge['customer_effect']);
-        $this->assertEquals(-5000000, $merge['balance']);
-        $this->assertEquals(-5000000, $data['reconcile']['computed_balance']);
+        $this->assertEquals(0, $merge['customer_effect']);
+        $this->assertEquals(-10000000, $merge['balance']);
+        $this->assertEquals(-10000000, $data['reconcile']['computed_balance']);
         $this->assertEquals(-5000000, $data['reconcile']['current_net_debt']);
-        $this->assertFalse($data['reconcile']['has_mismatch']);
+        $this->assertTrue($data['reconcile']['has_mismatch']);
     }
 
     public function test_supplier_entry_between_customer_ledgers_keeps_net_running_balance(): void
@@ -491,7 +494,7 @@ class PartnerFinancialTimelineTest extends TestCase
     private function createCustomer(array $overrides = []): Customer
     {
         return Customer::create(array_merge([
-            'code' => 'KH-TIMELINE-' . uniqid(),
+            'code' => 'KH-TIMELINE-'.uniqid(),
             'name' => 'Timeline Customer',
             'phone' => '0900000000',
             'debt_amount' => 0,

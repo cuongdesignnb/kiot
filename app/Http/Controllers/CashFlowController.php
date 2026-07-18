@@ -2,16 +2,16 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\PaymentMethod;
 use App\Models\ActivityLog;
-use App\Models\CashFlow;
 use App\Models\BankAccount;
+use App\Models\CashFlow;
 use App\Services\CustomerPaymentService;
 use App\Services\LockPeriodService;
-use Illuminate\Http\Request;
-use Inertia\Inertia;
-use App\Enums\PaymentMethod;
 use App\Support\BusinessDateTime;
 use App\Support\Filters\FilterableIndex;
+use Illuminate\Http\Request;
+use Inertia\Inertia;
 
 class CashFlowController extends Controller
 {
@@ -62,16 +62,16 @@ class CashFlowController extends Controller
                 ['value' => 'active', 'label' => 'Đã ghi nhận'],
                 ['value' => 'cancelled', 'label' => 'Đã hủy'],
             ],
-            'bankAccounts' => BankAccount::where('status', 'active')->orderBy('bank_name')->get(['id', 'bank_name as name'])->map(fn($b) => ['value' => $b->id, 'label' => $b->name]),
-            'categories' => collect(array_merge($savedReceiptCategories, $savedPaymentCategories))->unique()->values()->map(fn($c) => ['value' => $c, 'label' => $c]),
+            'bankAccounts' => BankAccount::where('status', 'active')->orderBy('bank_name')->get(['id', 'bank_name as name'])->map(fn ($b) => ['value' => $b->id, 'label' => $b->name]),
+            'categories' => collect(array_merge($savedReceiptCategories, $savedPaymentCategories))->unique()->values()->map(fn ($c) => ['value' => $c, 'label' => $c]),
             'categoryGroups' => [
-                'receipt' => collect($savedReceiptCategories)->unique()->values()->map(fn($c) => [
+                'receipt' => collect($savedReceiptCategories)->unique()->values()->map(fn ($c) => [
                     'value' => $c,
                     'label' => $c,
                     'type' => 'receipt',
                     'group' => 'Loại thu',
                 ]),
-                'payment' => collect($savedPaymentCategories)->unique()->values()->map(fn($c) => [
+                'payment' => collect($savedPaymentCategories)->unique()->values()->map(fn ($c) => [
                     'value' => $c,
                     'label' => $c,
                     'type' => 'payment',
@@ -122,7 +122,7 @@ class CashFlowController extends Controller
         ]);
         $targetPartner = null;
         if (in_array($request->target_type, ['Khách hàng', 'Nhà cung cấp', 'customer', 'supplier'], true)) {
-            if (!$request->filled('target_id')) {
+            if (! $request->filled('target_id')) {
                 throw \Illuminate\Validation\ValidationException::withMessages([
                     'target_id' => 'Vui lòng chọn đối tác từ danh sách.',
                 ]);
@@ -140,7 +140,7 @@ class CashFlowController extends Controller
         app(LockPeriodService::class)->assertNotLocked($txDate, 'cashflow_create');
 
         $cashFlow = CashFlow::create([
-            'code' => $prefix . date('ymdHis') . rand(10, 99),
+            'code' => $prefix.date('ymdHis').rand(10, 99),
             'type' => $request->type,
             'amount' => $request->amount,
             'time' => $txDate,
@@ -155,7 +155,7 @@ class CashFlowController extends Controller
         ]);
 
         $typeLabel = $request->type === 'receipt' ? 'thu' : 'chi';
-        ActivityLog::log('cashflow_create', "Tạo phiếu {$typeLabel} {$cashFlow->code}, số tiền: " . number_format($cashFlow->amount), $cashFlow);
+        ActivityLog::log('cashflow_create', "Tạo phiếu {$typeLabel} {$cashFlow->code}, số tiền: ".number_format($cashFlow->amount), $cashFlow);
 
         if ($request->boolean('_print')) {
             return redirect()->back()->with(['success' => 'Tạo phiếu thành công', 'print_id' => $cashFlow->id]);
@@ -169,13 +169,13 @@ class CashFlowController extends Controller
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'phone' => 'nullable|string|max:255',
-            'is_supplier' => 'boolean'
+            'is_supplier' => 'boolean',
         ]);
 
         $isSupplier = $request->input('is_supplier', false);
-        $validated['code'] = ($isSupplier ? 'NCC' : 'KH') . time() . rand(10, 99);
+        $validated['code'] = ($isSupplier ? 'NCC' : 'KH').time().rand(10, 99);
         $validated['is_supplier'] = $isSupplier;
-        $validated['is_customer'] = !$isSupplier;
+        $validated['is_customer'] = ! $isSupplier;
 
         \App\Models\Customer::create($validated);
 
@@ -202,7 +202,7 @@ class CashFlowController extends Controller
         ]);
         $targetPartner = null;
         if (in_array($request->target_type, ['Khách hàng', 'Nhà cung cấp', 'customer', 'supplier'], true)) {
-            if (!$request->filled('target_id')) {
+            if (! $request->filled('target_id')) {
                 throw \Illuminate\Validation\ValidationException::withMessages([
                     'target_id' => 'Vui lòng chọn đối tác từ danh sách.',
                 ]);
@@ -256,7 +256,11 @@ class CashFlowController extends Controller
         // Lock period check
         app(LockPeriodService::class)->assertNotLocked($cashFlow->time, 'cashflow_cancel');
 
-        $status = app(CustomerPaymentService::class)->cancel($cashFlow, trim($validated['cancel_reason']));
+        $status = app(CustomerPaymentService::class)->cancel(
+            $cashFlow,
+            trim($validated['cancel_reason']),
+            $request->header('Idempotency-Key'),
+        );
         if ($status === CustomerPaymentService::ALREADY_CANCELLED) {
             $message = 'Phieu thu nay da bi huy truoc do.';
 
@@ -274,7 +278,7 @@ class CashFlowController extends Controller
 
         ActivityLog::log(
             'cashflow_cancel',
-            "Huy phieu {$cashFlow->code}, so tien: " . number_format($cashFlow->amount),
+            "Huy phieu {$cashFlow->code}, so tien: ".number_format($cashFlow->amount),
             $cashFlow,
             [
                 'amount' => (float) $cashFlow->amount,
@@ -298,6 +302,7 @@ class CashFlowController extends Controller
     public function print(CashFlow $cashFlow)
     {
         $cashFlow->load('bankAccount');
+
         return view('prints.cashflow', compact('cashFlow'));
     }
 
@@ -310,7 +315,7 @@ class CashFlowController extends Controller
 
         return \App\Services\CsvService::export(
             ['Mã phiếu', 'Thời gian', 'Loại', 'Giá trị', 'Người nộp/nhận', 'Hạng mục', 'Phương thức', 'Ghi chú'],
-            $flows->map(fn($f) => [$f->code, $f->time, $f->type === 'receipt' ? 'Thu' : 'Chi', $f->amount, $f->target_name, $f->category, $f->payment_method === 'cash' ? 'Tiền mặt' : 'Chuyển khoản', $f->description]),
+            $flows->map(fn ($f) => [$f->code, $f->time, $f->type === 'receipt' ? 'Thu' : 'Chi', $f->amount, $f->target_name, $f->category, $f->payment_method === 'cash' ? 'Tiền mặt' : 'Chuyển khoản', $f->description]),
             'so_quy.csv'
         );
     }
@@ -320,7 +325,9 @@ class CashFlowController extends Controller
         [$headers, $rows] = \App\Services\CsvService::parse($request);
         $count = 0;
         foreach ($rows as $row) {
-            if (count($row) < 4 || empty(trim($row[0] ?? ''))) continue;
+            if (count($row) < 4 || empty(trim($row[0] ?? ''))) {
+                continue;
+            }
             $type = mb_strtolower(trim($row[2] ?? '')) === 'thu' ? 'receipt' : 'payment';
             CashFlow::create([
                 'code' => trim($row[0]),
@@ -334,6 +341,7 @@ class CashFlowController extends Controller
             ]);
             $count++;
         }
+
         return back()->with('success', "Đã nhập {$count} bút toán từ file.");
     }
 
@@ -354,12 +362,12 @@ class CashFlowController extends Controller
             return response()->json(['success' => false, 'message' => 'Quy nguon va quy dich phai khac nhau.'], 422);
         }
 
-        $refCode = 'CQ' . date('ymdHis') . rand(10, 99);
+        $refCode = 'CQ'.date('ymdHis').rand(10, 99);
         $transferTime = BusinessDateTime::forCreate();
 
         // Phieu chi o quy nguon
         $payment = CashFlow::create([
-            'code' => 'PC' . date('ymdHis') . rand(10, 99),
+            'code' => 'PC'.date('ymdHis').rand(10, 99),
             'type' => 'payment',
             'amount' => $request->amount,
             'time' => $transferTime,
@@ -373,7 +381,7 @@ class CashFlowController extends Controller
 
         // Phieu thu doi ung o quy dich
         $receipt = CashFlow::create([
-            'code' => 'PT' . date('ymdHis') . rand(10, 99),
+            'code' => 'PT'.date('ymdHis').rand(10, 99),
             'type' => 'receipt',
             'amount' => $request->amount,
             'time' => $transferTime,
@@ -386,7 +394,7 @@ class CashFlowController extends Controller
             'status' => 'active',
         ]);
 
-        ActivityLog::log('cashflow_transfer', "Chuyển quỹ {$refCode}: " . number_format($request->amount) . " ({$request->from_method} -> {$request->to_method})");
+        ActivityLog::log('cashflow_transfer', "Chuyển quỹ {$refCode}: ".number_format($request->amount)." ({$request->from_method} -> {$request->to_method})");
 
         return response()->json([
             'success' => true,

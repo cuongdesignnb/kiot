@@ -19,6 +19,7 @@ use App\Support\Debt\PartnerDebtDisplayBalance;
 use App\Support\Status\BusinessStatus;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Throwable;
@@ -201,10 +202,14 @@ class MaterialDebtRootCauseDrilldownService
 
     private function storedBalance(Customer $partner): array
     {
-        $customer = PartnerDebtDisplayBalance::customerReceivable($partner);
-        $supplier = PartnerDebtDisplayBalance::supplierPayable($partner);
-        $customerScreen = PartnerDebtDisplayBalance::customerScreen($partner);
-        $supplierScreen = PartnerDebtDisplayBalance::supplierScreen($partner);
+        // Root-cause evidence must preserve the persisted projection exactly;
+        // canonical display helpers would replace it with the reducer result
+        // and hide the very drift this report is meant to explain.
+        $customer = (float) ($partner->debt_amount ?? 0);
+        $supplier = (float) ($partner->supplier_debt_amount ?? 0);
+        $isDualRole = PartnerDebtDisplayBalance::isDualRole($partner);
+        $customerScreen = $isDualRole ? $customer - $supplier : $customer;
+        $supplierScreen = $isDualRole ? $supplier - $customer : $supplier;
 
         return [
             'raw_customer_debt' => $customer,
@@ -216,10 +221,10 @@ class MaterialDebtRootCauseDrilldownService
             'customer_screen' => $customerScreen,
             'supplier_screen' => $supplierScreen,
             'expected_symmetry' => 0.0,
-            'actual_symmetry' => PartnerDebtDisplayBalance::isDualRole($partner)
+            'actual_symmetry' => $isDualRole
                 ? $customerScreen + $supplierScreen
                 : 0.0,
-            'dual_role_screen_symmetry_difference' => PartnerDebtDisplayBalance::isDualRole($partner)
+            'dual_role_screen_symmetry_difference' => $isDualRole
                 ? $customerScreen + $supplierScreen
                 : 0.0,
         ];
@@ -345,7 +350,7 @@ class MaterialDebtRootCauseDrilldownService
                 $matchMethods = collect();
                 $referenceConflicts = collect();
                 foreach ($cashFlows as $flow) {
-                    if (!$this->isExplicitInvoiceCashFlowReversal($flow)) {
+                    if (! $this->isExplicitInvoiceCashFlowReversal($flow)) {
                         continue;
                     }
                     $reference = $this->resolveDocumentReference($flow, $invoices, 'InvoiceCancellation', 'invoice');
@@ -399,9 +404,9 @@ class MaterialDebtRootCauseDrilldownService
                 if ($debtReversals->isNotEmpty()) {
                     $debtReversals->each(function (CustomerDebt $debt) use ($invoice, $matchMethods): void {
                         $matchMethods->push(
-                        (string) ($debt->ref_code ?? '') === (string) $invoice->code
-                                ? 'code'
-                                : 'relationship',
+                            (string) ($debt->ref_code ?? '') === (string) $invoice->code
+                                    ? 'code'
+                                    : 'relationship',
                         );
                     });
                 }
@@ -424,7 +429,7 @@ class MaterialDebtRootCauseDrilldownService
                     'historical_reversal_amount' => $historicalAmount,
                     'has_exact_reversal' => $exact,
                     'has_partial_reversal' => $partial,
-                    'missing_reversal' => $requiresReversal && !$hasActive,
+                    'missing_reversal' => $requiresReversal && ! $hasActive,
                     'reversal_state' => $reversalState,
                     'candidate_amount_difference' => $difference,
                     'match_method' => $this->strongestMatchMethod($matchMethods),
@@ -527,10 +532,63 @@ class MaterialDebtRootCauseDrilldownService
         $diagnostics = (array) (($supplierTimeline['reconcile']['generic_payment_allocation'] ?? []));
         $inferred = collect($diagnostics['inferred_allocations'] ?? [])->groupBy('payment_code');
         $unallocated = collect($diagnostics['unallocated_generic_payments'] ?? [])->keyBy('payment_code');
-        $supplier = $supplierPayments->map(function (CashFlow $flow) use ($purchases, $inferred, $unallocated): array {
+        $persistedSupplierAllocations = Schema::hasTable('supplier_payment_allocations')
+            ? DB::table('supplier_payment_allocations')
+                ->whereIn('payment_id', $supplierPayments->pluck('id'))
+                ->orderBy('purchase_id')
+                ->get()
+                ->groupBy('payment_id')
+            : collect();
+        $supplier = $supplierPayments->map(function (CashFlow $flow) use (
+            $purchases,
+            $inferred,
+            $unallocated,
+            $persistedSupplierAllocations,
+        ): array {
             $reference = $this->resolveDocumentReference($flow, $purchases, 'Purchase', 'purchase');
             $direct = $reference['document'];
             $scope = $this->cashFlowEvidenceScope($flow);
+            $actualRows = collect($persistedSupplierAllocations->get($flow->id, []));
+            if ($actualRows->isNotEmpty()) {
+                $candidates = $actualRows->map(function ($allocation) use ($purchases, $flow): array {
+                    $purchase = $purchases->firstWhere('id', $allocation->purchase_id);
+                    $ownershipValid = $purchase
+                        && (int) $purchase->supplier_id === (int) $flow->target_id
+                        && (int) $allocation->supplier_id === (int) $flow->target_id;
+
+                    return [
+                        'document_id' => (int) $allocation->purchase_id,
+                        'document_code' => (string) ($purchase?->code ?? ''),
+                        'amount' => (float) $allocation->amount,
+                        'evidence' => 'supplier_payment_allocations',
+                        'valid_ownership' => (bool) $ownershipValid,
+                        'valid_amount' => (float) $allocation->amount > 0,
+                    ];
+                })->values();
+                $valid = $candidates->every(
+                    fn (array $candidate): bool => $candidate['valid_ownership'] && $candidate['valid_amount'],
+                );
+                $allocated = $valid ? (float) $actualRows->sum('amount') : 0.0;
+                $exceeds = $allocated - (float) $flow->amount > PartnerDebtParityAuditService::TOLERANCE;
+                $partial = (float) $flow->amount - $allocated > PartnerDebtParityAuditService::TOLERANCE;
+
+                return $this->paymentEvidenceRow(
+                    $flow,
+                    $scope['is_active_for_balance'] && $valid && ! $exceeds,
+                    false,
+                    $scope['is_active_for_balance'] && $valid && ! $exceeds ? 'actual' : 'unknown',
+                    $candidates->all(),
+                    $scope['is_active_for_balance'] && $valid && ! $exceeds ? $allocated : 0.0,
+                    $scope['is_active_for_balance'] ? max(0.0, (float) $flow->amount - $allocated) : 0.0,
+                    ! $valid
+                        ? 'supplier_allocation_ownership_or_amount_invalid'
+                        : ($exceeds ? 'supplier_allocation_exceeds_cashflow_amount' : ($partial
+                            ? 'supplier_payment_not_fully_allocated'
+                            : null)),
+                    'allocation_table',
+                    false,
+                );
+            }
             $inferredRows = collect($inferred->get($flow->code, []));
             $unallocatedRow = (array) ($unallocated->get($flow->code, []));
             $candidates = $inferredRows->map(function (array $row) use ($purchases): array {
@@ -556,20 +614,20 @@ class MaterialDebtRootCauseDrilldownService
                 ? (float) $unallocatedRow['amount']
                 : ($isGeneric && $inferredRows->isEmpty() ? (float) $flow->amount : 0.0);
 
-            $useInference = $scope['is_active_for_balance'] && !$direct && $inferredRows->isNotEmpty();
+            $useInference = $scope['is_active_for_balance'] && ! $direct && $inferredRows->isNotEmpty();
             $method = $direct ? $reference['method'] : ($useInference ? 'fifo_projection' : 'none');
 
             return $this->paymentEvidenceRow(
                 $flow,
                 $scope['is_active_for_balance'] && (bool) $direct,
                 $useInference,
-                !$scope['is_active_for_balance']
+                ! $scope['is_active_for_balance']
                     ? 'historical'
                     : ($direct ? 'actual_reference' : ($useInference ? 'inferred' : ($isGeneric ? 'unknown' : 'global_payment_only'))),
                 $candidates->all(),
                 $scope['is_active_for_balance'] && $direct ? (float) $flow->amount : 0.0,
                 $scope['is_active_for_balance'] ? $unallocatedAmount : 0.0,
-                !$scope['is_active_for_balance']
+                ! $scope['is_active_for_balance']
                     ? 'historical_cashflow_excluded_from_active_allocation'
                     : ($reference['warning'] ?: ($direct ? null : ($useInference
                         ? 'supplier_allocation_is_inferred_not_actual'
@@ -654,7 +712,7 @@ class MaterialDebtRootCauseDrilldownService
             );
             $warning = $conflict
                 ? "{$warningPrefix}_reference_id_code_conflict"
-                : (!$byId ? "{$warningPrefix}_reference_id_not_found" : null);
+                : (! $byId ? "{$warningPrefix}_reference_id_not_found" : null);
 
             return ['document' => $byId, 'method' => 'id', 'conflict' => $conflict, 'warning' => $warning];
         }
@@ -675,7 +733,7 @@ class MaterialDebtRootCauseDrilldownService
     {
         $isDeleted = $flow->trashed() || $flow->getAttribute('deleted_at') !== null;
         $isCancelled = BusinessStatus::isCancelled($flow->status);
-        $isActive = !$isDeleted && !$isCancelled && BusinessStatus::isValidCashFlow($flow->status);
+        $isActive = ! $isDeleted && ! $isCancelled && BusinessStatus::isValidCashFlow($flow->status);
 
         return [
             'is_deleted' => $isDeleted,
@@ -695,14 +753,14 @@ class MaterialDebtRootCauseDrilldownService
         $note = Str::ascii(mb_strtolower((string) ($debt->note ?? '')));
         $isCancellationAdjustment = $type === 'adjustment'
             && (str_contains($note, 'huy hoa don') || str_contains($note, 'dao cong no'));
-        if (!$isSpecificType && !$isCancellationAdjustment) {
+        if (! $isSpecificType && ! $isCancellationAdjustment) {
             return false;
         }
 
         $codeMatch = (string) ($debt->ref_code ?? '') === (string) ($invoice->code ?? '');
         $orderMatch = $invoice->order_id && $debt->order_id
             && (int) $debt->order_id === (int) $invoice->order_id;
-        if (!$codeMatch && !$orderMatch) {
+        if (! $codeMatch && ! $orderMatch) {
             return false;
         }
 
@@ -1033,7 +1091,7 @@ class MaterialDebtRootCauseDrilldownService
         if ($value instanceof \DateTimeInterface) {
             return $value->format('Y-m-d H:i:s');
         }
-        if (is_numeric($value) && !is_string($value)) {
+        if (is_numeric($value) && ! is_string($value)) {
             return $value;
         }
 

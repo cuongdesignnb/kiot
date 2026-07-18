@@ -7,6 +7,7 @@ use App\Models\CustomerDebt;
 use App\Models\Invoice;
 use App\Models\SupplierDebtTransaction;
 use App\Services\CustomerDebtDocumentTimelineService;
+use App\Services\Debt\CanonicalPartnerDebtService;
 use App\Services\Debt\PartnerDebtParityAuditService;
 use App\Services\SupplierDebtDocumentTimelineService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -236,7 +237,7 @@ class PartnerDebtParityAuditServiceTest extends TestCase
             'supplier_debt_amount' => 0,
         ]);
         Invoice::query()->create([
-            'code' => 'HD-DUAL-PARITY-' . uniqid(),
+            'code' => 'HD-DUAL-PARITY-'.uniqid(),
             'customer_id' => $partner->id,
             'status' => 'Hoàn thành',
             'total' => 500_000,
@@ -248,16 +249,20 @@ class PartnerDebtParityAuditServiceTest extends TestCase
         $audit = $this->service->audit($partner);
 
         $this->assertSame('supplier_partner_timeline', $ui['summary']['display_mode']);
-        $this->assertSame(
-            (float) $ui['summary']['raw_document_final_balance'],
-            (float) $audit['supplier_document_raw_final'],
-        );
+        $canonical = app(CanonicalPartnerDebtService::class)->calculate($partner);
+
+        // The supplier-side audit remains a gross payable projection. The
+        // dual-role supplier screen is explicitly supplier-oriented net.
+        $this->assertSame(-500_000.0, (float) $ui['summary']['raw_document_final_balance']);
+        $this->assertSame(0.0, (float) $audit['supplier_document_raw_final']);
+        $this->assertSame(0.0, (float) $canonical['supplier_payable']);
+        $this->assertSame(-500_000.0, (float) $canonical['supplier_oriented_net']);
     }
 
     private function partner(array $overrides = []): Customer
     {
         return Customer::query()->create(array_merge([
-            'code' => 'PARITY-SERVICE-' . uniqid(),
+            'code' => 'PARITY-SERVICE-'.uniqid(),
             'name' => 'Generic Parity Service Partner',
             'phone' => '0900000000',
             'debt_amount' => 0,

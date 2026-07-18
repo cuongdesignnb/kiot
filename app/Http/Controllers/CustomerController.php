@@ -5,27 +5,24 @@ namespace App\Http\Controllers;
 use App\Models\CashFlow;
 use App\Models\Customer;
 use App\Models\CustomerGroup;
+use App\Models\CustomerPaymentDiscount;
 use App\Models\Invoice;
 use App\Models\OrderReturn;
 use App\Models\Purchase;
-use App\Models\PurchaseReturn;
 use App\Models\Setting;
-use App\Models\SupplierDebtTransaction;
-use Illuminate\Http\Request;
-use Inertia\Inertia;
 use App\Services\CustomerDebtService;
 use App\Services\CustomerPaymentDiscountService;
 use App\Services\CustomerPaymentService;
-use App\Services\PartnerMergeService;
-use App\Services\PartnerFinancialTimelineService;
-use App\Models\CustomerPaymentDiscount;
+use App\Services\Debt\PartnerDebtMutationCoordinator;
 use App\Services\DebtOffsetService;
-use App\Models\DebtOffset;
+use App\Services\PartnerMergeService;
 use App\Support\Debt\PartnerDebtDisplayBalance;
-use App\Support\Filters\FilterableIndex;
 use App\Support\Filters\DateRangePresets;
-use Illuminate\Support\Facades\Schema;
+use App\Support\Filters\FilterableIndex;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Inertia\Inertia;
 
 class CustomerController extends Controller
 {
@@ -46,14 +43,15 @@ class CustomerController extends Controller
     private function buildCapabilities(): array
     {
         $hasInvoiceTxDate = Schema::hasColumn('invoices', 'transaction_date');
+
         return [
-            'supportsBirthdayFilter'        => true,
-            'supportsLastTransactionFilter'  => true,
-            'supportsTotalSalesTimeFilter'   => true,
-            'supportsDebtDaysFilter'         => false,
-            'supportsPointsFilter'           => false,
-            'supportsDeliveryAreaFilter'     => true,
-            'supportsCreatedByFilter'        => Schema::hasColumn('customers', 'created_by'),
+            'supportsBirthdayFilter' => true,
+            'supportsLastTransactionFilter' => true,
+            'supportsTotalSalesTimeFilter' => true,
+            'supportsDebtDaysFilter' => false,
+            'supportsPointsFilter' => false,
+            'supportsDeliveryAreaFilter' => true,
+            'supportsCreatedByFilter' => Schema::hasColumn('customers', 'created_by'),
         ];
     }
 
@@ -149,17 +147,17 @@ class CustomerController extends Controller
             $request->input('last_transaction_to'),
         );
         if ($lastTxFrom || $lastTxTo) {
-            $subquery = Invoice::selectRaw('MAX(' . $this->invoiceDateExpr() . ')')
+            $subquery = Invoice::selectRaw('MAX('.$this->invoiceDateExpr().')')
                 ->whereColumn('invoices.customer_id', 'customers.id');
 
             if ($lastTxFrom) {
                 $query->where(function ($q) use ($subquery, $lastTxFrom) {
-                    $q->whereRaw('(' . $subquery->toSql() . ') >= ?', array_merge($subquery->getBindings(), [$lastTxFrom->toDateTimeString()]));
+                    $q->whereRaw('('.$subquery->toSql().') >= ?', array_merge($subquery->getBindings(), [$lastTxFrom->toDateTimeString()]));
                 });
             }
             if ($lastTxTo) {
                 $query->where(function ($q) use ($subquery, $lastTxTo) {
-                    $q->whereRaw('(' . $subquery->toSql() . ') <= ?', array_merge($subquery->getBindings(), [$lastTxTo->toDateTimeString()]));
+                    $q->whereRaw('('.$subquery->toSql().') <= ?', array_merge($subquery->getBindings(), [$lastTxTo->toDateTimeString()]));
                 });
             }
         }
@@ -189,10 +187,10 @@ class CustomerController extends Controller
                 }
 
                 if ($request->filled('total_sales_from')) {
-                    $query->whereRaw('(' . $sumSubquery->toSql() . ') >= ?', array_merge($sumSubquery->getBindings(), [(float) $request->total_sales_from]));
+                    $query->whereRaw('('.$sumSubquery->toSql().') >= ?', array_merge($sumSubquery->getBindings(), [(float) $request->total_sales_from]));
                 }
                 if ($request->filled('total_sales_to')) {
-                    $query->whereRaw('(' . $sumSubquery->toSql() . ') <= ?', array_merge($sumSubquery->getBindings(), [(float) $request->total_sales_to]));
+                    $query->whereRaw('('.$sumSubquery->toSql().') <= ?', array_merge($sumSubquery->getBindings(), [(float) $request->total_sales_to]));
                 }
             } else {
                 // Lifetime: use materialized customers.total_spent
@@ -222,7 +220,7 @@ class CustomerController extends Controller
         $this->configureCustomerFilters();
 
         $query = Customer::with('branch');
-        
+
         $hasSupplierDebtColumn = Schema::hasColumn('customers', 'supplier_debt_amount');
 
         // If request sorts by debt_amount, intercept and sort by net debt expression if supplier_debt_amount column exists
@@ -307,13 +305,13 @@ class CustomerController extends Controller
         $masterGroups = CustomerGroup::where('is_active', true)
             ->orderBy('sort_order')->orderBy('name')
             ->get(['id', 'name'])
-            ->map(fn($g) => ['value' => $g->name, 'label' => $g->name]);
+            ->map(fn ($g) => ['value' => $g->name, 'label' => $g->name]);
 
         $legacyGroups = Customer::whereNotNull('customer_group')
             ->where('customer_group', '!=', '')
             ->distinct()->pluck('customer_group')
             ->diff($masterGroups->pluck('value'))
-            ->map(fn($g) => ['value' => $g, 'label' => $g])
+            ->map(fn ($g) => ['value' => $g, 'label' => $g])
             ->values();
 
         $customerGroups = $masterGroups->concat($legacyGroups)->unique('value')->values();
@@ -328,10 +326,10 @@ class CustomerController extends Controller
         // Delivery areas (distinct cities from customers)
         $deliveryCities = Customer::whereNotNull('city')->where('city', '!=', '')
             ->distinct()->orderBy('city')->pluck('city')
-            ->map(fn($c) => ['value' => $c, 'label' => $c])->values();
+            ->map(fn ($c) => ['value' => $c, 'label' => $c])->values();
 
         $filterOptions = [
-            'branches'       => $branches,
+            'branches' => $branches,
             'customerGroups' => $customerGroups,
             'types' => [
                 ['value' => 'individual', 'label' => 'Cá nhân'],
@@ -350,7 +348,7 @@ class CustomerController extends Controller
                 ['value' => 'customer',          'label' => 'Khách hàng'],
                 ['value' => 'customer_supplier', 'label' => 'Khách hàng - Nhà cung cấp'],
             ],
-            'creators'       => $creators,
+            'creators' => $creators,
             'deliveryCities' => $deliveryCities,
             'debtOptions' => [
                 ['value' => 'yes', 'label' => 'Còn nợ'],
@@ -361,30 +359,30 @@ class CustomerController extends Controller
 
         // Echo back all filter values (standard + advanced)
         $filters = $this->currentFilters($request);
-        $filters['has_debt']              = $request->input('has_debt', '');
-        $filters['partner_type']          = $request->input('partner_type', '');
-        $filters['net_debt_from']         = $request->input('net_debt_from', '');
-        $filters['net_debt_to']           = $request->input('net_debt_to', '');
-        $filters['birthday_filter']           = $request->input('birthday_filter', 'all');
-        $filters['birthday_from']             = $request->input('birthday_from', '');
-        $filters['birthday_to']               = $request->input('birthday_to', '');
-        $filters['last_transaction_filter']   = $request->input('last_transaction_filter', 'all');
-        $filters['last_transaction_from']     = $request->input('last_transaction_from', '');
-        $filters['last_transaction_to']       = $request->input('last_transaction_to', '');
-        $filters['total_sales_from']          = $request->input('total_sales_from', '');
-        $filters['total_sales_to']            = $request->input('total_sales_to', '');
-        $filters['total_sales_date_filter']   = $request->input('total_sales_date_filter', 'all');
-        $filters['total_sales_date_from']     = $request->input('total_sales_date_from', '');
-        $filters['total_sales_date_to']       = $request->input('total_sales_date_to', '');
-        $filters['delivery_city']         = $request->input('delivery_city', '');
-        $filters['delivery_district']     = $request->input('delivery_district', '');
+        $filters['has_debt'] = $request->input('has_debt', '');
+        $filters['partner_type'] = $request->input('partner_type', '');
+        $filters['net_debt_from'] = $request->input('net_debt_from', '');
+        $filters['net_debt_to'] = $request->input('net_debt_to', '');
+        $filters['birthday_filter'] = $request->input('birthday_filter', 'all');
+        $filters['birthday_from'] = $request->input('birthday_from', '');
+        $filters['birthday_to'] = $request->input('birthday_to', '');
+        $filters['last_transaction_filter'] = $request->input('last_transaction_filter', 'all');
+        $filters['last_transaction_from'] = $request->input('last_transaction_from', '');
+        $filters['last_transaction_to'] = $request->input('last_transaction_to', '');
+        $filters['total_sales_from'] = $request->input('total_sales_from', '');
+        $filters['total_sales_to'] = $request->input('total_sales_to', '');
+        $filters['total_sales_date_filter'] = $request->input('total_sales_date_filter', 'all');
+        $filters['total_sales_date_from'] = $request->input('total_sales_date_from', '');
+        $filters['total_sales_date_to'] = $request->input('total_sales_date_to', '');
+        $filters['delivery_city'] = $request->input('delivery_city', '');
+        $filters['delivery_district'] = $request->input('delivery_district', '');
 
         return Inertia::render('Customers/Index', [
-            'customers'        => $customers,
-            'filters'          => $filters,
-            'filterOptions'    => $filterOptions,
+            'customers' => $customers,
+            'filters' => $filters,
+            'filterOptions' => $filterOptions,
             'customerSettings' => $customerSettings,
-            'summary'          => $summary,
+            'summary' => $summary,
         ]);
     }
 
@@ -394,13 +392,13 @@ class CustomerController extends Controller
         $rules = [
             'name' => 'required|string|max:255',
             'code' => 'nullable|string|max:255|unique:customers,code',
-            'phone' => (Setting::get('customer_required_phone', false) ? 'required' : 'nullable') . '|string|max:255|unique:customers,phone',
+            'phone' => (Setting::get('customer_required_phone', false) ? 'required' : 'nullable').'|string|max:255|unique:customers,phone',
             'phone2' => 'nullable|string|max:255',
-            'birthday' => (Setting::get('customer_required_birthday', false) ? 'required' : 'nullable') . '|date',
-            'gender' => (Setting::get('customer_required_gender', false) ? 'required' : 'nullable') . '|in:none,male,female',
-            'email' => (Setting::get('customer_required_email', false) ? 'required' : 'nullable') . '|email|max:255',
-            'facebook' => (Setting::get('customer_required_facebook', false) ? 'required' : 'nullable') . '|string|max:255',
-            'address' => (Setting::get('customer_required_address', false) ? 'required' : 'nullable') . '|string',
+            'birthday' => (Setting::get('customer_required_birthday', false) ? 'required' : 'nullable').'|date',
+            'gender' => (Setting::get('customer_required_gender', false) ? 'required' : 'nullable').'|in:none,male,female',
+            'email' => (Setting::get('customer_required_email', false) ? 'required' : 'nullable').'|email|max:255',
+            'facebook' => (Setting::get('customer_required_facebook', false) ? 'required' : 'nullable').'|string|max:255',
+            'address' => (Setting::get('customer_required_address', false) ? 'required' : 'nullable').'|string',
             'city' => 'nullable|string',
             'district' => 'nullable|string',
             'ward' => 'nullable|string',
@@ -424,7 +422,7 @@ class CustomerController extends Controller
 
         $validated = $request->validate($rules);
         if (empty($validated['code'])) {
-            $validated['code'] = 'KH' . time() . rand(10, 99);
+            $validated['code'] = 'KH'.time().rand(10, 99);
         }
 
         $validated['is_supplier'] = $request->input('is_supplier', false);
@@ -460,13 +458,13 @@ class CustomerController extends Controller
     {
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
-            'phone' => (Setting::get('customer_required_phone', false) ? 'required' : 'nullable') . '|string|max:255|unique:customers,phone,' . $customer->id,
+            'phone' => (Setting::get('customer_required_phone', false) ? 'required' : 'nullable').'|string|max:255|unique:customers,phone,'.$customer->id,
             'phone2' => 'nullable|string|max:255',
-            'birthday' => (Setting::get('customer_required_birthday', false) ? 'required' : 'nullable') . '|date',
-            'gender' => (Setting::get('customer_required_gender', false) ? 'required' : 'nullable') . '|in:none,male,female',
-            'email' => (Setting::get('customer_required_email', false) ? 'required' : 'nullable') . '|email|max:255',
-            'facebook' => (Setting::get('customer_required_facebook', false) ? 'required' : 'nullable') . '|string|max:255',
-            'address' => (Setting::get('customer_required_address', false) ? 'required' : 'nullable') . '|string',
+            'birthday' => (Setting::get('customer_required_birthday', false) ? 'required' : 'nullable').'|date',
+            'gender' => (Setting::get('customer_required_gender', false) ? 'required' : 'nullable').'|in:none,male,female',
+            'email' => (Setting::get('customer_required_email', false) ? 'required' : 'nullable').'|email|max:255',
+            'facebook' => (Setting::get('customer_required_facebook', false) ? 'required' : 'nullable').'|string|max:255',
+            'address' => (Setting::get('customer_required_address', false) ? 'required' : 'nullable').'|string',
             'city' => 'nullable|string',
             'district' => 'nullable|string',
             'ward' => 'nullable|string',
@@ -481,9 +479,9 @@ class CustomerController extends Controller
         ]);
 
         if (array_key_exists('is_supplier', $validated) && $validated['is_supplier']) {
-             $validated['is_supplier'] = true;
+            $validated['is_supplier'] = true;
         } else {
-             $validated['is_supplier'] = false;
+            $validated['is_supplier'] = false;
         }
 
         $linkId = $request->input('linked_supplier_id') ?: $request->input('link_existing_id');
@@ -491,7 +489,11 @@ class CustomerController extends Controller
 
         if (($linkMode === 'link_existing' || $linkId) && $linkId && $linkId != $customer->id) {
             $existing = Customer::findOrFail($linkId);
-            app(PartnerMergeService::class)->merge($customer, $existing);
+            app(PartnerMergeService::class)->merge(
+                $customer,
+                $existing,
+                $request->header('Idempotency-Key'),
+            );
             $existing->refresh();
             $existing->fill([
                 'name' => $validated['name'] ?? $existing->name,
@@ -529,6 +531,7 @@ class CustomerController extends Controller
         }
 
         $customer->delete();
+
         return redirect()->route('customers.index')->with('success', 'Xóa khách hàng thành công.');
     }
 
@@ -590,12 +593,12 @@ class CustomerController extends Controller
             return response()->json(array_merge($ledger, [
                 'entries' => $entries->slice($offset, $perPage)->values(),
                 'pagination' => [
-                    'total'        => $total,
-                    'per_page'     => $perPage,
+                    'total' => $total,
+                    'per_page' => $perPage,
                     'current_page' => $currentPage,
-                    'last_page'    => $lastPage,
-                    'from'         => $total === 0 ? 0 : $offset + 1,
-                    'to'           => min($offset + $perPage, $total),
+                    'last_page' => $lastPage,
+                    'from' => $total === 0 ? 0 : $offset + 1,
+                    'to' => min($offset + $perPage, $total),
                 ],
             ]));
         }
@@ -613,7 +616,7 @@ class CustomerController extends Controller
     {
         $mode = $request->input('mode', 'auto');
         $rules = [
-            'amount' => ($mode === 'manual' ? 'nullable' : 'required') . '|numeric|min:1',
+            'amount' => ($mode === 'manual' ? 'nullable' : 'required').'|numeric|min:1',
             'allocations' => $mode === 'manual' ? 'required|array|min:1' : 'nullable|array',
             'allocations.*.invoice_id' => 'required_with:allocations|integer|exists:invoices,id',
             'allocations.*.amount' => 'required_with:allocations|numeric|min:1',
@@ -623,7 +626,7 @@ class CustomerController extends Controller
         $validated = $request->validate($rules);
         $allocations = $validated['allocations'] ?? [];
 
-        if ($mode === 'manual' && !empty($allocations)) {
+        if ($mode === 'manual' && ! empty($allocations)) {
             $invoiceIds = collect($allocations)
                 ->pluck('invoice_id')
                 ->map(fn ($id) => (int) $id)
@@ -653,20 +656,21 @@ class CustomerController extends Controller
             $mode,
             $allocations,
             $validated['note'] ?? null,
-            $validated['date'] ?? null
+            $validated['date'] ?? null,
+            $request->header('Idempotency-Key'),
         );
 
         if ($request->wantsJson()) {
             return response()->json([
                 'success' => true,
-                'message' => 'Da thu ' . number_format($result['payment_amount']) . ' tu khach hang.',
+                'message' => 'Da thu '.number_format($result['payment_amount']).' tu khach hang.',
                 'payment' => $result,
             ]);
         }
 
         return back()->with(
             'success',
-            'Da thu ' . number_format($result['payment_amount']) . ' tu khach hang.'
+            'Da thu '.number_format($result['payment_amount']).' tu khach hang.'
         );
     }
 
@@ -684,61 +688,78 @@ class CustomerController extends Controller
     public function debtAdjust(Request $request, Customer $customer)
     {
         $validated = $request->validate([
-            'amount' => 'required|numeric', // Giá trị nợ cuối mong muốn
+            'amount' => 'required|numeric',
             'note' => 'nullable|string|max:500',
             'date' => 'nullable|date',
         ]);
+        $payloadHash = hash('sha256', json_encode([
+            'customer_id' => (int) $customer->id,
+            'target_debt' => (float) $validated['amount'],
+            'note' => $validated['note'] ?? null,
+            'date' => $validated['date'] ?? null,
+        ], JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION));
 
-        $targetDebt = $validated['amount']; // Nợ cuối user muốn set
-        $currentReceivable = (float) $customer->debt_amount;
-        $currentDebt = PartnerDebtDisplayBalance::customerScreen($customer);
-        $diff = $currentDebt - $targetDebt; // diff > 0 = giảm nợ, diff < 0 = tăng nợ
+        $result = app(PartnerDebtMutationCoordinator::class)->execute(
+            (int) $customer->id,
+            'customer_debt_adjustment',
+            $payloadHash,
+            function (Customer $lockedCustomer) use ($validated): array {
+                $targetDebt = (float) $validated['amount'];
+                $currentReceivable = (float) $lockedCustomer->debt_amount;
+                $currentDebt = PartnerDebtDisplayBalance::customerScreen($lockedCustomer);
+                $targetReceivable = PartnerDebtDisplayBalance::isDualRole($lockedCustomer)
+                    ? $targetDebt + (float) ($lockedCustomer->supplier_debt_amount ?? 0)
+                    : $targetDebt;
+                $debtDelta = $targetReceivable - $currentReceivable;
+                if (abs($debtDelta) < 0.01) {
+                    return ['changed' => false, 'before' => $currentDebt, 'after' => $targetDebt];
+                }
 
-        $targetReceivable = PartnerDebtDisplayBalance::isDualRole($customer)
-            ? (float) $targetDebt + (float) ($customer->supplier_debt_amount ?? 0)
-            : (float) $targetDebt;
-        $debtDelta = $targetReceivable - $currentReceivable;
+                $adjustedAt = ! empty($validated['date'])
+                    ? \Carbon\Carbon::parse($validated['date'])
+                    : now();
+                $description = ($validated['note'] ?? 'Điều chỉnh công nợ')
+                    .' | '.number_format($currentDebt).' → '.number_format($targetDebt);
+                $cashFlow = CashFlow::create([
+                    'code' => ($debtDelta < 0 ? 'PT' : 'PC').date('ymdHis').random_int(10, 99),
+                    'type' => $debtDelta < 0 ? 'receipt' : 'payment',
+                    'amount' => abs($debtDelta),
+                    'time' => $adjustedAt,
+                    'category' => 'Điều chỉnh công nợ',
+                    'target_type' => 'Khách hàng',
+                    'target_id' => $lockedCustomer->id,
+                    'target_name' => $lockedCustomer->name,
+                    'reference_type' => 'DebtAdjustment',
+                    'reference_code' => null,
+                    'description' => $description,
+                ]);
+                app(PartnerDebtMutationCoordinator::class)->checkpoint('document');
+                if (! empty($validated['date'])) {
+                    $cashFlow->created_at = $adjustedAt;
+                    $cashFlow->save();
+                }
 
-        if (abs($debtDelta) < 0.01) {
+                app(CustomerDebtService::class)->recordAdjustment(
+                    (int) $lockedCustomer->id,
+                    $debtDelta,
+                    $description,
+                    ['ref_code' => $cashFlow->code],
+                );
+                app(PartnerDebtMutationCoordinator::class)->checkpoint('projection');
+
+                return ['changed' => true, 'before' => $currentDebt, 'after' => $targetDebt];
+            },
+            $request->header('Idempotency-Key'),
+        );
+
+        if (! $result['changed']) {
             return back()->with('info', 'Công nợ không thay đổi.');
         }
 
-        $type = $diff > 0 ? 'receipt' : 'payment';
-        $prefix = $diff > 0 ? 'PT' : 'PC';
-        $adjustedAt = !empty($validated['date']) ? \Carbon\Carbon::parse($validated['date']) : now();
-
-        $cashFlow = CashFlow::create([
-            'code' => $prefix . date('ymdHis') . rand(10, 99),
-            'type' => $type,
-            'amount' => abs($debtDelta),
-            'time' => $adjustedAt,
-            'category' => 'Điều chỉnh công nợ',
-            'target_type' => 'Khách hàng',
-            'target_id' => $customer->id,
-            'target_name' => $customer->name,
-            'reference_type' => 'DebtAdjustment',
-            'reference_code' => null,
-            'description' => ($validated['note'] ?? 'Điều chỉnh công nợ') . ' | ' . number_format($currentDebt) . ' → ' . number_format($targetDebt),
-        ]);
-        // Override created_at để hiển thị trong lịch sử theo ngày người dùng chọn
-        if (!empty($validated['date'])) {
-            $cashFlow->created_at = $adjustedAt;
-            $cashFlow->save();
-        }
-
-        // RR-06: write the raw receivable delta after converting from the
-        // customer-screen display balance for dual-role partners.
-        if (abs($debtDelta) >= 0.01) {
-            app(CustomerDebtService::class)->recordAdjustment(
-                $customer->id,
-                $debtDelta,
-                ($validated['note'] ?? 'Điều chỉnh công nợ')
-                    . ' | ' . number_format($currentDebt) . ' → ' . number_format($targetDebt),
-                ['ref_code' => $cashFlow->code]
-            );
-        }
-
-        return back()->with('success', 'Đã điều chỉnh công nợ: ' . number_format($currentDebt) . ' → ' . number_format($targetDebt) . '₫');
+        return back()->with(
+            'success',
+            'Đã điều chỉnh công nợ: '.number_format($result['before']).' → '.number_format($result['after']).'₫',
+        );
     }
 
     public function searchForMerge(Request $request)
@@ -751,11 +772,11 @@ class CustomerController extends Controller
             ->when($q, function ($query, $q) {
                 $query->where(function ($qb) use ($q) {
                     $qb->where('name', 'LIKE', "%{$q}%")
-                       ->orWhere('phone', 'LIKE', "%{$q}%")
-                       ->orWhere('code', 'LIKE', "%{$q}%");
+                        ->orWhere('phone', 'LIKE', "%{$q}%")
+                        ->orWhere('code', 'LIKE', "%{$q}%");
                 });
             })
-            ->when($exclude, fn($qb, $id) => $qb->where('id', '!=', $id))
+            ->when($exclude, fn ($qb, $id) => $qb->where('id', '!=', $id))
             ->when($type === 'supplier', fn ($qb) => $qb->where('is_supplier', true))
             ->when($type === 'customer', fn ($qb) => $qb->where('is_customer', true))
             ->limit(20)
@@ -790,33 +811,33 @@ class CustomerController extends Controller
 
         $query->where(function ($q) use ($search) {
             $q->where('name', 'LIKE', "%{$search}%")
-              ->orWhere('code', 'LIKE', "%{$search}%")
-              ->orWhere('phone', 'LIKE', "%{$search}%")
-              ->orWhere('phone2', 'LIKE', "%{$search}%")
-              ->orWhere('email', 'LIKE', "%{$search}%")
-              ->orWhere('tax_code', 'LIKE', "%{$search}%");
+                ->orWhere('code', 'LIKE', "%{$search}%")
+                ->orWhere('phone', 'LIKE', "%{$search}%")
+                ->orWhere('phone2', 'LIKE', "%{$search}%")
+                ->orWhere('email', 'LIKE', "%{$search}%")
+                ->orWhere('tax_code', 'LIKE', "%{$search}%");
         });
 
         $columns = ['id', 'code', 'name', 'phone', 'phone2', 'email', 'address',
-                    'customer_group', 'debt_amount', 'total_spent'];
-        $columns = array_values(array_filter($columns, fn($c) => Schema::hasColumn('customers', $c)));
+            'customer_group', 'debt_amount', 'total_spent'];
+        $columns = array_values(array_filter($columns, fn ($c) => Schema::hasColumn('customers', $c)));
 
         $rows = $query->orderBy('name')->limit(20)->get($columns);
 
         return response()->json(
             $rows->map(function (Customer $c) {
                 return [
-                    'id'            => (int) $c->id,
-                    'code'          => $c->code,
-                    'name'          => $c->name,
-                    'phone'         => $c->phone,
-                    'phone2'        => $c->phone2 ?? null,
-                    'email'         => $c->email ?? null,
-                    'address'       => $c->address ?? null,
-                    'customer_group'=> $c->customer_group ?? null,
-                    'debt_amount'   => isset($c->debt_amount) ? (float) $c->debt_amount : 0,
-                    'total_spent'   => isset($c->total_spent) ? (float) $c->total_spent : 0,
-                    'display_label' => trim(($c->name ?? '') . ($c->phone ? ' — ' . $c->phone : '')) ?: ('#' . $c->id),
+                    'id' => (int) $c->id,
+                    'code' => $c->code,
+                    'name' => $c->name,
+                    'phone' => $c->phone,
+                    'phone2' => $c->phone2 ?? null,
+                    'email' => $c->email ?? null,
+                    'address' => $c->address ?? null,
+                    'customer_group' => $c->customer_group ?? null,
+                    'debt_amount' => isset($c->debt_amount) ? (float) $c->debt_amount : 0,
+                    'total_spent' => isset($c->total_spent) ? (float) $c->total_spent : 0,
+                    'display_label' => trim(($c->name ?? '').($c->phone ? ' — '.$c->phone : '')) ?: ('#'.$c->id),
                 ];
             })->values()
         );
@@ -829,7 +850,11 @@ class CustomerController extends Controller
         ]);
 
         $target = Customer::findOrFail($validated['merge_with_id']);
-        $preview = app(PartnerMergeService::class)->merge($customer, $target);
+        $preview = app(PartnerMergeService::class)->merge(
+            $customer,
+            $target,
+            $request->header('Idempotency-Key'),
+        );
 
         if ($request->wantsJson()) {
             return response()->json(['success' => true, 'merge' => $preview]);
@@ -862,7 +887,7 @@ class CustomerController extends Controller
 
         return \App\Services\CsvService::export(
             ['Mã KH', 'Tên khách hàng', 'Điện thoại', 'Email', 'Nhóm KH', 'Địa chỉ', 'Phường/Xã', 'Quận/Huyện', 'Tỉnh/TP', 'Công nợ', 'Tổng mua', 'Ghi chú'],
-            $customers->map(fn($c) => [$c->code, $c->name, $c->phone, $c->email, $c->customer_group, $c->address, $c->ward, $c->district, $c->city, $c->debt_amount, $c->total_spent, $c->note]),
+            $customers->map(fn ($c) => [$c->code, $c->name, $c->phone, $c->email, $c->customer_group, $c->address, $c->ward, $c->district, $c->city, $c->debt_amount, $c->total_spent, $c->note]),
             'khach_hang.csv'
         );
     }
@@ -888,20 +913,20 @@ class CustomerController extends Controller
 
         if ($hasQuery) {
             $validated = $request->validate([
-                'date_preset'    => 'nullable|string|in:today,this_week,last_7_days,last_30_days,this_month,last_month,this_quarter,this_year,all,custom',
-                'date_from'      => ['nullable', 'string', 'regex:#^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/\d{4})$#'],
-                'date_to'        => ['nullable', 'string', 'regex:#^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/\d{4})$#'],
+                'date_preset' => 'nullable|string|in:today,this_week,last_7_days,last_30_days,this_month,last_month,this_quarter,this_year,all,custom',
+                'date_from' => ['nullable', 'string', 'regex:#^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/\d{4})$#'],
+                'date_to' => ['nullable', 'string', 'regex:#^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/\d{4})$#'],
                 'include_detail' => 'nullable|in:0,1,true,false',
-                'columns'        => 'nullable|array',
-                'columns.*'      => 'string|in:unit,quantity,unit_price,discount,vat,cost,line_total,note',
-                'format'         => 'nullable|string|in:csv,xlsx',
+                'columns' => 'nullable|array',
+                'columns.*' => 'string|in:unit,quantity,unit_price,discount,vat,cost,line_total,note',
+                'format' => 'nullable|string|in:csv,xlsx',
             ], [
                 'date_from.regex' => 'Ngay bat dau phai co dinh dang dd/mm/yyyy hoac YYYY-MM-DD.',
-                'date_to.regex'   => 'Ngay ket thuc phai co dinh dang dd/mm/yyyy hoac YYYY-MM-DD.',
+                'date_to.regex' => 'Ngay ket thuc phai co dinh dang dd/mm/yyyy hoac YYYY-MM-DD.',
             ]);
 
             foreach (['date_from', 'date_to'] as $key) {
-                if (!empty($validated[$key]) && $this->parseDebtExportDate($validated[$key]) === null) {
+                if (! empty($validated[$key]) && $this->parseDebtExportDate($validated[$key]) === null) {
                     return response()->json([
                         'message' => "Ngay {$key} khong hop le.",
                         'errors' => [$key => ["Ngay {$key} khong hop le."]],
@@ -930,15 +955,22 @@ class CustomerController extends Controller
                     $to,
                     $includeDetail,
                     $selectedColumns
-                ))->download('cong_no_kh_' . ($customer->code ?: $customer->id) . '.xlsx');
+                ))->download('cong_no_kh_'.($customer->code ?: $customer->id).'.xlsx');
             }
 
             $entries = collect($entries)->filter(function ($entry) use ($from, $to) {
-                if (!$from && !$to) return true;
+                if (! $from && ! $to) {
+                    return true;
+                }
                 $ts = $this->customerDebtEntryExportCarbon($entry);
-                if (!$ts) return false;
-                if ($from && $ts->lessThan($from)) return false;
-                return !($to && $ts->greaterThan($to));
+                if (! $ts) {
+                    return false;
+                }
+                if ($from && $ts->lessThan($from)) {
+                    return false;
+                }
+
+                return ! ($to && $ts->greaterThan($to));
             })->values()->all();
         }
 
@@ -1048,7 +1080,7 @@ class CustomerController extends Controller
     private function customerDebtEntryExportCarbon(array $entry): ?\Carbon\Carbon
     {
         $raw = $this->customerDebtEntryExportRawTime($entry);
-        if (!$raw) {
+        if (! $raw) {
             return null;
         }
 
@@ -1062,7 +1094,7 @@ class CustomerController extends Controller
     private function customerDebtEntryExportTime(array $entry): string
     {
         $raw = $this->customerDebtEntryExportRawTime($entry);
-        if (!$raw) {
+        if (! $raw) {
             return '';
         }
 
@@ -1099,7 +1131,7 @@ class CustomerController extends Controller
 
     private function parseDebtExportDate(?string $value): ?\Carbon\Carbon
     {
-        if (!$value) {
+        if (! $value) {
             return null;
         }
 
@@ -1116,7 +1148,7 @@ class CustomerController extends Controller
             return null;
         }
 
-        if (!checkdate($month, $day, $year)) {
+        if (! checkdate($month, $day, $year)) {
             return null;
         }
 
@@ -1130,8 +1162,8 @@ class CustomerController extends Controller
         $returns = OrderReturn::where('customer_id', $customer->id)->orderByDesc('created_at')
             ->get(['code', 'total', 'status', 'created_at']);
 
-        $rows = $invoices->map(fn($i) => [$i->code, 'Hóa đơn', $i->total, $i->status, $i->created_at])
-            ->merge($returns->map(fn($r) => [$r->code, 'Trả hàng', $r->total, $r->status, $r->created_at]));
+        $rows = $invoices->map(fn ($i) => [$i->code, 'Hóa đơn', $i->total, $i->status, $i->created_at])
+            ->merge($returns->map(fn ($r) => [$r->code, 'Trả hàng', $r->total, $r->status, $r->created_at]));
 
         return \App\Services\CsvService::export(
             ['Mã chứng từ', 'Loại', 'Giá trị', 'Trạng thái', 'Ngày'],
@@ -1145,13 +1177,16 @@ class CustomerController extends Controller
         [$headers, $rows] = \App\Services\CsvService::parse($request);
         $count = 0;
         foreach ($rows as $row) {
-            if (count($row) < 3 || empty(trim($row[1] ?? ''))) continue;
+            if (count($row) < 3 || empty(trim($row[1] ?? ''))) {
+                continue;
+            }
             Customer::updateOrCreate(
                 ['code' => trim($row[0])],
                 ['name' => trim($row[1]), 'phone' => trim($row[2] ?? ''), 'email' => trim($row[3] ?? ''), 'customer_group' => trim($row[4] ?? ''), 'address' => trim($row[5] ?? ''), 'ward' => trim($row[6] ?? ''), 'district' => trim($row[7] ?? ''), 'city' => trim($row[8] ?? ''), 'note' => trim($row[11] ?? ''), 'is_customer' => true]
             );
             $count++;
         }
+
         return back()->with('success', "Đã nhập {$count} khách hàng từ file.");
     }
 
@@ -1169,7 +1204,7 @@ class CustomerController extends Controller
             'note' => 'nullable|string|max:500',
         ]);
 
-        if (!$customer->is_customer || !$customer->is_supplier) {
+        if (! $customer->is_customer || ! $customer->is_supplier) {
             return back()->with('error', 'Đối tác phải đồng thời là khách hàng và nhà cung cấp.');
         }
 
@@ -1182,12 +1217,17 @@ class CustomerController extends Controller
 
         $maxOffset = min($receivable, $payable);
         if ($validated['amount'] > $maxOffset) {
-            return back()->with('error', 'Số tiền cấn bằng không được vượt quá ' . number_format($maxOffset) . '₫.');
+            return back()->with('error', 'Số tiền cấn bằng không được vượt quá '.number_format($maxOffset).'₫.');
         }
 
-        $result = DebtOffsetService::manualOffset($customer, $validated['amount'], $validated['note']);
+        $result = DebtOffsetService::manualOffset(
+            $customer,
+            $validated['amount'],
+            $validated['note'],
+            $request->header('Idempotency-Key'),
+        );
 
-        if (!$result) {
+        if (! $result) {
             return back()->with('error', 'Không thể cấn bằng công nợ.');
         }
 
@@ -1195,7 +1235,7 @@ class CustomerController extends Controller
             return response()->json(['success' => true, 'data' => $result]);
         }
 
-        return back()->with('success', 'Cấn bằng công nợ thành công: ' . number_format($validated['amount']) . '₫');
+        return back()->with('success', 'Cấn bằng công nợ thành công: '.number_format($validated['amount']).'₫');
     }
 
     /**
@@ -1217,13 +1257,17 @@ class CustomerController extends Controller
             return back()->with('error', 'Chứng từ cấn bằng đã bị hủy trước đó.');
         }
 
-        $result = DebtOffsetService::cancelOffset($debtOffset, $validated['reason'] ?? null);
+        $result = DebtOffsetService::cancelOffset(
+            $debtOffset,
+            $validated['reason'] ?? null,
+            $request->header('Idempotency-Key'),
+        );
 
         if ($request->wantsJson()) {
             return response()->json(['success' => true, 'data' => $result]);
         }
 
-        return back()->with('success', 'Đã hủy cấn bằng công nợ: ' . number_format($debtOffset->amount) . '₫');
+        return back()->with('success', 'Đã hủy cấn bằng công nợ: '.number_format($debtOffset->amount).'₫');
     }
 
     /**
@@ -1239,7 +1283,7 @@ class CustomerController extends Controller
             ->with('user:id,name')
             ->orderByDesc('created_at')
             ->get()
-            ->map(fn($o) => [
+            ->map(fn ($o) => [
                 'id' => $o->id,
                 'code' => $o->code,
                 'amount' => $o->amount,
@@ -1278,27 +1322,27 @@ class CustomerController extends Controller
         if (empty($code)) {
             return response()->json([
                 'success' => false,
-                'message' => 'Mã chứng từ không được để trống.'
+                'message' => 'Mã chứng từ không được để trống.',
             ], 422);
         }
 
         // 1. HD - Hóa đơn bán hàng
         if (str_starts_with($code, 'HD')) {
             $invoice = Invoice::where('code', $code)->first();
-            if (!$invoice) {
+            if (! $invoice) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.'
+                    'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.',
                 ], 404);
             }
 
             $belongsToCustomer = (int) $invoice->customer_id === (int) $customer->id
                 || $this->customerHasDebtRef($customer, $invoice->code);
 
-            if (!$belongsToCustomer) {
+            if (! $belongsToCustomer) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.'
+                    'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.',
                 ], 404);
             }
 
@@ -1321,7 +1365,7 @@ class CustomerController extends Controller
                 'effective_paid' => $invoice->customer_paid,
                 'debt_amount' => max(0, $invoice->total - $invoice->customer_paid),
                 'payment_method' => $invoice->payment_method,
-                'items' => $invoice->items->map(fn($item) => [
+                'items' => $invoice->items->map(fn ($item) => [
                     'product_code' => $item->product->code ?? '',
                     'product_name' => $item->product->name ?? '',
                     'quantity' => $item->quantity,
@@ -1343,20 +1387,20 @@ class CustomerController extends Controller
         // 2. PN - Phiếu nhập hàng
         if (str_starts_with($code, 'PN')) {
             $purchase = Purchase::where('code', $code)->first();
-            if (!$purchase) {
+            if (! $purchase) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.'
+                    'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.',
                 ], 404);
             }
 
             $belongsToCustomer = (int) $purchase->supplier_id === (int) $customer->id
                 || $this->customerHasDebtRef($customer, $purchase->code);
 
-            if (!$belongsToCustomer) {
+            if (! $belongsToCustomer) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.'
+                    'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.',
                 ], 404);
             }
 
@@ -1378,7 +1422,7 @@ class CustomerController extends Controller
                 'paid_amount' => $purchase->paid_amount,
                 'debt_amount' => $purchase->debt_amount,
                 'payment_method' => $purchase->payment_method,
-                'items' => $purchase->items->map(fn($item) => [
+                'items' => $purchase->items->map(fn ($item) => [
                     'product_code' => $item->product->code ?? '',
                     'product_name' => $item->product->name ?? '',
                     'quantity' => $item->quantity,
@@ -1401,25 +1445,25 @@ class CustomerController extends Controller
         if (str_starts_with($code, 'PT') || str_starts_with($code, 'TTHD')) {
             $cashFlow = CashFlow::where('code', $code)->first();
 
-            if (!$cashFlow && str_starts_with($code, 'TTHD')) {
-                $invoiceCode = 'HD' . substr($code, 4);
+            if (! $cashFlow && str_starts_with($code, 'TTHD')) {
+                $invoiceCode = 'HD'.substr($code, 4);
                 $cashFlow = CashFlow::where('reference_type', 'Invoice')
                     ->where('reference_code', $invoiceCode)
                     ->where('type', 'receipt')
                     ->first();
             }
 
-            if (!$cashFlow && str_starts_with($code, 'TTHD')) {
-                $invoiceCode = 'HD' . substr($code, 4);
+            if (! $cashFlow && str_starts_with($code, 'TTHD')) {
+                $invoiceCode = 'HD'.substr($code, 4);
                 $invoice = Invoice::with('customer')->where('code', $invoiceCode)->first();
                 if ($invoice) {
                     $belongsToCustomer = (int) $invoice->customer_id === (int) $customer->id
                         || $this->customerHasDebtRef($customer, $invoice->code);
 
-                    if (!$belongsToCustomer) {
+                    if (! $belongsToCustomer) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.'
+                            'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.',
                         ], 404);
                     }
 
@@ -1442,27 +1486,27 @@ class CustomerController extends Controller
                             'bank_account_name' => null,
                             'reference_type' => 'Invoice',
                             'reference_code' => $invoice->code,
-                            'description' => 'Thanh toán tự động khi tạo hóa đơn ' . $invoice->code,
+                            'description' => 'Thanh toán tự động khi tạo hóa đơn '.$invoice->code,
                             'created_at' => $invoice->created_at ? $invoice->created_at->format('d/m/Y H:i') : '',
-                        ]
+                        ],
                     ]);
                 }
             }
 
-            if (!$cashFlow) {
+            if (! $cashFlow) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.'
+                    'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.',
                 ], 404);
             }
 
             $belongsToCustomer = ((int) $cashFlow->target_id === (int) $customer->id && $cashFlow->target_type === 'Khách hàng')
                 || $this->customerHasDebtRef($customer, $cashFlow->code);
 
-            if (!$belongsToCustomer) {
+            if (! $belongsToCustomer) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.'
+                    'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.',
                 ], 404);
             }
 
@@ -1478,7 +1522,7 @@ class CustomerController extends Controller
                 'target_type' => $cashFlow->target_type,
                 'target_name' => $cashFlow->target_name,
                 'payment_method' => $cashFlow->payment_method,
-                'bank_account_name' => $cashFlow->bankAccount ? ($cashFlow->bankAccount->bank_name . ' - ' . $cashFlow->bankAccount->account_number) : null,
+                'bank_account_name' => $cashFlow->bankAccount ? ($cashFlow->bankAccount->bank_name.' - '.$cashFlow->bankAccount->account_number) : null,
                 'reference_type' => $cashFlow->reference_type,
                 'reference_code' => $cashFlow->reference_code,
                 'description' => $cashFlow->description,
@@ -1507,10 +1551,10 @@ class CustomerController extends Controller
             $discount = CustomerPaymentDiscount::where('code', $code)
                 ->where('customer_id', $customer->id)
                 ->first();
-            if (!$discount) {
+            if (! $discount) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.'
+                    'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.',
                 ], 404);
             }
 
@@ -1528,7 +1572,7 @@ class CustomerController extends Controller
                 'allocate_to_invoices' => $discount->allocate_to_invoices,
                 'cancelled_at' => $discount->cancelled_at ? $discount->cancelled_at->format('d/m/Y H:i') : null,
                 'cancel_reason' => $discount->cancel_reason,
-                'allocations' => $discount->allocations->map(fn($alloc) => [
+                'allocations' => $discount->allocations->map(fn ($alloc) => [
                     'invoice_code' => $alloc->invoice->code ?? '',
                     'invoice_id' => $alloc->invoice_id,
                     'invoice_total' => $alloc->invoice->total ?? 0,
@@ -1554,11 +1598,11 @@ class CustomerController extends Controller
         if ($debts->isEmpty()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.'
+                'message' => 'Không tìm thấy chứng từ hoặc chứng từ không thuộc khách hàng này.',
             ], 404);
         }
 
-        $entries = $debts->map(fn($d) => [
+        $entries = $debts->map(fn ($d) => [
             'code' => $d->ref_code,
             'type' => $d->type,
             'amount' => $d->amount,

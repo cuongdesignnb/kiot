@@ -6,4 +6,9 @@ return [
         'require_distinct_approver' => env('DEBT_OFFSET_REQUIRE_DISTINCT_APPROVER', true),
         'require_distinct_applier' => env('DEBT_OFFSET_REQUIRE_DISTINCT_APPLIER', false),
     ],
+    'mutation' => [
+        // Test-only fault injection checkpoint: document, evidence,
+        // projection, mutation or before_commit.
+        'failure_after' => env('DEBT_MUTATION_FAIL_AFTER'),
+    ],
 ];

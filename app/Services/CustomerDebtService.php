@@ -7,6 +7,7 @@ use App\Models\CustomerDebt;
 use App\Models\Invoice;
 use App\Models\Order;
 use App\Models\OrderReturn;
+use App\Services\Debt\PartnerDebtMutationCoordinator;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -30,14 +31,14 @@ use InvalidArgumentException;
  */
 class CustomerDebtService
 {
+    public function __construct(private readonly PartnerDebtMutationCoordinator $coordinator) {}
+
     /**
      * Bán hàng nợ — increase debt_amount + ghi ledger type='sale'.
      *
-     * @param int $customerId
-     * @param float $amount Positive sale receivable amount.
-     * @param Model|null $reference Invoice | Order | OrderReturn | null
-     * @param string|null $note
-     * @param array $meta Có thể chứa 'ref_code', 'order_id', 'order_return_id'
+     * @param  float  $amount  Positive sale receivable amount.
+     * @param  Model|null  $reference  Invoice | Order | OrderReturn | null
+     * @param  array  $meta  Có thể chứa 'ref_code', 'order_id', 'order_return_id'
      * @return CustomerDebt|null null nếu amount=0
      */
     public function recordSale(int $customerId, float $amount, ?Model $reference = null, ?string $note = null, array $meta = []): ?CustomerDebt
@@ -130,43 +131,54 @@ class CustomerDebtService
             return null;
         }
 
-        return DB::transaction(function () use ($customerId, $signedAmount, $type, $reference, $note, $meta) {
-            $customer = Customer::lockForUpdate()->find($customerId);
-            if (!$customer) {
-                return null;
-            }
+        $payloadHash = hash('sha256', json_encode([
+            'partner_id' => $customerId,
+            'amount' => $signedAmount,
+            'type' => $type,
+            'reference_type' => $reference?->getMorphClass(),
+            'reference_id' => $reference?->getKey(),
+            'ref_code' => $meta['ref_code'] ?? null,
+        ], JSON_PRESERVE_ZERO_FRACTION | JSON_UNESCAPED_UNICODE));
 
-            $customer->debt_amount = (float) $customer->debt_amount + $signedAmount;
-            $customer->save();
+        return $this->coordinator->execute(
+            $customerId,
+            'customer_'.$type,
+            $payloadHash,
+            function (Customer $customer) use ($signedAmount, $type, $reference, $note, $meta) {
 
-            // Resolve ref_code + order_id + order_return_id từ reference + meta
-            $refCode = $meta['ref_code'] ?? null;
-            $orderId = $meta['order_id'] ?? null;
-            $orderReturnId = $meta['order_return_id'] ?? null;
+                $customer->debt_amount = (float) $customer->debt_amount + $signedAmount;
+                $customer->save();
 
-            if ($reference instanceof Invoice) {
-                $refCode = $refCode ?? $reference->code;
-            } elseif ($reference instanceof Order) {
-                $refCode = $refCode ?? $reference->code;
-                $orderId = $orderId ?? $reference->id;
-            } elseif ($reference instanceof OrderReturn) {
-                $refCode = $refCode ?? $reference->code;
-                $orderReturnId = $orderReturnId ?? $reference->id;
-            }
+                // Resolve ref_code + order_id + order_return_id từ reference + meta
+                $refCode = $meta['ref_code'] ?? null;
+                $orderId = $meta['order_id'] ?? null;
+                $orderReturnId = $meta['order_return_id'] ?? null;
 
-            return CustomerDebt::create([
-                'customer_id'     => $customer->id,
-                'order_id'        => $orderId,
-                'order_return_id' => $orderReturnId,
-                'ref_code'        => $refCode,
-                'amount'          => $signedAmount,
-                'debt_total'      => (float) $customer->debt_amount,
-                'type'            => $type,
-                'note'            => $note,
-                'created_by'      => auth()->id(),
-                'recorded_at'     => now(),
-            ]);
-        });
+                if ($reference instanceof Invoice) {
+                    $refCode = $refCode ?? $reference->code;
+                } elseif ($reference instanceof Order) {
+                    $refCode = $refCode ?? $reference->code;
+                    $orderId = $orderId ?? $reference->id;
+                } elseif ($reference instanceof OrderReturn) {
+                    $refCode = $refCode ?? $reference->code;
+                    $orderReturnId = $orderReturnId ?? $reference->id;
+                }
+
+                return CustomerDebt::create([
+                    'customer_id' => $customer->id,
+                    'order_id' => $orderId,
+                    'order_return_id' => $orderReturnId,
+                    'ref_code' => $refCode,
+                    'amount' => $signedAmount,
+                    'debt_total' => (float) $customer->debt_amount,
+                    'type' => $type,
+                    'note' => $note,
+                    'created_by' => auth()->id(),
+                    'recorded_at' => now(),
+                ]);
+            },
+            isset($meta['idempotency_key']) ? (string) $meta['idempotency_key'] : null,
+        );
     }
 
     private function assertNonNegative(float $amount, string $method): void

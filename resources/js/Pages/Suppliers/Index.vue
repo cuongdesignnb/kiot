@@ -679,6 +679,7 @@ const debtAmount = ref(0);
 const debtNote = ref('');
 const debtDate = ref('');
 const debtSubmitting = ref(false);
+const debtIdempotencyKey = ref('');
 
 const debtActionLabels = {
     payment: 'Thanh toán công nợ',
@@ -693,6 +694,7 @@ const openDebtAction = (supplier, type) => {
     debtNote.value = '';
     // Mặc định ngày điều chỉnh = hiện tại
     debtDate.value = nowDatetimeLocal();
+    debtIdempotencyKey.value = crypto.randomUUID();
     showDebtModal.value = true;
 };
 
@@ -704,18 +706,26 @@ const submitDebtAction = async () => {
     const id = debtActionSupplier.value.id;
     try {
         if (debtActionType.value === 'payment') {
-            await axios.post(`/api/suppliers/${id}/payment`, {
-                amount: debtAmount.value,
-                note: debtNote.value,
-                date: debtDate.value,
-            });
+            await axios.post(
+                `/api/suppliers/${id}/payment`,
+                {
+                    amount: debtAmount.value,
+                    note: debtNote.value,
+                    date: debtDate.value,
+                },
+                { headers: { "Idempotency-Key": debtIdempotencyKey.value } },
+            );
         } else {
-            await axios.post(`/api/suppliers/${id}/adjust-debt`, {
-                amount: debtAmount.value,
-                note: debtNote.value,
-                type: debtActionType.value,
-                date: debtDate.value,
-            });
+            await axios.post(
+                `/api/suppliers/${id}/adjust-debt`,
+                {
+                    amount: debtAmount.value,
+                    note: debtNote.value,
+                    type: debtActionType.value,
+                    date: debtDate.value,
+                },
+                { headers: { "Idempotency-Key": debtIdempotencyKey.value } },
+            );
         }
         // Reload debt data
         delete supplierDebt[id];
@@ -742,6 +752,7 @@ const mergeModal = reactive({
     preview: null,
     previewLoading: false,
     previewError: '',
+    idempotencyKey: '',
 });
 
 let mergeSearchTimeout;
@@ -755,6 +766,7 @@ const openMergeModal = (supplier) => {
     mergeModal.preview = null;
     mergeModal.previewLoading = false;
     mergeModal.previewError = '';
+    mergeModal.idempotencyKey = crypto.randomUUID();
 };
 
 const searchMergeTarget = () => {
@@ -808,6 +820,7 @@ const submitMerge = () => {
     router.post(`/customers/${mergeModal.source.id}/merge`, {
         merge_with_id: mergeModal.selected.id,
     }, {
+        headers: { "Idempotency-Key": mergeModal.idempotencyKey },
         onSuccess: () => {
             mergeModal.show = false;
             mergeModal.source = null;
@@ -829,7 +842,7 @@ const offsetModal = reactive({
     maxOffset: 0,
     submitting: false,
 });
-const offsetForm = reactive({ amount: 0, note: '' });
+const offsetForm = reactive({ amount: 0, note: '', idempotencyKey: '' });
 const offsetHistoryData = reactive({});
 
 const openOffsetModal = (supplier) => {
@@ -842,6 +855,7 @@ const openOffsetModal = (supplier) => {
     offsetModal.submitting = false;
     offsetForm.amount = offsetModal.maxOffset;
     offsetForm.note = '';
+    offsetForm.idempotencyKey = crypto.randomUUID();
 };
 
 const submitOffset = async () => {
@@ -855,10 +869,14 @@ const submitOffset = async () => {
     }
     offsetModal.submitting = true;
     try {
-        await axios.post(`/customers/${offsetModal.customerId}/debt-offset`, {
-            amount: offsetForm.amount,
-            note: offsetForm.note,
-        });
+        await axios.post(
+            `/customers/${offsetModal.customerId}/debt-offset`,
+            {
+                amount: offsetForm.amount,
+                note: offsetForm.note,
+            },
+            { headers: { "Idempotency-Key": offsetForm.idempotencyKey } },
+        );
         offsetModal.show = false;
         // Reload debt & offset data
         delete supplierDebt[offsetModal.customerId];
@@ -881,11 +899,21 @@ const loadOffsetHistory = async (supplierId) => {
     }
 };
 
+const offsetCancellationKeys = new Map();
+
 const cancelOffset = async (supplierId, offsetId) => {
     const reason = prompt('Lý do hủy cấn bằng (không bắt buộc):');
     if (reason === null) return;
     try {
-        await axios.post(`/customers/${supplierId}/cancel-debt-offset/${offsetId}`, { reason });
+        const idempotencyKey =
+            offsetCancellationKeys.get(offsetId) || crypto.randomUUID();
+        offsetCancellationKeys.set(offsetId, idempotencyKey);
+        await axios.post(
+            `/customers/${supplierId}/cancel-debt-offset/${offsetId}`,
+            { reason },
+            { headers: { "Idempotency-Key": idempotencyKey } },
+        );
+        offsetCancellationKeys.delete(offsetId);
         delete supplierDebt[supplierId];
         await setSupplierTab(supplierId, 'debt');
         await loadOffsetHistory(supplierId);

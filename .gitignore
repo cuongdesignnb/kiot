@@ -23,6 +23,8 @@ kiotdb.zip
 /storage/app/audit/*.csv
 /storage/app/audit/*.json
 /storage/app/audit/*.txt
+/backups/
+/.vendor-worktree/
 !/database/**/*.sql
 /.fleet
 /.idea

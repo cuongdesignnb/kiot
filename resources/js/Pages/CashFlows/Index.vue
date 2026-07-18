@@ -431,6 +431,8 @@ const submitFormAndPrint = () => {
     }
 };
 
+const cancelIdempotencyKeys = new Map();
+
 const deleteFlow = (id) => {
     if (
         confirm(
@@ -443,11 +445,16 @@ const deleteFlow = (id) => {
             alert("Lý do hủy phải có ít nhất 5 ký tự.");
             return;
         }
+        const idempotencyKey =
+            cancelIdempotencyKeys.get(id) || crypto.randomUUID();
+        cancelIdempotencyKeys.set(id, idempotencyKey);
         router.delete(`/cash-flows/${id}`, {
             data: { cancel_reason: cancelReason.trim() },
+            headers: { "Idempotency-Key": idempotencyKey },
             preserveScroll: true,
             preserveState: true,
             onSuccess: () => {
+                cancelIdempotencyKeys.delete(id);
                 expandedRow.value = null;
             },
         });

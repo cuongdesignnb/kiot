@@ -12,7 +12,10 @@ use RuntimeException;
 class AuditDebtParityCommand extends Command
 {
     protected $signature = 'debt:audit-parity
-        {--dry-run : Required read-only gate}
+        {--dry-run : Compatibility flag; the command is always read-only}
+        {--all-partners : Include every partner row, including missing-role and zero-projection rows}
+        {--include-special-status : Include inactive, merged, branchless and other historical statuses}
+        {--fail-on-mismatch : Exit non-zero when any raw parity difference is non-zero}
         {--role=all : all, customer, supplier or dual}
         {--partner-id= : Audit one local partner ID}
         {--classification= : Filter primary classification or classification flags}
@@ -20,33 +23,34 @@ class AuditDebtParityCommand extends Command
         {--only-mismatch : Exclude rows classified OK}
         {--limit= : Limit number of audited partners}
         {--export= : CSV path under storage/app/audits}
-        {--json= : JSON path under storage/app/audits}';
+        {--json= : JSON path under storage/app/audits}
+        {--output= : Directory under storage/app/audits for audit.json and audit.csv}';
 
     protected $description = 'Read-only parity audit across stored debt, document timelines and ledgers';
 
     public function handle(PartnerDebtParityAuditService $audit): int
     {
-        if (!$this->option('dry-run')) {
+        if (! $this->option('dry-run')) {
             $this->error('Please pass --dry-run. This command never applies debt changes.');
 
             return self::FAILURE;
         }
 
         $role = (string) $this->option('role');
-        if (!in_array($role, ['all', 'customer', 'supplier', 'dual'], true)) {
+        if (! in_array($role, ['all', 'customer', 'supplier', 'dual'], true)) {
             $this->error('Invalid --role. Use all, customer, supplier or dual.');
 
             return self::FAILURE;
         }
 
         $classification = (string) ($this->option('classification') ?? '');
-        if ($classification !== '' && !in_array($classification, PartnerDebtParityAuditService::CLASSIFICATIONS, true)) {
+        if ($classification !== '' && ! in_array($classification, PartnerDebtParityAuditService::CLASSIFICATIONS, true)) {
             $this->error('Invalid --classification. Use a supported audit classification.');
 
             return self::FAILURE;
         }
         $risk = (string) ($this->option('risk') ?? '');
-        if ($risk !== '' && !in_array($risk, PartnerDebtParityAuditService::RISK_LEVELS, true)) {
+        if ($risk !== '' && ! in_array($risk, PartnerDebtParityAuditService::RISK_LEVELS, true)) {
             $this->error('Invalid --risk. Use CRITICAL, HIGH, MEDIUM, LOW or OK.');
 
             return self::FAILURE;
@@ -72,7 +76,7 @@ class AuditDebtParityCommand extends Command
             $scanned++;
             $row = $audit->audit($partner);
             $hasAuditErrors = $hasAuditErrors || $row['primary_classification'] === 'AUDIT_ERROR';
-            if (!$this->matchesFilters($row, $classification, $risk)) {
+            if (! $this->matchesFilters($row, $classification, $risk)) {
                 continue;
             }
             $matched++;
@@ -88,10 +92,19 @@ class AuditDebtParityCommand extends Command
         if ($path = $this->option('json')) {
             $this->writeJson($this->auditPath((string) $path), $rows);
         }
+        if ($directory = $this->option('output')) {
+            $output = rtrim(str_replace('\\', '/', (string) $directory), '/');
+            $this->writeCsv($this->auditPath($output.'/audit.csv'), $rows);
+            $this->writeJson($this->auditPath($output.'/audit.json'), $rows);
+        }
 
         $this->printSummary($rows, $eligible, $scanned, $matched);
 
-        return $hasAuditErrors ? self::FAILURE : self::SUCCESS;
+        $hasMismatch = collect($rows)->contains(fn (array $row): bool => $this->hasRawMismatch($row));
+
+        return ($hasAuditErrors || ($this->option('fail-on-mismatch') && $hasMismatch))
+            ? self::FAILURE
+            : self::SUCCESS;
     }
 
     private function partnerQuery(string $role): Builder
@@ -99,6 +112,10 @@ class AuditDebtParityCommand extends Command
         $query = Customer::query()->orderBy('id');
         if ($id = $this->option('partner-id')) {
             return $query->whereKey((int) $id);
+        }
+
+        if ($this->option('all-partners')) {
+            return $query;
         }
 
         if ($role === 'customer') {
@@ -159,7 +176,7 @@ class AuditDebtParityCommand extends Command
             ? $normalized
             : str_replace('\\', '/', base_path($normalized));
         $root = rtrim(str_replace('\\', '/', storage_path('app/audits')), '/');
-        if ($absolute !== $root && !str_starts_with($absolute, $root . '/')) {
+        if ($absolute !== $root && ! str_starts_with($absolute, $root.'/')) {
             throw new RuntimeException('Audit output must be under storage/app/audits.');
         }
 
@@ -187,6 +204,25 @@ class AuditDebtParityCommand extends Command
         return $classificationMatches && ($risk === '' || ($row['risk_level'] ?? '') === $risk);
     }
 
+    private function hasRawMismatch(array $row): bool
+    {
+        foreach ([
+            'customer_stored_vs_document_raw',
+            'customer_stored_vs_ledger',
+            'customer_document_vs_ledger',
+            'supplier_stored_vs_document_raw',
+            'supplier_stored_vs_ledger',
+            'supplier_document_vs_ledger',
+            'dual_role_screen_symmetry_difference',
+        ] as $key) {
+            if (abs((float) ($row[$key] ?? 0)) > PartnerDebtParityAuditService::TOLERANCE) {
+                return true;
+            }
+        }
+
+        return (string) ($row['primary_classification'] ?? '') === 'AUDIT_ERROR';
+    }
+
     private function printSummary(array $rows, int $eligible, int $scanned, int $matched): void
     {
         $classifications = collect($rows)->countBy('primary_classification')->sortKeys();
@@ -195,7 +231,7 @@ class AuditDebtParityCommand extends Command
         $this->info("Total eligible: {$eligible}");
         $this->info("Total scanned: {$scanned}");
         $this->info("Total matched: {$matched}");
-        $this->info('Total exported: ' . count($rows));
+        $this->info('Total exported: '.count($rows));
         $this->line('Classification counts:');
         foreach ($classifications as $classification => $count) {
             $this->line("- {$classification}: {$count}");

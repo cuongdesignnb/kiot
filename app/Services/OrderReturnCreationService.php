@@ -12,6 +12,7 @@ use App\Models\Product;
 use App\Models\ReturnItem;
 use App\Models\SerialImei;
 use App\Models\Setting;
+use App\Services\Debt\PartnerDebtMutationCoordinator;
 use App\Support\BusinessDateTime;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -19,6 +20,8 @@ use Illuminate\Validation\ValidationException;
 
 class OrderReturnCreationService
 {
+    public function __construct(private readonly PartnerDebtMutationCoordinator $coordinator) {}
+
     public function create(array $payload, array $context = []): OrderReturn
     {
         app(PartnerTransactionGuard::class)->assertCanTransact(
@@ -30,12 +33,12 @@ class OrderReturnCreationService
         $this->validateReturnable($payload);
         $this->validateSerials($payload);
 
-        $createdReturn = DB::transaction(function () use ($payload, $context) {
+        $createReturn = function () use ($payload, $context) {
             $this->assertReturnTimeLimit($payload);
             $returnDate = $this->resolveReturnDate($payload, $context);
 
             $returnPayload = [
-                'code' => $context['code'] ?? ('TH' . date('YmdHis') . rand(10, 99)),
+                'code' => $context['code'] ?? ('TH'.date('YmdHis').rand(10, 99)),
                 'invoice_id' => $payload['invoice_id'] ?? null,
                 'customer_id' => $payload['customer_id'] ?? null,
                 'branch_id' => $payload['branch_id'] ?? null,
@@ -67,7 +70,18 @@ class OrderReturnCreationService
             $this->recordCashFlow($return, $payload, $context, $returnDate);
 
             return $return->load('items.product', 'invoice');
-        });
+        };
+
+        $customerId = (int) ($payload['customer_id'] ?? 0);
+        $createdReturn = $customerId > 0
+            ? $this->coordinator->execute(
+                $customerId,
+                'customer_return_create',
+                hash('sha256', json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION)),
+                fn () => DB::transaction($createReturn),
+                isset($context['idempotency_key']) ? (string) $context['idempotency_key'] : null,
+            )
+            : DB::transaction($createReturn);
 
         ActivityLog::log(
             ActivityLog::ACTION_RETURN_CREATE,
@@ -112,7 +126,7 @@ class OrderReturnCreationService
         }
 
         $invoice = Invoice::find($payload['invoice_id']);
-        if (!$invoice) {
+        if (! $invoice) {
             return;
         }
 
@@ -157,7 +171,7 @@ class OrderReturnCreationService
         $seenSerialIds = [];
         foreach ($payload['items'] as $item) {
             $product = Product::find($item['product_id']);
-            if (!$product || !$product->tracksInventory() || !$product->has_serial) {
+            if (! $product || ! $product->tracksInventory() || ! $product->has_serial) {
                 continue;
             }
 
@@ -165,7 +179,7 @@ class OrderReturnCreationService
             $serialIds = array_values(array_filter(array_map('intval', (array) ($item['serial_ids'] ?? []))));
             if (count($serialIds) !== $qty) {
                 throw ValidationException::withMessages([
-                    'items' => "San pham '{$product->name}' can chon dung {$qty} serial, hien da chon " . count($serialIds) . '.',
+                    'items' => "San pham '{$product->name}' can chon dung {$qty} serial, hien da chon ".count($serialIds).'.',
                 ]);
             }
 
@@ -181,7 +195,7 @@ class OrderReturnCreationService
             $serialQuery = SerialImei::whereIn('id', $serialIds)
                 ->where('product_id', $product->id)
                 ->where('status', 'sold');
-            if (!empty($payload['invoice_id'])) {
+            if (! empty($payload['invoice_id'])) {
                 $serialQuery->where('invoice_id', $payload['invoice_id']);
             }
             if ($serialQuery->count() !== count($serialIds)) {
@@ -194,12 +208,12 @@ class OrderReturnCreationService
 
     private function assertReturnTimeLimit(array $payload): void
     {
-        if (!Setting::get('return_time_limit_enabled', false) || empty($payload['invoice_id'])) {
+        if (! Setting::get('return_time_limit_enabled', false) || empty($payload['invoice_id'])) {
             return;
         }
 
         $invoice = Invoice::find($payload['invoice_id']);
-        if (!$invoice) {
+        if (! $invoice) {
             return;
         }
 
@@ -216,15 +230,15 @@ class OrderReturnCreationService
     private function createReturnItemAndRestoreStock(OrderReturn $return, array $item, array $payload, \Carbon\Carbon $returnDate): void
     {
         $product = Product::lockForUpdate()->find($item['product_id']);
-        if (!$product) {
+        if (! $product) {
             return;
         }
 
         $qty = (int) $item['qty'];
         $invoiceItem = null;
-        if (!empty($item['invoice_item_id'])) {
+        if (! empty($item['invoice_item_id'])) {
             $invoiceItem = InvoiceItem::find($item['invoice_item_id']);
-        } elseif (!empty($payload['invoice_id'])) {
+        } elseif (! empty($payload['invoice_id'])) {
             $invoiceItem = InvoiceItem::where('invoice_id', $payload['invoice_id'])
                 ->where('product_id', $product->id)
                 ->orderBy('id')
@@ -233,7 +247,7 @@ class OrderReturnCreationService
 
         $restoredSerials = collect();
         if ($product->tracksInventory() && $product->has_serial) {
-            if (!empty($item['serial_ids'])) {
+            if (! empty($item['serial_ids'])) {
                 $restoredSerials = SerialImei::whereIn('id', $item['serial_ids'])
                     ->where('product_id', $product->id)
                     ->where('status', 'sold')
@@ -241,7 +255,7 @@ class OrderReturnCreationService
             } elseif ($invoiceItem) {
                 $linkSerialIds = InvoiceItemSerial::where('invoice_item_id', $invoiceItem->id)
                     ->pluck('serial_imei_id')->filter()->all();
-                if (!empty($linkSerialIds)) {
+                if (! empty($linkSerialIds)) {
                     $restoredSerials = SerialImei::whereIn('id', $linkSerialIds)
                         ->where('status', 'sold')
                         ->limit($qty)
@@ -249,7 +263,7 @@ class OrderReturnCreationService
                 }
             }
 
-            if ($restoredSerials->isEmpty() && !empty($payload['invoice_id'])) {
+            if ($restoredSerials->isEmpty() && ! empty($payload['invoice_id'])) {
                 $restoredSerials = SerialImei::where('invoice_id', $payload['invoice_id'])
                     ->where('product_id', $product->id)
                     ->where('status', 'sold')
@@ -274,10 +288,10 @@ class OrderReturnCreationService
             'discount' => $item['discount'] ?? 0,
             'import_price' => $item['price'],
             'cost_price' => $restoredCostPerUnit,
-            'serial_ids' => !empty($serialIdsForItem) ? $serialIdsForItem : null,
+            'serial_ids' => ! empty($serialIdsForItem) ? $serialIdsForItem : null,
         ]);
 
-        if (!$product->tracksInventory()) {
+        if (! $product->tracksInventory()) {
             return;
         }
 
@@ -306,7 +320,7 @@ class OrderReturnCreationService
                 'branch_id' => $return->branch_id ?? null,
                 'ref_code' => $return->code,
                 'moved_at' => $returnDate,
-                'note' => 'Khach tra hang phieu ' . $return->code,
+                'note' => 'Khach tra hang phieu '.$return->code,
             ]
         );
     }
@@ -318,7 +332,7 @@ class OrderReturnCreationService
         }
 
         $customer = \App\Models\Customer::find($payload['customer_id']);
-        if (!$customer) {
+        if (! $customer) {
             return;
         }
 
@@ -348,9 +362,9 @@ class OrderReturnCreationService
             return;
         }
 
-        $customer = !empty($payload['customer_id']) ? \App\Models\Customer::find($payload['customer_id']) : null;
+        $customer = ! empty($payload['customer_id']) ? \App\Models\Customer::find($payload['customer_id']) : null;
         CashFlow::create([
-            'code' => 'PC' . date('YmdHis') . rand(10, 99),
+            'code' => 'PC'.date('YmdHis').rand(10, 99),
             'type' => 'payment',
             'amount' => $return->paid_to_customer,
             'time' => $returnDate,
@@ -361,7 +375,7 @@ class OrderReturnCreationService
             'reference_type' => 'OrderReturn',
             'reference_code' => $return->code,
             'payment_method' => $context['payment_method'] ?? 'cash',
-            'description' => "Chi tra hang khach cho phieu {$return->code}" . ($customer ? " - {$customer->name}" : ''),
+            'description' => "Chi tra hang khach cho phieu {$return->code}".($customer ? " - {$customer->name}" : ''),
         ]);
     }
 
@@ -370,7 +384,7 @@ class OrderReturnCreationService
         $orderDate = $context['order_date'] ?? $payload['return_date'] ?? $payload['order_date'] ?? null;
         $returnDate = BusinessDateTime::forCreate($orderDate);
 
-        if (!empty($payload['invoice_id'])) {
+        if (! empty($payload['invoice_id'])) {
             $invoice = Invoice::find($payload['invoice_id']);
             $invoiceDate = $invoice?->transaction_date ?? $invoice?->created_at;
             if ($invoiceDate && $returnDate->lt($invoiceDate)) {
