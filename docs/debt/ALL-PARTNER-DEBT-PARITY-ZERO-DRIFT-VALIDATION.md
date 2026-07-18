@@ -12,11 +12,168 @@ changed, no deployment or merge was performed, and
 DEBT_OFFSET_WRITE_MODE=legacy remained in effect. The debt-offset
 workflow/outbox write path was not enabled.
 
-## PR #30 final closure differential (2026-07-18)
+## P0 final-unblock clean revalidation (authoritative, 2026-07-18)
 
-This section is the authoritative closure result. The sections after it retain
-the previously accepted repair evidence as validation history; they are not a
-claim that the current closure head still passes 332/332.
+This is the authoritative result for the final-unblock request. It supersedes
+the earlier 331/332 and 332/332 clone claims retained below as investigation
+history. Revalidation started from the requested branch input head
+`181140387ead7b5d9e63c907cff8450635a73ff6` and the immutable backup, not from
+the previously exercised clone volume.
+
+```text
+PR30_CLOSURE_STATUS=BLOCKED
+PR_NUMBER=30
+PR_DRAFT=yes
+PR_READY=no
+PR_MERGED=no
+REVALIDATION_INPUT_HEAD=181140387ead7b5d9e63c907cff8450635a73ff6
+CLONE_REPAIR_APPLIED=no
+PRODUCTION_ACCESSED=no
+PRODUCTION_DATABASE_CHANGED=no
+PRODUCTION_DEPLOYED=no
+```
+
+### Clean-source provenance and invalid prior premise
+
+- Immutable archive:
+  `backups/debt-parity-latest-20260718-151155/database.sql.zip`.
+- Archive SHA-256:
+  `026c7f510a5202eb7cf205150736c4fb2c9f0fc105a6ee4a274aa81cb91d2784`.
+- Extracted SQL SHA-256:
+  `71719eee442fbd5cbc75c7caea71732b11ae21bbf4643073fa2db1f8fb9d1942`.
+- Engine: MariaDB 10.11.10; restored population: 332 customers.
+- Historical accepted projection baseline fingerprint:
+  `3fadb19546b017496664b0f8e9bb4c808ebf2e280b3857460c27b3cea17ccecc`.
+- Historical accepted projection-row hash:
+  `f96f1b4827e6d040dfb321db65acd190f3ff378dbfe716b4458a21af110eb8c4`.
+
+The immutable backup itself stores partner 78 at zero on both sides. The
+`-14,000,000` value exists only after reconstructing the previous 17-row
+accepted projection baseline on a clone. The earlier clone that produced the
+331/332 closure artifact had also been mutated by regression suites: its
+invoice, cash-flow, return, purchase, and related business-table checksums do
+not equal a clean restore. It is therefore not a valid clean-backup oracle.
+
+### Canonical corrections found during clean revalidation
+
+Two deterministic reducer/audit issues were fixed in code:
+
+- cancellation and reversal events no longer collide with an invoice fallback
+  as if they were a second real payment or refund;
+- a `CustomerDebt` payment mirror whose same-partner, customer-domain CashFlow
+  is cancelled or soft-deleted is reference-only and contributes zero
+  canonical delta. Supplier-domain code collisions remain countable customer
+  evidence. Invalidated CashFlows are loaded once per partner to avoid an N+1
+  query.
+
+After those corrections, the clean historical baseline scans all 332 partners
+with no duplicate warning, technical warning, insufficient evidence, unknown
+root cause, or audit error:
+
+| Metric | Result |
+| --- | ---: |
+| Eligible/scanned | 332/332 |
+| Matched | 328 |
+| Material stored-projection drift | 4 |
+| Insufficient evidence | 0 |
+| Technical warnings | 0 |
+| Duplicate real/fallback warnings | 0 |
+| Audit errors | 0 |
+| Unknown root causes | 0 |
+
+The regenerated plan has 328 `NO_ACTION` rows and four
+`UPDATE_STORED_PROJECTION` rows:
+
+| Partner | Role | Customer projection before | Corrected canonical target | Supplier before/target |
+| --- | --- | ---: | ---: | ---: |
+| 16 `NCC177425584137` | dual-role | 17,200,000 | 8,600,000 | 10,640,000 |
+| 72 `KH177561736414` | customer-only | 4,940,000 | 2,370,000 | 0 |
+| 78 `KH177598487429` | dual-role | -14,000,000 | 0 | 0 |
+| 148 `KH177794725633` | customer-only | -1,010,000 | 0 | 0 |
+
+Partners 16 and 72 retain persisted cancellation reversals that the previous
+accepted targets omitted. Partner 148 retains a payment ledger mirror for a
+cancelled, soft-deleted CashFlow; counting that mirror was a reducer defect,
+not evidence for a real debt. These are persisted-evidence corrections, not
+new adjustments or synthetic openings.
+
+### Partner 78 exact evidence
+
+Partner 78 is persisted as dual-role (`is_customer=1`, `is_supplier=1`), not
+customer-only. Its exactly-once event stream is:
+
+- customer invoice `HD177601111594`: `+15,000,000` receivable;
+- real receipt `PT26041317201042`: `-1,000,000` receivable;
+- DebtOffset `CB000001`: `-14,000,000` receivable and `-14,000,000` payable;
+- purchase `PN20260412232555`: `+14,000,000` payable.
+
+The offset CashFlow and supplier-ledger mirrors are reference-only. There are
+zero virtual events. Therefore customer canonical, supplier canonical, net,
+and display alignment are all exactly zero.
+
+### Regenerated plan, dry-run, and fail-closed decision
+
+- Source audit SHA-256:
+  `6c580b6646cd0281451b3562a597b4ea21b0b068f1411c52936cc30ab544eba9`.
+- Database fingerprint:
+  `3fadb19546b017496664b0f8e9bb4c808ebf2e280b3857460c27b3cea17ccecc`.
+- Plan hash:
+  `e58958d56113751b504ab8131d81afa006101266e370f6902e4a1fe1482afc81`.
+- Approval hash:
+  `edda04882e03bf17ddccf584e0d0b6d55d17c939e0e0135c6eb477338857e29c`.
+- Plan file SHA-256:
+  `180948826b616a794e4f918f78e0c6ac2cd18197c30ebfad5c43c0d571ed428e`.
+- Dry-run: 4 repair rows, 0 manual-review rows, 0 blocking flags, and
+  `ROWS_CHANGED=0`.
+- Projection hash before and after dry-run:
+  `f96f1b4827e6d040dfb321db65acd190f3ff378dbfe716b4458a21af110eb8c4`.
+
+The final-unblock authorization permits only partner 78 and explicitly says
+that any other accepted target change must block closure. Because the
+regenerated plan also changes partners 16, 72, and 148, the plan was not
+applied. Clone 2, replay, 332/332 post-apply, and Ready-for-review transition
+were intentionally not fabricated or attempted after this gate failed.
+
+### Regression and lifecycle gates for this continuation
+
+| Gate | Result |
+| --- | --- |
+| MariaDB 10.11.10 targeted reducer/audit suites | 53 tests, 197 assertions, PASS |
+| MySQL 8.0.44 targeted reducer/audit suites | 53 tests, 197 assertions, PASS |
+| Changed-file PHP lint | 4 files, PASS |
+| Changed-file Pint | 4 files, PASS |
+| Frontend build | Vite 5.4.21, 923 modules, PASS |
+| Git diff check | PASS |
+
+Two discarded MySQL attempts failed database authentication before executing
+any assertion; the valid run used the container credential only in a process
+variable and passed. Local PHP's unavailable OCI/Firebird extension warnings
+remain unrelated to these MySQL/MariaDB gates.
+
+All task containers were stopped immediately after their DB-dependent phase.
+At this handoff `docker ps` returns no running container. Task volumes and
+ignored audit artifacts remain stopped/on disk for repeatable review.
+
+```text
+FINAL_UNBLOCK_POPULATION=332/332
+FINAL_UNBLOCK_MATCHED=328
+FINAL_UNBLOCK_MISMATCHES=4
+FINAL_UNBLOCK_DUPLICATE_WARNINGS=0
+FINAL_UNBLOCK_UNKNOWN_ROOT_CAUSES=0
+FINAL_UNBLOCK_PLAN_DRY_RUN=PASS
+FINAL_UNBLOCK_PLAN_APPLIED=no
+FINAL_UNBLOCK_SECOND_APPLY=NOT_RUN
+FINAL_UNBLOCK_CLONE_2=NOT_CREATED_AFTER_FAIL_CLOSED_GATE
+FINAL_UNBLOCK_OTHER_ACCEPTED_TARGETS_CHANGED=3
+FINAL_UNBLOCK_STATUS=BLOCKED
+PR_READY=no
+DOCKER_RUNNING_CONTAINERS=0
+```
+
+## Prior PR #30 closure differential (superseded, 2026-07-18)
+
+This section is retained as investigation history. It is superseded by the
+clean-source revalidation above and is not the current closure result.
 
 ```text
 PR30_CLOSURE_STATUS=BLOCKED
@@ -431,7 +588,7 @@ work required them. At handoff:
 No unrelated project container was stopped or changed. Backup artifacts and
 stopped task volumes are retained for repeatable inspection.
 
-## Final status
+## Historical final status before clean revalidation (superseded)
 
     LATEST_BACKUP_INTEGRITY=PASS
     BACKUP_CREATED_TODAY=yes

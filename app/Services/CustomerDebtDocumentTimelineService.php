@@ -466,6 +466,27 @@ class CustomerDebtDocumentTimelineService
 
         $adjustmentDebts = CustomerDebt::where('customer_id', $customer->id)->get();
         $existingCodes = $entries->pluck('code')->filter()->toArray();
+        $paymentLedgerCodes = $adjustmentDebts
+            ->filter(fn (CustomerDebt $debt): bool => (string) $debt->type === 'payment')
+            ->pluck('ref_code')
+            ->map(fn ($code): string => trim((string) $code))
+            ->filter()
+            ->unique()
+            ->values();
+        $invalidatedCashFlowMirrorCodes = $paymentLedgerCodes->isEmpty()
+            ? collect()
+            : CashFlow::withTrashed()
+                ->where('target_id', $customer->id)
+                ->where('type', 'receipt')
+                ->whereIn('code', $paymentLedgerCodes->all())
+                ->get()
+                ->filter(fn (CashFlow $cashFlow): bool => $this->isCustomerCashFlow($cashFlow))
+                ->filter(fn (CashFlow $cashFlow): bool => $cashFlow->trashed()
+                    || BusinessStatus::isCancelled($cashFlow->status))
+                ->pluck('code')
+                ->map(fn ($code): string => trim((string) $code))
+                ->filter()
+                ->flip();
 
         foreach ($adjustmentDebts as $debt) {
             $refCode = $debt->ref_code;
@@ -475,12 +496,16 @@ class CustomerDebtDocumentTimelineService
                 continue;
             }
 
-            $isTech = $this->isTechnicalLedgerCode($refCode);
+            $invalidatedCashFlowMirror = (string) $debt->type === 'payment'
+                && $invalidatedCashFlowMirrorCodes->has(trim((string) $refCode));
+            $isTech = $this->isTechnicalLedgerCode($refCode) || $invalidatedCashFlowMirror;
             if ($isTech) {
                 $excludedLedgerEntries[] = [
                     'code' => $refCode,
                     'amount' => (float) $debt->amount,
-                    'reason' => 'technical_ledger_excluded_from_document_timeline',
+                    'reason' => $invalidatedCashFlowMirror
+                        ? 'cancelled_cash_flow_ledger_mirror_reference_only'
+                        : 'technical_ledger_excluded_from_document_timeline',
                     'source' => 'customer_debts',
                 ];
 
@@ -506,7 +531,11 @@ class CustomerDebtDocumentTimelineService
                 'customer_display_effect' => $isTech ? 0.0 : (float) $debt->amount,
                 'affects_document_balance' => ! $isTech,
                 'excluded_from_document_balance' => $isTech,
-                'excluded_reason' => $isTech ? 'technical_ledger_merge_or_opening' : null,
+                'excluded_reason' => $isTech
+                    ? ($invalidatedCashFlowMirror
+                        ? 'cancelled_cash_flow_ledger_mirror_reference_only'
+                        : 'technical_ledger_merge_or_opening')
+                    : null,
                 'affects_canonical_balance' => ! $isTech,
                 'time' => $businessTime,
                 'display_time' => $businessTime,

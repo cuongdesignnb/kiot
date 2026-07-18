@@ -2,13 +2,13 @@
 
 namespace Tests\Feature\Customers;
 
-use App\Models\Customer;
-use App\Models\User;
-use App\Models\Invoice;
 use App\Models\CashFlow;
-use App\Models\OrderReturn;
+use App\Models\Customer;
 use App\Models\CustomerDebt;
+use App\Models\Invoice;
+use App\Models\OrderReturn;
 use App\Models\Purchase;
+use App\Models\User;
 use App\Services\CustomerDebtDocumentTimelineService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -19,6 +19,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
     use DatabaseTransactions;
 
     private CustomerDebtDocumentTimelineService $service;
+
     private User $admin;
 
     protected function setUp(): void
@@ -27,7 +28,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
         $this->service = app(CustomerDebtDocumentTimelineService::class);
         $this->admin = User::create([
             'name' => 'Admin Test Timeline',
-            'email' => 'admin-timeline-' . uniqid() . '@test.local',
+            'email' => 'admin-timeline-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
             'role_id' => null,
         ]);
@@ -36,9 +37,9 @@ class CustomerDebtDocumentTimelineTest extends TestCase
     private function createTestCustomer(array $attributes = []): Customer
     {
         return Customer::create(array_merge([
-            'code' => 'KH-TEST-' . uniqid(),
+            'code' => 'KH-TEST-'.uniqid(),
             'name' => 'Test Customer',
-            'phone' => '09' . random_int(10000000, 99999999),
+            'phone' => '09'.random_int(10000000, 99999999),
             'debt_amount' => 0,
             'supplier_debt_amount' => 0,
             'is_customer' => true,
@@ -182,6 +183,116 @@ class CustomerDebtDocumentTimelineTest extends TestCase
         $this->assertSame(-500000.0, (float) $fallbackEntry['display_effect']);
     }
 
+    public function test_cancelled_deleted_cash_flow_customer_debt_mirror_is_reference_only(): void
+    {
+        $customer = $this->createTestCustomer();
+        $code = 'PT-CANCELLED-MIRROR-'.uniqid();
+        $cashFlow = CashFlow::create([
+            'code' => $code,
+            'type' => 'receipt',
+            'amount' => 505000,
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer->id,
+            'target_name' => $customer->name,
+            'reference_type' => 'DebtPayment',
+            'reference_code' => 'HD-CANCELLED-MIRROR',
+            'status' => 'cancelled',
+            'time' => now(),
+        ]);
+        $cashFlow->delete();
+        CustomerDebt::create([
+            'customer_id' => $customer->id,
+            'ref_code' => $code,
+            'amount' => -505000,
+            'debt_total' => 0,
+            'type' => 'payment',
+            'recorded_at' => now(),
+        ]);
+
+        $canonical = $this->service->build($customer);
+        $audit = $this->service->build($customer, ['include_technical' => true]);
+        $reference = collect($audit['entries'])->firstWhere('code', $code);
+
+        $this->assertSame(0.0, (float) $canonical['summary']['raw_document_final_balance']);
+        $this->assertNotNull($reference);
+        $this->assertFalse((bool) $reference['affects_canonical_balance']);
+        $this->assertSame(0.0, (float) $reference['customer_display_effect']);
+        $this->assertSame(
+            'cancelled_cash_flow_ledger_mirror_reference_only',
+            $reference['excluded_reason'],
+        );
+    }
+
+    public function test_cancelled_supplier_cash_flow_code_collision_does_not_hide_customer_ledger(): void
+    {
+        $customer = $this->createTestCustomer();
+        $code = 'PT-CROSS-DOMAIN-COLLISION-'.uniqid();
+        $cashFlow = CashFlow::create([
+            'code' => $code,
+            'type' => 'receipt',
+            'amount' => 505000,
+            'target_type' => 'Nhà cung cấp',
+            'target_id' => $customer->id,
+            'target_name' => $customer->name,
+            'reference_type' => 'DebtPayment',
+            'reference_code' => 'PN-CROSS-DOMAIN-COLLISION',
+            'status' => 'cancelled',
+            'time' => now(),
+        ]);
+        $cashFlow->delete();
+        CustomerDebt::create([
+            'customer_id' => $customer->id,
+            'ref_code' => $code,
+            'amount' => -505000,
+            'debt_total' => -505000,
+            'type' => 'payment',
+            'recorded_at' => now(),
+        ]);
+
+        $timeline = $this->service->build($customer);
+        $entry = collect($timeline['entries'])->firstWhere('code', $code);
+
+        $this->assertSame(-505000.0, (float) $timeline['summary']['raw_document_final_balance']);
+        $this->assertNotNull($entry);
+        $this->assertTrue((bool) $entry['affects_canonical_balance']);
+        $this->assertSame(-505000.0, (float) $entry['customer_display_effect']);
+    }
+
+    public function test_cancelled_customer_refund_code_collision_does_not_hide_payment_ledger(): void
+    {
+        $customer = $this->createTestCustomer();
+        $code = 'PT-TYPE-COLLISION-'.uniqid();
+        $cashFlow = CashFlow::create([
+            'code' => $code,
+            'type' => 'payment',
+            'amount' => 505000,
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer->id,
+            'target_name' => $customer->name,
+            'reference_type' => 'ReturnRefund',
+            'reference_code' => 'TH-TYPE-COLLISION',
+            'status' => 'cancelled',
+            'time' => now(),
+        ]);
+        $cashFlow->delete();
+        CustomerDebt::create([
+            'customer_id' => $customer->id,
+            'ref_code' => $code,
+            'amount' => -505000,
+            'debt_total' => -505000,
+            'type' => 'payment',
+            'recorded_at' => now(),
+        ]);
+
+        $timeline = $this->service->build($customer);
+        $entry = collect($timeline['entries'])->firstWhere('code', $code);
+
+        $this->assertSame(-505000.0, (float) $timeline['summary']['raw_document_final_balance']);
+        $this->assertNotNull($entry);
+        $this->assertTrue((bool) $entry['affects_canonical_balance']);
+        $this->assertSame(-505000.0, (float) $entry['customer_display_effect']);
+    }
+
     /**
      * Test 5 — sales return reduces debt
      */
@@ -239,11 +350,11 @@ class CustomerDebtDocumentTimelineTest extends TestCase
 
     public function test_sales_return_with_real_refund_does_not_create_virtual_pcth_fallback(): void
     {
-        $suffix = '-' . uniqid();
-        $invoiceCode = 'HD-REFUND-REAL-001' . $suffix;
-        $receiptCode = 'PT-REFUND-REAL-001' . $suffix;
-        $returnCode = 'TH2026062611405938' . $suffix;
-        $refundCode = 'PC2026062611405949' . $suffix;
+        $suffix = '-'.uniqid();
+        $invoiceCode = 'HD-REFUND-REAL-001'.$suffix;
+        $receiptCode = 'PT-REFUND-REAL-001'.$suffix;
+        $returnCode = 'TH2026062611405938'.$suffix;
+        $refundCode = 'PC2026062611405949'.$suffix;
         $customer = $this->createTestCustomer([
             'debt_amount' => 0,
         ]);
@@ -303,7 +414,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
 
         $this->assertNotNull($entries->firstWhere('code', $return->code));
         $this->assertNotNull($entries->firstWhere('code', $refund->code));
-        $this->assertNull($entries->firstWhere('code', 'PC' . $returnCode));
+        $this->assertNull($entries->firstWhere('code', 'PC'.$returnCode));
 
         $returnEntry = $entries->firstWhere('code', $return->code);
         $this->assertTrue((bool) $returnEntry['fallback_suppressed_by_real_refund']);
@@ -315,10 +426,10 @@ class CustomerDebtDocumentTimelineTest extends TestCase
 
     public function test_sales_return_with_real_refund_no_accent_target_type_does_not_create_virtual_pcth_fallback(): void
     {
-        $suffix = '-' . uniqid();
-        $invoiceCode = 'HD177927122018' . $suffix;
-        $returnCode = 'TH2026062611405938' . $suffix;
-        $refundCode = 'PC2026062611405949' . $suffix;
+        $suffix = '-'.uniqid();
+        $invoiceCode = 'HD177927122018'.$suffix;
+        $returnCode = 'TH2026062611405938'.$suffix;
+        $refundCode = 'PC2026062611405949'.$suffix;
         $customer = $this->createTestCustomer([
             'debt_amount' => 0,
         ]);
@@ -364,7 +475,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
 
         $this->assertNotNull($entries->firstWhere('code', $returnCode));
         $this->assertNotNull($entries->firstWhere('code', $refundCode));
-        $this->assertNull($entries->firstWhere('code', 'PC' . $returnCode));
+        $this->assertNull($entries->firstWhere('code', 'PC'.$returnCode));
 
         $returnEntry = $entries->firstWhere('code', $returnCode);
         $this->assertTrue((bool) $returnEntry['fallback_suppressed_by_real_refund']);
@@ -469,7 +580,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
     /**
      * Test 7 — does not use CustomerDebt sale amount as invoice display amount
      */
-    public function test_does_not_use_CustomerDebt_sale_amount_as_invoice_display_amount(): void
+    public function test_does_not_use_customer_debt_sale_amount_as_invoice_display_amount(): void
     {
         $customer = $this->createTestCustomer();
 
@@ -505,9 +616,9 @@ class CustomerDebtDocumentTimelineTest extends TestCase
      */
     public function test_local_real_case_from_screenshot(): void
     {
-        $invoiceCode = 'HD178090993527-' . uniqid();
+        $invoiceCode = 'HD178090993527-'.uniqid();
         $customer = $this->createTestCustomer();
-        
+
         Invoice::create([
             'code' => $invoiceCode,
             'customer_id' => $customer->id,
@@ -524,7 +635,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
         $this->assertNotNull($inv);
         $this->assertSame(800000.0, (float) $inv['display_effect']);
 
-        $pay = $entries->firstWhere('code', 'TT' . $invoiceCode);
+        $pay = $entries->firstWhere('code', 'TT'.$invoiceCode);
         $this->assertNotNull($pay);
         $this->assertSame(-500000.0, (float) $pay['display_effect']);
     }
@@ -611,17 +722,17 @@ class CustomerDebtDocumentTimelineTest extends TestCase
             'type' => 'sale',
             'recorded_at' => Carbon::now()->subMinutes(10),
         ]);
-        
+
         $res = $this->service->build($customer);
         $entries = collect($res['entries']);
-        
+
         $invEntry = $entries->firstWhere('code', 'HD-PARTIAL-123');
         $this->assertNotNull($invEntry);
         $this->assertSame(800000.0, (float) $invEntry['display_effect']);
         $this->assertSame(800000.0, (float) $invEntry['customer_display_effect']);
         $this->assertSame('document_first', $invEntry['source']);
         $this->assertNotEquals('Ledger', $invEntry['badge_label']);
-        
+
         $fallbackEntry = $entries->firstWhere('code', 'TTHD-PARTIAL-123');
         $this->assertNotNull($fallbackEntry);
         $this->assertSame(-500000.0, (float) $fallbackEntry['display_effect']);
@@ -638,11 +749,11 @@ class CustomerDebtDocumentTimelineTest extends TestCase
             'customer_paid' => 500000,
             'created_at' => Carbon::now(),
         ]);
-        
+
         $response = $this->actingAs($this->admin)->get("/customers/{$customer->id}/debt-history");
         $response->assertStatus(200);
         $entries = collect($response->json('entries'));
-        
+
         $invEntry = $entries->firstWhere('code', 'HD-DEFAULT-123');
         $this->assertNotNull($invEntry);
         $this->assertSame(800000.0, (float) $invEntry['display_effect']);
@@ -675,7 +786,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
         $entriesDoc = collect($resDoc->json('entries'));
         $invDoc = $entriesDoc->firstWhere('code', 'HD-COMPARE-123');
         $this->assertSame(800000.0, (float) $invDoc['display_effect']);
-        
+
         // Legacy mode
         $resLegacy = $this->actingAs($this->admin)->get("/customers/{$customer->id}/debt-history?mode=legacy");
         $entriesLegacy = collect($resLegacy->json('entries'));
@@ -705,7 +816,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
 
         $res = $this->service->build($customer);
         $entries = collect($res['entries']);
-        
+
         $retEntry = $entries->firstWhere('code', 'TH-RED-123');
         $this->assertNotNull($retEntry);
         $this->assertSame(-1000000.0, (float) $retEntry['display_effect']);
@@ -727,7 +838,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
 
         $response = $this->actingAs($this->admin)->get("/customers/{$customer->id}/debt-history");
         $entries = collect($response->json('entries'));
-        
+
         $invEntry = $entries->firstWhere('code', 'HD-FRONT-123');
         $this->assertNotNull($invEntry);
         $this->assertSame('document_first', $invEntry['source']);
@@ -739,7 +850,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
         // Stored debt is 300000 but document final will be 800000 - 500000 - 1000000 = -700000
         // This mismatch triggers reconcile warning
         $customer = $this->createTestCustomer(['debt_amount' => 300000]);
-        
+
         $invoice = Invoice::create([
             'code' => 'HD-WARN-123',
             'customer_id' => $customer->id,
@@ -748,7 +859,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
             'customer_paid' => 500000,
             'created_at' => Carbon::now()->subMinutes(10),
         ]);
-        
+
         CashFlow::create([
             'code' => 'PT-WARN-123',
             'type' => 'receipt',
@@ -774,17 +885,17 @@ class CustomerDebtDocumentTimelineTest extends TestCase
 
         $response = $this->actingAs($this->admin)->get("/customers/{$customer->id}/debt-history");
         $response->assertStatus(200);
-        
+
         $this->assertSame('warning', $response->json('reconcile.severity'));
-        
+
         $entries = $response->json('entries');
         $this->assertNotEmpty($entries);
-        
+
         foreach ($entries as $entry) {
             $this->assertArrayHasKey('customer_display_running_balance', $entry);
             $this->assertNotNull($entry['customer_display_running_balance']);
             $this->assertTrue(is_numeric($entry['customer_display_running_balance']));
-            
+
             $this->assertArrayHasKey('running_balance', $entry);
             $this->assertNotNull($entry['running_balance']);
             $this->assertTrue(is_numeric($entry['running_balance']));
@@ -794,7 +905,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
     public function test_zero_balance_displays_as_numeric_zero(): void
     {
         $customer = $this->createTestCustomer();
-        
+
         $invoice = Invoice::create([
             'code' => 'HD-ZERO-123',
             'customer_id' => $customer->id,
@@ -803,7 +914,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
             'customer_paid' => 800000,
             'created_at' => Carbon::now()->subMinutes(10),
         ]);
-        
+
         CashFlow::create([
             'code' => 'PT-ZERO-123',
             'type' => 'receipt',
@@ -820,8 +931,8 @@ class CustomerDebtDocumentTimelineTest extends TestCase
 
         $response = $this->actingAs($this->admin)->get("/customers/{$customer->id}/debt-history");
         $entries = collect($response->json('entries'));
-        
-        $lastEntry = $entries->sortBy(function($e) {
+
+        $lastEntry = $entries->sortBy(function ($e) {
             return $e['display_time'] ?? $e['time'] ?? $e['created_at'];
         })->last();
 
@@ -833,7 +944,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
     public function test_collection_map_persistence(): void
     {
         $customer = $this->createTestCustomer();
-        
+
         Invoice::create([
             'code' => 'HD-PERSIST-123',
             'customer_id' => $customer->id,
@@ -845,7 +956,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
 
         $response = $this->actingAs($this->admin)->get("/customers/{$customer->id}/debt-history");
         $entries = collect($response->json('entries'));
-        
+
         $invEntry = $entries->firstWhere('code', 'HD-PERSIST-123');
         $this->assertNotNull($invEntry);
         $this->assertNotNull($invEntry['customer_display_running_balance']);
@@ -854,7 +965,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
     public function test_does_not_regress_document_values(): void
     {
         $customer = $this->createTestCustomer();
-        
+
         Invoice::create([
             'code' => 'HD-REGRESS-123',
             'customer_id' => $customer->id,
@@ -863,7 +974,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
             'customer_paid' => 500000,
             'created_at' => Carbon::now()->subMinutes(10),
         ]);
-        
+
         CashFlow::create([
             'code' => 'PT-REGRESS-123',
             'type' => 'receipt',
@@ -889,13 +1000,13 @@ class CustomerDebtDocumentTimelineTest extends TestCase
 
         $res = $this->service->build($customer);
         $entries = collect($res['entries']);
-        
+
         $inv = $entries->firstWhere('code', 'HD-REGRESS-123');
         $this->assertSame(800000.0, (float) $inv['display_effect']);
-        
+
         $pay = $entries->firstWhere('code', 'PT-REGRESS-123');
         $this->assertSame(-500000.0, (float) $pay['display_effect']);
-        
+
         $ret = $entries->firstWhere('code', 'TH-REGRESS-123');
         $this->assertSame(-1000000.0, (float) $ret['display_effect']);
     }
@@ -947,7 +1058,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
         // 1. PT-DOC-GRP1 (subHours(1))
         // 2. TH-DOC-GRP1 (subHours(3))
         // 3. HD-DOC-GRP1 (subHours(5))
-        
+
         $codes = $entries->pluck('code')->toArray();
         $this->assertEquals(['PT-DOC-GRP1', 'TH-DOC-GRP1', 'HD-DOC-GRP1'], $codes);
     }
@@ -1136,7 +1247,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
         ]);
 
         $baseDate = Carbon::today();
-        
+
         Invoice::create([
             'code' => 'HD-DOC-001',
             'customer_id' => $customer->id,
@@ -1187,7 +1298,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
     {
         $customer = $this->createTestCustomer();
         $baseDate = Carbon::today();
-        
+
         Invoice::create([
             'code' => 'HD-DOC-001',
             'customer_id' => $customer->id,
@@ -1226,7 +1337,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
     {
         $customer = $this->createTestCustomer();
         $baseDate = Carbon::today();
-        
+
         Invoice::create([
             'code' => 'HD-DOC-001',
             'customer_id' => $customer->id,
@@ -1317,7 +1428,7 @@ class CustomerDebtDocumentTimelineTest extends TestCase
     public function test_include_technical_only_for_audit_debug(): void
     {
         $customer = $this->createTestCustomer();
-        
+
         CustomerDebt::create([
             'customer_id' => $customer->id,
             'ref_code' => 'MERGE-CUSTOMER-239',

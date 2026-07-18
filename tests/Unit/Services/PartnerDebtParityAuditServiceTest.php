@@ -155,6 +155,25 @@ class PartnerDebtParityAuditServiceTest extends TestCase
         $this->assertContains('TARGET_TYPE_ALIAS_SUSPECT', $flags);
     }
 
+    public function test_cancel_reversal_is_not_a_real_payment_collision_with_invoice_fallback(): void
+    {
+        $partner = $this->partner();
+        Invoice::query()->create([
+            'code' => 'HD-CANCEL-FALLBACK-'.uniqid(),
+            'customer_id' => $partner->id,
+            'status' => 'Đã hủy',
+            'total' => 1_000_000,
+            'customer_paid' => 1_000_000,
+            'transaction_date' => now(),
+        ]);
+
+        $audit = $this->service->audit($partner);
+
+        $this->assertFalse($audit['has_duplicate_real_and_fallback']);
+        $this->assertNotContains('DUPLICATE_REAL_AND_FALLBACK', $audit['classification_flags']);
+        $this->assertSame(0.0, (float) $audit['customer_document_raw_final']);
+    }
+
     public function test_allocation_warnings_have_explicit_classifications(): void
     {
         $flags = $this->service->classify($this->baseline([

@@ -648,6 +648,12 @@ class PartnerDebtParityAuditService
     private function collisionKey(array $entry): string
     {
         $kind = (string) ($entry['event_kind'] ?? '');
+        // A cancellation/reversal is the persisted opposite of the original
+        // event. It may share the invoice document key with a fallback, but it
+        // is not a second real payment/refund and must not raise a collision.
+        if (str_contains($kind, 'cancel') || str_contains($kind, 'reversal')) {
+            return '';
+        }
         $family = match (true) {
             str_contains($kind, 'payment') => 'payment',
             str_contains($kind, 'refund') => 'refund',
