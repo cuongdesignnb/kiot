@@ -2,6 +2,8 @@
 
 `DEBT_PARITY_ZERO_DRIFT_STATUS=BLOCKED`
 
+`TASK_CODE=DEBT-PARITY-ZERO-DRIFT-02-CLOSURE`
+
 This report records the validation performed from branch
 `fix/all-partner-debt-parity-zero-drift`, based directly on
 `0c35b3498437dd163f38625fee6df9b6342027ab`. No production system was
@@ -27,14 +29,66 @@ applied and completion must not be claimed.
 - Dump SHA-256:
   `6beaece0b64ac66ba889fb9ca3ccd843755a947860724065c2ea4ed31ec26d67`.
 - Gzip integrity: PASS.
-- Source database container was stopped immediately after backup.
+- The source database container was started once for a read-only population
+  count, then stopped. It still contains 322 customer rows and was not
+  changed.
 - Validation used clone container `kiot_debt_parity_clone1`; it was stopped at
   the end of validation.
 
+## Closure population gate: expected 332 versus scanned 322
+
+The continuation gate was run against a newly restored container named
+`kiot_debt_parity_clone1_final`. The command used the immutable backup above
+and the new read-only `--population-only --expected-population=332` mode. The
+container was stopped immediately after the gate and its transaction-based
+tests completed.
+
+| Population metric | Count |
+| --- | ---: |
+| `TOTAL_CUSTOMERS_WITHOUT_TRASHED` | 322 |
+| `TOTAL_CUSTOMERS_WITH_TRASHED` | 322 |
+| `TOTAL_PARTNER_SOURCE_UNION` | 323 |
+| `TOTAL_WITH_FINANCIAL_HISTORY` | 322 |
+| `TOTAL_WITH_NONZERO_STORED_BALANCE` | 30 |
+| `TOTAL_SCANNED` | 322 |
+| `TOTAL_EXCLUDED` | 0 |
+| `TOTAL_UNSCANNABLE` | 1 |
+| Expected customer gap | 10 |
+| Expected union gap | 9 |
+
+The `customers` schema has no `deleted_at` column, so soft deletion cannot
+explain the ten-row difference. There is no separate supplier or legacy
+partner table. One additional source ID (`55`) exists only in `cash_flows`;
+it has financial evidence and therefore cannot be excluded. The other nine
+expected population members are absent from every partner/document/ledger
+source in the supplied database.
+
+Consequently:
+
+```text
+DOCKER_DATABASE_IS_LATEST=no
+POPULATION_RECONCILIATION=FAIL
+CLOSURE_STATUS=BLOCKED
+```
+
+The ignored evidence files are under
+`storage/app/audits/debt-parity-zero-drift-closure/`:
+
+- `population-reconciliation.json` (SHA-256
+  `7b73444012bca2a606dc2571bc4f73c0789f31f881118a19754c45fecaa7fc6e`)
+- `population-excluded.csv` (header only because no row is safely excludable)
+- `population-unscannable.csv` (the orphan financial reference)
+
+The audit command now produces these artifacts from the full source union and
+fails when the expected database population, scan coverage, or orphan checks
+do not reconcile. No personal data from these ignored artifacts is committed.
+
 ## Final all-partner audit on clone 1
 
-Population was the union of partner and debt/document sources, with special
-statuses included. It was not derived from UI pagination.
+This is the earlier 322-row audit. The closure population gate above proved
+that it was the customer-table scan, not a complete and reconciled 332-row
+source population. Its mismatch counts remain historical evidence only and
+were not used to authorize repair.
 
 | Metric | Count |
 | --- | ---: |
@@ -115,6 +169,9 @@ Checksums before and after dry-run were identical:
 
 ## Code validation
 
+- Closure population command/service tests: PASS — 15 tests, 74 assertions.
+- Closure population PHP syntax: PASS.
+- Closure changed-file Pint: PASS.
 - Targeted MySQL regression: PASS — 169 tests, 903 assertions, 1 skipped.
   Coverage includes canonical/audit/invariants, mutation atomicity and
   idempotency, invoice update/cancellation, sales returns, supplier display
@@ -135,6 +192,11 @@ these extensions are unrelated to the MySQL debt tests.
 
 ## Remaining blockers
 
+- The immutable backup and Docker source contain 322 customer rows, while the
+  fixed expected population is 332. The source union contains 323 IDs and one
+  unscannable orphan with financial evidence. A current immutable source
+  snapshot is required before any further audit, repair, clone-2 replay, UI
+  acceptance, or cross-engine acceptance can be validly performed.
 - Clone 1 still has 21 material drift rows, 8 insufficient-evidence rows, and
   11 technical warnings.
 - A real repair cannot run while 17 plan rows require manual review.

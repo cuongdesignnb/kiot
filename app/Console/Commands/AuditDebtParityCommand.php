@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Models\Customer;
 use App\Services\Debt\PartnerDebtParityAuditService;
+use App\Services\Debt\PartnerDebtPopulationService;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\File;
@@ -15,6 +16,8 @@ class AuditDebtParityCommand extends Command
         {--dry-run : Compatibility flag; the command is always read-only}
         {--all-partners : Include every partner row, including missing-role and zero-projection rows}
         {--include-special-status : Include inactive, merged, branchless and other historical statuses}
+        {--population-only : Reconcile partner sources without reducing document timelines}
+        {--expected-population= : Expected full customer population; fails when the database snapshot differs}
         {--fail-on-mismatch : Exit non-zero when any raw parity difference is non-zero}
         {--role=all : all, customer, supplier or dual}
         {--partner-id= : Audit one local partner ID}
@@ -28,8 +31,10 @@ class AuditDebtParityCommand extends Command
 
     protected $description = 'Read-only parity audit across stored debt, document timelines and ledgers';
 
-    public function handle(PartnerDebtParityAuditService $audit): int
-    {
+    public function handle(
+        PartnerDebtParityAuditService $audit,
+        PartnerDebtPopulationService $population,
+    ): int {
         if (! $this->option('dry-run')) {
             $this->error('Please pass --dry-run. This command never applies debt changes.');
 
@@ -62,8 +67,34 @@ class AuditDebtParityCommand extends Command
             return self::FAILURE;
         }
         $limit = $limitOption === null ? null : (int) $limitOption;
+        $expectedPopulationOption = $this->option('expected-population');
+        if ($expectedPopulationOption !== null
+            && preg_match('/^[1-9][0-9]*$/', (string) $expectedPopulationOption) !== 1) {
+            $this->error('Invalid --expected-population. Use a positive integer.');
+
+            return self::FAILURE;
+        }
+        $expectedPopulation = $expectedPopulationOption === null ? null : (int) $expectedPopulationOption;
+
+        if ($this->option('population-only')) {
+            if (! $this->option('all-partners') || ! $this->option('output')) {
+                $this->error('--population-only requires --all-partners and --output.');
+
+                return self::FAILURE;
+            }
+            $scannedPartnerIds = Customer::query()->orderBy('id')->pluck('id')->map(fn ($id): int => (int) $id)->all();
+            $populationResult = $population->reconcile($scannedPartnerIds, $expectedPopulation);
+            $output = rtrim(str_replace('\\', '/', (string) $this->option('output')), '/');
+            $this->writePopulationArtifacts($output, $populationResult);
+            $this->printPopulationSummary($populationResult['summary']);
+
+            return (bool) ($populationResult['summary']['population_reconciliation_pass'] ?? false)
+                ? self::SUCCESS
+                : self::FAILURE;
+        }
 
         $rows = [];
+        $scannedPartnerIds = [];
         $scanned = 0;
         $matched = 0;
         $hasAuditErrors = false;
@@ -74,6 +105,7 @@ class AuditDebtParityCommand extends Command
                 break;
             }
             $scanned++;
+            $scannedPartnerIds[] = (int) $partner->id;
             $row = $audit->audit($partner);
             $hasAuditErrors = $hasAuditErrors || $row['primary_classification'] === 'AUDIT_ERROR';
             if (! $this->matchesFilters($row, $classification, $risk)) {
@@ -92,19 +124,80 @@ class AuditDebtParityCommand extends Command
         if ($path = $this->option('json')) {
             $this->writeJson($this->auditPath((string) $path), $rows);
         }
+        $populationResult = null;
         if ($directory = $this->option('output')) {
             $output = rtrim(str_replace('\\', '/', (string) $directory), '/');
             $this->writeCsv($this->auditPath($output.'/audit.csv'), $rows);
             $this->writeJson($this->auditPath($output.'/audit.json'), $rows);
+            if ($this->option('all-partners')) {
+                $populationResult = $population->reconcile($scannedPartnerIds, $expectedPopulation);
+                $this->writePopulationArtifacts($output, $populationResult);
+            }
         }
 
         $this->printSummary($rows, $eligible, $scanned, $matched);
+        if ($populationResult !== null) {
+            $this->printPopulationSummary($populationResult['summary']);
+        }
 
         $hasMismatch = collect($rows)->contains(fn (array $row): bool => $this->hasRawMismatch($row));
 
-        return ($hasAuditErrors || ($this->option('fail-on-mismatch') && $hasMismatch))
+        $populationFailed = $populationResult !== null
+            && ! (bool) ($populationResult['summary']['population_reconciliation_pass'] ?? false);
+
+        return ($hasAuditErrors || $populationFailed || ($this->option('fail-on-mismatch') && $hasMismatch))
             ? self::FAILURE
             : self::SUCCESS;
+    }
+
+    private function writePopulationArtifacts(string $output, array $population): void
+    {
+        $directory = $this->auditPath($output);
+        File::ensureDirectoryExists($directory);
+        file_put_contents(
+            $directory.DIRECTORY_SEPARATOR.'population-reconciliation.json',
+            json_encode([
+                'generated_at' => now()->toIso8601String(),
+                'dry_run' => true,
+                ...$population,
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+        );
+        $this->writePopulationCsv(
+            $directory.DIRECTORY_SEPARATOR.'population-excluded.csv',
+            PartnerDebtPopulationService::EXCLUDED_CSV_COLUMNS,
+            $population['excluded'] ?? [],
+        );
+        $this->writePopulationCsv(
+            $directory.DIRECTORY_SEPARATOR.'population-unscannable.csv',
+            ['partner_id', 'partner_code', 'reason', 'sources', 'stored_customer_debt', 'stored_supplier_debt'],
+            $population['unscannable'] ?? [],
+        );
+    }
+
+    private function writePopulationCsv(string $path, array $columns, array $rows): void
+    {
+        $handle = fopen($path, 'wb');
+        if ($handle === false) {
+            throw new RuntimeException("Cannot open population CSV: {$path}");
+        }
+        fwrite($handle, "\xEF\xBB\xBF");
+        fputcsv($handle, $columns);
+        foreach ($rows as $row) {
+            fputcsv($handle, array_map(
+                fn (string $column): mixed => $this->scalar($row[$column] ?? null),
+                $columns,
+            ));
+        }
+        fclose($handle);
+    }
+
+    private function printPopulationSummary(array $summary): void
+    {
+        $this->line('Population reconciliation:');
+        foreach ($summary as $key => $value) {
+            $formatted = is_bool($value) ? ($value ? 'yes' : 'no') : ($value ?? 'not-set');
+            $this->line("- {$key}: {$formatted}");
+        }
     }
 
     private function partnerQuery(string $role): Builder
