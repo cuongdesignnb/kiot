@@ -41,6 +41,14 @@ class AppServiceProvider extends ServiceProvider
                 ->where($customer->getRouteKeyName(), $value)
                 ->firstOrFail();
         });
+        Route::bind('supplier', function (string $value): Customer {
+            $supplier = new Customer;
+
+            return Customer::query()
+                ->where('is_supplier', true)
+                ->where($supplier->getRouteKeyName(), $value)
+                ->firstOrFail();
+        });
 
         // ===== Payroll Auto-Recalc Observers =====
         // Khi dữ liệu liên quan lương thay đổi → đánh dấu paysheet cần tính lại

@@ -490,6 +490,44 @@ class KiotVietPartnerDebtTimelineContractTest extends TestCase
         $this->assertNotContains('NCC177621742868', PartnerDebtRoleResolver::OWNER_CONFIRMED_DUAL_ROLE_CODES);
     }
 
+    public function test_customer_only_partner_is_denied_across_every_supplier_surface(): void
+    {
+        $customer = $this->partner([
+            'is_customer' => true,
+            'is_supplier' => false,
+            'debt_amount' => 25_000,
+            'supplier_debt_amount' => 0,
+        ]);
+        Invoice::create([
+            'code' => 'HD-CUSTOMER-ONLY-SUPPLIER-SCOPE',
+            'customer_id' => $customer->id,
+            'status' => 'completed',
+            'total' => 25_000,
+            'customer_paid' => 0,
+            'transaction_date' => now(),
+        ]);
+
+        foreach ([
+            "/api/suppliers/{$customer->id}/purchase-history",
+            "/api/suppliers/{$customer->id}/debt-transactions",
+            "/api/suppliers/{$customer->id}/debt-voucher-detail?code=HD-CUSTOMER-ONLY-SUPPLIER-SCOPE",
+            "/api/suppliers/{$customer->id}/export-debt",
+            "/api/suppliers/{$customer->id}/export-purchases",
+        ] as $supplierEndpoint) {
+            $this->actingAs($this->user)->get($supplierEndpoint)->assertNotFound();
+        }
+
+        $this->actingAs($this->user)
+            ->post("/api/suppliers/{$customer->id}/payment", ['amount' => 1])
+            ->assertNotFound();
+        $this->actingAs($this->user)
+            ->post("/api/suppliers/{$customer->id}/adjust-debt", ['amount' => 1])
+            ->assertNotFound();
+        $this->actingAs($this->user)
+            ->put("/suppliers/{$customer->id}", ['name' => 'Blocked customer-only partner'])
+            ->assertNotFound();
+    }
+
     private function partner(array $attributes = []): Customer
     {
         return Customer::create(array_merge([

@@ -23,6 +23,13 @@ class SupplierController extends Controller
 {
     use FilterableIndex;
 
+    private function supplierOrFail(int|string $id): Customer
+    {
+        return Customer::query()
+            ->where('is_supplier', true)
+            ->findOrFail($id);
+    }
+
     protected function configureSupplierFilters(): void
     {
         $this->searchable = ['code', 'name', 'phone', 'phone2', 'email', 'tax_code'];
@@ -320,10 +327,7 @@ class SupplierController extends Controller
         // HOTFIX — export must pull ALL entries from the same document
         // timeline contract as the supplier debt tab. Legacy ledger export is
         // retained only behind explicit ?mode=legacy.
-        $supplier = Customer::findOrFail($id);
-        if (! (bool) $supplier->is_supplier) {
-            abort(404);
-        }
+        $supplier = $this->supplierOrFail($id);
         $mode = (string) $request->query('mode', 'document');
         $usePartnerTimeline = (bool) $supplier->is_customer;
 
@@ -727,6 +731,8 @@ class SupplierController extends Controller
      */
     public function purchaseHistory($id)
     {
+        $this->supplierOrFail($id);
+
         $purchases = Purchase::where('supplier_id', $id)
             ->with(['user:id,name', 'employee:id,name'])
             ->get()
@@ -797,10 +803,7 @@ class SupplierController extends Controller
      */
     public function debtTransactions($id, Request $request)
     {
-        $supplier = Customer::findOrFail($id);
-        if (! $supplier->is_supplier) {
-            abort(404);
-        }
+        $supplier = $this->supplierOrFail($id);
 
         $hasSupplierColumn = \Illuminate\Support\Facades\Schema::hasColumn('customers', 'supplier_debt_amount');
         $isDualRole = PartnerDebtDisplayBalance::isDualRole($supplier);
@@ -947,7 +950,7 @@ class SupplierController extends Controller
      */
     public function debtVoucherDetail($id, Request $request)
     {
-        $supplier = Customer::findOrFail($id);
+        $supplier = $this->supplierOrFail($id);
         $code = trim((string) $request->query('code', ''));
         if ($code === '') {
             return response()->json(['success' => false, 'message' => 'Mã chứng từ không được để trống.'], 422);
@@ -1084,6 +1087,8 @@ class SupplierController extends Controller
      */
     public function recordPayment(Request $request, $id)
     {
+        $this->supplierOrFail($id);
+
         $data = $request->validate([
             'amount' => 'required|numeric|min:0.01',
             'note' => 'nullable|string',
@@ -1205,6 +1210,8 @@ class SupplierController extends Controller
      */
     public function outstandingPurchases($id)
     {
+        $this->supplierOrFail($id);
+
         $purchases = Purchase::where('supplier_id', $id)
             ->where('status', 'completed')
             ->where('debt_amount', '>', 0)
@@ -1227,6 +1234,8 @@ class SupplierController extends Controller
      */
     public function adjustDebt(Request $request, $id)
     {
+        $this->supplierOrFail($id);
+
         $data = $request->validate([
             'amount' => 'required|numeric',
             'note' => 'nullable|string',
