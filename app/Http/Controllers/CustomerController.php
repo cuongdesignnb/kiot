@@ -99,7 +99,7 @@ class CustomerController extends Controller
         // Net debt range: debt_amount - supplier_debt_amount
         $hasSupplierDebtColumn = Schema::hasColumn('customers', 'supplier_debt_amount');
         $supplierDebtExprForFilter = $hasSupplierDebtColumn
-            ? 'COALESCE(customers.supplier_debt_amount, 0)'
+            ? 'CASE WHEN COALESCE(customers.is_supplier, 0) = 1 THEN COALESCE(customers.supplier_debt_amount, 0) ELSE 0 END'
             : '0';
         $netDebtExpr = DB::raw("(COALESCE(customers.debt_amount, 0) - $supplierDebtExprForFilter)");
 
@@ -219,7 +219,7 @@ class CustomerController extends Controller
     {
         $this->configureCustomerFilters();
 
-        $query = Customer::with('branch');
+        $query = Customer::with('branch')->where('is_customer', true);
 
         $hasSupplierDebtColumn = Schema::hasColumn('customers', 'supplier_debt_amount');
 
@@ -227,7 +227,7 @@ class CustomerController extends Controller
         if ($request->input('sort_by') === 'debt_amount') {
             $direction = strtolower($request->input('sort_direction', 'desc')) === 'asc' ? 'asc' : 'desc';
             $supplierDebtExprForSort = $hasSupplierDebtColumn
-                ? 'COALESCE(customers.supplier_debt_amount, 0)'
+                ? 'CASE WHEN COALESCE(customers.is_supplier, 0) = 1 THEN COALESCE(customers.supplier_debt_amount, 0) ELSE 0 END'
                 : '0';
             $query->orderByRaw("(COALESCE(customers.debt_amount, 0) - {$supplierDebtExprForSort}) {$direction}");
             $request->merge(['sort_by' => null]);
@@ -240,12 +240,9 @@ class CustomerController extends Controller
 
         $customers = $query->paginate(15)->withQueryString();
 
-        $customers->getCollection()->transform(function ($customer) use ($hasSupplierDebtColumn) {
-            $customerDebt = (float) ($customer->debt_amount ?? 0);
-            $supplierDebt = $hasSupplierDebtColumn
-                ? (float) ($customer->supplier_debt_amount ?? 0)
-                : 0.0;
-            $netDebt = $customerDebt - $supplierDebt;
+        $customers->getCollection()->transform(function ($customer) {
+            $aliases = PartnerDebtDisplayBalance::aliases($customer);
+            $netDebt = (float) $aliases['customer_screen_debt'];
 
             $customer->net_debt_amount = $netDebt;
             $customer->net_debt_direction = $netDebt > 0
@@ -260,7 +257,7 @@ class CustomerController extends Controller
             // Old `net_debt_amount` retained for backward compatibility;
             // new keys make it explicit this is a display delta, NOT a
             // recorded offset voucher.
-            foreach (PartnerDebtDisplayBalance::aliases($customer) as $key => $value) {
+            foreach ($aliases as $key => $value) {
                 $customer->{$key} = $value;
             }
 
@@ -275,7 +272,7 @@ class CustomerController extends Controller
 
         $customerDebtExpr = 'COALESCE(customers.debt_amount, 0)';
         $supplierDebtExpr = $hasSupplierDebtColumn
-            ? 'COALESCE(customers.supplier_debt_amount, 0)'
+            ? 'CASE WHEN COALESCE(customers.is_supplier, 0) = 1 THEN COALESCE(customers.supplier_debt_amount, 0) ELSE 0 END'
             : '0';
         $netDebtExpr = "($customerDebtExpr - $supplierDebtExpr)";
 
@@ -307,7 +304,8 @@ class CustomerController extends Controller
             ->get(['id', 'name'])
             ->map(fn ($g) => ['value' => $g->name, 'label' => $g->name]);
 
-        $legacyGroups = Customer::whereNotNull('customer_group')
+        $legacyGroups = Customer::where('is_customer', true)
+            ->whereNotNull('customer_group')
             ->where('customer_group', '!=', '')
             ->distinct()->pluck('customer_group')
             ->diff($masterGroups->pluck('value'))
@@ -319,12 +317,12 @@ class CustomerController extends Controller
         // Creators: users who have created customers
         $creators = $capabilities['supportsCreatedByFilter']
             ? \App\Models\User::select('id', 'name')
-                ->whereIn('id', Customer::whereNotNull('created_by')->distinct()->pluck('created_by'))
+                ->whereIn('id', Customer::where('is_customer', true)->whereNotNull('created_by')->distinct()->pluck('created_by'))
                 ->orderBy('name')->get()
             : collect();
 
         // Delivery areas (distinct cities from customers)
-        $deliveryCities = Customer::whereNotNull('city')->where('city', '!=', '')
+        $deliveryCities = Customer::where('is_customer', true)->whereNotNull('city')->where('city', '!=', '')
             ->distinct()->orderBy('city')->pluck('city')
             ->map(fn ($c) => ['value' => $c, 'label' => $c])->values();
 
@@ -567,10 +565,11 @@ class CustomerController extends Controller
      */
     public function debtHistory(Request $request, Customer $customer)
     {
-        $mode = $request->query('mode');
-        if ($mode === null) {
-            $mode = $request->expectsJson() ? 'legacy' : 'document';
+        if (! (bool) $customer->is_customer) {
+            abort(404);
         }
+
+        $mode = (string) $request->query('mode', 'document');
 
         if ($mode === 'legacy') {
             $ledger = app(\App\Services\PartnerDebtLedgerService::class)->buildCustomerNetLedger($customer);
@@ -704,6 +703,11 @@ class CustomerController extends Controller
             'customer_debt_adjustment',
             $payloadHash,
             function (Customer $lockedCustomer) use ($validated): array {
+                if (! (bool) $lockedCustomer->is_customer) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'customer_id' => 'Doi tac khong co vai tro khach hang da duoc luu.',
+                    ]);
+                }
                 $targetDebt = (float) $validated['amount'];
                 $currentReceivable = (float) $lockedCustomer->debt_amount;
                 $currentDebt = PartnerDebtDisplayBalance::customerScreen($lockedCustomer);
@@ -797,11 +801,8 @@ class CustomerController extends Controller
             return response()->json([]);
         }
 
-        $query = app(\App\Services\PartnerTransactionGuard::class)->availablePartners();
-
-        if (Schema::hasColumn('customers', 'is_customer')) {
-            $query->where('is_customer', true);
-        }
+        $query = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
+            ->where('is_customer', true);
 
         if (Schema::hasColumn('customers', 'status')) {
             $query->where(function ($q) {
@@ -881,7 +882,7 @@ class CustomerController extends Controller
     {
         $this->configureCustomerFilters();
 
-        $query = Customer::with('branch');
+        $query = Customer::with('branch')->where('is_customer', true);
         $this->applyAdvancedCustomerFilters($query, $request);
         $customers = $query->get();
 
@@ -894,6 +895,10 @@ class CustomerController extends Controller
 
     public function exportDebtHistory(Customer $customer, Request $request)
     {
+        if (! (bool) $customer->is_customer) {
+            abort(404);
+        }
+
         // HOTFIX FOLLOW-UP — export must include ALL entries; bypass the
         // pagination layer added to debtHistory() for the UI tab.
         $mode = $request->query('mode', 'document');

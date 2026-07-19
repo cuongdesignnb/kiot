@@ -40,11 +40,10 @@ class AuditDebtParityCommandTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_command_requires_dry_run(): void
+    public function test_command_is_read_only_by_default(): void
     {
         $this->artisan('debt:audit-parity')
-            ->expectsOutputToContain('Please pass --dry-run')
-            ->assertExitCode(1);
+            ->assertExitCode(0);
     }
 
     public function test_customer_fixture_exports_csv_and_json(): void

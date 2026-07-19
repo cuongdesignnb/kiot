@@ -2,11 +2,13 @@
 
 namespace App\Services;
 
+use App\Models\ActivityLog;
 use App\Models\CashFlow;
 use App\Models\Customer;
 use App\Models\CustomerPaymentAllocation;
 use App\Models\Invoice;
 use App\Services\Debt\PartnerDebtMutationCoordinator;
+use App\Services\Debt\PartnerDebtRoleResolver;
 use App\Support\Status\BusinessStatus;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -56,6 +58,11 @@ class CustomerPaymentService
                 $note,
                 $paidAt,
             ) {
+                if (! (bool) $lockedCustomer->is_customer) {
+                    throw ValidationException::withMessages([
+                        'customer_id' => 'Doi tac khong co vai tro khach hang da duoc luu.',
+                    ]);
+                }
                 app(PartnerTransactionGuard::class)->assertCanTransact((int) $customer->id, 'customer_id');
                 $debtBefore = (float) $lockedCustomer->debt_amount;
                 $allocations = $mode === 'manual'
@@ -159,16 +166,19 @@ class CustomerPaymentService
             (int) $flowSnapshot->target_id,
             'customer_payment_cancel',
             $payloadHash,
-            function () use ($flowSnapshot, $reason): string {
-                return $this->cancelUnlinkedFlow($flowSnapshot, $reason);
+            function (Customer $lockedPartner) use ($flowSnapshot, $reason): string {
+                return $this->cancelUnlinkedFlow($flowSnapshot, $reason, $lockedPartner);
             },
             $idempotencyKey,
         );
     }
 
-    private function cancelUnlinkedFlow(CashFlow $cashFlow, ?string $reason): string
-    {
-        return DB::transaction(function () use ($cashFlow, $reason): string {
+    private function cancelUnlinkedFlow(
+        CashFlow $cashFlow,
+        ?string $reason,
+        ?Customer $lockedPartner = null,
+    ): string {
+        return DB::transaction(function () use ($cashFlow, $reason, $lockedPartner): string {
             $flow = CashFlow::withTrashed()->lockForUpdate()->findOrFail($cashFlow->id);
             if (! BusinessStatus::isValidCashFlow($flow->status) || $flow->trashed()) {
                 return self::ALREADY_CANCELLED;
@@ -187,6 +197,31 @@ class CustomerPaymentService
                 return self::SOURCE_DOCUMENT_REQUIRED;
             }
 
+            if ($lockedPartner && $flow->reference_type !== 'DebtPayment') {
+                $amount = (float) $flow->amount;
+                $isCustomer = in_array((string) $flow->target_type, PartnerDebtRoleResolver::CUSTOMER_TARGET_TYPES, true);
+                $isSupplier = in_array((string) $flow->target_type, PartnerDebtRoleResolver::SUPPLIER_TARGET_TYPES, true);
+                if ($isCustomer) {
+                    if (! (bool) $lockedPartner->is_customer) {
+                        throw ValidationException::withMessages([
+                            'target_id' => 'Doi tac khong co vai tro khach hang da duoc luu.',
+                        ]);
+                    }
+                    $originalDelta = $flow->type === 'receipt' ? -$amount : $amount;
+                    $lockedPartner->debt_amount = (float) $lockedPartner->debt_amount - $originalDelta;
+                } elseif ($isSupplier) {
+                    if (! (bool) $lockedPartner->is_supplier) {
+                        throw ValidationException::withMessages([
+                            'target_id' => 'Doi tac khong co vai tro nha cung cap da duoc luu.',
+                        ]);
+                    }
+                    $originalDelta = $flow->type === 'payment' ? -$amount : $amount;
+                    $lockedPartner->supplier_debt_amount = (float) $lockedPartner->supplier_debt_amount - $originalDelta;
+                }
+                $lockedPartner->save();
+                $this->coordinator->checkpoint('projection');
+            }
+
             $flow->status = 'cancelled';
             $flow->cancel_reason = $reason;
             $flow->cancelled_by = auth()->id();
@@ -195,12 +230,29 @@ class CustomerPaymentService
             $flow->delete();
             $this->coordinator->checkpoint('evidence');
 
+            ActivityLog::log(
+                'cashflow_cancel',
+                "Huy phieu {$flow->code}, so tien: ".number_format($flow->amount),
+                $flow,
+                [
+                    'amount' => (float) $flow->amount,
+                    'reference_type' => $flow->reference_type,
+                    'reference_code' => $flow->reference_code,
+                    'cancel_reason' => $reason,
+                ],
+            );
+
             return self::CANCELLED;
         });
     }
 
     public function isFinanciallyLinked(CashFlow $cashFlow): bool
     {
+        if ($cashFlow->target_id && (in_array((string) $cashFlow->target_type, PartnerDebtRoleResolver::CUSTOMER_TARGET_TYPES, true)
+            || in_array((string) $cashFlow->target_type, PartnerDebtRoleResolver::SUPPLIER_TARGET_TYPES, true))) {
+            return true;
+        }
+
         return in_array($cashFlow->reference_type, [
             'DebtPayment',
             'Invoice',

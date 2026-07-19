@@ -506,6 +506,7 @@ const save = async () => {
     }
     if (!validateOrderSerialSelection()) return;
     submitRef.value = true;
+    activeTab.value.idempotencyKey ||= crypto.randomUUID();
     try {
         const isReturn = activeTab.value.status === 'return';
         const isEditing = !!activeTab.value.editing_invoice_id;
@@ -563,6 +564,7 @@ const save = async () => {
             }
             // Update existing invoice — use Inertia callbacks
             router.put(`/invoices/${activeTab.value.editing_invoice_id}`, payload, {
+                headers: { "Idempotency-Key": activeTab.value.idempotencyKey },
                 onSuccess: () => {
                     submitRef.value = false;
                     // Inertia will redirect to invoices.index via backend
@@ -579,7 +581,9 @@ const save = async () => {
             return; // Don't reset tab — Inertia handles the redirect
         } else {
             const endpoint = isReturn ? '/returns' : '/orders';
-            await router.post(endpoint, payload);
+            await router.post(endpoint, payload, {
+                headers: { "Idempotency-Key": activeTab.value.idempotencyKey },
+            });
         }
         if (tabs.value.length > 1) {
             closeTab(activeTabIndex.value);

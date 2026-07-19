@@ -46,7 +46,12 @@ class CustomerPaymentDiscountController extends Controller
         ]);
 
         try {
-            $discount = $this->service->create($customer, $validated);
+            $discount = $this->service->create(
+                $customer,
+                $validated,
+                $request->header('Idempotency-Key'),
+            );
+
             return response()->json([
                 'success' => true,
                 'message' => "Đã tạo phiếu chiết khấu thanh toán {$discount->code}",
@@ -73,7 +78,12 @@ class CustomerPaymentDiscountController extends Controller
         }
 
         try {
-            $this->service->cancel($paymentDiscount, $validated['reason']);
+            $this->service->cancel(
+                $paymentDiscount,
+                $validated['reason'],
+                $request->header('Idempotency-Key'),
+            );
+
             return response()->json([
                 'success' => true,
                 'message' => "Đã hủy phiếu chiết khấu thanh toán {$paymentDiscount->code}",

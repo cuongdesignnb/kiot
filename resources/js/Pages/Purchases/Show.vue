@@ -15,6 +15,8 @@ const props = defineProps({
 });
 
 const activeTab = ref('info');
+const cancelIdempotencyKey = ref('');
+const updateIdempotencyKey = ref('');
 const { can } = usePermission();
 
 const formatDate = (val) => val ? new Date(val).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
@@ -41,9 +43,11 @@ const cancelPurchase = () => {
         alert('Lý do hủy phải có ít nhất 5 ký tự.');
         return;
     }
+    cancelIdempotencyKey.value ||= crypto.randomUUID();
     router.delete(`/purchases/${props.purchase.id}`, {
         data: { cancel_reason: cancelReason.trim() },
-        onSuccess: () => {},
+        headers: { 'Idempotency-Key': cancelIdempotencyKey.value },
+        onSuccess: () => { cancelIdempotencyKey.value = ''; },
     });
 };
 
@@ -113,8 +117,11 @@ const openUpdateModal = () => {
 
 const submitUpdate = () => {
     isSubmitting.value = true;
+    updateIdempotencyKey.value ||= crypto.randomUUID();
     router.put(`/purchases/${props.purchase.id}`, editForm.value, {
+        headers: { 'Idempotency-Key': updateIdempotencyKey.value },
         onSuccess: () => {
+            updateIdempotencyKey.value = '';
             showUpdateModal.value = false;
             isSubmitting.value = false;
         },

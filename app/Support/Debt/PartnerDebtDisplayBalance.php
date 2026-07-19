@@ -25,11 +25,23 @@ class PartnerDebtDisplayBalance
 
     public static function customerScreen(Customer $partner): float
     {
-        return self::canonical($partner)['net_display_balance'];
+        if (! (bool) $partner->is_customer) {
+            return 0.0;
+        }
+
+        $canonical = self::canonical($partner);
+
+        return self::isDualRole($partner)
+            ? $canonical['net_display_balance']
+            : $canonical['customer_balance'];
     }
 
     public static function supplierScreen(Customer $partner): float
     {
+        if (! (bool) $partner->is_supplier) {
+            return 0.0;
+        }
+
         $canonical = self::canonical($partner);
 
         return self::isDualRole($partner)
@@ -42,8 +54,10 @@ class PartnerDebtDisplayBalance
         $canonical = self::canonical($partner);
         $receivable = $canonical['customer_balance'];
         $payable = $canonical['supplier_balance'];
-        $customerScreen = $canonical['net_display_balance'];
-        $supplierScreen = self::isDualRole($partner) ? -$customerScreen : $payable;
+        [$isCustomer, $isSupplier] = PartnerDebtRoleResolver::sides($partner);
+        $isDualRole = $isCustomer && $isSupplier;
+        $customerScreen = ! $isCustomer ? 0.0 : ($isDualRole ? $canonical['net_display_balance'] : $receivable);
+        $supplierScreen = ! $isSupplier ? 0.0 : ($isDualRole ? -$canonical['net_display_balance'] : $payable);
 
         return [
             'customer_receivable_balance' => $receivable,
@@ -57,8 +71,8 @@ class PartnerDebtDisplayBalance
             'supplier_display_balance' => $supplierScreen,
             'supplier_picker_display_balance' => $supplierScreen,
             'supplier_list_debt_amount' => $supplierScreen,
-            'is_dual_role' => self::isDualRole($partner),
-            'is_dual_role_partner' => self::isDualRole($partner),
+            'is_dual_role' => $isDualRole,
+            'is_dual_role_partner' => $isDualRole,
             'debt_display_contract' => $canonical['display_contract'],
             'debt_raw_timeline_final' => $canonical['raw_timeline_final'],
             'debt_stored_projection' => $canonical['stored_projection'],

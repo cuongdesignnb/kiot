@@ -181,6 +181,7 @@ const lookupSerial = async () => {
     }
 };
 
+const submitIdempotencyKey = ref('');
 const save = () => {
     if (!supplierId.value) {
         alert('Vui lòng chọn nhà cung cấp.');
@@ -207,6 +208,7 @@ const save = () => {
     }
 
     submitting.value = true;
+    submitIdempotencyKey.value ||= crypto.randomUUID();
     router.post('/purchase-returns/quick', {
         code: props.returnCode,
         supplier_id: supplierId.value,
@@ -221,6 +223,8 @@ const save = () => {
             price: Number(i.price) || 0,
         })),
     }, {
+        headers: { 'Idempotency-Key': submitIdempotencyKey.value },
+        onSuccess: () => { submitIdempotencyKey.value = ''; },
         onError: (errors) => {
             const firstError = Object.values(errors)[0];
             if (firstError) alert(firstError);

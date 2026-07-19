@@ -50,6 +50,22 @@ class PartnerDebtParityAuditService
         'TARGET_TYPE_ALIAS_SUSPECT',
         'TECHNICAL_LEDGER_EXCLUDED',
         'MULTIPLE_MISMATCHES',
+        'ROLE_FLAG_EVIDENCE_MISMATCH',
+        'OWNER_CONFIRMED_ROLE_MISMATCH',
+        'CUSTOMER_LIST_SCOPE_MISMATCH',
+        'SUPPLIER_LIST_SCOPE_MISMATCH',
+        'DOMAIN_PARITY_MISMATCH',
+        'CUSTOMER_VIEW_TIMELINE_MISMATCH',
+        'SUPPLIER_VIEW_TIMELINE_MISMATCH',
+        'CROSS_VIEW_EVENT_MISSING',
+        'CROSS_VIEW_EVENT_EXTRA',
+        'CROSS_VIEW_EVENT_ORDER_MISMATCH',
+        'CROSS_VIEW_SIGN_MISMATCH',
+        'CROSS_VIEW_RUNNING_BALANCE_MISMATCH',
+        'MIRROR_COUNTED_AS_FINANCIAL_EVENT',
+        'REAL_AND_FALLBACK_DOUBLE_COUNT',
+        'CANCEL_REVERSAL_ASYMMETRY',
+        'STORED_BALANCE_USED_AS_EVENT',
         'AUDIT_ERROR',
     ];
 
@@ -97,12 +113,28 @@ class PartnerDebtParityAuditService
         'suspect_purchase_return_codes', 'suspect_adjustment_codes', 'suspect_fallback_codes',
         'customer_technical_codes', 'supplier_technical_codes', 'excluded_technical_codes',
         'technical_customer_total', 'technical_supplier_total',
+        'persisted_role', 'effective_role', 'evidence_role', 'role_integrity_status', 'owner_confirmed_role',
+        'customer_list_expected', 'customer_list_actual', 'customer_list_scope_mismatch',
+        'supplier_list_expected', 'supplier_list_actual', 'supplier_list_scope_mismatch',
+        'canonical_customer_receivable', 'canonical_supplier_payable',
+        'customer_domain_difference', 'supplier_domain_difference', 'domain_parity_pass',
+        'customer_view_target', 'customer_view_final', 'customer_view_difference',
+        'customer_view_parity_pass', 'customer_view_warning', 'customer_view_entry_count', 'customer_source_identity_hash',
+        'supplier_view_target', 'supplier_view_final', 'supplier_view_difference',
+        'supplier_view_parity_pass', 'supplier_view_warning', 'supplier_view_entry_count', 'supplier_source_identity_hash',
+        'cross_view_applicable', 'cross_view_parity_pass', 'cross_view_event_missing_count',
+        'cross_view_event_extra_count', 'cross_view_sign_mismatch_count', 'cross_view_order_mismatch_count',
+        'cross_view_running_mismatch_count', 'cross_view_first_divergence',
+        'virtual_opening_event_count', 'display_alignment_event_count', 'stored_balance_event_count',
+        'mirror_counted_as_financial_event_count', 'real_and_fallback_double_count', 'cancel_reversal_asymmetry_count',
+        'timeline_primary_classification', 'timeline_classification_flags', 'all_applicable_layers_pass',
         'primary_classification', 'classification_flags', 'risk_level', 'recommended_action', 'audit_error',
     ];
 
     public function __construct(
         private readonly CustomerDebtDocumentTimelineService $customerDocuments,
         private readonly SupplierDebtDocumentTimelineService $supplierDocuments,
+        private readonly PartnerDebtTimelineAuditService $timelineAudit,
     ) {}
 
     public function audit(Customer $partner): array
@@ -139,8 +171,13 @@ class PartnerDebtParityAuditService
                 'status' => (string) ($partner->status ?? ''),
             ], $stored, $customerDocument, $customerLedger, $supplierDocument, $supplierLedger, $metrics, $evidence);
 
-            $row = array_merge($row, $this->parityDifferences($row));
-            $flags = $this->classify($row);
+            $row = array_merge($row, $this->parityDifferences($row), $this->timelineAudit->audit($partner));
+            $legacyFlags = array_values(array_diff($this->classify($row), ['OK']));
+            $timelineFlags = (array) ($row['timeline_classification_flags'] ?? []);
+            $flags = array_values(array_unique([...$timelineFlags, ...$legacyFlags]));
+            if ($flags === []) {
+                $flags = ['OK'];
+            }
             $row['primary_classification'] = $this->primaryClassification($flags);
             $row['classification_flags'] = $flags;
             $row['risk_level'] = $this->riskLevel($row, $flags);
@@ -257,6 +294,10 @@ class PartnerDebtParityAuditService
         $critical = [
             'DUAL_ROLE_SCREEN_ASYMMETRY', 'RETURN_REFUND_DUPLICATE',
             'CANCEL_REVERSAL_MISSING', 'DUPLICATE_REAL_AND_FALLBACK',
+            'REAL_AND_FALLBACK_DOUBLE_COUNT',
+            'CROSS_VIEW_EVENT_MISSING', 'CROSS_VIEW_EVENT_EXTRA',
+            'CROSS_VIEW_EVENT_ORDER_MISMATCH', 'CROSS_VIEW_SIGN_MISMATCH',
+            'CROSS_VIEW_RUNNING_BALANCE_MISMATCH', 'CANCEL_REVERSAL_ASYMMETRY',
         ];
         if (array_intersect($critical, $flags) !== []) {
             return 'CRITICAL';
@@ -278,6 +319,9 @@ class PartnerDebtParityAuditService
             'CUSTOMER_STORED_VS_DOCUMENT', 'CUSTOMER_STORED_VS_LEDGER',
             'SUPPLIER_STORED_VS_DOCUMENT', 'SUPPLIER_STORED_VS_LEDGER',
             'DUAL_ROLE_NET_MISMATCH', 'VIRTUAL_OPENING_REQUIRED', 'STORED_BALANCE_NO_HISTORY',
+            'DOMAIN_PARITY_MISMATCH', 'CUSTOMER_VIEW_TIMELINE_MISMATCH',
+            'SUPPLIER_VIEW_TIMELINE_MISMATCH', 'OWNER_CONFIRMED_ROLE_MISMATCH',
+            'ROLE_FLAG_EVIDENCE_MISMATCH', 'STORED_BALANCE_USED_AS_EVENT',
         ];
         if ($maxDifference >= 1_000_000 || array_intersect($high, $flags) !== []) {
             return 'HIGH';
@@ -330,8 +374,16 @@ class PartnerDebtParityAuditService
         $summary = $timeline['summary'] ?? [];
         $reconcile = $timeline['reconcile'] ?? [];
         $entries = collect($timeline['entries'] ?? [])->map(fn ($entry): array => (array) $entry)->values();
-        $raw = (float) ($summary['raw_document_final_balance'] ?? $summary['document_final_balance'] ?? 0);
-        $display = (float) ($summary['display_balance_final'] ?? $raw);
+        // The five-layer contract keeps domain R/P separate from the oriented
+        // UI final. Legacy audit columns remain side-oriented for compatibility.
+        $canonicalSide = $prefix === 'customer'
+            ? ($timeline['canonical_customer_receivable'] ?? null)
+            : ($timeline['canonical_supplier_payable'] ?? null);
+        $raw = (float) ($canonicalSide
+            ?? $summary['raw_document_final_balance']
+            ?? $summary['document_final_balance']
+            ?? 0);
+        $display = $raw;
         $excludedEntries = collect($reconcile['excluded_ledger_entries'] ?? [])
             ->map(fn ($entry): array => (array) $entry)
             ->values();
@@ -343,8 +395,8 @@ class PartnerDebtParityAuditService
             "{$prefix}_document_raw_final" => $raw,
             "{$prefix}_document_display_final" => $display,
             "{$prefix}_document_difference" => $stored - $raw,
-            "{$prefix}_document_has_mismatch" => (bool) ($reconcile['has_mismatch'] ?? $this->different($stored - $display)),
-            "{$prefix}_document_raw_has_mismatch" => (bool) ($reconcile['raw_has_mismatch'] ?? $this->different($stored - $raw)),
+            "{$prefix}_document_has_mismatch" => $this->different($stored - $display),
+            "{$prefix}_document_raw_has_mismatch" => $this->different($stored - $raw),
             "{$prefix}_document_display_aligned" => (bool) ($summary['display_aligned'] ?? false),
             "{$prefix}_document_alignment_amount" => (float) ($summary['display_alignment_amount'] ?? 0),
             "{$prefix}_document_has_virtual_opening" => (bool) ($summary['has_virtual_opening_balance'] ?? false),
@@ -711,8 +763,17 @@ class PartnerDebtParityAuditService
     private function primaryClassification(array $flags): string
     {
         $priority = [
-            'AUDIT_ERROR', 'DUAL_ROLE_SCREEN_ASYMMETRY', 'RETURN_REFUND_DUPLICATE',
-            'CANCEL_REVERSAL_MISSING', 'DUPLICATE_REAL_AND_FALLBACK', 'DUAL_ROLE_NET_MISMATCH',
+            'AUDIT_ERROR', 'OWNER_CONFIRMED_ROLE_MISMATCH', 'ROLE_FLAG_EVIDENCE_MISMATCH',
+            'CROSS_VIEW_EVENT_MISSING', 'CROSS_VIEW_EVENT_EXTRA',
+            'CROSS_VIEW_EVENT_ORDER_MISMATCH', 'CROSS_VIEW_SIGN_MISMATCH',
+            'CROSS_VIEW_RUNNING_BALANCE_MISMATCH', 'CANCEL_REVERSAL_ASYMMETRY',
+            'CUSTOMER_LIST_SCOPE_MISMATCH', 'SUPPLIER_LIST_SCOPE_MISMATCH',
+            'DOMAIN_PARITY_MISMATCH', 'CUSTOMER_VIEW_TIMELINE_MISMATCH',
+            'SUPPLIER_VIEW_TIMELINE_MISMATCH', 'MIRROR_COUNTED_AS_FINANCIAL_EVENT',
+            'STORED_BALANCE_USED_AS_EVENT',
+            'DUAL_ROLE_SCREEN_ASYMMETRY', 'RETURN_REFUND_DUPLICATE',
+            'CANCEL_REVERSAL_MISSING', 'DUPLICATE_REAL_AND_FALLBACK',
+            'REAL_AND_FALLBACK_DOUBLE_COUNT', 'DUAL_ROLE_NET_MISMATCH',
             'CUSTOMER_STORED_VS_DOCUMENT', 'SUPPLIER_STORED_VS_DOCUMENT',
             'CUSTOMER_STORED_VS_LEDGER', 'SUPPLIER_STORED_VS_LEDGER',
             'VIRTUAL_OPENING_REQUIRED', 'STORED_BALANCE_NO_HISTORY',
@@ -734,11 +795,22 @@ class PartnerDebtParityAuditService
     private function recommendedAction(string $classification): string
     {
         return match ($classification) {
+            'OWNER_CONFIRMED_ROLE_MISMATCH' => 'Apply đúng owner-approved role plan trên clone; không đổi dữ liệu tài chính.',
+            'ROLE_FLAG_EVIDENCE_MISMATCH' => 'Đưa vào manual review role; không tự sửa role trong runtime.',
+            'CUSTOMER_LIST_SCOPE_MISMATCH', 'SUPPLIER_LIST_SCOPE_MISMATCH' => 'Sửa query scope theo persisted role flag.',
+            'DOMAIN_PARITY_MISMATCH' => 'Drilldown canonical domain evidence; không sửa projection khi chưa xác định root cause.',
+            'CUSTOMER_VIEW_TIMELINE_MISMATCH', 'SUPPLIER_VIEW_TIMELINE_MISMATCH' => 'Review orientation target và canonical event completeness.',
+            'CROSS_VIEW_EVENT_MISSING', 'CROSS_VIEW_EVENT_EXTRA', 'CROSS_VIEW_EVENT_ORDER_MISMATCH',
+            'CROSS_VIEW_SIGN_MISMATCH', 'CROSS_VIEW_RUNNING_BALANCE_MISMATCH' => 'Sửa canonical adapter; hai view phải dùng cùng identities và thứ tự.',
+            'MIRROR_COUNTED_AS_FINANCIAL_EVENT' => 'Đánh dấu mirror reference-only và loại khỏi balance reducer.',
+            'CANCEL_REVERSAL_ASYMMETRY' => 'Đối chiếu persisted cancellation/reversal và đảm bảo tổng delta bằng 0.',
+            'STORED_BALANCE_USED_AS_EVENT' => 'Loại stored projection khỏi canonical event source.',
             'OK' => 'Không xử lý.',
             'VIRTUAL_OPENING_REQUIRED', 'STORED_BALANCE_NO_HISTORY' => 'Review số dư đầu kỳ; chưa tạo opening thật.',
             'CUSTOMER_STORED_VS_DOCUMENT', 'CUSTOMER_STORED_VS_LEDGER', 'CUSTOMER_DOCUMENT_VS_LEDGER' => 'Drilldown hóa đơn, phiếu thu, trả hàng và adjustment; chưa sửa dữ liệu.',
             'SUPPLIER_STORED_VS_DOCUMENT', 'SUPPLIER_STORED_VS_LEDGER', 'SUPPLIER_DOCUMENT_VS_LEDGER' => 'Drilldown phiếu nhập, phiếu chi, trả nhập và adjustment; chưa sửa dữ liệu.',
-            'DUPLICATE_REAL_AND_FALLBACK', 'DUPLICATE_CUSTOMER_RECEIPT', 'DUPLICATE_SUPPLIER_PAYMENT' => 'Review và sửa dedup code trước; không xóa dữ liệu.',
+            'DUPLICATE_REAL_AND_FALLBACK', 'REAL_AND_FALLBACK_DOUBLE_COUNT',
+            'DUPLICATE_CUSTOMER_RECEIPT', 'DUPLICATE_SUPPLIER_PAYMENT' => 'Review và sửa dedup code trước; không xóa dữ liệu.',
             'RETURN_REFUND_DUPLICATE', 'PURCHASE_RETURN_REFUND_MISMATCH' => 'Review matching chứng từ hoàn tiền thật/fallback; chưa sửa dữ liệu.',
             'CANCEL_REVERSAL_MISSING' => 'Review luồng hủy và reversal; chưa tự tạo reversal.',
             'DUAL_ROLE_NET_MISMATCH', 'DUAL_ROLE_SCREEN_ASYMMETRY' => 'Review raw customer/supplier fields và write-path dual-role.',

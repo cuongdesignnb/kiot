@@ -21,6 +21,7 @@ const props = defineProps({
     filterOptions: { type: Object, default: () => ({}) },
     summary: Object,
 });
+const customerRows = computed(() => (props.customers?.data || []).filter((partner) => Boolean(partner.is_customer)));
 
 const page = usePage();
 const { can } = usePermission();
@@ -161,6 +162,8 @@ const shouldShowDebtReconcileWarning = (reconcile) =>
     reconcile?.severity === "warning" || reconcile?.user_warning === true;
 const shouldShowDebtReconcileInfo = (reconcile) =>
     reconcile?.severity === "info" && !!reconcile?.message;
+const shouldShowRoleIntegrityWarning = (payload) =>
+    !!payload?.role_integrity_status && payload.role_integrity_status !== "OK";
 
 const loadDebtHistory = async (customerId, page = null) => {
     // Clear cache to avoid rendering stale entries while loading
@@ -555,7 +558,11 @@ const submitDebtModal = async () => {
         return;
     }
     try {
-        await axios.post(`/customers/${customerId}/debt-adjust`, { amount: Number(debtForm.amount) || 0, note: debtForm.note, date: debtForm.date });
+        await axios.post(
+            `/customers/${customerId}/debt-adjust`,
+            { amount: Number(debtForm.amount) || 0, note: debtForm.note, date: debtForm.date },
+            { headers: { "Idempotency-Key": debtForm.idempotencyKey } },
+        );
         debtModal.value.show = false;
         await loadDebtHistory(customerId);
         router.reload({ only: ["customers"], preserveScroll: true });
@@ -580,6 +587,7 @@ const paymentDiscountForm = reactive({
     performed_by: '',
     note: '',
     allocate_to_invoices: true,
+    idempotencyKey: '',
 });
 
 const openPaymentDiscountModal = async (customer) => {
@@ -596,6 +604,7 @@ const openPaymentDiscountModal = async (customer) => {
     paymentDiscountForm.note = "";
     paymentDiscountForm.allocate_to_invoices = true;
     paymentDiscountForm.performed_by = "";
+    paymentDiscountForm.idempotencyKey = crypto.randomUUID();
 
     paymentDiscountForm.discount_at = nowDatetimeLocal();
 
@@ -684,7 +693,11 @@ const submitPaymentDiscount = async () => {
                 : [],
         };
 
-        const { data } = await axios.post(`/customers/${paymentDiscountModal.customer.id}/payment-discounts`, payload);
+        const { data } = await axios.post(
+            `/customers/${paymentDiscountModal.customer.id}/payment-discounts`,
+            payload,
+            { headers: { "Idempotency-Key": paymentDiscountForm.idempotencyKey } },
+        );
         if (data.success) {
             paymentDiscountModal.show = false;
             await loadDebtHistory(paymentDiscountModal.customer.id);
@@ -704,7 +717,11 @@ const cancelPaymentDiscount = async (customerId, discountId) => {
     if (reason === null) return;
 
     try {
-        const { data } = await axios.post(`/customers/${customerId}/payment-discounts/${discountId}/cancel`, { reason });
+        const { data } = await axios.post(
+            `/customers/${customerId}/payment-discounts/${discountId}/cancel`,
+            { reason },
+            { headers: { "Idempotency-Key": crypto.randomUUID() } },
+        );
         if (data.success) {
             await loadDebtHistory(customerId);
             router.reload({ only: ['customers'], preserveScroll: true });
@@ -1607,7 +1624,7 @@ const createdDateRange = computed({
                             <td class="px-4 py-3 text-right text-gray-700">{{ formatCurrency(summary?.total_spent || 0) }}</td>
                             <td class="px-4 py-3 text-right text-gray-700">{{ formatCurrency((summary?.total_spent || 0) - (summary?.total_returns || 0)) }}</td>
                         </tr>
-                        <tr v-if="customers.data.length === 0">
+                        <tr v-if="customerRows.length === 0">
                             <td
                                 colspan="8"
                                 class="px-6 py-12 text-center text-gray-500"
@@ -1616,7 +1633,7 @@ const createdDateRange = computed({
                             </td>
                         </tr>
                         <template
-                            v-for="customer in customers.data"
+                            v-for="customer in customerRows"
                             :key="customer.id"
                         >
                             <!-- Main Row -->
@@ -2366,7 +2383,14 @@ const createdDateRange = computed({
                                                     debtHistoryData[customer.id]
                                                 "
                                             >
-                                                <!-- Reconcile Warning -->
+                                                <!-- Persisted-role integrity is distinct from financial parity. -->
+                                                <div
+                                                    v-if="shouldShowRoleIntegrityWarning(debtHistoryData[customer.id])"
+                                                    class="mb-3 p-3 bg-orange-50 border border-orange-200 text-orange-800 rounded text-xs"
+                                                >
+                                                    Vai trò đã lưu không khớp bằng chứng nghiệp vụ ({{ debtHistoryData[customer.id].role_integrity_status }}). Cần duyệt kế hoạch sửa vai trò riêng; hệ thống không tự đổi vai trò.
+                                                </div>
+                                                <!-- Financial reconcile warning -->
                                                 <div
                                                     v-if="shouldShowDebtReconcileWarning(debtHistoryData[customer.id].reconcile)"
                                                     class="mb-3 p-3 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded text-xs flex items-center gap-2"

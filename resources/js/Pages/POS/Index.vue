@@ -55,6 +55,7 @@ const emptyReturnState = () => ({
     exchangeCustomerPaid: 0,
     exchangePaymentMethod: 'cash',
     exchangeBankAccountInfo: '',
+    idempotencyKey: '',
 });
 
 const createNewTab = (type = 'sale') => ({
@@ -68,6 +69,7 @@ const createNewTab = (type = 'sale') => ({
     selectedCustomer: null,
     customerQuery: '',
     note: '',                        // 24.6C: per-tab invoice/order note
+    idempotencyKey: '',
     saleMode: type === 'order' ? 'quick_order' : 'normal',
     returnState: type === 'return' ? emptyReturnState() : null,
     // POS order process extensions
@@ -933,6 +935,8 @@ const processCheckout = async () => {
         return;
     }
 
+    activeTab.value.idempotencyKey ||= crypto.randomUUID();
+    const idempotencyKey = activeTab.value.idempotencyKey;
     isCheckingOut.value = true;
 
     try {
@@ -981,7 +985,11 @@ const processCheckout = async () => {
                 }))
             };
 
-            const response = await axios.post(`/orders/${activeTab.value.source_order_id}/process`, processPayload);
+            const response = await axios.post(
+                `/orders/${activeTab.value.source_order_id}/process`,
+                processPayload,
+                { headers: { "Idempotency-Key": idempotencyKey } },
+            );
             if (response.data.success) {
                 handleCheckoutSuccess(response.data.message);
             } else {
@@ -1039,7 +1047,11 @@ const processCheckout = async () => {
             }))
         };
 
-        const response = await axios.post('/api/pos/checkout', payload);
+        const response = await axios.post(
+            '/api/pos/checkout',
+            payload,
+            { headers: { "Idempotency-Key": idempotencyKey } },
+        );
         
         if (response.data.success) {
             handleCheckoutSuccess(`${response.data.message} - Phiếu ${response.data.invoice_code}`);
@@ -1655,6 +1667,7 @@ const submitReturnTab = async (tab) => {
     rs.errorTitle = '';
     rs.successResult = null;
     rs.submitting = true;
+    rs.idempotencyKey ||= crypto.randomUUID();
     const itemsPayload = [];
     const returnItems = visibleReturnItems(tab);
     for (const item of returnItems) {
@@ -1731,8 +1744,12 @@ const submitReturnTab = async (tab) => {
                         serial_ids: item.is_serial_product ? item.serials.map((s) => s.id) : [],
                     })),
                 },
-            })
-            : await axios.post('/returns', payload);
+            }, { headers: { "Idempotency-Key": rs.idempotencyKey } })
+            : await axios.post(
+                '/returns',
+                payload,
+                { headers: { "Idempotency-Key": rs.idempotencyKey } },
+            );
         const created = res.data?.return || res.data;
         if (hasExchange) {
             const invoice = res.data?.exchange_invoice;

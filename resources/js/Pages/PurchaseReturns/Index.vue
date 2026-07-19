@@ -109,6 +109,7 @@ const isExpanded = (id) => expandedRows.value.includes(id);
 const getReturnedSerials = (ret, item) =>
     (ret.returned_serials || []).filter((s) => s.product_id === item.product_id);
 
+const cancelIdempotencyKeys = new Map();
 const cancelReturn = (ret) => {
     if (
         !confirm(
@@ -116,7 +117,13 @@ const cancelReturn = (ret) => {
         )
     )
         return;
-    router.delete(`/purchase-returns/${ret.id}`, { preserveState: false });
+    const idempotencyKey = cancelIdempotencyKeys.get(ret.id) || crypto.randomUUID();
+    cancelIdempotencyKeys.set(ret.id, idempotencyKey);
+    router.delete(`/purchase-returns/${ret.id}`, {
+        headers: { 'Idempotency-Key': idempotencyKey },
+        preserveState: false,
+        onSuccess: () => { cancelIdempotencyKeys.delete(ret.id); },
+    });
 };
 
 const showCreateMenu = ref(false);

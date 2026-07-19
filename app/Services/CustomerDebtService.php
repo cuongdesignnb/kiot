@@ -10,6 +10,7 @@ use App\Models\OrderReturn;
 use App\Services\Debt\PartnerDebtMutationCoordinator;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 
 /**
@@ -145,6 +146,11 @@ class CustomerDebtService
             'customer_'.$type,
             $payloadHash,
             function (Customer $customer) use ($signedAmount, $type, $reference, $note, $meta) {
+                if (! (bool) $customer->is_customer) {
+                    throw ValidationException::withMessages([
+                        'customer_id' => 'Doi tac khong co vai tro khach hang da duoc luu.',
+                    ]);
+                }
 
                 $customer->debt_amount = (float) $customer->debt_amount + $signedAmount;
                 $customer->save();

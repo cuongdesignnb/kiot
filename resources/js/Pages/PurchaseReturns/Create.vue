@@ -109,6 +109,7 @@ onMounted(() => {
 });
 
 
+const submitIdempotencyKey = ref('');
 const save = () => {
     if (selectedItems.value.length === 0) {
         alert('Vui lòng chọn ít nhất 1 sản phẩm để trả.');
@@ -116,6 +117,7 @@ const save = () => {
     }
 
     submitting.value = true;
+    submitIdempotencyKey.value ||= crypto.randomUUID();
 
     router.post('/purchase-returns', {
         code: props.returnCode,
@@ -132,6 +134,8 @@ const save = () => {
             serial_ids: item.serial_ids || [],
         })),
     }, {
+        headers: { 'Idempotency-Key': submitIdempotencyKey.value },
+        onSuccess: () => { submitIdempotencyKey.value = ''; },
         onError: (errors) => {
             const firstError = Object.values(errors)[0];
             if (firstError) alert(firstError);

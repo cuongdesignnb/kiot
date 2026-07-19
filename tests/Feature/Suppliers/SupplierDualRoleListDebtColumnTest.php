@@ -3,6 +3,8 @@
 namespace Tests\Feature\Suppliers;
 
 use App\Models\Customer;
+use App\Models\Invoice;
+use App\Models\Purchase;
 use App\Models\User;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
@@ -15,21 +17,38 @@ class SupplierDualRoleListDebtColumnTest extends TestCase
     {
         $admin = User::create([
             'name' => 'Admin Supplier List Debt Column Test',
-            'email' => 'admin-supplier-list-debt-' . uniqid() . '@test.local',
+            'email' => 'admin-supplier-list-debt-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
             'role_id' => null,
         ]);
 
         $partner = Customer::create([
-            'code' => 'NCC-LIST-COL-' . uniqid(),
+            'code' => 'NCC-LIST-COL-'.uniqid(),
             'name' => 'Anh Thanh Thien Phu Supplier Column',
             'debt_amount' => 47_400_000,
             'supplier_debt_amount' => 75_000_000,
             'is_customer' => true,
             'is_supplier' => true,
         ]);
+        Invoice::create([
+            'code' => 'HD-SUPPLIER-LIST-COL-'.uniqid(),
+            'customer_id' => $partner->id,
+            'status' => 'completed',
+            'total' => 47_400_000,
+            'customer_paid' => 0,
+            'transaction_date' => now(),
+        ]);
+        Purchase::create([
+            'code' => 'PN-SUPPLIER-LIST-COL-'.uniqid(),
+            'supplier_id' => $partner->id,
+            'status' => 'completed',
+            'total_amount' => 75_000_000,
+            'paid_amount' => 0,
+            'debt_amount' => 75_000_000,
+            'purchase_date' => now(),
+        ]);
 
-        $response = $this->actingAs($admin)->get('/suppliers?search=' . urlencode($partner->code));
+        $response = $this->actingAs($admin)->get('/suppliers?search='.urlencode($partner->code));
 
         $response->assertOk();
 
@@ -50,21 +69,30 @@ class SupplierDualRoleListDebtColumnTest extends TestCase
     {
         $admin = User::create([
             'name' => 'Admin Supplier Only List Debt Column Test',
-            'email' => 'admin-supplier-only-list-debt-' . uniqid() . '@test.local',
+            'email' => 'admin-supplier-only-list-debt-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
             'role_id' => null,
         ]);
 
         $supplier = Customer::create([
-            'code' => 'NCC-ONLY-LIST-' . uniqid(),
+            'code' => 'NCC-ONLY-LIST-'.uniqid(),
             'name' => 'Supplier Only List Column',
             'debt_amount' => 0,
             'supplier_debt_amount' => 75_000_000,
             'is_customer' => false,
             'is_supplier' => true,
         ]);
+        Purchase::create([
+            'code' => 'PN-SUPPLIER-ONLY-LIST-'.uniqid(),
+            'supplier_id' => $supplier->id,
+            'status' => 'completed',
+            'total_amount' => 75_000_000,
+            'paid_amount' => 0,
+            'debt_amount' => 75_000_000,
+            'purchase_date' => now(),
+        ]);
 
-        $response = $this->actingAs($admin)->get('/suppliers?search=' . urlencode($supplier->code));
+        $response = $this->actingAs($admin)->get('/suppliers?search='.urlencode($supplier->code));
 
         $response->assertOk();
 

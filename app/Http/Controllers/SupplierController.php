@@ -23,6 +23,13 @@ class SupplierController extends Controller
 {
     use FilterableIndex;
 
+    private function supplierOrFail(int|string $id): Customer
+    {
+        return Customer::query()
+            ->where('is_supplier', true)
+            ->findOrFail($id);
+    }
+
     protected function configureSupplierFilters(): void
     {
         $this->searchable = ['code', 'name', 'phone', 'phone2', 'email', 'tax_code'];
@@ -320,10 +327,9 @@ class SupplierController extends Controller
         // HOTFIX — export must pull ALL entries from the same document
         // timeline contract as the supplier debt tab. Legacy ledger export is
         // retained only behind explicit ?mode=legacy.
-        $supplier = Customer::findOrFail($id);
+        $supplier = $this->supplierOrFail($id);
         $mode = (string) $request->query('mode', 'document');
-        $usePartnerTimeline = (bool) $supplier->is_customer
-            && (string) $request->input('view', '') === 'partner';
+        $usePartnerTimeline = (bool) $supplier->is_customer;
 
         if ($mode === 'legacy') {
             $ledgerService = app(\App\Services\PartnerDebtLedgerService::class);
@@ -725,6 +731,8 @@ class SupplierController extends Controller
      */
     public function purchaseHistory($id)
     {
+        $this->supplierOrFail($id);
+
         $purchases = Purchase::where('supplier_id', $id)
             ->with(['user:id,name', 'employee:id,name'])
             ->get()
@@ -795,14 +803,11 @@ class SupplierController extends Controller
      */
     public function debtTransactions($id, Request $request)
     {
-        $supplier = Customer::findOrFail($id);
-        if (! $supplier->is_supplier) {
-            abort(404);
-        }
+        $supplier = $this->supplierOrFail($id);
 
         $hasSupplierColumn = \Illuminate\Support\Facades\Schema::hasColumn('customers', 'supplier_debt_amount');
         $isDualRole = PartnerDebtDisplayBalance::isDualRole($supplier);
-        $usePartnerTimeline = $isDualRole && (string) $request->input('view', '') === 'partner';
+        $usePartnerTimeline = $isDualRole;
 
         $mode = $request->query('mode', 'document');
 
@@ -874,15 +879,17 @@ class SupplierController extends Controller
             ->where('status', '!=', 'cancelled')
             ->exists();
 
-        $response = [
+        $targetBalance = (float) ($ledger['target_balance']
+            ?? ($usePartnerTimeline ? $supplierOrientedBalance : $supplierDebt));
+        $response = array_merge($ledger, [
             'entries' => $pagedEntries,
-            'summary' => [
+            'summary' => array_merge($ledgerSummary, [
                 // Canonical receivable/payable/net keys (HOTFIX FOLLOW-UP)
                 'customer_receivable_balance' => $customerDebt,
                 'supplier_payable_balance' => $supplierDebt,
                 'partner_net_position' => $netDebt,
                 'supplier_oriented_balance' => $supplierOrientedBalance,
-                'current_debt' => $usePartnerTimeline ? $supplierOrientedBalance : $supplierDebt,
+                'current_debt' => $targetBalance,
                 'has_debt_offset_voucher' => $hasDebtOffsetVoucher,
                 'is_actual_offset' => false,
                 'is_net_view' => $usePartnerTimeline,
@@ -900,7 +907,7 @@ class SupplierController extends Controller
                 'display_timeline_mode' => (bool) ($ledgerSummary['display_timeline_mode'] ?? true),
                 'has_virtual_opening_balance' => (bool) ($ledgerSummary['has_virtual_opening_balance'] ?? false),
                 'virtual_opening_balance' => (float) ($ledgerSummary['virtual_opening_balance'] ?? 0.0),
-                'display_balance_target' => $usePartnerTimeline ? $supplierOrientedBalance : $supplierDebt,
+                'display_balance_target' => $targetBalance,
                 'display_balance_final' => (float) ($ledgerSummary['display_balance_final'] ?? $ledger['closing_balance'] ?? 0.0),
                 'raw_document_final_balance' => (float) ($ledgerSummary['raw_document_final_balance'] ?? $ledgerSummary['document_final_balance_before_alignment'] ?? $ledgerSummary['document_final_balance'] ?? 0.0),
                 'document_final_balance_before_alignment' => (float) ($ledgerSummary['document_final_balance_before_alignment'] ?? $ledgerSummary['document_final_balance'] ?? 0.0),
@@ -914,8 +921,8 @@ class SupplierController extends Controller
                 'customer_debt_amount' => $customerDebt,
                 'supplier_debt_amount' => $supplierDebt,
                 'net_debt_amount' => $netDebt,
-            ],
-        ];
+            ]),
+        ]);
         if (! empty($ledger['reconcile'])) {
             $response['reconcile'] = $ledger['reconcile'];
         }
@@ -943,7 +950,7 @@ class SupplierController extends Controller
      */
     public function debtVoucherDetail($id, Request $request)
     {
-        $supplier = Customer::findOrFail($id);
+        $supplier = $this->supplierOrFail($id);
         $code = trim((string) $request->query('code', ''));
         if ($code === '') {
             return response()->json(['success' => false, 'message' => 'Mã chứng từ không được để trống.'], 422);
@@ -1080,6 +1087,8 @@ class SupplierController extends Controller
      */
     public function recordPayment(Request $request, $id)
     {
+        $this->supplierOrFail($id);
+
         $data = $request->validate([
             'amount' => 'required|numeric|min:0.01',
             'note' => 'nullable|string',
@@ -1112,6 +1121,11 @@ class SupplierController extends Controller
                 $data,
                 $paidAt,
             ): array {
+                if (! (bool) $supplier->is_supplier) {
+                    throw ValidationException::withMessages([
+                        'supplier_id' => 'Đối tác chưa có vai trò nhà cung cấp đã lưu.',
+                    ]);
+                }
                 app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
                     (int) $supplier->id,
                     'supplier_id',
@@ -1196,6 +1210,8 @@ class SupplierController extends Controller
      */
     public function outstandingPurchases($id)
     {
+        $this->supplierOrFail($id);
+
         $purchases = Purchase::where('supplier_id', $id)
             ->where('status', 'completed')
             ->where('debt_amount', '>', 0)
@@ -1218,6 +1234,8 @@ class SupplierController extends Controller
      */
     public function adjustDebt(Request $request, $id)
     {
+        $this->supplierOrFail($id);
+
         $data = $request->validate([
             'amount' => 'required|numeric',
             'note' => 'nullable|string',
@@ -1237,6 +1255,11 @@ class SupplierController extends Controller
             'supplier_debt_adjustment',
             $payloadHash,
             function (Customer $supplier) use ($id, $data): array {
+                if (! (bool) $supplier->is_supplier) {
+                    throw ValidationException::withMessages([
+                        'supplier_id' => 'Đối tác chưa có vai trò nhà cung cấp đã lưu.',
+                    ]);
+                }
                 app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
                     (int) $supplier->id,
                     'supplier_id',

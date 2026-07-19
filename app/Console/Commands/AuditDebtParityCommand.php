@@ -7,6 +7,7 @@ use App\Services\Debt\PartnerDebtParityAuditService;
 use App\Services\Debt\PartnerDebtPopulationService;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
 use RuntimeException;
 
@@ -35,12 +36,6 @@ class AuditDebtParityCommand extends Command
         PartnerDebtParityAuditService $audit,
         PartnerDebtPopulationService $population,
     ): int {
-        if (! $this->option('dry-run')) {
-            $this->error('Please pass --dry-run. This command never applies debt changes.');
-
-            return self::FAILURE;
-        }
-
         $role = (string) $this->option('role');
         if (! in_array($role, ['all', 'customer', 'supplier', 'dual'], true)) {
             $this->error('Invalid --role. Use all, customer, supplier or dual.');
@@ -82,7 +77,10 @@ class AuditDebtParityCommand extends Command
 
                 return self::FAILURE;
             }
-            $scannedPartnerIds = Customer::query()->orderBy('id')->pluck('id')->map(fn ($id): int => (int) $id)->all();
+            $scannedPartnerIds = $this->partnerQuery('all')
+                ->pluck('id')
+                ->map(fn ($id): int => (int) $id)
+                ->all();
             $populationResult = $population->reconcile($scannedPartnerIds, $expectedPopulation);
             $output = rtrim(str_replace('\\', '/', (string) $this->option('output')), '/');
             $this->writePopulationArtifacts($output, $populationResult);
@@ -132,6 +130,7 @@ class AuditDebtParityCommand extends Command
             if ($this->option('all-partners')) {
                 $populationResult = $population->reconcile($scannedPartnerIds, $expectedPopulation);
                 $this->writePopulationArtifacts($output, $populationResult);
+                $this->writeTimelineArtifacts($output, $rows);
             }
         }
 
@@ -148,6 +147,186 @@ class AuditDebtParityCommand extends Command
         return ($hasAuditErrors || $populationFailed || ($this->option('fail-on-mismatch') && $hasMismatch))
             ? self::FAILURE
             : self::SUCCESS;
+    }
+
+    /** @param array<int, array<string, mixed>> $rows */
+    private function writeTimelineArtifacts(string $output, array $rows): void
+    {
+        $directory = $this->auditPath($output);
+        File::ensureDirectoryExists($directory);
+        $collection = collect($rows);
+        $summary = [
+            'generated_at' => now()->toIso8601String(),
+            'read_only' => true,
+            'total_partners' => $collection->count(),
+            'persisted_customer_count' => $collection->whereIn('persisted_role', ['customer_only', 'dual_role'])->count(),
+            'persisted_supplier_count' => $collection->whereIn('persisted_role', ['supplier_only', 'dual_role'])->count(),
+            'persisted_dual_role_count' => $collection->where('persisted_role', 'dual_role')->count(),
+            'role_flag_evidence_mismatches' => $collection->where('role_integrity_status', 'ROLE_FLAG_EVIDENCE_MISMATCH')->count(),
+            'owner_confirmed_role_mismatches' => $collection->where('role_integrity_status', 'OWNER_CONFIRMED_ROLE_MISMATCH')->count(),
+            'customer_list_scope_mismatches' => $collection->where('customer_list_scope_mismatch', true)->count(),
+            'supplier_list_scope_mismatches' => $collection->where('supplier_list_scope_mismatch', true)->count(),
+            'domain_parity_pass' => $collection->where('domain_parity_pass', true)->count(),
+            'customer_view_parity_pass' => $collection->where('customer_view_parity_pass', true)->count(),
+            'supplier_view_parity_pass' => $collection->where('supplier_view_parity_pass', true)->count(),
+            'cross_view_parity_pass' => $collection->where('cross_view_applicable', true)->where('cross_view_parity_pass', true)->count(),
+            'customer_view_warnings' => $collection->where('customer_view_warning', true)->count(),
+            'supplier_view_warnings' => $collection->where('supplier_view_warning', true)->count(),
+            'cross_view_event_missing_count' => (int) $collection->sum('cross_view_event_missing_count'),
+            'cross_view_event_extra_count' => (int) $collection->sum('cross_view_event_extra_count'),
+            'cross_view_sign_mismatch_count' => (int) $collection->sum('cross_view_sign_mismatch_count'),
+            'cross_view_order_mismatch_count' => (int) $collection->sum('cross_view_order_mismatch_count'),
+            'cross_view_running_mismatch_count' => (int) $collection->sum('cross_view_running_mismatch_count'),
+            'virtual_opening_event_count' => (int) $collection->sum('virtual_opening_event_count'),
+            'display_alignment_event_count' => (int) $collection->sum('display_alignment_event_count'),
+            'stored_balance_event_count' => (int) $collection->sum('stored_balance_event_count'),
+            'mirror_counted_as_financial_event_count' => (int) $collection->sum('mirror_counted_as_financial_event_count'),
+            'real_and_fallback_double_count' => (int) $collection->sum('real_and_fallback_double_count'),
+            'cancel_reversal_asymmetry_count' => (int) $collection->sum('cancel_reversal_asymmetry_count'),
+        ];
+        $this->writeArtifactJson($directory.DIRECTORY_SEPARATOR.'summary.json', $summary);
+
+        $roleRows = $collection
+            ->filter(fn (array $row): bool => ($row['role_integrity_status'] ?? 'OK') !== 'OK')
+            ->values()
+            ->all();
+        $this->writeArtifactJson($directory.DIRECTORY_SEPARATOR.'role-integrity.json', [
+            'generated_at' => now()->toIso8601String(),
+            'rows' => $roleRows,
+        ]);
+        $this->writeArtifactJson(
+            $directory.DIRECTORY_SEPARATOR.'role-repair-plan.json',
+            $this->roleRepairPlan($collection),
+        );
+
+        $listColumns = [
+            'partner_id', 'partner_code', 'persisted_role',
+            'customer_list_expected', 'customer_list_actual', 'customer_list_scope_mismatch',
+            'supplier_list_expected', 'supplier_list_actual', 'supplier_list_scope_mismatch',
+        ];
+        $this->writeArtifactCsv($directory.DIRECTORY_SEPARATOR.'customer-list-scope.csv', $listColumns, $rows);
+        $this->writeArtifactCsv($directory.DIRECTORY_SEPARATOR.'supplier-list-scope.csv', $listColumns, $rows);
+
+        $timelineColumns = [
+            'partner_id', 'partner_code', 'persisted_role', 'role_integrity_status',
+            'canonical_customer_receivable', 'canonical_supplier_payable',
+            'customer_view_target', 'customer_view_final', 'customer_view_difference', 'customer_view_warning',
+            'supplier_view_target', 'supplier_view_final', 'supplier_view_difference', 'supplier_view_warning',
+            'timeline_primary_classification', 'all_applicable_layers_pass',
+        ];
+        $this->writeArtifactCsv($directory.DIRECTORY_SEPARATOR.'timeline-parity.csv', $timelineColumns, $rows);
+
+        $crossColumns = [
+            'partner_id', 'partner_code', 'cross_view_applicable',
+            'customer_view_entry_count', 'supplier_view_entry_count',
+            'customer_source_identity_hash', 'supplier_source_identity_hash',
+            'cross_view_event_missing_count', 'cross_view_event_extra_count',
+            'cross_view_sign_mismatch_count', 'cross_view_order_mismatch_count',
+            'cross_view_running_mismatch_count', 'cross_view_first_divergence', 'cross_view_parity_pass',
+        ];
+        $this->writeArtifactCsv(
+            $directory.DIRECTORY_SEPARATOR.'cross-view-parity.csv',
+            $crossColumns,
+            $collection->where('cross_view_applicable', true)->values()->all(),
+        );
+
+        $this->writePartnerDossier($directory, '80', 'partner-80-dossier.json', true);
+        $this->writePartnerDossier($directory, 'NCC177950763826', 'partner-ncc177950763826-dossier.json');
+    }
+
+    /** @param Collection<int, array<string, mixed>> $rows */
+    private function roleRepairPlan(Collection $rows): array
+    {
+        $actions = $rows
+            ->where('role_integrity_status', 'OWNER_CONFIRMED_ROLE_MISMATCH')
+            ->filter(fn (array $row): bool => in_array(
+                (string) ($row['partner_code'] ?? ''),
+                \App\Services\Debt\PartnerDebtRoleResolver::OWNER_CONFIRMED_DUAL_ROLE_CODES,
+                true,
+            ))
+            ->map(fn (array $row): array => [
+                'partner_id' => (int) $row['partner_id'],
+                'partner_code' => (string) $row['partner_code'],
+                'action' => 'set_persisted_role_dual',
+                'before' => [
+                    'persisted_role' => $row['persisted_role'],
+                    'is_customer' => in_array($row['persisted_role'], ['customer_only', 'dual_role'], true),
+                    'is_supplier' => in_array($row['persisted_role'], ['supplier_only', 'dual_role'], true),
+                    'debt_amount' => $row['raw_customer_debt'],
+                    'supplier_debt_amount' => $row['raw_supplier_debt'],
+                ],
+                'after' => ['is_customer' => true, 'is_supplier' => true],
+                'owner_confirmation_reference' => 'KIOTVIET-PARTNER-DEBT-TIMELINE-CONTRACT-01#17',
+                'idempotency_key' => 'owner-role-confirmation:'.(string) $row['partner_code'].':dual-role:v1',
+            ])
+            ->values()
+            ->all();
+
+        $payload = [
+            'generated_at' => now()->toIso8601String(),
+            'dry_run' => true,
+            'clone_only' => true,
+            'financial_fields_must_not_change' => true,
+            'actions' => $actions,
+        ];
+        $payload['plan_hash'] = hash('sha256', json_encode($payload['actions'], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+
+        return $payload;
+    }
+
+    private function writePartnerDossier(string $directory, string $identifier, string $filename, bool $byId = false): void
+    {
+        $query = Customer::query();
+        $partner = $byId ? $query->whereKey((int) $identifier)->first() : $query->where('code', $identifier)->first();
+        if (! $partner) {
+            $this->writeArtifactJson($directory.DIRECTORY_SEPARATOR.$filename, [
+                'found' => false,
+                'identifier' => $identifier,
+            ]);
+
+            return;
+        }
+
+        $events = app(\App\Services\Debt\CanonicalPartnerDebtEventService::class)->build($partner);
+        $orientation = app(\App\Services\Debt\PartnerDebtTimelineOrientationService::class);
+        $customer = $orientation->customer($partner, ['audit' => true]);
+        $supplier = $orientation->supplier($partner, ['audit' => true]);
+        $this->writeArtifactJson($directory.DIRECTORY_SEPARATOR.$filename, [
+            'found' => true,
+            'partner' => [
+                'id' => (int) $partner->id,
+                'code' => (string) $partner->code,
+                'is_customer' => (bool) $partner->is_customer,
+                'is_supplier' => (bool) $partner->is_supplier,
+                'customer_receivable' => (float) $partner->debt_amount,
+                'supplier_payable' => (float) $partner->supplier_debt_amount,
+            ],
+            'canonical_events' => $events->all(),
+            'customer_view' => $customer,
+            'supplier_view' => $supplier,
+            'first_divergence' => app(PartnerDebtParityAuditService::class)->audit($partner)['cross_view_first_divergence'] ?? null,
+        ]);
+    }
+
+    /** @param array<int, string> $columns @param array<int, array<string, mixed>> $rows */
+    private function writeArtifactCsv(string $path, array $columns, array $rows): void
+    {
+        $handle = fopen($path, 'wb');
+        if ($handle === false) {
+            throw new RuntimeException("Cannot open timeline CSV: {$path}");
+        }
+        fwrite($handle, "\xEF\xBB\xBF");
+        fputcsv($handle, $columns);
+        foreach ($rows as $row) {
+            fputcsv($handle, array_map(fn (string $column): mixed => $this->scalar($row[$column] ?? null), $columns));
+        }
+        fclose($handle);
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function writeArtifactJson(string $path, array $payload): void
+    {
+        file_put_contents($path, json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
     }
 
     private function writePopulationArtifacts(string $output, array $population): void
@@ -207,7 +386,12 @@ class AuditDebtParityCommand extends Command
 
     private function partnerQuery(string $role): Builder
     {
-        $query = Customer::query()->orderBy('id');
+        $query = Customer::query();
+        if ($this->option('include-special-status')
+            && in_array(\Illuminate\Database\Eloquent\SoftDeletes::class, class_uses_recursive(Customer::class), true)) {
+            $query->withTrashed();
+        }
+        $query->orderBy('id');
         if ($id = $this->option('partner-id')) {
             return $query->whereKey((int) $id);
         }
@@ -304,6 +488,11 @@ class AuditDebtParityCommand extends Command
 
     private function hasRawMismatch(array $row): bool
     {
+        if (array_key_exists('all_applicable_layers_pass', $row)
+            && ! (bool) $row['all_applicable_layers_pass']) {
+            return true;
+        }
+
         foreach ([
             'customer_stored_vs_document_raw',
             'customer_stored_vs_ledger',
