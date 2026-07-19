@@ -139,6 +139,7 @@ class SupplierDebtDomainEventSource
                     })
                     ->orWhere(function ($q2) use ($purchaseCodes) {
                         $q2->where('reference_type', 'Purchase')
+                            ->whereIn('target_type', PartnerDebtRoleResolver::SUPPLIER_TARGET_TYPES)
                             ->whereIn('reference_code', $purchaseCodes);
                     });
             })
@@ -166,23 +167,69 @@ class SupplierDebtDomainEventSource
         }
 
         $realPaymentCoverageByPurchase = [];
+        $directPaymentAmountById = [];
         foreach ($paymentsByPurchase as $refCode => $cfs) {
-            $realPaymentCoverageByPurchase[$refCode] = (float) collect($cfs)->sum('amount');
+            $purchase = $purchases->firstWhere('code', $refCode);
+            $remainingObligation = $purchase ? $this->purchasePaymentObligation($purchase) : 0.0;
+
+            foreach (collect($cfs)->sort(function (CashFlow $left, CashFlow $right): int {
+                $timeComparison = strcmp(
+                    $this->normalizeSortableTime($left->time ?: $left->created_at),
+                    $this->normalizeSortableTime($right->time ?: $right->created_at),
+                );
+
+                return $timeComparison !== 0
+                    ? $timeComparison
+                    : ((int) $left->id <=> (int) $right->id);
+            }) as $cashFlow) {
+                $canonicalAmount = min(max(0.0, (float) $cashFlow->amount), $remainingObligation);
+                $directPaymentAmountById[(int) $cashFlow->id] = $canonicalAmount;
+                $remainingObligation = max(0.0, $remainingObligation - $canonicalAmount);
+            }
+
+            $realPaymentCoverageByPurchase[$refCode] = (float) collect($cfs)
+                ->sum(fn (CashFlow $cashFlow): float => (float) ($directPaymentAmountById[(int) $cashFlow->id] ?? 0.0));
         }
         $directPaymentIds = collect($paymentsByPurchase)
             ->flatMap(fn (array $cashFlows): array => $cashFlows)
             ->pluck('id')
             ->map(fn ($id): int => (int) $id)
             ->flip();
+        $persistedAllocationAmountByKey = [];
+        $remainingPersistedAllocationByPayment = $supplierPayments
+            ->mapWithKeys(fn (CashFlow $payment): array => [
+                (int) $payment->id => max(0.0, (float) $payment->amount),
+            ])
+            ->all();
         foreach ($persistedAllocations as $allocation) {
             if ($directPaymentIds->has((int) $allocation->payment_id)) {
                 continue;
             }
             $purchaseCode = (string) ($purchasesById->get($allocation->purchase_id)?->code ?? '');
             if ($purchaseCode !== '') {
+                $purchase = $purchasesById->get($allocation->purchase_id);
+                $remainingObligation = max(
+                    0.0,
+                    $this->purchasePaymentObligation($purchase)
+                        - (float) ($realPaymentCoverageByPurchase[$purchaseCode] ?? 0.0)
+                );
+                $remainingPayment = max(
+                    0.0,
+                    (float) ($remainingPersistedAllocationByPayment[(int) $allocation->payment_id] ?? 0.0),
+                );
+                $canonicalAmount = min(
+                    max(0.0, (float) $allocation->amount),
+                    $remainingObligation,
+                    $remainingPayment,
+                );
+                $persistedAllocationAmountByKey[
+                    (int) $allocation->payment_id.':'.(int) $allocation->purchase_id
+                ] = $canonicalAmount;
+                $remainingPersistedAllocationByPayment[(int) $allocation->payment_id]
+                    = max(0.0, $remainingPayment - $canonicalAmount);
                 $realPaymentCoverageByPurchase[$purchaseCode]
                     = (float) ($realPaymentCoverageByPurchase[$purchaseCode] ?? 0)
-                    + (float) $allocation->amount;
+                    + $canonicalAmount;
             }
         }
 
@@ -204,11 +251,17 @@ class SupplierDebtDomainEventSource
         // Emit linked payments
         foreach ($paymentsByPurchase as $refCode => $cfs) {
             $purchase = $purchases->firstWhere('code', $refCode);
-            $purchasePaid = $purchase ? (float) $purchase->paid_amount : 0.0;
-            $paymentTotal = (float) collect($cfs)->sum('amount');
+            $purchasePaid = $purchase ? $this->purchasePaymentObligation($purchase) : 0.0;
+            $paymentTotal = (float) collect($cfs)
+                ->sum(fn (CashFlow $cashFlow): float => (float) ($directPaymentAmountById[(int) $cashFlow->id] ?? 0.0));
             $mismatch = abs($paymentTotal - $purchasePaid) > 0.01;
 
             foreach ($cfs as $index => $cf) {
+                $canonicalAmount = (float) ($directPaymentAmountById[(int) $cf->id] ?? 0.0);
+                if ($canonicalAmount <= 0.01) {
+                    continue;
+                }
+
                 $businessTime = $cf->time ?: $cf->created_at;
                 $purchaseTime = $purchase ? ($purchase->purchase_date ?: $purchase->created_at) : ($cf->time ?: $cf->created_at);
                 $entries->push($this->createEntry([
@@ -217,10 +270,10 @@ class SupplierDebtDomainEventSource
                     'display_type' => 'Thanh toán NCC',
                     'event_kind' => 'supplier_payment',
                     'domain' => 'supplier',
-                    'document_amount' => (float) $cf->amount,
-                    'amount' => (float) $cf->amount,
-                    'display_effect' => -(float) $cf->amount,
-                    'supplier_display_effect' => -(float) $cf->amount,
+                    'document_amount' => $canonicalAmount,
+                    'amount' => $canonicalAmount,
+                    'display_effect' => -$canonicalAmount,
+                    'supplier_display_effect' => -$canonicalAmount,
                     'time' => $businessTime,
                     'display_time' => $businessTime,
                     'created_at' => $cf->created_at,
@@ -241,6 +294,9 @@ class SupplierDebtDomainEventSource
                     'is_virtual_fallback' => false,
                     'payment_allocation_mismatch' => $mismatch,
                     'needs_manual_review' => $mismatch,
+                    'original_cash_flow_amount' => (float) $cf->amount,
+                    'non_debt_cash_amount' => max(0.0, (float) $cf->amount - $canonicalAmount),
+                    'payment_obligation_evidence' => 'purchases.total_amount_minus_debt_amount',
                     'source' => 'document_first',
                     'document_group_key' => $refCode,
                     'document_group_type' => 'purchase',
@@ -254,9 +310,11 @@ class SupplierDebtDomainEventSource
             }
         }
 
-        // 3. Fallback Payment from purchase.paid_amount
+        // 3. Fallback payment from the persisted purchase obligation. The
+        // cash voucher may also contain acquisition costs, which are not
+        // supplier-debt mutations and must not reduce payable a second time.
         foreach ($purchases as $p) {
-            $paidAmount = (float) $p->paid_amount;
+            $paidAmount = $this->purchasePaymentObligation($p);
             if ($paidAmount > 0) {
                 $coveredAmount = max(0.0, (float) ($realPaymentCoverageByPurchase[$p->code] ?? 0.0));
                 $genericInferredCoveredAmount = max(0.0, (float) ($genericPaymentCoverageByPurchase[$p->code] ?? 0.0));
@@ -320,7 +378,10 @@ class SupplierDebtDomainEventSource
             if ($hasActualAllocations) {
                 foreach ($actualAllocations as $allocation) {
                     $purchase = $purchasesById->get($allocation->purchase_id);
-                    $allocatedAmount = (float) $allocation->amount;
+                    $originalAllocatedAmount = (float) $allocation->amount;
+                    $allocatedAmount = (float) ($persistedAllocationAmountByKey[
+                        (int) $allocation->payment_id.':'.(int) $allocation->purchase_id
+                    ] ?? 0.0);
                     if ($allocatedAmount <= 0.01) {
                         continue;
                     }
@@ -355,6 +416,9 @@ class SupplierDebtDomainEventSource
                         'payment_allocation_confidence' => $allocationMismatch ? 'persisted_partial' : 'persisted',
                         'allocation_is_actual' => true,
                         'allocated_amount' => $allocatedAmount,
+                        'original_allocated_amount' => $originalAllocatedAmount,
+                        'non_debt_cash_amount' => max(0.0, $originalAllocatedAmount - $allocatedAmount),
+                        'payment_obligation_evidence' => 'purchases.total_amount_minus_debt_amount',
                         'payment_allocation_mismatch' => $allocationMismatch,
                         'needs_manual_review' => $allocationMismatch,
                         'payment_allocation_note' => 'Persisted supplier payment allocation evidence.',
@@ -567,6 +631,7 @@ class SupplierDebtDomainEventSource
             ->get()
             ->groupBy(fn (CashFlow $cashFlow): string => (string) $cashFlow->reference_code);
 
+        $refundBackedHistoricalPaymentByPurchase = [];
         foreach ($purchaseReturns as $pr) {
             $businessTime = $pr->return_date ?: $pr->created_at;
             $entries->push($this->createEntry([
@@ -599,6 +664,62 @@ class SupplierDebtDomainEventSource
 
             $refundEntries = collect();
             $realRefunds = collect($supplierRefundsByReturn->get((string) $pr->code, []));
+            $purchase = $purchasesById->get($pr->purchase_id);
+            if ($purchase !== null && BusinessStatus::isReturnCompleted($pr->status)) {
+                $purchaseCode = (string) $purchase->code;
+                $refundEvidence = max((float) $pr->refund_amount, (float) $realRefunds->sum('amount'));
+                $paymentState = (array) ($refundBackedHistoricalPaymentByPurchase[$purchaseCode] ?? [
+                    'refund_evidence' => 0.0,
+                    'backfilled_payment' => 0.0,
+                ]);
+                $cumulativeRefundEvidence = (float) $paymentState['refund_evidence'] + max(0.0, $refundEvidence);
+                $alreadyBackfilled = (float) $paymentState['backfilled_payment'];
+                $requiredHistoricalPayment = min(
+                    max(0.0, (float) $purchase->total_amount),
+                    $cumulativeRefundEvidence,
+                );
+                $additionalHistoricalPayment = max(
+                    0.0,
+                    $requiredHistoricalPayment
+                        - $this->purchasePaymentObligation($purchase)
+                        - $alreadyBackfilled,
+                );
+
+                if ($additionalHistoricalPayment > 0.01) {
+                    $purchaseTime = $purchase->purchase_date ?: $purchase->created_at ?: $businessTime;
+                    $entries->push($this->createEntry([
+                        'id' => 'purchase-return-payment-evidence-'.$pr->id,
+                        'code' => 'TTNH-'.($purchase->code ?: $pr->code),
+                        'display_type' => 'Thanh toán NCC',
+                        'event_kind' => 'supplier_payment_fallback',
+                        'domain' => 'supplier',
+                        'document_amount' => $additionalHistoricalPayment,
+                        'amount' => $additionalHistoricalPayment,
+                        'display_effect' => -$additionalHistoricalPayment,
+                        'supplier_display_effect' => -$additionalHistoricalPayment,
+                        'time' => $purchaseTime,
+                        'display_time' => $purchaseTime,
+                        'created_at' => $purchase->created_at ?: $purchaseTime,
+                        'reference_type' => 'Purchase',
+                        'reference_id' => $purchase->id,
+                        'reference_code' => $purchase->code,
+                        'parent_document_code' => $purchase->code,
+                        'source_table' => 'purchase_returns',
+                        'source_id' => $pr->id.':historical-payment-evidence',
+                        'is_real_voucher' => false,
+                        'is_virtual_fallback' => true,
+                        'fallback_for_unallocated_amount' => true,
+                        'persisted_evidence' => 'purchase_returns.refund_amount',
+                        'refund_evidence_amount' => $refundEvidence,
+                        'source' => 'purchase_return_refund_payment_evidence',
+                    ]));
+                }
+                $refundBackedHistoricalPaymentByPurchase[$purchaseCode] = [
+                    'refund_evidence' => $cumulativeRefundEvidence,
+                    'backfilled_payment' => $alreadyBackfilled + $additionalHistoricalPayment,
+                ];
+            }
+
             foreach ($realRefunds as $cashFlow) {
                 $refundAmount = (float) $cashFlow->amount;
                 if ($refundAmount <= 0.01) {
@@ -1208,6 +1329,10 @@ class SupplierDebtDomainEventSource
             }
         }
 
+        if ((bool) ($options['canonical'] ?? false)) {
+            $entries = $this->addPersistedLedgerCheckpoints($entries, $supplierDebts);
+        }
+
         // Deduplicate only the canonical source identity. Voucher codes are
         // display labels and can collide between independent source tables.
         $deduped = [];
@@ -1519,7 +1644,7 @@ class SupplierDebtDomainEventSource
         }
 
         $purchaseStates = $purchases
-            ->filter(fn (Purchase $purchase) => (float) $purchase->paid_amount > 0.01)
+            ->filter(fn (Purchase $purchase) => $this->purchasePaymentObligation($purchase) > 0.01)
             ->filter(fn (Purchase $purchase) => (string) ($purchase->status ?? '') === 'completed')
             ->sort(function (Purchase $a, Purchase $b) {
                 $timeCompare = strcmp(
@@ -1534,7 +1659,7 @@ class SupplierDebtDomainEventSource
                 return ((int) $a->id) <=> ((int) $b->id);
             })
             ->map(function (Purchase $purchase) use ($directCoverageByPurchase) {
-                $paidAmount = (float) $purchase->paid_amount;
+                $paidAmount = $this->purchasePaymentObligation($purchase);
                 $directCovered = max(0.0, (float) ($directCoverageByPurchase[$purchase->code] ?? 0.0));
 
                 return [
@@ -1651,6 +1776,127 @@ class SupplierDebtDomainEventSource
             'coverage' => $coverage,
             'diagnostics' => $diagnostics,
         ];
+    }
+
+    /**
+     * Persisted payment evidence for a purchase.
+     *
+     * paid_amount can include acquisition costs that never mutate supplier
+     * payable. total_amount - debt_amount is the persisted amount which did
+     * reduce the purchase obligation; a negative debt intentionally permits
+     * an overpayment credit. Older rows which never persisted a positive
+     * remaining debt are capped by their smaller paid_amount instead.
+     */
+    private function purchasePaymentObligation(Purchase $purchase): float
+    {
+        $total = max(0.0, (float) $purchase->total_amount);
+        $debt = (float) $purchase->debt_amount;
+        $paid = max(0.0, (float) $purchase->paid_amount);
+        if (abs($debt) <= 0.01 && $paid < $total - 0.01) {
+            return $paid;
+        }
+
+        return max(0.0, $total - $debt);
+    }
+
+    /**
+     * Reconstruct discontinuities from persisted supplier ledger checkpoints.
+     *
+     * Legacy imports and backdated documents can make document creation order
+     * diverge from business timestamps. A non-purchase ledger row persists the
+     * authoritative debt_remain immediately after that mutation. When the
+     * preceding canonical events do not reach its persisted before-state, emit
+     * a signed checkpoint event backed by that exact row. This is neither a
+     * virtual opening nor a stored customer projection event.
+     *
+     * @param  Collection<int, array<string, mixed>>  $entries
+     * @param  Collection<int, SupplierDebtTransaction>  $transactions
+     * @return Collection<int, array<string, mixed>>
+     */
+    private function addPersistedLedgerCheckpoints(Collection $entries, Collection $transactions): Collection
+    {
+        $timeline = $entries
+            ->filter(fn (array $entry): bool => (string) ($entry['domain'] ?? '') === 'supplier'
+                && (bool) ($entry['affects_document_balance'] ?? true))
+            ->map(fn (array $entry): array => [
+                'kind' => 'event',
+                'time' => $this->normalizeSortableTime($entry['created_at'] ?? $entry['time'] ?? null),
+                'order' => 0,
+                'key' => (string) ($entry['event_identity'] ?? $entry['id'] ?? ''),
+                'entry' => $entry,
+            ]);
+
+        $markers = $transactions
+            ->filter(fn (SupplierDebtTransaction $transaction): bool => (int) ($transaction->purchase_id ?? 0) === 0)
+            ->map(fn (SupplierDebtTransaction $transaction): array => [
+                'kind' => 'checkpoint',
+                'time' => $this->normalizeSortableTime($transaction->created_at),
+                'order' => 1,
+                'key' => str_pad((string) $transaction->id, 20, '0', STR_PAD_LEFT),
+                'transaction' => $transaction,
+            ]);
+
+        $running = 0.0;
+        $checkpoints = collect();
+        $timeline
+            ->concat($markers)
+            ->sort(function (array $left, array $right): int {
+                return [$left['time'], $left['order'], $left['key']]
+                    <=> [$right['time'], $right['order'], $right['key']];
+            })
+            ->each(function (array $item) use (&$running, $checkpoints): void {
+                if ($item['kind'] === 'event') {
+                    $entry = $item['entry'];
+                    $running += (float) ($entry['supplier_display_effect']
+                        ?? $entry['display_effect']
+                        ?? $entry['amount']
+                        ?? 0);
+
+                    return;
+                }
+
+                /** @var SupplierDebtTransaction $transaction */
+                $transaction = $item['transaction'];
+                $expected = (float) $transaction->debt_remain;
+                $correction = $expected - $running;
+                if (abs($correction) <= 0.01) {
+                    return;
+                }
+
+                $checkpoints->push($this->createEntry([
+                    'id' => 'supplier-ledger-checkpoint-'.$transaction->id,
+                    'code' => 'CHECKPOINT-'.($transaction->code ?: $transaction->id),
+                    'display_type' => 'Số dư chứng từ đã lưu',
+                    'event_kind' => 'persisted_ledger_checkpoint',
+                    'domain' => 'supplier',
+                    'document_amount' => abs($correction),
+                    'amount' => $correction,
+                    'display_effect' => $correction,
+                    'supplier_display_effect' => $correction,
+                    'time' => $transaction->created_at,
+                    'display_time' => $transaction->created_at,
+                    'created_at' => $transaction->created_at,
+                    'reference_type' => 'SupplierDebtTransaction',
+                    'reference_id' => $transaction->id,
+                    'reference_code' => $transaction->code,
+                    'source_table' => 'supplier_debt_transactions',
+                    'source_id' => $transaction->id.':checkpoint',
+                    'source_status' => 'persisted_evidence',
+                    'detail_available' => false,
+                    'detail_modal_type' => 'none',
+                    'badge_label' => 'Đối chiếu lịch sử',
+                    'badge_title' => 'Khôi phục đoạn lịch sử từ debt_remain đã lưu trên ledger.',
+                    'is_real_voucher' => false,
+                    'is_virtual_fallback' => false,
+                    'persisted_evidence' => 'supplier_debt_transactions.debt_remain',
+                    'persisted_debt_remain' => $expected,
+                    'canonical_running_before_checkpoint' => $running,
+                    'source' => 'persisted_ledger_checkpoint',
+                ]));
+                $running = $expected;
+            });
+
+        return $entries->concat($checkpoints)->values();
     }
 
     private function classifySupplierDebt(SupplierDebtTransaction $stx): array

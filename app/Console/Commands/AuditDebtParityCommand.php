@@ -7,6 +7,7 @@ use App\Services\Debt\PartnerDebtParityAuditService;
 use App\Services\Debt\PartnerDebtPopulationService;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
 use RuntimeException;
 
@@ -237,7 +238,6 @@ class AuditDebtParityCommand extends Command
     private function roleRepairPlan(Collection $rows): array
     {
         $actions = $rows
-            ->where('role_integrity_status', 'OWNER_CONFIRMED_ROLE_MISMATCH')
             ->filter(fn (array $row): bool => in_array(
                 (string) ($row['partner_code'] ?? ''),
                 \App\Services\Debt\PartnerDebtRoleResolver::OWNER_CONFIRMED_DUAL_ROLE_CODES,

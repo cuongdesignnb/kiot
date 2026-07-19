@@ -1574,6 +1574,20 @@ class CustomerDebtDomainEventSource
         )) {
             return true;
         }
+        if ($type === 'adjustment') {
+            return $receipts->concat($refunds)->contains(function (CashFlow $cashFlow) use ($code, $debt): bool {
+                if ((string) $cashFlow->reference_type !== 'DebtAdjustment'
+                    || ((string) $cashFlow->code !== $code && (string) $cashFlow->reference_code !== $code)) {
+                    return false;
+                }
+
+                $documentDelta = $cashFlow->type === 'receipt'
+                    ? -(float) $cashFlow->amount
+                    : (float) $cashFlow->amount;
+
+                return abs($documentDelta - (float) $debt->amount) <= 0.01;
+            });
+        }
         if ($type !== 'payment') {
             return false;
         }

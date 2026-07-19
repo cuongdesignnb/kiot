@@ -14,8 +14,8 @@ use Throwable;
 class ApplyPartnerRoleRepairPlanCommand extends Command
 {
     private const ALLOWED_DATABASES = [
-        'kiot_partner_timeline_audit',
-        'kiot_partner_timeline_validation',
+        'kiot_partner_timeline_clone1',
+        'kiot_partner_timeline_clone2',
     ];
 
     protected $signature = 'debt:apply-role-repair-plan

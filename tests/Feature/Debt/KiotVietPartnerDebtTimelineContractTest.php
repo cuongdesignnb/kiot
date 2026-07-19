@@ -7,11 +7,14 @@ use App\Models\Customer;
 use App\Models\Invoice;
 use App\Models\Purchase;
 use App\Models\PurchaseReturn;
+use App\Models\SupplierDebtTransaction;
 use App\Models\User;
 use App\Services\CustomerDebtDocumentTimelineService;
 use App\Services\Debt\PartnerDebtRoleResolver;
 use App\Services\SupplierDebtDocumentTimelineService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class KiotVietPartnerDebtTimelineContractTest extends TestCase
@@ -104,6 +107,170 @@ class KiotVietPartnerDebtTimelineContractTest extends TestCase
         $this->assertSame(-900_000.0, (float) $entries->firstWhere('event_kind', 'purchase_return')['display_delta']);
         $this->assertSame(250_000.0, (float) $entries->firstWhere('event_kind', 'supplier_refund')['display_delta']);
         $this->assertNull($entries->firstWhere('event_kind', 'supplier_refund_fallback'));
+    }
+
+    public function test_purchase_payment_excludes_cash_amount_that_did_not_reduce_supplier_payable(): void
+    {
+        $supplier = $this->partner([
+            'is_supplier' => true,
+            'supplier_debt_amount' => 0,
+        ]);
+        $purchase = Purchase::create([
+            'code' => 'PN-CONTRACT-NON-DEBT-COST',
+            'supplier_id' => $supplier->id,
+            'status' => 'completed',
+            'total_amount' => 1_000_000,
+            'paid_amount' => 1_100_000,
+            'debt_amount' => 0,
+            'purchase_date' => now(),
+        ]);
+        CashFlow::create([
+            'code' => 'PC-CONTRACT-NON-DEBT-COST',
+            'type' => 'payment',
+            'amount' => 1_100_000,
+            'status' => 'active',
+            'target_type' => 'Supplier',
+            'target_id' => $supplier->id,
+            'reference_type' => 'Purchase',
+            'reference_code' => $purchase->code,
+            'time' => now(),
+        ]);
+
+        $timeline = app(SupplierDebtDocumentTimelineService::class)->build($supplier->fresh());
+        $payment = collect($timeline['entries'])->firstWhere('event_kind', 'supplier_payment');
+
+        $this->assertSame(0.0, (float) $timeline['raw_final_balance']);
+        $this->assertSame(-1_000_000.0, (float) $payment['display_delta']);
+        $this->assertSame(1_100_000.0, (float) $payment['original_cash_flow_amount']);
+        $this->assertSame(100_000.0, (float) $payment['non_debt_cash_amount']);
+    }
+
+    public function test_purchase_return_refund_restores_missing_historical_payment_evidence(): void
+    {
+        $supplier = $this->partner([
+            'is_supplier' => true,
+            'supplier_debt_amount' => 0,
+        ]);
+        $purchase = Purchase::create([
+            'code' => 'PN-CONTRACT-RETURNED-LEGACY',
+            'supplier_id' => $supplier->id,
+            'status' => 'returned',
+            'total_amount' => 900_000,
+            'paid_amount' => 0,
+            'debt_amount' => 900_000,
+            'purchase_date' => now()->subMinute(),
+        ]);
+        $return = PurchaseReturn::create([
+            'code' => 'PTN-CONTRACT-RETURNED-LEGACY',
+            'purchase_id' => $purchase->id,
+            'supplier_id' => $supplier->id,
+            'total_amount' => 900_000,
+            'refund_amount' => 900_000,
+            'status' => 'completed',
+            'return_date' => now(),
+        ]);
+        CashFlow::create([
+            'code' => 'PT-CONTRACT-RETURNED-LEGACY',
+            'type' => 'receipt',
+            'amount' => 900_000,
+            'status' => 'active',
+            'reference_type' => 'PurchaseReturn',
+            'reference_code' => $return->code,
+            'time' => now(),
+        ]);
+
+        $timeline = app(SupplierDebtDocumentTimelineService::class)->build($supplier->fresh());
+        $entries = collect($timeline['entries']);
+
+        $this->assertSame(0.0, (float) $timeline['raw_final_balance']);
+        $this->assertSame(-900_000.0, (float) $entries
+            ->firstWhere('persisted_evidence', 'purchase_returns.refund_amount')['display_delta']);
+        $this->assertSame(900_000.0, (float) $entries->firstWhere('event_kind', 'supplier_refund')['display_delta']);
+    }
+
+    public function test_persisted_payment_allocation_is_capped_by_purchase_obligation(): void
+    {
+        $supplier = $this->partner([
+            'is_supplier' => true,
+            'supplier_debt_amount' => 0,
+        ]);
+        $purchase = Purchase::create([
+            'code' => 'PN-CONTRACT-ALLOCATED-COST',
+            'supplier_id' => $supplier->id,
+            'status' => 'completed',
+            'total_amount' => 1_000_000,
+            'paid_amount' => 1_100_000,
+            'debt_amount' => 0,
+            'purchase_date' => now(),
+        ]);
+        $payment = CashFlow::create([
+            'code' => 'PC-CONTRACT-ALLOCATED-COST',
+            'type' => 'payment',
+            'amount' => 1_100_000,
+            'status' => 'active',
+            'target_type' => 'Supplier',
+            'target_id' => $supplier->id,
+            'reference_type' => 'SupplierPayment',
+            'time' => now(),
+        ]);
+        $token = (string) Str::uuid();
+        $operationId = DB::table('partner_debt_operations')->insertGetId([
+            'operation_uuid' => $token,
+            'operation_type' => 'timeline_contract_test',
+            'idempotency_key' => 'timeline-contract-'.$token,
+            'request_hash' => hash('sha256', $token),
+            'status' => 'pending',
+            'initiated_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('supplier_payment_allocations')->insert([
+            'payment_id' => $payment->id,
+            'purchase_id' => $purchase->id,
+            'supplier_id' => $supplier->id,
+            'amount' => 1_100_000,
+            'allocation_source' => 'manual',
+            'idempotency_key' => 'timeline-allocation-'.$token,
+            'operation_id' => $operationId,
+            'allocated_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $timeline = app(SupplierDebtDocumentTimelineService::class)->build($supplier->fresh());
+        $allocation = collect($timeline['entries'])->firstWhere('event_kind', 'supplier_payment');
+
+        $this->assertSame(0.0, (float) $timeline['raw_final_balance']);
+        $this->assertSame(-1_000_000.0, (float) $allocation['display_delta']);
+        $this->assertSame(1_100_000.0, (float) $allocation['original_allocated_amount']);
+        $this->assertSame(100_000.0, (float) $allocation['non_debt_cash_amount']);
+    }
+
+    public function test_persisted_supplier_ledger_debt_remain_restores_auditable_history_gap(): void
+    {
+        $supplier = $this->partner([
+            'is_supplier' => true,
+            'supplier_debt_amount' => 0,
+        ]);
+        SupplierDebtTransaction::create([
+            'supplier_id' => $supplier->id,
+            'code' => 'DCNCC-CONTRACT-CHECKPOINT',
+            'type' => 'adjustment',
+            'amount' => -800_000,
+            'debt_remain' => 0,
+            'purchase_id' => null,
+            'created_at' => now(),
+        ]);
+
+        $timeline = app(SupplierDebtDocumentTimelineService::class)->build($supplier->fresh());
+        $entries = collect($timeline['entries']);
+
+        $this->assertSame(0.0, (float) $timeline['raw_final_balance']);
+        $this->assertSame(800_000.0, (float) $entries->firstWhere('event_kind', 'persisted_ledger_checkpoint')['display_delta']);
+        $this->assertSame(-800_000.0, (float) $entries->firstWhere('event_kind', 'supplier_adjustment')['display_delta']);
+        $this->assertFalse($entries->contains(
+            fn (array $entry): bool => str_contains((string) $entry['event_kind'], 'virtual_opening'),
+        ));
     }
 
     public function test_cancelled_purchase_return_keeps_originals_and_exact_reversals(): void
