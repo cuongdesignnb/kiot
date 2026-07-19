@@ -7,7 +7,16 @@ PR_NUMBER=31
 PR_DRAFT=yes
 PR_MERGED=no
 BASE_SHA=c2df609571d35738423df313137de94c5108a8c5
-VALIDATED_SOURCE_HEAD_SHA=65d302799c146fefb172dfed3ce4521c3be60d1a
+PREVIOUS_VALIDATED_SOURCE_SHA=65d302799c146fefb172dfed3ce4521c3be60d1a
+VALIDATED_RUNTIME_SHA=6655de2b3286d750f0ea1f2288c5416b32f3af47
+FINAL_PR_HEAD_SHA=pending-report-commit
+REPORT_COMMIT_SHA=pending
+PREVIOUS_TO_RUNTIME_DIFF_CLASSIFICATION=runtime_or_test
+PREVIOUS_TO_RUNTIME_FILES_CHANGED=12
+POST_VALIDATION_DIFF_CLASSIFICATION=docs_only
+POST_VALIDATION_RUNTIME_FILES_CHANGED=0
+GITHUB_ACTIONS_STATUS=NO_WORKFLOW_RUN
+GITHUB_ACTIONS_HEAD_SHA=none
 BRANCH=fix/kiotviet-partner-debt-ledger-contract
 DEBT_OFFSET_WRITE_MODE=legacy
 PRODUCTION_ACCESSED=no
@@ -33,6 +42,8 @@ CLONE_MIGRATIONS=PASS (Nothing to migrate)
 LOCAL_PRIMARY_DATABASE_OVERWRITTEN=no
 TASK_CONTAINERS_STOPPED=yes
 ```
+
+`VALIDATED_RUNTIME_SHA` is the exact commit containing every runtime and test file used by the final engine and clone validation. The successor report commit changes only `docs/**`; its exact SHA is resolved in the Draft PR body and final agent output instead of creating a self-referential follow-up commit solely to rewrite its own hash.
 
 The restored role flags are authoritative for runtime UI scope. `NCC177621742868` is supplier-only and is intentionally absent from the repair allowlist. The current dataset has no owner-confirmed mismatch requiring a repair, so the clone-only dry-run plan is empty and no role row was changed.
 
@@ -74,6 +85,8 @@ SUPPLIER_TIMELINE_AVAILABLE=yes
 NCC177621742868_ROLE_REPAIR_ROWS_CHANGED=0
 ROLE_UI_SCOPE_STATUS=PASS
 ```
+
+The inverse role boundary is also fail-closed: customer-only partners receive 404 from supplier route-model binding and every supplier purchase/debt/detail/export/payment/adjustment API. Runtime UI scope and both badges are derived only from the two persisted role flags.
 
 The former customer-screen value `+6800000` came from applying a dual-role/net display contract to supplier-only data. The role-aware display contract now returns zero for a non-customer, and no supplier balance, canonical net, evidence role, history or code prefix can make that row customer-applicable.
 
@@ -169,8 +182,8 @@ MIRROR_COUNTED_AS_FINANCIAL_EVENT_COUNT=0
 REAL_AND_FALLBACK_DOUBLE_COUNT=0
 CANCEL_REVERSAL_ASYMMETRY_COUNT=0
 
-CLONE_1_NORMALIZED_ROWS_SHA256=e741cb3e91265a4b7a4b5206e5d5a99fa7e76a16b6df9d8826a428a1f34159ad
-CLONE_2_NORMALIZED_ROWS_SHA256=e741cb3e91265a4b7a4b5206e5d5a99fa7e76a16b6df9d8826a428a1f34159ad
+CLONE_1_NORMALIZED_AUDIT_SHA256=329629721e7ba56cc87077bc6ea5f9071fd4b347bb6fe2e62e8ab6eddfe9bf99
+CLONE_2_NORMALIZED_AUDIT_SHA256=329629721e7ba56cc87077bc6ea5f9071fd4b347bb6fe2e62e8ab6eddfe9bf99
 CLONE_1_NORMALIZED_SUMMARY_SHA256=133e9d0c8644cf06fa3bb7166326dbcb9d85d2829491addc867f60ae869538f1
 CLONE_2_NORMALIZED_SUMMARY_SHA256=133e9d0c8644cf06fa3bb7166326dbcb9d85d2829491addc867f60ae869538f1
 CLONE_RESULTS_IDENTICAL=yes
@@ -191,7 +204,8 @@ GLOBAL_AUDIT_EXIT=1 (role-integrity review classifications only)
 ROLE_UI_SCOPE_STATUS=PASS
 SUPPLIER_FINANCIAL_PARITY_STATUS=PASS
 DUAL_ROLE_TIMELINE_PARITY_STATUS=PASS
-ROLE_INTEGRITY_REVIEW_STATUS=REVIEW_REQUIRED (2)
+ROLE_INTEGRITY_REVIEW_STATUS=REVIEW_REQUIRED
+ROLE_INTEGRITY_REVIEW_ITEMS=2
 ```
 
 ## Financial immutability
@@ -212,11 +226,11 @@ The relevant suite was executed on both real engines. SQLite was not used for pa
 ```text
 MARIADB_VERSION=10.11.18-MariaDB-ubu2204
 MARIADB_MIGRATIONS=PASS
-MARIADB_TESTS=PASS (62 tests, 1111 assertions)
+MARIADB_TESTS=PASS (63 tests, 1119 assertions)
 
 MYSQL_VERSION=8.0.44
 MYSQL_MIGRATIONS=PASS
-MYSQL_TESTS=PASS (62 tests, 1111 assertions)
+MYSQL_TESTS=PASS (63 tests, 1119 assertions)
 
 CANONICAL_EVENT_TESTS=PASS
 ORIENTATION_TESTS=PASS
@@ -226,11 +240,28 @@ PAGINATION_TESTS=PASS
 EXPORT_TESTS=PASS
 AUDIT_TESTS=PASS
 
-FRONTEND_BUILD=PASS (925 modules)
-CHANGED_FILE_PINT=PASS (10 files)
-PHP_LINT=PASS (10 files)
+SUPPLIER_ROUTE_SCOPE_TESTS=PASS
+FRONTEND_BUILD=PASS (922 modules)
+CHANGED_FILE_PINT=PASS (39 files)
+PHP_LINT=PASS (39 files)
 GIT_DIFF_CHECK=PASS
 SECRET_SCAN=PASS
+DEBUG_OUTPUT_SCAN=PASS
+REPORT_CONSISTENCY_CHECK=PASS
+```
+
+## Final PR diff gate
+
+The complete diff from `production-customer-group` to the validated runtime commit was reviewed. Customer and supplier collection queries scope persisted roles before search, aggregate and pagination. Direct customer and supplier routes fail closed on the matching persisted flag. Evidence classification remains audit-only. Canonical reduction contains no stored-projection event, virtual opening or display alignment, and the full clone audit reports no mirror/fallback/reversal defect.
+
+```text
+PR31_EXACT_HEAD_AUDIT=PASS
+WORKTREE_CLEAN_AT_RUNTIME_COMMIT=yes
+MIGRATION_CREATED=no
+DEPENDENCY_LOCK_CHANGED=no
+PRODUCTION_CONFIG_CHANGED=no
+PRODUCTION_CREDENTIAL_FOUND=no
+HARDCODED_PRODUCTION_PATH_FOUND=no
 ```
 
 ## Final status
