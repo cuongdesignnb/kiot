@@ -386,6 +386,110 @@ class KiotVietPartnerDebtTimelineContractTest extends TestCase
             ->assertNotFound();
     }
 
+    public function test_ncc177621742868_remains_supplier_only_across_every_customer_surface(): void
+    {
+        $supplier = $this->partner([
+            'code' => 'NCC177621742868',
+            'name' => 'P0 supplier-only scope regression',
+            'is_customer' => false,
+            'is_supplier' => true,
+            'debt_amount' => 0,
+            'supplier_debt_amount' => 6_800_000,
+        ]);
+        $purchase = Purchase::create([
+            'code' => 'PN-P0-SUPPLIER-ONLY-6800',
+            'supplier_id' => $supplier->id,
+            'status' => 'completed',
+            'total_amount' => 6_800_000,
+            'paid_amount' => 0,
+            'debt_amount' => 6_800_000,
+            'purchase_date' => now(),
+        ]);
+
+        $exactCustomerProps = $this->pageProps(
+            $this->actingAs($this->user)
+                ->get('/customers?keyword=NCC177621742868')
+                ->assertOk(),
+        );
+        $this->assertCount(0, $exactCustomerProps['customers']['data'] ?? []);
+        $this->assertSame(0, (int) ($exactCustomerProps['customers']['total'] ?? -1));
+        $this->assertSame(0.0, (float) ($exactCustomerProps['summary']['total_debt'] ?? -1));
+        $this->assertSame(0.0, (float) ($exactCustomerProps['summary']['total_store_owes'] ?? -1));
+
+        $keywordCustomerProps = $this->pageProps(
+            $this->actingAs($this->user)
+                ->get('/customers?search=177621742868')
+                ->assertOk(),
+        );
+        $this->assertCount(0, $keywordCustomerProps['customers']['data'] ?? []);
+
+        $paginatedCustomerProps = $this->pageProps(
+            $this->actingAs($this->user)
+                ->get('/customers?keyword=NCC177621742868&page=2')
+                ->assertOk(),
+        );
+        $this->assertCount(0, $paginatedCustomerProps['customers']['data'] ?? []);
+        $this->assertSame(0, (int) ($paginatedCustomerProps['customers']['total'] ?? -1));
+
+        $export = $this->actingAs($this->user)
+            ->get('/customers/export?keyword=NCC177621742868')
+            ->assertOk();
+        $exportBody = $export->streamedContent() ?: $export->getContent();
+        $this->assertStringNotContainsString('NCC177621742868', $exportBody);
+
+        $this->actingAs($this->user)
+            ->getJson('/api/customers/search?search=NCC177621742868')
+            ->assertOk()
+            ->assertExactJson([]);
+
+        foreach ([
+            "/customers/{$supplier->id}/sales-history",
+            "/customers/{$supplier->id}/debt-history",
+            "/customers/{$supplier->id}/export-debt",
+            "/customers/{$supplier->id}/export-sales",
+            "/customers/{$supplier->id}/debt-voucher-detail?code={$purchase->code}",
+            "/customers/{$supplier->id}/outstanding-invoices",
+            "/customers/{$supplier->id}/debt-offset-history",
+            "/customers/{$supplier->id}/payment-discount-invoices",
+        ] as $customerEndpoint) {
+            $this->actingAs($this->user)->get($customerEndpoint)->assertNotFound();
+        }
+
+        $supplierProps = $this->pageProps(
+            $this->actingAs($this->user)
+                ->get('/suppliers?keyword=NCC177621742868')
+                ->assertOk(),
+        );
+        $supplierRows = collect($supplierProps['suppliers']['data'] ?? []);
+        $this->assertCount(1, $supplierRows);
+        $supplierRow = (array) $supplierRows->first();
+        $this->assertSame($supplier->id, (int) $supplierRow['id']);
+        $this->assertFalse((bool) $supplierRow['is_customer']);
+        $this->assertTrue((bool) $supplierRow['is_supplier']);
+        $this->assertFalse((bool) $supplierRow['is_dual_role']);
+        $this->assertSame(0.0, (float) $supplierRow['customer_screen_debt']);
+
+        $this->actingAs($this->user)
+            ->getJson("/api/suppliers/{$supplier->id}/debt-transactions")
+            ->assertOk()
+            ->assertJsonPath('orientation', 'supplier')
+            ->assertJsonPath('applicable', true);
+
+        $customerTimeline = app(CustomerDebtDocumentTimelineService::class)->build($supplier->fresh());
+        $supplierTimeline = app(SupplierDebtDocumentTimelineService::class)->build($supplier->fresh());
+        $role = PartnerDebtRoleResolver::integrity($supplier->fresh());
+
+        $this->assertFalse($customerTimeline['applicable']);
+        $this->assertSame(0, $customerTimeline['entry_count']);
+        $this->assertSame(0.0, (float) $customerTimeline['target_balance']);
+        $this->assertSame(0.0, (float) $customerTimeline['raw_final_balance']);
+        $this->assertTrue($supplierTimeline['applicable']);
+        $this->assertSame(6_800_000.0, (float) $supplierTimeline['raw_final_balance']);
+        $this->assertSame('supplier_only', $role['persisted_role']);
+        $this->assertNull($role['owner_confirmed_role']);
+        $this->assertNotContains('NCC177621742868', PartnerDebtRoleResolver::OWNER_CONFIRMED_DUAL_ROLE_CODES);
+    }
+
     private function partner(array $attributes = []): Customer
     {
         return Customer::create(array_merge([

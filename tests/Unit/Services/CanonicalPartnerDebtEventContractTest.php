@@ -332,7 +332,7 @@ class CanonicalPartnerDebtEventContractTest extends TestCase
         ], $events->pluck('event_identity')->all());
     }
 
-    public function test_runtime_role_uses_persisted_flags_and_reports_owner_confirmation_separately(): void
+    public function test_runtime_role_uses_persisted_flags_without_promoting_supplier_only_code(): void
     {
         $partner = new Customer;
         $partner->forceFill([
@@ -343,7 +343,9 @@ class CanonicalPartnerDebtEventContractTest extends TestCase
 
         $this->assertSame([false, true], PartnerDebtRoleResolver::sides($partner));
         $this->assertSame('supplier_only', PartnerDebtRoleResolver::role($partner));
-        $this->assertSame('OWNER_CONFIRMED_ROLE_MISMATCH', PartnerDebtRoleResolver::integrity($partner)['role_integrity_status']);
+        $integrity = PartnerDebtRoleResolver::integrity($partner);
+        $this->assertNull($integrity['owner_confirmed_role']);
+        $this->assertSame('OK', $integrity['role_integrity_status']);
     }
 
     private function service(): CanonicalPartnerDebtEventService

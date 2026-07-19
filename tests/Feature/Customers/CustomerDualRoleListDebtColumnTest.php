@@ -3,6 +3,8 @@
 namespace Tests\Feature\Customers;
 
 use App\Models\Customer;
+use App\Models\Invoice;
+use App\Models\Purchase;
 use App\Models\User;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
@@ -15,21 +17,38 @@ class CustomerDualRoleListDebtColumnTest extends TestCase
     {
         $admin = User::create([
             'name' => 'Admin Customer List Debt Column Test',
-            'email' => 'admin-customer-list-debt-' . uniqid() . '@test.local',
+            'email' => 'admin-customer-list-debt-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
             'role_id' => null,
         ]);
 
         $partner = Customer::create([
-            'code' => 'KH-LIST-COL-' . uniqid(),
+            'code' => 'KH-LIST-COL-'.uniqid(),
             'name' => 'Anh Thanh Thien Phu Customer Column',
             'debt_amount' => 47_400_000,
             'supplier_debt_amount' => 75_000_000,
             'is_customer' => true,
             'is_supplier' => true,
         ]);
+        Invoice::create([
+            'code' => 'HD-LIST-COL-'.uniqid(),
+            'customer_id' => $partner->id,
+            'status' => 'completed',
+            'total' => 47_400_000,
+            'customer_paid' => 0,
+            'transaction_date' => now(),
+        ]);
+        Purchase::create([
+            'code' => 'PN-LIST-COL-'.uniqid(),
+            'supplier_id' => $partner->id,
+            'status' => 'completed',
+            'total_amount' => 75_000_000,
+            'paid_amount' => 0,
+            'debt_amount' => 75_000_000,
+            'purchase_date' => now(),
+        ]);
 
-        $response = $this->actingAs($admin)->get('/customers?search=' . urlencode($partner->code));
+        $response = $this->actingAs($admin)->get('/customers?search='.urlencode($partner->code));
 
         $response->assertOk();
 

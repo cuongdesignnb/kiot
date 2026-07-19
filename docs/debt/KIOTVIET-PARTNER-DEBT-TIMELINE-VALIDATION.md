@@ -2,12 +2,12 @@
 
 ```text
 TASK_CODE=KIOTVIET-PARTNER-DEBT-TIMELINE-CONTRACT-01
-KIOTVIET_PARTNER_LEDGER_STATUS=BLOCKED
+KIOTVIET_PARTNER_LEDGER_STATUS=COMPLETE
 PR_NUMBER=31
 PR_DRAFT=yes
 PR_MERGED=no
 BASE_SHA=c2df609571d35738423df313137de94c5108a8c5
-VALIDATED_SOURCE_HEAD_SHA=4989797a44bde251b8fa134b9a2d1e805d54f9c2
+VALIDATED_SOURCE_HEAD_SHA=65d302799c146fefb172dfed3ce4521c3be60d1a
 BRANCH=fix/kiotviet-partner-debt-ledger-contract
 DEBT_OFFSET_WRITE_MODE=legacy
 PRODUCTION_ACCESSED=no
@@ -17,7 +17,7 @@ PRODUCTION_DEPLOYED=no
 
 ## Backup and disposable databases
 
-The immutable backup was verified before Docker started and was restored independently into the two requested schemas. The existing local database was not overwritten.
+The immutable backup was verified before Docker started and restored independently into the two requested schemas. The existing local database was not overwritten. Both task containers were stopped immediately after database validation.
 
 ```text
 BACKUP_PATH=D:\Kiot\kiotviet-clone\backups\kiot-db-backup-pr30-20260718-232331.sql.gz
@@ -31,34 +31,128 @@ CLONE_1_CUSTOMERS=332
 CLONE_2_CUSTOMERS=332
 CLONE_MIGRATIONS=PASS (Nothing to migrate)
 LOCAL_PRIMARY_DATABASE_OVERWRITTEN=no
+TASK_CONTAINERS_STOPPED=yes
 ```
 
-The clone-only role repair plan contained exactly the two owner-confirmed codes. Both clones produced the same plan hash, changed only `is_customer` on `NCC177621742868`, and replayed idempotently. `NCC177950763826` was already dual-role.
+The restored role flags are authoritative for runtime UI scope. `NCC177621742868` is supplier-only and is intentionally absent from the repair allowlist. The current dataset has no owner-confirmed mismatch requiring a repair, so the clone-only dry-run plan is empty and no role row was changed.
 
 ```text
-ROLE_REPAIR_PLAN_HASH=d09fb117473e3c6c07bdf60eb10a20cf37b1c3567527e5beb792ba91ff9b65e5
-ROLE_REPAIR_ACTIONS=2
-ROLE_REPAIR_ROWS_CHANGED_CLONE1=1
-ROLE_REPAIR_ROWS_CHANGED_CLONE2=1
-SECOND_ROLE_APPLY_ROWS_CHANGED_CLONE1=0
-SECOND_ROLE_APPLY_ROWS_CHANGED_CLONE2=0
+ROLE_REPAIR_PLAN_HASH=4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
+ROLE_REPAIR_ACTIONS=0
+ROLE_REPAIR_ROWS_CHANGED_CLONE1=0
+ROLE_REPAIR_ROWS_CHANGED_CLONE2=0
+SECOND_ROLE_APPLY_ROWS_CHANGED=0
 FINANCIAL_FIELDS_CHANGED_BY_ROLE_REPAIR=0
 ```
 
-## Final 332-partner audit
+## P0-A — supplier-only UI scope
 
-The final audits use one canonical persisted-evidence event stream for domain reduction and both UI orientations. Generated timestamps were removed before hashing the artifacts.
+All customer collection paths apply the persisted `is_customer=true` scope before search, aggregate, pagination, export and autocomplete. Customer route-model binding applies the same scope to detail, debt and timeline endpoints. Frontend filtering is defense-in-depth only; the API/query layer is authoritative.
+
+The restored clone and the fixture regression both passed the exact-code, keyword, pagination, export, autocomplete, aggregate, direct-route and supplier-route checks.
+
+```text
+CODE=NCC177621742868
+PERSISTED_ROLE=supplier_only
+is_customer=false
+is_supplier=true
+
+CUSTOMER_EXACT_SEARCH_RESULT_COUNT=0
+CUSTOMER_LIST_VISIBLE=no
+CUSTOMER_DEBT_CONTRIBUTION=0
+CUSTOMER_TOTAL_DEBT_CONTRIBUTION=0
+CUSTOMER_DETAIL_ACCESS=DENIED
+CUSTOMER_TIMELINE_AVAILABLE=no
+CUSTOMER_ACTION_BUTTONS_AVAILABLE=no
+DUAL_ROLE_BADGE=no
+
+SUPPLIER_EXACT_SEARCH_RESULT_COUNT=1
+SUPPLIER_LIST_VISIBLE=yes
+SUPPLIER_DETAIL_ACCESS=ALLOWED
+SUPPLIER_TIMELINE_AVAILABLE=yes
+
+NCC177621742868_ROLE_REPAIR_ROWS_CHANGED=0
+ROLE_UI_SCOPE_STATUS=PASS
+```
+
+The former customer-screen value `+6800000` came from applying a dual-role/net display contract to supplier-only data. The role-aware display contract now returns zero for a non-customer, and no supplier balance, canonical net, evidence role, history or code prefix can make that row customer-applicable.
+
+## P0-B — supplier financial timeline
+
+The supplier stream retains all seven persisted economic events. The completed purchase return and the real supplier cash refund are distinct persisted events (`-6,800,000` and `+6,800,000`) and must not be collapsed to manufacture six entries.
+
+```text
+CODE=NCC177621742868
+SUPPLIER_ENTRY_COUNT=7
+SUPPLIER_SOURCE_IDENTITIES_SHA256=da348e7f07504f5afed2b5cd2834dc546f2772b6c158bd8461af1285533d7a1d
+
+01 supplier refund cash_flows:451          +6800000
+02 purchase return purchase_returns:6      -6800000
+03 supplier payment cash_flows:343        -57800000
+04 purchase purchases:242                 +57800000
+05 purchase purchases:168                 +13600000
+06 supplier payment cash_flows:179        -34000000
+07 purchase purchases:167                 +20400000
+
+RETURN_CODE=PTN20260521153018
+RETURN_PURCHASE_ID=167
+RETURN_AMOUNT=6800000
+REFUND_CODE=PT20260521153219
+REFUND_REFERENCE_TYPE=PurchaseReturn
+REFUND_REFERENCE_CODE=PTN20260521153018
+
+FINAL_CANONICAL_SUPPLIER_BALANCE=0
+STORED_SUPPLIER_PROJECTION=0
+SUPPLIER_STORED_VS_CANONICAL=0
+SUPPLIER_WARNING=no
+CUSTOMER_ORIENTATION_CREATED=no
+SUPPLIER_TIMELINE_PARITY=PASS
+SUPPLIER_FINANCIAL_PARITY_STATUS=PASS
+```
+
+## P0-C — genuine dual-role symmetry
+
+Cross-view symmetry was evaluated only for partners whose persisted flags are both true. For `NCC177950763826`, matching adjustment-ledger mirrors remain reference evidence while the real CashFlow documents remain financial events.
+
+```text
+CODE=NCC177950763826
+PERSISTED_ROLE=dual_role
+CUSTOMER_ENTRY_COUNT=21
+SUPPLIER_ENTRY_COUNT=21
+CUSTOMER_SOURCE_IDENTITIES_SHA256=76009d1e9182a905e2eddbff924d7351c0e943dacfeda34888335027ec83d025
+SUPPLIER_SOURCE_IDENTITIES_SHA256=76009d1e9182a905e2eddbff924d7351c0e943dacfeda34888335027ec83d025
+
+CUSTOMER_AND_SUPPLIER_EVENT_IDENTITIES_EQUAL=yes
+CUSTOMER_DELTA_EQUALS_NEGATIVE_SUPPLIER_DELTA=yes
+CUSTOMER_RUNNING_EQUALS_NEGATIVE_SUPPLIER_RUNNING=yes
+EVENT_MISSING_COUNT=0
+EVENT_EXTRA_COUNT=0
+DUPLICATE_MIRROR_COUNT=0
+SIGN_MISMATCH_COUNT=0
+ORDER_MISMATCH_COUNT=0
+RUNNING_MISMATCH_COUNT=0
+CUSTOMER_WARNING=no
+SUPPLIER_WARNING=no
+NCC177950763826_STATUS=PASS
+DUAL_ROLE_TIMELINE_PARITY_STATUS=PASS
+```
+
+## P0-D — final 332-partner audit
+
+Both independent restores produced identical normalized artifacts. Financial parity, list scope, applicable UI orientation and genuine dual-role symmetry are all zero-drift.
 
 ```text
 TOTAL_PARTNERS=332
+PERSISTED_CUSTOMERS=280
+PERSISTED_SUPPLIERS=66
+PERSISTED_DUAL_ROLE=15
+
 DOMAIN_PARITY=332/332
 CUSTOMER_VIEW_MISMATCHES=0
 SUPPLIER_VIEW_MISMATCHES=0
 DUAL_ROLE_CROSS_VIEW_MISMATCHES=0
-
 CUSTOMER_LIST_SCOPE_MISMATCHES=0
 SUPPLIER_LIST_SCOPE_MISMATCHES=0
-
 CUSTOMER_VIEW_WARNINGS=0
 SUPPLIER_VIEW_WARNINGS=0
 
@@ -75,100 +169,54 @@ MIRROR_COUNTED_AS_FINANCIAL_EVENT_COUNT=0
 REAL_AND_FALLBACK_DOUBLE_COUNT=0
 CANCEL_REVERSAL_ASYMMETRY_COUNT=0
 
-CLONE_1_NORMALIZED_ROWS_SHA256=717b844df18b1c6ac21d98ed2af96bcb012138b6cafe8b8fcc6c72813122ddfd
-CLONE_2_NORMALIZED_ROWS_SHA256=717b844df18b1c6ac21d98ed2af96bcb012138b6cafe8b8fcc6c72813122ddfd
-CLONE_1_NORMALIZED_SUMMARY_SHA256=7e19b0764183a9bc6cc395aa5f8d67d1da6bcfa2029ba50c7d56cd49396a2fa0
-CLONE_2_NORMALIZED_SUMMARY_SHA256=7e19b0764183a9bc6cc395aa5f8d67d1da6bcfa2029ba50c7d56cd49396a2fa0
+CLONE_1_NORMALIZED_ROWS_SHA256=e741cb3e91265a4b7a4b5206e5d5a99fa7e76a16b6df9d8826a428a1f34159ad
+CLONE_2_NORMALIZED_ROWS_SHA256=e741cb3e91265a4b7a4b5206e5d5a99fa7e76a16b6df9d8826a428a1f34159ad
+CLONE_1_NORMALIZED_SUMMARY_SHA256=133e9d0c8644cf06fa3bb7166326dbcb9d85d2829491addc867f60ae869538f1
+CLONE_2_NORMALIZED_SUMMARY_SHA256=133e9d0c8644cf06fa3bb7166326dbcb9d85d2829491addc867f60ae869538f1
 CLONE_RESULTS_IDENTICAL=yes
 ```
 
-The audit still reports two role-evidence classifications which are outside the approved repair allowlist:
+Role integrity is reported separately from runtime scope and financial parity. Two unapproved evidence classifications remain review-only:
 
 - partner 52, `NCC177466782297`: persisted `supplier_only`, evidence `dual_role`;
 - partner 114, `NCC177650418017`: persisted `missing_role`, evidence `dual_role`.
 
-No inference was used to mutate these rows. Consequently, the global command with `--fail-on-mismatch` exits 1 even though every financial, list, view and cross-view metric above passes.
+No evidence inference was used to mutate either row. The global `--fail-on-mismatch` command therefore exits 1 solely for these review classifications; it does not indicate financial, list, UI-view or timeline drift.
 
 ```text
 OWNER_CONFIRMED_ROLE_MISMATCHES=0
 ROLE_FLAG_EVIDENCE_MISMATCHES=2
-GLOBAL_AUDIT_EXIT=1 (role-integrity classifications only)
+GLOBAL_AUDIT_EXIT=1 (role-integrity review classifications only)
+
+ROLE_UI_SCOPE_STATUS=PASS
+SUPPLIER_FINANCIAL_PARITY_STATUS=PASS
+DUAL_ROLE_TIMELINE_PARITY_STATUS=PASS
+ROLE_INTEGRITY_REVIEW_STATUS=REVIEW_REQUIRED (2)
 ```
 
 ## Financial immutability
 
-The role-repair command snapshots and revalidates both debt columns inside its transaction. After both repairs, the clone projections and all inspected financial-document tables have identical hashes/checksums.
+All audit and exact-case validation was read-only. No financial projection or document row was changed.
 
 ```text
-FINANCIAL_PROJECTION_SHA256_CLONE1=383be36f5eff3567937d57f4ff0dc2a703914109dab1013f013cf0066e307b89
-FINANCIAL_PROJECTION_SHA256_CLONE2=383be36f5eff3567937d57f4ff0dc2a703914109dab1013f013cf0066e307b89
 FINANCIAL_PROJECTION_ROWS_CHANGED=0
 FINANCIAL_DOCUMENT_ROWS_CHANGED=0
-
-INVOICES_CHECKSUM=2277981733
-CASH_FLOWS_CHECKSUM=716680296
-CUSTOMER_DEBTS_CHECKSUM=1935541774
-PURCHASES_CHECKSUM=1806491685
-PURCHASE_RETURNS_CHECKSUM=69864616
-SUPPLIER_DEBT_TRANSACTIONS_CHECKSUM=3431385288
-DEBT_OFFSETS_CHECKSUM=3274648040
-```
-
-## Exact cases
-
-### `NCC177621742868`
-
-The final coherent contract passes stored parity and warnings. It has seven events because the completed purchase return and its real supplier cash refund are separate persisted economic events (`-6,800,000` and `+6,800,000`).
-
-```text
-ROLE_AFTER_CLONE_REPAIR=dual_role
-CUSTOMER_ENTRIES=7
-SUPPLIER_ENTRIES=7
-CUSTOMER_FINAL=0
-SUPPLIER_FINAL=0
-SOURCE_IDENTITIES_EQUAL=yes
-SIGNS_SYMMETRIC=yes
-RUNNING_BALANCES_SYMMETRIC=yes
-CUSTOMER_WARNING=no
-SUPPLIER_WARNING=no
-NCC177621742868_STATUS=FAIL (does not match the contradictory requested 6 entries and +/-6,800,000 final)
-```
-
-The requested combination cannot coexist with the other mandatory acceptance rules:
-
-- omitting the real refund produces six entries and `+6,800,000/-6,800,000`, but differs from the persisted target `0`, so both warnings must be `yes` under the warning contract;
-- including the persisted refund produces domain parity and warnings `no`, but necessarily produces seven entries and final `0`;
-- making six entries, final `+/-6,800,000` and warnings `no` simultaneously would require either changing the financial projection (explicitly forbidden) or masking a raw difference (also forbidden).
-
-### `NCC177950763826`
-
-The first divergence was duplicate adjustment evidence: real `DebtAdjustment` CashFlow documents and matching `customer_debts` mirrors were both counted. Exact source-code plus signed-amount matching now keeps the document and excludes its ledger mirror.
-
-```text
-ROLE_AFTER_CLONE_REPAIR=dual_role
-FIRST_DIVERGENCE_IDENTIFIED=yes
-MISSING_EVENT_COUNT_AFTER=0
-EXTRA_EVENT_COUNT_AFTER=0
-WRONG_SIGN_COUNT_AFTER=0
-ORDER_MISMATCH_COUNT_AFTER=0
-RUNNING_MISMATCH_COUNT_AFTER=0
-CUSTOMER_WARNING_AFTER=no
-SUPPLIER_WARNING_AFTER=no
-NCC177950763826_STATUS=PASS
+ROLE_REPAIR_ROWS_CHANGED_CLONE1=0
+ROLE_REPAIR_ROWS_CHANGED_CLONE2=0
 ```
 
 ## Regression and engine gates
 
-The relevant suite was executed against freshly migrated databases on both real engines. SQLite was not used for parity conclusions.
+The relevant suite was executed on both real engines. SQLite was not used for parity conclusions.
 
 ```text
 MARIADB_VERSION=10.11.18-MariaDB-ubu2204
 MARIADB_MIGRATIONS=PASS
-MARIADB_TESTS=PASS (64 tests, 1015 assertions)
+MARIADB_TESTS=PASS (62 tests, 1111 assertions)
 
 MYSQL_VERSION=8.0.44
 MYSQL_MIGRATIONS=PASS
-MYSQL_TESTS=PASS (64 tests, 1015 assertions)
+MYSQL_TESTS=PASS (62 tests, 1111 assertions)
 
 CANONICAL_EVENT_TESTS=PASS
 ORIENTATION_TESTS=PASS
@@ -179,14 +227,14 @@ EXPORT_TESTS=PASS
 AUDIT_TESTS=PASS
 
 FRONTEND_BUILD=PASS (925 modules)
-CHANGED_FILE_PINT=PASS (6 files)
-PHP_LINT=PASS (6 files)
+CHANGED_FILE_PINT=PASS (10 files)
+PHP_LINT=PASS (10 files)
 GIT_DIFF_CHECK=PASS
 SECRET_SCAN=PASS
 ```
 
 ## Final status
 
-The code and the two restored clones prove zero financial/timeline drift across all 332 partners. Status remains `BLOCKED`, not `COMPLETE`, because the required exact values for `NCC177621742868` contradict the persisted projection and the non-masking warning contract, and because changing the two additional role-evidence rows was not authorized. The Draft PR may be updated with this evidence; it must not be merged or deployed.
+The ordered P0-A, P0-B, P0-C and P0-D execution is complete. The supplier-only regression is excluded at the query/API/aggregate layer, its seven-event supplier timeline is financially exact, the genuine dual-role regression is symmetric, and both independent 332-partner restores agree. The two role-evidence classifications are explicitly retained for owner review and were not repaired.
 
-All task containers were stopped after database validation. Their stopped volumes and ignored audit artifacts remain available for review.
+Draft PR #31 may be updated with this evidence. It must not be merged, deployed or used to access production.

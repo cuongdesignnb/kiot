@@ -99,7 +99,7 @@ cancelled evidence and reverses the exact stored side atomically.
 
 ## Role integrity
 
-Persisted role, evidence role and owner-confirmed role are separate facts. Runtime list/timeline applicability uses persisted role only. Evidence without its persisted flag produces `ROLE_FLAG_EVIDENCE_MISMATCH`; the two owner-confirmed codes produce `OWNER_CONFIRMED_ROLE_MISMATCH` until a clone-only approved role plan is applied.
+Persisted role, evidence role and owner-confirmed role are separate facts. Runtime list/timeline applicability uses persisted role only. Evidence without its persisted flag produces `ROLE_FLAG_EVIDENCE_MISMATCH`. The sole owner-confirmed dual-role code is `NCC177950763826`; `NCC177621742868` is persisted supplier-only and must never be role-repaired or exposed through a customer route.
 
 Role repair may change only `is_customer` and `is_supplier`, records an ActivityLog and is idempotent. It never changes debt projections or financial documents.
 

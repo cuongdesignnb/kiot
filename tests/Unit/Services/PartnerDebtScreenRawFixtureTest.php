@@ -30,7 +30,12 @@ class PartnerDebtScreenRawFixtureTest extends TestCase
 
         $this->assertSame((float) $fixture['customer'], $aliases['customer_receivable_balance']);
         $this->assertSame((float) $fixture['supplier'], $aliases['supplier_payable_balance']);
-        $this->assertSame((float) ($fixture['customer'] - $fixture['supplier']), $aliases['customer_screen_debt']);
+        $expectedCustomerScreen = ! $fixture['is_customer']
+            ? 0.0
+            : ($fixture['is_supplier']
+                ? (float) ($fixture['customer'] - $fixture['supplier'])
+                : (float) $fixture['customer']);
+        $this->assertSame($expectedCustomerScreen, $aliases['customer_screen_debt']);
         $expectedSupplierScreen = $fixture['is_customer'] && $fixture['is_supplier']
             ? (float) ($fixture['supplier'] - $fixture['customer'])
             : (float) $fixture['supplier'];

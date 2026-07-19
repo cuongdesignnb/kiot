@@ -21,6 +21,7 @@ const props = defineProps({
     filterOptions: { type: Object, default: () => ({}) },
     summary: Object,
 });
+const customerRows = computed(() => (props.customers?.data || []).filter((partner) => Boolean(partner.is_customer)));
 
 const page = usePage();
 const { can } = usePermission();
@@ -1623,7 +1624,7 @@ const createdDateRange = computed({
                             <td class="px-4 py-3 text-right text-gray-700">{{ formatCurrency(summary?.total_spent || 0) }}</td>
                             <td class="px-4 py-3 text-right text-gray-700">{{ formatCurrency((summary?.total_spent || 0) - (summary?.total_returns || 0)) }}</td>
                         </tr>
-                        <tr v-if="customers.data.length === 0">
+                        <tr v-if="customerRows.length === 0">
                             <td
                                 colspan="8"
                                 class="px-6 py-12 text-center text-gray-500"
@@ -1632,7 +1633,7 @@ const createdDateRange = computed({
                             </td>
                         </tr>
                         <template
-                            v-for="customer in customers.data"
+                            v-for="customer in customerRows"
                             :key="customer.id"
                         >
                             <!-- Main Row -->

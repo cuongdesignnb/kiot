@@ -15,7 +15,6 @@ use App\Models\SupplierDebtTransaction;
 class PartnerDebtRoleResolver
 {
     public const OWNER_CONFIRMED_DUAL_ROLE_CODES = [
-        'NCC177621742868',
         'NCC177950763826',
     ];
 
