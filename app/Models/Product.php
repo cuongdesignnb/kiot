@@ -2,12 +2,12 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Product extends Model
 {
@@ -53,8 +53,8 @@ class Product extends Model
         'retail_price' => 'decimal:2',
         'inventory_total_cost' => 'decimal:2',
         // Step 24.9
-        'warranty_months'      => 'integer',
-        'warranty_policies'    => 'array',
+        'warranty_months' => 'integer',
+        'warranty_policies' => 'array',
         'maintenance_policies' => 'array',
     ];
 
@@ -100,6 +100,11 @@ class Product extends Model
         return $this->hasMany(SerialImei::class);
     }
 
+    public function externalInventoryReservations(): HasMany
+    {
+        return $this->hasMany(ExternalInventoryReservation::class);
+    }
+
     public function isService(): bool
     {
         return $this->type === 'service';
@@ -107,7 +112,7 @@ class Product extends Model
 
     public function tracksInventory(): bool
     {
-        return !$this->isService();
+        return ! $this->isService();
     }
 
     public function canHaveSerial(): bool
@@ -124,7 +129,7 @@ class Product extends Model
         $earliestPurchaseDate = Purchase::whereHas('items', function ($q) {
             $q->where('product_id', $this->id);
         })->where('status', 'completed')
-          ->min('purchase_date');
+            ->min('purchase_date');
 
         if ($earliestPurchaseDate) {
             return Carbon::parse($earliestPurchaseDate);
@@ -148,7 +153,7 @@ class Product extends Model
      */
     public function recomputeFromSerials(): void
     {
-        if (!$this->has_serial || $this->isService()) {
+        if (! $this->has_serial || $this->isService()) {
             return;
         }
 

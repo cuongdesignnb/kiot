@@ -346,6 +346,15 @@ Route::prefix('media')->group(function () {
     Route::delete('/{media}', [\App\Http\Controllers\Api\MediaController::class, 'destroy']);
 });
 
+// Website PC integration v1 — all endpoints are feature-flagged and HMAC signed.
+Route::prefix('integrations/v1/pc')->middleware('pc.integration')->group(function () {
+    Route::get('/products', [\App\Http\Controllers\Api\Integrations\PcWebsite\ProductSyncController::class, 'index']);
+    Route::get('/products/{sku}', [\App\Http\Controllers\Api\Integrations\PcWebsite\ProductSyncController::class, 'show']);
+    Route::post('/orders', [\App\Http\Controllers\Api\Integrations\PcWebsite\ExternalOrderController::class, 'store']);
+    Route::get('/orders/{externalOrderId}', [\App\Http\Controllers\Api\Integrations\PcWebsite\ExternalOrderController::class, 'status']);
+    Route::post('/orders/{externalOrderId}/cancel', [\App\Http\Controllers\Api\Integrations\PcWebsite\ExternalOrderController::class, 'cancel']);
+});
+
 // 🏷️ PRODUCT ATTRIBUTES
 Route::prefix('product-attributes')->group(function () {
     Route::get('/', [\App\Http\Controllers\Api\ProductAttributeController::class, 'index']);

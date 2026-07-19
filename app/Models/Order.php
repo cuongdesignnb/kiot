@@ -11,10 +11,18 @@ class Order extends Model
 
     protected $guarded = ['id'];
 
+    protected $casts = [
+        'integration_received_at' => 'datetime',
+    ];
+
     const STATUS_DRAFT = 'draft';
+
     const STATUS_CONFIRMED = 'confirmed';
+
     const STATUS_COMPLETED = 'completed';
+
     const STATUS_CANCELLED = 'cancelled';
+
     const STATUS_ENDED = 'ended';
 
     public function items()
@@ -40,5 +48,10 @@ class Order extends Model
     public function invoice()
     {
         return $this->hasOne(Invoice::class);
+    }
+
+    public function externalInventoryReservations()
+    {
+        return $this->hasMany(ExternalInventoryReservation::class);
     }
 }
