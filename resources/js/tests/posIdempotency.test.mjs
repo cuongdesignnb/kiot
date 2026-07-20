@@ -5,6 +5,8 @@ import {
     POS_DRAFT_SCHEMA_VERSION,
     canonicalRequestFingerprint,
     getCheckoutAttemptKey,
+    normalizeSaleTabType,
+    removeCompletedSaleTab,
     resetSaleTabAfterSuccess,
     sanitizeSaleTabDraft,
 } from '../Pages/POS/posIdempotency.js';
@@ -59,6 +61,39 @@ test('separate tabs never share an attempt', () => {
     assert.equal(getCheckoutAttemptKey(secondTab, '/api/pos/checkout', { total: 1 }, { createKey: nextKey }), 'key-b');
 });
 
+test('click event passed by the add-tab button is normalized to a sale tab', () => {
+    assert.equal(normalizeSaleTabType({ isTrusted: true }), 'sale');
+    assert.equal(normalizeSaleTabType('sale'), 'sale');
+    assert.equal(normalizeSaleTabType('order'), 'order');
+    assert.equal(normalizeSaleTabType('return'), 'return');
+});
+
+test('completed background tab is removed without changing the active tab identity', () => {
+    const tabA = { id: 'a' };
+    const tabB = { id: 'b' };
+    const tabC = { id: 'c' };
+    const tabs = [tabA, tabB, tabC];
+
+    const nextActiveIndex = removeCompletedSaleTab(tabs, 1, tabA);
+
+    assert.deepEqual(tabs, [tabB, tabC]);
+    assert.equal(nextActiveIndex, 0);
+    assert.equal(tabs[nextActiveIndex], tabB);
+});
+
+test('completed active tab selects the adjacent tab deterministically', () => {
+    const tabA = { id: 'a' };
+    const tabB = { id: 'b' };
+    const tabC = { id: 'c' };
+    const tabs = [tabA, tabB, tabC];
+
+    const nextActiveIndex = removeCompletedSaleTab(tabs, 1, tabB);
+
+    assert.deepEqual(tabs, [tabA, tabC]);
+    assert.equal(nextActiveIndex, 1);
+    assert.equal(tabs[nextActiveIndex], tabC);
+});
+
 test('success reset clears attempt and transaction-specific state', () => {
     const tab = {
         type: 'sale',
@@ -95,6 +130,7 @@ test('success reset clears attempt and transaction-specific state', () => {
 
 test('legacy draft key is discarded without deleting user draft data', () => {
     const sanitized = sanitizeSaleTabDraft({
+        type: { isTrusted: false },
         cart: [{ product_id: 10 }],
         selectedCustomer: { id: 20 },
         idempotencyKey: 'stale-key',
@@ -102,6 +138,7 @@ test('legacy draft key is discarded without deleting user draft data', () => {
 
     assert.deepEqual(sanitized.cart, [{ product_id: 10 }]);
     assert.deepEqual(sanitized.selectedCustomer, { id: 20 });
+    assert.equal(sanitized.type, 'sale');
     assert.equal(sanitized.checkoutAttempt, null);
     assert.equal('idempotencyKey' in sanitized, false);
 });

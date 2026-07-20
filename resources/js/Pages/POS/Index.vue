@@ -13,6 +13,8 @@ import {
     clearCheckoutAttempt,
     emptyDeliveryState,
     getCheckoutAttemptKey,
+    normalizeSaleTabType,
+    removeCompletedSaleTab,
     resetSaleTabAfterSuccess,
     sanitizeSaleTabDraft,
 } from './posIdempotency.js';
@@ -139,7 +141,7 @@ let customerTimeout;
 
 // Tab management
 const addTab = (type = 'sale') => {
-    tabs.value.push(createNewTab(type));
+    tabs.value.push(createNewTab(normalizeSaleTabType(type)));
     activeTabIndex.value = tabs.value.length - 1;
 };
 const switchTab = (idx) => {
@@ -1092,7 +1094,11 @@ const resetAfterCheckout = (completedTab) => {
 
     resetSaleTabAfterSuccess(completedTab);
     if (tabs.value.length > 1) {
-        closeTab(completedTabIndex);
+        activeTabIndex.value = removeCompletedSaleTab(
+            tabs.value,
+            activeTabIndex.value,
+            completedTab,
+        );
     }
     saleDate.value = toDatetimeLocalValue(new Date());
     saveDraft();

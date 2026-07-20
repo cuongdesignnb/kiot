@@ -1,5 +1,9 @@
 export const POS_DRAFT_SCHEMA_VERSION = 2;
 
+export const normalizeSaleTabType = (type) => (
+    ['sale', 'order', 'return'].includes(type) ? type : 'sale'
+);
+
 const stableValue = (value) => {
     if (Array.isArray(value)) {
         return value.map(stableValue);
@@ -57,8 +61,29 @@ export const clearCheckoutAttempt = (tab) => {
     delete tab.idempotencyKey;
 };
 
+export const removeCompletedSaleTab = (tabs, activeTabIndex, completedTab) => {
+    const completedTabIndex = tabs.indexOf(completedTab);
+
+    if (completedTabIndex === -1 || tabs.length <= 1) {
+        return activeTabIndex;
+    }
+
+    const activeTab = tabs[activeTabIndex] ?? null;
+    tabs.splice(completedTabIndex, 1);
+
+    if (activeTab && activeTab !== completedTab) {
+        const preservedActiveIndex = tabs.indexOf(activeTab);
+        if (preservedActiveIndex !== -1) {
+            return preservedActiveIndex;
+        }
+    }
+
+    return Math.min(completedTabIndex, tabs.length - 1);
+};
+
 export const sanitizeSaleTabDraft = (tab, schemaVersion) => {
     const sanitized = { ...tab };
+    sanitized.type = normalizeSaleTabType(sanitized.type);
     const attempt = sanitized.checkoutAttempt;
     const canRestoreAttempt = schemaVersion === POS_DRAFT_SCHEMA_VERSION
         && attempt
