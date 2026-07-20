@@ -3,13 +3,14 @@
 ## Release metadata
 
 ```text
-STATUS=IMPLEMENTED_AND_AUTOMATED_TESTED
+STATUS=DRAFT_PR_OPEN
 REPOSITORY=cuongdesignnb/kiot
 BASE_BRANCH=production-customer-group
 BASE_SHA=0e68f13807aaa69b97e5c90b45b2131944b9c196
 WORK_BRANCH=hotfix/pos-idempotency-key-lifecycle
-DRAFT_PR=pending
-PR_URL=pending
+IMPLEMENTATION_COMMIT=436245377f91bf5e9c5036f9aa435c61bd588021
+DRAFT_PR=33
+PR_URL=https://github.com/cuongdesignnb/kiot/pull/33
 MIGRATION_CREATED=no
 BACKFILL_CREATED=no
 PRODUCTION_ACCESSED=no
