@@ -47,7 +47,7 @@ class PcProductSyncTest extends PcIntegrationTestCase
         )->assertOk()->assertJsonCount(0, 'data');
     }
 
-    public function test_inactive_deleted_and_service_products_are_hidden_by_default_but_return_as_tombstones(): void
+    public function test_inactive_and_deleted_products_return_as_tombstones_but_service_is_always_excluded(): void
     {
         $inactive = $this->makeProduct(['sku' => 'PC-INACTIVE', 'is_active' => false]);
         $deleted = $this->makeProduct(['sku' => 'PC-DELETED']);
@@ -67,7 +67,19 @@ class PcProductSyncTest extends PcIntegrationTestCase
         $mapped = collect($all->json('data'))->keyBy('sku');
         $this->assertSame('inactive', $mapped[$inactive->sku]['sync_status']);
         $this->assertSame('deleted', $mapped[$deleted->sku]['sync_status']);
-        $this->assertFalse($mapped[$service->sku]['sell_directly']);
+        $this->assertFalse($mapped->has($service->sku));
+
+        $updated = $this->getJson(
+            $basePath.'?updated_since='.urlencode(now()->subMinute()->toIso8601String()),
+            $this->signedHeaders('GET', $basePath),
+        );
+        $updated->assertOk();
+        $this->assertFalse(collect($updated->json('data'))->pluck('sku')->contains($service->sku));
+
+        $detailPath = $basePath.'/'.$service->sku;
+        $this->getJson($detailPath, $this->signedHeaders('GET', $detailPath))
+            ->assertNotFound()
+            ->assertJsonPath('error.code', 'UNKNOWN_SKU');
     }
 
     public function test_cursor_pagination_and_product_detail_by_sku(): void
@@ -86,5 +98,52 @@ class PcProductSyncTest extends PcIntegrationTestCase
         $detailPath = '/api/integrations/v1/pc/products/PC-CURSOR-1';
         $this->getJson($detailPath, $this->signedHeaders('GET', $detailPath))
             ->assertOk()->assertJsonPath('data.sku', 'PC-CURSOR-1');
+    }
+
+    public function test_cursor_is_stable_for_equal_timestamps_and_updated_since_is_inclusive(): void
+    {
+        $timestamp = now()->subMinute()->startOfSecond();
+        \App\Models\Product::withTrashed()->update(['updated_at' => $timestamp->copy()->subDays(2)]);
+        $beforeBoundary = $this->makeProduct(['sku' => 'PC-CURSOR-BEFORE-BOUNDARY']);
+        $products = collect(range(1, 3))->map(fn (int $number) => $this->makeProduct([
+            'sku' => 'PC-CURSOR-EQUAL-'.$number,
+        ]));
+        \App\Models\Product::withoutTimestamps(function () use ($beforeBoundary, $products, $timestamp): void {
+            $beforeBoundary->forceFill(['updated_at' => $timestamp->copy()->subSecond()])->save();
+            $products->each(fn ($product) => $product->forceFill(['updated_at' => $timestamp])->save());
+        });
+        $basePath = '/api/integrations/v1/pc/products';
+        $query = '?limit=2&updated_since='.urlencode($timestamp->toIso8601String());
+
+        $first = $this->getJson($basePath.$query, $this->signedHeaders('GET', $basePath));
+        $first->assertOk()->assertJsonCount(2, 'data')->assertJsonPath('meta.has_more', true);
+        $second = $this->getJson(
+            $basePath.$query.'&cursor='.urlencode((string) $first->json('meta.next_cursor')),
+            $this->signedHeaders('GET', $basePath),
+        );
+        $second->assertOk()->assertJsonPath('meta.has_more', false);
+        $this->assertCount(1, $second->json('data'), json_encode([
+            'first' => $first->json('data'),
+            'second' => $second->json('data'),
+        ], JSON_THROW_ON_ERROR));
+
+        $actualIds = collect($first->json('data'))->concat($second->json('data'))->pluck('id')->all();
+        $this->assertSame($products->pluck('id')->sort()->values()->all(), $actualIds);
+        $this->assertCount(3, array_unique($actualIds));
+    }
+
+    public function test_detail_accepts_url_encoded_exact_case_sku_and_rejects_wrong_case(): void
+    {
+        $product = $this->makeProduct(['sku' => 'PC+Encoded SKU']);
+        $path = '/api/integrations/v1/pc/products/'.rawurlencode($product->sku);
+
+        $this->getJson($path, $this->signedHeaders('GET', $path))
+            ->assertOk()
+            ->assertJsonPath('data.sku', $product->sku);
+
+        $wrongCasePath = '/api/integrations/v1/pc/products/'.rawurlencode(strtolower($product->sku));
+        $this->getJson($wrongCasePath, $this->signedHeaders('GET', $wrongCasePath))
+            ->assertNotFound()
+            ->assertJsonPath('error.code', 'UNKNOWN_SKU');
     }
 }

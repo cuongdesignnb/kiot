@@ -612,6 +612,7 @@ class OrderController extends Controller
                 $customer = $order->customer;
 
                 if ($order->external_source === PcOrderImportService::SOURCE) {
+                    app(LockPeriodService::class)->assertNotLocked(now(), 'pc_order_convert_to_invoice');
                     app(PcInventoryReservationService::class)->assertProcessable($order);
                 }
 

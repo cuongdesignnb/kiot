@@ -14,15 +14,16 @@ class PcProductSyncService
     {
         $limit = min(100, max(1, (int) ($filters['limit'] ?? 50)));
         $includeInactive = filter_var($filters['include_inactive'] ?? false, FILTER_VALIDATE_BOOL);
-        $updatedSince = ! empty($filters['updated_since']) ? Carbon::parse($filters['updated_since'])->utc() : null;
+        $updatedSince = ! empty($filters['updated_since'])
+            ? Carbon::parse($filters['updated_since'])->setTimezone((string) config('app.timezone', 'UTC'))
+            : null;
 
-        $query = Product::query();
+        $query = Product::query()->where('type', '!=', 'service');
         if ($includeInactive || $updatedSince) {
             $query->withTrashed();
         } else {
             $query->where('is_active', true)
-                ->where('sell_directly', true)
-                ->where('type', '!=', 'service');
+                ->where('sell_directly', true);
         }
 
         if (! empty($filters['sku'])) {
@@ -72,6 +73,7 @@ class PcProductSyncService
         $normalized = trim($sku);
         $matches = Product::withTrashed()
             ->where('sku', $normalized)
+            ->where('type', '!=', 'service')
             ->select([
                 'products.id', 'products.sku', 'products.barcode', 'products.name', 'products.type',
                 'products.retail_price', 'products.stock_quantity', 'products.has_serial',

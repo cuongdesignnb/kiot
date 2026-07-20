@@ -12,7 +12,9 @@ use App\Models\Order;
 use App\Models\SerialImei;
 use App\Models\StockMovement;
 use App\Models\User;
+use App\Services\LockPeriodService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class PcExternalOrderTest extends PcIntegrationTestCase
@@ -21,7 +23,18 @@ class PcExternalOrderTest extends PcIntegrationTestCase
     {
         $product = $this->makeProduct(['sku' => 'PC-ORDER-SUCCESS', 'stock_quantity' => 5]);
         $payload = $this->orderPayload($product, ['customer' => ['phone' => '+84 987 654 321']]);
-        $stockBefore = $product->stock_quantity;
+        $productBefore = $product->only(['stock_quantity', 'cost_price', 'inventory_total_cost']);
+        $forbiddenTables = [
+            'invoices',
+            'invoice_items',
+            'invoice_item_serials',
+            'cash_flows',
+            'stock_movements',
+            'customer_debts',
+            'warranties',
+        ];
+        $forbiddenCountsBefore = collect($forbiddenTables)
+            ->mapWithKeys(fn (string $table) => [$table => DB::table($table)->count()]);
 
         $response = $this->postSignedJson('/api/integrations/v1/pc/orders', $payload, 'idem-'.Str::uuid());
 
@@ -38,9 +51,42 @@ class PcExternalOrderTest extends PcIntegrationTestCase
         $this->assertDatabaseHas('external_inventory_reservations', [
             'order_id' => $order->id, 'product_id' => $product->id, 'quantity' => 1, 'status' => 'active',
         ]);
-        $this->assertSame((int) $stockBefore, (int) $product->fresh()->stock_quantity);
+        $this->assertSame($productBefore, $product->fresh()->only(array_keys($productBefore)));
         $this->assertSame(0, Invoice::where('order_id', $order->id)->count());
         $this->assertSame(0, CashFlow::where('reference_code', $order->code)->count());
+        $this->assertSame(0, StockMovement::where('product_id', $product->id)->count());
+        foreach ($forbiddenCountsBefore as $table => $countBefore) {
+            $this->assertSame($countBefore, DB::table($table)->count(), "Unexpected import side effect in {$table}.");
+        }
+    }
+
+    public function test_external_order_conversion_cannot_bypass_accounting_lock_period(): void
+    {
+        $product = $this->makeProduct(['sku' => 'PC-CONVERT-LOCKED', 'stock_quantity' => 3]);
+        $payload = $this->orderPayload($product);
+        $this->postSignedJson('/api/integrations/v1/pc/orders', $payload, 'idem-'.Str::uuid())->assertCreated();
+        $order = Order::where('external_order_id', $payload['external_order_id'])->firstOrFail();
+        $user = User::create([
+            'name' => 'PC Lock Period User',
+            'email' => Str::uuid().'@example.test',
+            'password' => bcrypt('password'),
+            'role_id' => null,
+        ]);
+        app(LockPeriodService::class)->setLockDate(now()->toDateString());
+        $this->actingAs($user);
+        $request = Request::create('/orders/'.$order->id.'/process', 'POST', [
+            'amount_paid' => 0,
+            'payment_method' => 'cash',
+        ], [], [], ['HTTP_ACCEPT' => 'application/json']);
+
+        $response = app(OrderController::class)->processOrder($request, $order);
+
+        $this->assertSame(422, $response->getStatusCode(), $response->getContent());
+        $this->assertStringContainsString('khóa sổ', (string) $response->getData(true)['message']);
+        $this->assertDatabaseMissing('invoices', ['order_id' => $order->id]);
+        $this->assertSame('confirmed', $order->fresh()->status);
+        $this->assertSame('active', $order->externalInventoryReservations()->firstOrFail()->status);
+        $this->assertSame(3, (int) $product->fresh()->stock_quantity);
         $this->assertSame(0, StockMovement::where('product_id', $product->id)->count());
     }
 
@@ -62,6 +108,32 @@ class PcExternalOrderTest extends PcIntegrationTestCase
         $this->assertSame('Tên đang dùng', $existing->fresh()->name);
         $this->assertSame('new-email@example.test', $existing->fresh()->email);
         $this->assertTrue((bool) $existing->fresh()->is_supplier);
+    }
+
+    public function test_customer_is_reused_by_lowercase_email_after_phone_miss(): void
+    {
+        $product = $this->makeProduct(['sku' => 'PC-CUSTOMER-EMAIL-REUSE']);
+        $existing = \App\Models\Customer::create([
+            'code' => 'KH-EMAIL-'.Str::random(8),
+            'name' => 'Khách email hiện có',
+            'phone' => '0987111111',
+            'email' => 'email-reuse@example.test',
+            'is_customer' => true,
+            'status' => 'active',
+        ]);
+        $payload = $this->orderPayload($product, [
+            'customer' => [
+                'name' => 'Tên website',
+                'phone' => '0987222222',
+                'email' => 'EMAIL-REUSE@EXAMPLE.TEST',
+            ],
+        ]);
+
+        $this->postSignedJson('/api/integrations/v1/pc/orders', $payload, 'idem-'.Str::uuid())->assertCreated();
+
+        $order = Order::where('external_order_id', $payload['external_order_id'])->firstOrFail();
+        $this->assertSame($existing->id, $order->customer_id);
+        $this->assertSame(1, \App\Models\Customer::whereRaw('LOWER(email) = ?', ['email-reuse@example.test'])->count());
     }
 
     public function test_duplicate_conflict_and_idempotency_conflict_contracts(): void
@@ -108,6 +180,52 @@ class PcExternalOrderTest extends PcIntegrationTestCase
 
         $this->assertSame(0, ExternalInventoryReservation::where('product_id', $product->id)->count());
         $this->assertGreaterThanOrEqual(3, IntegrationEvent::where('source', 'pc_website')->count());
+    }
+
+    public function test_each_money_region_over_one_cent_is_rejected_without_partial_order(): void
+    {
+        $product = $this->makeProduct(['sku' => 'PC-TOTAL-REGIONS', 'stock_quantity' => 10]);
+        $mutations = [
+            'line_total' => fn (array $payload) => array_replace_recursive($payload, ['items' => [0 => ['line_total' => 800000.02]]]),
+            'subtotal' => fn (array $payload) => array_replace_recursive($payload, ['totals' => ['subtotal' => 800000.02]]),
+            'shipping_between_regions' => fn (array $payload) => array_replace_recursive($payload, ['delivery' => ['shipping_fee' => 30000.02]]),
+            'final_total' => fn (array $payload) => array_replace_recursive($payload, ['totals' => ['total' => 830000.02]]),
+        ];
+
+        foreach ($mutations as $region => $mutate) {
+            $payload = $mutate($this->orderPayload($product));
+            $this->postSignedJson('/api/integrations/v1/pc/orders', $payload, 'idem-'.Str::uuid())
+                ->assertStatus(422)
+                ->assertJsonPath('error.code', 'ORDER_TOTAL_MISMATCH');
+            $this->assertDatabaseMissing('orders', [
+                'external_source' => 'pc_website',
+                'external_order_id' => $payload['external_order_id'],
+            ]);
+        }
+
+        $this->assertSame(0, ExternalInventoryReservation::where('product_id', $product->id)->count());
+    }
+
+    public function test_missing_idempotency_key_is_rejected_and_audited(): void
+    {
+        $product = $this->makeProduct(['sku' => 'PC-MISSING-IDEMPOTENCY']);
+        $payload = $this->orderPayload($product);
+        $path = '/api/integrations/v1/pc/orders';
+        $raw = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
+
+        $this->call(
+            'POST',
+            $path,
+            [],
+            [],
+            [],
+            $this->transformHeadersToServerVars($this->signedHeaders('POST', $path, $raw)),
+            $raw,
+        )->assertStatus(422)->assertJsonPath('error.code', 'INVALID_PAYLOAD');
+
+        $event = IntegrationEvent::where('event_id', $payload['event_id'])->firstOrFail();
+        $this->assertSame('INVALID_PAYLOAD', $event->last_error_code);
+        $this->assertDatabaseMissing('orders', ['external_order_id' => $payload['external_order_id']]);
     }
 
     public function test_authenticated_invalid_payload_is_audited_without_sensitive_fields(): void
@@ -210,6 +328,22 @@ class PcExternalOrderTest extends PcIntegrationTestCase
         $this->assertSame('cancelled', $order->status);
         $this->assertSame('released', $order->externalInventoryReservations()->first()->status);
         $this->assertSame($stockBefore, (int) $product->fresh()->stock_quantity);
+    }
+
+    public function test_status_response_does_not_expose_customer_payment_or_audit_payload(): void
+    {
+        $product = $this->makeProduct(['sku' => 'PC-STATUS-SAFE']);
+        $payload = $this->orderPayload($product);
+        $this->postSignedJson('/api/integrations/v1/pc/orders', $payload, 'idem-'.Str::uuid())->assertCreated();
+        $path = '/api/integrations/v1/pc/orders/'.$payload['external_order_id'];
+
+        $response = $this->getJson($path, $this->signedHeaders('GET', $path));
+
+        $response->assertOk();
+        $encoded = json_encode($response->json(), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+        foreach ([$payload['customer']['phone'], $payload['customer']['email'], 'payment', 'payload_hash', 'cost_price'] as $sensitive) {
+            $this->assertStringNotContainsString((string) $sensitive, $encoded);
+        }
     }
 
     public function test_cancel_rejects_internal_completed_and_invoiced_orders(): void
