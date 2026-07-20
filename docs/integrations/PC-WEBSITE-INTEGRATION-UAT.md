@@ -12,7 +12,7 @@
 
 - [ ] Client sai, signature sai, thiếu header trả lỗi JSON `401` và không trả stack trace.
 - [ ] Timestamp quá cũ và quá xa trong tương lai bị từ chối.
-- [ ] Gửi lại nonce trả `409 REPLAYED_NONCE`.
+- [ ] Hai request đồng thời cùng nonce cho đúng một request đi tiếp; request còn lại trả `409 REPLAYED_NONCE`.
 - [ ] Vượt rate limit trả `429 RATE_LIMITED` với thời gian retry.
 - [ ] Kiểm tra log không chứa secret, signature, raw header hoặc raw payload; không có phone/email rõ nếu log text có liên quan.
 - [ ] Mọi lỗi có schema `{success:false,error:{code,message,details}}`.
@@ -23,8 +23,10 @@
 - [ ] `limit` mặc định 50, giới hạn 100; đi hết nhiều cursor không thiếu/trùng `(updated_at,id)`.
 - [ ] Filter SKU giữ nguyên hoa/thường; SKU sai case không tự map.
 - [ ] `updated_since` trả cả inactive và tombstone đã xóa mềm.
+- [ ] `updated_since` đổi đúng timezone ứng dụng; record đúng biên được trả và record trước biên một giây bị loại.
 - [ ] `include_inactive=true` trả product inactive với `sync_status=inactive`.
 - [ ] Soft-deleted product trả `sync_status=deleted`.
+- [ ] Product service bị loại khỏi list/detail kể cả với `include_inactive` hoặc `updated_since`.
 - [ ] Active reservation làm giảm `available_quantity`; released/consumed/expired không làm giảm.
 - [ ] Product serial dùng đúng `products.stock_quantity` hiện hành.
 - [ ] Response không có `cost_price`, `last_purchase_price`, `inventory_total_cost` hoặc supplier data.
@@ -69,6 +71,7 @@
 - [ ] Thành công chuyển reservation active sang consumed trong cùng transaction.
 - [ ] Inject failure sau consume làm rollback Invoice, stock, StockMovement và giữ reservation active.
 - [ ] Không double CashFlow; payment metadata website không sinh dòng tiền.
+- [ ] External Order bị chặn khi chuyển Invoice trong kỳ khóa sổ; Invoice/stock/reservation rollback toàn bộ.
 - [ ] Order nội bộ hiện có vẫn đi qua costing, debt, serial và stock regression bình thường.
 
 ## Rollback và sign-off

@@ -71,7 +71,9 @@ $signature = hash_hmac('sha256', $canonical, $secret);
 
 ### Product list
 
-Query hỗ trợ `cursor`, `limit` (mặc định 50, tối đa 100), `updated_since`, `sku`, `include_inactive`. Cursor ổn định theo `(updated_at,id)`. Mặc định chỉ trả product active, `sell_directly`, không phải service và chưa xóa. `include_inactive=true` hoặc có `updated_since` bao gồm inactive và soft-deleted tombstone.
+Query hỗ trợ `cursor`, `limit` (mặc định 50, tối đa 100), `updated_since`, `sku`, `include_inactive`. Cursor ổn định theo `(updated_at,id)`. Mặc định chỉ trả product active, `sell_directly` và chưa xóa. `include_inactive=true` hoặc có `updated_since` bao gồm inactive và soft-deleted tombstone. Product `type=service` nằm ngoài V1 nên luôn bị loại khỏi list/detail, kể cả khi dùng `include_inactive` hoặc `updated_since`.
+
+`updated_since` nhận datetime có timezone và được đổi về timezone cấu hình của ứng dụng trước khi so với timestamp MySQL. Biên là inclusive (`updated_at >= updated_since`); cursor dùng ID làm tie-break khi nhiều Product có cùng `updated_at`.
 
 SKU chỉ được `trim`, không đổi hoa/thường. `available_quantity = max(0, stock_quantity - active reservations)`. Hàng Serial/IMEI tiếp tục dùng `products.stock_quantity`. Response không chứa cost, inventory total cost, supplier, mô tả marketing, ảnh hoặc category data.
 
@@ -176,6 +178,8 @@ php artisan integrations:expire-pc-reservations
 ```
 
 Reservation expired không cản xử lý Order: POS kiểm tra lại tồn khả dụng. Product service (`type=service`) nằm ngoài V1 và bị từ chối. Order serial được nhập với `serial_ids=null`; nhân viên phải chọn đủ Serial/IMEI ở POS. Chỉ sau khi toàn bộ Invoice transaction thành công reservation active mới thành consumed.
+
+Nhận Order external chỉ tạo phiếu tạm và reservation, không tạo chứng từ kế toán/kho nên không kiểm tra kỳ khóa sổ tại thời điểm import. Khi nhân viên chuyển external Order thành Invoice, transaction hiện tại phải qua `PartnerTransactionGuard`, customer-role/debt coordinator và `LockPeriodService` với context `pc_order_convert_to_invoice`; nếu kỳ hiện tại đã khóa thì toàn bộ Invoice/stock/reservation mutation rollback.
 
 ## Error response và mã lỗi
 
