@@ -114,7 +114,7 @@ jobs:
             echo "Credential-like value found in tracked files"
             exit 1
           fi
-          if grep -E 'Ãƒ|Ã„|Ã†|Ã¡|Ä|áº|á»|â‚¬|â€œ|â€|ðŸ|�' <<<"$added"; then
+          if grep -P '\x{00C3}\x{0192}|\x{00C3}\x{201E}|\x{00C3}\x{2020}|\x{00C3}\x{00A1}|\x{00C4}\x{0090}|\x{00E1}\x{00BA}|\x{00E1}\x{00BB}|\x{00E2}\x{201A}\x{00AC}|\x{00E2}\x{20AC}\x{0153}|\x{00F0}\x{0178}|\x{FFFD}' <<<"$added"; then
             echo "Possible mojibake found"
             exit 1
           fi
