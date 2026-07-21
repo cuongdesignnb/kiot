@@ -4,6 +4,9 @@ on:
   pull_request:
     branches:
       - production-customer-group
+  push:
+    branches:
+      - integration/pc-products-orders-v1
   workflow_dispatch:
 
 permissions:
