@@ -15,6 +15,7 @@ use App\Services\SerialAvailabilityService;
 use App\Support\Customers\CustomerGroupSnapshot;
 use App\Support\Reports\SellerResolver;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 
 class PosController extends Controller
@@ -263,7 +264,15 @@ class PosController extends Controller
                 'invoice_code' => $invoice->code,
                 'message' => 'Thanh toán thành công!',
             ]);
-        } catch (\Illuminate\Validation\ValidationException $e) {
+        } catch (ValidationException $e) {
+            if (array_key_exists('idempotency_key', $e->errors())) {
+                return response()->json([
+                    'success' => false,
+                    'code' => 'POS_IDEMPOTENCY_PAYLOAD_MISMATCH',
+                    'message' => 'Phiên thanh toán cũ không còn khớp với nội dung hiện tại. Hệ thống đã làm mới phiên; vui lòng kiểm tra và bấm Thanh toán lại.',
+                ], 409);
+            }
+
             throw $e;
         } catch (\Exception $e) {
             \Illuminate\Support\Facades\Log::error('POS Checkout Error', [

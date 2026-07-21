@@ -8,6 +8,16 @@ import QuickCreateProductModal from '@/Components/QuickCreateProductModal.vue';
 import DateTimePicker from '@/Components/DateTimePicker.vue';
 import MoneyInput from '@/Components/MoneyInput.vue';
 import { toDatetimeLocalValue } from '@/utils/dateTime.js';
+import {
+    POS_DRAFT_SCHEMA_VERSION,
+    clearCheckoutAttempt,
+    emptyDeliveryState,
+    getCheckoutAttemptKey,
+    normalizeSaleTabType,
+    removeCompletedSaleTab,
+    resetSaleTabAfterSuccess,
+    sanitizeSaleTabDraft,
+} from './posIdempotency.js';
 
 const props = defineProps({
     employees: Array,
@@ -69,7 +79,7 @@ const createNewTab = (type = 'sale') => ({
     selectedCustomer: null,
     customerQuery: '',
     note: '',                        // 24.6C: per-tab invoice/order note
-    idempotencyKey: '',
+    checkoutAttempt: null,
     saleMode: type === 'order' ? 'quick_order' : 'normal',
     returnState: type === 'return' ? emptyReturnState() : null,
     // POS order process extensions
@@ -78,22 +88,7 @@ const createNewTab = (type = 'sale') => ({
     source_order_code: '',
     orderDepositAmount: 0,
     orderPaymentSummary: null,
-    delivery: {
-        is_delivery: false,
-        delivery_mode: 'none',       // 'none' | 'self' | 'partner'
-        delivery_partner: '',
-        tracking_code: '',
-        delivery_fee: 0,
-        cod_amount: 0,
-        receiver_name: '',
-        receiver_phone: '',
-        receiver_address: '',
-        receiver_ward: '',
-        receiver_district: '',
-        receiver_city: '',
-        weight: 0,
-        delivery_note: '',
-    }
+    delivery: emptyDeliveryState(),
 });
 
 const tabs = ref([createNewTab('sale')]);
@@ -146,7 +141,7 @@ let customerTimeout;
 
 // Tab management
 const addTab = (type = 'sale') => {
-    tabs.value.push(createNewTab(type));
+    tabs.value.push(createNewTab(normalizeSaleTabType(type)));
     activeTabIndex.value = tabs.value.length - 1;
 };
 const switchTab = (idx) => {
@@ -571,6 +566,7 @@ const DRAFT_KEY = 'kiotviet_pos_tabs';
 
 const saveDraft = () => {
     const data = {
+        schemaVersion: POS_DRAFT_SCHEMA_VERSION,
         tabs: tabs.value,
         activeTabIndex: activeTabIndex.value,
         selectedSellerKey: selectedSellerKey.value,
@@ -586,17 +582,21 @@ const loadDraft = () => {
             const data = JSON.parse(raw);
             if (data.tabs && data.tabs.length > 0) {
                 tabIdCounter = Math.max(...data.tabs.map(t => t.id || 0)) + 1;
-                tabs.value = data.tabs.map(tab => ({
-                    ...createNewTab(),
-                    ...tab,
-                    cart: (tab.cart || []).map(i => {
-                        i.quantityInput = String(i.quantity ?? '');
-                        if (i.is_serial_product) {
-                            return { ...i, showSerialDropdown: false, serialLoading: false, availableSerials: i.allAvailableSerials || [] };
-                        }
-                        return i;
-                    })
-                }));
+                tabs.value = data.tabs.map(tab => {
+                    const sanitizedTab = sanitizeSaleTabDraft(tab, data.schemaVersion);
+
+                    return {
+                        ...createNewTab(sanitizedTab.type || 'sale'),
+                        ...sanitizedTab,
+                        cart: (sanitizedTab.cart || []).map(i => {
+                            i.quantityInput = String(i.quantity ?? '');
+                            if (i.is_serial_product) {
+                                return { ...i, showSerialDropdown: false, serialLoading: false, availableSerials: i.allAvailableSerials || [] };
+                            }
+                            return i;
+                        })
+                    };
+                });
                 activeTabIndex.value = Math.min(data.activeTabIndex || 0, tabs.value.length - 1);
             }
             // HOTFIX 24.33 — prefer new seller_key draft; fall back to legacy
@@ -615,6 +615,10 @@ const loadDraft = () => {
                     if (item.is_serial_product) loadSerialsForProduct(item);
                 });
             });
+
+            // Persist the sanitized schema immediately so stale legacy keys do
+            // not survive another refresh before the first user edit.
+            saveDraft();
         }
     } catch(e) {
         console.warn('Failed to load POS tabs', e);
@@ -935,8 +939,7 @@ const processCheckout = async () => {
         return;
     }
 
-    activeTab.value.idempotencyKey ||= crypto.randomUUID();
-    const idempotencyKey = activeTab.value.idempotencyKey;
+    const checkoutTab = activeTab.value;
     isCheckingOut.value = true;
 
     try {
@@ -985,13 +988,17 @@ const processCheckout = async () => {
                 }))
             };
 
+            const processEndpoint = `/orders/${checkoutTab.source_order_id}/process`;
+            const idempotencyKey = getCheckoutAttemptKey(checkoutTab, processEndpoint, processPayload);
+            saveDraft();
+
             const response = await axios.post(
-                `/orders/${activeTab.value.source_order_id}/process`,
+                processEndpoint,
                 processPayload,
                 { headers: { "Idempotency-Key": idempotencyKey } },
             );
             if (response.data.success) {
-                handleCheckoutSuccess(response.data.message);
+                handleCheckoutSuccess(response.data.message, checkoutTab);
             } else {
                 alert("Lỗi: " + response.data.message);
             }
@@ -1016,9 +1023,13 @@ const processCheckout = async () => {
                 }))
             };
 
+            getCheckoutAttemptKey(checkoutTab, '/api/pos/quick-order', orderPayload, {
+                usesIdempotency: false,
+            });
+
             const response = await axios.post('/api/pos/quick-order', orderPayload);
             if (response.data.success) {
-                handleCheckoutSuccess(response.data.message);
+                handleCheckoutSuccess(response.data.message, checkoutTab);
             } else {
                 alert("Lỗi: " + response.data.message);
             }
@@ -1047,19 +1058,29 @@ const processCheckout = async () => {
             }))
         };
 
+        const checkoutEndpoint = '/api/pos/checkout';
+        const idempotencyKey = getCheckoutAttemptKey(checkoutTab, checkoutEndpoint, payload);
+        saveDraft();
+
         const response = await axios.post(
-            '/api/pos/checkout',
+            checkoutEndpoint,
             payload,
             { headers: { "Idempotency-Key": idempotencyKey } },
         );
         
         if (response.data.success) {
-            handleCheckoutSuccess(`${response.data.message} - Phiếu ${response.data.invoice_code}`);
+            handleCheckoutSuccess(`${response.data.message} - Phiếu ${response.data.invoice_code}`, checkoutTab);
         } else {
             alert("Lỗi: " + response.data.message);
         }
     } catch(err) {
         console.error("Checkout Error:", err);
+        if (err.response?.data?.code === 'POS_IDEMPOTENCY_PAYLOAD_MISMATCH') {
+            clearCheckoutAttempt(checkoutTab);
+            saveDraft();
+            alert(err.response.data.message);
+            return;
+        }
         const msg = err.response?.data?.message || err.message || "Lỗi khi kết nối tới máy chủ.";
         alert("Lỗi: " + msg);
     } finally {
@@ -1067,31 +1088,29 @@ const processCheckout = async () => {
     }
 };
 
-const resetAfterCheckout = () => {
+const resetAfterCheckout = (completedTab) => {
+    const completedTabIndex = tabs.value.indexOf(completedTab);
+    if (completedTabIndex === -1) return;
+
+    resetSaleTabAfterSuccess(completedTab);
     if (tabs.value.length > 1) {
-        closeTab(activeTabIndex.value);
-    } else {
-        const t = activeTab.value;
-        t.cart = [];
-        t.discount = 0;
-        t.customerPaid = 0;
-        t.paymentMethod = 'cash';
-        t.bankAccountInfo = '';
-        t.selectedCustomer = null;
-        t.customerQuery = '';
-        t.note = '';
+        activeTabIndex.value = removeCompletedSaleTab(
+            tabs.value,
+            activeTabIndex.value,
+            completedTab,
+        );
     }
     saleDate.value = toDatetimeLocalValue(new Date());
     saveDraft();
     searchProducts();
 };
 
-const handleCheckoutSuccess = (message) => {
+const handleCheckoutSuccess = (message, completedTab) => {
     toastMsg.value = message;
     setTimeout(() => toastMsg.value = '', 4000);
 
     try {
-        resetAfterCheckout();
+        resetAfterCheckout(completedTab);
     } catch (error) {
         console.error('POS reset after successful checkout failed:', error);
     }
