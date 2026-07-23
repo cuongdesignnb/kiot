@@ -24,4 +24,9 @@ class OrderItem extends Model
     {
         return $this->belongsTo(Product::class);
     }
+
+    public function externalInventoryReservations()
+    {
+        return $this->hasMany(ExternalInventoryReservation::class);
+    }
 }

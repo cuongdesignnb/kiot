@@ -1,0 +1,124 @@
+name: PC integration gate
+
+on:
+  pull_request:
+    branches:
+      - production-customer-group
+  push:
+    branches:
+      - integration/pc-products-orders-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pc-integration-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  provider:
+    name: Provider contract and POS regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: sales_test
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      APP_ENV: testing
+      APP_KEY: base64:qUGGmND6tGLuPD2LSLQbo4V8K8q/bFdhALKRVUVD8No=
+      APP_TIMEZONE: Asia/Ho_Chi_Minh
+      CACHE_STORE: array
+      DB_CONNECTION: mysql
+      DB_DATABASE: sales_test
+      DB_HOST: 127.0.0.1
+      DB_PASSWORD: root
+      DB_PORT: 3306
+      DB_USERNAME: root
+      MAIL_MAILER: array
+      QUEUE_CONNECTION: sync
+      SESSION_DRIVER: array
+      PC_INTEGRATION_ENABLED: "false"
+
+    steps:
+      - name: Check out tested head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: mbstring, pdo_mysql
+          coverage: none
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          composer install --no-interaction --prefer-dist --no-progress
+          npm ci
+
+      - name: Prepare and migrate database
+        run: |
+          php artisan optimize:clear
+          php artisan migrate:fresh --env=testing --force
+
+      - name: Verify provider contract
+        run: php artisan test --filter=PcIntegration
+
+      - name: Verify Order and POS conversion
+        run: php artisan test tests/Feature/Orders/ProcessOrderViaPosTest.php tests/Feature/POS/PosCheckoutIdempotencyTest.php
+
+      - name: Verify migration rollback and re-apply
+        run: |
+          php artisan migrate:rollback --env=testing --force --step=3
+          php artisan migrate --env=testing --force
+
+      - name: Verify changed PHP style and syntax
+        shell: bash
+        run: |
+          git fetch --no-tags origin production-customer-group
+          mapfile -t files < <(git diff --name-only origin/production-customer-group...HEAD -- '*.php')
+          test "${#files[@]}" -gt 0
+          php vendor/bin/pint --test "${files[@]}"
+          for file in "${files[@]}"; do php -l "$file"; done
+
+      - name: Build frontend
+        run: |
+          node --test resources/js/tests/posIdempotency.test.mjs
+          npm run build
+
+      - name: Scan tracked source
+        shell: bash
+        run: |
+          added="$(git diff --unified=0 origin/production-customer-group...HEAD -- app config database routes scripts tests resources/js docs/integrations | sed -n '/^+/p' | sed '/^+++/d')"
+          if grep -P '(?<![A-Za-z0-9_-])(dd|dump|var_dump|ray)\s*\(' <<<"$added"; then
+            echo "Debug helper found in tracked source"
+            exit 1
+          fi
+          if grep -E 'AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,}|sk-[A-Za-z0-9]{20,}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----' <<<"$added"; then
+            echo "Credential-like value found in tracked files"
+            exit 1
+          fi
+          if grep -P '\x{00C3}\x{0192}|\x{00C3}\x{201E}|\x{00C3}\x{2020}|\x{00C3}\x{00A1}|\x{00C4}\x{0090}|\x{00E1}\x{00BA}|\x{00E1}\x{00BB}|\x{00E2}\x{201A}\x{00AC}|\x{00E2}\x{20AC}\x{0153}|\x{00F0}\x{0178}|\x{FFFD}' <<<"$added"; then
+            echo "Possible mojibake found"
+            exit 1
+          fi
+          git diff --check origin/production-customer-group...HEAD

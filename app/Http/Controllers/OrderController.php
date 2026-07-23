@@ -14,6 +14,8 @@ use App\Models\Product;
 use App\Models\SerialImei;
 use App\Models\Setting;
 use App\Services\CustomerDebtService;
+use App\Services\Integrations\PcWebsite\PcInventoryReservationService;
+use App\Services\Integrations\PcWebsite\PcOrderImportService;
 use App\Services\LockPeriodService;
 use App\Services\MovingAvgCostingService;
 use App\Services\OrderPaymentSummaryService;
@@ -365,6 +367,24 @@ class OrderController extends Controller
             'customer_id'
         );
 
+        // External orders release their reservation atomically when staff cancel from KIOT UI.
+        if (($validated['status'] ?? null) === Order::STATUS_CANCELLED) {
+            \Illuminate\Support\Facades\DB::transaction(function () use ($order) {
+                $lockedOrder = Order::query()->lockForUpdate()->findOrFail($order->id);
+                if (in_array($lockedOrder->status, [Order::STATUS_COMPLETED, Order::STATUS_CANCELLED], true)) {
+                    return;
+                }
+                $lockedOrder->update(['status' => Order::STATUS_CANCELLED]);
+                if ($lockedOrder->external_source === PcOrderImportService::SOURCE) {
+                    app(PcInventoryReservationService::class)->releaseForOrder($lockedOrder, 'kiot_ui_cancel');
+                }
+            });
+
+            ActivityLog::log('order_cancel', "Hủy đơn hàng {$order->code}", $order->fresh());
+
+            return back()->with('success', 'Đã hủy đơn hàng.');
+        }
+
         // Update items if provided
         if ($request->has('items')) {
             // Step 22.2G: pre-flight serial validation TRƯỚC khi xoá items cũ.
@@ -590,6 +610,12 @@ class OrderController extends Controller
 
                 $order->load('items.product', 'customer');
                 $customer = $order->customer;
+
+                if ($order->external_source === PcOrderImportService::SOURCE) {
+                    app(LockPeriodService::class)->assertNotLocked(now(), 'pc_order_convert_to_invoice');
+                    app(PcInventoryReservationService::class)->assertProcessable($order);
+                }
+
                 $newPayment = $validated['amount_paid']; // Additional payment at conversion
                 $priorDeposit = max(0.0, (float) ($order->amount_paid ?? 0));
                 $totalPaid = $priorDeposit + $newPayment;
@@ -600,6 +626,7 @@ class OrderController extends Controller
                 $invoiceData = [
                     'code' => 'HD'.time().rand(10, 99),
                     'order_id' => $order->id,
+                    'branch_id' => $order->branch_id,
                     'subtotal' => $order->total_price,
                     'discount' => $order->discount,
                     'total' => $order->total_payment,
@@ -682,6 +709,9 @@ class OrderController extends Controller
                             throw new \Exception(
                                 "Sản phẩm '{$product->name}': Serial/IMEI không khả dụng (id: ".implode(', ', $blocked).').'
                             );
+                        }
+                        if ($order->external_source === PcOrderImportService::SOURCE) {
+                            $orderItem->update(['serial_ids' => $serialIds]);
                         }
                     } elseif (! $allowOversell && $product->stock_quantity < $qty) {
                         throw new \Exception(
@@ -806,6 +836,9 @@ class OrderController extends Controller
                 }
 
                 $order->update($orderUpdateData);
+                if ($order->external_source === PcOrderImportService::SOURCE) {
+                    app(PcInventoryReservationService::class)->consumeForOrder($order);
+                }
                 app(\App\Services\Debt\PartnerDebtMutationCoordinator::class)->checkpoint('projection');
 
                 // 7) STEP 23.7B: Auto-generate warranty records (in-transaction → rollback-safe)
@@ -873,10 +906,16 @@ class OrderController extends Controller
             return back()->with('error', 'Đơn hàng đã bị hủy trước đó.');
         }
 
-        $order->update([
-            'status' => 'cancelled',
-            'note' => ($order->note ? $order->note.' | ' : '').'Hủy: '.($request->reason ?? ''),
-        ]);
+        \Illuminate\Support\Facades\DB::transaction(function () use ($request, $order) {
+            $order = Order::query()->lockForUpdate()->findOrFail($order->id);
+            $order->update([
+                'status' => 'cancelled',
+                'note' => ($order->note ? $order->note.' | ' : '').'Hủy: '.($request->reason ?? ''),
+            ]);
+            if ($order->external_source === PcOrderImportService::SOURCE) {
+                app(PcInventoryReservationService::class)->releaseForOrder($order, 'kiot_cancel_action');
+            }
+        });
 
         ActivityLog::log('order_cancel', "Hủy đơn hàng {$order->code}", $order);
 
@@ -892,10 +931,16 @@ class OrderController extends Controller
             return back()->with('error', 'Đơn hàng không ở trạng thái có thể kết thúc.');
         }
 
-        $order->update([
-            'status' => 'ended',
-            'note' => ($order->note ? $order->note.' | ' : '').'Kết thúc: '.($request->reason ?? ''),
-        ]);
+        \Illuminate\Support\Facades\DB::transaction(function () use ($request, $order) {
+            $order = Order::query()->lockForUpdate()->findOrFail($order->id);
+            $order->update([
+                'status' => 'ended',
+                'note' => ($order->note ? $order->note.' | ' : '').'Kết thúc: '.($request->reason ?? ''),
+            ]);
+            if ($order->external_source === PcOrderImportService::SOURCE) {
+                app(PcInventoryReservationService::class)->releaseForOrder($order, 'kiot_order_ended');
+            }
+        });
 
         ActivityLog::log('order_end', "Kết thúc đơn hàng {$order->code}", $order);
 
@@ -913,6 +958,10 @@ class OrderController extends Controller
         ]);
 
         $orders = Order::with('items')->whereIn('id', $request->order_ids)->get();
+
+        if ($orders->contains(fn (Order $order) => $order->external_source === PcOrderImportService::SOURCE)) {
+            return back()->with('error', 'Không thể gộp đơn hàng được đồng bộ từ Website PC.');
+        }
 
         // Validate compatibility
         $customers = $orders->pluck('customer_id')->unique();
