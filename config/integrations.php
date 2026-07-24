@@ -2,6 +2,7 @@
 
 return [
     'pc_website' => [
+        'management_ui_enabled' => env('PC_INTEGRATION_MANAGEMENT_UI_ENABLED', false),
         'enabled' => env('PC_INTEGRATION_ENABLED', false),
         'client_id' => env('PC_INTEGRATION_CLIENT_ID'),
         'secret' => env('PC_INTEGRATION_SECRET'),
@@ -11,5 +12,8 @@ return [
         'nonce_ttl_seconds' => (int) env('PC_INTEGRATION_NONCE_TTL', 600),
         'rate_limit_per_minute' => (int) env('PC_INTEGRATION_RATE_LIMIT', 60),
         'reservation_ttl_minutes' => (int) env('PC_INTEGRATION_RESERVATION_TTL', 1440),
+        'pairing_ttl_seconds' => (int) env('PC_INTEGRATION_PAIRING_TTL', 600),
+        'pairing_max_attempts' => (int) env('PC_INTEGRATION_PAIRING_MAX_ATTEMPTS', 5),
+        'secret_rotation_grace_seconds' => (int) env('PC_INTEGRATION_SECRET_ROTATION_GRACE', 900),
     ],
 ];

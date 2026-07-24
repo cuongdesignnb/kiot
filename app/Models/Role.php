@@ -302,6 +302,10 @@ class Role extends Model
                     ],
                     'Hệ thống' => [
                         'system.audit.view' => 'Xem nhật ký hoạt động (Step 24.0B)',
+                        'integrations.view' => 'Xem cấu hình tích hợp',
+                        'integrations.manage' => 'Quản lý kết nối tích hợp',
+                        'integrations.rotate-secret' => 'Xoay vòng secret tích hợp',
+                        'integrations.sync' => 'Chạy đồng bộ tích hợp',
                     ],
                 ],
             ],
