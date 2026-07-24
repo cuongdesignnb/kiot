@@ -11,7 +11,7 @@ class PcIntegrationCredentialResolver
     public function hasDatabaseConfiguration(): bool
     {
         return Schema::hasTable('integration_clients')
-            && IntegrationClient::query()
+            && IntegrationClient::withTrashed()
                 ->where('provider', IntegrationClient::PROVIDER_PC_WEBSITE)
                 ->exists();
     }

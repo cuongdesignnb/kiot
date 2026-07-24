@@ -7,6 +7,8 @@ use App\Models\Branch;
 use App\Models\IntegrationClient;
 use App\Models\Role;
 use App\Models\User;
+use App\Services\Integrations\PcWebsite\PcIntegrationCredentialResolver;
+use App\Services\Integrations\PcWebsite\PcIntegrationSignatureService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -127,6 +129,64 @@ class PcIntegrationManagementTest extends TestCase
             ->postJson('/settings/integrations/website-pc/import-environment')
             ->assertStatus(409)
             ->assertJsonPath('error.code', 'DATABASE_CONFIGURATION_EXISTS');
+    }
+
+    public function test_soft_deleted_database_client_blocks_environment_fallback_and_old_credentials(): void
+    {
+        $environmentClientId = 'environment-fallback-client';
+        $environmentSecret = 'environment-fallback-secret-with-sufficient-entropy';
+        config()->set('integrations.pc_website', array_merge(config('integrations.pc_website'), [
+            'enabled' => true,
+            'client_id' => $environmentClientId,
+            'secret' => $environmentSecret,
+            'default_branch_id' => $this->branch->id,
+        ]));
+
+        $deletedSecret = 'soft-deleted-client-secret-with-sufficient-entropy';
+        $deletedClient = IntegrationClient::create([
+            'name' => 'Soft-deleted Website PC',
+            'provider' => IntegrationClient::PROVIDER_PC_WEBSITE,
+            'client_id' => 'soft-deleted-client',
+            'secret_encrypted' => $deletedSecret,
+            'secret_fingerprint' => substr(hash('sha256', $deletedSecret), 0, 8),
+            'website_url' => 'https://deleted.example.test',
+            'default_branch_id' => $this->branch->id,
+            'sales_channel' => 'Website PC',
+            'is_enabled' => true,
+            'timestamp_tolerance_seconds' => 300,
+            'nonce_ttl_seconds' => 600,
+            'rate_limit_per_minute' => 60,
+            'reservation_ttl_minutes' => 1440,
+            'api_version' => 'v1',
+            'secret_created_at' => now(),
+        ]);
+        $deletedClient->delete();
+
+        $resolver = app(PcIntegrationCredentialResolver::class);
+        $this->assertTrue($resolver->hasDatabaseConfiguration());
+        $this->assertSame('database', $resolver->source());
+        $this->assertNull($resolver->resolve());
+        $this->assertNull($resolver->resolve($environmentClientId));
+        $this->assertNull($resolver->resolve($deletedClient->client_id));
+        $this->assertTrue(IntegrationClient::withTrashed()->findOrFail($deletedClient->id)->trashed());
+        $this->assertFalse(IntegrationClient::query()->whereKey($deletedClient->id)->exists());
+
+        $path = '/api/integrations/v1/pc/connection';
+        $signature = app(PcIntegrationSignatureService::class);
+        foreach ([
+            [$environmentClientId, $environmentSecret],
+            [$deletedClient->client_id, $deletedSecret],
+        ] as [$clientId, $secret]) {
+            $timestamp = (string) time();
+            $nonce = (string) Str::uuid();
+            $this->getJson($path, [
+                'X-Integration-Key' => $clientId,
+                'X-Timestamp' => $timestamp,
+                'X-Nonce' => $nonce,
+                'X-Signature' => $signature->sign('GET', $path, $timestamp, $nonce, '[]', $secret),
+            ])->assertUnauthorized()
+                ->assertJsonPath('error.code', 'INVALID_INTEGRATION_CLIENT');
+        }
     }
 
     public function test_management_permissions_and_rollout_flag_are_enforced(): void
