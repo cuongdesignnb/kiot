@@ -328,24 +328,6 @@ Route::get('/paysheets/{paysheet}/print', [\App\Http\Controllers\PaysheetControl
 Route::get('/settings', [SettingController::class, 'index'])->middleware('permission:settings.view')->name('settings.index');
 Route::post('/settings', [SettingController::class, 'update'])->middleware('permission:settings.manage')->name('settings.update');
 
-Route::get('/settings/integrations/website-pc', [\App\Http\Controllers\Settings\PcIntegrationManagementController::class, 'index'])
-    ->middleware('permission:integrations.view')
-    ->name('settings.integrations.website-pc');
-Route::middleware(['permission:integrations.manage', 'pc.integration.management'])
-    ->prefix('/settings/integrations/website-pc')
-    ->group(function () {
-        Route::post('/clients', [\App\Http\Controllers\Settings\PcIntegrationManagementController::class, 'store']);
-        Route::patch('/clients/{integrationClient}', [\App\Http\Controllers\Settings\PcIntegrationManagementController::class, 'update']);
-        Route::post('/clients/{integrationClient}/enable', [\App\Http\Controllers\Settings\PcIntegrationManagementController::class, 'enable']);
-        Route::post('/clients/{integrationClient}/disable', [\App\Http\Controllers\Settings\PcIntegrationManagementController::class, 'disable']);
-        Route::post('/clients/{integrationClient}/revoke', [\App\Http\Controllers\Settings\PcIntegrationManagementController::class, 'revoke']);
-        Route::post('/clients/{integrationClient}/pairing-token', [\App\Http\Controllers\Settings\PcIntegrationManagementController::class, 'pairingToken']);
-        Route::post('/clients/{integrationClient}/test', [\App\Http\Controllers\Settings\PcIntegrationManagementController::class, 'testConnection']);
-        Route::post('/import-environment', [\App\Http\Controllers\Settings\PcIntegrationManagementController::class, 'importEnvironment']);
-    });
-Route::post('/settings/integrations/website-pc/clients/{integrationClient}/rotate-secret', [\App\Http\Controllers\Settings\PcIntegrationManagementController::class, 'rotateSecret'])
-    ->middleware(['permission:integrations.rotate-secret', 'pc.integration.management']);
-
 // Category CRUD from Settings
 Route::middleware('permission:settings.categories')->group(function () {
     Route::post('/settings/categories', [SettingController::class, 'storeCategory'])->name('settings.categories.store');
