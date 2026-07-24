@@ -346,8 +346,13 @@ Route::prefix('media')->group(function () {
     Route::delete('/{media}', [\App\Http\Controllers\Api\MediaController::class, 'destroy']);
 });
 
-// Website PC integration v1 — all endpoints are feature-flagged and HMAC signed.
+// Website PC pairing is protected by a one-time token before HMAC credentials exist.
+Route::post('integrations/v1/pc/pair', \App\Http\Controllers\Api\Integrations\PcWebsite\PairingController::class)
+    ->middleware('pc.integration.management');
+
+// Website PC integration v1 — all remaining endpoints are feature-flagged and HMAC signed.
 Route::prefix('integrations/v1/pc')->middleware('pc.integration')->group(function () {
+    Route::get('/connection', \App\Http\Controllers\Api\Integrations\PcWebsite\ConnectionController::class);
     Route::get('/products', [\App\Http\Controllers\Api\Integrations\PcWebsite\ProductSyncController::class, 'index']);
     Route::get('/products/{sku}', [\App\Http\Controllers\Api\Integrations\PcWebsite\ProductSyncController::class, 'show']);
     Route::post('/orders', [\App\Http\Controllers\Api\Integrations\PcWebsite\ExternalOrderController::class, 'store']);

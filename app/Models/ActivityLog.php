@@ -180,6 +180,24 @@ class ActivityLog extends Model
 
     const ACTION_EXTERNAL_RESERVATION_EXPIRED = 'external_reservation_expired';
 
+    const ACTION_INTEGRATION_CREATED = 'integration.created';
+
+    const ACTION_INTEGRATION_UPDATED = 'integration.updated';
+
+    const ACTION_INTEGRATION_ENABLED = 'integration.enabled';
+
+    const ACTION_INTEGRATION_DISABLED = 'integration.disabled';
+
+    const ACTION_INTEGRATION_SECRET_ROTATED = 'integration.secret_rotated';
+
+    const ACTION_INTEGRATION_PAIRING_CREATED = 'integration.pairing_created';
+
+    const ACTION_INTEGRATION_PAIRED = 'integration.paired';
+
+    const ACTION_INTEGRATION_REVOKED = 'integration.revoked';
+
+    const ACTION_INTEGRATION_CONNECTION_TESTED = 'integration.connection_tested';
+
     // Đặt hàng nhập
     const ACTION_PO_CREATE = 'po_create';
 
@@ -303,6 +321,15 @@ class ActivityLog extends Model
         'external_reservation_released' => 'Giải phóng giữ tồn Website PC',
         'external_reservation_consumed' => 'Sử dụng giữ tồn Website PC',
         'external_reservation_expired' => 'Giữ tồn Website PC hết hạn',
+        'integration.created' => 'Tạo kết nối tích hợp',
+        'integration.updated' => 'Cập nhật kết nối tích hợp',
+        'integration.enabled' => 'Bật kết nối tích hợp',
+        'integration.disabled' => 'Tắt kết nối tích hợp',
+        'integration.secret_rotated' => 'Xoay vòng secret tích hợp',
+        'integration.pairing_created' => 'Tạo mã ghép nối tích hợp',
+        'integration.paired' => 'Ghép nối tích hợp thành công',
+        'integration.revoked' => 'Thu hồi kết nối tích hợp',
+        'integration.connection_tested' => 'Kiểm tra kết nối tích hợp',
         'po_create' => 'Tạo đặt hàng nhập',
         'po_update' => 'Cập nhật đặt hàng nhập',
         'po_cancel' => 'Hủy đặt hàng nhập',

@@ -21,6 +21,7 @@ class PcOrderImportService
         private readonly PcProductResolver $productResolver,
         private readonly PcCustomerResolver $customerResolver,
         private readonly PcInventoryReservationService $reservationService,
+        private readonly PcIntegrationRuntimeConfiguration $runtimeConfiguration,
     ) {}
 
     public function import(array $payload, string $idempotencyKey, string $rawBody): array
@@ -209,7 +210,8 @@ class PcOrderImportService
             ]])];
         }
 
-        $branchId = (int) config('integrations.pc_website.default_branch_id');
+        $runtime = $this->runtimeConfiguration->current();
+        $branchId = (int) $runtime->defaultBranchId;
         $branch = Branch::query()->whereKey($branchId)->lockForUpdate()->first();
         if (! $branch) {
             throw new PcIntegrationException('INTEGRATION_NOT_CONFIGURED', 'Chi nhánh tích hợp không hợp lệ.', 503);
@@ -226,7 +228,7 @@ class PcOrderImportService
         $this->reservationService->assertAvailable($requested, $products);
 
         $customer = $this->customerResolver->resolve($payload['customer'], $branchId);
-        $salesChannel = trim((string) config('integrations.pc_website.sales_channel', 'Website PC')) ?: 'Website PC';
+        $salesChannel = trim($runtime->salesChannel) ?: 'Website PC';
         $orderData = [
             'external_source' => self::SOURCE,
             'external_order_id' => trim((string) $payload['external_order_id']),

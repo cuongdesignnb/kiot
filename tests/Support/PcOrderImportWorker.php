@@ -10,6 +10,9 @@ require $basePath.'/vendor/autoload.php';
 
 $app = require $basePath.'/bootstrap/app.php';
 $app->make(Kernel::class)->bootstrap();
+config()->set('integrations.pc_website.enabled', true);
+config()->set('integrations.pc_website.client_id', 'pc-concurrency-worker');
+config()->set('integrations.pc_website.secret', 'pc-concurrency-worker-secret-with-sufficient-entropy');
 config()->set('integrations.pc_website.default_branch_id', (int) $branchId);
 config()->set('integrations.pc_website.sales_channel', 'Website PC');
 config()->set('integrations.pc_website.reservation_ttl_minutes', 1440);

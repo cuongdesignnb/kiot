@@ -13,6 +13,8 @@ class PcInventoryReservationService
 {
     public const SOURCE = 'pc_website';
 
+    public function __construct(private readonly PcIntegrationRuntimeConfiguration $runtimeConfiguration) {}
+
     /** @param array<int, int> $requestedByProduct */
     public function assertAvailable(array $requestedByProduct, Collection $products, ?int $excludeOrderId = null): void
     {
@@ -66,7 +68,7 @@ class PcInventoryReservationService
 
     public function createForOrder(Order $order, Collection $orderItems): void
     {
-        $expiresAt = now()->addMinutes(max(1, (int) config('integrations.pc_website.reservation_ttl_minutes', 1440)));
+        $expiresAt = now()->addMinutes($this->runtimeConfiguration->current()->reservationTtlMinutes);
         $ids = [];
         foreach ($orderItems as $item) {
             $reservation = ExternalInventoryReservation::create([

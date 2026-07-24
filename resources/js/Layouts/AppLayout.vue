@@ -492,6 +492,26 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                             Thiết lập
                         </Link>
                         <Link
+                            v-if="can('integrations.view')"
+                            href="/settings/integrations/website-pc"
+                            class="block px-4 py-2.5 hover:bg-gray-100 flex items-center gap-2"
+                        >
+                            <svg
+                                class="w-4 h-4 text-gray-500"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="2"
+                                    d="M8 12h8m-4-4v8m8-4a8 8 0 11-16 0 8 8 0 0116 0z"
+                                ></path>
+                            </svg>
+                            Tích hợp Website PC
+                        </Link>
+                        <Link
                             href="#"
                             class="block px-4 py-2.5 hover:bg-gray-100 flex items-center gap-2"
                         >
