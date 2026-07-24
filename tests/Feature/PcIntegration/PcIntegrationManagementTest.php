@@ -25,6 +25,8 @@ class PcIntegrationManagementTest extends TestCase
     {
         parent::setUp();
 
+        $this->withoutVite();
+
         config()->set('integrations.pc_website.management_ui_enabled', true);
         config()->set('integrations.pc_website.enabled', false);
         config()->set('integrations.pc_website.client_id', null);
