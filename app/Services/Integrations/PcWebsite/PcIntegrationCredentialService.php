@@ -7,6 +7,7 @@ use App\Models\ActivityLog;
 use App\Models\Branch;
 use App\Models\IntegrationClient;
 use App\Models\IntegrationPairingToken;
+use App\Models\PriceBook;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -192,6 +193,7 @@ class PcIntegrationCredentialService
         $clientId = trim((string) ($config['client_id'] ?? ''));
         $secret = (string) ($config['secret'] ?? '');
         $branchId = filter_var($config['default_branch_id'] ?? null, FILTER_VALIDATE_INT);
+        $priceBookId = filter_var($config['product_price_book_id'] ?? null, FILTER_VALIDATE_INT);
         if ($clientId === '' || $secret === '' || ! $branchId || ! Branch::query()->whereKey($branchId)->exists()) {
             throw new PcIntegrationException('ENVIRONMENT_CONFIGURATION_INVALID', 'Cấu hình môi trường chưa hoàn chỉnh.', 409);
         }
@@ -203,6 +205,13 @@ class PcIntegrationCredentialService
             'secret_encrypted' => $secret,
             'secret_fingerprint' => $this->fingerprint($secret),
             'default_branch_id' => (int) $branchId,
+            'pc_product_price_book_id' => $priceBookId && PriceBook::query()
+                ->whereKey($priceBookId)
+                ->where('is_active', true)
+                ->where('status', 'active')
+                ->where(fn ($query) => $query->whereNull('start_date')->orWhereDate('start_date', '<=', today()))
+                ->where(fn ($query) => $query->whereNull('end_date')->orWhereDate('end_date', '>=', today()))
+                ->exists() ? (int) $priceBookId : null,
             'sales_channel' => (string) ($config['sales_channel'] ?? 'Website PC'),
             'is_enabled' => (bool) ($config['enabled'] ?? false),
             'timestamp_tolerance_seconds' => max(1, (int) ($config['timestamp_tolerance_seconds'] ?? 300)),
@@ -232,7 +241,7 @@ class PcIntegrationCredentialService
 
     private function runtimeFields(array $data): array
     {
-        return array_filter([
+        $fields = array_filter([
             'default_branch_id' => $data['default_branch_id'] ?? null,
             'sales_channel' => $data['sales_channel'] ?? null,
             'timestamp_tolerance_seconds' => $data['timestamp_tolerance_seconds'] ?? null,
@@ -240,6 +249,12 @@ class PcIntegrationCredentialService
             'rate_limit_per_minute' => $data['rate_limit_per_minute'] ?? null,
             'reservation_ttl_minutes' => $data['reservation_ttl_minutes'] ?? null,
         ], fn ($value) => $value !== null);
+
+        if (array_key_exists('pc_product_price_book_id', $data)) {
+            $fields['pc_product_price_book_id'] = $data['pc_product_price_book_id'] ?: null;
+        }
+
+        return $fields;
     }
 
     private function generateClientId(): string

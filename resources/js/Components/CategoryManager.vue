@@ -9,9 +9,9 @@ const props = defineProps({
 
 const emit = defineEmits(['close']);
 
-const newForm = useForm({ name: '', parent_id: '', description: '' });
+const newForm = useForm({ name: '', parent_id: '', description: '', show_on_pc_website: false });
 const editingId = ref(null);
-const editForm = useForm({ name: '', description: '' });
+const editForm = useForm({ name: '', parent_id: '', description: '', show_on_pc_website: false });
 
 // Flatten tree for display
 const flattenTree = (nodes, depth = 0) => {
@@ -44,7 +44,9 @@ const flatOptions = computed(() => {
 const startEdit = (cat) => {
     editingId.value = cat.id;
     editForm.name = cat.name;
+    editForm.parent_id = cat.parent_id || '';
     editForm.description = cat.description || '';
+    editForm.show_on_pc_website = Boolean(cat.show_on_pc_website);
 };
 
 const cancelEdit = () => { editingId.value = null; };
@@ -96,7 +98,7 @@ const totalCount = computed(() => {
 
         <!-- Add new -->
         <div class="px-6 py-3 bg-blue-50 border-b">
-            <div class="flex gap-3 items-end">
+            <div class="flex gap-3 items-end flex-wrap">
                 <div class="w-40">
                     <label class="block text-xs font-bold text-gray-500 mb-1">Nhóm cha</label>
                     <select v-model="newForm.parent_id" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm bg-white outline-none focus:ring-1 focus:ring-blue-500">
@@ -108,6 +110,10 @@ const totalCount = computed(() => {
                     <label class="block text-xs font-bold text-gray-500 mb-1">Tên nhóm hàng mới</label>
                     <input v-model="newForm.name" @keyup.enter="submitNew" placeholder="Ví dụ: Điện thoại, Phụ kiện..." class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none">
                 </div>
+                <label class="flex items-center gap-2 pb-1.5 text-xs font-medium text-gray-700">
+                    <input v-model="newForm.show_on_pc_website" type="checkbox" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                    Hiển thị trên Website PC
+                </label>
                 <button @click="submitNew" :disabled="!newForm.name || newForm.processing" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded text-sm font-medium disabled:opacity-50 whitespace-nowrap">
                     + Thêm mới
                 </button>
@@ -121,6 +127,7 @@ const totalCount = computed(() => {
                     <tr>
                         <th class="text-left px-6 py-2.5 text-xs font-bold text-gray-500 uppercase">Tên nhóm hàng</th>
                         <th class="text-center px-4 py-2.5 text-xs font-bold text-gray-500 uppercase w-28">Số SP</th>
+                        <th class="text-center px-4 py-2.5 text-xs font-bold text-gray-500 uppercase w-32">Website PC</th>
                         <th class="text-right px-6 py-2.5 text-xs font-bold text-gray-500 uppercase w-32">Thao tác</th>
                     </tr>
                 </thead>
@@ -128,7 +135,13 @@ const totalCount = computed(() => {
                     <tr v-for="cat in flatList" :key="cat.id" class="hover:bg-gray-50/80 group">
                         <td class="px-6 py-3" :style="{ paddingLeft: (24 + cat.depth * 24) + 'px' }">
                             <template v-if="editingId === cat.id">
-                                <input v-model="editForm.name" @keyup.enter="submitEdit(cat.id)" @keyup.escape="cancelEdit" class="w-full border border-blue-400 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 outline-none" autofocus>
+                                <div class="space-y-2">
+                                    <input v-model="editForm.name" @keyup.enter="submitEdit(cat.id)" @keyup.escape="cancelEdit" class="w-full border border-blue-400 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 outline-none" autofocus>
+                                    <select v-model="editForm.parent_id" class="w-full border border-gray-300 rounded px-2 py-1 text-xs bg-white">
+                                        <option value="">-- Nhóm gốc --</option>
+                                        <option v-for="opt in flatOptions.filter(option => option.id !== cat.id)" :key="opt.id" :value="opt.id">{{ opt.name }}</option>
+                                    </select>
+                                </div>
                             </template>
                             <template v-else>
                                 <span v-if="cat.depth > 0" class="text-gray-400 mr-1">└</span>
@@ -137,6 +150,15 @@ const totalCount = computed(() => {
                         </td>
                         <td class="text-center px-4 py-3">
                             <span class="bg-gray-100 text-gray-600 text-xs font-bold px-2.5 py-1 rounded-full">{{ cat.products_count ?? 0 }}</span>
+                        </td>
+                        <td class="text-center px-4 py-3">
+                            <label v-if="editingId === cat.id" class="inline-flex items-center gap-1.5 text-xs text-gray-600">
+                                <input v-model="editForm.show_on_pc_website" type="checkbox" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                                Hiển thị
+                            </label>
+                            <span v-else class="rounded-full px-2 py-1 text-xs font-semibold" :class="cat.show_on_pc_website ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'">
+                                {{ cat.show_on_pc_website ? 'Hiển thị' : 'Ẩn' }}
+                            </span>
                         </td>
                         <td class="text-right px-6 py-3">
                             <template v-if="editingId === cat.id">
@@ -150,7 +172,7 @@ const totalCount = computed(() => {
                         </td>
                     </tr>
                     <tr v-if="!flatList.length">
-                        <td colspan="3" class="px-6 py-8 text-center text-gray-400">Chưa có nhóm hàng nào</td>
+                        <td colspan="4" class="px-6 py-8 text-center text-gray-400">Chưa có nhóm hàng nào</td>
                     </tr>
                 </tbody>
             </table>

@@ -353,6 +353,8 @@ Route::post('integrations/v1/pc/pair', \App\Http\Controllers\Api\Integrations\Pc
 // Website PC integration v1 — all remaining endpoints are feature-flagged and HMAC signed.
 Route::prefix('integrations/v1/pc')->middleware('pc.integration')->group(function () {
     Route::get('/connection', \App\Http\Controllers\Api\Integrations\PcWebsite\ConnectionController::class);
+    Route::get('/categories', \App\Http\Controllers\Api\Integrations\PcWebsite\CategorySyncController::class);
+    Route::get('/price-books', \App\Http\Controllers\Api\Integrations\PcWebsite\PriceBookSyncController::class);
     Route::get('/products', [\App\Http\Controllers\Api\Integrations\PcWebsite\ProductSyncController::class, 'index']);
     Route::get('/products/{sku}', [\App\Http\Controllers\Api\Integrations\PcWebsite\ProductSyncController::class, 'show']);
     Route::post('/orders', [\App\Http\Controllers\Api\Integrations\PcWebsite\ExternalOrderController::class, 'store']);

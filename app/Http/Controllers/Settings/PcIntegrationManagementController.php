@@ -9,6 +9,7 @@ use App\Http\Requests\Integrations\PcWebsite\UpdateIntegrationClientRequest;
 use App\Models\ActivityLog;
 use App\Models\Branch;
 use App\Models\IntegrationClient;
+use App\Models\PriceBook;
 use App\Services\Integrations\PcWebsite\PcIntegrationCredentialResolver;
 use App\Services\Integrations\PcWebsite\PcIntegrationCredentialService;
 use App\Support\Integrations\PcWebsite\PcIntegrationResponse;
@@ -57,6 +58,13 @@ class PcIntegrationManagementController extends Controller
                 && (string) config('integrations.pc_website.secret') !== '',
             'clients' => $clients->map(fn (IntegrationClient $client) => $this->serializeClient($client))->values(),
             'branches' => Branch::query()->orderBy('name')->get(['id', 'name']),
+            'price_books' => PriceBook::query()
+                ->where('is_active', true)
+                ->where('status', 'active')
+                ->where(fn ($query) => $query->whereNull('start_date')->orWhereDate('start_date', '<=', today()))
+                ->where(fn ($query) => $query->whereNull('end_date')->orWhereDate('end_date', '>=', today()))
+                ->orderBy('name')
+                ->get(['id', 'code', 'name']),
             'history' => $history,
             'defaults' => [
                 'sales_channel' => 'Website PC',
@@ -202,6 +210,7 @@ class PcIntegrationManagementController extends Controller
                 : ($client->previous_secret_expires_at?->isFuture() ? 'rotation_grace' : 'active'),
             'website_url' => $client->website_url,
             'default_branch_id' => $client->default_branch_id,
+            'pc_product_price_book_id' => $client->pc_product_price_book_id,
             'branch' => $client->relationLoaded('branch') && $client->branch
                 ? ['id' => $client->branch->id, 'name' => $client->branch->name]
                 : null,

@@ -5,6 +5,7 @@ namespace Tests\Feature\PcIntegration;
 use App\Models\ActivityLog;
 use App\Models\Branch;
 use App\Models\IntegrationClient;
+use App\Models\PriceBook;
 use App\Models\Role;
 use App\Models\User;
 use App\Services\Integrations\PcWebsite\PcIntegrationCredentialResolver;
@@ -207,6 +208,40 @@ class PcIntegrationManagementTest extends TestCase
             ->postJson('/settings/integrations/website-pc/clients', [])
             ->assertStatus(503)
             ->assertJsonPath('error.code', 'INTEGRATION_MANAGEMENT_DISABLED');
+    }
+
+    public function test_client_can_select_only_an_active_price_book_and_can_clear_selection(): void
+    {
+        $created = $this->createConnection();
+        $active = PriceBook::create(['code' => 'WEB', 'name' => 'Website', 'is_active' => true, 'status' => 'active']);
+        $inactive = PriceBook::create(['code' => 'OLD', 'name' => 'Old', 'is_active' => false, 'status' => 'inactive']);
+        $expired = PriceBook::create([
+            'code' => 'EXPIRED',
+            'name' => 'Expired',
+            'is_active' => true,
+            'status' => 'active',
+            'end_date' => today()->subDay(),
+        ]);
+
+        $this->actingAs($this->admin)
+            ->patchJson("/settings/integrations/website-pc/clients/{$created['id']}", ['pc_product_price_book_id' => $active->id])
+            ->assertOk()
+            ->assertJsonPath('client.pc_product_price_book_id', $active->id);
+        $this->assertDatabaseHas('integration_clients', ['id' => $created['id'], 'pc_product_price_book_id' => $active->id]);
+
+        $this->actingAs($this->admin)
+            ->patchJson("/settings/integrations/website-pc/clients/{$created['id']}", ['pc_product_price_book_id' => $inactive->id])
+            ->assertUnprocessable();
+
+        $this->actingAs($this->admin)
+            ->patchJson("/settings/integrations/website-pc/clients/{$created['id']}", ['pc_product_price_book_id' => $expired->id])
+            ->assertUnprocessable();
+
+        $this->actingAs($this->admin)
+            ->patchJson("/settings/integrations/website-pc/clients/{$created['id']}", ['pc_product_price_book_id' => null])
+            ->assertOk()
+            ->assertJsonPath('client.pc_product_price_book_id', null);
+        $this->assertDatabaseHas('integration_clients', ['id' => $created['id'], 'pc_product_price_book_id' => null]);
     }
 
     public function test_enable_disable_and_revoke_are_audited_without_credentials(): void

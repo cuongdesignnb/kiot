@@ -23,6 +23,7 @@ class IntegrationClient extends Model
         'previous_secret_expires_at',
         'website_url',
         'default_branch_id',
+        'pc_product_price_book_id',
         'sales_channel',
         'is_enabled',
         'timestamp_tolerance_seconds',
@@ -63,6 +64,11 @@ class IntegrationClient extends Model
     public function branch(): BelongsTo
     {
         return $this->belongsTo(Branch::class, 'default_branch_id');
+    }
+
+    public function productPriceBook(): BelongsTo
+    {
+        return $this->belongsTo(PriceBook::class, 'pc_product_price_book_id');
     }
 
     public function creator(): BelongsTo

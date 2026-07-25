@@ -2,14 +2,14 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Setting;
-use App\Models\Category;
+use App\Models\BankAccount;
 use App\Models\Brand;
-use App\Models\Unit;
-use App\Models\ProductAttribute;
+use App\Models\Category;
 use App\Models\Location;
 use App\Models\OtherFee;
-use App\Models\BankAccount;
+use App\Models\ProductAttribute;
+use App\Models\Setting;
+use App\Models\Unit;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -26,7 +26,7 @@ class SettingController extends Controller
         }
 
         // Categories with product count (tree structure)
-        $categories = Category::withCount('products')->with(['children' => function($q) {
+        $categories = Category::withCount('products')->with(['children' => function ($q) {
             $q->withCount('products')->orderBy('name');
         }])->whereNull('parent_id')->orderBy('name')->get();
 
@@ -58,7 +58,7 @@ class SettingController extends Controller
                 'other_fees_count' => $otherFees->count(),
                 'bank_accounts_count' => $bankAccounts->count(),
                 'purchase_fees_count' => 1,
-            ]
+            ],
         ]);
     }
 
@@ -82,6 +82,7 @@ class SettingController extends Controller
             'name' => 'required|string|max:255',
             'parent_id' => 'nullable|exists:categories,id',
             'description' => 'nullable|string',
+            'show_on_pc_website' => 'sometimes|boolean',
         ]);
 
         $category = Category::create($validated);
@@ -106,6 +107,8 @@ class SettingController extends Controller
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
+            'parent_id' => 'nullable|exists:categories,id',
+            'show_on_pc_website' => 'sometimes|boolean',
         ]);
 
         $category->update($validated);
@@ -120,6 +123,7 @@ class SettingController extends Controller
         }
         $name = $category->name;
         $category->delete();
+
         return redirect()->back()->with('success', "Đã xóa nhóm hàng \"{$name}\".");
     }
 
@@ -166,6 +170,7 @@ class SettingController extends Controller
         }
         $name = $brand->name;
         $brand->delete();
+
         return redirect()->back()->with('success', "Đã xóa thương hiệu \"{$name}\".");
     }
 
@@ -174,6 +179,7 @@ class SettingController extends Controller
     {
         $v = $request->validate(['name' => 'required|string|max:100|unique:units,name']);
         Unit::create($v);
+
         return redirect()->back()->with('success', "Đơn vị \"{$v['name']}\" đã được tạo.");
     }
 
@@ -181,6 +187,7 @@ class SettingController extends Controller
     {
         $v = $request->validate(['name' => 'required|string|max:100']);
         $unit->update($v);
+
         return redirect()->back()->with('success', "Đơn vị \"{$unit->name}\" đã được cập nhật.");
     }
 
@@ -188,6 +195,7 @@ class SettingController extends Controller
     {
         $name = $unit->name;
         $unit->delete();
+
         return redirect()->back()->with('success', "Đã xóa đơn vị \"{$name}\".");
     }
 
@@ -196,6 +204,7 @@ class SettingController extends Controller
     {
         $v = $request->validate(['name' => 'required|string|max:100']);
         ProductAttribute::create($v);
+
         return redirect()->back()->with('success', "Thuộc tính \"{$v['name']}\" đã được tạo.");
     }
 
@@ -203,6 +212,7 @@ class SettingController extends Controller
     {
         $v = $request->validate(['name' => 'required|string|max:100']);
         $attribute->update($v);
+
         return redirect()->back()->with('success', "Thuộc tính \"{$attribute->name}\" đã được cập nhật.");
     }
 
@@ -210,6 +220,7 @@ class SettingController extends Controller
     {
         $name = $attribute->name;
         $attribute->delete();
+
         return redirect()->back()->with('success', "Đã xóa thuộc tính \"{$name}\".");
     }
 
@@ -218,6 +229,7 @@ class SettingController extends Controller
     {
         $v = $request->validate(['name' => 'required|string|max:100']);
         Location::create($v);
+
         return redirect()->back()->with('success', "Vị trí \"{$v['name']}\" đã được tạo.");
     }
 
@@ -225,6 +237,7 @@ class SettingController extends Controller
     {
         $v = $request->validate(['name' => 'required|string|max:100']);
         $location->update($v);
+
         return redirect()->back()->with('success', "Vị trí \"{$location->name}\" đã được cập nhật.");
     }
 
@@ -232,6 +245,7 @@ class SettingController extends Controller
     {
         $name = $location->name;
         $location->delete();
+
         return redirect()->back()->with('success', "Đã xóa vị trí \"{$name}\".");
     }
 
@@ -249,6 +263,7 @@ class SettingController extends Controller
         ]);
 
         OtherFee::create($v);
+
         return redirect()->back()->with('success', "Loại thu khác \"{$v['name']}\" đã được tạo.");
     }
 
@@ -266,6 +281,7 @@ class SettingController extends Controller
         ]);
 
         $otherFee->update($v);
+
         return redirect()->back()->with('success', "Loại thu khác \"{$otherFee->name}\" đã được cập nhật.");
     }
 
@@ -273,6 +289,7 @@ class SettingController extends Controller
     {
         $name = $otherFee->name;
         $otherFee->delete();
+
         return redirect()->back()->with('success', "Đã xóa loại thu khác \"{$name}\".");
     }
 
@@ -290,6 +307,7 @@ class SettingController extends Controller
         ]);
 
         BankAccount::create($v);
+
         return redirect()->back()->with('success', "Tài khoản \"{$v['bank_name']} - {$v['account_number']}\" đã được thêm.");
     }
 
@@ -307,13 +325,15 @@ class SettingController extends Controller
         ]);
 
         $bankAccount->update($v);
-        return redirect()->back()->with('success', "Tài khoản đã được cập nhật.");
+
+        return redirect()->back()->with('success', 'Tài khoản đã được cập nhật.');
     }
 
     public function destroyBankAccount(BankAccount $bankAccount)
     {
         $info = "{$bankAccount->bank_name} - {$bankAccount->account_number}";
         $bankAccount->delete();
+
         return redirect()->back()->with('success', "Đã xóa tài khoản \"{$info}\".");
     }
 }
