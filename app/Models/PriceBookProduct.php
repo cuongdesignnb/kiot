@@ -24,4 +24,14 @@ class PriceBookProduct extends Model
     {
         return $this->belongsTo(Product::class);
     }
+
+    protected static function booted(): void
+    {
+        $touchProduct = static function (PriceBookProduct $price): void {
+            Product::withTrashed()->whereKey($price->product_id)->update(['updated_at' => now()]);
+        };
+
+        static::saved($touchProduct);
+        static::deleted($touchProduct);
+    }
 }

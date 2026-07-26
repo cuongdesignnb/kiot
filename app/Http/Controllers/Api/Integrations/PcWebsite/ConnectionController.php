@@ -38,7 +38,10 @@ class ConnectionController extends Controller
             'capabilities' => [
                 'products' => true,
                 'orders' => true,
-                'price_books' => false,
+                'categories' => true,
+                'product_images' => true,
+                'price_books' => true,
+                'repair_status' => true,
                 'google_sheets' => false,
             ],
         ]);

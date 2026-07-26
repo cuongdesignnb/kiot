@@ -2,7 +2,7 @@
 
 namespace App\Http\Requests\Integrations\PcWebsite;
 
-class ProductSyncRequest extends PcIntegrationRequest
+class CatalogSyncRequest extends PcIntegrationRequest
 {
     public function rules(): array
     {
@@ -10,8 +10,6 @@ class ProductSyncRequest extends PcIntegrationRequest
             'cursor' => ['nullable', 'string', 'max:2048'],
             'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
             'updated_since' => ['nullable', 'date'],
-            'sku' => ['nullable', 'string', 'max:255'],
-            'id' => ['nullable', 'integer', 'min:1'],
             'include_inactive' => ['nullable', 'boolean'],
         ];
     }

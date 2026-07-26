@@ -1,0 +1,28 @@
+{
+  "success": true,
+  "data": [
+    {
+      "id": 123,
+      "sku": "SP26070143809",
+      "barcode": "SP26070143809",
+      "name": "Tên sản phẩm",
+      "description": null,
+      "category": { "id": 12, "code": "LAPTOP-DELL", "name": "Laptop Dell", "slug": "laptop-dell", "parent_id": null, "show_on_pc_website": true },
+      "publishing": { "show_on_pc_website": true, "blocked_reason": null },
+      "pricing": { "base_price": 10500000, "retail_price": 10500000, "selected_price": 9900000, "selected_price_book_id": 3, "selected_price_book_code": "WEBSITE", "selected_price_book_name": "Giá Website", "fallback_used": false },
+      "inventory": { "stock_quantity": 1, "reserved_quantity": 0, "available_quantity": 1, "status": "available" },
+      "availability": { "is_available": true, "is_under_repair": false, "sell_directly": true },
+      "primary_image": { "id": 90, "url": "https://kiot.example.test/storage/products/example.webp", "checksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "width": 1200, "height": 1200, "sort_order": 0, "is_primary": true },
+      "images": [
+        { "id": 90, "url": "https://kiot.example.test/storage/products/example.webp", "checksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "width": 1200, "height": 1200, "sort_order": 0, "is_primary": true }
+      ],
+      "has_serial": true,
+      "weight": null,
+      "warranty_months": null,
+      "is_active": true,
+      "sync_status": "active",
+      "updated_at": "2026-07-25T05:00:00Z"
+    }
+  ],
+  "meta": { "next_cursor": null, "has_more": false }
+}

@@ -90,6 +90,7 @@ class PcIntegrationCredentialResolver
             reservationTtlMinutes: max(1, (int) $client->reservation_ttl_minutes),
             apiVersion: (string) $client->api_version,
             revoked: $client->revoked_at !== null,
+            productPriceBookId: $this->integerOrNull($client->pc_product_price_book_id),
         );
     }
 
@@ -111,6 +112,7 @@ class PcIntegrationCredentialResolver
             nonceTtlSeconds: max(1, (int) ($config['nonce_ttl_seconds'] ?? 600)),
             rateLimitPerMinute: max(1, (int) ($config['rate_limit_per_minute'] ?? 60)),
             reservationTtlMinutes: max(1, (int) ($config['reservation_ttl_minutes'] ?? 1440)),
+            productPriceBookId: $this->integerOrNull($config['product_price_book_id'] ?? null),
         );
     }
 

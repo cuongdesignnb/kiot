@@ -20,6 +20,7 @@ final readonly class RuntimePcIntegrationConfig
         public int $reservationTtlMinutes,
         public string $apiVersion = 'v1',
         public bool $revoked = false,
+        public ?int $productPriceBookId = null,
     ) {}
 
     public function isComplete(): bool

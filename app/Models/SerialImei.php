@@ -32,14 +32,14 @@ class SerialImei extends Model
 
     const REPAIR_STATUS_MAP = [
         'not_started' => 'Chưa làm',
-        'repairing'   => 'Đang xử lý',
-        'ready'       => 'Sẵn bán',
+        'repairing' => 'Đang xử lý',
+        'ready' => 'Sẵn bán',
     ];
 
     const REPAIR_STATUS_COLORS = [
         'not_started' => 'red',
-        'repairing'   => 'yellow',
-        'ready'       => 'green',
+        'repairing' => 'yellow',
+        'ready' => 'green',
     ];
 
     public function getRepairStatusLabelAttribute(): ?string
@@ -65,5 +65,15 @@ class SerialImei extends Model
     public function tasks()
     {
         return $this->hasMany(Task::class, 'serial_imei_id');
+    }
+
+    protected static function booted(): void
+    {
+        $touchProduct = static function (SerialImei $serial): void {
+            Product::withTrashed()->whereKey($serial->product_id)->update(['updated_at' => now()]);
+        };
+
+        static::saved($touchProduct);
+        static::deleted($touchProduct);
     }
 }

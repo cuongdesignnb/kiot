@@ -2,21 +2,22 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
-use Inertia\Inertia;
-use App\Models\Category;
 use App\Models\Brand;
-use App\Models\Product;
-use App\Models\SerialImei;
+use App\Models\Category;
 use App\Models\PriceBook;
 use App\Models\PriceBookProduct;
+use App\Models\Product;
 use App\Models\ProductAttribute;
 use App\Models\ProductVariant;
+use App\Models\SerialImei;
 use App\Services\ProductExcel\ProductExcelExportService;
 use App\Services\ProductExcel\ProductExcelFieldCatalog;
 use App\Services\ProductExcel\ProductExcelImportService;
 use App\Services\ProductSearchService;
+use Illuminate\Http\Request;
+use Illuminate\Validation\Rules\File;
 use Illuminate\Validation\ValidationException;
+use Inertia\Inertia;
 
 class ProductController extends Controller
 {
@@ -45,11 +46,11 @@ class ProductController extends Controller
         if (is_string($productIds)) {
             $productIds = array_filter(explode(',', $productIds));
         }
-        if (!is_array($productIds)) {
+        if (! is_array($productIds)) {
             $productIds = [];
         }
 
-        if (!empty($productIds)) {
+        if (! empty($productIds)) {
             $query->whereIn('id', $productIds);
         } else {
             $query->limit(20);
@@ -60,7 +61,7 @@ class ProductController extends Controller
         $priceBookName = 'Bảng giá chung';
         $bookPriceByProductId = collect();
 
-        if (!empty($priceBookId)) {
+        if (! empty($priceBookId)) {
             $priceBook = PriceBook::find($priceBookId);
             if ($priceBook) {
                 $priceBookName = $priceBook->name;
@@ -117,7 +118,7 @@ class ProductController extends Controller
             $childIds = Category::where('parent_id', $categoryId)->pluck('id')->toArray();
             $categoryIds = array_merge($categoryIds, $childIds);
             // Lấy cả nhóm con cấp 3 nếu có
-            if (!empty($childIds)) {
+            if (! empty($childIds)) {
                 $grandChildIds = Category::whereIn('parent_id', $childIds)->pluck('id')->toArray();
                 $categoryIds = array_merge($categoryIds, $grandChildIds);
             }
@@ -159,7 +160,7 @@ class ProductController extends Controller
                     break;
                 case 'below_min':
                     $query->whereColumn('stock_quantity', '<', 'min_stock')
-                          ->where('min_stock', '>', 0);
+                        ->where('min_stock', '>', 0);
                     break;
             }
         }
@@ -205,7 +206,7 @@ class ProductController extends Controller
                 $product->ready_count = (clone $inStockSerials)
                     ->where(function ($q) {
                         $q->whereNull('repair_status')
-                          ->orWhereNotIn('repair_status', ['not_started', 'repairing']);
+                            ->orWhereNotIn('repair_status', ['not_started', 'repairing']);
                     })
                     ->count();
                 // Đang sửa chữa = in_stock VÀ đang trong luồng repair
@@ -230,6 +231,7 @@ class ProductController extends Controller
                         ->get(['id', 'serial_number', 'status', 'repair_status']);
                 }
             }
+
             return $product;
         });
 
@@ -249,7 +251,7 @@ class ProductController extends Controller
     public function create(Request $request, $type = 'standard')
     {
         // Allowed types
-        if (!in_array($type, ['standard', 'service', 'combo', 'manufactured'])) {
+        if (! in_array($type, ['standard', 'service', 'combo', 'manufactured'])) {
             $type = 'standard';
         }
 
@@ -273,6 +275,9 @@ class ProductController extends Controller
             'sku' => 'nullable|string|unique:products,sku',
             'barcode' => 'nullable|string',
             'image' => 'nullable|string|max:500',
+            'images' => ['nullable', 'array', 'max:'.max(1, (int) config('integrations.pc_website.product_images.max_count', 12))],
+            'images.*' => [File::types(['jpg', 'jpeg', 'png', 'webp'])->max(max(1, (int) config('integrations.pc_website.product_images.max_size_kb', 5120)))],
+            'primary_image_index' => 'nullable|integer|min:0',
             'category_id' => 'nullable|exists:categories,id',
             'brand_id' => 'nullable|exists:brands,id',
             'cost_price' => 'numeric|min:0',
@@ -326,7 +331,7 @@ class ProductController extends Controller
 
         if (empty($validatedData['sku'])) {
             do {
-                $sku = 'SP' . date('ymd') . str_pad(random_int(1000, 99999), 5, '0', STR_PAD_LEFT);
+                $sku = 'SP'.date('ymd').str_pad(random_int(1000, 99999), 5, '0', STR_PAD_LEFT);
             } while (Product::where('sku', $sku)->exists());
             $validatedData['sku'] = $sku;
         }
@@ -334,8 +339,8 @@ class ProductController extends Controller
         if (empty($validatedData['barcode']) && \App\Models\Setting::get('product_barcode_auto', true)) {
             $validatedData['barcode'] = $validatedData['sku'];
         }
-        if (!empty($validatedData['barcode']) && Product::where('barcode', $validatedData['barcode'])->exists()) {
-            $validatedData['barcode'] = $validatedData['sku'] . '-' . random_int(10, 99);
+        if (! empty($validatedData['barcode']) && Product::where('barcode', $validatedData['barcode'])->exists()) {
+            $validatedData['barcode'] = $validatedData['sku'].'-'.random_int(10, 99);
         }
 
         $technicianPrice = $validatedData['technician_price'] ?? 0;
@@ -344,7 +349,9 @@ class ProductController extends Controller
         $units = $validatedData['units'] ?? [];
         $baseUnitName = $validatedData['base_unit_name'] ?? null;
         $variants = $validatedData['variants'] ?? [];
-        unset($validatedData['units'], $validatedData['base_unit_name'], $validatedData['variants']);
+        $images = $validatedData['images'] ?? [];
+        $primaryImageIndex = $validatedData['primary_image_index'] ?? null;
+        unset($validatedData['units'], $validatedData['base_unit_name'], $validatedData['variants'], $validatedData['images'], $validatedData['primary_image_index']);
 
         $product = Product::create($validatedData);
 
@@ -361,7 +368,7 @@ class ProductController extends Controller
         }
 
         // Handle Units
-        if (!empty($baseUnitName)) {
+        if (! empty($baseUnitName)) {
             $product->units()->create([
                 'unit_name' => $baseUnitName,
                 'conversion_rate' => 1,
@@ -371,7 +378,7 @@ class ProductController extends Controller
             ]);
         }
 
-        if (!empty($units)) {
+        if (! empty($units)) {
             foreach ($units as $unit) {
                 $product->units()->create([
                     'unit_name' => $unit['unit_name'],
@@ -383,9 +390,9 @@ class ProductController extends Controller
         }
 
         // Handle Variants
-        if (!empty($variants) && ($product->has_variants ?? false)) {
+        if (! empty($variants) && ($product->has_variants ?? false)) {
             foreach ($variants as $vData) {
-                $variantSku = $vData['sku'] ?? ($product->sku . '-V' . random_int(100, 999));
+                $variantSku = $vData['sku'] ?? ($product->sku.'-V'.random_int(100, 999));
                 $variant = $product->variants()->create([
                     'sku' => $variantSku,
                     'name' => $vData['name'],
@@ -393,10 +400,15 @@ class ProductController extends Controller
                     'retail_price' => $vData['retail_price'] ?? $product->retail_price,
                     'stock_quantity' => $vData['stock_quantity'] ?? 0,
                 ]);
-                if (!empty($vData['attribute_value_ids'])) {
+                if (! empty($vData['attribute_value_ids'])) {
                     $variant->attributeValues()->sync($vData['attribute_value_ids']);
                 }
             }
+        }
+
+        if (! empty($images)) {
+            app(\App\Services\ProductImages\ProductImageService::class)
+                ->uploadMany($product, $images, $primaryImageIndex, $request->user());
         }
 
         return redirect()->route('products.index')->with('success', 'Hàng hóa được tạo thành công!');
@@ -427,7 +439,7 @@ class ProductController extends Controller
 
         if (empty($validatedData['sku'])) {
             do {
-                $sku = 'SP' . date('ymd') . str_pad(random_int(1000, 99999), 5, '0', STR_PAD_LEFT);
+                $sku = 'SP'.date('ymd').str_pad(random_int(1000, 99999), 5, '0', STR_PAD_LEFT);
             } while (Product::where('sku', $sku)->exists());
             $validatedData['sku'] = $sku;
         }
@@ -435,8 +447,8 @@ class ProductController extends Controller
         if (empty($validatedData['barcode']) && \App\Models\Setting::get('product_barcode_auto', true)) {
             $validatedData['barcode'] = $validatedData['sku'];
         }
-        if (!empty($validatedData['barcode']) && Product::where('barcode', $validatedData['barcode'])->exists()) {
-            $validatedData['barcode'] = $validatedData['sku'] . '-' . random_int(10, 99);
+        if (! empty($validatedData['barcode']) && Product::where('barcode', $validatedData['barcode'])->exists()) {
+            $validatedData['barcode'] = $validatedData['sku'].'-'.random_int(10, 99);
         }
 
         $technicianPriceQuick = $validatedData['technician_price'] ?? 0;
@@ -464,14 +476,14 @@ class ProductController extends Controller
 
     public function edit(Product $product)
     {
-        $product->load(['variants.attributeValues']);
+        $product->load(['variants.attributeValues', 'images']);
         $priceBooks = PriceBook::where('is_active', true)->get();
         $showTechnician = $priceBooks->contains('enable_technician_price', true);
 
         // Load technician_price from PriceBookProduct if applicable
         $technicianPrice = 0;
         if ($showTechnician) {
-            $pbp = PriceBookProduct::whereHas('priceBook', fn($q) => $q->where('is_active', true)->where('enable_technician_price', true))
+            $pbp = PriceBookProduct::whereHas('priceBook', fn ($q) => $q->where('is_active', true)->where('enable_technician_price', true))
                 ->where('product_id', $product->id)->first();
             $technicianPrice = $pbp ? $pbp->technician_price : 0;
         }
@@ -484,6 +496,7 @@ class ProductController extends Controller
             'showTechnicianPrice' => $showTechnician,
             'technicianPrice' => $technicianPrice,
             'productAttributes' => ProductAttribute::with('values')->orderBy('sort_order')->orderBy('name')->get(),
+            'productImages' => $product->images->map->integrationPayload()->values(),
         ]);
     }
 
@@ -492,7 +505,7 @@ class ProductController extends Controller
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'type' => 'nullable|in:standard,service,combo,manufactured',
-            'sku' => 'nullable|string|unique:products,sku,' . $product->id,
+            'sku' => 'nullable|string|unique:products,sku,'.$product->id,
             'barcode' => 'nullable|string',
             'category_id' => 'nullable|exists:categories,id',
             'brand_id' => 'nullable|exists:brands,id',
@@ -530,7 +543,7 @@ class ProductController extends Controller
         ]);
 
         $validated['type'] = $validated['type'] ?? $product->type ?? 'standard';
-        if ($validated['type'] === 'service' && !$product->isService()) {
+        if ($validated['type'] === 'service' && ! $product->isService()) {
             $this->assertCanConvertToService($product);
         }
         $validated = $this->normalizeServicePayload($validated);
@@ -577,7 +590,7 @@ class ProductController extends Controller
         if ($product->has_variants) {
             $keepIds = [];
             foreach ($variants as $vData) {
-                if (!empty($vData['id'])) {
+                if (! empty($vData['id'])) {
                     $variant = ProductVariant::where('id', $vData['id'])->where('product_id', $product->id)->first();
                     if ($variant) {
                         $variant->update([
@@ -591,10 +604,11 @@ class ProductController extends Controller
                             $variant->attributeValues()->sync($vData['attribute_value_ids']);
                         }
                         $keepIds[] = $variant->id;
+
                         continue;
                     }
                 }
-                $variantSku = $vData['sku'] ?? ($product->sku . '-V' . random_int(100, 999));
+                $variantSku = $vData['sku'] ?? ($product->sku.'-V'.random_int(100, 999));
                 $variant = $product->variants()->create([
                     'sku' => $variantSku,
                     'name' => $vData['name'],
@@ -602,7 +616,7 @@ class ProductController extends Controller
                     'retail_price' => $vData['retail_price'] ?? $product->retail_price,
                     'stock_quantity' => $vData['stock_quantity'] ?? 0,
                 ]);
-                if (!empty($vData['attribute_value_ids'])) {
+                if (! empty($vData['attribute_value_ids'])) {
                     $variant->attributeValues()->sync($vData['attribute_value_ids']);
                 }
                 $keepIds[] = $variant->id;
@@ -660,13 +674,14 @@ class ProductController extends Controller
         // 1. Nhập hàng (Purchases) — loại trừ phiếu huỷ/draft
         $purchases = \App\Models\PurchaseItem::with(['purchase', 'purchase.supplier'])
             ->where('product_id', $product->id)
-            ->whereHas('purchase', fn($q) => $q->where(function($sq) {
+            ->whereHas('purchase', fn ($q) => $q->where(function ($sq) {
                 $sq->whereNull('status')
-                   ->orWhereNotIn('status', ['cancelled', 'draft']);
+                    ->orWhereNotIn('status', ['cancelled', 'draft']);
             }))
             ->get()
             ->map(function ($item) {
                 $unitCost = (float) ($item->unit_cost_allocated ?? $item->price ?? 0);
+
                 return [
                     'date' => $item->purchase->created_at,
                     'code' => $item->purchase->code,
@@ -685,7 +700,7 @@ class ProductController extends Controller
         // 2. Bán hàng (Invoices) — loại bỏ hoá đơn đã huỷ
         $sales = \App\Models\InvoiceItem::with(['invoice', 'invoice.customer'])
             ->where('product_id', $product->id)
-            ->whereHas('invoice', fn($q) => $q->where(function($sq) {
+            ->whereHas('invoice', fn ($q) => $q->where(function ($sq) {
                 $sq->whereNull('status')->orWhere('status', '!=', 'cancelled');
             }))
             ->get()
@@ -708,7 +723,7 @@ class ProductController extends Controller
         // 3. Trả hàng (Returns) — dùng return_item.cost_price (snapshot)
         $returns = \App\Models\ReturnItem::with(['orderReturn', 'orderReturn.customer'])
             ->where('product_id', $product->id)
-            ->whereHas('orderReturn', fn($q) => $q->where(function($sq) {
+            ->whereHas('orderReturn', fn ($q) => $q->where(function ($sq) {
                 $sq->where('status', '!=', 'Đã hủy')->orWhereNull('status');
             }))
             ->get()
@@ -732,10 +747,11 @@ class ProductController extends Controller
         $defaultCostPrice = (float) ($product->cost_price ?? 0);
         $stockTakes = \App\Models\StockTakeItem::with('stockTake')
             ->where('product_id', $product->id)
-            ->whereHas('stockTake', fn($q) => $q->where('status', 'balanced'))
+            ->whereHas('stockTake', fn ($q) => $q->where('status', 'balanced'))
             ->get()
             ->map(function ($item) use ($defaultCostPrice) {
                 $diff = (int) $item->actual_stock - (int) $item->system_stock;
+
                 return [
                     'date' => $item->stockTake->balanced_date ?? $item->stockTake->created_at,
                     'code' => $item->stockTake->code,
@@ -799,9 +815,10 @@ class ProductController extends Controller
                 $task = $part->task;
                 $repairedName = $task?->product?->name ?? $task?->title ?? 'Sửa chữa';
                 $isImport = ($part->direction ?? 'export') === 'import';
+
                 return [
                     'date' => $part->created_at,
-                    'code' => $task?->code ?? ('TP-' . $part->id),
+                    'code' => $task?->code ?? ('TP-'.$part->id),
                     'doc_type' => $isImport ? 'disassemble_part' : 'repair_part',
                     'doc_id' => $task?->id,
                     'type' => $isImport ? 'Nhập bóc máy' : 'Xuất sửa chữa',
@@ -817,7 +834,7 @@ class ProductController extends Controller
         // 8. Trả hàng nhập NCC (Purchase Returns)
         $purchaseReturns = \App\Models\PurchaseReturnItem::with(['purchaseReturn', 'purchaseReturn.supplier'])
             ->where('product_id', $product->id)
-            ->whereHas('purchaseReturn', fn($q) => $q->where('status', 'completed'))
+            ->whereHas('purchaseReturn', fn ($q) => $q->where('status', 'completed'))
             ->get()
             ->map(function ($item) {
                 return [
@@ -843,6 +860,7 @@ class ProductController extends Controller
         $result = $sorted->map(function ($tx) use (&$balance) {
             $balance += $tx['change'];
             $tx['balance'] = $balance;
+
             return $tx;
         });
 
@@ -863,14 +881,14 @@ class ProductController extends Controller
             switch ($status) {
                 case 'ready':
                     $query->where('status', 'in_stock')
-                          ->where(function ($q) {
-                              $q->whereNull('repair_status')
+                        ->where(function ($q) {
+                            $q->whereNull('repair_status')
                                 ->orWhereNotIn('repair_status', ['not_started', 'repairing']);
-                          });
+                        });
                     break;
                 case 'repairing':
                     $query->where('status', 'in_stock')
-                          ->whereIn('repair_status', ['not_started', 'repairing']);
+                        ->whereIn('repair_status', ['not_started', 'repairing']);
                     break;
                 case 'dismantled':
                     $query->where('status', 'dismantled');
@@ -881,7 +899,7 @@ class ProductController extends Controller
         }
 
         if ($request->filled('search')) {
-            $query->where('serial_number', 'LIKE', '%' . $request->search . '%');
+            $query->where('serial_number', 'LIKE', '%'.$request->search.'%');
         }
 
         return response()->json($query->orderBy('created_at', 'desc')->get());
@@ -921,7 +939,7 @@ class ProductController extends Controller
         $type = $request->input('type');
         $id = $request->input('id');
 
-        if (!$type || !$id) {
+        if (! $type || ! $id) {
             return response()->json(['error' => 'Missing type or id'], 400);
         }
 
@@ -932,7 +950,10 @@ class ProductController extends Controller
         switch ($type) {
             case 'invoice':
                 $doc = \App\Models\Invoice::with(['items.product', 'items.serials', 'customer'])->find($id);
-                if (!$doc) return response()->json(['error' => 'Not found'], 404);
+                if (! $doc) {
+                    return response()->json(['error' => 'Not found'], 404);
+                }
+
                 return response()->json([
                     'source_document' => $source,
                     'type' => 'invoice',
@@ -957,7 +978,7 @@ class ProductController extends Controller
                             ])
                             ->values();
 
-                        if ($serials->isEmpty() && !empty($i->serial)) {
+                        if ($serials->isEmpty() && ! empty($i->serial)) {
                             $serials = collect(array_filter(array_map('trim', explode(',', $i->serial))))
                                 ->map(fn ($serialNumber) => [
                                     'id' => null,
@@ -989,7 +1010,10 @@ class ProductController extends Controller
                 ]);
             case 'purchase':
                 $doc = \App\Models\Purchase::with(['items.product', 'supplier', 'user'])->find($id);
-                if (!$doc) return response()->json(['error' => 'Not found'], 404);
+                if (! $doc) {
+                    return response()->json(['error' => 'Not found'], 404);
+                }
+
                 return response()->json([
                     'source_document' => $source,
                     'type' => 'purchase',
@@ -1003,7 +1027,7 @@ class ProductController extends Controller
                     'price_book' => '',
                     'date' => $doc->created_at?->format('d/m/Y H:i'),
                     'note' => $doc->note,
-                    'items' => $doc->items->map(fn($i) => [
+                    'items' => $doc->items->map(fn ($i) => [
                         'product_code' => $i->product_code ?? ($i->product->sku ?? ''),
                         'product_name' => $i->product_name ?? ($i->product->name ?? ''),
                         'has_serial' => $i->product->has_serial ?? false,
@@ -1021,7 +1045,10 @@ class ProductController extends Controller
 
             case 'return':
                 $doc = \App\Models\OrderReturn::with(['items.product', 'customer'])->find($id);
-                if (!$doc) return response()->json(['error' => 'Not found'], 404);
+                if (! $doc) {
+                    return response()->json(['error' => 'Not found'], 404);
+                }
+
                 return response()->json([
                     'source_document' => $source,
                     'type' => 'return',
@@ -1035,7 +1062,7 @@ class ProductController extends Controller
                     'price_book' => '',
                     'date' => $doc->created_at?->format('d/m/Y H:i'),
                     'note' => $doc->note ?? '',
-                    'items' => $doc->items->map(fn($i) => [
+                    'items' => $doc->items->map(fn ($i) => [
                         'product_code' => $i->product->sku ?? '',
                         'product_name' => $i->product->name ?? '',
                         'has_serial' => $i->product->has_serial ?? false,
@@ -1051,27 +1078,30 @@ class ProductController extends Controller
                     'customer_paid' => 0,
                 ]);
 
-            // ─── PHIẾU SỬA CHỮA / BÓC MÁY ───
+                // ─── PHIẾU SỬA CHỮA / BÓC MÁY ───
             case 'repair_part':
             case 'disassemble_part':
                 $task = \App\Models\Task::with(['parts.product', 'product', 'serialImei', 'assignedEmployee'])->find($id);
-                if (!$task) return response()->json(['error' => 'Not found'], 404);
+                if (! $task) {
+                    return response()->json(['error' => 'Not found'], 404);
+                }
                 $machineName = $task->product->name ?? $task->title ?? 'Sửa chữa';
                 $serialNumber = $task->serialImei->serial_number ?? null;
+
                 return response()->json([
                     'source_document' => $source,
                     'type' => $type,
                     'title' => $type === 'repair_part' ? 'Phiếu xuất sửa chữa' : 'Phiếu nhập bóc máy',
                     'code' => $task->code,
                     'status' => $task->status_label ?? $task->status,
-                    'partner_name' => $machineName . ($serialNumber ? " ({$serialNumber})" : ''),
+                    'partner_name' => $machineName.($serialNumber ? " ({$serialNumber})" : ''),
                     'created_by' => $task->creator?->name ?? '',
                     'seller' => $task->assignedEmployee?->name ?? '',
                     'sales_channel' => $task->type === 'repair' ? 'Sửa chữa' : 'Công việc',
                     'price_book' => '',
                     'date' => $task->created_at?->format('d/m/Y H:i'),
                     'note' => $task->notes ?? $task->issue_description ?? '',
-                    'items' => $task->parts->map(fn($p) => [
+                    'items' => $task->parts->map(fn ($p) => [
                         'product_code' => $p->product->sku ?? '',
                         'product_name' => $p->product->name ?? '',
                         'has_serial' => $p->product->has_serial ?? false,
@@ -1089,10 +1119,13 @@ class ProductController extends Controller
                     'customer_paid' => 0,
                 ]);
 
-            // ─── PHIẾU TRẢ HÀNG NCC ───
+                // ─── PHIẾU TRẢ HÀNG NCC ───
             case 'purchase_return':
                 $doc = \App\Models\PurchaseReturn::with(['items.product', 'supplier'])->find($id);
-                if (!$doc) return response()->json(['error' => 'Not found'], 404);
+                if (! $doc) {
+                    return response()->json(['error' => 'Not found'], 404);
+                }
+
                 return response()->json([
                     'source_document' => $source,
                     'type' => 'purchase_return',
@@ -1106,7 +1139,7 @@ class ProductController extends Controller
                     'price_book' => '',
                     'date' => ($doc->return_date ?? $doc->created_at)?->format('d/m/Y H:i'),
                     'note' => $doc->note ?? '',
-                    'items' => $doc->items->map(fn($i) => [
+                    'items' => $doc->items->map(fn ($i) => [
                         'product_code' => $i->product->sku ?? '',
                         'product_name' => $i->product->name ?? '',
                         'has_serial' => $i->product->has_serial ?? false,
@@ -1122,10 +1155,13 @@ class ProductController extends Controller
                     'customer_paid' => 0,
                 ]);
 
-            // ─── PHIẾU KIỂM KHO ───
+                // ─── PHIẾU KIỂM KHO ───
             case 'stock_take':
                 $doc = \App\Models\StockTake::with(['items.product'])->find($id);
-                if (!$doc) return response()->json(['error' => 'Not found'], 404);
+                if (! $doc) {
+                    return response()->json(['error' => 'Not found'], 404);
+                }
+
                 return response()->json([
                     'source_document' => $source,
                     'type' => 'stock_take',
@@ -1139,7 +1175,7 @@ class ProductController extends Controller
                     'price_book' => '',
                     'date' => ($doc->balanced_date ?? $doc->created_at)?->format('d/m/Y H:i'),
                     'note' => $doc->note ?? '',
-                    'items' => $doc->items->map(fn($i) => [
+                    'items' => $doc->items->map(fn ($i) => [
                         'product_code' => $i->product->sku ?? '',
                         'product_name' => $i->product->name ?? '',
                         'has_serial' => false,
@@ -1157,10 +1193,13 @@ class ProductController extends Controller
                     'customer_paid' => 0,
                 ]);
 
-            // ─── PHIẾU XUẤT HỦY ───
+                // ─── PHIẾU XUẤT HỦY ───
             case 'damage':
                 $doc = \App\Models\Damage::with(['items.product'])->find($id);
-                if (!$doc) return response()->json(['error' => 'Not found'], 404);
+                if (! $doc) {
+                    return response()->json(['error' => 'Not found'], 404);
+                }
+
                 return response()->json([
                     'source_document' => $source,
                     'type' => 'damage',
@@ -1174,7 +1213,7 @@ class ProductController extends Controller
                     'price_book' => '',
                     'date' => ($doc->destroyed_date ?? $doc->created_at)?->format('d/m/Y H:i'),
                     'note' => $doc->note ?? '',
-                    'items' => $doc->items->map(fn($i) => [
+                    'items' => $doc->items->map(fn ($i) => [
                         'product_code' => $i->product->sku ?? '',
                         'product_name' => $i->product->name ?? '',
                         'has_serial' => false,
@@ -1213,6 +1252,7 @@ class ProductController extends Controller
 
         return redirect()->back()->with('success', 'Đã xoá các hàng hóa được chọn!');
     }
+
     public function export(
         Request $request,
         ProductSearchService $productSearch,
@@ -1235,7 +1275,7 @@ class ProductController extends Controller
             $categoryIds = [$categoryId];
             $childIds = Category::where('parent_id', $categoryId)->pluck('id')->toArray();
             $categoryIds = array_merge($categoryIds, $childIds);
-            if (!empty($childIds)) {
+            if (! empty($childIds)) {
                 $categoryIds = array_merge($categoryIds, Category::whereIn('parent_id', $childIds)->pluck('id')->toArray());
             }
             $query->whereIn('category_id', $categoryIds);
@@ -1270,7 +1310,7 @@ class ProductController extends Controller
         $fields = $catalog->selectedExportFields((array) $request->input('fields', []), auth()->user());
         $products = $query->with('units')->orderBy('id', 'desc')->get();
 
-        return $exporter->download($products, $fields, 'hang_hoa_' . now()->format('Ymd_His') . '.xlsx');
+        return $exporter->download($products, $fields, 'hang_hoa_'.now()->format('Ymd_His').'.xlsx');
     }
 
     public function importTemplate(ProductExcelImportService $importer)
@@ -1328,7 +1368,7 @@ class ProductController extends Controller
 
         return \App\Services\CsvService::export(
             ['Mã hàng', 'Tên hàng', 'Loại', 'Nhóm hàng', 'Thương hiệu', 'Giá vốn', 'Giá bán', 'Tồn kho', 'Định mức tồn ít nhất', 'Định mức tồn nhiều nhất', 'Trọng lượng', 'Vị trí', 'Mô tả'],
-            $products->map(fn($p) => [$p->sku, $p->name, $p->type, $p->category?->name, $p->brand?->name, $p->cost_price, $p->retail_price, $p->stock_quantity, $p->min_stock, $p->max_stock, $p->weight, $p->location, $p->description]),
+            $products->map(fn ($p) => [$p->sku, $p->name, $p->type, $p->category?->name, $p->brand?->name, $p->cost_price, $p->retail_price, $p->stock_quantity, $p->min_stock, $p->max_stock, $p->weight, $p->location, $p->description]),
             'hang_hoa.csv'
         );
     }
@@ -1338,7 +1378,9 @@ class ProductController extends Controller
         [$headers, $rows] = \App\Services\CsvService::parse($request);
         $count = 0;
         foreach ($rows as $row) {
-            if (count($row) < 2 || empty(trim($row[1] ?? ''))) continue;
+            if (count($row) < 2 || empty(trim($row[1] ?? ''))) {
+                continue;
+            }
             $categoryName = trim($row[3] ?? '');
             $brandName = trim($row[4] ?? '');
             $categoryId = $categoryName ? \App\Models\Category::firstOrCreate(['name' => $categoryName])->id : null;
@@ -1359,10 +1401,11 @@ class ProductController extends Controller
                     'weight' => trim($row[10] ?? ''),
                     'location' => trim($row[11] ?? ''),
                     'description' => trim($row[12] ?? ''),
-                ], fn($v) => $v !== '' && $v !== null)
+                ], fn ($v) => $v !== '' && $v !== null)
             );
             $count++;
         }
+
         return back()->with('success', "Đã nhập {$count} sản phẩm từ file.");
     }
 
@@ -1405,6 +1448,7 @@ class ProductController extends Controller
         foreach ($lines as $serial) {
             if (SerialImei::where('serial_number', $serial)->exists()) {
                 $duplicates[] = $serial;
+
                 continue;
             }
             SerialImei::create([
@@ -1434,7 +1478,7 @@ class ProductController extends Controller
     public function updateSerial(Request $request, Product $product, SerialImei $serial)
     {
         $data = $request->validate([
-            'serial_number' => 'required|string|max:255|unique:serial_imeis,serial_number,' . $serial->id,
+            'serial_number' => 'required|string|max:255|unique:serial_imeis,serial_number,'.$serial->id,
             'status' => 'nullable|string|in:in_stock,sold,returning,warranty,defective',
             'cost_price' => 'nullable|numeric|min:0',
         ]);
@@ -1481,7 +1525,7 @@ class ProductController extends Controller
             \App\Models\ActivityLog::log(
                 'serial_cost_update',
                 "Sửa giá vốn serial {$serial->serial_number} (SP: {$product->name}): "
-                    . number_format($oldCost, 0, ',', '.') . ' → ' . number_format((float)$serial->cost_price, 0, ',', '.'),
+                    .number_format($oldCost, 0, ',', '.').' → '.number_format((float) $serial->cost_price, 0, ',', '.'),
                 $serial,
                 ['old_cost' => $oldCost, 'new_cost' => (float) $serial->cost_price, 'product_id' => $product->id]
             );

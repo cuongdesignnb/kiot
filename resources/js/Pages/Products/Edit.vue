@@ -4,6 +4,7 @@ import { ref, computed, onMounted, watch } from 'vue';
 import axios from 'axios';
 import AppLayout from '../../Layouts/AppLayout.vue';
 import MoneyInput from '../../Components/MoneyInput.vue';
+import ProductImageManager from '../../Components/ProductImageManager.vue';
 import { formatVND as formatCurrency } from '@/utils/money';
 
 const props = defineProps({
@@ -14,6 +15,7 @@ const props = defineProps({
     showTechnicianPrice: Boolean,
     technicianPrice: { type: Number, default: 0 },
     productAttributes: { type: Array, default: () => [] },
+    productImages: { type: Array, default: () => [] },
 });
 
 // ===== Serial/IMEI Management =====
@@ -449,10 +451,7 @@ const generateVariants = () => {
                     <!-- Cột Trái: Upload Hình Ảnh -->
                     <div class="w-1/4">
                         <div class="bg-white rounded border border-gray-200 shadow-sm p-4">
-                            <div class="border-2 border-dashed border-gray-300 rounded-lg h-48 flex items-center justify-center flex-col text-gray-400 bg-gray-50 hover:bg-blue-50 hover:border-blue-400 hover:text-blue-500 cursor-pointer transition-colors group">
-                                <svg class="w-10 h-10 mb-2 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-                                <span class="text-sm font-semibold">Cập nhật ảnh</span>
-                            </div>
+                            <ProductImageManager :product-id="props.product.id" :initial-images="props.productImages" />
                             <div class="pt-4 space-y-3">
                                 <label class="flex items-center gap-2 text-sm text-gray-700 font-medium cursor-pointer">
                                     <input type="checkbox" v-model="form.sell_directly" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4">

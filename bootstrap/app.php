@@ -14,6 +14,8 @@ return Application::configure(basePath: dirname(__DIR__))
         then: function () {
             Route::middleware('web')
                 ->group(base_path('routes/integration-management.php'));
+            Route::middleware('web')
+                ->group(base_path('routes/product-images.php'));
         },
     )
     ->withMiddleware(function (Middleware $middleware) {

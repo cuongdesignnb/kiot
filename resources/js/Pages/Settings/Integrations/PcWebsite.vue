@@ -10,6 +10,7 @@ const props = defineProps({
     environment_import_available: Boolean,
     clients: Array,
     branches: Array,
+    price_books: Array,
     history: Array,
     defaults: Object,
 });
@@ -39,6 +40,7 @@ const form = reactive({
     name: '',
     website_url: '',
     default_branch_id: props.branches?.[0]?.id || '',
+    pc_product_price_book_id: '',
     sales_channel: props.defaults?.sales_channel || 'Website PC',
     timestamp_tolerance_seconds: props.defaults?.timestamp_tolerance_seconds || 300,
     nonce_ttl_seconds: props.defaults?.nonce_ttl_seconds || 600,
@@ -77,6 +79,7 @@ function resetCreateForm() {
         name: '',
         website_url: '',
         default_branch_id: props.branches?.[0]?.id || '',
+        pc_product_price_book_id: '',
         sales_channel: props.defaults?.sales_channel || 'Website PC',
         timestamp_tolerance_seconds: props.defaults?.timestamp_tolerance_seconds || 300,
         nonce_ttl_seconds: props.defaults?.nonce_ttl_seconds || 600,
@@ -111,6 +114,7 @@ async function saveClient() {
             name: selected.value.name,
             website_url: selected.value.website_url,
             default_branch_id: selected.value.default_branch_id,
+            pc_product_price_book_id: selected.value.pc_product_price_book_id || null,
             sales_channel: selected.value.sales_channel,
             timestamp_tolerance_seconds: selected.value.timestamp_tolerance_seconds,
             nonce_ttl_seconds: selected.value.nonce_ttl_seconds,
@@ -266,6 +270,7 @@ function formatDate(value) {
                             <label class="text-sm font-medium text-slate-700">Tên kết nối<input v-model="selected.name" :disabled="!canManage" class="mt-1 w-full rounded-lg border-slate-300" /></label>
                             <label class="text-sm font-medium text-slate-700">Website URL<input v-model="selected.website_url" :disabled="!canManage" class="mt-1 w-full rounded-lg border-slate-300" /></label>
                             <label class="text-sm font-medium text-slate-700">Chi nhánh mặc định<select v-model="selected.default_branch_id" :disabled="!canManage" class="mt-1 w-full rounded-lg border-slate-300"><option v-for="branch in branches" :key="branch.id" :value="branch.id">{{ branch.name }}</option></select></label>
+                            <label class="text-sm font-medium text-slate-700">Bảng giá sản phẩm Website PC<select v-model="selected.pc_product_price_book_id" :disabled="!canManage" class="mt-1 w-full rounded-lg border-slate-300"><option :value="null">— Chưa chọn, fallback giá bán lẻ —</option><option v-for="book in price_books" :key="book.id" :value="book.id">{{ book.code ? `${book.code} · ` : '' }}{{ book.name }}</option></select><span v-if="!selected.pc_product_price_book_id" class="mt-1 block text-xs text-amber-700">Chưa chọn bảng giá; Product API sẽ trả giá bán lẻ và fallback_used=true.</span></label>
                             <label class="text-sm font-medium text-slate-700">Kênh bán hàng<input v-model="selected.sales_channel" :disabled="!canManage" class="mt-1 w-full rounded-lg border-slate-300" /></label>
                             <label class="text-sm font-medium text-slate-700">Timestamp tolerance (giây)<input v-model.number="selected.timestamp_tolerance_seconds" type="number" :disabled="!canManage" class="mt-1 w-full rounded-lg border-slate-300" /></label>
                             <label class="text-sm font-medium text-slate-700">Nonce TTL (giây)<input v-model.number="selected.nonce_ttl_seconds" type="number" :disabled="!canManage" class="mt-1 w-full rounded-lg border-slate-300" /></label>
@@ -315,6 +320,7 @@ function formatDate(value) {
                     <label class="text-sm font-medium">Tên kết nối<input v-model="form.name" required class="mt-1 w-full rounded-lg border-slate-300" /></label>
                     <label class="text-sm font-medium">Website URL<input v-model="form.website_url" required placeholder="https://admin.example.vn" class="mt-1 w-full rounded-lg border-slate-300" /></label>
                     <label class="text-sm font-medium">Chi nhánh mặc định<select v-model="form.default_branch_id" required class="mt-1 w-full rounded-lg border-slate-300"><option v-for="branch in branches" :key="branch.id" :value="branch.id">{{ branch.name }}</option></select></label>
+                    <label class="text-sm font-medium">Bảng giá sản phẩm Website PC<select v-model="form.pc_product_price_book_id" class="mt-1 w-full rounded-lg border-slate-300"><option value="">— Chưa chọn, fallback giá bán lẻ —</option><option v-for="book in price_books" :key="book.id" :value="book.id">{{ book.code ? `${book.code} · ` : '' }}{{ book.name }}</option></select></label>
                     <label class="text-sm font-medium">Kênh bán hàng<input v-model="form.sales_channel" required class="mt-1 w-full rounded-lg border-slate-300" /></label>
                     <label class="text-sm font-medium">Timestamp tolerance<input v-model.number="form.timestamp_tolerance_seconds" type="number" class="mt-1 w-full rounded-lg border-slate-300" /></label>
                     <label class="text-sm font-medium">Nonce TTL<input v-model.number="form.nonce_ttl_seconds" type="number" class="mt-1 w-full rounded-lg border-slate-300" /></label>

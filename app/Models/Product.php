@@ -105,6 +105,21 @@ class Product extends Model
         return $this->hasMany(ExternalInventoryReservation::class);
     }
 
+    public function images(): HasMany
+    {
+        return $this->hasMany(ProductImage::class)->orderBy('sort_order')->orderBy('id');
+    }
+
+    public function primaryImage()
+    {
+        return $this->hasOne(ProductImage::class)->where('is_primary', true);
+    }
+
+    public function priceBookProducts(): HasMany
+    {
+        return $this->hasMany(PriceBookProduct::class);
+    }
+
     public function isService(): bool
     {
         return $this->type === 'service';

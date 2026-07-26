@@ -3,7 +3,7 @@ import { Head, useForm, Link } from '@inertiajs/vue3';
 import { ref, computed, watch } from 'vue';
 import axios from 'axios';
 import AppLayout from '../../Layouts/AppLayout.vue';
-import MediaLibrary from '../../Components/MediaLibrary.vue';
+import ProductImageManager from '../../Components/ProductImageManager.vue';
 import MoneyInput from '../../Components/MoneyInput.vue';
 
 const props = defineProps({
@@ -24,6 +24,8 @@ const form = useForm({
     sku: '',
     barcode: '',
     image: '',
+    images: [],
+    primary_image_index: null,
     category_id: '',
     brand_id: '',
     cost_price: 0,
@@ -322,7 +324,10 @@ const generateVariants = () => {
                     <!-- Cột Trái: Upload Hình Ảnh -->
                     <div class="w-1/4">
                         <div class="bg-white rounded border border-gray-200 shadow-sm p-4">
-                            <MediaLibrary v-model="form.image" collection="products" label="Thêm ảnh sản phẩm" />
+                            <ProductImageManager
+                                v-model:files="form.images"
+                                v-model:primary-index="form.primary_image_index"
+                            />
                             <div class="pt-4 space-y-3">
                                 <label class="flex items-center gap-2 text-sm text-gray-700 font-medium cursor-pointer">
                                     <input type="checkbox" v-model="form.sell_directly" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4">

@@ -17,7 +17,10 @@ class ProductSyncController extends Controller
     public function index(ProductSyncRequest $request, PcProductSyncService $service): JsonResponse
     {
         try {
-            $result = $service->paginate($request->validated());
+            $result = $service->paginate(
+                $request->validated(),
+                $request->attributes->get('pc_integration_runtime'),
+            );
 
             return PcIntegrationResponse::success($result['data'], $result['meta']);
         } catch (Throwable $exception) {
@@ -28,7 +31,10 @@ class ProductSyncController extends Controller
     public function show(ProductSyncRequest $request, string $sku, PcProductSyncService $service): JsonResponse
     {
         try {
-            return PcIntegrationResponse::success($service->findBySku($sku));
+            return PcIntegrationResponse::success($service->findBySku(
+                $sku,
+                $request->attributes->get('pc_integration_runtime'),
+            ));
         } catch (Throwable $exception) {
             return $this->integrationError($exception);
         }
