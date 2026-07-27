@@ -5,6 +5,7 @@ namespace Tests\Feature\PcIntegration;
 use App\Models\Category;
 use App\Models\PriceBook;
 use App\Models\PriceBookProduct;
+use App\Models\Product;
 use App\Models\ProductImage;
 use App\Models\SerialImei;
 use Illuminate\Support\Facades\Storage;
@@ -100,6 +101,33 @@ class PcProductProviderV2Test extends PcIntegrationTestCase
             ->assertJsonPath('data.0.inventory.status', 'repairing')
             ->assertJsonPath('data.0.inventory.available_quantity', 0)
             ->assertJsonPath('data.0.availability.is_available', false);
+    }
+
+    public function test_product_pages_explicitly_forbid_delete_by_omission(): void
+    {
+        Product::query()->delete();
+        $this->makeProduct(['sku' => 'PC-SAFE-SYNC-1']);
+        $this->makeProduct(['sku' => 'PC-SAFE-SYNC-2']);
+
+        $path = '/api/integrations/v1/pc/products';
+        $first = $this->getJson($path.'?limit=1', $this->signedHeaders('GET', $path));
+
+        $first->assertOk()
+            ->assertJsonPath('meta.has_more', true)
+            ->assertJsonPath('meta.dataset_complete', false)
+            ->assertJsonPath('meta.deletion_policy', 'explicit_tombstone_only')
+            ->assertJsonPath('meta.missing_products_are_deleted', false);
+
+        $second = $this->getJson(
+            $path.'?limit=1&cursor='.urlencode((string) $first->json('meta.next_cursor')),
+            $this->signedHeaders('GET', $path),
+        );
+
+        $second->assertOk()
+            ->assertJsonPath('meta.has_more', false)
+            ->assertJsonPath('meta.dataset_complete', true)
+            ->assertJsonPath('meta.deletion_policy', 'explicit_tombstone_only')
+            ->assertJsonPath('meta.missing_products_are_deleted', false);
     }
 
     public function test_category_visibility_is_name_agnostic_and_touches_products_for_incremental_sync(): void
