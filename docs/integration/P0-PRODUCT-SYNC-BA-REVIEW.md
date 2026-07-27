@@ -118,44 +118,58 @@ Snapshot được ưu tiên để đảm bảo chứng từ luôn phản ánh đ
 
 ### AC-01 — Sản phẩm không xuất hiện trong response
 
-**Given** một sản phẩm local không xuất hiện trong response sản phẩm của KIOT.  
-**When** phía nhận xử lý kết quả sync.  
+**Given** một sản phẩm local không xuất hiện trong response sản phẩm của KIOT.
+
+**When** phía nhận xử lý kết quả sync.
+
 **Then** sản phẩm không được tự động soft-delete chỉ vì bị thiếu khỏi response.
 
 ### AC-02 — Tombstone tường minh
 
-**Given** KIOT trả về một sản phẩm có `sync_status=deleted`.  
-**When** phía nhận xử lý payload.  
+**Given** KIOT trả về một sản phẩm có `sync_status=deleted`.
+
+**When** phía nhận xử lý payload.
+
 **Then** phía nhận có thể áp dụng quy trình inactive/archive theo đặc tả riêng, nhưng không được xóa quan hệ chứng từ lịch sử.
 
 ### AC-03 — Phân trang chưa hoàn chỉnh
 
-**Given** một trang sync bị timeout hoặc lỗi.  
-**When** phía nhận chưa đi hết chuỗi `next_cursor`.  
+**Given** một trang sync bị timeout hoặc lỗi.
+
+**When** phía nhận chưa đi hết chuỗi `next_cursor`.
+
 **Then** không được coi dataset là hoàn chỉnh và không được chạy đối soát xóa theo dữ liệu bị thiếu.
 
 ### AC-04 — Product đổi SKU hoặc tên
 
-**Given** phiếu nhập đã lưu mã và tên sản phẩm tại thời điểm lập phiếu.  
-**When** Product được đổi SKU hoặc tên sau đó.  
+**Given** phiếu nhập đã lưu mã và tên sản phẩm tại thời điểm lập phiếu.
+
+**When** Product được đổi SKU hoặc tên sau đó.
+
 **Then** popup phiếu nhập vẫn hiển thị mã và tên cũ từ snapshot.
 
 ### AC-05 — Product đã soft-delete
 
-**Given** Product liên quan tới hóa đơn hoặc phiếu nhập đã bị soft-delete.  
-**When** người dùng mở chi tiết chứng từ lịch sử.  
+**Given** Product liên quan tới hóa đơn hoặc phiếu nhập đã bị soft-delete.
+
+**When** người dùng mở chi tiết chứng từ lịch sử.
+
 **Then** mã và tên sản phẩm vẫn hiển thị, chứng từ không bị mất liên kết hiển thị.
 
 ### AC-06 — Quan hệ Product không còn nhưng snapshot vẫn còn
 
-**Given** dòng phiếu nhập còn `product_code` và `product_name`, nhưng quan hệ Product trả về `null`.  
-**When** người dùng mở popup chi tiết.  
+**Given** dòng phiếu nhập còn `product_code` và `product_name`, nhưng quan hệ Product trả về `null`.
+
+**When** người dùng mở popup chi tiết.
+
 **Then** popup hiển thị đầy đủ mã và tên từ snapshot.
 
 ### AC-07 — Không thay đổi dữ liệu nghiệp vụ
 
-**Given** hotfix được triển khai.  
-**When** mở hoặc đọc chứng từ lịch sử.  
+**Given** hotfix được triển khai.
+
+**When** mở hoặc đọc chứng từ lịch sử.
+
 **Then** tồn kho, giá vốn, công nợ, số lượng dòng chứng từ và primary key không thay đổi.
 
 ## 6. Bằng chứng kiểm thử
