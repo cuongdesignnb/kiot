@@ -6,6 +6,7 @@ use App\Models\ActivityLog;
 use App\Models\Product;
 use App\Models\SerialImei;
 use App\Models\User;
+use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Artisan;
@@ -15,6 +16,13 @@ use Tests\TestCase;
 class P0ProductDeletionSafetyTest extends TestCase
 {
     use DatabaseTransactions;
+
+    public function test_audit_deletions_command_is_registered_by_application_bootstrap(): void
+    {
+        $commands = $this->app->make(Kernel::class)->all();
+
+        $this->assertArrayHasKey('products:audit-deletions', $commands);
+    }
 
     private function admin(): User
     {

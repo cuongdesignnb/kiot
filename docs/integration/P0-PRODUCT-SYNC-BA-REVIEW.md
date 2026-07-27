@@ -10,7 +10,7 @@ Hotfix tập trung vào ba vấn đề:
 2. Khắc phục tình trạng mã hoặc tên sản phẩm bị trống trên popup chứng từ lịch sử khi sản phẩm đã bị xóa mềm hoặc đã thay đổi thông tin.
 3. Chặn thao tác xóa hàng hóa đã có tồn kho, serial hoặc lịch sử nghiệp vụ; đồng thời ghi audit cho cả thao tác thành công và bị chặn.
 
-> **Đính chính bằng chứng:** `DELETED=137` là số payload tombstone có `sync_status=deleted` mà consumer nhận từ KIOT. Chưa có bằng chứng consumer tạo `products.deleted_at`; code consumer hiện được xác nhận không soft-delete sản phẩm chỉ vì thiếu khỏi response. Nguồn tạo soft-delete trong KIOT vẫn đang được điều tra. Hotfix này không khôi phục 137 sản phẩm và chưa được xem là hoàn tất toàn bộ sự cố production.
+> **Kết luận điều tra:** `DELETED=137` là số payload tombstone có `sync_status=deleted` mà consumer nhận từ KIOT, không phải nguyên nhân tạo `products.deleted_at`. Sự cố được xác định là 100 sản phẩm bị xóa qua hai request trình duyệt đã xác thực tới `POST /products/bulk-destroy`; implementation cũ của `ProductController::bulkDestroy` soft-delete trực tiếp các ID được gửi lên. Chưa xác định được tài khoản người dùng cụ thể từ dữ liệu session/audit lịch sử còn lại.
 
 ## 2. Tóm tắt vấn đề
 
@@ -27,11 +27,11 @@ ERRORS=0
 
 Metric phía consumer tăng `DELETED` mỗi khi nhận một payload có `sync_status=deleted`. Vì vậy số `137` chỉ chứng minh consumer đã nhận 137 tombstone từ KIOT; số liệu này không chứng minh consumer đã ghi `products.deleted_at`, cũng không chứng minh 137 sản phẩm bị thiếu khỏi response.
 
-Kết luận hiện tại:
+Kết luận về sync:
 
 - Consumer không soft-delete sản phẩm chỉ vì sản phẩm thiếu khỏi response.
-- Chưa có bằng chứng consumer là nơi tạo `products.deleted_at`.
-- KIOT là nguồn phát tombstone, nhưng đường code hoặc tác nhân nào tạo soft-delete trong KIOT vẫn chưa được xác định đầy đủ.
+- Consumer không tạo `products.deleted_at` trong sự cố này; sync không gây ra thao tác xóa.
+- KIOT phát tombstone sau khi Product đã bị soft-delete bởi request bulk-delete.
 
 Các trường hợp sản phẩm có thể không xuất hiện gồm:
 
@@ -48,6 +48,78 @@ Popup phiếu nhập hoặc công nợ có thể không hiển thị mã và tê
 - Quan hệ tới Product không còn trả về dữ liệu.
 - Code đọc nhầm trường `product.code`, trong khi mã sản phẩm thực tế được lưu ở `product.sku`.
 - Chứng từ đã lưu snapshot `product_code` và `product_name`, nhưng popup không ưu tiên sử dụng snapshot này.
+
+### 2.3. Nguyên nhân gốc đã xác nhận của sự cố xóa 100 sản phẩm
+
+Một browser session đã đăng nhập thành công lúc `2026-07-24 14:54:59 +0700` và gửi hai request đã xác thực tới endpoint `POST /products/bulk-destroy`:
+
+| Request | Thời gian | Số Product |
+|---|---:|---:|
+| 1 | `2026-07-24 14:59:31 +0700` | 50 |
+| 2 | `2026-07-24 14:59:41 +0700` | 50 |
+
+Hai request đến từ IP `42.116.14.105`, user-agent Chrome 138 trên Macintosh. Hai tập ID khớp chính xác với hai batch `deleted_at`, mỗi batch 50 Product. Implementation cũ của `ProductController::bulkDestroy` trực tiếp soft-delete các ID được gửi lên, không có guard kiểm tra tồn kho, serial hoặc lịch sử nghiệp vụ.
+
+Không được gán hành động cho một nhân viên cụ thể: session và audit lịch sử hiện có không còn đủ dữ liệu để xác định tài khoản đã thực hiện. `ACTOR_ACCOUNT=UNRESOLVED`.
+
+```text
+ROOT_CAUSE_CONFIRMED=YES
+DELETE_ENDPOINT=POST /products/bulk-destroy
+DELETE_REQUEST_1=2026-07-24 14:59:31 +0700
+DELETE_REQUEST_1_COUNT=50
+DELETE_REQUEST_2=2026-07-24 14:59:41 +0700
+DELETE_REQUEST_2_COUNT=50
+TOTAL_INCIDENT_PRODUCTS=100
+SOURCE_IP=42.116.14.105
+USER_AGENT=Chrome 138 on Macintosh
+LOGIN_SUCCESS=2026-07-24 14:54:59 +0700
+SYNC_CAUSED_DELETE=NO
+ACTOR_ACCOUNT=UNRESOLVED
+```
+
+### 2.4. Bằng chứng audit sự cố và khả năng restore
+
+Audit trên dữ liệu sự cố cho kết quả:
+
+| Chỉ số | Kết quả |
+|---|---:|
+| Products audited | 100 |
+| Expected IDs match | YES |
+| Restore candidates | 100 |
+| Có lịch sử nghiệp vụ | 100 |
+| Có tồn kho khác 0 | 34 |
+| Tổng tồn kho | 197 |
+| Có serial | 35 |
+| Có phiếu nhập | 97 |
+| Có hóa đơn | 24 |
+| Có giao dịch kho | 99 |
+| Xung đột SKU/remote với Product active | 0 |
+| Sẵn sàng restore sau deploy guard | YES |
+
+```text
+PRODUCTS_AUDITED=100
+EXPECTED_IDS_MATCH=YES
+RESTORE_CANDIDATES=100
+WITH_BUSINESS_HISTORY=100
+WITH_NONZERO_STOCK=34
+STOCK_QUANTITY_SUM=197
+WITH_SERIALS=35
+WITH_PURCHASES=97
+WITH_INVOICES=24
+WITH_STOCK_MOVEMENTS=99
+ACTIVE_SKU_OR_REMOTE_CONFLICTS=0
+RESTORE_READY_AFTER_DEPLOY=YES
+```
+
+Bằng chứng được lưu ngoài Git, không commit dữ liệu production vào repository:
+
+```text
+/www/backup/database/kiot-product-delete-incident-20260727-181724/product-deletion-audit-direct.json
+SHA256=e95139667411d2f358d227d3d8a55b641a53fbb5550058ca9850d1dd7acb8cb5
+
+/www/backup/database/kiot-product-delete-incident-20260727-181724/restore-conflict-audit.json
+SHA256=12754735e481323f72eb9e29c9612e2afc0276caf154d4a57dd3b1eebff498fe
+```
 
 ## 3. Phạm vi đã sửa
 
@@ -132,6 +204,13 @@ php artisan products:audit-deletions --from="2026-07-24 14:55:00" --to="2026-07-
 ```
 
 `restore_candidate=true` chỉ là tín hiệu cần BA/kỹ thuật review vì sản phẩm đã xóa vẫn có tồn kho, serial hoặc lịch sử. Lệnh không restore và không thực hiện `INSERT`, `UPDATE` hoặc `DELETE`.
+
+Command được đăng ký tường minh trong Laravel bootstrap. Bằng chứng cuối phải chạy qua Artisan bình thường:
+
+```bash
+php artisan list --raw | grep -F 'products:audit-deletions'
+php artisan products:audit-deletions --help
+```
 
 ## 4. Kết quả trước và sau hotfix
 
@@ -233,7 +312,9 @@ php artisan products:audit-deletions --from="2026-07-24 14:55:00" --to="2026-07-
 
 | Hạng mục | Kết quả |
 |---|---|
-| QA guard xóa Product và hiển thị lịch sử | 13 test pass, 55 assertion |
+| QA guard xóa Product, đăng ký Artisan command và hiển thị lịch sử | 14 test pass, 56 assertion |
+| `php artisan list --raw` có `products:audit-deletions` | Pass |
+| `php artisan products:audit-deletions --help` | Pass |
 | Toàn bộ test module PC integration | Pass |
 | PHP syntax check | Pass |
 | Laravel Pint | Pass |
@@ -247,15 +328,12 @@ Docker MySQL chỉ được bật trong thời gian QA và đã được tắt s
 
 Các đầu việc sau chưa được tuyên bố hoàn tất:
 
-- Xác định đường code/tác nhân trong KIOT đã tạo `products.deleted_at` và phát 137 tombstone.
-- Xác định chính xác sync run gây sự cố trên production.
-- Audit và phân loại 137 sản phẩm bị ảnh hưởng.
-- Backup database production.
-- Restore có chọn lọc các sản phẩm được chứng minh là bị sync xóa nhầm.
+- Xác định tài khoản người dùng cụ thể đã sở hữu browser session thực hiện hai request bulk-delete; dữ liệu hiện tại chỉ đủ xác nhận session đã xác thực.
+- Restore có chọn lọc 100 sản phẩm được chứng minh là bị hai request bulk-delete xóa nhầm.
 - Chạy dry-run và real full sync sau deploy.
 - Smoke test và hậu kiểm production.
 
-Không được merge hoặc deploy hotfix như một giải pháp hoàn chỉnh cho sự cố cho tới khi companion hotfix phía consumer được review và nguồn tạo soft-delete trong KIOT được điều tra đủ bằng chứng.
+Không được merge hoặc deploy hotfix như một giải pháp hoàn chỉnh cho sự cố cho tới khi hai Draft PR được review, guard được phê duyệt và kế hoạch restore có kiểm soát được phê duyệt. Không blind restore.
 
 ## 8. Checklist BA review
 
@@ -267,7 +345,8 @@ Không được merge hoặc deploy hotfix như một giải pháp hoàn chỉnh
 - [ ] Xác nhận `DELETED=137` là số tombstone consumer nhận từ KIOT, không phải bằng chứng consumer ghi `deleted_at`.
 - [ ] Xác nhận Product có tồn kho, serial hoặc lịch sử phải dùng Ngừng kinh doanh thay cho xóa.
 - [ ] Xác nhận xóa hàng loạt phải atomic.
-- [ ] Xác định đường code/tác nhân trong KIOT tạo soft-delete.
+- [x] Xác nhận hai request `POST /products/bulk-destroy` tạo đúng hai batch soft-delete 50 + 50 Product.
+- [ ] Xác định tài khoản cụ thể của browser session; hiện vẫn `UNRESOLVED`.
 - [ ] Chưa chấp thuận merge/deploy cho tới khi có kế hoạch audit và restore production.
 
 ## 9. Tham chiếu triển khai

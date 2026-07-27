@@ -1,5 +1,6 @@
 <?php
 
+use App\Console\Commands\AuditProductDeletions;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -18,6 +19,9 @@ return Application::configure(basePath: dirname(__DIR__))
                 ->group(base_path('routes/product-images.php'));
         },
     )
+    ->withCommands([
+        AuditProductDeletions::class,
+    ])
     ->withMiddleware(function (Middleware $middleware) {
         // Enable Sanctum cookie/session auth for API routes (required for /api/my-tasks, /api/notifications)
         $middleware->statefulApi();
