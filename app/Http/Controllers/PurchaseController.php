@@ -1328,8 +1328,8 @@ class PurchaseController extends Controller
             'debt_amount' => $purchase->debt_amount,
             'payment_method' => $purchase->payment_method,
             'items' => $purchase->items->map(fn ($item) => [
-                'product_code' => $item->product->code ?? '',
-                'product_name' => $item->product->name ?? '',
+                'product_code' => $item->product_code ?: ($item->product?->sku ?: $item->product?->barcode ?: ''),
+                'product_name' => $item->product_name ?: ($item->product?->name ?: ''),
                 'quantity' => $item->quantity,
                 'price' => $item->price,
                 'discount' => $item->discount ?? 0,

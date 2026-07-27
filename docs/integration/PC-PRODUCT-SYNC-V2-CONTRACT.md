@@ -27,6 +27,8 @@ List endpoints accept `limit` (1–100), opaque `cursor`, `updated_since` and `i
 
 Ordering is stable by `(updated_at, id)`. `updated_since` is inclusive. When it is supplied, inactive and soft-deleted tombstones are included. Consumers must upsert by stable numeric ID and treat `sync_status=deleted` as a soft tombstone.
 
+Every product page returns `meta.dataset_complete`, `meta.deletion_policy=explicit_tombstone_only` and `meta.missing_products_are_deleted=false`. `dataset_complete=true` only identifies the terminal page for the exact filter/cursor chain; the consumer must still prove that every preceding page completed and that each `next_cursor` was followed without an HTTP, validation or decoding error. Omission from any response, including a fully fetched active-only response, is never a delete/archive signal. Consumers may change deletion state only for an explicit payload carrying `sync_status=deleted`.
+
 ## Category publishing
 
 KIOT product groups are Website PC categories and use the stable numeric `category.id` as `remote_category_id`; names are display data only. Each group has an explicit `show_on_pc_website` flag. The current schema has no equivalent legacy flag, so the additive migration uses the fail-closed default `false` for existing and new rows. An operator must opt a group in through Settings; no repair/service group name is hard-coded.

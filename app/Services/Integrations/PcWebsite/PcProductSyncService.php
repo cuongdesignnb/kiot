@@ -54,6 +54,11 @@ class PcProductSyncService
             'meta' => [
                 'next_cursor' => $paginator->nextCursor()?->encode(),
                 'has_more' => $paginator->hasMorePages(),
+                // A missing row is never a delete signal. Consumers may only
+                // remove/archive a row after receiving an explicit tombstone.
+                'dataset_complete' => ! $paginator->hasMorePages(),
+                'deletion_policy' => 'explicit_tombstone_only',
+                'missing_products_are_deleted' => false,
             ],
         ];
     }

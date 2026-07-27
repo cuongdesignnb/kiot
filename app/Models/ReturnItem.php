@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class ReturnItem extends Model
 {
     protected $table = 'return_items';
+
     protected $guarded = ['id'];
 
     protected $casts = [
@@ -20,6 +21,6 @@ class ReturnItem extends Model
 
     public function product()
     {
-        return $this->belongsTo(Product::class);
+        return $this->belongsTo(Product::class)->withTrashed();
     }
 }
