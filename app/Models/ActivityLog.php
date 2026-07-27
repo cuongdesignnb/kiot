@@ -143,6 +143,10 @@ class ActivityLog extends Model
     // Dữ liệu chính
     const ACTION_PRODUCT_UPDATE = 'product_update';
 
+    const ACTION_PRODUCT_DELETE = 'product_delete';
+
+    const ACTION_PRODUCT_DELETE_BLOCKED = 'product_delete_blocked';
+
     const ACTION_CUSTOMER_UPDATE = 'customer_update';
 
     const ACTION_SUPPLIER_UPDATE = 'supplier_update';
@@ -304,6 +308,8 @@ class ActivityLog extends Model
         'stocktake_complete' => 'Cân bằng kho',
         'stocktake_cancel' => 'Hủy kiểm kho',
         'product_update' => 'Cập nhật hàng hóa',
+        'product_delete' => 'Xóa hàng hóa',
+        'product_delete_blocked' => 'Chặn xóa hàng hóa',
         'customer_update' => 'Cập nhật khách hàng',
         'supplier_update' => 'Cập nhật nhà cung cấp',
         'lock_period_change' => 'Thay đổi khóa sổ',
@@ -410,6 +416,8 @@ class ActivityLog extends Model
         'stocktake_complete' => '✅',
         'stocktake_cancel' => '🚫',
         'product_update' => '📦',
+        'product_delete' => '🗑️',
+        'product_delete_blocked' => '🚫',
         'customer_update' => '👤',
         'supplier_update' => '🏭',
         'lock_period_change' => '🔒',

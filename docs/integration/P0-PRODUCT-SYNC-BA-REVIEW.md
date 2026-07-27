@@ -4,12 +4,13 @@
 
 Tài liệu này mô tả phần đã được sửa trong hệ thống KIOT để BA có thể review nghiệp vụ và nghiệm thu.
 
-Hotfix tập trung vào hai vấn đề:
+Hotfix tập trung vào ba vấn đề:
 
 1. Làm rõ quy tắc an toàn khi Website PC đồng bộ sản phẩm từ KIOT.
 2. Khắc phục tình trạng mã hoặc tên sản phẩm bị trống trên popup chứng từ lịch sử khi sản phẩm đã bị xóa mềm hoặc đã thay đổi thông tin.
+3. Chặn thao tác xóa hàng hóa đã có tồn kho, serial hoặc lịch sử nghiệp vụ; đồng thời ghi audit cho cả thao tác thành công và bị chặn.
 
-> **Lưu ý quan trọng:** Repo KIOT hiện tại là phía cung cấp dữ liệu sản phẩm. Code phía nhận dữ liệu đã tạo kết quả `DELETED=137` không nằm trong repo này. Vì vậy hotfix này chưa được xem là hoàn tất toàn bộ sự cố production và chưa bao gồm khôi phục 137 sản phẩm.
+> **Đính chính bằng chứng:** `DELETED=137` là số payload tombstone có `sync_status=deleted` mà consumer nhận từ KIOT. Chưa có bằng chứng consumer tạo `products.deleted_at`; code consumer hiện được xác nhận không soft-delete sản phẩm chỉ vì thiếu khỏi response. Nguồn tạo soft-delete trong KIOT vẫn đang được điều tra. Hotfix này không khôi phục 137 sản phẩm và chưa được xem là hoàn tất toàn bộ sự cố production.
 
 ## 2. Tóm tắt vấn đề
 
@@ -24,7 +25,13 @@ DELETED=137
 ERRORS=0
 ```
 
-137 sản phẩm local không xuất hiện trong dữ liệu trả về đã bị phía nhận sync coi là sản phẩm cần xóa. Tuy nhiên, việc một sản phẩm không xuất hiện trong response không chứng minh rằng sản phẩm đó đã bị xóa tại KIOT.
+Metric phía consumer tăng `DELETED` mỗi khi nhận một payload có `sync_status=deleted`. Vì vậy số `137` chỉ chứng minh consumer đã nhận 137 tombstone từ KIOT; số liệu này không chứng minh consumer đã ghi `products.deleted_at`, cũng không chứng minh 137 sản phẩm bị thiếu khỏi response.
+
+Kết luận hiện tại:
+
+- Consumer không soft-delete sản phẩm chỉ vì sản phẩm thiếu khỏi response.
+- Chưa có bằng chứng consumer là nơi tạo `products.deleted_at`.
+- KIOT là nguồn phát tombstone, nhưng đường code hoặc tác nhân nào tạo soft-delete trong KIOT vẫn chưa được xác định đầy đủ.
 
 Các trường hợp sản phẩm có thể không xuất hiện gồm:
 
@@ -102,6 +109,30 @@ Thay đổi này chỉ phục vụ đọc và hiển thị lịch sử. Hotfix k
 
 Snapshot được ưu tiên để đảm bảo chứng từ luôn phản ánh đúng thông tin tại thời điểm phát sinh, kể cả khi sản phẩm sau đó được đổi SKU hoặc đổi tên.
 
+### 3.4. Chặn xóa Product đã phát sinh nghiệp vụ
+
+Mọi đường xóa Product đang có trong ứng dụng KIOT đều đi qua `ProductDeletionGuard`. Guard từ chối xóa khi sản phẩm có tồn kho khác 0, serial hoặc bất kỳ lịch sử nghiệp vụ nào như nhập hàng, hóa đơn, đơn hàng, trả hàng, thẻ kho, kiểm kho, chuyển kho, xuất hủy, sửa chữa hoặc bảo hành.
+
+Xóa hàng loạt thực hiện preflight toàn bộ danh sách và kiểm tra lại trong transaction. Nếu một sản phẩm bị chặn thì không sản phẩm nào trong yêu cầu bị xóa.
+
+Thông báo nghiệp vụ:
+
+```text
+Không thể xóa hàng hóa đã phát sinh tồn kho hoặc chứng từ. Hãy sử dụng chức năng Ngừng kinh doanh.
+```
+
+### 3.5. Audit thao tác xóa và lệnh đối soát chỉ đọc
+
+Mỗi lần xóa thành công hoặc bị chặn đều ghi vào `activity_logs`, gồm actor, request ID, route, IP, user agent, nguồn gọi, danh sách ID/SKU, kết quả, lý do và thời điểm. Hotfix tận dụng bảng audit hiện có, không tạo migration.
+
+Lệnh sau chỉ đọc Product đã soft-delete và thống kê tồn kho/lịch sử để phục vụ phân loại thủ công:
+
+```bash
+php artisan products:audit-deletions --from="2026-07-24 14:55:00" --to="2026-07-24 15:05:00" --json
+```
+
+`restore_candidate=true` chỉ là tín hiệu cần BA/kỹ thuật review vì sản phẩm đã xóa vẫn có tồn kho, serial hoặc lịch sử. Lệnh không restore và không thực hiện `INSERT`, `UPDATE` hoặc `DELETE`.
+
 ## 4. Kết quả trước và sau hotfix
 
 | Tình huống | Trước hotfix | Sau hotfix |
@@ -113,6 +144,8 @@ Snapshot được ưu tiên để đảm bảo chứng từ luôn phản ánh đ
 | Quan hệ Product bằng `null` nhưng snapshot còn | Popup có thể trống | Hiển thị mã và tên từ snapshot |
 | Sản phẩm vắng mặt trong response sync | Có thể bị phía nhận hiểu là cần xóa | API tuyên bố rõ không phải tín hiệu xóa |
 | Tombstone `sync_status=deleted` | Chưa có quy tắc đủ rõ cho consumer | Là tín hiệu xóa tường minh duy nhất |
+| Xóa Product có tồn kho/chứng từ | Có thể tạo soft-delete và làm mất Product khỏi luồng hiện hành | Bị chặn, hướng người dùng sang Ngừng kinh doanh và có audit |
+| Xóa hàng loạt có một Product không hợp lệ | Có nguy cơ xóa một phần | Preflight toàn bộ; một Product bị chặn thì không xóa Product nào |
 
 ## 5. Kịch bản BA cần nghiệm thu
 
@@ -172,11 +205,35 @@ Snapshot được ưu tiên để đảm bảo chứng từ luôn phản ánh đ
 
 **Then** tồn kho, giá vốn, công nợ, số lượng dòng chứng từ và primary key không thay đổi.
 
+### AC-08 — Chặn xóa hàng hóa đã phát sinh
+
+**Given** Product có tồn kho, serial hoặc ít nhất một dòng lịch sử nghiệp vụ.
+
+**When** người dùng xóa đơn hoặc xóa hàng loạt.
+
+**Then** Product không bị soft-delete, người dùng nhận thông báo dùng chức năng Ngừng kinh doanh và hệ thống ghi audit `blocked` kèm lý do.
+
+### AC-09 — Xóa hàng loạt là atomic
+
+**Given** danh sách xóa có một Product sạch và một Product đã phát sinh nghiệp vụ.
+
+**When** người dùng xác nhận xóa hàng loạt.
+
+**Then** cả hai Product đều được giữ nguyên; không có partial delete.
+
+### AC-10 — Đối soát soft-delete không sửa dữ liệu
+
+**Given** khoảng thời gian cần điều tra Product đã soft-delete.
+
+**When** kỹ thuật chạy `products:audit-deletions --json`.
+
+**Then** lệnh trả về các chỉ số phục vụ phân loại và không restore hay cập nhật database.
+
 ## 6. Bằng chứng kiểm thử
 
 | Hạng mục | Kết quả |
 |---|---|
-| Regression test trực tiếp của hotfix | 13 test pass, 89 assertion |
+| QA guard xóa Product và hiển thị lịch sử | 13 test pass, 55 assertion |
 | Toàn bộ test module PC integration | Pass |
 | PHP syntax check | Pass |
 | Laravel Pint | Pass |
@@ -190,7 +247,7 @@ Docker MySQL chỉ được bật trong thời gian QA và đã được tắt s
 
 Các đầu việc sau chưa được tuyên bố hoàn tất:
 
-- Xác định code phía consumer đã tạo metric `DELETED=137`.
+- Xác định đường code/tác nhân trong KIOT đã tạo `products.deleted_at` và phát 137 tombstone.
 - Xác định chính xác sync run gây sự cố trên production.
 - Audit và phân loại 137 sản phẩm bị ảnh hưởng.
 - Backup database production.
@@ -198,7 +255,7 @@ Các đầu việc sau chưa được tuyên bố hoàn tất:
 - Chạy dry-run và real full sync sau deploy.
 - Smoke test và hậu kiểm production.
 
-Không được merge hoặc deploy hotfix như một giải pháp hoàn chỉnh cho sự cố cho tới khi phía consumer được xác định và chặn hành vi xóa do thiếu dữ liệu.
+Không được merge hoặc deploy hotfix như một giải pháp hoàn chỉnh cho sự cố cho tới khi companion hotfix phía consumer được review và nguồn tạo soft-delete trong KIOT được điều tra đủ bằng chứng.
 
 ## 8. Checklist BA review
 
@@ -207,7 +264,10 @@ Không được merge hoặc deploy hotfix như một giải pháp hoàn chỉnh
 - [ ] Đồng ý snapshot trên chứng từ được ưu tiên hơn tên/SKU hiện tại.
 - [ ] Xác nhận Product inactive hoặc soft-delete vẫn phải xem được trong lịch sử.
 - [ ] Xác nhận hotfix không được thay đổi tồn kho, giá vốn hoặc công nợ.
-- [ ] Xác định owner/repository của consumer đang thực hiện full product sync.
+- [ ] Xác nhận `DELETED=137` là số tombstone consumer nhận từ KIOT, không phải bằng chứng consumer ghi `deleted_at`.
+- [ ] Xác nhận Product có tồn kho, serial hoặc lịch sử phải dùng Ngừng kinh doanh thay cho xóa.
+- [ ] Xác nhận xóa hàng loạt phải atomic.
+- [ ] Xác định đường code/tác nhân trong KIOT tạo soft-delete.
 - [ ] Chưa chấp thuận merge/deploy cho tới khi có kế hoạch audit và restore production.
 
 ## 9. Tham chiếu triển khai
@@ -217,6 +277,6 @@ Repository: cuongdesignnb/kiot
 Base branch: production-customer-group
 Hotfix branch: codex/hotfix-product-sync-safety
 Pull request: #36
-Commit đã QA: 0e377690ebcbea0f9fc1c1db3e3f18022fe8d37b
+Commit đã QA: xem HEAD mới nhất của PR KIOT #36 và Draft PR companion được liên kết trong phần bàn giao.
 Trạng thái PR: Draft
 ```

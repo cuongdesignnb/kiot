@@ -10,6 +10,7 @@ use App\Models\Product;
 use App\Models\ProductAttribute;
 use App\Models\ProductVariant;
 use App\Models\SerialImei;
+use App\Services\ProductDeletionGuard;
 use App\Services\ProductExcel\ProductExcelExportService;
 use App\Services\ProductExcel\ProductExcelFieldCatalog;
 use App\Services\ProductExcel\ProductExcelImportService;
@@ -1234,21 +1235,30 @@ class ProductController extends Controller
         }
     }
 
-    public function destroy(Product $product)
+    public function destroy(Product $product, ProductDeletionGuard $deletionGuard)
     {
-        $product->delete();
+        $result = $deletionGuard->delete($product, 'product_controller.destroy');
+
+        if (! $result['deleted']) {
+            return redirect()->back()->with('error', ProductDeletionGuard::BLOCKED_MESSAGE);
+        }
 
         return redirect()->back()->with('success', 'Đã xoá hàng hóa!');
     }
 
-    public function bulkDestroy(Request $request)
+    public function bulkDestroy(Request $request, ProductDeletionGuard $deletionGuard)
     {
         $validated = $request->validate([
             'product_ids' => 'required|array|min:1',
             'product_ids.*' => 'exists:products,id',
         ]);
 
-        Product::whereIn('id', $validated['product_ids'])->delete();
+        $products = Product::whereIn('id', $validated['product_ids'])->get();
+        $result = $deletionGuard->deleteMany($products, 'product_controller.bulk_destroy');
+
+        if (! $result['deleted']) {
+            return redirect()->back()->with('error', ProductDeletionGuard::BLOCKED_MESSAGE);
+        }
 
         return redirect()->back()->with('success', 'Đã xoá các hàng hóa được chọn!');
     }
