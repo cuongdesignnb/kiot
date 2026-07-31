@@ -15,13 +15,16 @@ use App\Services\CustomerPaymentDiscountService;
 use App\Services\CustomerPaymentService;
 use App\Services\Debt\PartnerDebtMutationCoordinator;
 use App\Services\DebtOffsetService;
+use App\Services\PartnerAlreadyExistsException;
 use App\Services\PartnerMergeService;
+use App\Services\PartnerRoleService;
 use App\Support\Debt\PartnerDebtDisplayBalance;
 use App\Support\Filters\DateRangePresets;
 use App\Support\Filters\FilterableIndex;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Validator;
 use Inertia\Inertia;
 
 class CustomerController extends Controller
@@ -384,13 +387,13 @@ class CustomerController extends Controller
         ]);
     }
 
-    public function store(Request $request)
+    public function store(Request $request, PartnerRoleService $partnerRoleService)
     {
         // Build dynamic validation rules based on settings
         $rules = [
             'name' => 'required|string|max:255',
-            'code' => 'nullable|string|max:255|unique:customers,code',
-            'phone' => (Setting::get('customer_required_phone', false) ? 'required' : 'nullable').'|string|max:255|unique:customers,phone',
+            'code' => 'nullable|string|max:255',
+            'phone' => (Setting::get('customer_required_phone', false) ? 'required' : 'nullable').'|string|max:255',
             'phone2' => 'nullable|string|max:255',
             'birthday' => (Setting::get('customer_required_birthday', false) ? 'required' : 'nullable').'|date',
             'gender' => (Setting::get('customer_required_gender', false) ? 'required' : 'nullable').'|in:none,male,female',
@@ -416,33 +419,53 @@ class CustomerController extends Controller
             'bank_name' => 'nullable|string|max:255',
             'bank_account' => 'nullable|string|max:255',
             'is_supplier' => 'boolean',
+            'supplier_linking_mode' => 'nullable|in:new,link_existing',
+            'linked_supplier_id' => 'nullable|integer',
+            'link_existing_id' => 'nullable|integer',
         ];
 
-        $validated = $request->validate($rules);
-        if (empty($validated['code'])) {
-            $validated['code'] = 'KH'.time().rand(10, 99);
-        }
+        $validated = Validator::make($request->all(), $rules, [
+            'name.required' => 'Vui lòng nhập tên khách hàng.',
+            'email.email' => 'Email khách hàng không đúng định dạng.',
+            'birthday.date' => 'Ngày sinh khách hàng không đúng định dạng.',
+            'supplier_linking_mode.in' => 'Cách xử lý đối tác không hợp lệ.',
+            '*.required' => 'Vui lòng nhập thông tin bắt buộc.',
+        ])->validate();
 
-        $validated['is_supplier'] = $request->input('is_supplier', false);
+        $validated['is_supplier'] = $request->boolean('is_supplier');
         $validated['is_customer'] = true;
         $validated['created_by'] = auth()->id();
 
         $linkId = $request->input('linked_supplier_id') ?: $request->input('link_existing_id');
-        $linkMode = $request->input('supplier_linking_mode');
+        $linkMode = $request->input('supplier_linking_mode', 'new');
+        unset($validated['supplier_linking_mode'], $validated['linked_supplier_id'], $validated['link_existing_id']);
 
-        if (($linkMode === 'link_existing' || $linkId) && $linkId) {
-            $existing = Customer::findOrFail($linkId);
-            $existing->update([
-                'name' => $validated['name'],
-                'phone' => $validated['phone'] ?? $existing->phone,
-                'is_customer' => true,
-                'is_supplier' => true,
-                'address' => $validated['address'] ?? $existing->address,
-                'note' => $validated['note'] ?? $existing->note,
-            ]);
-            $customer = $existing;
-        } else {
-            $customer = Customer::create($validated);
+        try {
+            $customer = $partnerRoleService->createOrLink($validated, $linkMode, $linkId);
+        } catch (PartnerAlreadyExistsException $e) {
+            if (! $request->wantsJson()) {
+                return back()->withInput()->withErrors($e->errors());
+            }
+
+            return response()->json([
+                'success' => false,
+                'code' => 'PARTNER_ALREADY_EXISTS',
+                'message' => $e->getMessage(),
+                'errors' => $e->errors(),
+                'existing_partner' => $e->existingPartner(),
+                'suggested_action' => $e->suggestedAction(),
+            ], 422);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            if (! $request->wantsJson()) {
+                throw $e;
+            }
+
+            return response()->json([
+                'success' => false,
+                'code' => 'PARTNER_VALIDATION_FAILED',
+                'message' => 'Thông tin đối tác chưa hợp lệ.',
+                'errors' => $e->errors(),
+            ], 422);
         }
 
         if ($request->wantsJson()) {

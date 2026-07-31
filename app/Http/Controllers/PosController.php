@@ -9,12 +9,15 @@ use App\Models\Product;
 use App\Models\ReturnItem;
 use App\Models\SerialImei;
 use App\Services\InvoiceSaleService;
+use App\Services\PartnerAlreadyExistsException;
+use App\Services\PartnerRoleService;
 use App\Services\PosReturnExchangeService;
 use App\Services\ProductSearchService;
 use App\Services\SerialAvailabilityService;
 use App\Support\Customers\CustomerGroupSnapshot;
 use App\Support\Reports\SellerResolver;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 
@@ -508,50 +511,80 @@ class PosController extends Controller
     /**
      * Tạo nhanh khách hàng từ POS.
      */
-    public function quickCreateCustomer(Request $request)
+    public function quickCreateCustomer(Request $request, PartnerRoleService $partnerRoleService)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'code' => 'nullable|string|max:255|unique:customers,code',
-            'phone' => 'nullable|string|max:255|unique:customers,phone',
-            'phone2' => 'nullable|string|max:255',
-            'birthday' => 'nullable|date',
-            'gender' => 'nullable|in:none,male,female',
-            'email' => 'nullable|email|max:255',
-            'facebook' => 'nullable|string|max:255',
-            'address' => 'nullable|string',
-            'city' => 'nullable|string',
-            'district' => 'nullable|string',
-            'ward' => 'nullable|string',
-            'customer_group' => 'nullable|string',
-            'note' => 'nullable|string',
-            'type' => 'nullable|in:individual,company',
-            'invoice_name' => 'nullable|string|max:255',
-            'id_card' => 'nullable|string|max:255',
-            'passport' => 'nullable|string|max:255',
-            'tax_code' => 'nullable|string|max:255',
-            'invoice_address' => 'nullable|string',
-            'invoice_city' => 'nullable|string',
-            'invoice_district' => 'nullable|string',
-            'invoice_ward' => 'nullable|string',
-            'invoice_email' => 'nullable|email|max:255',
-            'invoice_phone' => 'nullable|string|max:255',
-            'bank_name' => 'nullable|string|max:255',
-            'bank_account' => 'nullable|string|max:255',
-            'is_supplier' => 'boolean',
-            'is_customer' => 'boolean',
-        ]);
+        try {
+            $validated = Validator::make($request->all(), [
+                'name' => 'required|string|max:255',
+                'code' => 'nullable|string|max:255',
+                'phone' => 'nullable|string|max:255',
+                'phone2' => 'nullable|string|max:255',
+                'birthday' => 'nullable|date',
+                'gender' => 'nullable|in:none,male,female',
+                'email' => 'nullable|email|max:255',
+                'facebook' => 'nullable|string|max:255',
+                'address' => 'nullable|string',
+                'city' => 'nullable|string',
+                'district' => 'nullable|string',
+                'ward' => 'nullable|string',
+                'customer_group' => 'nullable|string',
+                'note' => 'nullable|string',
+                'type' => 'nullable|in:individual,company',
+                'invoice_name' => 'nullable|string|max:255',
+                'id_card' => 'nullable|string|max:255',
+                'passport' => 'nullable|string|max:255',
+                'tax_code' => 'nullable|string|max:255',
+                'invoice_address' => 'nullable|string',
+                'invoice_city' => 'nullable|string',
+                'invoice_district' => 'nullable|string',
+                'invoice_ward' => 'nullable|string',
+                'invoice_email' => 'nullable|email|max:255',
+                'invoice_phone' => 'nullable|string|max:255',
+                'bank_name' => 'nullable|string|max:255',
+                'bank_account' => 'nullable|string|max:255',
+                'is_supplier' => 'boolean',
+                'is_customer' => 'boolean',
+                'supplier_linking_mode' => 'nullable|in:new,link_existing',
+                'linked_supplier_id' => 'nullable|integer',
+                'link_existing_id' => 'nullable|integer',
+            ], [
+                'name.required' => 'Vui lòng nhập tên khách hàng.',
+                'email.email' => 'Email khách hàng không đúng định dạng.',
+                'birthday.date' => 'Ngày sinh khách hàng không đúng định dạng.',
+                'supplier_linking_mode.in' => 'Cách xử lý đối tác không hợp lệ.',
+                '*.required' => 'Vui lòng nhập thông tin bắt buộc.',
+            ], [
+                'name' => 'tên khách hàng',
+            ])->validate();
 
-        if (empty($validated['code'])) {
-            $validated['code'] = 'KH'.time().rand(10, 99);
+            $validated['is_supplier'] = $request->boolean('is_supplier');
+            $validated['is_customer'] = $request->has('is_customer')
+                ? $request->boolean('is_customer')
+                : true;
+            $mode = $request->input('supplier_linking_mode', 'new');
+            $linkedSupplierId = $request->input('linked_supplier_id') ?: $request->input('link_existing_id');
+            unset($validated['supplier_linking_mode'], $validated['linked_supplier_id'], $validated['link_existing_id']);
+
+            $customer = $partnerRoleService->createOrLink($validated, $mode, $linkedSupplierId);
+
+            return response()->json(['success' => true, 'customer' => $customer]);
+        } catch (PartnerAlreadyExistsException $e) {
+            return response()->json([
+                'success' => false,
+                'code' => 'PARTNER_ALREADY_EXISTS',
+                'message' => $e->getMessage(),
+                'errors' => $e->errors(),
+                'existing_partner' => $e->existingPartner(),
+                'suggested_action' => $e->suggestedAction(),
+            ], 422);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'code' => 'PARTNER_VALIDATION_FAILED',
+                'message' => 'Thông tin đối tác chưa hợp lệ.',
+                'errors' => $e->errors(),
+            ], 422);
         }
-
-        $validated['is_supplier'] = $request->input('is_supplier', false);
-        $validated['is_customer'] = $request->input('is_customer', true);
-
-        $customer = \App\Models\Customer::create($validated);
-
-        return response()->json(['customer' => $customer]);
     }
 
     // ════════════════════════════════════════════════════════════════════

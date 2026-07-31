@@ -11,6 +11,8 @@ use App\Models\Purchase;
 use App\Models\PurchaseReturn;
 use App\Models\SupplierDebtTransaction;
 use App\Services\Debt\PartnerDebtMutationCoordinator;
+use App\Services\PartnerAlreadyExistsException;
+use App\Services\PartnerRoleService;
 use App\Support\Debt\PartnerDebtDisplayBalance;
 use App\Support\Filters\FilterableIndex;
 use Illuminate\Http\Request;
@@ -259,22 +261,51 @@ class SupplierController extends Controller
         return response()->json($suppliers);
     }
 
-    public function quickStore(Request $request)
+    public function quickStore(Request $request, PartnerRoleService $partnerRoleService)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'phone' => 'nullable|string|max:255|unique:customers,phone',
-            'email' => 'nullable|email|max:255',
-            'address' => 'nullable|string',
-        ]);
+        try {
+            $validated = $request->validate([
+                'name' => 'required|string|max:255',
+                'code' => 'nullable|string|max:255',
+                'phone' => 'nullable|string|max:255',
+                'email' => 'nullable|email|max:255',
+                'address' => 'nullable|string',
+                'is_customer' => 'boolean',
+                'supplier_linking_mode' => 'nullable|in:new,link_existing',
+                'linked_supplier_id' => 'nullable|integer',
+                'link_existing_id' => 'nullable|integer',
+            ], [
+                'name.required' => 'Vui lòng nhập tên nhà cung cấp.',
+                'email.email' => 'Email nhà cung cấp không đúng định dạng.',
+                'supplier_linking_mode.in' => 'Cách xử lý đối tác không hợp lệ.',
+            ]);
 
-        $validated['code'] = 'NCC'.time().rand(10, 99);
-        $validated['is_supplier'] = true;
-        $validated['is_customer'] = false;
+            $linkId = $request->input('linked_supplier_id') ?: $request->input('link_existing_id');
+            $mode = $request->input('supplier_linking_mode', 'new');
+            $validated['is_supplier'] = true;
+            $validated['is_customer'] = $request->boolean('is_customer');
+            unset($validated['supplier_linking_mode'], $validated['linked_supplier_id'], $validated['link_existing_id']);
 
-        $supplier = Customer::create($validated);
+            $supplier = $partnerRoleService->createOrLink($validated, $mode, $linkId);
 
-        return response()->json(['success' => true, 'supplier' => $supplier]);
+            return response()->json(['success' => true, 'supplier' => $supplier]);
+        } catch (PartnerAlreadyExistsException $e) {
+            return response()->json([
+                'success' => false,
+                'code' => 'PARTNER_ALREADY_EXISTS',
+                'message' => $e->getMessage(),
+                'errors' => $e->errors(),
+                'existing_partner' => $e->existingPartner(),
+                'suggested_action' => $e->suggestedAction(),
+            ], 422);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'code' => 'PARTNER_VALIDATION_FAILED',
+                'message' => 'Thông tin nhà cung cấp chưa hợp lệ.',
+                'errors' => $e->errors(),
+            ], 422);
+        }
     }
 
     public function export(Request $request)
