@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Enums\ReturnStatus;
 use App\Models\CashFlow;
+use App\Models\Employee;
 use App\Models\OrderReturn;
 use App\Models\ReturnItem;
 use App\Models\SerialImei;
@@ -42,7 +43,7 @@ class OrderReturnController extends Controller
     {
         $this->configureReturnFilters();
 
-        $query = OrderReturn::with(['items.product', 'customer', 'invoice']);
+        $query = OrderReturn::with(['items.product', 'customer', 'invoice.creator', 'receivedByEmployee']);
         $this->applyFilters($query, $request);
 
         $sellerKey = $request->input('seller_key');
@@ -85,6 +86,16 @@ class OrderReturnController extends Controller
                 }
                 $it->setAttribute('returned_serials', $list);
             }
+
+            $resolver = app(\App\Support\Reports\SellerResolver::class);
+            $ret->setAttribute('original_seller_name', $resolver->displayNameForInvoice($ret->invoice));
+            $ret->setAttribute(
+                'default_receiver_employee_id',
+                $ret->invoice?->created_by && $ret->invoice?->creator?->is_active
+                    ? (int) $ret->invoice->created_by
+                    : null
+            );
+            $ret->setAttribute('received_by_name', $ret->received_by_name ?: $ret->receivedByEmployee?->name);
         }
 
         $filters = $this->currentFilters($request);
@@ -101,12 +112,16 @@ class OrderReturnController extends Controller
                     ->distinct()->orderBy('sales_channel')->pluck('sales_channel')
                     ->map(fn ($c) => ['value' => $c, 'label' => $c])->values(),
             ],
+            'activeEmployees' => Employee::query()
+                ->where('is_active', true)
+                ->orderBy('name')
+                ->get(['id', 'name', 'code']),
         ]);
     }
 
     public function show(OrderReturn $return)
     {
-        $return->load(['customer', 'items.product', 'invoice']);
+        $return->load(['customer', 'items.product', 'invoice.creator', 'receivedByEmployee']);
 
         // Step 22.1B (read-only): map serial_ids → display names.
         $allSerialIds = [];
@@ -130,7 +145,11 @@ class OrderReturnController extends Controller
                 'code' => $return->code,
                 'status' => $return->status,
                 'created_at' => $return->created_at?->format('d/m/Y H:i'),
-                'created_by_name' => $return->created_by_name ?? 'Admin',
+                'created_by_name' => $return->created_by_name,
+                'original_seller_name' => app(\App\Support\Reports\SellerResolver::class)
+                    ->displayNameForInvoice($return->invoice),
+                'received_by_employee_id' => $return->received_by_employee_id,
+                'received_by_name' => $return->received_by_name ?: $return->receivedByEmployee?->name,
                 'invoice_code' => $return->invoice?->code,
                 'invoice_id' => $return->invoice_id,
                 'customer' => $return->customer ? [
@@ -187,6 +206,7 @@ class OrderReturnController extends Controller
             'total' => 'required|numeric',
             'paid_to_customer' => 'nullable|numeric',
             'note' => 'nullable|string',
+            'received_by_employee_id' => 'nullable|integer|exists:employees,id',
             'order_date' => 'nullable|date',
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|exists:products,id',
@@ -555,6 +575,75 @@ class OrderReturnController extends Controller
         }
 
         return redirect()->route('returns.index')->with('success', 'Phiếu trả hàng đã được tạo thành công.');
+    }
+
+    public function updateReceiver(Request $request, OrderReturn $return)
+    {
+        $validated = $request->validate([
+            'received_by_employee_id' => 'required|integer|exists:employees,id',
+        ], [
+            'received_by_employee_id.required' => 'Vui lòng chọn nhân viên nhận trả.',
+            'received_by_employee_id.exists' => 'Nhân viên nhận trả không tồn tại.',
+        ]);
+
+        $updated = DB::transaction(function () use ($return, $validated) {
+            $locked = OrderReturn::query()->lockForUpdate()->findOrFail($return->id);
+            if (in_array(trim((string) $locked->status), [ReturnStatus::CANCELLED, 'cancelled', 'canceled', 'void', 'deleted', 'Đã hủy'], true)) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'received_by_employee_id' => 'Không thể đổi người nhận của phiếu đã hủy.',
+                ]);
+            }
+
+            $employee = Employee::query()->lockForUpdate()->find($validated['received_by_employee_id']);
+            if (! $employee) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'received_by_employee_id' => 'Nhân viên nhận trả không tồn tại.',
+                ]);
+            }
+            if (! $employee->is_active) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'received_by_employee_id' => 'Chỉ được chọn nhân viên đang hoạt động.',
+                ]);
+            }
+
+            $old = [
+                'received_by_employee_id' => $locked->received_by_employee_id,
+                'received_by_name' => $locked->received_by_name,
+            ];
+            $locked->update([
+                'received_by_employee_id' => $employee->id,
+                'received_by_name' => $employee->name,
+            ]);
+
+            \App\Models\ActivityLog::log(
+                \App\Models\ActivityLog::ACTION_RETURN_RECEIVER_UPDATE,
+                "Cập nhật người nhận trả phiếu {$locked->code}",
+                $locked,
+                [
+                    'old' => $old,
+                    'new' => [
+                        'received_by_employee_id' => $employee->id,
+                        'received_by_name' => $employee->name,
+                    ],
+                ],
+            );
+
+            return $locked->fresh(['receivedByEmployee']);
+        });
+
+        if ($request->expectsJson() || $request->wantsJson()) {
+            return response()->json([
+                'success' => true,
+                'return' => [
+                    'id' => $updated->id,
+                    'received_by_employee_id' => $updated->received_by_employee_id,
+                    'received_by_name' => $updated->received_by_name,
+                ],
+                'message' => 'Đã lưu người nhận trả.',
+            ]);
+        }
+
+        return back()->with('success', 'Đã lưu người nhận trả.');
     }
 
     public function export(Request $request)

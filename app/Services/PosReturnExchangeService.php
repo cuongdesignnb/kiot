@@ -59,6 +59,7 @@ class PosReturnExchangeService
                 'invoice_id' => $sourceInvoice->id,
                 'customer_id' => $payload['customer_id'] ?? $sourceInvoice->customer_id,
                 'branch_id' => $payload['branch_id'] ?? $sourceInvoice->branch_id,
+                'received_by_employee_id' => $payload['received_by_employee_id'] ?? null,
                 'subtotal' => $returnCalc['subtotal'],
                 'discount' => $returnCalc['discount'],
                 'fee_type' => $returnCalc['fee_type'],

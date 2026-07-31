@@ -235,6 +235,8 @@ Route::patch('/invoices/{invoice}/seller', [InvoiceController::class, 'updateSel
 // ===== RETURNS =====
 Route::get('/returns', [OrderReturnController::class, 'index'])->name('returns.index')->middleware('permission:returns.view');
 Route::post('/returns', [OrderReturnController::class, 'store'])->name('returns.store')->middleware('permission:returns.create');
+Route::patch('/returns/{return}/receiver', [OrderReturnController::class, 'updateReceiver'])
+    ->name('returns.update-receiver')->middleware('permission:returns.create');
 // RR-08: route hủy phiếu trả hàng (rollback serial chính xác qua serial_ids đã lưu)
 // Step 24.0B: hủy phiếu trả hàng dùng quyền tách `returns.cancel`.
 Route::post('/returns/{return}/cancel', [OrderReturnController::class, 'cancel'])->name('returns.cancel')->middleware('permission:returns.cancel');

@@ -2,6 +2,7 @@
 import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed } from "vue";
 import { Head, router, Link } from "@inertiajs/vue3";
+import axios from "axios";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
@@ -12,6 +13,7 @@ const props = defineProps({
     returns: Object,
     filters: Object,
     filterOptions: Object,
+    activeEmployees: { type: Array, default: () => [] },
 });
 
 const { filters, setSort, reset } = useFilters({
@@ -53,6 +55,9 @@ const sidebarConfig = computed(() => [
 ]);
 
 const expandedRows = ref([]);
+const receiverDrafts = ref({});
+const receiverSaving = ref({});
+const receiverMessages = ref({});
 
 const handleSort = (field, direction) => setSort(field, direction);
 
@@ -66,6 +71,54 @@ const toggleExpand = (id) => {
 };
 
 const isExpanded = (id) => expandedRows.value.includes(id);
+
+const receiverOptions = (ret) => {
+    const options = [...(props.activeEmployees || [])];
+    if (ret.received_by_employee_id && !options.some((employee) => employee.id === ret.received_by_employee_id)) {
+        options.unshift({
+            id: ret.received_by_employee_id,
+            name: `${ret.received_by_name || "Nhân viên đã lưu"} (không còn hoạt động)`,
+            code: "",
+            inactiveLegacy: true,
+        });
+    }
+    return options;
+};
+
+const receiverValue = (ret) => {
+    if (Object.prototype.hasOwnProperty.call(receiverDrafts.value, ret.id)) {
+        return receiverDrafts.value[ret.id];
+    }
+    return ret.received_by_employee_id || "";
+};
+
+const saveReceiver = async (ret) => {
+    const employeeId = receiverValue(ret);
+    receiverMessages.value[ret.id] = null;
+    if (!employeeId) {
+        receiverMessages.value[ret.id] = { type: "error", text: "Vui lòng chọn nhân viên nhận trả." };
+        return;
+    }
+    receiverSaving.value[ret.id] = true;
+    try {
+        const response = await axios.patch(`/returns/${ret.id}/receiver`, {
+            received_by_employee_id: employeeId,
+        });
+        ret.received_by_employee_id = response.data.return.received_by_employee_id;
+        ret.received_by_name = response.data.return.received_by_name;
+        receiverDrafts.value[ret.id] = ret.received_by_employee_id;
+        receiverMessages.value[ret.id] = { type: "success", text: "Đã lưu người nhận trả." };
+    } catch (error) {
+        receiverMessages.value[ret.id] = {
+            type: "error",
+            text: error.response?.data?.errors?.received_by_employee_id?.[0]
+                || error.response?.data?.message
+                || "Không thể lưu người nhận trả.",
+        };
+    } finally {
+        receiverSaving.value[ret.id] = false;
+    }
+};
 
 
 const printReturn = (ret) => {
@@ -274,7 +327,7 @@ const cancelReturn = (ret) => {
                                     <a :href="`/returns/${ret.id}/show`" class="hover:underline" @click.stop>{{ ret.code }}</a>
                                 </td>
                                 <td class="px-2 py-2">
-                                    {{ ret.seller_name || "Trần Văn Tiến" }}
+                                    {{ ret.original_seller_name || "Chưa xác định người bán" }}
                                 </td>
                                 <td class="px-2 py-2">
                                     {{
@@ -351,7 +404,7 @@ const cancelReturn = (ret) => {
                                             >
                                                 {{
                                                     ret.customer?.name ||
-                                                    "Hà Phi Hùng"
+                                                    "Khách lẻ"
                                                 }}
                                             </h2>
                                             <svg
@@ -399,7 +452,7 @@ const cancelReturn = (ret) => {
                                                         class="text-gray-800"
                                                         >{{
                                                             ret.created_by_name ||
-                                                            "Trần Văn Tiến"
+                                                            "Chưa xác định"
                                                         }}</span
                                                     >
                                                 </div>
@@ -408,16 +461,39 @@ const cancelReturn = (ret) => {
                                                         class="text-gray-400 w-24"
                                                         >Người nhận trả:</span
                                                     >
-                                                    <select
-                                                        class="border border-gray-300 rounded px-2 py-0.5 outline-none flex-1"
+                                                    <div class="flex-1 flex items-center gap-2">
+                                                        <select
+                                                            :value="receiverValue(ret)"
+                                                            class="border border-gray-300 rounded px-2 py-0.5 outline-none flex-1"
+                                                            @change="receiverDrafts[ret.id] = Number($event.target.value) || ''"
+                                                            @click.stop
+                                                        >
+                                                            <option value="">-- Chọn nhân viên --</option>
+                                                            <option
+                                                                v-for="employee in receiverOptions(ret)"
+                                                                :key="employee.id"
+                                                                :value="employee.id"
+                                                                :disabled="employee.inactiveLegacy"
+                                                            >
+                                                                {{ employee.name }}{{ employee.code ? ` (${employee.code})` : '' }}
+                                                            </option>
+                                                        </select>
+                                                        <button
+                                                            type="button"
+                                                            class="px-2 py-0.5 rounded bg-blue-600 text-white disabled:opacity-50"
+                                                            :disabled="receiverSaving[ret.id] || !receiverValue(ret)"
+                                                            @click.stop="saveReceiver(ret)"
+                                                        >
+                                                            {{ receiverSaving[ret.id] ? "Đang lưu..." : "Lưu" }}
+                                                        </button>
+                                                    </div>
+                                                    <div
+                                                        v-if="receiverMessages[ret.id]"
+                                                        class="col-span-3 text-xs mt-1"
+                                                        :class="receiverMessages[ret.id].type === 'success' ? 'text-green-600' : 'text-red-600'"
                                                     >
-                                                        <option>
-                                                            {{
-                                                                ret.seller_name ||
-                                                                "Vũ Hồng Nhung"
-                                                            }}
-                                                        </option>
-                                                    </select>
+                                                        {{ receiverMessages[ret.id].text }}
+                                                    </div>
                                                 </div>
                                                 <div
                                                     class="flex items-center justify-end"
