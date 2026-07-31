@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, reactive } from 'vue';
+import { ref, watch, reactive, computed } from 'vue';
 import axios from 'axios';
 import CustomerGroupCombobox from './CustomerGroupCombobox.vue';
 
@@ -55,7 +55,15 @@ const isSearchingExisting = ref(false);
 const existingResults = ref([]);
 const showExistingDropdown = ref(false);
 const selectedExistingEntity = ref(null);
+const fieldErrors = ref({});
+const formError = ref('');
+const existingPartnerSuggestion = ref(null);
+const suggestedAction = ref(null);
 let searchExistingTimeout = null;
+
+const dualRoleEnabled = computed(() => props.isSupplier
+    ? form.value.is_customer
+    : form.value.is_supplier);
 
 const normalizeCustomerGroups = (groups) => (groups || []).map((group) => ({
     id: group.id ?? null,
@@ -97,7 +105,7 @@ const createCustomerGroup = async (name) => {
         }
         form.value.customer_group = createdName;
     } catch (e) {
-        alert(e.response?.data?.message || 'Lỗi tạo nhóm khách hàng.');
+        formError.value = e.response?.data?.message || 'Không thể tạo nhóm khách hàng.';
     }
 };
 
@@ -126,6 +134,7 @@ watch(searchExistingQuery, (val) => {
 const selectExistingEntity = (entity) => {
     selectedExistingEntity.value = entity;
     form.value.link_existing_id = entity.id;
+    if (!form.value.name.trim()) form.value.name = entity.name || '';
     searchExistingQuery.value = '';
     showExistingDropdown.value = false;
 };
@@ -134,6 +143,37 @@ const removeExistingEntity = () => {
     selectedExistingEntity.value = null;
     form.value.link_existing_id = null;
     searchExistingQuery.value = '';
+};
+
+const clearLinkState = () => {
+    linkOption.value = 'new';
+    selectedExistingEntity.value = null;
+    form.value.link_existing_id = null;
+    searchExistingQuery.value = '';
+    existingResults.value = [];
+    showExistingDropdown.value = false;
+    delete fieldErrors.value.link_existing_id;
+    delete fieldErrors.value.linked_supplier_id;
+    existingPartnerSuggestion.value = null;
+    suggestedAction.value = null;
+};
+
+const clearErrors = () => {
+    fieldErrors.value = {};
+    formError.value = '';
+    existingPartnerSuggestion.value = null;
+    suggestedAction.value = null;
+};
+
+const useSuggestedPartner = () => {
+    if (!existingPartnerSuggestion.value) return;
+    selectedExistingEntity.value = existingPartnerSuggestion.value;
+    form.value.link_existing_id = existingPartnerSuggestion.value.id;
+    linkOption.value = 'existing';
+    formError.value = '';
+    fieldErrors.value = {};
+    existingPartnerSuggestion.value = null;
+    suggestedAction.value = null;
 };
 
 
@@ -160,28 +200,52 @@ watch(() => props.show, (val) => {
         existingResults.value = [];
         selectedExistingEntity.value = null;
         form.value.link_existing_id = null;
+        clearErrors();
     }
 });
 
+watch(dualRoleEnabled, (enabled) => {
+    if (! enabled) clearLinkState();
+});
+
 const submit = async () => {
-    if (!form.value.name.trim()) return;
+    clearErrors();
+    if (!form.value.name.trim()) {
+        fieldErrors.value.name = 'Vui lòng nhập tên đối tác.';
+        return;
+    }
+    if (dualRoleEnabled.value && linkOption.value === 'existing' && !selectedExistingEntity.value) {
+        fieldErrors.value.link_existing_id = 'Vui lòng chọn đối tác cần liên kết.';
+        return;
+    }
     creating.value = true;
     try {
         const payload = { ...form.value };
-        // Map linking fields to what backend expects
-        if (form.value.is_supplier && linkOption.value === 'existing' && form.value.link_existing_id) {
+        payload.supplier_linking_mode = dualRoleEnabled.value && linkOption.value === 'existing'
+            ? 'link_existing'
+            : 'new';
+        if (dualRoleEnabled.value && linkOption.value === 'existing' && form.value.link_existing_id) {
             payload.supplier_linking_mode = 'link_existing';
-            payload.linked_supplier_id = form.value.link_existing_id;
-        }
-        if (form.value.is_customer && linkOption.value === 'existing' && form.value.link_existing_id) {
-            payload.supplier_linking_mode = 'link_existing';
-            payload.linked_supplier_id = form.value.link_existing_id;
+            payload.link_existing_id = form.value.link_existing_id;
+            payload[props.isSupplier ? 'linked_customer_id' : 'linked_supplier_id'] = form.value.link_existing_id;
         }
         const res = await axios.post(props.apiUrl, payload);
         emit('created', res.data.customer || res.data.supplier || res.data);
         emit('close');
     } catch (e) {
-        alert(e.response?.data?.message || `Lỗi tạo ${props.entityLabel}.`);
+        const data = e.response?.data || {};
+        const errors = Object.fromEntries(
+            Object.entries(data.errors || {}).map(([key, value]) => [key, Array.isArray(value) ? value[0] : value]),
+        );
+        if (errors.linked_supplier_id && !errors.link_existing_id) {
+            errors.link_existing_id = errors.linked_supplier_id;
+        }
+        fieldErrors.value = errors;
+        formError.value = data.message || `Không thể tạo ${props.entityLabel}.`;
+        if (data.code === 'PARTNER_ALREADY_EXISTS' && data.existing_partner) {
+            existingPartnerSuggestion.value = data.existing_partner;
+            suggestedAction.value = data.suggested_action || null;
+        }
     } finally {
         creating.value = false;
     }
@@ -201,6 +265,7 @@ const onToggleIsSupplier = () => {
         dualRoleConfirm.show = true;
     } else {
         form.value.is_supplier = false;
+        clearLinkState();
     }
 };
 
@@ -210,6 +275,7 @@ const onToggleIsCustomer = () => {
         dualRoleConfirm.show = true;
     } else {
         form.value.is_customer = false;
+        clearLinkState();
     }
 };
 
@@ -242,6 +308,21 @@ const cancelDualRole = () => {
 
             <div class="flex-1 overflow-y-auto px-6 py-6 custom-scrollbar text-[13.5px]">
                 <form @submit.prevent="submit" class="space-y-6">
+                    <div v-if="formError" class="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                        {{ formError }}
+                    </div>
+                    <div v-if="existingPartnerSuggestion" class="rounded border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800">
+                        <div class="font-semibold">Đã tìm thấy đối tác có thông tin trùng:</div>
+                        <div class="mt-1">{{ existingPartnerSuggestion.name }} · {{ existingPartnerSuggestion.code }} · {{ existingPartnerSuggestion.phone || 'Chưa có số điện thoại' }}</div>
+                        <button
+                            v-if="suggestedAction === 'link_existing'"
+                            type="button"
+                            class="mt-2 rounded bg-amber-600 px-3 py-1.5 font-semibold text-white hover:bg-amber-700"
+                            @click="useSuggestedPartner"
+                        >
+                            Dùng đối tác này và liên kết
+                        </button>
+                    </div>
                     <!-- Basic Info -->
                     <div class="flex gap-8 items-start pb-4 border-b border-gray-100">
                         <div class="flex-1 grid grid-cols-2 gap-x-6 gap-y-4">
@@ -249,10 +330,12 @@ const cancelDualRole = () => {
                             <div>
                                 <label class="block font-semibold mb-1">Tên {{ entityLabel }} <span class="text-red-500">*</span></label>
                                 <input v-model="form.name" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none" placeholder="Bắt buộc" required autofocus />
+                                <p v-if="fieldErrors.name" class="mt-1 text-xs text-red-600">{{ fieldErrors.name }}</p>
                             </div>
                             <div>
                                 <label class="block font-semibold mb-1">Mã {{ entityLabel }}</label>
                                 <input v-model="form.code" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none" placeholder="Tự động" />
+                                <p v-if="fieldErrors.code" class="mt-1 text-xs text-red-600">{{ fieldErrors.code }}</p>
                             </div>
 
                             <!-- Row 2: Supplier layout = Phone + Email side by side -->
@@ -260,6 +343,7 @@ const cancelDualRole = () => {
                                 <div>
                                     <label class="block font-semibold mb-1">Điện thoại</label>
                                     <input v-model="form.phone" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 outline-none" />
+                                    <p v-if="fieldErrors.phone" class="mt-1 text-xs text-red-600">{{ fieldErrors.phone }}</p>
                                 </div>
                                 <div>
                                     <label class="block font-semibold mb-1">Email</label>
@@ -273,6 +357,7 @@ const cancelDualRole = () => {
                                     <div class="w-1/2">
                                         <label class="block font-semibold mb-1">Điện thoại</label>
                                         <input v-model="form.phone" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 outline-none" />
+                                        <p v-if="fieldErrors.phone" class="mt-1 text-xs text-red-600">{{ fieldErrors.phone }}</p>
                                     </div>
                                     <div class="w-1/2">
                                         <label class="block font-semibold mb-1">Điện thoại 2</label>
@@ -450,6 +535,7 @@ const cancelDualRole = () => {
                             </div>
                             
                             <div v-if="linkOption === 'existing'" class="relative">
+                                <p v-if="fieldErrors.link_existing_id" class="mb-1 text-xs text-red-600">{{ fieldErrors.link_existing_id }}</p>
                                 <div v-if="!selectedExistingEntity" class="relative">
                                     <svg class="w-4 h-4 text-gray-400 absolute left-2.5 top-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                                     <input v-model="searchExistingQuery" @focus="showExistingDropdown = true" type="text" class="w-full border border-gray-300 rounded pl-8 pr-3 py-1.5 focus:border-blue-500 outline-none" placeholder="Tìm tên nhà cung cấp..." />
@@ -496,6 +582,7 @@ const cancelDualRole = () => {
                             </div>
                             
                             <div v-if="linkOption === 'existing'" class="relative">
+                                <p v-if="fieldErrors.link_existing_id" class="mb-1 text-xs text-red-600">{{ fieldErrors.link_existing_id }}</p>
                                 <div v-if="!selectedExistingEntity" class="relative">
                                     <svg class="w-4 h-4 text-gray-400 absolute left-2.5 top-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                                     <input v-model="searchExistingQuery" @focus="showExistingDropdown = true" type="text" class="w-full border border-gray-300 rounded pl-8 pr-3 py-1.5 focus:border-blue-500 outline-none" placeholder="Tìm tên khách hàng..." />

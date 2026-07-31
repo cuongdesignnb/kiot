@@ -11,11 +11,14 @@ use App\Models\Purchase;
 use App\Models\PurchaseReturn;
 use App\Models\SupplierDebtTransaction;
 use App\Services\Debt\PartnerDebtMutationCoordinator;
+use App\Services\PartnerAlreadyExistsException;
+use App\Services\PartnerRoleService;
 use App\Support\Debt\PartnerDebtDisplayBalance;
 use App\Support\Filters\FilterableIndex;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 
@@ -115,32 +118,96 @@ class SupplierController extends Controller
         ]);
     }
 
-    public function store(Request $request)
+    public function store(Request $request, PartnerRoleService $partnerRoleService)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'code' => 'nullable|string|max:255|unique:customers,code',
-            'phone' => 'nullable|string|max:255|unique:customers,phone',
-            'email' => 'nullable|email|max:255',
-            'address' => 'nullable|string',
-            'customer_group' => 'nullable|string',
-            'note' => 'nullable|string',
-            'is_customer' => 'boolean',
-        ]);
+        try {
+            $validated = Validator::make($request->all(), [
+                'name' => 'required_unless:supplier_linking_mode,link_existing|string|max:255',
+                'code' => 'nullable|string|max:255',
+                'phone' => 'nullable|string|max:255',
+                'phone2' => 'nullable|string|max:255',
+                'birthday' => 'nullable|date',
+                'gender' => 'nullable|in:none,male,female',
+                'email' => 'nullable|email|max:255',
+                'facebook' => 'nullable|string|max:255',
+                'address' => 'nullable|string',
+                'city' => 'nullable|string|max:255',
+                'district' => 'nullable|string|max:255',
+                'ward' => 'nullable|string|max:255',
+                'customer_group' => 'nullable|string|max:255',
+                'note' => 'nullable|string',
+                'type' => 'nullable|in:individual,company',
+                'invoice_name' => 'nullable|string|max:255',
+                'id_card' => 'nullable|string|max:255',
+                'passport' => 'nullable|string|max:255',
+                'tax_code' => 'nullable|string|max:255',
+                'invoice_address' => 'nullable|string',
+                'invoice_city' => 'nullable|string|max:255',
+                'invoice_district' => 'nullable|string|max:255',
+                'invoice_ward' => 'nullable|string|max:255',
+                'invoice_email' => 'nullable|email|max:255',
+                'invoice_phone' => 'nullable|string|max:255',
+                'bank_name' => 'nullable|string|max:255',
+                'bank_account' => 'nullable|string|max:255',
+                'is_customer' => 'boolean',
+                'supplier_linking_mode' => 'nullable|in:new,link_existing',
+                'linked_customer_id' => 'nullable|integer',
+                'linked_supplier_id' => 'nullable|integer',
+                'link_existing_id' => 'nullable|integer',
+            ], [
+                'name.required' => 'Vui lòng nhập tên nhà cung cấp.',
+                'name.required_unless' => 'Vui lòng nhập tên nhà cung cấp.',
+                'email.email' => 'Email nhà cung cấp không đúng định dạng.',
+                'birthday.date' => 'Ngày sinh nhà cung cấp không đúng định dạng.',
+                'supplier_linking_mode.in' => 'Cách xử lý đối tác không hợp lệ.',
+                '*.required' => 'Vui lòng nhập thông tin bắt buộc.',
+                '*.string' => 'Giá trị phải là chuỗi ký tự.',
+                '*.max' => 'Giá trị vượt quá độ dài cho phép.',
+                '*.boolean' => 'Giá trị đúng/sai không hợp lệ.',
+                '*.integer' => 'Giá trị số nguyên không hợp lệ.',
+                '*.in' => 'Giá trị được chọn không hợp lệ.',
+            ])->validate();
 
-        if (empty($validated['code'])) {
-            $validated['code'] = 'NCC'.time().rand(10, 99);
+            $linkId = $request->input('linked_customer_id')
+                ?: $request->input('linked_supplier_id')
+                ?: $request->input('link_existing_id');
+            $mode = $request->input('supplier_linking_mode', 'new');
+            $validated['is_supplier'] = true;
+            $validated['is_customer'] = $request->boolean('is_customer');
+            unset(
+                $validated['supplier_linking_mode'],
+                $validated['linked_customer_id'],
+                $validated['linked_supplier_id'],
+                $validated['link_existing_id']
+            );
+
+            $supplier = $partnerRoleService->createOrLink($validated, $mode, $linkId, 'supplier');
+        } catch (PartnerAlreadyExistsException $e) {
+            if (! $request->wantsJson()) {
+                return back()->withInput()->withErrors($e->errors())->with('error', $e->getMessage());
+            }
+
+            return response()->json([
+                'success' => false,
+                'code' => 'PARTNER_ALREADY_EXISTS',
+                'message' => $e->getMessage(),
+                'errors' => $e->errors(),
+                'existing_partner' => $e->existingPartner(),
+                'suggested_action' => $e->suggestedAction(),
+            ], 422);
+        } catch (ValidationException $e) {
+            if (! $request->wantsJson()) {
+                throw $e;
+            }
+
+            return response()->json([
+                'success' => false,
+                'code' => 'PARTNER_VALIDATION_FAILED',
+                'message' => 'Thông tin nhà cung cấp chưa hợp lệ.',
+                'errors' => $e->errors(),
+            ], 422);
         }
 
-        $validated['is_supplier'] = true;
-        // If the toggle 'is_customer' is false, it means they are only a supplier.
-        $validated['is_customer'] = $request->input('is_customer', false);
-
-        $supplier = Customer::create($validated);
-
-        // STEP 24.13 — return JSON when the caller expects it so a quick-create
-        // form can stay in-context (Purchases/Create, PurchaseOrders/Create) and
-        // auto-select the new supplier without a full-page redirect.
         if ($request->wantsJson()) {
             return response()->json(['success' => true, 'supplier' => $supplier]);
         }
@@ -259,22 +326,61 @@ class SupplierController extends Controller
         return response()->json($suppliers);
     }
 
-    public function quickStore(Request $request)
+    public function quickStore(Request $request, PartnerRoleService $partnerRoleService)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'phone' => 'nullable|string|max:255|unique:customers,phone',
-            'email' => 'nullable|email|max:255',
-            'address' => 'nullable|string',
-        ]);
+        try {
+            $validated = $request->validate([
+                'name' => 'required_unless:supplier_linking_mode,link_existing|string|max:255',
+                'code' => 'nullable|string|max:255',
+                'phone' => 'nullable|string|max:255',
+                'email' => 'nullable|email|max:255',
+                'address' => 'nullable|string',
+                'is_customer' => 'boolean',
+                'supplier_linking_mode' => 'nullable|in:new,link_existing',
+                'linked_customer_id' => 'nullable|integer',
+                'linked_supplier_id' => 'nullable|integer',
+                'link_existing_id' => 'nullable|integer',
+            ], [
+                'name.required' => 'Vui lòng nhập tên nhà cung cấp.',
+                'name.required_unless' => 'Vui lòng nhập tên nhà cung cấp.',
+                'email.email' => 'Email nhà cung cấp không đúng định dạng.',
+                'supplier_linking_mode.in' => 'Cách xử lý đối tác không hợp lệ.',
+                '*.required' => 'Vui lòng nhập thông tin bắt buộc.',
+                '*.string' => 'Giá trị phải là chuỗi ký tự.',
+                '*.max' => 'Giá trị vượt quá độ dài cho phép.',
+                '*.boolean' => 'Giá trị đúng/sai không hợp lệ.',
+                '*.integer' => 'Giá trị số nguyên không hợp lệ.',
+                '*.in' => 'Giá trị được chọn không hợp lệ.',
+            ]);
 
-        $validated['code'] = 'NCC'.time().rand(10, 99);
-        $validated['is_supplier'] = true;
-        $validated['is_customer'] = false;
+            $linkId = $request->input('linked_customer_id')
+                ?: $request->input('linked_supplier_id')
+                ?: $request->input('link_existing_id');
+            $mode = $request->input('supplier_linking_mode', 'new');
+            $validated['is_supplier'] = true;
+            $validated['is_customer'] = $request->boolean('is_customer');
+            unset($validated['supplier_linking_mode'], $validated['linked_customer_id'], $validated['linked_supplier_id'], $validated['link_existing_id']);
 
-        $supplier = Customer::create($validated);
+            $supplier = $partnerRoleService->createOrLink($validated, $mode, $linkId, 'supplier');
 
-        return response()->json(['success' => true, 'supplier' => $supplier]);
+            return response()->json(['success' => true, 'supplier' => $supplier]);
+        } catch (PartnerAlreadyExistsException $e) {
+            return response()->json([
+                'success' => false,
+                'code' => 'PARTNER_ALREADY_EXISTS',
+                'message' => $e->getMessage(),
+                'errors' => $e->errors(),
+                'existing_partner' => $e->existingPartner(),
+                'suggested_action' => $e->suggestedAction(),
+            ], 422);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'code' => 'PARTNER_VALIDATION_FAILED',
+                'message' => 'Thông tin nhà cung cấp chưa hợp lệ.',
+                'errors' => $e->errors(),
+            ], 422);
+        }
     }
 
     public function export(Request $request)
