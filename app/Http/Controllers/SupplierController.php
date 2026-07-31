@@ -278,6 +278,12 @@ class SupplierController extends Controller
                 'name.required' => 'Vui lòng nhập tên nhà cung cấp.',
                 'email.email' => 'Email nhà cung cấp không đúng định dạng.',
                 'supplier_linking_mode.in' => 'Cách xử lý đối tác không hợp lệ.',
+                '*.required' => 'Vui lòng nhập thông tin bắt buộc.',
+                '*.string' => 'Giá trị phải là chuỗi ký tự.',
+                '*.max' => 'Giá trị vượt quá độ dài cho phép.',
+                '*.boolean' => 'Giá trị đúng/sai không hợp lệ.',
+                '*.integer' => 'Giá trị số nguyên không hợp lệ.',
+                '*.in' => 'Giá trị được chọn không hợp lệ.',
             ]);
 
             $linkId = $request->input('linked_supplier_id') ?: $request->input('link_existing_id');
@@ -286,7 +292,7 @@ class SupplierController extends Controller
             $validated['is_customer'] = $request->boolean('is_customer');
             unset($validated['supplier_linking_mode'], $validated['linked_supplier_id'], $validated['link_existing_id']);
 
-            $supplier = $partnerRoleService->createOrLink($validated, $mode, $linkId);
+            $supplier = $partnerRoleService->createOrLink($validated, $mode, $linkId, 'supplier');
 
             return response()->json(['success' => true, 'supplier' => $supplier]);
         } catch (PartnerAlreadyExistsException $e) {

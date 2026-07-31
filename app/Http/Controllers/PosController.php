@@ -553,6 +553,11 @@ class PosController extends Controller
                 'birthday.date' => 'Ngày sinh khách hàng không đúng định dạng.',
                 'supplier_linking_mode.in' => 'Cách xử lý đối tác không hợp lệ.',
                 '*.required' => 'Vui lòng nhập thông tin bắt buộc.',
+                '*.string' => 'Giá trị phải là chuỗi ký tự.',
+                '*.max' => 'Giá trị vượt quá độ dài cho phép.',
+                '*.boolean' => 'Giá trị đúng/sai không hợp lệ.',
+                '*.integer' => 'Giá trị số nguyên không hợp lệ.',
+                '*.in' => 'Giá trị được chọn không hợp lệ.',
             ], [
                 'name' => 'tên khách hàng',
             ])->validate();
@@ -565,7 +570,7 @@ class PosController extends Controller
             $linkedSupplierId = $request->input('linked_supplier_id') ?: $request->input('link_existing_id');
             unset($validated['supplier_linking_mode'], $validated['linked_supplier_id'], $validated['link_existing_id']);
 
-            $customer = $partnerRoleService->createOrLink($validated, $mode, $linkedSupplierId);
+            $customer = $partnerRoleService->createOrLink($validated, $mode, $linkedSupplierId, 'customer');
 
             return response()->json(['success' => true, 'customer' => $customer]);
         } catch (PartnerAlreadyExistsException $e) {

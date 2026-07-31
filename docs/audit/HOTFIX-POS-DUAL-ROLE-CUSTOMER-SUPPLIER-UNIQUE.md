@@ -2,42 +2,49 @@
 
 ## Root cause
 
-The POS quick-create flow used `PosController::quickCreateCustomer`, which ran
-`unique:customers,code` and `unique:customers,phone` before persistence and then
-always called `Customer::create()`. When the operator selected an existing
-supplier, the request still contained that supplier's code/phone, so the request
-failed before the existing partner could be promoted to customer role. The
-`CustomerController::store` path had the same ordering problem and a separate
-link implementation that could drift from POS. The modal then exposed the raw
-validation key/message through `alert()`.
+`POST /api/pos/customers` and `POST /customers` validated `code` and `phone`
+as globally unique before inspecting the linking intent. POS then always called
+`Customer::create()`, so selecting an existing supplier with the same code or
+phone failed before the partner could be promoted. The customer controller had
+the same ordering problem and a separate persistence implementation. The
+frontend displayed the raw validation key with browser `alert()`.
 
-`customers` is the shared partner table. Adding the customer role to an existing
-supplier is a role promotion, not a merge and not creation of a second row.
+`customers` is the shared partner table. Adding the other role is a role
+promotion, not a merge and not creation of a second row.
 
 ## Request/response contract
 
 ### Before
 
-- `POST /api/pos/customers` and `POST /customers` validated `code` and `phone`
-  as globally unique before looking at `supplier_linking_mode`.
-- `link_existing_id`/`linked_supplier_id` could reach different controller
-  implementations; POS ignored the linking fields.
-- A duplicate commonly returned a generic validation response, and the modal
-  showed it with browser `alert()`.
+- `code` and `phone` uniqueness ran before `supplier_linking_mode`.
+- POS ignored the linking fields and created a second row.
+- `/customers` and POS could diverge in link behavior.
+- Duplicate responses could expose `validation.unique`; the modal used browser
+  alert instead of field-level errors.
 
 ### After
 
-Both endpoints use `PartnerRoleService::createOrLink()`.
-The shared supplier quick-store endpoint used by purchase screens uses the same
-contract so the modal cannot silently create a second supplier row in existing
-mode.
+All three quick-create paths use `PartnerRoleService::createOrLink()`:
 
-For a new row:
+- `new`: creates exactly one row. Customer context generates `KH...` codes;
+  supplier quick-store generates `NCC...` codes.
+- `link_existing`: locks the selected row in a DB transaction and updates only
+  the missing role flag. Customer context requires target `is_supplier=true`
+  and promotes `is_customer=true`; supplier context requires target
+  `is_customer=true` and promotes `is_supplier=true`.
+- A target must exist, have the counterpart role, have `merged_into_id IS NULL`,
+  and have status NULL or not `inactive`.
+- Link mode never copies code, phone, name, debt, totals, documents, history,
+  or any financial fields, and never calls `PartnerMergeService`.
+- `link_existing` without the counterpart role flag is rejected as
+  `PARTNER_VALIDATION_FAILED` with Vietnamese field errors and no mutation.
+
+New customer request example:
 
 ```json
 {
   "supplier_linking_mode": "new",
-  "name": "Nguyễn Văn A",
+  "name": "Customer A",
   "code": "KH001",
   "phone": "0900000000",
   "is_customer": true,
@@ -45,21 +52,34 @@ For a new row:
 }
 ```
 
-If code or phone already belongs to a partner, the response is HTTP 422 and no
-row is changed or inserted:
+Customer-context link example:
+
+```json
+{
+  "supplier_linking_mode": "link_existing",
+  "linked_supplier_id": 10,
+  "is_customer": true,
+  "is_supplier": true
+}
+```
+
+Successful link returns HTTP 200 and the selected row in `customer` (or
+`supplier` for supplier quick-store). The row count is unchanged.
+
+Duplicate `new` returns HTTP 422 without mutation:
 
 ```json
 {
   "success": false,
   "code": "PARTNER_ALREADY_EXISTS",
-  "message": "Đối tác đã tồn tại. Vui lòng chọn đối tác có sẵn để liên kết.",
+  "message": "A partner with this information already exists.",
   "errors": {
-    "phone": ["Số điện thoại đã tồn tại."]
+    "phone": ["Phone number already exists."]
   },
   "existing_partner": {
     "id": 10,
     "code": "NCC001",
-    "name": "Nhà cung cấp A",
+    "name": "Supplier A",
     "phone": "0900000000",
     "is_customer": false,
     "is_supplier": true
@@ -68,123 +88,91 @@ row is changed or inserted:
 }
 ```
 
-For an existing supplier:
-
-```json
-{
-  "supplier_linking_mode": "link_existing",
-  "linked_supplier_id": 10,
-  "name": "Thông tin form chỉ dùng cho context UI",
-  "code": "NCC001",
-  "phone": "0900000000",
-  "is_customer": true,
-  "is_supplier": true
-}
-```
-
-The response is HTTP 200 with `customer` equal to the selected row. The service
-locks the target inside a database transaction, verifies that it exists, is a
-supplier, is active, and has not been merged, then updates only
-`is_customer=true` and `is_supplier=true`. Code, phone, profile identity,
-financial totals, debt, documents, and row count are preserved.
-
-Invalid link targets return HTTP 422 with:
-
-```json
-{
-  "success": false,
-  "code": "PARTNER_VALIDATION_FAILED",
-  "message": "Thông tin đối tác chưa hợp lệ.",
-  "errors": {
-    "linked_supplier_id": ["Nhà cung cấp được chọn đang ngừng hoạt động."]
-  }
-}
-```
-
-No response in this flow contains `validation.*`.
+Validation failures return HTTP 422 with `code` set to
+`PARTNER_VALIDATION_FAILED`, Vietnamese messages in `errors`, and no
+`validation.*` key. No response in this flow contains `validation.unique`.
 
 ## Files changed
 
-- `app/Services/PartnerRoleService.php` — shared transactional create/link
-  contract, duplicate detection, target validation, and safe role promotion.
-- `app/Services/PartnerAlreadyExistsException.php` — structured duplicate
-  contract data for both controllers.
-- `app/Http/Controllers/PosController.php` — accepts linking fields and uses
-  the shared service with Vietnamese JSON errors.
-- `app/Http/Controllers/CustomerController.php` — removes premature unique
-  validation and uses the same service contract for `/customers` parity.
-- `app/Http/Controllers/SupplierController.php` — aligns supplier quick-store
-  with the same create/link contract used by the shared modal.
-- `resources/js/Components/QuickCreateCustomerModal.vue` — field-level errors,
-  duplicate partner card/CTA, required existing selection, and no browser
-  validation alert.
+- `app/Services/PartnerRoleService.php` - shared transactional create/link
+  contract for both directions, duplicate detection, target validation, code
+  prefixes, and safe role promotion.
+- `app/Services/PartnerTransactionGuard.php` - canonical availability rule;
+  NULL status remains available while inactive and merged partners are blocked.
+- `app/Http/Controllers/PosController.php` - accepts linking fields and uses
+  the shared service with structured Vietnamese JSON errors.
+- `app/Http/Controllers/CustomerController.php` - removes premature unique
+  validation and uses the same contract for `/customers` parity.
+- `app/Http/Controllers/SupplierController.php` - aligns supplier quick-store
+  with the shared create/link contract.
+- `resources/js/Components/QuickCreateCustomerModal.vue` - computed dual-role
+  guard, stale-state reset, field errors, duplicate partner CTA, required
+  selection, and created-entity emission without browser alert.
 - `tests/Feature/Customers/P0PosCustomerSupplierDualRoleUniqueValidationTest.php`
-  — P0 endpoint, role, count, financial-preservation, duplicate, and invalid
-  target regression coverage.
-- `docs/audit/HOTFIX-POS-DUAL-ROLE-CUSTOMER-SUPPLIER-UNIQUE.md` — this audit.
+  - endpoint parity, both link directions, role constraints, count and
+  financial/document preservation, duplicate, stale payload, invalid target,
+  prefix, and Vietnamese validation coverage.
+- `docs/audit/HOTFIX-POS-DUAL-ROLE-CUSTOMER-SUPPLIER-UNIQUE.md` - this audit.
 
 No migration or backfill was added.
 
 ## Test evidence
 
-Executed against the repository's local MySQL test container on `127.0.0.1:3319`:
+Executed against the local MySQL test container at `127.0.0.1:3319`:
 
-- `php artisan test tests/Feature/Customers/P0PosCustomerSupplierDualRoleUniqueValidationTest.php`
-  — PASS, 6 tests / 51 assertions.
-- `php artisan test tests/Feature/QuickCreate/Step2413QuickCreateEntityFlowTest.php tests/Feature/POS/Hotfix246CPosQuickCreateCustomerGroupDropdownTest.php`
-  — PASS, 10 tests / 39 assertions.
-- `php artisan test tests/Feature/Supplier/RR01SupplierDualRoleRegressionTest.php tests/Feature/CustomerDebt/RR06CustomerDebtLedgerTest.php`
-  — PASS, 7 tests / 18 assertions.
-- `npm run build` — PASS, Vite production build.
-- `vendor/bin/pint` on all changed PHP files — PASS, 5 files.
-- `php -l` on changed PHP files — PASS.
-- `git diff --check` — PASS.
+- P0 suite: PASS, 12 tests / 96 assertions.
+- `Step2413QuickCreateEntityFlowTest` plus POS customer-group suite: PASS,
+  10 tests / 39 assertions.
+- RR01 supplier dual-role plus RR06 customer debt suites: PASS, 7 tests / 18
+  assertions.
+- `npm run build`: PASS.
+- Pint on changed PHP files: PASS, 6 files.
+- PHP lint on changed PHP files: PASS.
+- `git diff --check`: PASS.
 
-The first test attempt was blocked because the local MySQL test container was
-stopped; it was started with the repo's `docker-compose.testing.yml`. No
-production database command was run. PHP emitted pre-existing startup warnings
-for unavailable OCI/Firebird extensions; they did not affect the passing tests.
+The exact two-file timeline run at BASE_SHA and at the updated HEAD both had
+9 failures / 12 tests / 52 assertions, with identical failure names and
+locations (4 customer and 5 supplier legacy timeline contracts). Therefore no
+new timeline regression was introduced by this hotfix. Those pre-existing
+failures include `customer_effect`, `supplier_ledger_mirror`, `display_mode`,
+event-kind/display labels, and pagination expectations.
 
-The existing `Step2413QuickCreateEntityFlowTest` remains passing.
-
-The broader existing `DualRolePartnerDebtTimelineTest` and
-`SupplierDualRolePartnerTimelineTest` suites were also run and currently have
-9 baseline failures in legacy timeline field/display contracts (for example
-`customer_effect`, `supplier_ledger_mirror`, and `display_mode`). They do not
-touch the changed create/link service or controller paths and were not changed
-by this hotfix; they remain a release risk to resolve separately.
+The local test schema declares `customers.status` NOT NULL, so the NULL-status
+test asserts the canonical availability predicate directly and runs link
+coverage with the available active fixture. Production legacy rows with NULL
+status are accepted by that same predicate. PHP emitted pre-existing warnings
+for unavailable OCI/Firebird extensions; they did not affect the passing
+targeted suites. No production database command was run.
 
 ## Manual QA checklist
 
-- [ ] POS: create a normal customer; customer is selected in the active POS tab.
-- [ ] POS: create a new dual-role customer/supplier; exactly one partner row is
-      created and the selected customer remains in the current tab.
-- [ ] POS: select an active existing supplier, keep its code/phone, enable the
-      customer role, and save; no duplicate row is created.
-- [ ] POS: verify code, phone, customer debt, supplier debt, totals, invoices,
-      purchases, notes, and cart/draft state are unchanged after linking.
-- [ ] POS: submit duplicate new code/phone; verify inline Vietnamese field
-      errors, found-partner card, and link CTA instead of browser alert.
-- [ ] POS: choose existing mode without an entity; verify inline selection error
-      and no request mutation.
-- [ ] POS: try inactive, merged, non-supplier, and nonexistent targets; verify
-      rejection and no mutation.
-- [ ] Customers: repeat new, dual-role, existing-link, and duplicate flows and
-      verify the same response semantics as POS.
-- [ ] POS: after success, verify cart, active tab, note, and draft remain intact.
+- [ ] POS normal customer creation selects the returned customer and preserves
+      cart, active tab, note, and draft state.
+- [ ] POS new dual-role creation creates exactly one row and selects it.
+- [ ] POS customer-context link to an existing active supplier preserves code,
+      phone, name, debts, totals, documents, history, and row count.
+- [ ] Supplier quick-store link to an existing active customer preserves the
+      same fields and row count.
+- [ ] Duplicate new code/phone shows inline Vietnamese errors, the found partner,
+      and a link-existing CTA instead of browser alert.
+- [ ] Existing mode without a selected entity shows an inline selection error.
+- [ ] Turning dual-role off after selecting an entity resets mode, entity, link
+      id, search query, results, and link errors.
+- [ ] Inactive, merged, nonexistent, and wrong-role targets are rejected with
+      no mutation in both contexts.
+- [ ] `/customers` has the same response and persistence behavior as POS.
 
 ## Data safety statement
 
-This hotfix adds no migration, backfill, delete, or merge operation. In
-`link_existing`, only the two role flags on the locked target are updated. It
-does not call `PartnerMergeService`, move documents, write debt/ledger rows, or
-modify checkout, invoices, purchases, cashflow, or debt calculations. Duplicate
-`new` requests are rejected before `Customer::create()` and therefore do not
-mutate data.
+This hotfix adds no migration, backfill, delete, or merge operation. Link mode
+updates only one locked partner row and only the missing role flag. It does not
+move documents, write debt/ledger rows, alter checkout, invoices, purchases,
+cashflow, or debt calculations. Duplicate new requests are rejected before
+`Customer::create()`.
 
 ## Rollback plan
 
-Revert the hotfix commit or roll back the Draft PR. Because this change adds no
-schema or data migration, rollback requires no database rollback and no
-backfill. A role promotion made by this hotfix should be reviewed before any
-manual reversal; do not delete or merge the partner as part of rollback.
+Revert the hotfix commit or roll back the Draft PR. No database rollback or
+backfill is needed because there is no schema or data migration. Any role
+promotion already performed should be reviewed before a manual reversal; do
+not delete or merge production partners as part of rollback.

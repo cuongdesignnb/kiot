@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, reactive } from 'vue';
+import { ref, watch, reactive, computed } from 'vue';
 import axios from 'axios';
 import CustomerGroupCombobox from './CustomerGroupCombobox.vue';
 
@@ -60,6 +60,10 @@ const formError = ref('');
 const existingPartnerSuggestion = ref(null);
 const suggestedAction = ref(null);
 let searchExistingTimeout = null;
+
+const dualRoleEnabled = computed(() => props.isSupplier
+    ? form.value.is_customer
+    : form.value.is_supplier);
 
 const normalizeCustomerGroups = (groups) => (groups || []).map((group) => ({
     id: group.id ?? null,
@@ -140,6 +144,19 @@ const removeExistingEntity = () => {
     searchExistingQuery.value = '';
 };
 
+const clearLinkState = () => {
+    linkOption.value = 'new';
+    selectedExistingEntity.value = null;
+    form.value.link_existing_id = null;
+    searchExistingQuery.value = '';
+    existingResults.value = [];
+    showExistingDropdown.value = false;
+    delete fieldErrors.value.link_existing_id;
+    delete fieldErrors.value.linked_supplier_id;
+    existingPartnerSuggestion.value = null;
+    suggestedAction.value = null;
+};
+
 const clearErrors = () => {
     fieldErrors.value = {};
     formError.value = '';
@@ -186,21 +203,27 @@ watch(() => props.show, (val) => {
     }
 });
 
+watch(dualRoleEnabled, (enabled) => {
+    if (! enabled) clearLinkState();
+});
+
 const submit = async () => {
     clearErrors();
     if (!form.value.name.trim()) {
         fieldErrors.value.name = 'Vui lòng nhập tên đối tác.';
         return;
     }
-    if (linkOption.value === 'existing' && !selectedExistingEntity.value) {
+    if (dualRoleEnabled.value && linkOption.value === 'existing' && !selectedExistingEntity.value) {
         fieldErrors.value.link_existing_id = 'Vui lòng chọn đối tác cần liên kết.';
         return;
     }
     creating.value = true;
     try {
         const payload = { ...form.value };
-        payload.supplier_linking_mode = linkOption.value === 'existing' ? 'link_existing' : 'new';
-        if (linkOption.value === 'existing' && form.value.link_existing_id) {
+        payload.supplier_linking_mode = dualRoleEnabled.value && linkOption.value === 'existing'
+            ? 'link_existing'
+            : 'new';
+        if (dualRoleEnabled.value && linkOption.value === 'existing' && form.value.link_existing_id) {
             payload.supplier_linking_mode = 'link_existing';
             payload.linked_supplier_id = form.value.link_existing_id;
         }
@@ -209,9 +232,13 @@ const submit = async () => {
         emit('close');
     } catch (e) {
         const data = e.response?.data || {};
-        fieldErrors.value = Object.fromEntries(
+        const errors = Object.fromEntries(
             Object.entries(data.errors || {}).map(([key, value]) => [key, Array.isArray(value) ? value[0] : value]),
         );
+        if (errors.linked_supplier_id && !errors.link_existing_id) {
+            errors.link_existing_id = errors.linked_supplier_id;
+        }
+        fieldErrors.value = errors;
         formError.value = data.message || `Không thể tạo ${props.entityLabel}.`;
         if (data.code === 'PARTNER_ALREADY_EXISTS' && data.existing_partner) {
             existingPartnerSuggestion.value = data.existing_partner;
@@ -236,6 +263,7 @@ const onToggleIsSupplier = () => {
         dualRoleConfirm.show = true;
     } else {
         form.value.is_supplier = false;
+        clearLinkState();
     }
 };
 
@@ -245,6 +273,7 @@ const onToggleIsCustomer = () => {
         dualRoleConfirm.show = true;
     } else {
         form.value.is_customer = false;
+        clearLinkState();
     }
 };
 

@@ -8,36 +8,64 @@ use Illuminate\Validation\ValidationException;
 
 class PartnerRoleService
 {
+    public function __construct(private readonly PartnerTransactionGuard $partnerTransactionGuard) {}
+
     /**
      * Persist one partner for customer/supplier quick-create flows.
      *
-     * `new` creates exactly one row. `link_existing` locks and promotes the
-     * selected active, unmerged supplier without copying profile or financial
-     * values and without invoking the merge workflow.
+     * primaryRole is explicit controller intent. It must not be inferred from
+     * the two role flags because dual-role payloads have both flags set.
      */
     public function createOrLink(
         array $attributes,
         string $mode = 'new',
-        int|string|null $linkedSupplierId = null,
+        int|string|null $linkedPartnerId = null,
+        string $primaryRole = 'customer',
     ): Customer {
         if (! in_array($mode, ['new', 'link_existing'], true)) {
             throw ValidationException::withMessages([
                 'supplier_linking_mode' => 'Cách xử lý đối tác không hợp lệ.',
             ]);
         }
+        if (! in_array($primaryRole, ['customer', 'supplier'], true)) {
+            throw ValidationException::withMessages([
+                'primary_role' => 'Ngữ cảnh đối tác không hợp lệ.',
+            ]);
+        }
 
-        return DB::transaction(function () use ($attributes, $mode, $linkedSupplierId): Customer {
+        $primaryFlag = $primaryRole === 'customer' ? 'is_customer' : 'is_supplier';
+        if (! (bool) ($attributes[$primaryFlag] ?? false)) {
+            throw ValidationException::withMessages([
+                $primaryFlag => $primaryRole === 'customer'
+                    ? 'Luồng khách hàng phải có is_customer=true.'
+                    : 'Luồng nhà cung cấp phải có is_supplier=true.',
+            ]);
+        }
+        if ($mode === 'link_existing') {
+            $counterpartFlag = $primaryRole === 'customer' ? 'is_supplier' : 'is_customer';
+            if (! (bool) ($attributes[$counterpartFlag] ?? false)) {
+                throw ValidationException::withMessages([
+                    $counterpartFlag => $primaryRole === 'customer'
+                        ? 'Liên kết khách hàng phải có is_supplier=true.'
+                        : 'Liên kết nhà cung cấp phải có is_customer=true.',
+                ]);
+            }
+        }
+
+        $codePrefix = $primaryRole === 'customer' ? 'KH' : 'NCC';
+
+        return DB::transaction(function () use ($attributes, $mode, $linkedPartnerId, $primaryRole, $codePrefix): Customer {
             if ($mode === 'link_existing') {
-                return $this->linkExisting($linkedSupplierId);
+                return $this->linkExisting($linkedPartnerId, $primaryRole);
             }
 
-            return $this->createNew($attributes);
+            return $this->createNew($attributes, $codePrefix, $primaryRole);
         });
     }
 
-    private function createNew(array $attributes): Customer
+    private function createNew(array $attributes, string $codePrefix, string $primaryRole): Customer
     {
-        $attributes['code'] = $this->resolveCode($attributes['code'] ?? null);
+        $attributes['code'] = $this->resolveCode($attributes['code'] ?? null, $codePrefix);
 
         $codeMatch = Customer::query()
             ->where('code', $attributes['code'])
@@ -59,9 +87,8 @@ class PartnerRoleService
 
             $existing = $this->unambiguousExistingPartner($codeMatch, $phoneMatch);
             $canLink = $existing
-                && (bool) $existing->is_supplier
-                && ($existing->status ?? 'active') === 'active'
-                && $existing->merged_into_id === null;
+                && $this->partnerTransactionGuard->isAvailable($existing)
+                && (bool) $existing->{$this->counterpartFlag($primaryRole)};
 
             throw new PartnerAlreadyExistsException(
                 $errors,
@@ -73,51 +100,52 @@ class PartnerRoleService
         return Customer::create($attributes);
     }
 
-    private function linkExisting(int|string|null $linkedSupplierId): Customer
+    private function linkExisting(int|string|null $linkedPartnerId, string $primaryRole): Customer
     {
-        if (! $linkedSupplierId) {
+        if (! $linkedPartnerId) {
             throw ValidationException::withMessages([
-                'linked_supplier_id' => 'Vui lòng chọn nhà cung cấp cần liên kết.',
+                'linked_supplier_id' => 'Vui lòng chọn đối tác cần liên kết.',
             ]);
         }
 
-        $supplier = Customer::query()
-            ->whereKey($linkedSupplierId)
+        $partner = Customer::query()
+            ->whereKey($linkedPartnerId)
             ->lockForUpdate()
             ->first();
 
-        if (! $supplier) {
+        if (! $partner) {
             throw ValidationException::withMessages([
-                'linked_supplier_id' => 'Nhà cung cấp được chọn không tồn tại.',
-            ]);
-        }
-        if (! (bool) $supplier->is_supplier) {
-            throw ValidationException::withMessages([
-                'linked_supplier_id' => 'Đối tác được chọn không phải là nhà cung cấp.',
-            ]);
-        }
-        if (($supplier->status ?? null) !== 'active') {
-            throw ValidationException::withMessages([
-                'linked_supplier_id' => 'Nhà cung cấp được chọn đang ngừng hoạt động.',
-            ]);
-        }
-        if ($supplier->merged_into_id !== null) {
-            throw ValidationException::withMessages([
-                'linked_supplier_id' => 'Nhà cung cấp được chọn đã được gộp và không thể liên kết.',
+                'linked_supplier_id' => 'Đối tác được chọn không tồn tại.',
             ]);
         }
 
-        // Deliberately update only role flags. Code, profile, financial fields,
-        // documents and debt history remain exactly on the selected row.
-        $supplier->forceFill([
-            'is_customer' => true,
-            'is_supplier' => true,
+        $counterpartFlag = $this->counterpartFlag($primaryRole);
+        if (! (bool) $partner->{$counterpartFlag}) {
+            throw ValidationException::withMessages([
+                'linked_supplier_id' => $primaryRole === 'customer'
+                    ? 'Đối tác được chọn không phải là nhà cung cấp.'
+                    : 'Đối tác được chọn không phải là khách hàng.',
+            ]);
+        }
+        if (! $this->partnerTransactionGuard->isAvailable($partner)) {
+            throw ValidationException::withMessages([
+                'linked_supplier_id' => $partner->merged_into_id !== null
+                    ? 'Đối tác được chọn đã được gộp và không thể liên kết.'
+                    : 'Đối tác được chọn đang ngừng hoạt động.',
+            ]);
+        }
+
+        // Deliberately update only the missing primary role. Code, profile,
+        // financial fields, documents and debt history stay on this row.
+        $partner->forceFill([
+            'is_customer' => $primaryRole === 'customer' ? true : (bool) $partner->is_customer,
+            'is_supplier' => $primaryRole === 'supplier' ? true : (bool) $partner->is_supplier,
         ])->save();
 
-        return $supplier->refresh();
+        return $partner->refresh();
     }
 
-    private function resolveCode(mixed $code): string
+    private function resolveCode(mixed $code, string $prefix): string
     {
         $code = is_string($code) ? trim($code) : $code;
         if ($code !== null && $code !== '') {
@@ -125,7 +153,7 @@ class PartnerRoleService
         }
 
         do {
-            $generated = 'KH'.now()->format('YmdHis').random_int(10, 99);
+            $generated = $prefix.now()->format('YmdHis').random_int(10, 99);
         } while (Customer::query()->where('code', $generated)->exists());
 
         return $generated;
@@ -138,6 +166,11 @@ class PartnerRoleService
         }
 
         return $codeMatch ?: $phoneMatch;
+    }
+
+    private function counterpartFlag(string $primaryRole): string
+    {
+        return $primaryRole === 'customer' ? 'is_supplier' : 'is_customer';
     }
 
     private function partnerSummary(Customer $partner): array

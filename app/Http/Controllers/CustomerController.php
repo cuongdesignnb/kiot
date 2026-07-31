@@ -389,59 +389,64 @@ class CustomerController extends Controller
 
     public function store(Request $request, PartnerRoleService $partnerRoleService)
     {
-        // Build dynamic validation rules based on settings
-        $rules = [
-            'name' => 'required|string|max:255',
-            'code' => 'nullable|string|max:255',
-            'phone' => (Setting::get('customer_required_phone', false) ? 'required' : 'nullable').'|string|max:255',
-            'phone2' => 'nullable|string|max:255',
-            'birthday' => (Setting::get('customer_required_birthday', false) ? 'required' : 'nullable').'|date',
-            'gender' => (Setting::get('customer_required_gender', false) ? 'required' : 'nullable').'|in:none,male,female',
-            'email' => (Setting::get('customer_required_email', false) ? 'required' : 'nullable').'|email|max:255',
-            'facebook' => (Setting::get('customer_required_facebook', false) ? 'required' : 'nullable').'|string|max:255',
-            'address' => (Setting::get('customer_required_address', false) ? 'required' : 'nullable').'|string',
-            'city' => 'nullable|string',
-            'district' => 'nullable|string',
-            'ward' => 'nullable|string',
-            'customer_group' => 'nullable|string',
-            'note' => 'nullable|string',
-            'type' => 'nullable|in:individual,company',
-            'invoice_name' => 'nullable|string|max:255',
-            'id_card' => 'nullable|string|max:255',
-            'passport' => 'nullable|string|max:255',
-            'tax_code' => 'nullable|string|max:255',
-            'invoice_address' => 'nullable|string',
-            'invoice_city' => 'nullable|string',
-            'invoice_district' => 'nullable|string',
-            'invoice_ward' => 'nullable|string',
-            'invoice_email' => 'nullable|email|max:255',
-            'invoice_phone' => 'nullable|string|max:255',
-            'bank_name' => 'nullable|string|max:255',
-            'bank_account' => 'nullable|string|max:255',
-            'is_supplier' => 'boolean',
-            'supplier_linking_mode' => 'nullable|in:new,link_existing',
-            'linked_supplier_id' => 'nullable|integer',
-            'link_existing_id' => 'nullable|integer',
-        ];
-
-        $validated = Validator::make($request->all(), $rules, [
-            'name.required' => 'Vui lòng nhập tên khách hàng.',
-            'email.email' => 'Email khách hàng không đúng định dạng.',
-            'birthday.date' => 'Ngày sinh khách hàng không đúng định dạng.',
-            'supplier_linking_mode.in' => 'Cách xử lý đối tác không hợp lệ.',
-            '*.required' => 'Vui lòng nhập thông tin bắt buộc.',
-        ])->validate();
-
-        $validated['is_supplier'] = $request->boolean('is_supplier');
-        $validated['is_customer'] = true;
-        $validated['created_by'] = auth()->id();
-
-        $linkId = $request->input('linked_supplier_id') ?: $request->input('link_existing_id');
-        $linkMode = $request->input('supplier_linking_mode', 'new');
-        unset($validated['supplier_linking_mode'], $validated['linked_supplier_id'], $validated['link_existing_id']);
-
         try {
-            $customer = $partnerRoleService->createOrLink($validated, $linkMode, $linkId);
+            // Build dynamic validation rules based on settings
+            $rules = [
+                'name' => 'required|string|max:255',
+                'code' => 'nullable|string|max:255',
+                'phone' => (Setting::get('customer_required_phone', false) ? 'required' : 'nullable').'|string|max:255',
+                'phone2' => 'nullable|string|max:255',
+                'birthday' => (Setting::get('customer_required_birthday', false) ? 'required' : 'nullable').'|date',
+                'gender' => (Setting::get('customer_required_gender', false) ? 'required' : 'nullable').'|in:none,male,female',
+                'email' => (Setting::get('customer_required_email', false) ? 'required' : 'nullable').'|email|max:255',
+                'facebook' => (Setting::get('customer_required_facebook', false) ? 'required' : 'nullable').'|string|max:255',
+                'address' => (Setting::get('customer_required_address', false) ? 'required' : 'nullable').'|string',
+                'city' => 'nullable|string',
+                'district' => 'nullable|string',
+                'ward' => 'nullable|string',
+                'customer_group' => 'nullable|string',
+                'note' => 'nullable|string',
+                'type' => 'nullable|in:individual,company',
+                'invoice_name' => 'nullable|string|max:255',
+                'id_card' => 'nullable|string|max:255',
+                'passport' => 'nullable|string|max:255',
+                'tax_code' => 'nullable|string|max:255',
+                'invoice_address' => 'nullable|string',
+                'invoice_city' => 'nullable|string',
+                'invoice_district' => 'nullable|string',
+                'invoice_ward' => 'nullable|string',
+                'invoice_email' => 'nullable|email|max:255',
+                'invoice_phone' => 'nullable|string|max:255',
+                'bank_name' => 'nullable|string|max:255',
+                'bank_account' => 'nullable|string|max:255',
+                'is_supplier' => 'boolean',
+                'supplier_linking_mode' => 'nullable|in:new,link_existing',
+                'linked_supplier_id' => 'nullable|integer',
+                'link_existing_id' => 'nullable|integer',
+            ];
+
+            $validated = Validator::make($request->all(), $rules, [
+                'name.required' => 'Vui lòng nhập tên khách hàng.',
+                'email.email' => 'Email khách hàng không đúng định dạng.',
+                'birthday.date' => 'Ngày sinh khách hàng không đúng định dạng.',
+                'supplier_linking_mode.in' => 'Cách xử lý đối tác không hợp lệ.',
+                '*.required' => 'Vui lòng nhập thông tin bắt buộc.',
+                '*.string' => 'Giá trị phải là chuỗi ký tự.',
+                '*.max' => 'Giá trị vượt quá độ dài cho phép.',
+                '*.boolean' => 'Giá trị đúng/sai không hợp lệ.',
+                '*.integer' => 'Giá trị số nguyên không hợp lệ.',
+                '*.in' => 'Giá trị được chọn không hợp lệ.',
+            ])->validate();
+
+            $validated['is_supplier'] = $request->boolean('is_supplier');
+            $validated['is_customer'] = true;
+            $validated['created_by'] = auth()->id();
+
+            $linkId = $request->input('linked_supplier_id') ?: $request->input('link_existing_id');
+            $linkMode = $request->input('supplier_linking_mode', 'new');
+            unset($validated['supplier_linking_mode'], $validated['linked_supplier_id'], $validated['link_existing_id']);
+
+            $customer = $partnerRoleService->createOrLink($validated, $linkMode, $linkId, 'customer');
         } catch (PartnerAlreadyExistsException $e) {
             if (! $request->wantsJson()) {
                 return back()->withInput()->withErrors($e->errors());

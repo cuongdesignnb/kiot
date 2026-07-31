@@ -11,7 +11,7 @@ class PartnerTransactionGuard
 {
     public function assertCanTransact(?int $partnerId, string $field = 'partner_id'): ?Customer
     {
-        if (!$partnerId) {
+        if (! $partnerId) {
             return null;
         }
 
@@ -22,7 +22,7 @@ class PartnerTransactionGuard
 
         $partner = $query->findOrFail($partnerId);
         if ($partner->merged_into_id !== null) {
-            $targetCode = $partner->mergedInto?->code ?? ('#' . $partner->merged_into_id);
+            $targetCode = $partner->mergedInto?->code ?? ('#'.$partner->merged_into_id);
 
             throw ValidationException::withMessages([
                 $field => "Đối tác này đã được gộp vào {$targetCode}. Vui lòng chọn đối tác đích.",
@@ -39,5 +39,11 @@ class PartnerTransactionGuard
             ->where(function (Builder $query) {
                 $query->whereNull('status')->orWhere('status', '!=', 'inactive');
             });
+    }
+
+    public function isAvailable(Customer $partner): bool
+    {
+        return $partner->merged_into_id === null
+            && (($partner->status ?? null) !== 'inactive');
     }
 }
