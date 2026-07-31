@@ -162,7 +162,8 @@ test asserts the canonical availability predicate directly and runs link
 coverage with the available active fixture. Production legacy rows with NULL
 status are accepted by that same predicate. PHP emitted pre-existing warnings
 for unavailable OCI/Firebird extensions; they did not affect the passing
-targeted suites. No production database command was run.
+targeted suites. No production write command was run; the authorized
+production read-only result is recorded below.
 
 ## Manual QA checklist
 
