@@ -182,23 +182,42 @@ partner was used or changed.
 | Supplier quick-create link existing customer | UI offers existing-customer selection and links one row. | On `/suppliers`, selected `QA POS Customer 20260731` (id 1084), saved, and list reloaded; total customer rows stayed 326 and id 1084 changed only to `is_supplier=1` while code/name/financial fields stayed unchanged. | PASS |
 | Supplier duplicate code + phone | HTTP 422 with Vietnamese field errors, found partner and CTA; no browser alert or mutation. | Modal showed `Mã đối tác đã tồn tại.`, `Số điện thoại đã tồn tại.`, found `QA Supplier 20260731 · NCC178549138335 · 0991234567`, CTA `Dùng đối tác này và liên kết`; `getJsDialog()` was undefined. | PASS |
 | Supplier existing target then dual-role off | Target selection and link mode are cleared; no implicit link. | After selecting id 1084 then turning off dual-role, existing option and target selection disappeared, checkbox was unchecked, and the modal was closed without submit. | PASS |
-| Purchases/Create supplier entry | Shared modal opens and purchase draft remains intact. | Blocked before page render by pre-existing local schema mismatch: `categories.deleted_at` is absent; no mutation performed. | BLOCKED (local schema) |
+| Purchases/Create supplier entry | Shared modal opens and purchase draft remains intact. | Fresh-schema rerun passed on the disposable QA database below; no `categories.deleted_at` error appeared and the draft remained unchanged through both supplier flows. | PASS |
 | Purchases/Edit supplier entry | Shared modal opens; entered purchase fields remain after close. | `/purchases/428/edit` rendered; `Ghi chú đơn nhập` stayed `QA purchase edit draft note` and quantity `5` after opening/closing the shared supplier modal. | PASS |
 | Customer auto-code | New customer gets `KH` prefix. | Local read-only query returned `KH2026073116480060` and `KH2026073116483852` for the two POS-created customers. | PASS |
 | Browser alert validation | Validation must remain inline. | Duplicate and link flows had no native JS dialog; errors stayed in the modal. | PASS |
 
-The Purchases/Create browser case remains blocked by the local `categories`
-schema mismatch; no migration was run to bypass it. Supplier UI parity itself
-is covered by the shared modal and the full-store/quick-store feature tests.
+### Fresh-schema Purchases/Create QA
+
+The stale local database was not repaired. A disposable, local-only database
+`pr37_fresh_qa_20260731` was created in the non-production MySQL test container
+at `127.0.0.1:3319`. It was separate from the old local database and was never
+connected to production. The complete repository migration set contained 179
+files and the fresh database contained 179 applied migrations in batch 1.
+Only minimum browser-QA seed data was added: the standard seeders, one branch,
+one existing customer with one invoice for preservation checks, and no
+production data.
+
+| Case | EXPECTED | ACTUAL | Result |
+|---|---|---|---|
+| Fresh schema gate | `categories` exists with `deleted_at`; `customers.status` exists. | Read-only schema inspection returned `categories=YES`, `categories.deleted_at=YES`, `customers.status=YES`, and migrations `179/179`. | PASS |
+| Purchases/Create render | Page renders without `categories.deleted_at` error. | Authenticated browser opened `http://127.0.0.1:8019/purchases/create` successfully on the fresh database. | PASS |
+| Purchase draft setup | Supplier/product/quantity/note/payment can be entered. | Product `Hp 830 G5` x2, payment `100.000`, and note `PR37 fresh schema draft note` were visible before each modal operation. | PASS |
+| Supplier quick-create new | Success, selected supplier, generated code starts `NCC`, draft unchanged. | Created id 2 `NCC2026073123013218` / `PR37 Fresh Supplier`; it became selected. Product, quantity, payment, and note remained unchanged. | PASS |
+| Link existing customer as supplier | Same id; row count, identity, financial fields, and history unchanged; selected supplier and draft preserved. | Customer id 1 `KHPR370001` stayed the same; count stayed 2; only `is_supplier` changed `0→1`. Code/name/phone, debt/totals, and invoice count `1→1` were unchanged. It became selected and the draft remained unchanged. | PASS |
+| Existing target then dual-role off | Target and link mode clear; no implicit link. | After selecting id 1 and disabling dual-role, the target chip and link radios disappeared, checkbox was unchecked, modal closed without save, and DB state stayed unchanged. | PASS |
+| Browser validation alert | No native browser alert; validation remains in UI. | `getJsDialog()` was `undefined` after create, link, and stale-toggle flows. | PASS |
+
+The fresh QA server used `SESSION_DRIVER=database` against the disposable
+database so the authenticated browser session and CSRF token were persisted.
+No migration was added to the PR and the old local database was not changed.
 
 ## Production read-only status audit
 
-No production database command was executed. The workspace has only local
-database configuration and no authorized production read-only credential or
-endpoint. The following command is the approved read-only handoff; it must be
-run by an operator with a read-only MySQL account and a protected client file.
-It performs only `SELECT`, returns count plus `id`/`code` samples, and must not
-be replaced with an application write command:
+The production audit was performed read-only by the authorized operator. The
+following is the approved read-only handoff command; it performs only `SELECT`,
+returns count plus `id`/`code` samples, and must not be replaced with an
+application write command:
 
 ```sh
 mysql --defaults-extra-file=/secure/prod-readonly.cnf --batch --raw \
@@ -206,14 +225,23 @@ mysql --defaults-extra-file=/secure/prod-readonly.cnf --batch --raw \
   --execute='SELECT COUNT(*) AS null_status_count FROM customers WHERE status IS NULL; SELECT id, code FROM customers WHERE status IS NULL ORDER BY id LIMIT 50;'
 ```
 
-Production result: `NOT RUN — authorized production read-only access not
-available in this workspace`. Therefore `PRODUCTION_NULL_STATUS_COUNT=NOT_RUN`
-and production sample IDs/codes are intentionally not asserted. No production
-data was modified. The local QA database is not a production substitute; its
-schema declares `customers.status` NOT NULL. A staging clone is recommended
-before any remediation decision if the production audit returns a non-zero
-count, so the legacy-row behavior and any proposed repair can be rehearsed
-without touching production.
+Production result: `SUPERSEDED - production read-only audit completed; see authoritative result below`. No production data was modified. The local QA
+database is not a production substitute.
+
+```text
+PRODUCTION_CATEGORIES_TABLE_EXISTS=YES
+PRODUCTION_CATEGORIES_DELETED_AT=YES
+PRODUCTION_CUSTOMERS_STATUS_COLUMN=YES
+PRODUCTION_NULL_STATUS_COUNT=0
+PRODUCTION_NULL_STATUS_SAMPLE=[]
+PRODUCTION_MIGRATIONS_PENDING=0
+PRODUCTION_SCHEMA_GATE=PASS
+```
+
+Production `categories.deleted_at` is present and there are no
+`customers.status IS NULL` rows requiring remediation. A staging clone is not
+required for a status-NULL repair because the read-only count is zero; it
+remains appropriate for any future schema or data change.
 
 ## Final release-gate evidence
 
