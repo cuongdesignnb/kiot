@@ -146,21 +146,61 @@ targeted suites. No production database command was run.
 
 ## Manual QA checklist
 
-- [ ] POS normal customer creation selects the returned customer and preserves
-      cart, active tab, note, and draft state.
-- [ ] POS new dual-role creation creates exactly one row and selects it.
-- [ ] POS customer-context link to an existing active supplier preserves code,
-      phone, name, debts, totals, documents, history, and row count.
-- [ ] Supplier quick-store link to an existing active customer preserves the
-      same fields and row count.
-- [ ] Duplicate new code/phone shows inline Vietnamese errors, the found partner,
-      and a link-existing CTA instead of browser alert.
-- [ ] Existing mode without a selected entity shows an inline selection error.
-- [ ] Turning dual-role off after selecting an entity resets mode, entity, link
-      id, search query, results, and link errors.
-- [ ] Inactive, merged, nonexistent, and wrong-role targets are rejected with
-      no mutation in both contexts.
-- [ ] `/customers` has the same response and persistence behavior as POS.
+Browser: local app at `http://127.0.0.1:8000/pos`, authenticated admin session,
+branch `codex/p0-fix-pos-customer-supplier-dual-role`, 2026-07-31. The browser
+session used local MySQL only. Evidence is recorded below; no production
+partner was used or changed.
+
+| Case | EXPECTED | ACTUAL | Result |
+|---|---|---|---|
+| POS draft preservation + normal customer | Customer is selected; cart, invoice tab, payment, note and draft remain. | Cart retained `Sạc Dell Type C 65W` x1, tab remained `Hóa đơn 1 (1)`, payment remained `500.000`, note remained `QA draft note preserved`; selected `QA POS Customer 20260731`. | PASS |
+| POS new dual-role | One new row, selected in POS, customer and supplier roles set. | Selected `QA POS Dual Role 20260731`; local read-only query returned `KH2026073116483852`, `is_customer=1`, `is_supplier=1`. | PASS |
+| Duplicate supplier code + phone | HTTP 422 with `PARTNER_ALREADY_EXISTS`, Vietnamese field errors, found partner and CTA; no browser alert. | Modal displayed `Mã đối tác đã tồn tại.`, `Số điện thoại đã tồn tại.`, found `QA Supplier 20260731 · NCC178549138335 · 0991234567`, CTA `Dùng đối tác này và liên kết`; `getJsDialog()` was undefined. | PASS |
+| POS CTA customer→existing supplier | Existing row is promoted, no second row, financial fields unchanged. | CTA selected the supplier, save selected `QA Supplier 20260731`; local count was 325 before and after; id 1086 retained code/phone/debt/totals and changed only role to `is_customer=1,is_supplier=1`. | PASS |
+| Existing target then dual-role off | Target selection and link mode are cleared; no implicit link. | Selected target chip disappeared, checkbox became unchecked, modal closed without submit; no browser alert. | PASS |
+| Supplier quick-create new | New supplier is persisted with `NCC` code prefix. | Created `QA Supplier 20260731`; local read-only query returned `NCC178549138335`, `is_supplier=1`. | PASS |
+| Supplier quick-create link existing customer | UI must offer existing-customer selection and link one row. | Current supplier quick-create modal exposed only checkbox `Là khách hàng`; it did not expose `Chọn từ khách hàng đã có` or a customer selector. No mutation was submitted. | FAIL (UI gap) |
+| Customer auto-code | New customer gets `KH` prefix. | Local read-only query returned `KH2026073116480060` and `KH2026073116483852` for the two POS-created customers. | PASS |
+| Browser alert validation | Validation must remain inline. | Duplicate and link flows had no native JS dialog; errors stayed in the modal. | PASS |
+
+The supplier quick-create UI gap is explicitly out of this final QA run's
+scope to fix. The shared supplier endpoint contract remains covered by the
+targeted feature tests; manual UI release readiness is `NO` until the product
+owner accepts or separately scopes that UI gap.
+
+## Production read-only status audit
+
+No production database command was executed. The workspace has only local
+database configuration and no authorized production read-only credential or
+endpoint. The following command is the approved read-only handoff; it must be
+run by an operator with a read-only MySQL account and a protected client file.
+It performs only `SELECT`, returns count plus `id`/`code` samples, and must not
+be replaced with an application write command:
+
+```sh
+mysql --defaults-extra-file=/secure/prod-readonly.cnf --batch --raw \
+  --database="$DB_DATABASE" \
+  --execute='SELECT COUNT(*) AS null_status_count FROM customers WHERE status IS NULL; SELECT id, code FROM customers WHERE status IS NULL ORDER BY id LIMIT 50;'
+```
+
+Production result: `NOT RUN — authorized production read-only access not
+available in this workspace`. Therefore `PRODUCTION_NULL_STATUS_COUNT=NOT_RUN`
+and production sample IDs/codes are intentionally not asserted. No production
+data was modified. The local QA database is not a production substitute; its
+schema declares `customers.status` NOT NULL. A staging clone is recommended
+before any remediation decision if the production audit returns a non-zero
+count, so the legacy-row behavior and any proposed repair can be rehearsed
+without touching production.
+
+## Final release-gate evidence
+
+- Targeted P0, Step2413/POS, RR01/RR06, build, Pint, PHP lint and diff checks
+  are rerun after this document-only evidence update; results are recorded in
+  the PR handoff.
+- GitHub Actions status is checked for the final commit through the GitHub
+  connector; the PR remains Draft and is not merged or deployed.
+- No migration, backfill, delete, merge, checkout, invoice, purchase,
+  cashflow or debt-calculation change was made.
 
 ## Data safety statement
 
