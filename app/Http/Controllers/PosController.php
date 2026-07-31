@@ -515,7 +515,7 @@ class PosController extends Controller
     {
         try {
             $validated = Validator::make($request->all(), [
-                'name' => 'required|string|max:255',
+                'name' => 'required_unless:supplier_linking_mode,link_existing|string|max:255',
                 'code' => 'nullable|string|max:255',
                 'phone' => 'nullable|string|max:255',
                 'phone2' => 'nullable|string|max:255',
@@ -549,6 +549,7 @@ class PosController extends Controller
                 'link_existing_id' => 'nullable|integer',
             ], [
                 'name.required' => 'Vui lòng nhập tên khách hàng.',
+                'name.required_unless' => 'Vui lòng nhập tên khách hàng.',
                 'email.email' => 'Email khách hàng không đúng định dạng.',
                 'birthday.date' => 'Ngày sinh khách hàng không đúng định dạng.',
                 'supplier_linking_mode.in' => 'Cách xử lý đối tác không hợp lệ.',

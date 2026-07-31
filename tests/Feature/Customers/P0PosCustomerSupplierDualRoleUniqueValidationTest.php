@@ -20,7 +20,7 @@ class P0PosCustomerSupplierDualRoleUniqueValidationTest extends TestCase
         $role = Role::create([
             'name' => 'p0-partner-role-'.uniqid(),
             'display_name' => 'P0 partner hotfix',
-            'permissions' => ['pos.use', 'customers.create'],
+            'permissions' => ['pos.use', 'customers.create', 'suppliers.create'],
             'is_system' => false,
         ]);
 
@@ -179,7 +179,7 @@ class P0PosCustomerSupplierDualRoleUniqueValidationTest extends TestCase
             'phone' => $customer->phone,
             'is_customer' => true,
             'supplier_linking_mode' => 'link_existing',
-            'linked_supplier_id' => $customer->id,
+            'linked_customer_id' => $customer->id,
         ]);
 
         $response->assertOk()->assertJsonPath('supplier.id', $customer->id);

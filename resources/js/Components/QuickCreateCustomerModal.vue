@@ -134,6 +134,7 @@ watch(searchExistingQuery, (val) => {
 const selectExistingEntity = (entity) => {
     selectedExistingEntity.value = entity;
     form.value.link_existing_id = entity.id;
+    if (!form.value.name.trim()) form.value.name = entity.name || '';
     searchExistingQuery.value = '';
     showExistingDropdown.value = false;
 };
@@ -225,7 +226,8 @@ const submit = async () => {
             : 'new';
         if (dualRoleEnabled.value && linkOption.value === 'existing' && form.value.link_existing_id) {
             payload.supplier_linking_mode = 'link_existing';
-            payload.linked_supplier_id = form.value.link_existing_id;
+            payload.link_existing_id = form.value.link_existing_id;
+            payload[props.isSupplier ? 'linked_customer_id' : 'linked_supplier_id'] = form.value.link_existing_id;
         }
         const res = await axios.post(props.apiUrl, payload);
         emit('created', res.data.customer || res.data.supplier || res.data);

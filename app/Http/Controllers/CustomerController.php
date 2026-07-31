@@ -392,7 +392,7 @@ class CustomerController extends Controller
         try {
             // Build dynamic validation rules based on settings
             $rules = [
-                'name' => 'required|string|max:255',
+                'name' => 'required_unless:supplier_linking_mode,link_existing|string|max:255',
                 'code' => 'nullable|string|max:255',
                 'phone' => (Setting::get('customer_required_phone', false) ? 'required' : 'nullable').'|string|max:255',
                 'phone2' => 'nullable|string|max:255',
@@ -427,6 +427,7 @@ class CustomerController extends Controller
 
             $validated = Validator::make($request->all(), $rules, [
                 'name.required' => 'Vui lòng nhập tên khách hàng.',
+                'name.required_unless' => 'Vui lòng nhập tên khách hàng.',
                 'email.email' => 'Email khách hàng không đúng định dạng.',
                 'birthday.date' => 'Ngày sinh khách hàng không đúng định dạng.',
                 'supplier_linking_mode.in' => 'Cách xử lý đối tác không hợp lệ.',

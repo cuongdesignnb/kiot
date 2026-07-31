@@ -7,7 +7,9 @@ as globally unique before inspecting the linking intent. POS then always called
 `Customer::create()`, so selecting an existing supplier with the same code or
 phone failed before the partner could be promoted. The customer controller had
 the same ordering problem and a separate persistence implementation. The
-frontend displayed the raw validation key with browser `alert()`.
+frontend displayed the raw validation key with browser `alert()`. The supplier
+Index page also retained a separate inline create form, so it did not expose
+the existing-customer selector used by the shared modal.
 
 `customers` is the shared partner table. Adding the other role is a role
 promotion, not a merge and not creation of a second row.
@@ -24,7 +26,8 @@ promotion, not a merge and not creation of a second row.
 
 ### After
 
-All three quick-create paths use `PartnerRoleService::createOrLink()`:
+All customer and supplier create/link paths use
+`PartnerRoleService::createOrLink()`:
 
 - `new`: creates exactly one row. Customer context generates `KH...` codes;
   supplier quick-store generates `NCC...` codes.
@@ -104,7 +107,11 @@ Validation failures return HTTP 422 with `code` set to
 - `app/Http/Controllers/CustomerController.php` - removes premature unique
   validation and uses the same contract for `/customers` parity.
 - `app/Http/Controllers/SupplierController.php` - aligns supplier quick-store
-  with the shared create/link contract.
+  and full `/suppliers` store with the shared create/link contract, including
+  `linked_customer_id` for supplier-context links.
+- `resources/js/Pages/Suppliers/Index.vue` - removes the duplicate inline create
+  form and uses `QuickCreateCustomerModal` with supplier context; reloads the
+  supplier list and summary while preserving filters and page state.
 - `resources/js/Components/QuickCreateCustomerModal.vue` - computed dual-role
   guard, stale-state reset, field errors, duplicate partner CTA, required
   selection, and created-entity emission without browser alert.
@@ -112,7 +119,19 @@ Validation failures return HTTP 422 with `code` set to
   - endpoint parity, both link directions, role constraints, count and
   financial/document preservation, duplicate, stale payload, invalid target,
   prefix, and Vietnamese validation coverage.
+- `tests/Feature/Supplier/SupplierStoreParityTest.php` - full `/suppliers`
+  store parity, both supplier directions, duplicate/stale/invalid targets,
+  row-count and financial-history preservation.
 - `docs/audit/HOTFIX-POS-DUAL-ROLE-CUSTOMER-SUPPLIER-UNIQUE.md` - this audit.
+
+Supplier entry-point inventory:
+
+- `Suppliers/Index.vue` -> `POST /suppliers` (full form, shared modal).
+- `Purchases/Create.vue` -> `POST /api/suppliers/quick-store` (shared modal,
+  purchase draft callback).
+- `Purchases/Edit.vue` -> `POST /api/suppliers/quick-store` (shared modal,
+  purchase draft callback).
+- No separate supplier quick-create entry was found under PurchaseOrders.
 
 No migration or backfill was added.
 
@@ -121,12 +140,13 @@ No migration or backfill was added.
 Executed against the local MySQL test container at `127.0.0.1:3319`:
 
 - P0 suite: PASS, 12 tests / 96 assertions.
+- `SupplierStoreParityTest`: PASS, 4 tests / 41 assertions.
 - `Step2413QuickCreateEntityFlowTest` plus POS customer-group suite: PASS,
   10 tests / 39 assertions.
 - RR01 supplier dual-role plus RR06 customer debt suites: PASS, 7 tests / 18
   assertions.
 - `npm run build`: PASS.
-- Pint on changed PHP files: PASS, 6 files.
+- Pint on changed PHP files: PASS.
 - PHP lint on changed PHP files: PASS.
 - `git diff --check`: PASS.
 
@@ -146,7 +166,7 @@ targeted suites. No production database command was run.
 
 ## Manual QA checklist
 
-Browser: local app at `http://127.0.0.1:8000/pos`, authenticated admin session,
+Browser: local app at `http://127.0.0.1:8000`, authenticated admin session,
 branch `codex/p0-fix-pos-customer-supplier-dual-role`, 2026-07-31. The browser
 session used local MySQL only. Evidence is recorded below; no production
 partner was used or changed.
@@ -155,18 +175,21 @@ partner was used or changed.
 |---|---|---|---|
 | POS draft preservation + normal customer | Customer is selected; cart, invoice tab, payment, note and draft remain. | Cart retained `Sạc Dell Type C 65W` x1, tab remained `Hóa đơn 1 (1)`, payment remained `500.000`, note remained `QA draft note preserved`; selected `QA POS Customer 20260731`. | PASS |
 | POS new dual-role | One new row, selected in POS, customer and supplier roles set. | Selected `QA POS Dual Role 20260731`; local read-only query returned `KH2026073116483852`, `is_customer=1`, `is_supplier=1`. | PASS |
-| Duplicate supplier code + phone | HTTP 422 with `PARTNER_ALREADY_EXISTS`, Vietnamese field errors, found partner and CTA; no browser alert. | Modal displayed `Mã đối tác đã tồn tại.`, `Số điện thoại đã tồn tại.`, found `QA Supplier 20260731 · NCC178549138335 · 0991234567`, CTA `Dùng đối tác này và liên kết`; `getJsDialog()` was undefined. | PASS |
 | POS CTA customer→existing supplier | Existing row is promoted, no second row, financial fields unchanged. | CTA selected the supplier, save selected `QA Supplier 20260731`; local count was 325 before and after; id 1086 retained code/phone/debt/totals and changed only role to `is_customer=1,is_supplier=1`. | PASS |
 | Existing target then dual-role off | Target selection and link mode are cleared; no implicit link. | Selected target chip disappeared, checkbox became unchecked, modal closed without submit; no browser alert. | PASS |
-| Supplier quick-create new | New supplier is persisted with `NCC` code prefix. | Created `QA Supplier 20260731`; local read-only query returned `NCC178549138335`, `is_supplier=1`. | PASS |
-| Supplier quick-create link existing customer | UI must offer existing-customer selection and link one row. | Current supplier quick-create modal exposed only checkbox `Là khách hàng`; it did not expose `Chọn từ khách hàng đã có` or a customer selector. No mutation was submitted. | FAIL (UI gap) |
+| Suppliers Index shared modal | Supplier creation uses the shared modal and list reload preserves the current page/filter state. | `/suppliers` opened `Tạo nhà cung cấp` with the same dual-role controls; successful create returned to the list with the pagination context intact. | PASS |
+| Supplier quick-create new | New supplier is persisted with `NCC` code prefix. | Created `QA Shared Supplier 20260731`; local read-only query returned id 1087, `NCC2026073118541196`, `is_supplier=1,is_customer=1`; no alert. | PASS |
+| Supplier quick-create link existing customer | UI offers existing-customer selection and links one row. | On `/suppliers`, selected `QA POS Customer 20260731` (id 1084), saved, and list reloaded; total customer rows stayed 326 and id 1084 changed only to `is_supplier=1` while code/name/financial fields stayed unchanged. | PASS |
+| Supplier duplicate code + phone | HTTP 422 with Vietnamese field errors, found partner and CTA; no browser alert or mutation. | Modal showed `Mã đối tác đã tồn tại.`, `Số điện thoại đã tồn tại.`, found `QA Supplier 20260731 · NCC178549138335 · 0991234567`, CTA `Dùng đối tác này và liên kết`; `getJsDialog()` was undefined. | PASS |
+| Supplier existing target then dual-role off | Target selection and link mode are cleared; no implicit link. | After selecting id 1084 then turning off dual-role, existing option and target selection disappeared, checkbox was unchecked, and the modal was closed without submit. | PASS |
+| Purchases/Create supplier entry | Shared modal opens and purchase draft remains intact. | Blocked before page render by pre-existing local schema mismatch: `categories.deleted_at` is absent; no mutation performed. | BLOCKED (local schema) |
+| Purchases/Edit supplier entry | Shared modal opens; entered purchase fields remain after close. | `/purchases/428/edit` rendered; `Ghi chú đơn nhập` stayed `QA purchase edit draft note` and quantity `5` after opening/closing the shared supplier modal. | PASS |
 | Customer auto-code | New customer gets `KH` prefix. | Local read-only query returned `KH2026073116480060` and `KH2026073116483852` for the two POS-created customers. | PASS |
 | Browser alert validation | Validation must remain inline. | Duplicate and link flows had no native JS dialog; errors stayed in the modal. | PASS |
 
-The supplier quick-create UI gap is explicitly out of this final QA run's
-scope to fix. The shared supplier endpoint contract remains covered by the
-targeted feature tests; manual UI release readiness is `NO` until the product
-owner accepts or separately scopes that UI gap.
+The Purchases/Create browser case remains blocked by the local `categories`
+schema mismatch; no migration was run to bypass it. Supplier UI parity itself
+is covered by the shared modal and the full-store/quick-store feature tests.
 
 ## Production read-only status audit
 
@@ -194,9 +217,9 @@ without touching production.
 
 ## Final release-gate evidence
 
-- Targeted P0, Step2413/POS, RR01/RR06, build, Pint, PHP lint and diff checks
-  are rerun after this document-only evidence update; results are recorded in
-  the PR handoff.
+- Targeted P0, SupplierStoreParity, Step2413/POS, RR01/RR06, build, Pint, PHP
+  lint and diff checks are rerun after the final code/document update; results
+  are recorded in the PR handoff.
 - GitHub Actions status is checked for the final commit through the GitHub
   connector; the PR remains Draft and is not merged or deployed.
 - No migration, backfill, delete, merge, checkout, invoice, purchase,
