@@ -26,6 +26,31 @@ use Illuminate\Support\Facades\Schema;
  */
 class SellerResolver
 {
+    /**
+     * Resolve the canonical seller display for a source invoice.
+     * Return creator snapshots are intentionally not consulted.
+     */
+    public function displayNameForInvoice(?Invoice $invoice): string
+    {
+        if (! $invoice) {
+            return 'Chưa xác định người bán';
+        }
+
+        $creator = $invoice->relationLoaded('creator')
+            ? $invoice->creator
+            : ($invoice->created_by ? Employee::find($invoice->created_by) : null);
+
+        if ($invoice->created_by !== null && $creator?->name) {
+            return $creator->name;
+        }
+
+        if ($invoice->seller_name) {
+            return $invoice->seller_name;
+        }
+
+        return 'Chưa xác định người bán';
+    }
+
     // ═══════════════════════════════════════
     // Key generation
     // ═══════════════════════════════════════
@@ -42,11 +67,13 @@ class SellerResolver
             ->select($selectCols)
             ->get();
 
-        if ($invoices->isEmpty()) return [];
+        if ($invoices->isEmpty()) {
+            return [];
+        }
 
         // Preload employee lookup
         $createdByIds = $invoices->pluck('created_by')->filter()->unique()->values()->all();
-        $employeeIdSet = !empty($createdByIds)
+        $employeeIdSet = ! empty($createdByIds)
             ? Employee::whereIn('id', $createdByIds)->pluck('name', 'id')->all()
             : [];
 
@@ -54,7 +81,7 @@ class SellerResolver
         $sellerNames = $invoices->whereNull('created_by')
             ->pluck('seller_name')->filter()->unique()->values()->all();
         $employeeBySellerName = [];
-        if (!empty($sellerNames)) {
+        if (! empty($sellerNames)) {
             $empsByName = Employee::where('is_active', true)
                 ->whereIn('name', $sellerNames)
                 ->get(['id', 'name', 'code']);
@@ -76,6 +103,7 @@ class SellerResolver
                 $employeeBySellerName
             );
         }
+
         return $map;
     }
 
@@ -119,6 +147,7 @@ class SellerResolver
             if (isset($employeeBySellerName[$sellerName])) {
                 return "employee:{$employeeBySellerName[$sellerName]->id}";
             }
+
             return "snapshot:{$sellerName}";
         }
 
@@ -137,7 +166,9 @@ class SellerResolver
     public function aggregateBySeller($invoiceQuery, string $valueExpr): array
     {
         $sellerMap = $this->invoiceSellerMap($invoiceQuery);
-        if (empty($sellerMap)) return [];
+        if (empty($sellerMap)) {
+            return [];
+        }
 
         $invoiceIds = array_keys($sellerMap);
         $rows = DB::table('invoices')
@@ -151,6 +182,7 @@ class SellerResolver
             $key = $sellerMap[$row->id] ?? 'unknown';
             $result[$key] = ($result[$key] ?? 0) + (float) $row->val;
         }
+
         return $result;
     }
 
@@ -160,7 +192,9 @@ class SellerResolver
     public function aggregateItemsBySeller($invoiceQuery, string $itemExpr): array
     {
         $sellerMap = $this->invoiceSellerMap($invoiceQuery);
-        if (empty($sellerMap)) return [];
+        if (empty($sellerMap)) {
+            return [];
+        }
 
         $invoiceIds = array_keys($sellerMap);
         $rows = DB::table('invoice_items')
@@ -174,6 +208,7 @@ class SellerResolver
             $key = $sellerMap[$row->invoice_id] ?? 'unknown';
             $result[$key] = ($result[$key] ?? 0) + (float) $row->val;
         }
+
         return $result;
     }
 
@@ -183,10 +218,14 @@ class SellerResolver
     public function aggregateReturnsBySeller($returnQuery, string $valueExpr): array
     {
         $returnRows = (clone $returnQuery)->select('id', 'invoice_id')->get();
-        if ($returnRows->isEmpty()) return [];
+        if ($returnRows->isEmpty()) {
+            return [];
+        }
 
         $invoiceIds = $returnRows->pluck('invoice_id')->filter()->unique()->values()->all();
-        if (empty($invoiceIds)) return [];
+        if (empty($invoiceIds)) {
+            return [];
+        }
 
         $invoiceSellerMap = $this->invoiceSellerMap(
             Invoice::whereIn('id', $invoiceIds)
@@ -208,6 +247,7 @@ class SellerResolver
             $key = $returnSellerMap[$row->id] ?? 'unknown';
             $result[$key] = ($result[$key] ?? 0) + (float) $row->val;
         }
+
         return $result;
     }
 
@@ -217,10 +257,14 @@ class SellerResolver
     public function aggregateReturnItemsBySeller($returnQuery, string $itemExpr): array
     {
         $returnRows = (clone $returnQuery)->select('id', 'invoice_id')->get();
-        if ($returnRows->isEmpty()) return [];
+        if ($returnRows->isEmpty()) {
+            return [];
+        }
 
         $invoiceIds = $returnRows->pluck('invoice_id')->filter()->unique()->values()->all();
-        if (empty($invoiceIds)) return [];
+        if (empty($invoiceIds)) {
+            return [];
+        }
 
         $invoiceSellerMap = $this->invoiceSellerMap(
             Invoice::whereIn('id', $invoiceIds)
@@ -243,6 +287,7 @@ class SellerResolver
             $key = $returnSellerMap[$row->return_id] ?? 'unknown';
             $result[$key] = ($result[$key] ?? 0) + (float) $row->val;
         }
+
         return $result;
     }
 
@@ -252,7 +297,9 @@ class SellerResolver
     public function cogsSoldBySeller($invoiceQuery): array
     {
         $sellerMap = $this->invoiceSellerMap($invoiceQuery);
-        if (empty($sellerMap)) return [];
+        if (empty($sellerMap)) {
+            return [];
+        }
 
         $invoiceIds = array_keys($sellerMap);
         $hasItemCost = Schema::hasColumn('invoice_items', 'cost_price');
@@ -272,6 +319,7 @@ class SellerResolver
             $key = $sellerMap[$row->invoice_id] ?? 'unknown';
             $result[$key] = ($result[$key] ?? 0) + (float) $row->val;
         }
+
         return $result;
     }
 
@@ -300,7 +348,9 @@ class SellerResolver
     public function sellerMeta(array $sellerKeys): array
     {
         $sellerKeys = array_values(array_unique(array_filter($sellerKeys)));
-        if (empty($sellerKeys)) return [];
+        if (empty($sellerKeys)) {
+            return [];
+        }
 
         // Extract numeric ids by prefix
         $empIds = [];
@@ -314,13 +364,13 @@ class SellerResolver
             }
         }
 
-        $employees = !empty($empIds)
+        $employees = ! empty($empIds)
             ? Employee::whereIn('id', $empIds)->get(['id', 'name', 'code', 'user_id'])->keyBy('id')
             : collect();
 
         // HOTFIX 24.30 Hướng A: resolve linked user names
         $linkedUserIds = $employees->pluck('user_id')->filter()->unique()->values()->all();
-        $linkedUsers = !empty($linkedUserIds)
+        $linkedUsers = ! empty($linkedUserIds)
             ? User::whereIn('id', $linkedUserIds)->where('status', 'active')->pluck('name', 'id')->all()
             : [];
 
@@ -328,7 +378,7 @@ class SellerResolver
         $meta = [];
         foreach ($sellerKeys as $key) {
             if (str_starts_with($key, 'employee:')) {
-                $id  = (int) substr($key, 9);
+                $id = (int) substr($key, 9);
                 $emp = $employees[$id] ?? null;
                 // Hướng A: if employee has linked active user, display user's current name
                 $displayName = $emp->name ?? "Nhân viên #{$id}";
@@ -336,41 +386,41 @@ class SellerResolver
                     $displayName = $linkedUsers[$emp->user_id];
                 }
                 $meta[$key] = [
-                    'id'     => $key,
-                    'key'    => $key,
+                    'id' => $key,
+                    'key' => $key,
                     'raw_id' => $id,
-                    'name'   => $displayName,
-                    'code'   => $emp->code ?? "NV{$id}",
-                    'type'   => 'employee',
+                    'name' => $displayName,
+                    'code' => $emp->code ?? "NV{$id}",
+                    'type' => 'employee',
                 ];
             } elseif (str_starts_with($key, 'snapshot:')) {
                 $name = substr($key, 9);
                 $meta[$key] = [
-                    'id'     => $key,
-                    'key'    => $key,
+                    'id' => $key,
+                    'key' => $key,
                     'raw_id' => null,
-                    'name'   => $name,
-                    'code'   => 'SNAPSHOT',
-                    'type'   => 'seller_snapshot',
+                    'name' => $name,
+                    'code' => 'SNAPSHOT',
+                    'type' => 'seller_snapshot',
                 ];
             } elseif ($key === 'unknown') {
                 $meta[$key] = [
-                    'id'     => 'unknown',
-                    'key'    => 'unknown',
+                    'id' => 'unknown',
+                    'key' => 'unknown',
                     'raw_id' => null,
-                    'name'   => 'Chưa xác định người bán',
-                    'code'   => 'UNKNOWN',
-                    'type'   => 'unknown_seller',
+                    'name' => 'Chưa xác định người bán',
+                    'code' => 'UNKNOWN',
+                    'type' => 'unknown_seller',
                 ];
             } else {
                 // Catch-all for any legacy keys
                 $meta[$key] = [
-                    'id'     => $key,
-                    'key'    => $key,
+                    'id' => $key,
+                    'key' => $key,
                     'raw_id' => null,
-                    'name'   => $key,
-                    'code'   => 'LEGACY',
-                    'type'   => 'legacy',
+                    'name' => $key,
+                    'code' => 'LEGACY',
+                    'type' => 'legacy',
                 ];
             }
         }
@@ -423,7 +473,7 @@ class SellerResolver
 
         // HOTFIX 24.30 Hướng A: resolve linked user names for display
         $linkedUserIds = $employees->pluck('user_id')->filter()->unique()->values()->all();
-        $linkedUsers = !empty($linkedUserIds)
+        $linkedUsers = ! empty($linkedUserIds)
             ? User::whereIn('id', $linkedUserIds)->where('status', 'active')->pluck('name', 'id')->all()
             : [];
 
@@ -434,8 +484,8 @@ class SellerResolver
                 $displayName = $linkedUsers[$emp->user_id];
             }
             $options[] = [
-                'id'   => $key,
-                'key'  => $key,
+                'id' => $key,
+                'key' => $key,
                 'name' => $displayName,
                 'code' => $emp->code ?: "NV{$emp->id}",
                 'type' => 'employee',
@@ -447,17 +497,17 @@ class SellerResolver
         $directIds = Invoice::whereNotNull('created_by')
             ->where('status', '!=', 'Đã hủy')
             ->distinct()->pluck('created_by')
-            ->map(fn($id) => (int) $id)->filter()->values()->all();
+            ->map(fn ($id) => (int) $id)->filter()->values()->all();
 
         $empIdSet = Employee::pluck('id')->flip()->all();
         foreach ($directIds as $id) {
-            if (isset($empIdSet[$id]) && !isset($seen["employee:{$id}"])) {
+            if (isset($empIdSet[$id]) && ! isset($seen["employee:{$id}"])) {
                 $emp = Employee::find($id);
                 if ($emp) {
                     $key = "employee:{$emp->id}";
                     $options[] = [
-                        'id'   => $key,
-                        'key'  => $key,
+                        'id' => $key,
+                        'key' => $key,
                         'name' => $emp->name,
                         'code' => $emp->code ?: "NV{$emp->id}",
                         'type' => 'employee',
@@ -482,10 +532,12 @@ class SellerResolver
                 continue; // Already in employee list
             }
             $key = "snapshot:{$name}";
-            if (isset($seen[$key])) continue;
+            if (isset($seen[$key])) {
+                continue;
+            }
             $options[] = [
-                'id'   => $key,
-                'key'  => $key,
+                'id' => $key,
+                'key' => $key,
                 'name' => $name,
                 'code' => 'SNAPSHOT',
                 'type' => 'seller_snapshot',
@@ -498,14 +550,14 @@ class SellerResolver
             ->where('status', '!=', 'Đã hủy')
             ->where(function ($q) {
                 $q->whereNull('seller_name')
-                  ->orWhere('seller_name', '');
+                    ->orWhere('seller_name', '');
             })
             ->count();
 
         if ($unknownCount > 0) {
             $options[] = [
-                'id'   => 'unknown',
-                'key'  => 'unknown',
+                'id' => 'unknown',
+                'key' => 'unknown',
                 'name' => 'Chưa xác định người bán',
                 'code' => 'UNKNOWN',
                 'type' => 'unknown_seller',
@@ -516,7 +568,9 @@ class SellerResolver
         $employeeLinkedUserIds = Employee::where('is_active', true)
             ->whereNotNull('user_id')->pluck('user_id')->all();
         foreach ($this->virtualAdminSellerOptions($employeeLinkedUserIds) as $opt) {
-            if (isset($seen[$opt['key']])) continue;
+            if (isset($seen[$opt['key']])) {
+                continue;
+            }
             $options[] = $opt;
             $seen[$opt['key']] = true;
         }
@@ -561,11 +615,11 @@ class SellerResolver
             ->sort()
             ->values();
 
-        return $names->map(fn($name) => [
-            'id'           => "creator_snapshot:{$name}",
-            'key'          => "creator_snapshot:{$name}",
-            'name'         => $name,
-            'type'         => 'creator_snapshot',
+        return $names->map(fn ($name) => [
+            'id' => "creator_snapshot:{$name}",
+            'key' => "creator_snapshot:{$name}",
+            'name' => $name,
+            'type' => 'creator_snapshot',
             'display_name' => "{$name}",
         ])->all();
     }
@@ -579,7 +633,9 @@ class SellerResolver
      */
     public function normalizeRequestedSellerKey($value): array
     {
-        if (!$value) return [];
+        if (! $value) {
+            return [];
+        }
 
         $value = (string) $value;
 
@@ -616,9 +672,10 @@ class SellerResolver
         if (preg_match('/^admin_user:(\d+)$/', $value, $m)) {
             $userId = (int) $m[1];
             $user = User::find($userId);
-            if (!$user || ($user->status ?? 'active') !== 'active' || !$user->isAdmin()) {
+            if (! $user || ($user->status ?? 'active') !== 'active' || ! $user->isAdmin()) {
                 return $invoiceQuery->whereRaw('1=0');
             }
+
             return $invoiceQuery->whereNull('created_by')
                 ->where('seller_name', $user->name);
         }
@@ -626,6 +683,7 @@ class SellerResolver
         // employee:<id> → where created_by = <id>
         if (preg_match('/^employee:(\d+)$/', $value, $m)) {
             $empId = (int) $m[1];
+
             return $invoiceQuery->where(function ($q) use ($empId) {
                 $emp = Employee::find($empId);
                 $q->where('created_by', $empId);
@@ -637,7 +695,7 @@ class SellerResolver
                     if ($nameCount === 1) {
                         $q->orWhere(function ($sq) use ($empName) {
                             $sq->whereNull('created_by')
-                               ->where('seller_name', $empName);
+                                ->where('seller_name', $empName);
                         });
                     }
                 }
@@ -647,6 +705,7 @@ class SellerResolver
         // snapshot:<name> → where created_by IS NULL AND seller_name = <name>
         if (str_starts_with($value, 'snapshot:')) {
             $name = substr($value, 9);
+
             return $invoiceQuery->whereNull('created_by')->where('seller_name', $name);
         }
 
@@ -655,7 +714,7 @@ class SellerResolver
             return $invoiceQuery->whereNull('created_by')
                 ->where(function ($q) {
                     $q->whereNull('seller_name')
-                      ->orWhere('seller_name', '');
+                        ->orWhere('seller_name', '');
                 });
         }
 
@@ -704,6 +763,7 @@ class SellerResolver
 
         if (str_starts_with($value, 'creator_snapshot:')) {
             $name = substr($value, 17);
+
             return $invoiceQuery->where('created_by_name', $name);
         }
 
@@ -732,7 +792,7 @@ class SellerResolver
             ->get(['id', 'name', 'code', 'user_id']);
 
         $linkedUserIds = $employees->pluck('user_id')->filter()->unique()->values()->all();
-        $linkedUsers = !empty($linkedUserIds)
+        $linkedUsers = ! empty($linkedUserIds)
             ? User::whereIn('id', $linkedUserIds)->where('status', 'active')->pluck('name', 'id')->all()
             : [];
 
@@ -743,13 +803,13 @@ class SellerResolver
                 $displayName = $linkedUsers[$emp->user_id];
             }
             $options[] = [
-                'id'           => "employee:{$emp->id}",
-                'key'          => "employee:{$emp->id}",
-                'raw_id'       => $emp->id,
-                'name'         => $displayName,
-                'code'         => $emp->code ?: "NV{$emp->id}",
-                'type'         => 'employee',
-                'display_name' => $displayName . ' — ' . ($emp->code ?: "NV{$emp->id}"),
+                'id' => "employee:{$emp->id}",
+                'key' => "employee:{$emp->id}",
+                'raw_id' => $emp->id,
+                'name' => $displayName,
+                'code' => $emp->code ?: "NV{$emp->id}",
+                'type' => 'employee',
+                'display_name' => $displayName.' — '.($emp->code ?: "NV{$emp->id}"),
             ];
         }
 
@@ -782,7 +842,7 @@ class SellerResolver
      * linked employee. Exposed so they can be chosen as seller for an
      * invoice without forcing an Employee record to exist.
      *
-     * @param  array $excludeUserIds  user_ids already covered by an active employee option
+     * @param  array  $excludeUserIds  user_ids already covered by an active employee option
      * @return array<int,array>
      */
     private function virtualAdminSellerOptions(array $excludeUserIds = []): array
@@ -794,20 +854,21 @@ class SellerResolver
         $admins = User::with('role')
             ->where('status', 'active')
             ->get(['id', 'name', 'role_id', 'status'])
-            ->filter(fn ($u) => $u->isAdmin() && !isset($exclude[$u->id]));
+            ->filter(fn ($u) => $u->isAdmin() && ! isset($exclude[$u->id]));
 
         $options = [];
         foreach ($admins as $u) {
             $options[] = [
-                'id'           => "admin_user:{$u->id}",
-                'key'          => "admin_user:{$u->id}",
-                'raw_id'       => $u->id,
-                'name'         => $u->name,
-                'code'         => 'ADMIN',
-                'type'         => 'admin_user',
-                'display_name' => $u->name . ' — Admin',
+                'id' => "admin_user:{$u->id}",
+                'key' => "admin_user:{$u->id}",
+                'raw_id' => $u->id,
+                'name' => $u->name,
+                'code' => 'ADMIN',
+                'type' => 'admin_user',
+                'display_name' => $u->name.' — Admin',
             ];
         }
+
         return $options;
     }
 }

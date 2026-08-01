@@ -2,16 +2,13 @@
 
 namespace Tests\Feature\OrderReturn;
 
-use App\Models\CashFlow;
 use App\Models\Category;
 use App\Models\Customer;
 use App\Models\CustomerDebt;
+use App\Models\Employee;
 use App\Models\Invoice;
-use App\Models\InvoiceItem;
-use App\Models\InvoiceItemSerial;
 use App\Models\OrderReturn;
 use App\Models\Product;
-use App\Models\ReturnItem;
 use App\Models\SerialImei;
 use App\Models\StockMovement;
 use App\Models\User;
@@ -33,22 +30,31 @@ class Step232SalesReturnFlowTest extends TestCase
     use DatabaseTransactions;
 
     private User $admin;
+
     private Customer $customer;
+
+    private function receiverId(): int
+    {
+        return Employee::firstOrCreate(
+            ['code' => 'NV-232-TEST'],
+            ['name' => 'Receiver 23.2', 'is_active' => true],
+        )->id;
+    }
 
     protected function setUp(): void
     {
         parent::setUp();
         $this->admin = User::create([
-            'name'     => 'Admin 23.2',
-            'email'    => 'admin-232-' . uniqid() . '@test.local',
+            'name' => 'Admin 23.2',
+            'email' => 'admin-232-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
-            'role_id'  => null,
+            'role_id' => null,
         ]);
         $this->customer = Customer::create([
-            'code'        => 'KH-232-' . uniqid(),
-            'name'        => 'KH 23.2',
-            'phone'       => '090' . rand(1000000, 9999999),
-            'email'       => 'kh-232-' . uniqid() . '@test.local',
+            'code' => 'KH-232-'.uniqid(),
+            'name' => 'KH 23.2',
+            'phone' => '090'.rand(1000000, 9999999),
+            'email' => 'kh-232-'.uniqid().'@test.local',
             'debt_amount' => 0,
             'total_spent' => 0,
         ]);
@@ -57,26 +63,27 @@ class Step232SalesReturnFlowTest extends TestCase
     private function makeProduct(bool $hasSerial = false, int $stock = 10, float $cost = 100000): Product
     {
         $cat = Category::firstOrCreate(['name' => 'Cat 23.2']);
+
         return Product::create([
-            'sku'                  => 'P232-' . uniqid(),
-            'name'                 => 'Product 23.2',
-            'cost_price'           => $cost,
-            'retail_price'         => $cost * 2,
-            'stock_quantity'       => $stock,
+            'sku' => 'P232-'.uniqid(),
+            'name' => 'Product 23.2',
+            'cost_price' => $cost,
+            'retail_price' => $cost * 2,
+            'stock_quantity' => $stock,
             'inventory_total_cost' => $stock * $cost,
-            'is_active'            => true,
-            'has_serial'           => $hasSerial,
-            'category_id'          => $cat->id,
+            'is_active' => true,
+            'has_serial' => $hasSerial,
+            'category_id' => $cat->id,
         ]);
     }
 
     private function makeSerial(Product $product, string $status = 'in_stock'): SerialImei
     {
         return SerialImei::create([
-            'product_id'    => $product->id,
-            'serial_number' => 'SN232-' . uniqid(),
-            'status'        => $status,
-            'cost_price'    => $product->cost_price,
+            'product_id' => $product->id,
+            'serial_number' => 'SN232-'.uniqid(),
+            'status' => $status,
+            'cost_price' => $product->cost_price,
             'original_cost' => $product->cost_price,
         ]);
     }
@@ -85,19 +92,20 @@ class Step232SalesReturnFlowTest extends TestCase
     private function sellNormal(Product $product, int $qty, float $price, float $paid): Invoice
     {
         $this->actingAs($this->admin)->post(route('invoices.store'), [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => $qty * $price,
-            'discount'       => 0,
-            'total'          => $qty * $price,
-            'customer_paid'  => $paid,
+            'customer_id' => $this->customer->id,
+            'subtotal' => $qty * $price,
+            'discount' => 0,
+            'total' => $qty * $price,
+            'customer_paid' => $paid,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => $qty,
-                'price'      => $price,
-                'discount'   => 0,
+                'quantity' => $qty,
+                'price' => $price,
+                'discount' => 0,
             ]],
         ]);
+
         return Invoice::where('customer_id', $this->customer->id)->latest('id')->first();
     }
 
@@ -105,19 +113,20 @@ class Step232SalesReturnFlowTest extends TestCase
     {
         $qty = count($serials);
         $this->actingAs($this->admin)->post(route('invoices.store'), [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => $qty * $price,
-            'discount'       => 0,
-            'total'          => $qty * $price,
-            'customer_paid'  => $paid,
+            'customer_id' => $this->customer->id,
+            'subtotal' => $qty * $price,
+            'discount' => 0,
+            'total' => $qty * $price,
+            'customer_paid' => $paid,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => $qty,
-                'price'      => $price,
+                'quantity' => $qty,
+                'price' => $price,
                 'serial_ids' => array_map(fn ($s) => $s->id, $serials),
             ]],
         ]);
+
         return Invoice::where('customer_id', $this->customer->id)->latest('id')->first();
     }
 
@@ -136,16 +145,17 @@ class Step232SalesReturnFlowTest extends TestCase
         $invoiceItem = $invoice->items()->first();
 
         $this->actingAs($this->admin)->post(route('returns.store'), [
-            'invoice_id'       => $invoice->id,
-            'customer_id'      => $this->customer->id,
-            'subtotal'         => 200000,
-            'total'            => 200000,
+            'invoice_id' => $invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
+            'customer_id' => $this->customer->id,
+            'subtotal' => 200000,
+            'total' => 200000,
             'paid_to_customer' => 0,
-            'items'            => [[
-                'product_id'      => $product->id,
+            'items' => [[
+                'product_id' => $product->id,
                 'invoice_item_id' => $invoiceItem->id,
-                'qty'             => 1,
-                'price'           => 200000,
+                'qty' => 1,
+                'price' => 200000,
             ]],
         ]);
 
@@ -175,27 +185,30 @@ class Step232SalesReturnFlowTest extends TestCase
         $sB = $this->makeSerial($product);
         $product->update(['stock_quantity' => 2, 'inventory_total_cost' => 10000000]);
         $invoice = $this->sellSerial($product, [$sA, $sB], 8000000, 16000000);
-        $sA->refresh(); $sB->refresh();
+        $sA->refresh();
+        $sB->refresh();
         $this->assertSame('sold', $sA->status);
         $this->assertSame('sold', $sB->status);
 
         $invoiceItem = $invoice->items()->first();
         $this->actingAs($this->admin)->post(route('returns.store'), [
-            'invoice_id'       => $invoice->id,
-            'customer_id'      => $this->customer->id,
-            'subtotal'         => 8000000,
-            'total'            => 8000000,
+            'invoice_id' => $invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
+            'customer_id' => $this->customer->id,
+            'subtotal' => 8000000,
+            'total' => 8000000,
             'paid_to_customer' => 8000000,
-            'items'            => [[
-                'product_id'      => $product->id,
+            'items' => [[
+                'product_id' => $product->id,
                 'invoice_item_id' => $invoiceItem->id,
-                'qty'             => 1,
-                'price'           => 8000000,
-                'serial_ids'      => [$sA->id],
+                'qty' => 1,
+                'price' => 8000000,
+                'serial_ids' => [$sA->id],
             ]],
         ]);
 
-        $sA->refresh(); $sB->refresh();
+        $sA->refresh();
+        $sB->refresh();
         $this->assertSame('in_stock', $sA->status, 'Serial A phải về in_stock.');
         $this->assertSame('sold', $sB->status, 'Serial B KHÔNG được đụng vào.');
         $product->refresh();
@@ -216,9 +229,9 @@ class Step232SalesReturnFlowTest extends TestCase
 
         // Tạo customer khác + bán sOther cho invoice khác
         $cust2 = Customer::create([
-            'code' => 'KH-OTH-' . uniqid(), 'name' => 'KH 2',
-            'phone' => '091' . rand(1000000, 9999999),
-            'email' => 'oth-' . uniqid() . '@test.local',
+            'code' => 'KH-OTH-'.uniqid(), 'name' => 'KH 2',
+            'phone' => '091'.rand(1000000, 9999999),
+            'email' => 'oth-'.uniqid().'@test.local',
             'debt_amount' => 0, 'total_spent' => 0,
         ]);
         $this->actingAs($this->admin)->post(route('invoices.store'), [
@@ -238,6 +251,7 @@ class Step232SalesReturnFlowTest extends TestCase
         // Cố trả sOther (không thuộc invoiceA) → phải bị chặn
         $this->actingAs($this->admin)->post(route('returns.store'), [
             'invoice_id' => $invoiceA->id,
+            'received_by_employee_id' => $this->receiverId(),
             'customer_id' => $this->customer->id,
             'subtotal' => 8000000, 'total' => 8000000, 'paid_to_customer' => 0,
             'items' => [[
@@ -265,6 +279,7 @@ class Step232SalesReturnFlowTest extends TestCase
 
         $resp = $this->actingAs($this->admin)->post(route('returns.store'), [
             'invoice_id' => $invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
             'customer_id' => $this->customer->id,
             'subtotal' => 400000, 'total' => 400000, 'paid_to_customer' => 0,
             'items' => [[
@@ -286,6 +301,7 @@ class Step232SalesReturnFlowTest extends TestCase
         $invoiceItem = $invoice->items()->first();
         $this->actingAs($this->admin)->post(route('returns.store'), [
             'invoice_id' => $invoice->id, 'customer_id' => $this->customer->id,
+            'received_by_employee_id' => $this->receiverId(),
             'subtotal' => 200000, 'total' => 200000, 'paid_to_customer' => 0,
             'items' => [[
                 'product_id' => $product->id,
@@ -320,6 +336,7 @@ class Step232SalesReturnFlowTest extends TestCase
 
         $this->actingAs($this->admin)->post(route('returns.store'), [
             'invoice_id' => $invoice->id, 'customer_id' => $this->customer->id,
+            'received_by_employee_id' => $this->receiverId(),
             'subtotal' => 8000000, 'total' => 8000000, 'paid_to_customer' => 8000000,
             'items' => [[
                 'product_id' => $product->id,
@@ -350,6 +367,7 @@ class Step232SalesReturnFlowTest extends TestCase
         $invoiceItem = $invoice->items()->first();
         $this->actingAs($this->admin)->post(route('returns.store'), [
             'invoice_id' => $invoice->id, 'customer_id' => $this->customer->id,
+            'received_by_employee_id' => $this->receiverId(),
             'subtotal' => 200000, 'total' => 200000, 'paid_to_customer' => 0,
             'items' => [[
                 'product_id' => $product->id,
@@ -388,6 +406,7 @@ class Step232SalesReturnFlowTest extends TestCase
 
         $this->actingAs($this->admin)->post(route('returns.store'), [
             'invoice_id' => $invoice->id, 'customer_id' => $this->customer->id,
+            'received_by_employee_id' => $this->receiverId(),
             'subtotal' => 200000, 'total' => 200000, 'paid_to_customer' => 200000,
             'items' => [[
                 'product_id' => $product->id,

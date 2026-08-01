@@ -59,8 +59,16 @@ const cancelReturn = () => {
                         <div class="font-semibold">{{ returnOrder.created_at }}</div>
                     </div>
                     <div>
-                        <div class="text-gray-500">Người tạo</div>
-                        <div class="font-semibold">{{ returnOrder.created_by_name }}</div>
+                        <div class="text-gray-500">Người bán gốc</div>
+                        <div class="font-semibold">{{ returnOrder.original_seller_name || 'Chưa xác định người bán' }}</div>
+                    </div>
+                    <div>
+                        <div class="text-gray-500">Người nhận trả</div>
+                        <div class="font-semibold">{{ returnOrder.received_by_name || 'Chưa chọn' }}</div>
+                    </div>
+                    <div>
+                        <div class="text-gray-500">Người tạo phiếu</div>
+                        <div class="font-semibold">{{ returnOrder.created_by_name || 'Chưa xác định' }}</div>
                     </div>
                     <div>
                         <div class="text-gray-500">Khách hàng</div>

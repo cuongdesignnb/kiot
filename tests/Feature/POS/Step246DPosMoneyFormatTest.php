@@ -2,16 +2,16 @@
 
 namespace Tests\Feature\POS;
 
-use Tests\TestCase;
-use Illuminate\Foundation\Testing\DatabaseTransactions;
-use App\Models\User;
-use App\Models\Role;
-use App\Models\Customer;
-use App\Models\Product;
 use App\Models\Category;
+use App\Models\Customer;
+use App\Models\Employee;
 use App\Models\Invoice;
-use App\Models\InvoiceItem;
 use App\Models\OrderReturn;
+use App\Models\Product;
+use App\Models\Role;
+use App\Models\User;
+use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Tests\TestCase;
 
 /**
  * HOTFIX 24.6D — POS VND money format guard.
@@ -25,38 +25,48 @@ class Step246DPosMoneyFormatTest extends TestCase
 {
     use DatabaseTransactions;
 
+    private function receiverId(): int
+    {
+        return Employee::firstOrCreate(
+            ['code' => 'NV-246D-TEST'],
+            ['name' => 'Receiver 24.6D', 'is_active' => true],
+        )->id;
+    }
+
     private function adminUser(): User
     {
         $role = Role::firstOrCreate(['name' => 'admin246d'], [
             'display_name' => 'Admin',
-            'permissions'  => ['*'],
-            'is_system'    => true,
+            'permissions' => ['*'],
+            'is_system' => true,
         ]);
+
         return User::factory()->create(['role_id' => $role->id]);
     }
 
     private function makeProduct(int $stock = 10, float $cost = 100000): Product
     {
         $cat = Category::firstOrCreate(['name' => 'Cat 246D']);
+
         return Product::create([
-            'sku'                  => 'SP-246D-' . uniqid(),
-            'name'                 => 'Sản phẩm 246D',
-            'cost_price'           => $cost,
-            'retail_price'         => $cost * 2,
-            'stock_quantity'       => $stock,
+            'sku' => 'SP-246D-'.uniqid(),
+            'name' => 'Sản phẩm 246D',
+            'cost_price' => $cost,
+            'retail_price' => $cost * 2,
+            'stock_quantity' => $stock,
             'inventory_total_cost' => $stock * $cost,
-            'is_active'            => true,
-            'has_serial'           => false,
-            'category_id'          => $cat->id,
+            'is_active' => true,
+            'has_serial' => false,
+            'category_id' => $cat->id,
         ]);
     }
 
     private function makeCustomer(): Customer
     {
         return Customer::create([
-            'code'        => 'KH-246D-' . uniqid(),
-            'name'        => 'KH 246D',
-            'phone'       => '090' . rand(1000000, 9999999),
+            'code' => 'KH-246D-'.uniqid(),
+            'name' => 'KH 246D',
+            'phone' => '090'.rand(1000000, 9999999),
             'is_customer' => true,
         ]);
     }
@@ -68,17 +78,17 @@ class Step246DPosMoneyFormatTest extends TestCase
         $product = $this->makeProduct(10, 100000);
 
         $res = $this->actingAs($admin)->postJson('/api/pos/checkout', [
-            'customer_id'    => $customer->id,
-            'subtotal'       => 210000,    // pure number
-            'discount'       => 0,
-            'total'          => 210000,
-            'customer_paid'  => 210000,
+            'customer_id' => $customer->id,
+            'subtotal' => 210000,    // pure number
+            'discount' => 0,
+            'total' => 210000,
+            'customer_paid' => 210000,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 1,
-                'price'      => 210000,
-                'discount'   => 0,
+                'quantity' => 1,
+                'price' => 210000,
+                'discount' => 0,
             ]],
         ]);
 
@@ -99,17 +109,17 @@ class Step246DPosMoneyFormatTest extends TestCase
 
         // Backend validation requires numeric — string "210.000đ" must fail.
         $res = $this->actingAs($admin)->postJson('/api/pos/checkout', [
-            'customer_id'    => $customer->id,
-            'subtotal'       => '210.000đ',
-            'discount'       => 0,
-            'total'          => '210.000đ',
-            'customer_paid'  => '210.000đ',
+            'customer_id' => $customer->id,
+            'subtotal' => '210.000đ',
+            'discount' => 0,
+            'total' => '210.000đ',
+            'customer_paid' => '210.000đ',
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 1,
-                'price'      => '210.000đ',
-                'discount'   => 0,
+                'quantity' => 1,
+                'price' => '210.000đ',
+                'discount' => 0,
             ]],
         ]);
 
@@ -124,14 +134,14 @@ class Step246DPosMoneyFormatTest extends TestCase
 
         $res = $this->actingAs($admin)->postJson('/api/pos/quick-order', [
             'customer_id' => $customer->id,
-            'subtotal'    => 505000,
-            'discount'    => 0,
-            'total'       => 505000,
-            'items'       => [[
+            'subtotal' => 505000,
+            'discount' => 0,
+            'total' => 505000,
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 1,
-                'price'      => 505000,
-                'discount'   => 0,
+                'quantity' => 1,
+                'price' => 505000,
+                'discount' => 0,
             ]],
         ]);
 
@@ -146,17 +156,17 @@ class Step246DPosMoneyFormatTest extends TestCase
 
         // Sell first so we have something to return.
         $this->actingAs($admin)->postJson('/api/pos/checkout', [
-            'customer_id'    => $customer->id,
-            'subtotal'       => 200000,
-            'discount'       => 0,
-            'total'          => 200000,
-            'customer_paid'  => 200000,
+            'customer_id' => $customer->id,
+            'subtotal' => 200000,
+            'discount' => 0,
+            'total' => 200000,
+            'customer_paid' => 200000,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 1,
-                'price'      => 200000,
-                'discount'   => 0,
+                'quantity' => 1,
+                'price' => 200000,
+                'discount' => 0,
             ]],
         ])->assertOk();
 
@@ -164,21 +174,22 @@ class Step246DPosMoneyFormatTest extends TestCase
         $invoiceItem = $invoice->items()->first();
 
         $res = $this->actingAs($admin)->post(route('returns.store'), [
-            'invoice_id'       => $invoice->id,
-            'customer_id'      => $customer->id,
-            'subtotal'         => 200000,        // numeric
-            'discount'         => 0,
-            'fee'              => 5000,          // numeric
-            'total'            => 195000,
+            'invoice_id' => $invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
+            'customer_id' => $customer->id,
+            'subtotal' => 200000,        // numeric
+            'discount' => 0,
+            'fee' => 5000,          // numeric
+            'total' => 195000,
             'paid_to_customer' => 195000,        // numeric
-            'note'             => null,
-            'items'            => [[
-                'product_id'      => $product->id,
+            'note' => null,
+            'items' => [[
+                'product_id' => $product->id,
                 'invoice_item_id' => $invoiceItem->id,
-                'qty'             => 1,
-                'price'           => 200000,    // numeric
-                'discount'        => 0,
-                'serial_ids'      => [],
+                'qty' => 1,
+                'price' => 200000,    // numeric
+                'discount' => 0,
+                'serial_ids' => [],
             ]],
         ]);
 

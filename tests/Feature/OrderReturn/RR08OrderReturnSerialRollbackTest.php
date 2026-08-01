@@ -5,6 +5,7 @@ namespace Tests\Feature\OrderReturn;
 use App\Http\Controllers\OrderReturnController;
 use App\Models\Category;
 use App\Models\Customer;
+use App\Models\Employee;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\InvoiceItemSerial;
@@ -43,42 +44,53 @@ class RR08OrderReturnSerialRollbackTest extends TestCase
 {
     use DatabaseTransactions;
 
-    private User     $admin;
-    private Product  $product;
+    private function receiverId(): int
+    {
+        return Employee::firstOrCreate(
+            ['code' => 'NV-RR08-TEST'],
+            ['name' => 'Receiver RR08', 'is_active' => true],
+        )->id;
+    }
+
+    private User $admin;
+
+    private Product $product;
+
     private Customer $customer;
-    private Invoice  $invoice;
+
+    private Invoice $invoice;
 
     protected function setUp(): void
     {
         parent::setUp();
 
         $this->admin = User::create([
-            'name'     => 'Admin RR08',
-            'email'    => 'admin-rr08-' . uniqid() . '@test.local',
+            'name' => 'Admin RR08',
+            'email' => 'admin-rr08-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
-            'role_id'  => null,
+            'role_id' => null,
         ]);
 
         $category = Category::firstOrCreate(['name' => 'Cat RR08']);
 
         // Sản phẩm has_serial: ban đầu trong kho 0 (sẽ được nhập serial sau)
         $this->product = Product::create([
-            'sku'                  => 'PROD-RR08-' . uniqid(),
-            'name'                 => 'Product RR08 Serial',
-            'cost_price'           => 5000000,
-            'retail_price'         => 8000000,
-            'stock_quantity'       => 0,
+            'sku' => 'PROD-RR08-'.uniqid(),
+            'name' => 'Product RR08 Serial',
+            'cost_price' => 5000000,
+            'retail_price' => 8000000,
+            'stock_quantity' => 0,
             'inventory_total_cost' => 0,
-            'is_active'            => true,
-            'has_serial'           => true,
-            'category_id'          => $category->id,
+            'is_active' => true,
+            'has_serial' => true,
+            'category_id' => $category->id,
         ]);
 
         $this->customer = Customer::create([
-            'code'        => 'KH-RR08-' . uniqid(),
-            'name'        => 'KH RR08 ' . uniqid(),
-            'phone'       => '090' . rand(1000000, 9999999),
-            'email'       => 'kh-rr08-' . uniqid() . '@test.local',
+            'code' => 'KH-RR08-'.uniqid(),
+            'name' => 'KH RR08 '.uniqid(),
+            'phone' => '090'.rand(1000000, 9999999),
+            'email' => 'kh-rr08-'.uniqid().'@test.local',
             'debt_amount' => 0,
             'total_spent' => 0,
         ]);
@@ -94,57 +106,57 @@ class RR08OrderReturnSerialRollbackTest extends TestCase
     {
         // 1) Tạo Serial B trước — id sẽ nhỏ hơn — in_stock, chưa từng thuộc invoice
         $serialB = SerialImei::create([
-            'product_id'    => $this->product->id,
-            'serial_number' => 'SN-B-' . uniqid(),
-            'status'        => 'in_stock',
-            'cost_price'    => 5000000,
+            'product_id' => $this->product->id,
+            'serial_number' => 'SN-B-'.uniqid(),
+            'status' => 'in_stock',
+            'cost_price' => 5000000,
             'original_cost' => 5000000,
         ]);
         MovingAvgCostingService::applyPurchase($this->product, 1, 5000000);
 
         // 2) Tạo Serial A — id lớn hơn B
         $serialA = SerialImei::create([
-            'product_id'    => $this->product->id,
-            'serial_number' => 'SN-A-' . uniqid(),
-            'status'        => 'in_stock',
-            'cost_price'    => 5000000,
+            'product_id' => $this->product->id,
+            'serial_number' => 'SN-A-'.uniqid(),
+            'status' => 'in_stock',
+            'cost_price' => 5000000,
             'original_cost' => 5000000,
         ]);
         MovingAvgCostingService::applyPurchase($this->product, 1, 5000000);
 
         // 3) Tạo invoice + invoice_item bán Serial A
         $invoice = Invoice::create([
-            'code'             => 'HD-RR08-' . uniqid(),
-            'customer_id'      => $this->customer->id,
-            'total_amount'     => 8000000,
-            'paid_amount'      => 8000000,
-            'debt_amount'      => 0,
-            'status'           => 'Hoàn thành',
-            'payment_method'   => 'cash',
-            'created_by_name'  => 'Admin',
+            'code' => 'HD-RR08-'.uniqid(),
+            'customer_id' => $this->customer->id,
+            'total_amount' => 8000000,
+            'paid_amount' => 8000000,
+            'debt_amount' => 0,
+            'status' => 'Hoàn thành',
+            'payment_method' => 'cash',
+            'created_by_name' => 'Admin',
         ]);
 
         $invoiceItem = InvoiceItem::create([
             'invoice_id' => $invoice->id,
             'product_id' => $this->product->id,
-            'quantity'   => 1,
-            'price'      => 8000000,
+            'quantity' => 1,
+            'price' => 8000000,
             'cost_price' => 5000000,
-            'subtotal'   => 8000000,
+            'subtotal' => 8000000,
         ]);
 
         InvoiceItemSerial::create([
             'invoice_item_id' => $invoiceItem->id,
-            'serial_imei_id'  => $serialA->id,
-            'serial_number'   => $serialA->serial_number,
-            'cost_price'      => 5000000,
+            'serial_imei_id' => $serialA->id,
+            'serial_number' => $serialA->serial_number,
+            'cost_price' => 5000000,
         ]);
 
         // Đánh dấu Serial A đã bán
         $serialA->update([
-            'status'          => 'sold',
-            'sold_at'         => now(),
-            'invoice_id'      => $invoice->id,
+            'status' => 'sold',
+            'sold_at' => now(),
+            'invoice_id' => $invoice->id,
             'sold_cost_price' => 5000000,
         ]);
         MovingAvgCostingService::applySale($this->product, 1);
@@ -155,17 +167,18 @@ class RR08OrderReturnSerialRollbackTest extends TestCase
 
         // 4) Tạo phiếu trả qua route store (Serial A được trả)
         $this->actingAs($this->admin)->post(route('returns.store'), [
-            'invoice_id'       => $invoice->id,
-            'customer_id'      => $this->customer->id,
-            'subtotal'         => 8000000,
-            'total'            => 8000000,
+            'invoice_id' => $invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
+            'customer_id' => $this->customer->id,
+            'subtotal' => 8000000,
+            'total' => 8000000,
             'paid_to_customer' => 8000000,
-            'items'            => [[
-                'product_id'      => $this->product->id,
-                'qty'             => 1,
-                'price'           => 8000000,
+            'items' => [[
+                'product_id' => $this->product->id,
+                'qty' => 1,
+                'price' => 8000000,
                 'invoice_item_id' => $invoiceItem->id,
-                'serial_ids'      => [$serialA->id],
+                'serial_ids' => [$serialA->id],
             ]],
         ]);
 
@@ -276,8 +289,8 @@ class RR08OrderReturnSerialRollbackTest extends TestCase
         $this->assertTrue(
             $hasSerialIdsColumn || $hasReturnItemSerialsTable || $hasSerialReturnId,
             'Schema cần lưu serial reference đã trả: '
-            . 'return_items.serial_ids, hoặc bảng return_item_serials, hoặc serial_imeis.return_id. '
-            . 'Hiện tại không có cột/bảng nào → cancel không thể rollback đúng serial.'
+            .'return_items.serial_ids, hoặc bảng return_item_serials, hoặc serial_imeis.return_id. '
+            .'Hiện tại không có cột/bảng nào → cancel không thể rollback đúng serial.'
         );
     }
 }

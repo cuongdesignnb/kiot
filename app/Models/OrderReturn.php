@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class OrderReturn extends Model
 {
     protected $table = 'returns';
+
     protected $guarded = ['id'];
 
     public function invoice()
@@ -17,6 +18,11 @@ class OrderReturn extends Model
     public function customer()
     {
         return $this->belongsTo(Customer::class);
+    }
+
+    public function receivedByEmployee()
+    {
+        return $this->belongsTo(Employee::class, 'received_by_employee_id');
     }
 
     public function items()

@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\ActivityLog;
 use App\Models\CashFlow;
 use App\Models\Customer;
+use App\Models\Employee;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\InvoiceItemSerial;
@@ -37,6 +38,7 @@ class OrderReturnCreationService
         $createReturn = function () use ($payload, $context) {
             $this->assertReturnTimeLimit($payload);
             $returnDate = $this->resolveReturnDate($payload, $context);
+            $receiver = $this->resolveReceiver($payload);
 
             $returnPayload = [
                 'code' => $context['code'] ?? ('TH'.date('YmdHis').rand(10, 99)),
@@ -51,6 +53,8 @@ class OrderReturnCreationService
                 'paid_to_customer' => $payload['paid_to_customer'] ?? $payload['total'],
                 'note' => $payload['note'] ?? null,
                 'created_by_name' => $context['created_by_name'] ?? auth()->user()?->name ?? 'Admin',
+                'received_by_employee_id' => $receiver['id'],
+                'received_by_name' => $receiver['name'],
                 'created_at' => $returnDate,
             ];
 
@@ -80,7 +84,7 @@ class OrderReturnCreationService
                 ],
             );
 
-            return $return->load('items.product', 'invoice');
+            return $return->load('items.product', 'invoice', 'receivedByEmployee');
         };
 
         $customerId = (int) ($payload['customer_id'] ?? 0);
@@ -103,6 +107,33 @@ class OrderReturnCreationService
             : DB::transaction($createReturn);
 
         return $createdReturn;
+    }
+
+    /**
+     * Receiver is operational metadata. It is validated and snapshotted, but
+     * it never participates in seller/report/debt/inventory attribution.
+     */
+    private function resolveReceiver(array $payload): array
+    {
+        $id = $payload['received_by_employee_id'] ?? null;
+        if ($id === null || $id === '') {
+            return ['id' => null, 'name' => null];
+        }
+
+        $employee = Employee::query()->lockForUpdate()->find((int) $id);
+        if (! $employee) {
+            throw ValidationException::withMessages([
+                'received_by_employee_id' => 'Nhân viên nhận trả không tồn tại.',
+            ]);
+        }
+
+        if (! $employee->is_active) {
+            throw ValidationException::withMessages([
+                'received_by_employee_id' => 'Chỉ được chọn nhân viên đang hoạt động.',
+            ]);
+        }
+
+        return ['id' => (int) $employee->id, 'name' => $employee->name];
     }
 
     private function canonicalizeTotals(array $payload): array

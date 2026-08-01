@@ -81,6 +81,8 @@ class ActivityLog extends Model
 
     const ACTION_RETURN_CANCEL = 'return_cancel';
 
+    const ACTION_RETURN_RECEIVER_UPDATE = 'return_receiver_update';
+
     // Nhập hàng — trả NCC (Step 24.0C standardized)
     const ACTION_PURCHASE_RETURN_CREATE = 'purchase_return_create';
 

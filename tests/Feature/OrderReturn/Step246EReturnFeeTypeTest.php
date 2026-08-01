@@ -2,18 +2,18 @@
 
 namespace Tests\Feature\OrderReturn;
 
-use Tests\TestCase;
-use Illuminate\Foundation\Testing\DatabaseTransactions;
-use App\Models\User;
+use App\Models\CashFlow;
+use App\Models\Category;
 use App\Models\Customer;
 use App\Models\CustomerDebt;
-use App\Models\CashFlow;
-use App\Models\Product;
-use App\Models\Category;
+use App\Models\Employee;
 use App\Models\Invoice;
 use App\Models\OrderReturn;
-use App\Models\SerialImei;
+use App\Models\Product;
+use App\Models\User;
 use App\Services\ReturnTotalCalculator;
+use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Tests\TestCase;
 
 /**
  * STEP 24.6E — Return fee VND/percent.
@@ -26,38 +26,47 @@ class Step246EReturnFeeTypeTest extends TestCase
 {
     use DatabaseTransactions;
 
+    private function receiverId(): int
+    {
+        return Employee::firstOrCreate(
+            ['code' => 'NV-246E-TEST'],
+            ['name' => 'Receiver 24.6E', 'is_active' => true],
+        )->id;
+    }
+
     private function admin(): User
     {
         return User::create([
-            'name'     => 'Admin 246E',
-            'email'    => 'admin-246e-' . uniqid() . '@test.local',
+            'name' => 'Admin 246E',
+            'email' => 'admin-246e-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
-            'role_id'  => null, // null role_id => isAdmin() = true (passes all permission gates)
+            'role_id' => null, // null role_id => isAdmin() = true (passes all permission gates)
         ]);
     }
 
     private function makeProduct(bool $hasSerial = false, int $stock = 10, float $cost = 1000000): Product
     {
         $cat = Category::firstOrCreate(['name' => 'Cat 246E']);
+
         return Product::create([
-            'sku'                  => 'P246E-' . uniqid(),
-            'name'                 => 'Product 24.6E',
-            'cost_price'           => $cost,
-            'retail_price'         => $cost * 2,
-            'stock_quantity'       => $stock,
+            'sku' => 'P246E-'.uniqid(),
+            'name' => 'Product 24.6E',
+            'cost_price' => $cost,
+            'retail_price' => $cost * 2,
+            'stock_quantity' => $stock,
             'inventory_total_cost' => $stock * $cost,
-            'is_active'            => true,
-            'has_serial'           => $hasSerial,
-            'category_id'          => $cat->id,
+            'is_active' => true,
+            'has_serial' => $hasSerial,
+            'category_id' => $cat->id,
         ]);
     }
 
     private function makeCustomer(): Customer
     {
         return Customer::create([
-            'code'        => 'KH-246E-' . uniqid(),
-            'name'        => 'KH 246E',
-            'phone'       => '090' . rand(1000000, 9999999),
+            'code' => 'KH-246E-'.uniqid(),
+            'name' => 'KH 246E',
+            'phone' => '090'.rand(1000000, 9999999),
             'is_customer' => true,
             'debt_amount' => 0,
             'total_spent' => 0,
@@ -68,19 +77,20 @@ class Step246EReturnFeeTypeTest extends TestCase
     private function sellNormal(User $admin, Customer $customer, Product $product, int $qty, float $price, float $paid): Invoice
     {
         $this->actingAs($admin)->post(route('invoices.store'), [
-            'customer_id'    => $customer->id,
-            'subtotal'       => $qty * $price,
-            'discount'       => 0,
-            'total'          => $qty * $price,
-            'customer_paid'  => $paid,
+            'customer_id' => $customer->id,
+            'subtotal' => $qty * $price,
+            'discount' => 0,
+            'total' => $qty * $price,
+            'customer_paid' => $paid,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => $qty,
-                'price'      => $price,
-                'discount'   => 0,
+                'quantity' => $qty,
+                'price' => $price,
+                'discount' => 0,
             ]],
         ]);
+
         return Invoice::where('customer_id', $customer->id)->latest('id')->first();
     }
 
@@ -88,32 +98,32 @@ class Step246EReturnFeeTypeTest extends TestCase
 
     public function test_calculator_amount_fee_produces_net_total(): void
     {
-        $out = (new ReturnTotalCalculator())->calculate([
-            'items'     => [['qty' => 1, 'price' => 7000000, 'discount' => 0]],
-            'fee_type'  => 'amount',
+        $out = (new ReturnTotalCalculator)->calculate([
+            'items' => [['qty' => 1, 'price' => 7000000, 'discount' => 0]],
+            'fee_type' => 'amount',
             'fee_value' => 700000,
         ]);
         $this->assertEquals(7000000.0, $out['subtotal']);
-        $this->assertEquals(700000.0,  $out['fee_amount']);
+        $this->assertEquals(700000.0, $out['fee_amount']);
         $this->assertEquals(6300000.0, $out['total_refund']);
     }
 
     public function test_calculator_percent_fee_produces_net_total(): void
     {
-        $out = (new ReturnTotalCalculator())->calculate([
-            'items'     => [['qty' => 1, 'price' => 7000000, 'discount' => 0]],
-            'fee_type'  => 'percent',
+        $out = (new ReturnTotalCalculator)->calculate([
+            'items' => [['qty' => 1, 'price' => 7000000, 'discount' => 0]],
+            'fee_type' => 'percent',
             'fee_value' => 10,
         ]);
-        $this->assertEquals(700000.0,  $out['fee_amount']);
+        $this->assertEquals(700000.0, $out['fee_amount']);
         $this->assertEquals(6300000.0, $out['total_refund']);
     }
 
     public function test_calculator_legacy_payload_without_fee_type_treats_as_amount(): void
     {
-        $out = (new ReturnTotalCalculator())->calculate([
-            'items'    => [['qty' => 1, 'price' => 7000000, 'discount' => 0]],
-            'fee'      => 700000, // legacy callers
+        $out = (new ReturnTotalCalculator)->calculate([
+            'items' => [['qty' => 1, 'price' => 7000000, 'discount' => 0]],
+            'fee' => 700000, // legacy callers
         ]);
         $this->assertEquals('amount', $out['fee_type']);
         $this->assertEquals(700000.0, $out['fee_amount']);
@@ -123,9 +133,9 @@ class Step246EReturnFeeTypeTest extends TestCase
     public function test_calculator_percent_over_100_fails(): void
     {
         $this->expectException(\Illuminate\Validation\ValidationException::class);
-        (new ReturnTotalCalculator())->calculate([
-            'items'     => [['qty' => 1, 'price' => 7000000]],
-            'fee_type'  => 'percent',
+        (new ReturnTotalCalculator)->calculate([
+            'items' => [['qty' => 1, 'price' => 7000000]],
+            'fee_type' => 'percent',
             'fee_value' => 120,
         ]);
     }
@@ -133,10 +143,10 @@ class Step246EReturnFeeTypeTest extends TestCase
     public function test_calculator_paid_exceeding_total_fails(): void
     {
         $this->expectException(\Illuminate\Validation\ValidationException::class);
-        (new ReturnTotalCalculator())->calculate([
-            'items'            => [['qty' => 1, 'price' => 7000000]],
-            'fee_type'         => 'percent',
-            'fee_value'        => 10,
+        (new ReturnTotalCalculator)->calculate([
+            'items' => [['qty' => 1, 'price' => 7000000]],
+            'fee_type' => 'percent',
+            'fee_value' => 10,
             'paid_to_customer' => 7000000, // > 6_300_000
         ]);
     }
@@ -153,28 +163,29 @@ class Step246EReturnFeeTypeTest extends TestCase
         $invoiceItem = $invoice->items()->first();
 
         $this->actingAs($admin)->post(route('returns.store'), [
-            'invoice_id'       => $invoice->id,
-            'customer_id'      => $customer->id,
-            'subtotal'         => 7000000,
-            'discount'         => 0,
-            'fee_type'         => 'amount',
-            'fee_value'        => 700000,
-            'total'            => 9999999, // intentionally wrong — backend must ignore
+            'invoice_id' => $invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
+            'customer_id' => $customer->id,
+            'subtotal' => 7000000,
+            'discount' => 0,
+            'fee_type' => 'amount',
+            'fee_value' => 700000,
+            'total' => 9999999, // intentionally wrong — backend must ignore
             'paid_to_customer' => 6300000,
-            'items'            => [[
-                'product_id'      => $product->id,
+            'items' => [[
+                'product_id' => $product->id,
                 'invoice_item_id' => $invoiceItem->id,
-                'qty'             => 1,
-                'price'           => 7000000,
+                'qty' => 1,
+                'price' => 7000000,
             ]],
         ])->assertRedirect();
 
         $return = OrderReturn::where('invoice_id', $invoice->id)->latest('id')->first();
-        $this->assertEquals(700000.0,  (float) $return->fee);
+        $this->assertEquals(700000.0, (float) $return->fee);
         $this->assertEquals(6300000.0, (float) $return->total);
         $this->assertEquals(6300000.0, (float) $return->paid_to_customer);
-        $this->assertEquals('amount',  $return->fee_type);
-        $this->assertEquals(700000.0,  (float) $return->fee_value);
+        $this->assertEquals('amount', $return->fee_type);
+        $this->assertEquals(700000.0, (float) $return->fee_value);
     }
 
     public function test_return_fee_percent_calculates_fee_and_net_and_persists(): void
@@ -186,26 +197,27 @@ class Step246EReturnFeeTypeTest extends TestCase
         $invoiceItem = $invoice->items()->first();
 
         $this->actingAs($admin)->post(route('returns.store'), [
-            'invoice_id'       => $invoice->id,
-            'customer_id'      => $customer->id,
-            'subtotal'         => 7000000,
-            'fee_type'         => 'percent',
-            'fee_value'        => 10,
-            'total'            => 0, // wrong on purpose
+            'invoice_id' => $invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
+            'customer_id' => $customer->id,
+            'subtotal' => 7000000,
+            'fee_type' => 'percent',
+            'fee_value' => 10,
+            'total' => 0, // wrong on purpose
             'paid_to_customer' => 6300000,
-            'items'            => [[
-                'product_id'      => $product->id,
+            'items' => [[
+                'product_id' => $product->id,
                 'invoice_item_id' => $invoiceItem->id,
-                'qty'             => 1,
-                'price'           => 7000000,
+                'qty' => 1,
+                'price' => 7000000,
             ]],
         ])->assertRedirect();
 
         $return = OrderReturn::where('invoice_id', $invoice->id)->latest('id')->first();
-        $this->assertEquals('percent',  $return->fee_type);
-        $this->assertEquals(10.0,       (float) $return->fee_value);
-        $this->assertEquals(700000.0,   (float) $return->fee);
-        $this->assertEquals(6300000.0,  (float) $return->total);
+        $this->assertEquals('percent', $return->fee_type);
+        $this->assertEquals(10.0, (float) $return->fee_value);
+        $this->assertEquals(700000.0, (float) $return->fee);
+        $this->assertEquals(6300000.0, (float) $return->total);
     }
 
     public function test_return_fee_percent_over_100_is_rejected(): void
@@ -221,17 +233,18 @@ class Step246EReturnFeeTypeTest extends TestCase
         $this->actingAs($admin)
             ->from(route('invoices.index'))
             ->post(route('returns.store'), [
-                'invoice_id'  => $invoice->id,
+                'invoice_id' => $invoice->id,
+                'received_by_employee_id' => $this->receiverId(),
                 'customer_id' => $customer->id,
-                'subtotal'    => 7000000,
-                'fee_type'    => 'percent',
-                'fee_value'   => 120,
-                'total'       => 0,
-                'items'       => [[
-                    'product_id'      => $product->id,
+                'subtotal' => 7000000,
+                'fee_type' => 'percent',
+                'fee_value' => 120,
+                'total' => 0,
+                'items' => [[
+                    'product_id' => $product->id,
                     'invoice_item_id' => $invoiceItem->id,
-                    'qty'             => 1,
-                    'price'           => 7000000,
+                    'qty' => 1,
+                    'price' => 7000000,
                 ]],
             ])->assertSessionHasErrors('fee_value');
 
@@ -250,18 +263,19 @@ class Step246EReturnFeeTypeTest extends TestCase
         $this->actingAs($admin)
             ->from(route('invoices.index'))
             ->post(route('returns.store'), [
-                'invoice_id'       => $invoice->id,
-                'customer_id'      => $customer->id,
-                'subtotal'         => 7000000,
-                'fee_type'         => 'percent',
-                'fee_value'        => 10,
-                'total'            => 0,
+                'invoice_id' => $invoice->id,
+                'received_by_employee_id' => $this->receiverId(),
+                'customer_id' => $customer->id,
+                'subtotal' => 7000000,
+                'fee_type' => 'percent',
+                'fee_value' => 10,
+                'total' => 0,
                 'paid_to_customer' => 7000000, // > net 6_300_000
-                'items'            => [[
-                    'product_id'      => $product->id,
+                'items' => [[
+                    'product_id' => $product->id,
                     'invoice_item_id' => $invoiceItem->id,
-                    'qty'             => 1,
-                    'price'           => 7000000,
+                    'qty' => 1,
+                    'price' => 7000000,
                 ]],
             ])->assertSessionHasErrors('paid_to_customer');
 
@@ -279,18 +293,19 @@ class Step246EReturnFeeTypeTest extends TestCase
 
         $invoiceItem = $invoice->items()->first();
         $this->actingAs($admin)->post(route('returns.store'), [
-            'invoice_id'       => $invoice->id,
-            'customer_id'      => $customer->id,
-            'subtotal'         => 7000000,
-            'fee_type'         => 'percent',
-            'fee_value'        => 10,
-            'total'            => 0,
+            'invoice_id' => $invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
+            'customer_id' => $customer->id,
+            'subtotal' => 7000000,
+            'fee_type' => 'percent',
+            'fee_value' => 10,
+            'total' => 0,
             'paid_to_customer' => 0, // debit-only return; no cash out
-            'items'            => [[
-                'product_id'      => $product->id,
+            'items' => [[
+                'product_id' => $product->id,
                 'invoice_item_id' => $invoiceItem->id,
-                'qty'             => 1,
-                'price'           => 7000000,
+                'qty' => 1,
+                'price' => 7000000,
             ]],
         ])->assertRedirect();
 
@@ -311,18 +326,19 @@ class Step246EReturnFeeTypeTest extends TestCase
         $invoiceItem = $invoice->items()->first();
 
         $this->actingAs($admin)->post(route('returns.store'), [
-            'invoice_id'       => $invoice->id,
-            'customer_id'      => $customer->id,
-            'subtotal'         => 7000000,
-            'fee_type'         => 'percent',
-            'fee_value'        => 10,
-            'total'            => 0,
+            'invoice_id' => $invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
+            'customer_id' => $customer->id,
+            'subtotal' => 7000000,
+            'fee_type' => 'percent',
+            'fee_value' => 10,
+            'total' => 0,
             'paid_to_customer' => 6300000,
-            'items'            => [[
-                'product_id'      => $product->id,
+            'items' => [[
+                'product_id' => $product->id,
                 'invoice_item_id' => $invoiceItem->id,
-                'qty'             => 1,
-                'price'           => 7000000,
+                'qty' => 1,
+                'price' => 7000000,
             ]],
         ])->assertRedirect();
 
@@ -344,24 +360,25 @@ class Step246EReturnFeeTypeTest extends TestCase
 
         // Old-style payload: just `fee` numeric, no fee_type/fee_value.
         $this->actingAs($admin)->post(route('returns.store'), [
-            'invoice_id'  => $invoice->id,
+            'invoice_id' => $invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
             'customer_id' => $customer->id,
-            'subtotal'    => 7000000,
-            'fee'         => 700000,
-            'total'       => 6300000,
-            'items'       => [[
-                'product_id'      => $product->id,
+            'subtotal' => 7000000,
+            'fee' => 700000,
+            'total' => 6300000,
+            'items' => [[
+                'product_id' => $product->id,
                 'invoice_item_id' => $invoiceItem->id,
-                'qty'             => 1,
-                'price'           => 7000000,
+                'qty' => 1,
+                'price' => 7000000,
             ]],
         ])->assertRedirect();
 
         $return = OrderReturn::where('invoice_id', $invoice->id)->latest('id')->first();
-        $this->assertEquals('amount',   $return->fee_type);
-        $this->assertEquals(700000.0,   (float) $return->fee_value);
-        $this->assertEquals(700000.0,   (float) $return->fee);
-        $this->assertEquals(6300000.0,  (float) $return->total);
+        $this->assertEquals('amount', $return->fee_type);
+        $this->assertEquals(700000.0, (float) $return->fee_value);
+        $this->assertEquals(700000.0, (float) $return->fee);
+        $this->assertEquals(6300000.0, (float) $return->total);
     }
 
     /**
@@ -373,10 +390,10 @@ class Step246EReturnFeeTypeTest extends TestCase
      */
     public function test_calculator_ignores_unsupported_refund_other_field(): void
     {
-        $out = (new ReturnTotalCalculator())->calculate([
-            'items'        => [['qty' => 1, 'price' => 7000000, 'discount' => 0]],
-            'fee_type'     => 'percent',
-            'fee_value'    => 10,
+        $out = (new ReturnTotalCalculator)->calculate([
+            'items' => [['qty' => 1, 'price' => 7000000, 'discount' => 0]],
+            'fee_type' => 'percent',
+            'fee_value' => 10,
             'refund_other' => 500000, // <- unsupported in scope; must be ignored
         ]);
         // 7M − 0 − 700k = 6.3M. NOT 6.8M.
@@ -392,18 +409,19 @@ class Step246EReturnFeeTypeTest extends TestCase
         $invoiceItem = $invoice->items()->first();
 
         $this->actingAs($admin)->post(route('returns.store'), [
-            'invoice_id'       => $invoice->id,
-            'customer_id'      => $customer->id,
-            'subtotal'         => 7000000,
-            'fee_type'         => 'percent',
-            'fee_value'        => 10,
-            'total'            => 0,
+            'invoice_id' => $invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
+            'customer_id' => $customer->id,
+            'subtotal' => 7000000,
+            'fee_type' => 'percent',
+            'fee_value' => 10,
+            'total' => 0,
             'paid_to_customer' => 0,
-            'items'            => [[
-                'product_id'      => $product->id,
+            'items' => [[
+                'product_id' => $product->id,
                 'invoice_item_id' => $invoiceItem->id,
-                'qty'             => 1,
-                'price'           => 7000000,
+                'qty' => 1,
+                'price' => 7000000,
             ]],
         ])->assertRedirect();
 

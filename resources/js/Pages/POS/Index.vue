@@ -48,6 +48,7 @@ const emptyReturnState = () => ({
     paidToCustomer: 0,
     paidToCustomerTouched: false,    // user typed manually → don't auto-override
     note: '',
+    receivedByEmployeeId: '',
     search: '',
     searchResults: [],
     searching: false,
@@ -1199,6 +1200,9 @@ const selectReturnInvoice = async (tab, inv) => {
         rs.paidToCustomer = 0;
         rs.paidToCustomerTouched = false;
         rs.note = '';
+        rs.receivedByEmployeeId = props.employees?.some((employee) => employee.id === data.invoice?.created_by && employee.is_active !== false)
+            ? data.invoice.created_by
+            : '';
     } catch (e) {
         if (e.response?.status === 403) {
             rs.error = 'Bạn không có quyền tạo phiếu trả hàng.';
@@ -1678,6 +1682,11 @@ const submitReturnTab = async (tab) => {
     if (!tab || tab.type !== 'return') return;
     const rs = tab.returnState;
     if (!rs?.sourceInvoice) return;
+    if (!rs.receivedByEmployeeId) {
+        rs.errorTitle = 'Thiếu người nhận trả';
+        rs.error = 'Vui lòng chọn nhân viên đang hoạt động chịu trách nhiệm nhận hàng trả.';
+        return;
+    }
     normalizeAllExchangeLines(tab);
     if (!canSubmitActiveExchange.value && tab.id === activeTab.value?.id) return;
 
@@ -1723,6 +1732,7 @@ const submitReturnTab = async (tab) => {
         invoice_id: rs.sourceInvoice.id,
         customer_id: rs.sourceInvoice.customer_id,
         branch_id: rs.sourceInvoice.branch_id,
+        received_by_employee_id: rs.receivedByEmployeeId,
         subtotal,
         discount: Number(rs.discount) || 0,
         fee_type: rs.feeType || 'amount',
@@ -1739,6 +1749,7 @@ const submitReturnTab = async (tab) => {
                 invoice_id: rs.sourceInvoice.id,
                 customer_id: rs.sourceInvoice.customer_id,
                 branch_id: rs.sourceInvoice.branch_id,
+                received_by_employee_id: rs.receivedByEmployeeId,
                 seller_key: selectedSellerKey.value || null,
                 employee_id: selectedEmployeeId.value || null,
                 sale_time: saleDate.value || null,
@@ -2887,6 +2898,18 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                             input-class="w-44 border border-gray-300 rounded-md px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500"
                             @update:model-value="activeTab.returnState.paidToCustomerTouched = true"
                         />
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 mb-1">Người nhận trả</label>
+                        <select
+                            v-model="activeTab.returnState.receivedByEmployeeId"
+                            class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        >
+                            <option value="">-- Chọn nhân viên đang hoạt động --</option>
+                            <option v-for="employee in props.employees" :key="employee.id" :value="employee.id">
+                                {{ employee.name }}{{ employee.code ? ` (${employee.code})` : '' }}
+                            </option>
+                        </select>
                     </div>
                     <div>
                         <label class="block text-xs text-gray-500 mb-1">Ghi chú</label>

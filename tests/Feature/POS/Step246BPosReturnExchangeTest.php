@@ -6,6 +6,7 @@ use App\Models\CashFlow;
 use App\Models\Category;
 use App\Models\Customer;
 use App\Models\CustomerDebt;
+use App\Models\Employee;
 use App\Models\Invoice;
 use App\Models\OrderReturn;
 use App\Models\Product;
@@ -19,6 +20,14 @@ use Tests\TestCase;
 class Step246BPosReturnExchangeTest extends TestCase
 {
     use DatabaseTransactions;
+
+    private function receiverId(): int
+    {
+        return Employee::firstOrCreate(
+            ['code' => 'NV-246B-TEST'],
+            ['name' => 'Receiver 24.6B', 'is_active' => true],
+        )->id;
+    }
 
     private function adminUser(): User
     {
@@ -34,7 +43,7 @@ class Step246BPosReturnExchangeTest extends TestCase
     private function userWith(array $perms): User
     {
         $role = Role::create([
-            'name' => 'role246b-' . uniqid(),
+            'name' => 'role246b-'.uniqid(),
             'display_name' => 'Test',
             'permissions' => $perms,
             'is_system' => false,
@@ -46,9 +55,9 @@ class Step246BPosReturnExchangeTest extends TestCase
     private function customer(): Customer
     {
         return Customer::create([
-            'code' => 'KH246B-' . uniqid(),
+            'code' => 'KH246B-'.uniqid(),
             'name' => 'KH 246B',
-            'phone' => '090' . rand(1000000, 9999999),
+            'phone' => '090'.rand(1000000, 9999999),
             'debt_amount' => 0,
             'total_spent' => 0,
             'is_customer' => true,
@@ -60,7 +69,7 @@ class Step246BPosReturnExchangeTest extends TestCase
         $cat = Category::firstOrCreate(['name' => 'Cat 246B']);
 
         return Product::create([
-            'sku' => 'P246B-' . uniqid(),
+            'sku' => 'P246B-'.uniqid(),
             'name' => 'Product 246B',
             'cost_price' => $cost,
             'retail_price' => $price,
@@ -76,7 +85,7 @@ class Step246BPosReturnExchangeTest extends TestCase
     {
         return SerialImei::create([
             'product_id' => $product->id,
-            'serial_number' => 'SN246B-' . uniqid(),
+            'serial_number' => 'SN246B-'.uniqid(),
             'status' => $status,
             'cost_price' => $product->cost_price,
             'original_cost' => $product->cost_price,
@@ -110,6 +119,7 @@ class Step246BPosReturnExchangeTest extends TestCase
             'invoice_id' => $invoice->id,
             'customer_id' => $invoice->customer_id,
             'branch_id' => $invoice->branch_id,
+            'received_by_employee_id' => $this->receiverId(),
             'payment_method' => 'cash',
             'note' => 'STEP 24.6B test',
             'return' => [
@@ -653,6 +663,7 @@ class Step246BPosReturnExchangeTest extends TestCase
 
         $this->actingAs($admin)->post(route('returns.store'), [
             'invoice_id' => $invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
             'customer_id' => $customer->id,
             'subtotal' => 100000,
             'total' => 100000,

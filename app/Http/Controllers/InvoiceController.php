@@ -188,7 +188,7 @@ class InvoiceController extends Controller
     public function apiSearch(Request $request)
     {
         $search = $request->input('search');
-        $invoices = Invoice::with(['items.product', 'customer'])
+        $invoices = Invoice::with(['items.product', 'customer', 'creator'])
             ->when($search, function ($query, $search) {
                 return $query->where('code', 'LIKE', "%{$search}%")
                     ->orWhereHas('customer', function ($q) use ($search) {

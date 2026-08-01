@@ -11,6 +11,7 @@ const props = defineProps({
     customers: Array,
     branches: Array,
     priceBooks: Array,
+    employees: { type: Array, default: () => [] },
     invoice: Object,
     action: { type: String, default: 'edit' },
 });
@@ -69,6 +70,7 @@ const createInitialTab = (index) => ({
     otherFees: 0,
     amountPaid: 0,
     note: '',
+    receivedByEmployeeId: '',
     orderDate: formatDatetimeLocal(new Date()),
     
     isDelivery: false,
@@ -119,6 +121,14 @@ const closeTab = (index) => {
 };
 
 const submitRef = ref(false);
+const returnFormError = ref('');
+
+const defaultReceiverForInvoice = (invoice) => {
+    const employee = (props.employees || []).find((candidate) =>
+        String(candidate.id) === String(invoice?.created_by)
+    );
+    return employee?.id || '';
+};
 
 // API-based product search with debounce
 const searchResults = ref([]);
@@ -505,6 +515,11 @@ const save = async () => {
         return;
     }
     if (!validateOrderSerialSelection()) return;
+    if (activeTab.value.status === 'return' && !activeTab.value.receivedByEmployeeId) {
+        returnFormError.value = 'Vui lòng chọn nhân viên đang hoạt động chịu trách nhiệm nhận hàng trả.';
+        return;
+    }
+    returnFormError.value = '';
     submitRef.value = true;
     activeTab.value.idempotencyKey ||= crypto.randomUUID();
     try {
@@ -547,6 +562,8 @@ const save = async () => {
             height: activeTab.value.sizeH,
             order_date: activeTab.value.orderDate || null,
         };
+
+        if (isReturn) payload.received_by_employee_id = activeTab.value.receivedByEmployeeId;
 
         if (isEditing) {
             // Remap items fields for backend validation (qty → quantity)
@@ -620,6 +637,8 @@ const selectInvoiceForReturn = (invoice) => {
     activeTab.value.name = `Trả hàng ${invoice.code}`;
     activeTab.value.status = 'return';
     activeTab.value.invoice_id = invoice.id;
+    activeTab.value.receivedByEmployeeId = defaultReceiverForInvoice(invoice);
+    returnFormError.value = '';
     activeTab.value.selectedPriceBookId = null;
     activeTab.value.selectedPriceBookName = invoice.price_book_name || 'Bảng giá chung';
     activeTab.value.discount = invoice.discount || 0;
@@ -691,6 +710,11 @@ const saveAndPrint = async () => {
         return;
     }
     if (!validateOrderSerialSelection()) return;
+    if (activeTab.value.status === 'return' && !activeTab.value.receivedByEmployeeId) {
+        returnFormError.value = 'Vui lòng chọn nhân viên đang hoạt động chịu trách nhiệm nhận hàng trả.';
+        return;
+    }
+    returnFormError.value = '';
     submitRef.value = true;
     try {
         const endpoint = activeTab.value.status === 'return' ? '/returns' : '/orders';
@@ -732,6 +756,8 @@ const saveAndPrint = async () => {
             order_date: activeTab.value.orderDate || null,
             _print: true,
         };
+
+        if (activeTab.value.status === 'return') payload.received_by_employee_id = activeTab.value.receivedByEmployeeId;
 
         if (!payload.is_delivery) {
             payload.cod_amount = 0;
@@ -1094,6 +1120,20 @@ onUnmounted(() => {
                             <select v-model="activeTab.selectedBranchId" class="w-full text-[13px] border-b border-gray-300 py-1 outline-none text-gray-700 font-medium">
                                 <option v-for="branch in branches" :key="branch.id" :value="branch.id">{{ branch.name }} - {{ branch.address }}</option>
                             </select>
+                        </div>
+                        <div v-if="activeTab.status === 'return'" class="mb-3 rounded border border-blue-100 bg-blue-50 p-2">
+                            <label class="block text-[12px] font-semibold text-gray-700 mb-1">Người nhận trả</label>
+                            <select
+                                v-model="activeTab.receivedByEmployeeId"
+                                @change="returnFormError = ''"
+                                class="w-full text-[13px] border border-gray-300 rounded px-2 py-1 outline-none focus:border-blue-500 bg-white"
+                            >
+                                <option value="">-- Chọn nhân viên đang hoạt động --</option>
+                                <option v-for="employee in employees" :key="employee.id" :value="employee.id">
+                                    {{ employee.name }}{{ employee.code ? ` (${employee.code})` : '' }}
+                                </option>
+                            </select>
+                            <p v-if="returnFormError" class="text-[11px] text-red-600 mt-1">{{ returnFormError }}</p>
                         </div>
                         <div v-show="activeTab.isDelivery">
                             <div class="flex gap-4 mb-3 mt-3">

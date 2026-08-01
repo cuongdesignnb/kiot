@@ -2,11 +2,10 @@
 
 namespace Tests\Feature\CustomerDebt;
 
-use App\Http\Controllers\InvoiceController;
 use App\Models\Category;
 use App\Models\Customer;
+use App\Models\Employee;
 use App\Models\Invoice;
-use App\Models\InvoiceItem;
 use App\Models\Product;
 use App\Models\User;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -32,25 +31,34 @@ class RR06CustomerDebtLedgerTest extends TestCase
 {
     use DatabaseTransactions;
 
-    private User     $admin;
+    private User $admin;
+
     private Customer $customer;
+
+    private function receiverId(): int
+    {
+        return Employee::firstOrCreate(
+            ['code' => 'NV-RR06-TEST'],
+            ['name' => 'Receiver RR06', 'is_active' => true],
+        )->id;
+    }
 
     protected function setUp(): void
     {
         parent::setUp();
 
         $this->admin = User::create([
-            'name'     => 'Admin RR06',
-            'email'    => 'admin-rr06-' . uniqid() . '@test.local',
+            'name' => 'Admin RR06',
+            'email' => 'admin-rr06-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
-            'role_id'  => null,
+            'role_id' => null,
         ]);
 
         $this->customer = Customer::create([
-            'code'        => 'KH-RR06-' . uniqid(),
-            'name'        => 'KH RR06 ' . uniqid(),
-            'phone'       => '090' . rand(1000000, 9999999),
-            'email'       => 'kh-rr06-' . uniqid() . '@test.local',
+            'code' => 'KH-RR06-'.uniqid(),
+            'name' => 'KH RR06 '.uniqid(),
+            'phone' => '090'.rand(1000000, 9999999),
+            'email' => 'kh-rr06-'.uniqid().'@test.local',
             'debt_amount' => 0,
             'total_spent' => 0,
         ]);
@@ -59,16 +67,17 @@ class RR06CustomerDebtLedgerTest extends TestCase
     private function makeProduct(): Product
     {
         $category = Category::firstOrCreate(['name' => 'Cat RR06']);
+
         return Product::create([
-            'sku'                  => 'PROD-RR06-' . uniqid(),
-            'name'                 => 'Product RR06',
-            'cost_price'           => 100000,
-            'retail_price'         => 200000,
-            'stock_quantity'       => 100,
+            'sku' => 'PROD-RR06-'.uniqid(),
+            'name' => 'Product RR06',
+            'cost_price' => 100000,
+            'retail_price' => 200000,
+            'stock_quantity' => 100,
             'inventory_total_cost' => 10000000,
-            'is_active'            => true,
-            'has_serial'           => false,
-            'category_id'          => $category->id,
+            'is_active' => true,
+            'has_serial' => false,
+            'category_id' => $category->id,
         ]);
     }
 
@@ -85,7 +94,7 @@ class RR06CustomerDebtLedgerTest extends TestCase
             class_exists(\App\Models\CustomerDebt::class)
             || class_exists(\App\Models\CustomerDebtTransaction::class),
             'Phải có Model CustomerDebt hoặc CustomerDebtTransaction. '
-            . 'Pattern tham chiếu: App\\Models\\SupplierDebtTransaction.'
+            .'Pattern tham chiếu: App\\Models\\SupplierDebtTransaction.'
         );
     }
 
@@ -98,15 +107,15 @@ class RR06CustomerDebtLedgerTest extends TestCase
         $rowsBefore = DB::table('customer_debts')->where('customer_id', $this->customer->id)->count();
 
         $this->actingAs($this->admin)->post(route('invoices.store'), [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => 1000000,
-            'total'          => 1000000,
-            'customer_paid'  => 400000, // còn nợ 600k
+            'customer_id' => $this->customer->id,
+            'subtotal' => 1000000,
+            'total' => 1000000,
+            'customer_paid' => 400000, // còn nợ 600k
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 5,
-                'price'      => 200000,
+                'quantity' => 5,
+                'price' => 200000,
             ]],
         ]);
 
@@ -117,7 +126,7 @@ class RR06CustomerDebtLedgerTest extends TestCase
         $rowsAfter = DB::table('customer_debts')->where('customer_id', $this->customer->id)->count();
         $this->assertGreaterThan($rowsBefore, $rowsAfter,
             'Bán hàng nợ phải tạo customer_debts row để truy vết. '
-            . 'Hiện InvoiceSaleService chỉ increment customers.debt_amount, không ghi ledger.');
+            .'Hiện InvoiceSaleService chỉ increment customers.debt_amount, không ghi ledger.');
 
         $invoice = Invoice::where('customer_id', $this->customer->id)->latest()->first();
         $debtRow = DB::table('customer_debts')
@@ -141,17 +150,17 @@ class RR06CustomerDebtLedgerTest extends TestCase
         $rowsBefore = DB::table('customer_debts')->where('customer_id', $this->customer->id)->count();
 
         $this->actingAs($this->admin)->postJson('/api/pos/checkout', [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => 1000000,
-            'discount'       => 0,
-            'total'          => 1000000,
-            'customer_paid'  => 400000,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 1000000,
+            'discount' => 0,
+            'total' => 1000000,
+            'customer_paid' => 400000,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 5,
-                'price'      => 200000,
-                'discount'   => 0,
+                'quantity' => 5,
+                'price' => 200000,
+                'discount' => 0,
             ]],
         ]);
 
@@ -171,15 +180,15 @@ class RR06CustomerDebtLedgerTest extends TestCase
         // Setup: bán hàng nợ trước
         $product = $this->makeProduct();
         $this->actingAs($this->admin)->post(route('invoices.store'), [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => 1000000,
-            'total'          => 1000000,
-            'customer_paid'  => 400000,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 1000000,
+            'total' => 1000000,
+            'customer_paid' => 400000,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 5,
-                'price'      => 200000,
+                'quantity' => 5,
+                'price' => 200000,
             ]],
         ]);
 
@@ -192,15 +201,16 @@ class RR06CustomerDebtLedgerTest extends TestCase
 
         // Trả 1 sản phẩm (200k)
         $this->actingAs($this->admin)->post(route('returns.store'), [
-            'invoice_id'      => $invoice->id,
-            'customer_id'     => $this->customer->id,
-            'subtotal'        => 200000,
-            'total'           => 200000,
-            'paid_to_customer'=> 0,
-            'items'           => [[
-                'product_id'      => $product->id,
-                'qty'             => 1,
-                'price'           => 200000,
+            'invoice_id' => $invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
+            'customer_id' => $this->customer->id,
+            'subtotal' => 200000,
+            'total' => 200000,
+            'paid_to_customer' => 0,
+            'items' => [[
+                'product_id' => $product->id,
+                'qty' => 1,
+                'price' => 200000,
                 'invoice_item_id' => $invoiceItem->id,
             ]],
         ]);
@@ -213,7 +223,7 @@ class RR06CustomerDebtLedgerTest extends TestCase
         $rowsAfter = DB::table('customer_debts')->where('customer_id', $this->customer->id)->count();
         $this->assertGreaterThan($rowsBefore, $rowsAfter,
             'Trả hàng phải tạo customer_debts row decrease/return type. '
-            . 'Hiện OrderReturnController@store chỉ decrement debt_amount, không ghi ledger.');
+            .'Hiện OrderReturnController@store chỉ decrement debt_amount, không ghi ledger.');
 
         $returnRow = DB::table('customer_debts')
             ->where('customer_id', $this->customer->id)
@@ -230,15 +240,15 @@ class RR06CustomerDebtLedgerTest extends TestCase
     {
         $product = $this->makeProduct();
         $this->actingAs($this->admin)->post(route('invoices.store'), [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => 1000000,
-            'total'          => 1000000,
-            'customer_paid'  => 400000,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 1000000,
+            'total' => 1000000,
+            'customer_paid' => 400000,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 5,
-                'price'      => 200000,
+                'quantity' => 5,
+                'price' => 200000,
             ]],
         ]);
 
@@ -261,6 +271,6 @@ class RR06CustomerDebtLedgerTest extends TestCase
         $rowsAfter = DB::table('customer_debts')->where('customer_id', $this->customer->id)->count();
         $this->assertGreaterThan($rowsBefore, $rowsAfter,
             'Hủy invoice phải tạo customer_debts reverse row. '
-            . 'Hiện InvoiceController@cancel chỉ decrement debt_amount, không ghi ledger.');
+            .'Hiện InvoiceController@cancel chỉ decrement debt_amount, không ghi ledger.');
     }
 }
