@@ -197,6 +197,6 @@ Read-only schema evidence:
 - php vendor/bin/pint --test on changed PHP: PASS.
 - PHP lint on changed PHP: PASS (only existing missing OCI/Firebird extension startup warnings).
 - git diff --check: PASS.
-- GitHub Actions run after push: pending until the new commit is pushed; the prior failure was routes/web.php Pint style and was fixed with php vendor/bin/pint routes/web.php.
+- GitHub Actions PC integration gate run #22: PASS on commit c280eed; migration, provider contract, Order/POS conversion, rollback/re-apply, changed PHP style/syntax, frontend build, and tracked-source scan all passed.
 
 Migration status: MIGRATION=YES (the receiver migration is part of PR #38); BACKFILL=NO. No production schema/data command was run.
