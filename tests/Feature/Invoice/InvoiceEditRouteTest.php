@@ -9,13 +9,9 @@ use App\Models\InvoiceItem;
 use App\Models\Product;
 use App\Models\Role;
 use App\Models\SerialImei;
-use App\Models\Setting;
-use App\Models\StockMovement;
 use App\Models\User;
-use App\Services\InvoiceUpdateService;
 use App\Services\MovingAvgCostingService;
 use App\Services\StockMovementService;
-use Carbon\Carbon;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
@@ -26,10 +22,11 @@ class InvoiceEditRouteTest extends TestCase
 
     private function userWithPermission(array $perms): User
     {
-        $name = 'test-user-' . uniqid();
+        $name = 'test-user-'.uniqid();
         $role = Role::create(['name' => $name, 'display_name' => $name, 'permissions' => $perms]);
+
         return User::create([
-            'name' => 'UserEditTest', 'email' => 'u-' . uniqid() . '@test.local',
+            'name' => 'UserEditTest', 'email' => 'u-'.uniqid().'@test.local',
             'password' => bcrypt('pw'), 'role_id' => $role->id,
         ]);
     }
@@ -38,7 +35,7 @@ class InvoiceEditRouteTest extends TestCase
     {
         $data = [
             'sku' => $sku,
-            'name' => 'SP Test ' . $sku,
+            'name' => 'SP Test '.$sku,
             'cost_price' => $cost,
             'retail_price' => 150000,
             'stock_quantity' => $stock,
@@ -49,6 +46,7 @@ class InvoiceEditRouteTest extends TestCase
         if ($barcode !== null) {
             $data['barcode'] = $barcode;
         }
+
         return Product::create($data);
     }
 
@@ -59,7 +57,7 @@ class InvoiceEditRouteTest extends TestCase
         $costAtSale = $costResult['cogs_per_unit'];
         $product->refresh();
 
-        $code = 'HDTEST-' . uniqid();
+        $code = 'HDTEST-'.uniqid();
         $now = now();
         $invoice = Invoice::create([
             'code' => $code, 'subtotal' => $total, 'discount' => 0,
@@ -78,12 +76,14 @@ class InvoiceEditRouteTest extends TestCase
         ]);
 
         $debt = $total - $paid;
-        if ($debt > 0) $customer->increment('debt_amount', $debt);
+        if ($debt > 0) {
+            $customer->increment('debt_amount', $debt);
+        }
         $customer->increment('total_spent', $total);
 
         if ($paid > 0) {
             CashFlow::create([
-                'code' => 'PTTEST-' . uniqid(), 'type' => 'receipt', 'amount' => $paid,
+                'code' => 'PTTEST-'.uniqid(), 'type' => 'receipt', 'amount' => $paid,
                 'time' => $now, 'category' => 'Thu tiền khách trả',
                 'target_type' => 'Khách hàng', 'target_id' => $customer->id,
                 'target_name' => $customer->name,
@@ -100,8 +100,8 @@ class InvoiceEditRouteTest extends TestCase
     private function customer(float $debt = 0): Customer
     {
         return Customer::create([
-            'code' => 'KHTEST-' . uniqid(), 'name' => 'KH Test Edit',
-            'phone' => '09' . rand(10000000, 99999999),
+            'code' => 'KHTEST-'.uniqid(), 'name' => 'KH Test Edit',
+            'phone' => '09'.rand(10000000, 99999999),
             'debt_amount' => $debt, 'total_spent' => 0, 'is_customer' => true,
         ]);
     }
@@ -127,7 +127,7 @@ class InvoiceEditRouteTest extends TestCase
                     'price' => 150000,
                     'discount' => 0,
                     'serial_ids' => [],
-                ]
+                ],
             ],
             'payment_method' => 'Tiền mặt',
         ];
@@ -158,13 +158,13 @@ class InvoiceEditRouteTest extends TestCase
                     'price' => 150000,
                     'discount' => 0,
                     'serial_ids' => [],
-                ]
+                ],
             ],
         ];
 
         // Standard web request
         $response = $this->actingAs($user)->put("/invoices/{$invoice->id}", $payload);
-        $response->assertRedirect('/');
+        $response->assertForbidden();
 
         // JSON request
         $responseJson = $this->actingAs($user)->putJson("/invoices/{$invoice->id}", $payload);
@@ -191,7 +191,7 @@ class InvoiceEditRouteTest extends TestCase
     public function test_product_code_fallback_chain_works(): void
     {
         $user = $this->userWithPermission(['invoices.view']);
-        
+
         // 4.1: Product has SKU
         $product1 = $this->product('SP001', 'BARCODE001');
         $customer1 = $this->customer();
@@ -210,7 +210,7 @@ class InvoiceEditRouteTest extends TestCase
         $customer = $this->customer();
         $invoice = $this->createInvoice($product, $customer, 1, 150000, 150000);
 
-        $response = $this->actingAs($user)->get("/invoices");
+        $response = $this->actingAs($user)->get('/invoices');
         $response->assertOk();
         $response->assertInertia(function (Assert $page) {
             $page->has('invoices.data')
@@ -224,7 +224,7 @@ class InvoiceEditRouteTest extends TestCase
         $user = $this->userWithPermission(['invoices.view', 'orders.create']);
         $product = $this->product('SPDELIVERY');
         $customer = $this->customer();
-        
+
         $invoice = $this->createInvoice($product, $customer, 1, 150000, 150000);
         $invoice->update([
             'is_delivery' => true,
@@ -254,8 +254,8 @@ class InvoiceEditRouteTest extends TestCase
         $product = $this->product('SPNORMAL');
         $customer = $this->customer();
         $invoice = $this->createInvoice($product, $customer, 1, 150000, 150000);
-        
-        $this->assertFalse((bool)$invoice->is_delivery);
+
+        $this->assertFalse((bool) $invoice->is_delivery);
 
         $response = $this->actingAs($user)->get("/orders/create?action=edit&invoice_id={$invoice->id}");
         $response->assertOk();
@@ -307,7 +307,7 @@ class InvoiceEditRouteTest extends TestCase
                     'price' => 150000,
                     'discount' => 0,
                     'serial_ids' => [],
-                ]
+                ],
             ],
             'payment_method' => 'Tiền mặt',
         ];
@@ -343,7 +343,7 @@ class InvoiceEditRouteTest extends TestCase
                     'price' => 150000,
                     'discount' => 0,
                     'serial_ids' => [],
-                ]
+                ],
             ],
             'payment_method' => 'Tiền mặt',
         ];
@@ -360,9 +360,9 @@ class InvoiceEditRouteTest extends TestCase
     public function test_serial_invoice_edit_reassigns_serials_correctly(): void
     {
         $user = $this->userWithPermission(['invoices.edit', 'invoices.view']);
-        
+
         $product = Product::create([
-            'sku' => 'SPSERIAL-' . uniqid(),
+            'sku' => 'SPSERIAL-'.uniqid(),
             'name' => 'Product has serial',
             'cost_price' => 200000,
             'retail_price' => 300000,
@@ -374,23 +374,23 @@ class InvoiceEditRouteTest extends TestCase
 
         $serialA = SerialImei::create([
             'product_id' => $product->id,
-            'serial_number' => 'SERIAL-A-' . uniqid(),
+            'serial_number' => 'SERIAL-A-'.uniqid(),
             'status' => 'sold',
             'cost_price' => 200000,
         ]);
-        
+
         $serialB = SerialImei::create([
             'product_id' => $product->id,
-            'serial_number' => 'SERIAL-B-' . uniqid(),
+            'serial_number' => 'SERIAL-B-'.uniqid(),
             'status' => 'in_stock',
             'cost_price' => 200000,
         ]);
 
         $customer = $this->customer();
-        
+
         // Setup initial invoice with serial A sold
         $invoice = Invoice::create([
-            'code' => 'HDSER-' . uniqid(),
+            'code' => 'HDSER-'.uniqid(),
             'subtotal' => 300000,
             'discount' => 0,
             'total' => 300000,
@@ -430,7 +430,7 @@ class InvoiceEditRouteTest extends TestCase
                     'price' => 300000,
                     'discount' => 0,
                     'serial_ids' => [$serialB->id],
-                ]
+                ],
             ],
             'payment_method' => 'Tiền mặt',
         ];

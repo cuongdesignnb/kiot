@@ -7,6 +7,7 @@ use App\Models\ActivityLog;
 use App\Models\Branch;
 use App\Models\Customer;
 use App\Models\Employee;
+use App\Models\Invoice;
 use App\Models\InvoiceItemSerial;
 use App\Models\Order;
 use App\Models\PriceBook;
@@ -25,6 +26,7 @@ use App\Support\Customers\CustomerGroupSnapshot;
 use App\Support\Filters\FilterableIndex;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 
 class OrderController extends Controller
@@ -146,7 +148,15 @@ class OrderController extends Controller
 
         $invoice = null;
         if ($request->filled('invoice_id')) {
-            $invoice = \App\Models\Invoice::with(['items.product', 'customer', 'creator'])->find($request->invoice_id);
+            $invoice = Invoice::with(['items.product', 'items.serials', 'customer', 'creator'])->find($request->invoice_id);
+            $cancelled = ['đã hủy', 'cancelled', 'canceled', 'void'];
+            if ($invoice && $request->input('action', 'edit') === 'edit'
+                && in_array(mb_strtolower((string) $invoice->status), $cancelled, true)) {
+                return redirect()->route('invoices.index')->with('error', 'Hóa đơn đã hủy, không thể chỉnh sửa.');
+            }
+            if ($invoice && $request->input('action', 'edit') === 'edit') {
+                $this->hydrateInvoiceEditSerials($invoice);
+            }
         }
 
         return Inertia::render('Orders/Create', [
@@ -169,6 +179,56 @@ class OrderController extends Controller
             'confirmBeforeComplete' => Setting::get('order_confirm_before_complete', false),
             'allowOutOfStock' => Setting::get('order_allow_when_out_of_stock', true),
         ]);
+    }
+
+    /**
+     * Provide one canonical serial representation for invoice editing. Legacy
+     * serials can be recovered only when the product appears on exactly one
+     * invoice line; otherwise assigning them would be unsafe.
+     */
+    private function hydrateInvoiceEditSerials(Invoice $invoice): void
+    {
+        $items = $invoice->items;
+        $itemsByProduct = $items->groupBy('product_id');
+        $linkedSerialIds = $items->flatMap(fn ($item) => $item->serials->pluck('serial_imei_id'))
+            ->filter()->unique()->values();
+        $linkedSerials = SerialImei::query()->whereIn('id', $linkedSerialIds)->get()->keyBy('id');
+        $legacySerials = SerialImei::query()
+            ->where('invoice_id', $invoice->id)
+            ->where('status', 'sold')
+            ->get()
+            ->groupBy('product_id');
+
+        foreach ($items as $item) {
+            $editSerials = $item->serials->map(function (InvoiceItemSerial $link) use ($linkedSerials) {
+                $serial = $linkedSerials->get($link->serial_imei_id);
+
+                return [
+                    'id' => (int) $link->serial_imei_id,
+                    'serial_number' => $serial?->serial_number ?? $link->serial_number,
+                    'status' => $serial?->status,
+                    'invoice_id' => $serial?->invoice_id,
+                ];
+            })->values();
+
+            if ($editSerials->isEmpty()) {
+                $legacyForProduct = $legacySerials->get($item->product_id, collect());
+                if ($legacyForProduct->isNotEmpty() && ($itemsByProduct[$item->product_id] ?? collect())->count() !== 1) {
+                    throw ValidationException::withMessages([
+                        'items' => 'Không xác định được Serial/IMEI của từng dòng hóa đơn.',
+                    ]);
+                }
+
+                $editSerials = $legacyForProduct->map(fn (SerialImei $serial) => [
+                    'id' => (int) $serial->id,
+                    'serial_number' => $serial->serial_number,
+                    'status' => $serial->status,
+                    'invoice_id' => $serial->invoice_id,
+                ])->values();
+            }
+
+            $item->setAttribute('edit_serials', $editSerials->all());
+        }
     }
 
     public function store(Request $request)

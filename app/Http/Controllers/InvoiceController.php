@@ -294,6 +294,19 @@ class InvoiceController extends Controller
 
     public function update(Request $request, Invoice $invoice)
     {
+        if (in_array(mb_strtolower((string) $invoice->status), ['đã hủy', 'cancelled', 'canceled', 'void'], true)) {
+            $message = 'Hóa đơn đã hủy, không thể chỉnh sửa.';
+
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'message' => $message,
+                    'errors' => ['invoice' => [$message]],
+                ], 422);
+            }
+
+            return back()->with('error', $message);
+        }
+
         $validated = $request->validate([
             'customer_id' => 'nullable|exists:customers,id',
             'branch_id' => 'nullable',
@@ -307,6 +320,8 @@ class InvoiceController extends Controller
             'delivery_fee' => 'nullable|numeric',
             'payment_method' => 'nullable|string',
             'price_book_name' => 'nullable|string|max:255',
+            'sales_channel' => 'nullable|string|max:255',
+            'seller_employee_id' => 'nullable|integer|exists:employees,id',
             'transaction_date' => 'nullable|date',
             'time_lock_override_reason' => 'nullable|string|min:5|max:500',
             'transaction_date_change_reason' => 'nullable|string|min:5|max:500',
@@ -316,14 +331,31 @@ class InvoiceController extends Controller
             'items.*.price' => 'required|numeric',
             'items.*.discount' => 'nullable|numeric',
             'items.*.note' => 'nullable|string',
+            'items.*.invoice_item_id' => 'nullable|integer|exists:invoice_items,id',
             'items.*.serial_ids' => 'nullable|array',
             'items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
+            'receiver_name' => 'nullable|string|max:255',
+            'receiver_phone' => 'nullable|string|max:255',
+            'receiver_address' => 'nullable|string|max:1000',
+            'receiver_ward' => 'nullable|string|max:255',
+            'receiver_district' => 'nullable|string|max:255',
+            'receiver_city' => 'nullable|string|max:255',
+            'delivery_note' => 'nullable|string|max:1000',
+            'weight' => 'nullable|numeric|min:0',
+            'length' => 'nullable|string|max:255',
+            'width' => 'nullable|string|max:255',
+            'height' => 'nullable|string|max:255',
+            'delivery_service' => 'nullable|string|max:255',
+            'expected_delivery_date' => 'nullable|date',
+            'cod_amount' => 'nullable|numeric|min:0',
+            'other_fees' => 'nullable|numeric',
         ]);
 
         try {
             $payload = $validated;
             $payload['items'] = array_map(function ($it) {
                 return [
+                    'invoice_item_id' => $it['invoice_item_id'] ?? null,
                     'product_id' => $it['product_id'],
                     'quantity' => $it['quantity'],
                     'price' => $it['price'],
