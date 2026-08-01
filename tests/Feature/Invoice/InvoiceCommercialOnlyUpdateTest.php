@@ -6,14 +6,19 @@ use App\Models\CashFlow;
 use App\Models\Customer;
 use App\Models\Employee;
 use App\Models\Invoice;
+use App\Models\InvoiceItem;
+use App\Models\InvoiceItemSerial;
 use App\Models\Product;
+use App\Models\Role;
 use App\Models\SerialImei;
 use App\Models\StockMovement;
+use App\Models\User;
 use App\Models\Warranty;
 use App\Services\InvoiceSaleService;
 use App\Services\InvoiceUpdateService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Validation\ValidationException;
+use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
 
 class InvoiceCommercialOnlyUpdateTest extends TestCase
@@ -175,6 +180,153 @@ class InvoiceCommercialOnlyUpdateTest extends TestCase
         $this->assertSame('Đã hủy', $invoice->fresh()->status);
     }
 
+    public function test_commercial_update_uses_stable_item_ids_for_duplicate_product_lines(): void
+    {
+        [$invoice, $product, $first, $second] = $this->duplicateProductInvoice();
+        $beforeStock = (float) $product->stock_quantity;
+
+        app(InvoiceUpdateService::class)->updateInvoice($invoice, $this->payload($invoice, [
+            ['invoice_item_id' => $first->id, 'product_id' => $product->id, 'quantity' => 1, 'price' => 150000, 'discount' => 0, 'serial_ids' => []],
+            ['invoice_item_id' => $second->id, 'product_id' => $product->id, 'quantity' => 1, 'price' => 200000, 'discount' => 0, 'serial_ids' => []],
+        ], ['subtotal' => 350000, 'total' => 350000]), []);
+
+        $this->assertSame(150000.0, (float) $first->fresh()->price);
+        $this->assertSame(200000.0, (float) $second->fresh()->price);
+        $this->assertSame($beforeStock, (float) $product->fresh()->stock_quantity);
+    }
+
+    public function test_foreign_or_duplicate_item_id_is_rejected_without_mutation(): void
+    {
+        [$invoice, $product, $first, $second] = $this->duplicateProductInvoice();
+        [, , $foreignItem] = $this->duplicateProductInvoice();
+        $beforeStock = (float) $product->stock_quantity;
+
+        foreach ([
+            [
+                ['invoice_item_id' => $foreignItem->id, 'product_id' => $product->id, 'quantity' => 1, 'price' => 150000, 'discount' => 0, 'serial_ids' => []],
+                ['invoice_item_id' => $second->id, 'product_id' => $product->id, 'quantity' => 1, 'price' => 200000, 'discount' => 0, 'serial_ids' => []],
+            ],
+            [
+                ['invoice_item_id' => $first->id, 'product_id' => $product->id, 'quantity' => 1, 'price' => 150000, 'discount' => 0, 'serial_ids' => []],
+                ['invoice_item_id' => $first->id, 'product_id' => $product->id, 'quantity' => 1, 'price' => 200000, 'discount' => 0, 'serial_ids' => []],
+            ],
+        ] as $items) {
+            try {
+                app(InvoiceUpdateService::class)->updateInvoice($invoice->fresh(['items']), $this->payload($invoice, $items), []);
+                $this->fail('Invalid invoice item IDs must be rejected.');
+            } catch (ValidationException $exception) {
+                $this->assertNotEmpty($exception->errors());
+            }
+        }
+
+        $this->assertSame(100000.0, (float) $first->fresh()->price);
+        $this->assertSame(200000.0, (float) $second->fresh()->price);
+        $this->assertSame($beforeStock, (float) $product->fresh()->stock_quantity);
+    }
+
+    public function test_legacy_payload_without_item_id_requires_one_unambiguous_candidate(): void
+    {
+        [$singleInvoice, $singleProduct] = $this->soldOutSerialInvoice();
+        $singleItem = $singleInvoice->items()->firstOrFail();
+        $singlePayload = $this->payload($singleInvoice, [[
+            'product_id' => $singleProduct->id,
+            'quantity' => 3,
+            'price' => 110000,
+            'discount' => 0,
+            'serial_ids' => $singleItem->serials()->pluck('serial_imei_id')->all(),
+        ]], ['subtotal' => 330000, 'total' => 330000]);
+
+        $this->assertTrue(app(InvoiceUpdateService::class)
+            ->buildChangePlan($singleInvoice->fresh(['items']), $singlePayload)['only_commercial_changed']);
+
+        [$duplicateInvoice, $duplicateProduct, $first, $second] = $this->duplicateProductInvoice();
+        try {
+            app(InvoiceUpdateService::class)->updateInvoice($duplicateInvoice, $this->payload($duplicateInvoice, [
+                ['product_id' => $duplicateProduct->id, 'quantity' => 1, 'price' => 150000, 'discount' => 0, 'serial_ids' => []],
+                ['product_id' => $duplicateProduct->id, 'quantity' => 1, 'price' => 200000, 'discount' => 0, 'serial_ids' => []],
+            ], ['subtotal' => 350000, 'total' => 350000]), []);
+            $this->fail('Ambiguous legacy item matching must be rejected.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('items.0.invoice_item_id', $exception->errors());
+        }
+    }
+
+    public function test_legacy_serials_are_hydrated_for_edit_and_keep_commercial_path(): void
+    {
+        [$invoice, $product, , $serials] = $this->soldOutSerialInvoice();
+        $item = $invoice->items()->firstOrFail();
+        InvoiceItemSerial::query()->where('invoice_item_id', $item->id)->delete();
+        $user = $this->userWithPermission(['orders.create']);
+
+        $this->actingAs($user)->get('/orders/create?action=edit&invoice_id='.$invoice->id)
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Orders/Create')
+                ->where('invoice.items.0.edit_serials.0.id', $serials[0]->id)
+                ->where('invoice.items.0.edit_serials.0.status', 'sold'));
+
+        $plan = app(InvoiceUpdateService::class)->buildChangePlan($invoice->fresh(['items']), $this->payload($invoice, [[
+            'invoice_item_id' => $item->id,
+            'product_id' => $product->id,
+            'quantity' => 3,
+            'price' => 3600000,
+            'discount' => 0,
+            'serial_ids' => collect($serials)->pluck('id')->all(),
+        ]], ['subtotal' => 10800000, 'total' => 10800000]));
+
+        $this->assertTrue($plan['only_commercial_changed']);
+        $this->assertFalse($plan['requires_inventory_replay']);
+
+        $serialBefore = collect($serials)->mapWithKeys(fn (SerialImei $serial) => [$serial->id => [
+            'status' => $serial->fresh()->status,
+            'invoice_id' => $serial->fresh()->invoice_id,
+            'sold_cost_price' => (float) $serial->fresh()->sold_cost_price,
+        ]])->all();
+        app(InvoiceUpdateService::class)->updateInvoice($invoice->fresh(['items']), $this->payload($invoice, [[
+            'invoice_item_id' => $item->id,
+            'product_id' => $product->id,
+            'quantity' => 3,
+            'price' => 3600000,
+            'discount' => 0,
+            'serial_ids' => collect($serials)->pluck('id')->all(),
+        ]], ['subtotal' => 10800000, 'total' => 10800000]), []);
+
+        $this->assertSame(0.0, (float) $product->fresh()->stock_quantity);
+        foreach ($serialBefore as $serialId => $before) {
+            $fresh = SerialImei::query()->findOrFail($serialId);
+            $this->assertSame($before['status'], $fresh->status);
+            $this->assertSame($before['invoice_id'], $fresh->invoice_id);
+            $this->assertSame($before['sold_cost_price'], (float) $fresh->sold_cost_price);
+        }
+    }
+
+    public function test_ambiguous_legacy_serial_mapping_is_rejected_without_mutation(): void
+    {
+        [$invoice, $product, $first, $second] = $this->duplicateProductInvoice(true);
+        $serial = SerialImei::create([
+            'product_id' => $product->id,
+            'serial_number' => 'IMEI-AMB-'.uniqid(),
+            'status' => 'sold',
+            'invoice_id' => $invoice->id,
+            'cost_price' => 500000,
+            'sold_cost_price' => 500000,
+        ]);
+        $beforeStock = (float) $product->stock_quantity;
+
+        try {
+            app(InvoiceUpdateService::class)->buildChangePlan($invoice->fresh(['items']), $this->payload($invoice, [
+                ['invoice_item_id' => $first->id, 'product_id' => $product->id, 'quantity' => 1, 'price' => 100000, 'discount' => 0, 'serial_ids' => []],
+                ['invoice_item_id' => $second->id, 'product_id' => $product->id, 'quantity' => 1, 'price' => 200000, 'discount' => 0, 'serial_ids' => []],
+            ]));
+            $this->fail('Ambiguous legacy serial mapping must be rejected.');
+        } catch (ValidationException $exception) {
+            $this->assertSame('Không xác định được Serial/IMEI của từng dòng hóa đơn.', $exception->errors()['items'][0]);
+        }
+
+        $this->assertSame('sold', $serial->fresh()->status);
+        $this->assertSame($beforeStock, (float) $product->fresh()->stock_quantity);
+    }
+
     private function soldOutSerialInvoice(float $total = 300000, float $paid = 0): array
     {
         $product = Product::create([
@@ -226,6 +378,65 @@ class InvoiceCommercialOnlyUpdateTest extends TestCase
             'debt_amount' => 0,
             'total_spent' => 0,
             'is_customer' => true,
+        ]);
+    }
+
+    private function duplicateProductInvoice(bool $serialProduct = false): array
+    {
+        $product = Product::create([
+            'sku' => 'SP-COM-DUP-'.uniqid(),
+            'name' => 'Sản phẩm dòng trùng',
+            'cost_price' => 500000,
+            'retail_price' => 200000,
+            'stock_quantity' => 0,
+            'inventory_total_cost' => 0,
+            'is_active' => true,
+            'has_serial' => $serialProduct,
+        ]);
+        $customer = $this->customer();
+        $invoice = Invoice::create([
+            'code' => 'HD-COM-DUP-'.uniqid(),
+            'customer_id' => $customer->id,
+            'status' => 'Hoàn thành',
+            'subtotal' => 300000,
+            'discount' => 0,
+            'total' => 300000,
+            'customer_paid' => 0,
+            'payment_method' => 'Tiền mặt',
+        ]);
+        $first = InvoiceItem::create([
+            'invoice_id' => $invoice->id,
+            'product_id' => $product->id,
+            'quantity' => 1,
+            'price' => 100000,
+            'discount' => 0,
+            'subtotal' => 100000,
+            'cost_price' => 500000,
+        ]);
+        $second = InvoiceItem::create([
+            'invoice_id' => $invoice->id,
+            'product_id' => $product->id,
+            'quantity' => 1,
+            'price' => 200000,
+            'discount' => 0,
+            'subtotal' => 200000,
+            'cost_price' => 500000,
+        ]);
+        $customer->update(['debt_amount' => 300000]);
+
+        return [$invoice->fresh(['items']), $product, $first, $second];
+    }
+
+    private function userWithPermission(array $permissions): User
+    {
+        $name = 'role-commercial-edit-'.uniqid();
+        $role = Role::create(['name' => $name, 'display_name' => $name, 'permissions' => $permissions]);
+
+        return User::create([
+            'name' => 'Commercial edit user',
+            'email' => 'commercial-edit-'.uniqid().'@test.local',
+            'password' => bcrypt('pw'),
+            'role_id' => $role->id,
         ]);
     }
 

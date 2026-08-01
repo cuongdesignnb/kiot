@@ -70,6 +70,29 @@ cả route mở chỉnh sửa và API update, trả thông báo tiếng Việt.
 | Browser smoke | Edit form opens for a completed invoice with persisted lines, payment and update CTA | Local `orders/create?action=edit&invoice_id=388` rendered correctly | PASS |
 | Frontend production build | Vite build succeeds | 924 modules transformed | PASS |
 
+### Review-blocker closure evidence (local MySQL QA only)
+
+| Case | Expected | Actual | Result |
+| --- | --- | --- | --- |
+| Duplicate product/quantity lines | Update only the line selected by `invoice_item_id` | Target line price changed; the other line and stock stayed unchanged | PASS |
+| Foreign or duplicate item ID | Validation error with no mutation | Rejected before persistence | PASS |
+| Legacy request without item ID | Fallback only for exactly one candidate | Unique candidate passes; ambiguous duplicate lines are rejected | PASS |
+| Legacy sold Serial/IMEI | Edit route provides canonical serials and price-only update preserves serial/cost/stock | `edit_serials` hydrated; serial status, invoice link, sold cost and stock asserted unchanged | PASS |
+| Ambiguous legacy serial | No guessed assignment and no mutation | Vietnamese validation error is returned | PASS |
+
+`InvoiceCommercialOnlyUpdateTest`: 10 passed / 77 assertions. The regression fixture
+uses a new serial SKU with equivalent characteristics; no production invoice (including
+cancelled invoice 500) was read or changed.
+
+Edit UI now sends `invoice_item_id` with each current line, uses canonical `edit_serials`
+before legacy `serials`, and hydrates the seller from `created_by`. The backend rejects a
+foreign/duplicate item ID, an item product/quantity/serial mismatch, and ambiguous legacy
+line or serial matching before mutation.
+
+Browser smoke on local QA (`127.0.0.1:8082`, completed local invoice 388): the edit form
+rendered its seller selector and `CẬP NHẬT HÓA ĐƠN` CTA with persisted lines and a sold
+serial. No browser validation alert was used. This local fixture is not production data.
+
 `InvoiceEditRouteTest` had 10 passing tests and one pre-existing local-policy
 expectation mismatch: the standard HTML permission request returned 403 while
 the legacy test expects a redirect. The route permission middleware is unchanged

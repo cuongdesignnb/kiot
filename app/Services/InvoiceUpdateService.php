@@ -753,6 +753,14 @@ class InvoiceUpdateService
                 && ($itemsByProduct[$item->product_id] ?? collect())->count() === 1) {
                 $linked[(int) $item->id] = $legacyByProduct->get($item->product_id, []);
             }
+
+            if (! array_key_exists((int) $item->id, $linked)
+                && ($itemsByProduct[$item->product_id] ?? collect())->count() > 1
+                && ! empty($legacyByProduct->get($item->product_id, []))) {
+                throw ValidationException::withMessages([
+                    'items' => 'Không xác định được Serial/IMEI của từng dòng hóa đơn.',
+                ]);
+            }
         }
 
         return $linked;
@@ -761,6 +769,7 @@ class InvoiceUpdateService
     /** @return array<int, array<string, mixed>> */
     private function assertCommercialPayloadPreservesInventory(Invoice $invoice, array $payload): array
     {
+        $serialIdsByItem = $this->serialIdsByInvoiceItem($invoice, $invoice->items);
         if ($this->inventoryIdentityCanonical($invoice) !== $this->payloadInventoryIdentityCanonical($payload['items'] ?? [])) {
             throw ValidationException::withMessages([
                 'items' => 'Hàng hóa, số lượng hoặc Serial/IMEI đã thay đổi. Vui lòng lưu theo luồng cập nhật tồn kho.',
@@ -771,9 +780,17 @@ class InvoiceUpdateService
         $usedItemIds = [];
         $resolved = [];
         foreach ($payload['items'] as $index => $payloadItem) {
-            $itemId = isset($payloadItem['invoice_item_id']) ? (int) $payloadItem['invoice_item_id'] : 0;
+            $hasItemId = array_key_exists('invoice_item_id', $payloadItem)
+                && $payloadItem['invoice_item_id'] !== null
+                && $payloadItem['invoice_item_id'] !== '';
+            $itemId = $hasItemId ? (int) $payloadItem['invoice_item_id'] : 0;
             $invoiceItem = $itemId > 0 ? $itemsById->get($itemId) : null;
-            if (! $invoiceItem) {
+            if ($hasItemId && ! $invoiceItem) {
+                throw ValidationException::withMessages([
+                    "items.{$index}.invoice_item_id" => 'Dòng hóa đơn không thuộc hóa đơn đang sửa.',
+                ]);
+            }
+            if (! $hasItemId) {
                 $candidates = $invoice->items->filter(fn (InvoiceItem $item) => ! in_array($item->id, $usedItemIds, true)
                     && (int) $item->product_id === (int) $payloadItem['product_id']
                     && abs((float) $item->quantity - (float) $payloadItem['quantity']) < 0.0001);
@@ -784,9 +801,32 @@ class InvoiceUpdateService
                 }
                 $invoiceItem = $candidates->first();
             }
-            if ((int) $invoiceItem->invoice_id !== (int) $invoice->id) {
+            if (! $invoiceItem || (int) $invoiceItem->invoice_id !== (int) $invoice->id) {
                 throw ValidationException::withMessages([
                     "items.{$index}.invoice_item_id" => 'Dòng hóa đơn không thuộc hóa đơn đang sửa.',
+                ]);
+            }
+            if (in_array((int) $invoiceItem->id, $usedItemIds, true)) {
+                throw ValidationException::withMessages([
+                    "items.{$index}.invoice_item_id" => 'Một dòng hóa đơn không được dùng hai lần trong cùng yêu cầu.',
+                ]);
+            }
+            if ((int) $invoiceItem->product_id !== (int) ($payloadItem['product_id'] ?? 0)) {
+                throw ValidationException::withMessages([
+                    "items.{$index}.product_id" => 'Sản phẩm không khớp với dòng hóa đơn đang sửa.',
+                ]);
+            }
+            if (abs((float) $invoiceItem->quantity - (float) ($payloadItem['quantity'] ?? 0)) >= 0.0001) {
+                throw ValidationException::withMessages([
+                    "items.{$index}.quantity" => 'Số lượng không khớp với dòng hóa đơn đang sửa.',
+                ]);
+            }
+            $payloadSerialIds = collect($payloadItem['serial_ids'] ?? [])
+                ->filter(fn ($id) => $id !== null && $id !== '')
+                ->map(fn ($id) => (int) $id)->unique()->sort()->values()->all();
+            if (($serialIdsByItem[(int) $invoiceItem->id] ?? []) !== $payloadSerialIds) {
+                throw ValidationException::withMessages([
+                    "items.{$index}.serial_ids" => 'Serial/IMEI không khớp với dòng hóa đơn đang sửa.',
                 ]);
             }
             $usedItemIds[] = (int) $invoiceItem->id;
@@ -803,6 +843,12 @@ class InvoiceUpdateService
                 'discount' => $discount,
                 'note' => $payloadItem['note'] ?? null,
             ];
+        }
+
+        if (count($usedItemIds) !== $invoice->items->count()) {
+            throw ValidationException::withMessages([
+                'items' => 'Danh sách dòng hóa đơn không đầy đủ.',
+            ]);
         }
 
         return $resolved;
@@ -827,7 +873,8 @@ class InvoiceUpdateService
         if ($changePlan['date_changed'] && Schema::hasColumn('invoices', 'transaction_date')) {
             $attributes['transaction_date'] = Carbon::parse($payload['transaction_date']);
         }
-        if (array_key_exists('seller_employee_id', $payload)) {
+        if (array_key_exists('seller_employee_id', $payload)
+            && (int) $payload['seller_employee_id'] !== (int) $invoice->created_by) {
             $employee = Employee::query()->whereKey((int) $payload['seller_employee_id'])
                 ->where('is_active', true)->first();
             if (! $employee) {

@@ -71,6 +71,7 @@ const createInitialTab = (index) => ({
     amountPaid: 0,
     note: '',
     receivedByEmployeeId: '',
+    sellerEmployeeId: '',
     orderDate: formatDatetimeLocal(new Date()),
     
     isDelivery: false,
@@ -596,6 +597,9 @@ const save = async () => {
             }));
             payload.customer_paid = moneyNumber(payload.amount_paid);
             payload.payment_method = activeTab.value.paymentMethod || 'Tiền mặt';
+            if (activeTab.value.sellerEmployeeId) {
+                payload.seller_employee_id = activeTab.value.sellerEmployeeId;
+            }
             if (!payload.is_delivery) {
                 payload.cod_amount = 0;
             }
@@ -701,6 +705,7 @@ const selectInvoiceForEdit = (invoice) => {
     activeTab.value.amountPaid = moneyNumber(invoice.customer_paid);
     activeTab.value.note = invoice.note || '';
     activeTab.value.paymentMethod = invoice.payment_method || 'Tiền mặt';
+    activeTab.value.sellerEmployeeId = invoice.created_by ? Number(invoice.created_by) : '';
     
     activeTab.value.deliveryFee = moneyNumber(invoice.delivery_fee);
     activeTab.value.otherFees = moneyNumber(invoice.other_fees);
@@ -718,6 +723,7 @@ const selectInvoiceForEdit = (invoice) => {
     activeTab.value.sizeH = invoice.height || 10;
 
     activeTab.value.items = (invoice.items || []).map(item => ({
+        invoice_item_id: item.id,
         product_id: item.product_id,
         sku: item.product?.sku || '',
         name: item.product?.name || 'Sản phẩm',
@@ -727,9 +733,9 @@ const selectInvoiceForEdit = (invoice) => {
         note: item.note || '',
         stock_quantity: item.product?.stock_quantity || 0,
         has_serial: !!item.product?.has_serial,
-        serial_ids: (item.serials || []).map(serial => serial.serial_imei_id),
-        available_serials: (item.serials || []).map(serial => ({
-            id: serial.serial_imei_id,
+        serial_ids: (item.edit_serials || item.serials || []).map(serial => Number(serial.id ?? serial.serial_imei_id)),
+        available_serials: (item.edit_serials || item.serials || []).map(serial => ({
+            id: Number(serial.id ?? serial.serial_imei_id),
             serial_number: serial.serial_number,
         })),
         subtotal: (Number(item.quantity || 0) * moneyNumber(item.price)) - moneyNumber(item.discount)
@@ -1173,6 +1179,19 @@ onUnmounted(() => {
                                 </option>
                             </select>
                             <p v-if="returnFormError" class="text-[11px] text-red-600 mt-1">{{ returnFormError }}</p>
+                        </div>
+                        <div v-if="activeTab.editing_invoice_id" class="mb-3 rounded border border-blue-100 bg-blue-50 p-2">
+                            <label class="block text-[12px] font-semibold text-gray-700 mb-1">Người bán</label>
+                            <select
+                                v-model="activeTab.sellerEmployeeId"
+                                class="w-full text-[13px] border border-gray-300 rounded px-2 py-1 outline-none focus:border-blue-500 bg-white"
+                            >
+                                <option value="">-- Chọn người bán --</option>
+                                <option v-for="employee in employees" :key="employee.id" :value="employee.id">
+                                    {{ employee.name }}{{ employee.code ? ` (${employee.code})` : '' }}
+                                </option>
+                            </select>
+                            <p v-if="editFormErrors.seller_employee_id" class="text-[11px] text-red-600 mt-1">{{ editFormErrors.seller_employee_id }}</p>
                         </div>
                         <div v-show="activeTab.isDelivery">
                             <div class="flex gap-4 mb-3 mt-3">
