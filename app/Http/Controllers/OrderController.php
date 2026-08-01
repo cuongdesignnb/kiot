@@ -146,7 +146,12 @@ class OrderController extends Controller
 
         $invoice = null;
         if ($request->filled('invoice_id')) {
-            $invoice = \App\Models\Invoice::with(['items.product', 'customer', 'creator'])->find($request->invoice_id);
+            $invoice = \App\Models\Invoice::with(['items.product', 'items.serials', 'customer', 'creator'])->find($request->invoice_id);
+            $cancelled = ['đã hủy', 'cancelled', 'canceled', 'void'];
+            if ($invoice && $request->input('action', 'edit') === 'edit'
+                && in_array(mb_strtolower((string) $invoice->status), $cancelled, true)) {
+                return redirect()->route('invoices.index')->with('error', 'Hóa đơn đã hủy, không thể chỉnh sửa.');
+            }
         }
 
         return Inertia::render('Orders/Create', [

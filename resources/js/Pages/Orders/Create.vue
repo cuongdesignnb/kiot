@@ -122,6 +122,11 @@ const closeTab = (index) => {
 
 const submitRef = ref(false);
 const returnFormError = ref('');
+const editFormErrors = ref({});
+
+const clearEditFormErrors = () => {
+    editFormErrors.value = {};
+};
 
 const defaultReceiverForInvoice = (invoice) => {
     const employee = (props.employees || []).find((candidate) =>
@@ -399,6 +404,10 @@ const toggleSerial = (item, serialId) => {
         ids.splice(idx, 1);
     } else {
         if (ids.length >= qty) {
+            if (activeTab.value?.editing_invoice_id) {
+                editFormErrors.value.items = 'Số serial đã chọn không được vượt quá số lượng bán.';
+                return;
+            }
             alert(`Đã chọn đủ ${qty} Serial/IMEI cho sản phẩm này. Vui lòng tăng số lượng trước khi chọn thêm.`);
             return;
         }
@@ -499,22 +508,32 @@ const orderHasSerialMissing = computed(() =>
     orderItemsSerialStatus.value.some((s) => s.has_serial && !s.ok)
 );
 
-function validateOrderSerialSelection() {
+function validateOrderSerialSelection(showInlineError = false) {
     const invalid = orderItemsSerialStatus.value.filter((s) => s.has_serial && !s.ok);
     if (invalid.length === 0) return true;
     const message = invalid
         .map((i) => `• ${i.name}: đã chọn ${i.selected}/${i.qty} Serial/IMEI`)
         .join('\n');
+    if (showInlineError) {
+        editFormErrors.value = { ...editFormErrors.value, items: `Vui lòng giữ nguyên Serial/IMEI của hóa đơn: ${message}` };
+        return false;
+    }
     alert('Vui lòng chọn đủ Serial/IMEI cho các sản phẩm sau trước khi lưu đơn:\n' + message);
     return false;
 }
 
 const save = async () => {
+    clearEditFormErrors();
+    const isEditing = !!activeTab.value.editing_invoice_id;
     if (activeTab.value.items.length === 0) {
+        if (isEditing) {
+            editFormErrors.value = { items: 'Hóa đơn phải có ít nhất một hàng hóa.' };
+            return;
+        }
         alert("Vui lòng chọn ít nhất 1 hàng hóa.");
         return;
     }
-    if (!validateOrderSerialSelection()) return;
+    if (!validateOrderSerialSelection(isEditing)) return;
     if (activeTab.value.status === 'return' && !activeTab.value.receivedByEmployeeId) {
         returnFormError.value = 'Vui lòng chọn nhân viên đang hoạt động chịu trách nhiệm nhận hàng trả.';
         return;
@@ -524,7 +543,6 @@ const save = async () => {
     activeTab.value.idempotencyKey ||= crypto.randomUUID();
     try {
         const isReturn = activeTab.value.status === 'return';
-        const isEditing = !!activeTab.value.editing_invoice_id;
         const payload = {
             status: activeTab.value.status,
             customer_id: activeTab.value.selectedCustomer?.id || null,
@@ -568,10 +586,12 @@ const save = async () => {
         if (isEditing) {
             // Remap items fields for backend validation (qty → quantity)
             payload.items = payload.items.map(item => ({
+                invoice_item_id: item.invoice_item_id || null,
                 product_id: item.product_id,
                 quantity: Number(item.qty || item.quantity || 0),
                 price: moneyNumber(item.price),
                 discount: moneyNumber(item.discount),
+                note: item.note || null,
                 serial_ids: item.serial_ids || [],
             }));
             payload.customer_paid = moneyNumber(payload.amount_paid);
@@ -588,8 +608,7 @@ const save = async () => {
                 },
                 onError: (errors) => {
                     submitRef.value = false;
-                    const firstError = Object.values(errors)[0];
-                    if (firstError) alert(firstError);
+                    editFormErrors.value = errors || {};
                 },
                 onFinish: () => {
                     submitRef.value = false;
@@ -609,6 +628,11 @@ const save = async () => {
         }
         submitRef.value = false;
     } catch (e) {
+        if (isEditing) {
+            editFormErrors.value = { form: 'Không thể cập nhật hóa đơn. Vui lòng kiểm tra lại dữ liệu.' };
+            submitRef.value = false;
+            return;
+        }
         alert("Có lỗi xảy ra, vui lòng kiểm tra lại dữ liệu.");
         submitRef.value = false;
     }
@@ -643,6 +667,7 @@ const selectInvoiceForReturn = (invoice) => {
     activeTab.value.selectedPriceBookName = invoice.price_book_name || 'Bảng giá chung';
     activeTab.value.discount = invoice.discount || 0;
     activeTab.value.items = (invoice.items || []).map(item => ({
+        invoice_item_id: item.id,
         product_id: item.product_id,
         sku: item.product?.sku || '',
         name: item.product?.name || 'Sản phẩm',
@@ -699,7 +724,14 @@ const selectInvoiceForEdit = (invoice) => {
         qty: item.quantity,
         price: moneyNumber(item.price),
         discount: moneyNumber(item.discount),
+        note: item.note || '',
         stock_quantity: item.product?.stock_quantity || 0,
+        has_serial: !!item.product?.has_serial,
+        serial_ids: (item.serials || []).map(serial => serial.serial_imei_id),
+        available_serials: (item.serials || []).map(serial => ({
+            id: serial.serial_imei_id,
+            serial_number: serial.serial_number,
+        })),
         subtotal: (Number(item.quantity || 0) * moneyNumber(item.price)) - moneyNumber(item.discount)
     }));
 };
@@ -818,6 +850,9 @@ onUnmounted(() => {
         <div v-if="usePage().props.flash?.success" class="bg-green-500 text-white px-4 py-2 text-sm flex items-center gap-2 flex-shrink-0 z-[60]">
             <svg class="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
             {{ usePage().props.flash.success }}
+        </div>
+        <div v-if="editFormErrors.form" class="bg-red-500 text-white px-4 py-2 text-sm flex items-center gap-2 flex-shrink-0 z-[60]">
+            {{ editFormErrors.form }}
         </div>
         <!-- Header POS (Blue) -->
         <header class="bg-[#0052a3] text-white px-2 h-[48px] flex items-center justify-between flex-shrink-0">
@@ -969,6 +1004,7 @@ onUnmounted(() => {
                                 </td>
                                 <td class="p-3 text-right font-medium text-gray-800">
                                     <MoneyInput v-model="activeTab.items[index].price" :min="0" input-class="w-24 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-right outline-none bg-transparent" />
+                                    <p v-if="editFormErrors[`items.${index}.price`]" class="mt-1 text-[11px] text-red-600 whitespace-normal text-right">{{ editFormErrors[`items.${index}.price`] }}</p>
                                 </td>
                                 <td class="p-3 text-right font-bold text-gray-800 pr-4">{{ formatCurrency(item.subtotal) }}</td>
                             </tr>
@@ -984,11 +1020,13 @@ onUnmounted(() => {
 
                 <!-- Footer sums Desktop (Left panel bottom) -->
                 <div class="h-[140px] border-t border-gray-200 flex flex-shrink-0 bg-white">
-                    <div class="w-1/2 p-3 border-r border-gray-200">
+                    <div class="w-1/2 p-3 border-r border-gray-200 relative">
                         <div class="flex items-start gap-2 h-full text-gray-500">
                             <i class="fas fa-pencil-alt mt-1.5 opacity-60"></i>
                             <textarea v-model="activeTab.note" class="w-full h-full resize-none outline-none text-[13px] hover:bg-gray-50 focus:bg-white p-1 rounded transition-colors text-gray-700" placeholder="Ghi chú đơn hàng"></textarea>
+                            <p v-if="editFormErrors.note" class="absolute text-[11px] text-red-600 bottom-1 left-7">{{ editFormErrors.note }}</p>
                         </div>
+                        <p v-if="editFormErrors.items" class="absolute text-[11px] text-red-600 bottom-1 left-7 right-2">{{ editFormErrors.items }}</p>
                     </div>
                     <div class="w-1/2 px-4 py-3 flex flex-col justify-between text-[13px] font-medium text-gray-700">
                         <div class="flex justify-between items-center mb-1">
@@ -1110,6 +1148,7 @@ onUnmounted(() => {
                            <option v-for="pb in priceBooks" :key="pb.id" :value="pb.id">{{ pb.name }}</option>
                        </select>
                     </div>
+                    <p v-if="editFormErrors.customer_id" class="mt-1 text-[11px] text-red-600">{{ editFormErrors.customer_id }}</p>
                 </div>
 
                 <!-- Address & Package Info Scrollable Area -->
@@ -1178,6 +1217,7 @@ onUnmounted(() => {
                            <MoneyInput v-model="activeTab.amountPaid" :min="0" input-class="w-full text-right outline-none bg-transparent font-bold text-gray-800" />
                        </div>
                     </div>
+                    <p v-if="editFormErrors.customer_paid" class="-mt-2 mb-2 text-right text-[11px] text-red-600">{{ editFormErrors.customer_paid }}</p>
                     <div v-if="activeTab.isDelivery" class="flex justify-between items-center mb-3">
                        <span class="font-bold text-gray-700">Thu hộ tiền (COD)</span>
                        <div class="flex items-center gap-3">
