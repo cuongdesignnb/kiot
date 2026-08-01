@@ -297,7 +297,7 @@ class PosController extends Controller
                 'branch_id' => 'nullable|exists:branches,id',
                 'seller_key' => 'nullable|string',
                 'employee_id' => 'nullable|exists:employees,id',
-                'received_by_employee_id' => 'nullable|integer|exists:employees,id',
+                'received_by_employee_id' => 'required|integer|exists:employees,id',
                 'sale_time' => 'nullable|date',
                 'payment_method' => 'nullable|string|in:cash,transfer',
                 'bank_account_info' => 'nullable|string',
@@ -325,6 +325,10 @@ class PosController extends Controller
                 'exchange.items.*.discount' => 'nullable|numeric|min:0',
                 'exchange.items.*.serial_ids' => 'nullable|array',
                 'exchange.items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
+            ], [
+                'received_by_employee_id.required' => 'Vui lòng chọn nhân viên nhận trả.',
+                'received_by_employee_id.integer' => 'Nhân viên nhận trả không hợp lệ.',
+                'received_by_employee_id.exists' => 'Nhân viên nhận trả không tồn tại.',
             ]);
 
             try {

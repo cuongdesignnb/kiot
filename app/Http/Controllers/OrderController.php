@@ -146,7 +146,7 @@ class OrderController extends Controller
 
         $invoice = null;
         if ($request->filled('invoice_id')) {
-            $invoice = \App\Models\Invoice::with(['items.product', 'customer'])->find($request->invoice_id);
+            $invoice = \App\Models\Invoice::with(['items.product', 'customer', 'creator'])->find($request->invoice_id);
         }
 
         return Inertia::render('Orders/Create', [
@@ -161,6 +161,10 @@ class OrderController extends Controller
                 ->orderBy('name')
                 ->get(['id', 'name']),
             'invoice' => $invoice,
+            'employees' => Employee::query()
+                ->where('is_active', true)
+                ->orderBy('name')
+                ->get(['id', 'name', 'code']),
             'action' => $request->input('action', 'edit'),
             'confirmBeforeComplete' => Setting::get('order_confirm_before_complete', false),
             'allowOutOfStock' => Setting::get('order_allow_when_out_of_stock', true),

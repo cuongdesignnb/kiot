@@ -6,6 +6,7 @@ use App\Models\CashFlow;
 use App\Models\Category;
 use App\Models\Customer;
 use App\Models\CustomerDebt;
+use App\Models\Employee;
 use App\Models\Invoice;
 use App\Models\OrderReturn;
 use App\Models\Product;
@@ -17,11 +18,19 @@ class ReturnDebtAfterPaidRefundTest extends TestCase
 {
     use DatabaseTransactions;
 
+    private function receiverId(): int
+    {
+        return Employee::firstOrCreate(
+            ['code' => 'NV-PAID-REFUND-TEST'],
+            ['name' => 'Receiver Paid Refund', 'is_active' => true],
+        )->id;
+    }
+
     private function admin(): User
     {
         return User::create([
             'name' => 'Admin Paid Refund',
-            'email' => 'admin-paid-refund-' . uniqid() . '@test.local',
+            'email' => 'admin-paid-refund-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
             'role_id' => null,
         ]);
@@ -30,9 +39,9 @@ class ReturnDebtAfterPaidRefundTest extends TestCase
     private function customer(): Customer
     {
         return Customer::create([
-            'code' => 'KH-PR-' . uniqid(),
+            'code' => 'KH-PR-'.uniqid(),
             'name' => 'Customer Paid Refund',
-            'phone' => '090' . rand(1000000, 9999999),
+            'phone' => '090'.rand(1000000, 9999999),
             'is_customer' => true,
             'debt_amount' => 0,
             'total_spent' => 0,
@@ -44,7 +53,7 @@ class ReturnDebtAfterPaidRefundTest extends TestCase
         $category = Category::firstOrCreate(['name' => 'Paid Refund']);
 
         return Product::create([
-            'sku' => 'PR-' . uniqid(),
+            'sku' => 'PR-'.uniqid(),
             'name' => 'Paid Refund Product',
             'cost_price' => 1000000,
             'retail_price' => 19200000,
@@ -82,6 +91,7 @@ class ReturnDebtAfterPaidRefundTest extends TestCase
 
         $this->actingAs($admin)->post(route('returns.store'), [
             'invoice_id' => $invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
             'customer_id' => $customer->id,
             'subtotal' => $total,
             'discount' => 0,
@@ -160,6 +170,7 @@ class ReturnDebtAfterPaidRefundTest extends TestCase
             ->from(route('returns.index'))
             ->post(route('returns.store'), [
                 'invoice_id' => $invoice->id,
+                'received_by_employee_id' => $this->receiverId(),
                 'customer_id' => $customer->id,
                 'subtotal' => 19200000,
                 'total' => 19200000,

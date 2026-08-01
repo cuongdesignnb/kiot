@@ -89,12 +89,6 @@ class OrderReturnController extends Controller
 
             $resolver = app(\App\Support\Reports\SellerResolver::class);
             $ret->setAttribute('original_seller_name', $resolver->displayNameForInvoice($ret->invoice));
-            $ret->setAttribute(
-                'default_receiver_employee_id',
-                $ret->invoice?->created_by && $ret->invoice?->creator?->is_active
-                    ? (int) $ret->invoice->created_by
-                    : null
-            );
             $ret->setAttribute('received_by_name', $ret->received_by_name ?: $ret->receivedByEmployee?->name);
         }
 
@@ -206,7 +200,7 @@ class OrderReturnController extends Controller
             'total' => 'required|numeric',
             'paid_to_customer' => 'nullable|numeric',
             'note' => 'nullable|string',
-            'received_by_employee_id' => 'nullable|integer|exists:employees,id',
+            'received_by_employee_id' => 'required|integer|exists:employees,id',
             'order_date' => 'nullable|date',
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|exists:products,id',
@@ -216,6 +210,10 @@ class OrderReturnController extends Controller
             'items.*.invoice_item_id' => 'nullable|exists:invoice_items,id',
             'items.*.serial_ids' => 'nullable|array',
             'items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
+        ], [
+            'received_by_employee_id.required' => 'Vui lòng chọn nhân viên nhận trả.',
+            'received_by_employee_id.integer' => 'Nhân viên nhận trả không hợp lệ.',
+            'received_by_employee_id.exists' => 'Nhân viên nhận trả không tồn tại.',
         ]);
 
         // Step 24.6E: backend recomputes subtotal/fee/total from raw inputs.

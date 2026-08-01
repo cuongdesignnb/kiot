@@ -150,3 +150,53 @@ Migration is additive and reversible. It is nullable by design for legacy return
 2. Deploy the previous application version.
 3. If schema rollback is approved separately, run the migration `down` in the normal release process; it drops only the two new nullable receiver fields.
 4. Do not backfill or rewrite legacy returns during rollback.
+
+## Main return creation flow gate (PR #38)
+
+The original review blocker was that /returns linked to /orders/create?action=return while only the POS flow had been updated. The blocker is now closed:
+
+- OrderController::create passes active employees as id, name, and code, and eager-loads the source invoice creator.
+- Orders/Create.vue renders the receiver selector only in return mode, excludes inactive employees, defaults to the source invoice seller when active, and sends received_by_employee_id to POST /returns.
+- Missing receiver is blocked inline with Vietnamese text; no browser validation alert is used.
+- Interactive POST /returns and POS return/exchange require an integer existing employee ID; the service still enforces active status.
+- The unused legacy default_receiver_employee_id index attribute was removed. Legacy rows are not silently assigned.
+
+### Fresh MySQL QA database
+
+The browser run used a disposable MySQL 8.0 container/database named kiot_pr38_qa, isolated from production. Repository migrations ran from an empty database through 2026_08_01_000000_add_receiver_fields_to_returns_table; migration count was 180 and no migration was added for QA. Seed data was limited to one admin, one branch, four employees (three active, one inactive), one customer, one product, and one source invoice.
+
+Read-only schema evidence:
+
+  categories exists                         YES
+  categories.deleted_at exists              YES
+  customers.status exists                   YES
+  receiver migration applied                YES
+  production database accessed              NO
+
+### Main-flow manual QA evidence
+
+| Case | EXPECTED | ACTUAL | PASS/FAIL |
+|---|---|---|---|
+| /returns to Trả hàng | Opens /orders/create?action=return without schema error | Opened successfully on fresh MySQL QA; no categories.deleted_at error | PASS |
+| Receiver selector | Visible in return mode and contains all active employees only | Listed NV-QA-01, NV-QA-02, NV-QA-03; NV-QA-04 inactive employee absent | PASS |
+| Source seller default | Active source seller is the initial receiver candidate | QA Seller Active (NV-QA-01) was selected from invoice HD-QA-RETURN-001 | PASS |
+| Missing receiver | Submit is blocked inline and creates no return | Clearing receiver and submitting showed the Vietnamese inline message; no browser dialog; draft remained | PASS |
+| Return draft | Product, quantity, note, and payment remain intact while receiver is changed | Product QA Return Product, quantity 1, note QA purchase return note, payment 20 remained in the form | PASS |
+| Create with another active receiver | Return succeeds and receiver persists | Selected QA Receiver Active (NV-QA-03), created return TH2026080109024012, and reload showed receiver QA Receiver Active | PASS |
+| Attribution invariant | Seller and creator remain separate from receiver | Show page displayed seller QA Seller Active, receiver QA Receiver Active, creator QA Admin, source invoice unchanged | PASS |
+| Browser validation alert | No browser alert for validation | getJsDialog returned none; validation was inline | PASS |
+
+### Automated evidence after blocker fix
+
+- ReturnReceiverSellerCreatorContractTest: PASS, 10 tests / 39 assertions.
+- Order-return targeted suite (Step232, Step246E, RR11, RR08): PASS, 30 tests / 101 assertions.
+- POS targeted suite (Step246PosQuickReturnTest, Step246BPosReturnExchangeTest): PASS, 43 tests / 195 assertions.
+- Reports + RR06 debt + paid-refund suite: PASS as part of the clean-database run.
+- Combined clean disposable MySQL target run: PASS, 147 tests / 604 assertions.
+- npm run build: PASS.
+- php vendor/bin/pint --test on changed PHP: PASS.
+- PHP lint on changed PHP: PASS (only existing missing OCI/Firebird extension startup warnings).
+- git diff --check: PASS.
+- GitHub Actions run after push: pending until the new commit is pushed; the prior failure was routes/web.php Pint style and was fixed with php vendor/bin/pint routes/web.php.
+
+Migration status: MIGRATION=YES (the receiver migration is part of PR #38); BACKFILL=NO. No production schema/data command was run.

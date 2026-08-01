@@ -77,6 +77,20 @@ class ReturnReceiverSellerCreatorContractTest extends TestCase
         ]);
     }
 
+    private function httpReturnPayload(Product $product): array
+    {
+        return [
+            'subtotal' => 20,
+            'total' => 20,
+            'paid_to_customer' => 0,
+            'items' => [[
+                'product_id' => $product->id,
+                'qty' => 1,
+                'price' => 20,
+            ]],
+        ];
+    }
+
     public function test_migration_adds_nullable_receiver_columns(): void
     {
         $this->assertTrue(Schema::hasColumn('returns', 'received_by_employee_id'));
@@ -161,5 +175,91 @@ class ReturnReceiverSellerCreatorContractTest extends TestCase
 
         $this->assertSame('Source seller B', app(SellerResolver::class)->displayNameForInvoice($return->invoice));
         $this->assertNotSame($return->created_by_name, app(SellerResolver::class)->displayNameForInvoice($return->invoice));
+    }
+
+    public function test_orders_create_exposes_active_receiver_employees_and_source_seller(): void
+    {
+        $admin = $this->admin();
+        $seller = $this->employee('Source seller B');
+        $inactive = $this->employee('Inactive receiver', false);
+        $invoice = Invoice::create([
+            'code' => 'HD-ORDER-'.uniqid(),
+            'created_by' => $seller->id,
+            'seller_name' => 'Source seller snapshot',
+            'subtotal' => 0,
+            'total' => 0,
+            'status' => 'completed',
+        ]);
+
+        $response = $this->actingAs($admin)->get(route('orders.create', [
+            'action' => 'return',
+            'invoice_id' => $invoice->id,
+        ]));
+
+        $response->assertOk()
+            ->assertSee($seller->code, false)
+            ->assertDontSee($inactive->code, false)
+            ->assertSee($invoice->code, false);
+    }
+
+    public function test_post_returns_requires_receiver_without_mutation(): void
+    {
+        $admin = $this->admin();
+        $product = $this->product();
+        $before = OrderReturn::count();
+
+        $response = $this->actingAs($admin)->postJson(route('returns.store'), $this->httpReturnPayload($product));
+
+        $response->assertStatus(422)->assertJsonValidationErrors('received_by_employee_id');
+        $this->assertSame($before, OrderReturn::count());
+    }
+
+    public function test_post_returns_persists_active_receiver_snapshot(): void
+    {
+        $admin = $this->admin();
+        $receiver = $this->employee('Receiver C');
+        $product = $this->product();
+        $payload = $this->httpReturnPayload($product);
+        $payload['received_by_employee_id'] = $receiver->id;
+
+        $response = $this->actingAs($admin)->postJson(route('returns.store'), $payload);
+
+        $response->assertOk();
+        $return = OrderReturn::latest('id')->first();
+        $this->assertSame($receiver->id, $return->received_by_employee_id);
+        $this->assertSame('Receiver C', $return->received_by_name);
+    }
+
+    public function test_pos_return_exchange_requires_receiver(): void
+    {
+        $admin = $this->admin();
+        $before = OrderReturn::count();
+
+        $response = $this->actingAs($admin)->postJson('/api/pos/return-exchange', []);
+
+        $response->assertStatus(422)->assertJsonValidationErrors('received_by_employee_id');
+        $this->assertSame($before, OrderReturn::count());
+    }
+
+    public function test_cancelled_return_receiver_update_is_rejected_without_mutation(): void
+    {
+        $admin = $this->admin();
+        $receiver = $this->employee('Receiver C');
+        $return = OrderReturn::create([
+            'code' => 'TH-CANCELLED-'.uniqid(),
+            'status' => 'cancelled',
+            'created_by_name' => 'Creator A',
+            'received_by_employee_id' => null,
+            'received_by_name' => null,
+            'subtotal' => 0,
+            'total' => 0,
+        ]);
+
+        $response = $this->actingAs($admin)->patchJson(route('returns.update-receiver', $return), [
+            'received_by_employee_id' => $receiver->id,
+        ]);
+
+        $response->assertStatus(422)->assertJsonValidationErrors('received_by_employee_id');
+        $this->assertNull($return->fresh()->received_by_employee_id);
     }
 }

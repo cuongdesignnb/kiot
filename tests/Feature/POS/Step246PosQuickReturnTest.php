@@ -4,6 +4,7 @@ namespace Tests\Feature\POS;
 
 use App\Models\Category;
 use App\Models\Customer;
+use App\Models\Employee;
 use App\Models\Invoice;
 use App\Models\InvoiceItemSerial;
 use App\Models\OrderReturn;
@@ -27,50 +28,61 @@ class Step246PosQuickReturnTest extends TestCase
 {
     use DatabaseTransactions;
 
+    private function receiverId(): int
+    {
+        return Employee::firstOrCreate(
+            ['code' => 'NV-246-TEST'],
+            ['name' => 'Receiver 24.6', 'is_active' => true],
+        )->id;
+    }
+
     private function adminUser(): User
     {
         $role = Role::firstOrCreate(['name' => 'admin246'], [
             'display_name' => 'Admin',
-            'permissions'  => ['*'],
-            'is_system'    => true,
+            'permissions' => ['*'],
+            'is_system' => true,
         ]);
+
         return User::factory()->create(['role_id' => $role->id]);
     }
 
     private function userWith(array $perms): User
     {
         $role = Role::create([
-            'name'         => 'role246-' . uniqid(),
+            'name' => 'role246-'.uniqid(),
             'display_name' => 'Test',
-            'permissions'  => $perms,
-            'is_system'    => false,
+            'permissions' => $perms,
+            'is_system' => false,
         ]);
+
         return User::factory()->create(['role_id' => $role->id]);
     }
 
     private function makeProduct(bool $hasSerial = false, int $stock = 10, float $cost = 100000): Product
     {
         $cat = Category::firstOrCreate(['name' => 'Cat 24.6']);
+
         return Product::create([
-            'sku'                  => 'P246-' . uniqid(),
-            'name'                 => 'Product 24.6',
-            'cost_price'           => $cost,
-            'retail_price'         => $cost * 2,
-            'stock_quantity'       => $stock,
+            'sku' => 'P246-'.uniqid(),
+            'name' => 'Product 24.6',
+            'cost_price' => $cost,
+            'retail_price' => $cost * 2,
+            'stock_quantity' => $stock,
             'inventory_total_cost' => $stock * $cost,
-            'is_active'            => true,
-            'has_serial'           => $hasSerial,
-            'category_id'          => $cat->id,
+            'is_active' => true,
+            'has_serial' => $hasSerial,
+            'category_id' => $cat->id,
         ]);
     }
 
     private function makeSerial(Product $product, string $status = 'in_stock'): SerialImei
     {
         return SerialImei::create([
-            'product_id'    => $product->id,
-            'serial_number' => 'SN246-' . uniqid(),
-            'status'        => $status,
-            'cost_price'    => $product->cost_price,
+            'product_id' => $product->id,
+            'serial_number' => 'SN246-'.uniqid(),
+            'status' => $status,
+            'cost_price' => $product->cost_price,
             'original_cost' => $product->cost_price,
         ]);
     }
@@ -78,10 +90,10 @@ class Step246PosQuickReturnTest extends TestCase
     private function makeCustomer(): Customer
     {
         return Customer::create([
-            'code'        => 'KH246-' . uniqid(),
-            'name'        => 'KH 24.6 ' . uniqid(),
-            'phone'       => '0903' . rand(100000, 999999),
-            'email'       => 'kh246-' . uniqid() . '@test.local',
+            'code' => 'KH246-'.uniqid(),
+            'name' => 'KH 24.6 '.uniqid(),
+            'phone' => '0903'.rand(100000, 999999),
+            'email' => 'kh246-'.uniqid().'@test.local',
             'debt_amount' => 0,
             'total_spent' => 0,
             'is_customer' => true,
@@ -92,19 +104,20 @@ class Step246PosQuickReturnTest extends TestCase
     private function sellNormal(User $admin, Customer $customer, Product $product, int $qty, float $price, float $paid): Invoice
     {
         $this->actingAs($admin)->post(route('invoices.store'), [
-            'customer_id'    => $customer->id,
-            'subtotal'       => $qty * $price,
-            'discount'       => 0,
-            'total'          => $qty * $price,
-            'customer_paid'  => $paid,
+            'customer_id' => $customer->id,
+            'subtotal' => $qty * $price,
+            'discount' => 0,
+            'total' => $qty * $price,
+            'customer_paid' => $paid,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => $qty,
-                'price'      => $price,
-                'discount'   => 0,
+                'quantity' => $qty,
+                'price' => $price,
+                'discount' => 0,
             ]],
         ]);
+
         return Invoice::where('customer_id', $customer->id)->latest('id')->first();
     }
 
@@ -112,19 +125,20 @@ class Step246PosQuickReturnTest extends TestCase
     {
         $qty = count($serials);
         $this->actingAs($admin)->post(route('invoices.store'), [
-            'customer_id'    => $customer->id,
-            'subtotal'       => $qty * $price,
-            'discount'       => 0,
-            'total'          => $qty * $price,
-            'customer_paid'  => $paid,
+            'customer_id' => $customer->id,
+            'subtotal' => $qty * $price,
+            'discount' => 0,
+            'total' => $qty * $price,
+            'customer_paid' => $paid,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => $qty,
-                'price'      => $price,
+                'quantity' => $qty,
+                'price' => $price,
                 'serial_ids' => array_map(fn ($s) => $s->id, $serials),
             ]],
         ]);
+
         return Invoice::where('customer_id', $customer->id)->latest('id')->first();
     }
 
@@ -150,14 +164,14 @@ class Step246PosQuickReturnTest extends TestCase
 
         $this->actingAs($admin);
 
-        $byCode = $this->getJson('/api/pos/returnable-invoices?search=' . $invoice->code);
+        $byCode = $this->getJson('/api/pos/returnable-invoices?search='.$invoice->code);
         $byCode->assertOk();
         $this->assertContains($invoice->id, collect($byCode->json())->pluck('id')->all());
 
-        $byName = $this->getJson('/api/pos/returnable-invoices?search=' . urlencode($customer->name));
+        $byName = $this->getJson('/api/pos/returnable-invoices?search='.urlencode($customer->name));
         $this->assertContains($invoice->id, collect($byName->json())->pluck('id')->all());
 
-        $byPhone = $this->getJson('/api/pos/returnable-invoices?search=' . $customer->phone);
+        $byPhone = $this->getJson('/api/pos/returnable-invoices?search='.$customer->phone);
         $this->assertContains($invoice->id, collect($byPhone->json())->pluck('id')->all());
     }
 
@@ -168,7 +182,7 @@ class Step246PosQuickReturnTest extends TestCase
         $product = $this->makeProduct(false, 20, 100000);
         $invoice = $this->sellNormal($admin, $customer, $product, 1, 200000, 200000);
 
-        $res = $this->actingAs($admin)->getJson('/api/pos/returnable-invoices?search=' . urlencode($product->sku));
+        $res = $this->actingAs($admin)->getJson('/api/pos/returnable-invoices?search='.urlencode($product->sku));
 
         $res->assertOk();
         $this->assertContains($invoice->id, collect($res->json())->pluck('id')->all());
@@ -184,7 +198,7 @@ class Step246PosQuickReturnTest extends TestCase
         $invoice = $this->sellSerial($admin, $customer, $product, [$serial], 8000000, 8000000);
 
         $res = $this->actingAs($admin)
-            ->getJson('/api/pos/returnable-invoices?search=' . urlencode($serial->serial_number));
+            ->getJson('/api/pos/returnable-invoices?search='.urlencode($serial->serial_number));
 
         $res->assertOk();
         $this->assertContains($invoice->id, collect($res->json())->pluck('id')->all());
@@ -203,7 +217,7 @@ class Step246PosQuickReturnTest extends TestCase
         $this->assertSame((int) $invoice->id, (int) $serial->fresh()->invoice_id);
 
         $res = $this->actingAs($admin)
-            ->getJson('/api/pos/returnable-invoices?search=' . urlencode($serial->serial_number));
+            ->getJson('/api/pos/returnable-invoices?search='.urlencode($serial->serial_number));
 
         $res->assertOk();
         $this->assertContains($invoice->id, collect($res->json())->pluck('id')->all());
@@ -222,16 +236,17 @@ class Step246PosQuickReturnTest extends TestCase
 
         // Return 1 of 3 first.
         $this->actingAs($admin)->post(route('returns.store'), [
-            'invoice_id'       => $invoice->id,
-            'customer_id'      => $customer->id,
-            'subtotal'         => 200000,
-            'total'            => 200000,
+            'invoice_id' => $invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
+            'customer_id' => $customer->id,
+            'subtotal' => 200000,
+            'total' => 200000,
             'paid_to_customer' => 0,
-            'items'            => [[
-                'product_id'      => $product->id,
+            'items' => [[
+                'product_id' => $product->id,
                 'invoice_item_id' => $invoiceItem->id,
-                'qty'             => 1,
-                'price'           => 200000,
+                'qty' => 1,
+                'price' => 200000,
             ]],
         ])->assertSessionDoesntHaveErrors();
 
@@ -276,22 +291,23 @@ class Step246PosQuickReturnTest extends TestCase
         $stockBefore = (int) $product->stock_quantity;
 
         $payload = [
-            'invoice_id'       => $invoice->id,
-            'customer_id'      => $customer->id,
-            'branch_id'        => $invoice->branch_id,
-            'subtotal'         => 200000,
-            'discount'         => 0,
-            'fee'              => 0,
-            'total'            => 200000,
+            'invoice_id' => $invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
+            'customer_id' => $customer->id,
+            'branch_id' => $invoice->branch_id,
+            'subtotal' => 200000,
+            'discount' => 0,
+            'fee' => 0,
+            'total' => 200000,
             'paid_to_customer' => 200000,
-            'note'             => 'Quick return TC-05',
-            'items'            => [[
-                'product_id'      => $product->id,
-                'qty'             => 1,
-                'price'           => 200000,
-                'discount'        => 0,
+            'note' => 'Quick return TC-05',
+            'items' => [[
+                'product_id' => $product->id,
+                'qty' => 1,
+                'price' => 200000,
+                'discount' => 0,
                 'invoice_item_id' => $invoiceItem->id,
-                'serial_ids'      => [],
+                'serial_ids' => [],
             ]],
         ];
 
@@ -302,7 +318,7 @@ class Step246PosQuickReturnTest extends TestCase
 
         $this->assertDatabaseHas('returns', [
             'invoice_id' => $invoice->id,
-            'total'      => 200000,
+            'total' => 200000,
         ]);
     }
 
@@ -320,15 +336,16 @@ class Step246PosQuickReturnTest extends TestCase
         $countBefore = OrderReturn::count();
 
         $this->actingAs($admin)->post(route('returns.store'), [
-            'invoice_id'       => $invoice->id,
-            'customer_id'      => $customer->id,
-            'subtotal'         => 400000,
-            'total'            => 400000,
+            'invoice_id' => $invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
+            'customer_id' => $customer->id,
+            'subtotal' => 400000,
+            'total' => 400000,
             'paid_to_customer' => 0,
-            'items'            => [[
-                'product_id'      => $product->id,
-                'qty'             => 2, // sold only 1
-                'price'           => 200000,
+            'items' => [[
+                'product_id' => $product->id,
+                'qty' => 2, // sold only 1
+                'price' => 200000,
                 'invoice_item_id' => $invoiceItem->id,
             ]],
         ])->assertSessionHasErrors('items');
@@ -353,17 +370,18 @@ class Step246PosQuickReturnTest extends TestCase
         $countBefore = OrderReturn::count();
 
         $this->actingAs($admin)->post(route('returns.store'), [
-            'invoice_id'       => $invoice->id,
-            'customer_id'      => $customer->id,
-            'subtotal'         => 16000000,
-            'total'            => 16000000,
+            'invoice_id' => $invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
+            'customer_id' => $customer->id,
+            'subtotal' => 16000000,
+            'total' => 16000000,
             'paid_to_customer' => 0,
-            'items'            => [[
-                'product_id'      => $product->id,
-                'qty'             => 2,             // says 2
-                'price'           => 8000000,
+            'items' => [[
+                'product_id' => $product->id,
+                'qty' => 2,             // says 2
+                'price' => 8000000,
                 'invoice_item_id' => $invoiceItem->id,
-                'serial_ids'      => [$sA->id],     // but only sends 1
+                'serial_ids' => [$sA->id],     // but only sends 1
             ]],
         ])->assertSessionHasErrors();
 
@@ -394,17 +412,18 @@ class Step246PosQuickReturnTest extends TestCase
 
         // Try to return on invoice A but pass a serial that belongs to invoice B.
         $this->actingAs($admin)->post(route('returns.store'), [
-            'invoice_id'       => $invoiceA->id,
-            'customer_id'      => $customer->id,
-            'subtotal'         => 8000000,
-            'total'            => 8000000,
+            'invoice_id' => $invoiceA->id,
+            'received_by_employee_id' => $this->receiverId(),
+            'customer_id' => $customer->id,
+            'subtotal' => 8000000,
+            'total' => 8000000,
             'paid_to_customer' => 0,
-            'items'            => [[
-                'product_id'      => $product->id,
-                'qty'             => 1,
-                'price'           => 8000000,
+            'items' => [[
+                'product_id' => $product->id,
+                'qty' => 1,
+                'price' => 8000000,
                 'invoice_item_id' => $invoiceItemA->id,
-                'serial_ids'      => [$sX->id],
+                'serial_ids' => [$sX->id],
             ]],
         ])->assertSessionHasErrors();
 
@@ -428,17 +447,18 @@ class Step246PosQuickReturnTest extends TestCase
         $this->assertEquals('sold', $sA->status);
 
         $this->actingAs($admin)->post(route('returns.store'), [
-            'invoice_id'       => $invoice->id,
-            'customer_id'      => $customer->id,
-            'subtotal'         => 8000000,
-            'total'            => 8000000,
+            'invoice_id' => $invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
+            'customer_id' => $customer->id,
+            'subtotal' => 8000000,
+            'total' => 8000000,
             'paid_to_customer' => 8000000,
-            'items'            => [[
-                'product_id'      => $product->id,
-                'qty'             => 1,
-                'price'           => 8000000,
+            'items' => [[
+                'product_id' => $product->id,
+                'qty' => 1,
+                'price' => 8000000,
                 'invoice_item_id' => $invoiceItem->id,
-                'serial_ids'      => [$sA->id],
+                'serial_ids' => [$sA->id],
             ]],
         ])->assertSessionDoesntHaveErrors();
 
@@ -458,7 +478,7 @@ class Step246PosQuickReturnTest extends TestCase
         $invoice->update(['status' => 'Đã hủy']);
 
         $this->actingAs($admin);
-        $res = $this->getJson('/api/pos/returnable-invoices?search=' . $invoice->code);
+        $res = $this->getJson('/api/pos/returnable-invoices?search='.$invoice->code);
         $res->assertOk();
         $ids = collect($res->json())->pluck('id')->all();
         $this->assertNotContains($invoice->id, $ids);

@@ -3,14 +3,13 @@
 namespace Tests\Feature\OrderReturn;
 
 use App\Models\Category;
-use App\Models\CashFlow;
 use App\Models\Customer;
+use App\Models\Employee;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\OrderReturn;
 use App\Models\Product;
 use App\Models\ReturnItem;
-use App\Models\StockMovement;
 use App\Models\User;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
@@ -34,69 +33,80 @@ class RR11OrderReturnQtyTest extends TestCase
 {
     use DatabaseTransactions;
 
-    private User     $admin;
-    private Product  $product;
+    private function receiverId(): int
+    {
+        return Employee::firstOrCreate(
+            ['code' => 'NV-RR11-TEST'],
+            ['name' => 'Receiver RR11', 'is_active' => true],
+        )->id;
+    }
+
+    private User $admin;
+
+    private Product $product;
+
     private Customer $customer;
-    private Invoice  $invoice;
+
+    private Invoice $invoice;
 
     protected function setUp(): void
     {
         parent::setUp();
 
         $this->admin = User::create([
-            'name'     => 'Admin RR11',
-            'email'    => 'admin-rr11-' . uniqid() . '@test.local',
+            'name' => 'Admin RR11',
+            'email' => 'admin-rr11-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
-            'role_id'  => null,
+            'role_id' => null,
         ]);
 
         $category = Category::firstOrCreate(['name' => 'Cat RR11']);
 
         $this->product = Product::create([
-            'sku'                  => 'PROD-RR11-' . uniqid(),
-            'name'                 => 'Product RR11',
-            'cost_price'           => 100000,
-            'retail_price'         => 200000,
-            'stock_quantity'       => 10,
+            'sku' => 'PROD-RR11-'.uniqid(),
+            'name' => 'Product RR11',
+            'cost_price' => 100000,
+            'retail_price' => 200000,
+            'stock_quantity' => 10,
             'inventory_total_cost' => 10 * 100000,
-            'is_active'            => true,
-            'has_serial'           => false,
-            'category_id'          => $category->id,
+            'is_active' => true,
+            'has_serial' => false,
+            'category_id' => $category->id,
         ]);
 
         $this->customer = Customer::create([
-            'code'         => 'KH-RR11-' . uniqid(),
-            'name'         => 'KH RR11 ' . uniqid(),
-            'phone'        => '090' . rand(1000000, 9999999),
-            'email'        => 'kh-rr11-' . uniqid() . '@test.local',
-            'debt_amount'  => 0,
-            'total_spent'  => 0,
+            'code' => 'KH-RR11-'.uniqid(),
+            'name' => 'KH RR11 '.uniqid(),
+            'phone' => '090'.rand(1000000, 9999999),
+            'email' => 'kh-rr11-'.uniqid().'@test.local',
+            'debt_amount' => 0,
+            'total_spent' => 0,
         ]);
 
         // Tạo Invoice bán 5 sản phẩm
         $this->invoice = Invoice::create([
-            'code'             => 'HD-RR11-' . uniqid(),
-            'customer_id'      => $this->customer->id,
-            'total_amount'     => 5 * 200000,
-            'paid_amount'      => 5 * 200000,
-            'debt_amount'      => 0,
-            'status'           => 'Hoàn thành',
-            'payment_method'   => 'cash',
-            'created_by_name'  => 'Admin',
+            'code' => 'HD-RR11-'.uniqid(),
+            'customer_id' => $this->customer->id,
+            'total_amount' => 5 * 200000,
+            'paid_amount' => 5 * 200000,
+            'debt_amount' => 0,
+            'status' => 'Hoàn thành',
+            'payment_method' => 'cash',
+            'created_by_name' => 'Admin',
         ]);
 
         InvoiceItem::create([
-            'invoice_id'  => $this->invoice->id,
-            'product_id'  => $this->product->id,
-            'quantity'    => 5,
-            'price'       => 200000,
-            'cost_price'  => 100000,
-            'subtotal'    => 5 * 200000,
+            'invoice_id' => $this->invoice->id,
+            'product_id' => $this->product->id,
+            'quantity' => 5,
+            'price' => 200000,
+            'cost_price' => 100000,
+            'subtotal' => 5 * 200000,
         ]);
 
         // Simulate stock after sale: stock was 10, sold 5 → 5 left
         $this->product->update([
-            'stock_quantity'       => 5,
+            'stock_quantity' => 5,
             'inventory_total_cost' => 5 * 100000,
         ]);
     }
@@ -112,16 +122,17 @@ class RR11OrderReturnQtyTest extends TestCase
         $stockBefore = $this->product->stock_quantity;
 
         $response = $this->actingAs($this->admin)->post(route('returns.store'), [
-            'invoice_id'      => $this->invoice->id,
-            'customer_id'     => $this->customer->id,
-            'subtotal'        => 8 * 200000,
-            'total'           => 8 * 200000,
+            'invoice_id' => $this->invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
+            'customer_id' => $this->customer->id,
+            'subtotal' => 8 * 200000,
+            'total' => 8 * 200000,
             'paid_to_customer' => 8 * 200000,
-            'items'           => [
+            'items' => [
                 [
                     'product_id' => $this->product->id,
-                    'qty'        => 8,
-                    'price'      => 200000,
+                    'qty' => 8,
+                    'price' => 200000,
                 ],
             ],
         ]);
@@ -133,9 +144,9 @@ class RR11OrderReturnQtyTest extends TestCase
 
         $this->assertFalse(
             $returnCreated && $this->product->stock_quantity > $stockBefore + 5,
-            "Không được cho trả 8 sản phẩm khi hóa đơn chỉ bán 5. "
-            . "stock trước={$stockBefore}, stock sau={$this->product->stock_quantity}. "
-            . "OrderReturnController KHÔNG validate qty trả vs qty bán."
+            'Không được cho trả 8 sản phẩm khi hóa đơn chỉ bán 5. '
+            ."stock trước={$stockBefore}, stock sau={$this->product->stock_quantity}. "
+            .'OrderReturnController KHÔNG validate qty trả vs qty bán.'
         );
 
         // Nếu system cho trả quá → đây là lỗi
@@ -148,7 +159,7 @@ class RR11OrderReturnQtyTest extends TestCase
                 5,
                 $returnQty,
                 "Tổng qty trả ({$returnQty}) vượt qty bán (5). "
-                . "OrderReturnController thiếu validation so sánh qty trả vs invoice_item.quantity."
+                .'OrderReturnController thiếu validation so sánh qty trả vs invoice_item.quantity.'
             );
         }
     }
@@ -163,16 +174,17 @@ class RR11OrderReturnQtyTest extends TestCase
     {
         // Lần 1: trả 3 → hợp lệ
         $this->actingAs($this->admin)->post(route('returns.store'), [
-            'invoice_id'      => $this->invoice->id,
-            'customer_id'     => $this->customer->id,
-            'subtotal'        => 3 * 200000,
-            'total'           => 3 * 200000,
+            'invoice_id' => $this->invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
+            'customer_id' => $this->customer->id,
+            'subtotal' => 3 * 200000,
+            'total' => 3 * 200000,
             'paid_to_customer' => 3 * 200000,
-            'items'           => [
+            'items' => [
                 [
                     'product_id' => $this->product->id,
-                    'qty'        => 3,
-                    'price'      => 200000,
+                    'qty' => 3,
+                    'price' => 200000,
                 ],
             ],
         ]);
@@ -184,16 +196,17 @@ class RR11OrderReturnQtyTest extends TestCase
 
         // Lần 2: trả 3 → phải FAIL vì chỉ còn 2
         $this->actingAs($this->admin)->post(route('returns.store'), [
-            'invoice_id'      => $this->invoice->id,
-            'customer_id'     => $this->customer->id,
-            'subtotal'        => 3 * 200000,
-            'total'           => 3 * 200000,
+            'invoice_id' => $this->invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
+            'customer_id' => $this->customer->id,
+            'subtotal' => 3 * 200000,
+            'total' => 3 * 200000,
             'paid_to_customer' => 3 * 200000,
-            'items'           => [
+            'items' => [
                 [
                     'product_id' => $this->product->id,
-                    'qty'        => 3,
-                    'price'      => 200000,
+                    'qty' => 3,
+                    'price' => 200000,
                 ],
             ],
         ]);
@@ -207,8 +220,8 @@ class RR11OrderReturnQtyTest extends TestCase
             5,
             $totalReturned,
             "Tổng qty trả ({$totalReturned}) vượt qty bán (5). "
-            . "Lần 1 trả 3, lần 2 trả 3 → tổng 6 > 5. "
-            . "OrderReturnController không kiểm tra qty đã trả trước đó."
+            .'Lần 1 trả 3, lần 2 trả 3 → tổng 6 > 5. '
+            .'OrderReturnController không kiểm tra qty đã trả trước đó.'
         );
     }
 
@@ -222,16 +235,17 @@ class RR11OrderReturnQtyTest extends TestCase
     {
         // Lần 1: trả 3
         $this->actingAs($this->admin)->post(route('returns.store'), [
-            'invoice_id'      => $this->invoice->id,
-            'customer_id'     => $this->customer->id,
-            'subtotal'        => 3 * 200000,
-            'total'           => 3 * 200000,
+            'invoice_id' => $this->invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
+            'customer_id' => $this->customer->id,
+            'subtotal' => 3 * 200000,
+            'total' => 3 * 200000,
             'paid_to_customer' => 3 * 200000,
-            'items'           => [
+            'items' => [
                 [
                     'product_id' => $this->product->id,
-                    'qty'        => 3,
-                    'price'      => 200000,
+                    'qty' => 3,
+                    'price' => 200000,
                 ],
             ],
         ]);
@@ -241,16 +255,17 @@ class RR11OrderReturnQtyTest extends TestCase
 
         // Lần 2: trả 2 (đúng còn lại)
         $this->actingAs($this->admin)->post(route('returns.store'), [
-            'invoice_id'      => $this->invoice->id,
-            'customer_id'     => $this->customer->id,
-            'subtotal'        => 2 * 200000,
-            'total'           => 2 * 200000,
+            'invoice_id' => $this->invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
+            'customer_id' => $this->customer->id,
+            'subtotal' => 2 * 200000,
+            'total' => 2 * 200000,
             'paid_to_customer' => 2 * 200000,
-            'items'           => [
+            'items' => [
                 [
                     'product_id' => $this->product->id,
-                    'qty'        => 2,
-                    'price'      => 200000,
+                    'qty' => 2,
+                    'price' => 200000,
                 ],
             ],
         ]);
@@ -289,16 +304,17 @@ class RR11OrderReturnQtyTest extends TestCase
         $stockBefore = $this->product->stock_quantity;
 
         $this->actingAs($this->admin)->post(route('returns.store'), [
-            'invoice_id'      => $this->invoice->id,
-            'customer_id'     => $this->customer->id,
-            'subtotal'        => 2 * 200000,
-            'total'           => 2 * 200000,
+            'invoice_id' => $this->invoice->id,
+            'received_by_employee_id' => $this->receiverId(),
+            'customer_id' => $this->customer->id,
+            'subtotal' => 2 * 200000,
+            'total' => 2 * 200000,
             'paid_to_customer' => 2 * 200000,
-            'items'           => [
+            'items' => [
                 [
                     'product_id' => $this->product->id,
-                    'qty'        => 2,
-                    'price'      => 200000,
+                    'qty' => 2,
+                    'price' => 200000,
                 ],
             ],
         ]);
@@ -312,14 +328,14 @@ class RR11OrderReturnQtyTest extends TestCase
 
         $this->assertFalse(
             $returnCreated,
-            "Không được tạo phiếu trả hàng khi invoice đã bị hủy. "
-            . "OrderReturnController không kiểm tra invoice.status."
+            'Không được tạo phiếu trả hàng khi invoice đã bị hủy. '
+            .'OrderReturnController không kiểm tra invoice.status.'
         );
 
         $this->assertEquals(
             $stockBefore,
             $this->product->stock_quantity,
-            "Stock không được thay đổi khi trả hàng trên invoice đã hủy."
+            'Stock không được thay đổi khi trả hàng trên invoice đã hủy.'
         );
     }
 }
