@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Invoice;
 
+use App\Models\ActivityLog;
 use App\Models\CashFlow;
 use App\Models\Customer;
 use App\Models\Employee;
@@ -325,6 +326,128 @@ class InvoiceCommercialOnlyUpdateTest extends TestCase
 
         $this->assertSame('sold', $serial->fresh()->status);
         $this->assertSame($beforeStock, (float) $product->fresh()->stock_quantity);
+    }
+
+    public function test_http_commercial_update_recomputes_totals_and_preserves_inventory(): void
+    {
+        [$invoice, $product, $customer, $serials] = $this->soldOutSerialInvoice(0, 0);
+        $sellerA = Employee::create(['code' => 'NV-HTTP-A-'.uniqid(), 'name' => 'Seller A', 'is_active' => true]);
+        $sellerB = Employee::create(['code' => 'NV-HTTP-B-'.uniqid(), 'name' => 'Seller B', 'is_active' => true]);
+        $invoice->update([
+            'created_by' => $sellerA->id,
+            'seller_name' => $sellerA->name,
+            'created_by_name' => 'Creator snapshot',
+        ]);
+        $item = $invoice->items()->firstOrFail();
+        $before = $this->commercialSnapshot($invoice, $product, $serials);
+        $payload = $this->payload($invoice, [[
+            'invoice_item_id' => $item->id,
+            'product_id' => $product->id,
+            'quantity' => 3,
+            'price' => 3600000,
+            'discount' => 0,
+            'serial_ids' => collect($serials)->pluck('id')->all(),
+        ]], [
+            // Deliberately inconsistent values prove the controller/service never
+            // persists money totals supplied by the browser.
+            'subtotal' => 0,
+            'total' => 0,
+            'customer_paid' => 1000000,
+            'seller_employee_id' => $sellerB->id,
+        ]);
+        $user = $this->userWithPermission(['invoices.edit']);
+        $key = 'invoice-http-commercial-'.uniqid();
+
+        $this->actingAs($user)->withHeader('Idempotency-Key', $key)
+            ->put("/invoices/{$invoice->id}", $payload)->assertRedirect();
+
+        $invoice->refresh();
+        $this->assertSame(10800000.0, (float) $invoice->subtotal);
+        $this->assertSame(10800000.0, (float) $invoice->total);
+        $this->assertSame(1000000.0, (float) $invoice->customer_paid);
+        $this->assertSame($sellerB->id, $invoice->created_by);
+        $this->assertSame($sellerB->name, $invoice->seller_name);
+        $this->assertSame('Creator snapshot', $invoice->created_by_name);
+        $this->assertSame(9800000.0, (float) $customer->fresh()->debt_amount);
+        $this->assertSame(1, CashFlow::active()->where('reference_code', $invoice->code)->count());
+        $this->assertTrue(ActivityLog::query()->where('subject_id', $invoice->id)
+            ->where('action', ActivityLog::ACTION_INVOICE_UPDATE)->exists());
+        $this->assertSame($before['stock'], (float) $product->fresh()->stock_quantity);
+        $this->assertSame($before['inventory_total_cost'], (float) $product->fresh()->inventory_total_cost);
+        $this->assertSame($before['product_cost'], (float) $product->fresh()->cost_price);
+        $this->assertSame($before['item_cost'], (float) $item->fresh()->cost_price);
+        $this->assertSame($before['stock_movements'], StockMovement::where('ref_id', $invoice->id)->count());
+        $this->assertSame($before['warranties'], Warranty::where('invoice_code', $invoice->code)->count());
+        foreach ($serials as $serial) {
+            $fresh = $serial->fresh();
+            $this->assertSame('sold', $fresh->status);
+            $this->assertSame($invoice->id, $fresh->invoice_id);
+            $this->assertSame($before['serials'][$serial->id]['sold_at'], optional($fresh->sold_at)->toDateTimeString());
+            $this->assertSame($before['serials'][$serial->id]['sold_cost_price'], (float) $fresh->sold_cost_price);
+        }
+
+        $this->actingAs($user)->withHeader('Idempotency-Key', $key)
+            ->put("/invoices/{$invoice->id}", $payload)->assertRedirect();
+        $this->assertSame(1, CashFlow::active()->where('reference_code', $invoice->code)->count());
+        $this->assertSame(9800000.0, (float) $customer->fresh()->debt_amount);
+    }
+
+    public function test_http_update_rejects_cancelled_invoice_and_inactive_seller_without_mutation(): void
+    {
+        [$invoice, $product, , $serials] = $this->soldOutSerialInvoice();
+        $item = $invoice->items()->firstOrFail();
+        $user = $this->userWithPermission(['invoices.edit']);
+        $payload = $this->payload($invoice, [[
+            'invoice_item_id' => $item->id,
+            'product_id' => $product->id,
+            'quantity' => 3,
+            'price' => 3600000,
+            'discount' => 0,
+            'serial_ids' => collect($serials)->pluck('id')->all(),
+        ]]);
+        $invoice->update(['status' => 'Đã hủy']);
+
+        $this->actingAs($user)->putJson("/invoices/{$invoice->id}", $payload)
+            ->assertStatus(422)
+            ->assertJsonPath('errors.invoice.0', 'Hóa đơn đã hủy, không thể chỉnh sửa.');
+        $this->assertSame(100000.0, (float) $item->fresh()->price);
+        $this->assertSame(0.0, (float) $product->fresh()->stock_quantity);
+
+        $invoice->update(['status' => 'Hoàn thành']);
+        $inactive = Employee::create(['code' => 'NV-INACTIVE-'.uniqid(), 'name' => 'Inactive', 'is_active' => false]);
+        $payload['seller_employee_id'] = $inactive->id;
+        $this->actingAs($user)->putJson("/invoices/{$invoice->id}", $payload)
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('seller_employee_id');
+        $this->assertSame(100000.0, (float) $item->fresh()->price);
+        $this->assertSame(0.0, (float) $product->fresh()->stock_quantity);
+    }
+
+    public function test_http_update_rejects_foreign_and_duplicate_invoice_item_ids(): void
+    {
+        [$invoice, $product, $first, $second] = $this->duplicateProductInvoice();
+        [, , $foreign] = $this->duplicateProductInvoice();
+        $user = $this->userWithPermission(['invoices.edit']);
+
+        foreach ([
+            [
+                ['invoice_item_id' => $foreign->id, 'product_id' => $product->id, 'quantity' => 1, 'price' => 150000, 'discount' => 0, 'serial_ids' => []],
+                ['invoice_item_id' => $second->id, 'product_id' => $product->id, 'quantity' => 1, 'price' => 200000, 'discount' => 0, 'serial_ids' => []],
+            ],
+            [
+                ['invoice_item_id' => $first->id, 'product_id' => $product->id, 'quantity' => 1, 'price' => 150000, 'discount' => 0, 'serial_ids' => []],
+                ['invoice_item_id' => $first->id, 'product_id' => $product->id, 'quantity' => 1, 'price' => 200000, 'discount' => 0, 'serial_ids' => []],
+            ],
+        ] as $items) {
+            $this->actingAs($user)->putJson("/invoices/{$invoice->id}", $this->payload($invoice, $items, [
+                'subtotal' => 350000,
+                'total' => 350000,
+            ]))->assertStatus(422);
+        }
+
+        $this->assertSame(100000.0, (float) $first->fresh()->price);
+        $this->assertSame(200000.0, (float) $second->fresh()->price);
+        $this->assertSame(0.0, (float) $product->fresh()->stock_quantity);
     }
 
     private function soldOutSerialInvoice(float $total = 300000, float $paid = 0): array

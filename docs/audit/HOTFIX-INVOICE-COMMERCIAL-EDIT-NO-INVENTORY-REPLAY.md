@@ -52,6 +52,7 @@ cả route mở chỉnh sửa và API update, trả thông báo tiếng Việt.
 - `resources/js/Pages/Orders/Create.vue`
 - `resources/js/Pages/Invoices/Index.vue`
 - `tests/Feature/Invoice/InvoiceCommercialOnlyUpdateTest.php`
+- `tests/Feature/Invoice/InvoiceEditRouteTest.php`
 - `docs/audit/HOTFIX-INVOICE-COMMERCIAL-EDIT-NO-INVENTORY-REPLAY.md`
 
 ## QA evidence
@@ -99,6 +100,41 @@ the legacy test expects a redirect. The route permission middleware is unchanged
 from the base SHA; this is not caused by the commercial-update path.
 
 Final lint, formatter, diff-check and PR CI evidence are recorded in the PR.
+
+### Final evidence gate — 2026-08-01 (fresh disposable MySQL QA)
+
+Database `kiot_pr39_final_qa_20260801` was created only in the local Docker MySQL
+instance, migrated from an empty schema, and seeded with the minimum admin/partner/
+employee/product fixtures. It is not the existing local database and is not production.
+
+| Case | Expected | Actual | Result |
+| --- | --- | --- | --- |
+| Browser commercial save | Price 3,600,000 × 3; paid 1,000,000; selected seller persists | Redirected to `/invoices`; reload showed total 10,800,000, paid 1,000,000, seller QA Seller B | PASS |
+| Canonical money | Browser-supplied `subtotal`/`total` cannot override line calculation | HTTP test sent both as `0`; service persisted 10,800,000 | PASS |
+| Financial delta | Debt/cashflow match total minus paid and are idempotent | Debt 9,800,000; exactly one cashflow after retry | PASS |
+| Commercial inventory invariants | No new invoice/order, stock replay, cost rewrite, serial mutation or stock movement | Invoice count 2, order count 0; serial `sold`, timestamps/costs and movement count unchanged | PASS |
+| Legacy serial fixture | Empty `invoice_item_serials` mapping must not be recreated during price edit | Three sold serials loaded and saved; mapping count remains 0; all serial/cost/movement values unchanged | PASS |
+| Seller/creator contract | Seller changes for reporting, creator snapshot remains immutable | `created_by=2`, `seller_name=QA Seller B`, `created_by_name=QA Creator` | PASS |
+| F9/print in edit mode | Must not create a new order/invoice | UI shows only “Vui lòng cập nhật hóa đơn trước khi in.”; F9 produced no dialog or navigation | PASS |
+| Browser validation alerts | No alert in edit validation/save flow | Alert count 0 during save/reload/F9/legacy QA | PASS |
+
+The browser found and the final code fixes a stale edit payload condition: default
+dimensions (`0`/`"0"`) are normalized to `null` before the update request, matching the
+route's nullable-string contract. The edit path also has a safe idempotency-key fallback
+when `crypto.randomUUID` is unavailable.
+
+Automated final gate:
+
+- `InvoiceCommercialOnlyUpdateTest` + `InvoiceEditRouteTest`: **24 passed / 220 assertions**.
+- Expanded invoice/seller/cashflow/debt/warranty run: **124 passed / 617 assertions**, one
+  explained skip (`einvoice_code` is not present in the test schema) and eight known
+  `CustomerDebtDocumentTimelineTest` baseline failures. Those failures assert older
+  `document_first`/technical-entry behavior while current baseline returns canonical
+  partner-debt events; they do not execute the invoice update route or the PR code paths.
+- `npm run build`: PASS (924 modules transformed).
+
+`UNEXPLAINED_SKIPS=0`. No production schema, data, connection, migration or remediation
+was used for this gate.
 
 ## Manual QA checklist
 

@@ -324,6 +324,7 @@ class InvoiceUpdateService
             $this->assertInvoiceIsEditable($lockedInvoice);
 
             $payloadItems = $this->assertCommercialPayloadPreservesInventory($lockedInvoice, $payload);
+            $payload = array_merge($payload, $this->canonicalCommercialAmounts($payloadItems, $payload));
             $oldTotal = (float) $lockedInvoice->total;
             $oldPaid = (float) ($lockedInvoice->customer_paid ?? 0);
             $oldDebt = $oldTotal - $oldPaid;
@@ -887,6 +888,45 @@ class InvoiceUpdateService
         }
 
         return $attributes;
+    }
+
+    /**
+     * Recompute commercial money from locked invoice-item identity instead of
+     * trusting subtotal/total values supplied by the browser.
+     *
+     * @param  array<int, array{invoice_item: InvoiceItem, price: float, discount: float, note: mixed}>  $payloadItems
+     * @return array{subtotal: float, discount: float, delivery_fee: float, other_fees: float, total: float}
+     */
+    private function canonicalCommercialAmounts(array $payloadItems, array $payload): array
+    {
+        $subtotal = round(array_sum(array_map(
+            fn (array $item) => ($item['price'] * (float) $item['invoice_item']->quantity) - $item['discount'],
+            $payloadItems
+        )), 2);
+        $discount = round((float) ($payload['discount'] ?? 0), 2);
+        $deliveryFee = round((float) ($payload['delivery_fee'] ?? 0), 2);
+        $otherFees = round((float) ($payload['other_fees'] ?? 0), 2);
+
+        if ($discount < 0 || $deliveryFee < 0 || $otherFees < 0) {
+            throw ValidationException::withMessages([
+                'discount' => 'Giảm giá và các khoản phí phải lớn hơn hoặc bằng 0.',
+            ]);
+        }
+
+        $total = round($subtotal - $discount + $deliveryFee + $otherFees, 2);
+        if ($total < 0) {
+            throw ValidationException::withMessages([
+                'discount' => 'Giảm giá không được lớn hơn giá trị hóa đơn.',
+            ]);
+        }
+
+        return [
+            'subtotal' => $subtotal,
+            'discount' => $discount,
+            'delivery_fee' => $deliveryFee,
+            'other_fees' => $otherFees,
+            'total' => $total,
+        ];
     }
 
     private function applyCommercialCustomerEffects(

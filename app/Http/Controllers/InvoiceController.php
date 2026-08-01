@@ -298,7 +298,10 @@ class InvoiceController extends Controller
             $message = 'Hóa đơn đã hủy, không thể chỉnh sửa.';
 
             if ($request->expectsJson()) {
-                return response()->json(['message' => $message], 422);
+                return response()->json([
+                    'message' => $message,
+                    'errors' => ['invoice' => [$message]],
+                ], 422);
             }
 
             return back()->with('error', $message);

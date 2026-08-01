@@ -18,6 +18,18 @@ const props = defineProps({
 
 const moneyNumber = (value) => Number(parseMoneyModelValue(value) || 0);
 
+const createIdempotencyKey = () =>
+    (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : null)
+    ?? `invoice-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+
+const nullableDimension = (value) => {
+    const normalized = String(value ?? '').trim();
+
+    return normalized === '' || normalized === '0' ? null : normalized;
+};
+
 const safeBool = (value) => {
     return value === true || value === 1 || value === '1' || value === 'true';
 };
@@ -475,6 +487,7 @@ const totalPayment = computed(() =>
         0,
         moneyNumber(totalAmount.value)
             - moneyNumber(activeTab.value.discount)
+            + moneyNumber(activeTab.value.deliveryFee)
             + moneyNumber(activeTab.value.otherFees)
     )
 );
@@ -541,7 +554,7 @@ const save = async () => {
     }
     returnFormError.value = '';
     submitRef.value = true;
-    activeTab.value.idempotencyKey ||= crypto.randomUUID();
+    activeTab.value.idempotencyKey ||= createIdempotencyKey();
     try {
         const isReturn = activeTab.value.status === 'return';
         const payload = {
@@ -576,9 +589,9 @@ const save = async () => {
             delivery_fee: moneyNumber(activeTab.value.deliveryFee),
             delivery_note: activeTab.value.deliveryNote,
             cod_amount: effectiveCod.value ? moneyNumber(totalPayment.value) : 0,
-            length: activeTab.value.sizeL,
-            width: activeTab.value.sizeW,
-            height: activeTab.value.sizeH,
+            length: nullableDimension(activeTab.value.sizeL),
+            width: nullableDimension(activeTab.value.sizeW),
+            height: nullableDimension(activeTab.value.sizeH),
             order_date: activeTab.value.orderDate || null,
         };
 
@@ -743,6 +756,13 @@ const selectInvoiceForEdit = (invoice) => {
 };
 
 const saveAndPrint = async () => {
+    if (activeTab.value.editing_invoice_id) {
+        editFormErrors.value = {
+            ...editFormErrors.value,
+            form: 'Vui lòng cập nhật hóa đơn trước khi in.',
+        };
+        return;
+    }
     if (activeTab.value.items.length === 0) {
         alert("Vui lòng chọn ít nhất 1 hàng hóa.");
         return;
@@ -1258,7 +1278,8 @@ onUnmounted(() => {
                             <i v-if="submitRef" class="fas fa-circle-notch fa-spin"></i>
                             {{ activeTab.editing_invoice_id ? 'CẬP NHẬT HÓA ĐƠN' : activeTab.status === 'return' ? 'TRẢ HÀNG' : 'ĐẶT HÀNG' }}
                         </button>
-                        <div @click="saveAndPrint" class="text-center font-bold text-gray-500 mt-2 text-[12px] cursor-pointer hover:text-blue-600"><i class="fas fa-print"></i> (F9)</div>
+                        <div v-if="activeTab.editing_invoice_id" class="text-center font-bold text-gray-400 mt-2 text-[12px]"><i class="fas fa-print"></i> Vui lòng cập nhật hóa đơn trước khi in.</div>
+                        <div v-else @click="saveAndPrint" class="text-center font-bold text-gray-500 mt-2 text-[12px] cursor-pointer hover:text-blue-600"><i class="fas fa-print"></i> (F9)</div>
                     </div>
                 </div>
             </div>
@@ -1308,7 +1329,8 @@ onUnmounted(() => {
                         <i v-if="submitRef" class="fas fa-circle-notch fa-spin"></i>
                         {{ activeTab.editing_invoice_id ? 'CẬP NHẬT HÓA ĐƠN' : activeTab.status === 'return' ? 'TRẢ HÀNG' : 'ĐẶT HÀNG' }}
                     </button>
-                    <div @click="saveAndPrint" class="text-center font-bold text-gray-500 mt-2 text-[12px] cursor-pointer hover:text-blue-600"><i class="fas fa-print"></i> (F9)</div>
+                    <div v-if="activeTab.editing_invoice_id" class="text-center font-bold text-gray-400 mt-2 text-[12px]"><i class="fas fa-print"></i> Vui lòng cập nhật hóa đơn trước khi in.</div>
+                    <div v-else @click="saveAndPrint" class="text-center font-bold text-gray-500 mt-2 text-[12px] cursor-pointer hover:text-blue-600"><i class="fas fa-print"></i> (F9)</div>
                 </div>
             </div>
 
