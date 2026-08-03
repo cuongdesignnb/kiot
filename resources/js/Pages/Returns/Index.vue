@@ -1,6 +1,6 @@
 <script setup>
 import { formatVND as formatCurrency } from '@/utils/money';
-import { ref, computed } from "vue";
+import { reactive, ref, computed } from "vue";
 import { Head, router, Link } from "@inertiajs/vue3";
 import axios from "axios";
 import AppLayout from "@/Layouts/AppLayout.vue";
@@ -55,9 +55,9 @@ const sidebarConfig = computed(() => [
 ]);
 
 const expandedRows = ref([]);
-const receiverDrafts = ref({});
-const receiverSaving = ref({});
-const receiverMessages = ref({});
+const receiverDrafts = reactive({});
+const receiverSaving = reactive({});
+const receiverMessages = reactive({});
 
 const handleSort = (field, direction) => setSort(field, direction);
 
@@ -86,37 +86,69 @@ const receiverOptions = (ret) => {
 };
 
 const receiverValue = (ret) => {
-    if (Object.prototype.hasOwnProperty.call(receiverDrafts.value, ret.id)) {
-        return receiverDrafts.value[ret.id];
+    if (Object.prototype.hasOwnProperty.call(receiverDrafts, ret.id)) {
+        return receiverDrafts[ret.id];
     }
     return ret.received_by_employee_id || "";
 };
 
+const setReceiverDraft = (returnId, rawValue) => {
+    const employeeId = Number(rawValue);
+
+    receiverDrafts[returnId] = Number.isInteger(employeeId) && employeeId > 0
+        ? employeeId
+        : "";
+};
+
 const saveReceiver = async (ret) => {
-    const employeeId = receiverValue(ret);
-    receiverMessages.value[ret.id] = null;
-    if (!employeeId) {
-        receiverMessages.value[ret.id] = { type: "error", text: "Vui lòng chọn nhân viên nhận trả." };
+    const employeeId = Number(receiverValue(ret));
+
+    receiverMessages[ret.id] = null;
+
+    if (!Number.isInteger(employeeId) || employeeId <= 0) {
+        receiverMessages[ret.id] = {
+            type: "error",
+            text: "Vui lòng chọn nhân viên nhận trả.",
+        };
+
         return;
     }
-    receiverSaving.value[ret.id] = true;
+
+    if (receiverSaving[ret.id]) {
+        return;
+    }
+
+    receiverSaving[ret.id] = true;
+
     try {
-        const response = await axios.patch(`/returns/${ret.id}/receiver`, {
-            received_by_employee_id: employeeId,
-        });
+        const response = await axios.patch(
+            `/returns/${ret.id}/receiver`,
+            {
+                received_by_employee_id: employeeId,
+            },
+            {
+                headers: {
+                    Accept: "application/json",
+                },
+            },
+        );
+
         ret.received_by_employee_id = response.data.return.received_by_employee_id;
         ret.received_by_name = response.data.return.received_by_name;
-        receiverDrafts.value[ret.id] = ret.received_by_employee_id;
-        receiverMessages.value[ret.id] = { type: "success", text: "Đã lưu người nhận trả." };
+        receiverDrafts[ret.id] = response.data.return.received_by_employee_id;
+        receiverMessages[ret.id] = {
+            type: "success",
+            text: response.data.message || "Đã lưu người nhận trả.",
+        };
     } catch (error) {
-        receiverMessages.value[ret.id] = {
+        receiverMessages[ret.id] = {
             type: "error",
             text: error.response?.data?.errors?.received_by_employee_id?.[0]
                 || error.response?.data?.message
                 || "Không thể lưu người nhận trả.",
         };
     } finally {
-        receiverSaving.value[ret.id] = false;
+        receiverSaving[ret.id] = false;
     }
 };
 
@@ -465,7 +497,7 @@ const cancelReturn = (ret) => {
                                                         <select
                                                             :value="receiverValue(ret)"
                                                             class="border border-gray-300 rounded px-2 py-0.5 outline-none flex-1"
-                                                            @change="receiverDrafts[ret.id] = Number($event.target.value) || ''"
+                                                            @change="setReceiverDraft(ret.id, $event.target.value)"
                                                             @click.stop
                                                         >
                                                             <option value="">-- Chọn nhân viên --</option>
@@ -482,7 +514,7 @@ const cancelReturn = (ret) => {
                                                             type="button"
                                                             class="px-2 py-0.5 rounded bg-blue-600 text-white disabled:opacity-50"
                                                             :disabled="receiverSaving[ret.id] || !receiverValue(ret)"
-                                                            @click.stop="saveReceiver(ret)"
+                                                            @click.stop.prevent="saveReceiver(ret)"
                                                         >
                                                             {{ receiverSaving[ret.id] ? "Đang lưu..." : "Lưu" }}
                                                         </button>
