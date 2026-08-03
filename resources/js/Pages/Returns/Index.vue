@@ -86,9 +86,12 @@ const receiverOptions = (ret) => {
 };
 
 const receiverValue = (ret) => {
-    if (Object.prototype.hasOwnProperty.call(receiverDrafts, ret.id)) {
-        return receiverDrafts[ret.id];
+    const draft = receiverDrafts[ret.id];
+
+    if (draft !== undefined) {
+        return draft;
     }
+
     return ret.received_by_employee_id || "";
 };
 
