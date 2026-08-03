@@ -96,7 +96,11 @@ jobs:
         run: |
           git fetch --no-tags origin production-customer-group
           mapfile -t files < <(git diff --name-only origin/production-customer-group...HEAD -- '*.php')
-          test "${#files[@]}" -gt 0
+          echo "CHANGED_PHP_FILE_COUNT=${#files[@]}"
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No changed PHP files; skipping Pint and PHP syntax checks."
+            exit 0
+          fi
           php vendor/bin/pint --test "${files[@]}"
           for file in "${files[@]}"; do php -l "$file"; done
 
