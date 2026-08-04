@@ -1310,6 +1310,7 @@ class PurchaseController extends Controller
     public function detail(Purchase $purchase)
     {
         $purchase->load(['supplier', 'items.product', 'user', 'employee']);
+        $businessTime = $purchase->purchase_date ?? $purchase->created_at;
 
         return response()->json([
             'id' => $purchase->id,
@@ -1317,6 +1318,10 @@ class PurchaseController extends Controller
             'status' => $purchase->status,
             'status_label' => $purchase->status === 'completed' ? 'Đã nhập hàng' : ($purchase->status === 'returned' ? 'Đã trả hàng' : ($purchase->status === 'cancelled' ? 'Đã hủy' : ucfirst($purchase->status))),
             'purchase_date' => $purchase->purchase_date ? $purchase->purchase_date->format('d/m/Y H:i') : ($purchase->created_at ? $purchase->created_at->format('d/m/Y H:i') : ''),
+            'business_time' => $businessTime?->format('d/m/Y H:i') ?? '',
+            'recorded_at' => $purchase->created_at?->format('d/m/Y H:i') ?? '',
+            'business_time_source' => $purchase->purchase_date ? 'purchase_date' : 'created_at',
+            'recorded_time_source' => 'created_at',
             'user_name' => $purchase->user->name ?? 'Admin',
             'employee_name' => $purchase->employee->name ?? null,
             'supplier_name' => $purchase->supplier->name ?? '',
