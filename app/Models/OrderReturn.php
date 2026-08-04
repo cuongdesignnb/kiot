@@ -10,6 +10,10 @@ class OrderReturn extends Model
 
     protected $guarded = ['id'];
 
+    protected $casts = [
+        'sales_attribution_updated_at' => 'datetime',
+    ];
+
     public function invoice()
     {
         return $this->belongsTo(Invoice::class);
@@ -23,6 +27,16 @@ class OrderReturn extends Model
     public function receivedByEmployee()
     {
         return $this->belongsTo(Employee::class, 'received_by_employee_id');
+    }
+
+    public function salesAttributionEmployee()
+    {
+        return $this->belongsTo(Employee::class, 'sales_attribution_employee_id');
+    }
+
+    public function salesAttributionUpdatedBy()
+    {
+        return $this->belongsTo(User::class, 'sales_attribution_updated_by');
     }
 
     public function items()

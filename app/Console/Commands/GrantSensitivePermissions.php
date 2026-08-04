@@ -45,6 +45,7 @@ class GrantSensitivePermissions extends Command
         'invoices.cancel',
         'invoices.edit',
         'returns.cancel',
+        'returns.sales_attribution.edit',
 
         // Purchases
         'purchases.edit',
@@ -93,6 +94,7 @@ class GrantSensitivePermissions extends Command
 
         if ($roles->isEmpty()) {
             $this->warn('Không tìm thấy role phù hợp để cấp.');
+
             return self::SUCCESS;
         }
 
@@ -116,6 +118,7 @@ class GrantSensitivePermissions extends Command
                     $role->id,
                     $role->display_name ?: $role->name
                 ));
+
                 continue;
             }
 
@@ -127,6 +130,7 @@ class GrantSensitivePermissions extends Command
                     $role->id,
                     $role->display_name ?: $role->name
                 ));
+
                 continue;
             }
 
@@ -150,7 +154,7 @@ class GrantSensitivePermissions extends Command
         if ($commit) {
             $this->info("Tổng cộng đã cấp {$totalGranted} permission(s).");
         } else {
-            $this->warn("DRY-RUN — không có gì ghi DB. Chạy lại với --commit để áp dụng.");
+            $this->warn('DRY-RUN — không có gì ghi DB. Chạy lại với --commit để áp dụng.');
             $this->line("Sẽ cấp tổng cộng {$totalGranted} permission(s).");
         }
 

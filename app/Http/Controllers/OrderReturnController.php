@@ -13,12 +13,14 @@ use App\Services\CustomerDebtService;
 use App\Services\Debt\PartnerDebtMutationCoordinator;
 use App\Services\DebtOffsetService;
 use App\Services\OrderReturnCreationService;
+use App\Services\ReturnSalesAttributionService;
 use App\Services\ReturnTotalCalculator;
 use App\Services\StockMovementService;
 use App\Support\BusinessDateTime;
 use App\Support\Filters\FilterableIndex;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 
 class OrderReturnController extends Controller
@@ -43,7 +45,13 @@ class OrderReturnController extends Controller
     {
         $this->configureReturnFilters();
 
-        $query = OrderReturn::with(['items.product', 'customer', 'invoice.creator', 'receivedByEmployee']);
+        $query = OrderReturn::with([
+            'items.product',
+            'customer',
+            'invoice.creator',
+            'receivedByEmployee',
+            'salesAttributionEmployee',
+        ]);
         $this->applyFilters($query, $request);
 
         $sellerKey = $request->input('seller_key');
@@ -53,6 +61,7 @@ class OrderReturnController extends Controller
         }
 
         $returns = $query->paginate(15)->withQueryString();
+        $resolver = app(\App\Support\Reports\SellerResolver::class);
 
         // Step 22.1B (read-only): enrich items[].returned_serials cho UI hiển thị.
         // Không sửa serial_ids, không thay đổi nghiệp vụ.
@@ -87,8 +96,12 @@ class OrderReturnController extends Controller
                 $it->setAttribute('returned_serials', $list);
             }
 
-            $resolver = app(\App\Support\Reports\SellerResolver::class);
-            $ret->setAttribute('original_seller_name', $resolver->displayNameForInvoice($ret->invoice));
+            $ret->setAttribute('original_seller_name', $resolver->originalSellerNameForReturn($ret));
+            $ret->setAttribute('effective_sales_attribution_name', $resolver->displayNameForReturn($ret));
+            $ret->setAttribute(
+                'is_sales_attribution_overridden',
+                $ret->sales_attribution_employee_id !== null || filled($ret->sales_attribution_name),
+            );
             $ret->setAttribute('received_by_name', $ret->received_by_name ?: $ret->receivedByEmployee?->name);
         }
 
@@ -115,8 +128,17 @@ class OrderReturnController extends Controller
 
     public function show(OrderReturn $return)
     {
-        $return->load(['customer', 'items.product', 'invoice.creator', 'receivedByEmployee']);
+        $return->load([
+            'customer',
+            'items.product',
+            'invoice.creator',
+            'receivedByEmployee',
+            'salesAttributionEmployee',
+            'salesAttributionUpdatedBy',
+        ]);
         $businessTime = BusinessDateTime::nullable($return->return_date) ?? $return->created_at;
+        $resolver = app(\App\Support\Reports\SellerResolver::class);
+        $canEditSalesAttribution = (bool) auth()->user()?->hasPermission('returns.sales_attribution.edit');
 
         // Step 22.1B (read-only): map serial_ids → display names.
         $allSerialIds = [];
@@ -145,8 +167,15 @@ class OrderReturnController extends Controller
                 'business_time_source' => $return->return_date ? 'return_date' : 'created_at',
                 'recorded_time_source' => 'created_at',
                 'created_by_name' => $return->created_by_name,
-                'original_seller_name' => app(\App\Support\Reports\SellerResolver::class)
-                    ->displayNameForInvoice($return->invoice),
+                'original_seller_name' => $resolver->originalSellerNameForReturn($return),
+                'effective_sales_attribution_name' => $resolver->displayNameForReturn($return),
+                'sales_attribution_employee_id' => $return->sales_attribution_employee_id,
+                'sales_attribution_reason' => $return->sales_attribution_reason,
+                'sales_attribution_updated_at' => $return->sales_attribution_updated_at?->format('d/m/Y H:i'),
+                'sales_attribution_updated_by_name' => $return->salesAttributionUpdatedBy?->name,
+                'is_sales_attribution_overridden' => $return->sales_attribution_employee_id !== null
+                    || filled($return->sales_attribution_name),
+                'can_edit_sales_attribution' => $canEditSalesAttribution,
                 'received_by_employee_id' => $return->received_by_employee_id,
                 'received_by_name' => $return->received_by_name ?: $return->receivedByEmployee?->name,
                 'invoice_code' => $return->invoice?->code,
@@ -186,6 +215,9 @@ class OrderReturnController extends Controller
                     ];
                 }),
             ],
+            'salesAttributionEmployees' => $canEditSalesAttribution
+                ? Employee::query()->where('is_active', true)->orderBy('name')->get(['id', 'name', 'code'])
+                : [],
         ]);
     }
 
@@ -649,12 +681,60 @@ class OrderReturnController extends Controller
         return back()->with('success', 'Đã lưu người nhận trả.');
     }
 
+    public function updateSalesAttribution(Request $request, OrderReturn $return, ReturnSalesAttributionService $service)
+    {
+        $validated = $request->validate([
+            'sales_attribution_employee_id' => 'nullable|integer|exists:employees,id',
+            'reason' => 'required|string|min:5|max:500',
+        ], [
+            'sales_attribution_employee_id.integer' => 'Người chịu doanh số phải là nhân viên hợp lệ.',
+            'sales_attribution_employee_id.exists' => 'Nhân viên chịu doanh số không tồn tại.',
+            'reason.required' => 'Vui lòng nhập lý do điều chỉnh.',
+            'reason.min' => 'Lý do điều chỉnh phải có ít nhất 5 ký tự.',
+            'reason.max' => 'Lý do điều chỉnh không được vượt quá 500 ký tự.',
+        ]);
+
+        $updated = $service->update(
+            $return,
+            isset($validated['sales_attribution_employee_id'])
+                ? (int) $validated['sales_attribution_employee_id']
+                : null,
+            $validated['reason'],
+            $request->user(),
+        );
+        $resolver = app(\App\Support\Reports\SellerResolver::class);
+        $isOverridden = $updated->sales_attribution_employee_id !== null
+            || filled($updated->sales_attribution_name);
+
+        if ($request->expectsJson() || $request->wantsJson()) {
+            return response()->json([
+                'success' => true,
+                'return' => [
+                    'id' => $updated->id,
+                    'original_seller_name' => $resolver->originalSellerNameForReturn($updated),
+                    'effective_sales_attribution_name' => $resolver->displayNameForReturn($updated),
+                    'sales_attribution_employee_id' => $updated->sales_attribution_employee_id,
+                    'sales_attribution_reason' => $updated->sales_attribution_reason,
+                    'sales_attribution_updated_at' => $updated->sales_attribution_updated_at?->toISOString(),
+                    'is_sales_attribution_overridden' => $isOverridden,
+                ],
+                'message' => 'Đã lưu người chịu doanh số trả hàng.',
+            ]);
+        }
+
+        return back()->with('success', 'Đã lưu người chịu doanh số trả hàng.');
+    }
+
     public function export(Request $request)
     {
         $this->configureReturnFilters();
 
         $query = \App\Models\OrderReturn::with(['customer', 'invoice']);
         $this->applyFilters($query, $request);
+        if ($sellerKey = $request->input('seller_key')) {
+            $query = app(\App\Support\Reports\SellerResolver::class)
+                ->filterReturnsBySeller($query, $sellerKey);
+        }
         $returns = $query->get();
 
         return \App\Services\CsvService::export(
@@ -685,6 +765,17 @@ class OrderReturnController extends Controller
         }
 
         $cancelReturn = function () use ($return) {
+            $return = OrderReturn::query()->lockForUpdate()->findOrFail($return->id);
+            if ($this->isCancelledReturn($return)) {
+                return null;
+            }
+
+            $return->setRelation('items', ReturnItem::query()
+                ->where('return_id', $return->id)
+                ->with('product')
+                ->lockForUpdate()
+                ->get());
+            $this->assertReturnSerialsSafeToCancel($return);
             $return->load('items.product');
 
             // 1. Rollback stock: trừ lại tồn kho đã cộng (đảo ngược applySaleReturn)
@@ -778,10 +869,12 @@ class OrderReturnController extends Controller
 
             // 4. Mark return as cancelled
             $return->update(['status' => 'Đã hủy']);
+
+            return $return;
         };
 
         if ($return->customer_id) {
-            app(PartnerDebtMutationCoordinator::class)->execute(
+            $cancelledReturn = app(PartnerDebtMutationCoordinator::class)->execute(
                 (int) $return->customer_id,
                 'customer_return_cancel',
                 hash('sha256', 'return_cancel|'.(int) $return->id),
@@ -789,21 +882,93 @@ class OrderReturnController extends Controller
                 request()->header('Idempotency-Key'),
             );
         } else {
-            DB::transaction($cancelReturn);
+            $cancelledReturn = DB::transaction($cancelReturn);
+        }
+
+        if (! $cancelledReturn) {
+            return back()->with('error', 'Phiếu trả hàng đã bị hủy trước đó.');
         }
 
         // Step 24.0: audit log return cancel
         \App\Models\ActivityLog::log(
             \App\Models\ActivityLog::ACTION_RETURN_CANCEL,
-            "Hủy phiếu trả hàng {$return->code}",
-            $return,
-            ['total' => (float) $return->total]
+            "Hủy phiếu trả hàng {$cancelledReturn->code}",
+            $cancelledReturn,
+            ['total' => (float) $cancelledReturn->total]
         );
 
         if (request()->wantsJson()) {
             return response()->json(['success' => true, 'message' => 'Đã hủy phiếu trả hàng.']);
         }
 
-        return back()->with('success', 'Đã hủy phiếu trả hàng '.$return->code);
+        return back()->with('success', 'Đã hủy phiếu trả hàng '.$cancelledReturn->code);
+    }
+
+    private function isCancelledReturn(OrderReturn $return): bool
+    {
+        return in_array(trim((string) $return->status), [
+            ReturnStatus::CANCELLED,
+            'cancelled',
+            'canceled',
+            'void',
+            'deleted',
+            'Đã hủy',
+        ], true);
+    }
+
+    /**
+     * A return can be cancelled only while every specifically returned serial
+     * remains in the safe state produced by return creation. This guard runs
+     * under the return and serial row locks, before stock/debt/cash mutations.
+     */
+    private function assertReturnSerialsSafeToCancel(OrderReturn $return): void
+    {
+        $serialIds = [];
+        foreach ($return->items as $item) {
+            $ids = array_values(array_filter(array_map('intval', (array) $item->serial_ids)));
+            if ($item->product?->has_serial && $ids === []) {
+                throw ValidationException::withMessages([
+                    'serial_ids' => 'Không thể hủy phiếu trả vì thiếu Serial/IMEI đã lưu. Hệ thống chưa thay đổi tồn kho, công nợ hoặc Serial.',
+                ]);
+            }
+            foreach ($ids as $serialId) {
+                $serialIds[$serialId] = true;
+            }
+        }
+
+        if ($serialIds === []) {
+            return;
+        }
+
+        $serials = SerialImei::query()
+            ->with('invoice:id,code')
+            ->whereIn('id', array_keys($serialIds))
+            ->lockForUpdate()
+            ->get()
+            ->keyBy('id');
+        if ($serials->count() !== count($serialIds)) {
+            throw ValidationException::withMessages([
+                'serial_ids' => 'Không thể hủy phiếu trả vì Serial/IMEI đã lưu không còn tồn tại. Hệ thống chưa thay đổi tồn kho, công nợ hoặc Serial.',
+            ]);
+        }
+
+        foreach ($serials as $serial) {
+            if ($serial->status === 'in_stock' && $serial->invoice_id === null) {
+                continue;
+            }
+
+            if ($serial->status === 'sold'
+                && $serial->invoice_id !== null
+                && (int) $serial->invoice_id !== (int) $return->invoice_id) {
+                $invoiceCode = $serial->invoice?->code ?? ('#'.$serial->invoice_id);
+                throw ValidationException::withMessages([
+                    'serial_ids' => "Không thể hủy phiếu trả vì Serial {$serial->serial_number} đã được bán lại trên hóa đơn {$invoiceCode}.\nHãy dùng chức năng “Điều chỉnh người chịu doanh số trả hàng”.\nHệ thống chưa thay đổi tồn kho, công nợ hoặc Serial.",
+                ]);
+            }
+
+            throw ValidationException::withMessages([
+                'serial_ids' => "Không thể hủy phiếu trả vì Serial {$serial->serial_number} không còn ở trạng thái tồn kho an toàn. Hệ thống chưa thay đổi tồn kho, công nợ hoặc Serial.",
+            ]);
+        }
     }
 }

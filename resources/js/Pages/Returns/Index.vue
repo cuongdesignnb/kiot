@@ -272,7 +272,8 @@ const cancelReturn = (ret) => {
                                 />
                             </th>
                             <SortableHeader label="Mã trả hàng" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-2 py-2" @sort="handleSort" />
-                            <th class="px-2 py-2">Người bán</th>
+                            <th class="px-2 py-2">Người bán hóa đơn gốc</th>
+                            <th class="px-2 py-2">Người chịu doanh số trả</th>
                             <SortableHeader label="Thời gian" field="created_at" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-2 py-2" @sort="handleSort" />
                             <th class="px-2 py-2">Khách hàng</th>
                             <SortableHeader label="Tổng tiền hàng" field="subtotal" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
@@ -284,7 +285,7 @@ const cancelReturn = (ret) => {
                     <tbody class="divide-y divide-gray-100">
                         <tr v-if="returns.data.length === 0">
                             <td
-                                colspan="9"
+                                colspan="10"
                                 class="p-16 text-center text-gray-500"
                             >
                                 <div
@@ -365,6 +366,12 @@ const cancelReturn = (ret) => {
                                     {{ ret.original_seller_name || "Chưa xác định người bán" }}
                                 </td>
                                 <td class="px-2 py-2">
+                                    <div>{{ ret.effective_sales_attribution_name || ret.original_seller_name || "Chưa xác định người bán" }}</div>
+                                    <div class="text-[11px]" :class="ret.is_sales_attribution_overridden ? 'text-indigo-600' : 'text-gray-400'">
+                                        {{ ret.is_sales_attribution_overridden ? 'Đã điều chỉnh' : 'Theo hóa đơn gốc' }}
+                                    </div>
+                                </td>
+                                <td class="px-2 py-2">
                                     {{
                                         new Date(ret.created_at).toLocaleString(
                                             "vi-VN",
@@ -408,7 +415,7 @@ const cancelReturn = (ret) => {
                                 class="border-b-4 border-blue-50"
                             >
                                 <td
-                                    colspan="9"
+                                    colspan="10"
                                     class="p-0 border-0 bg-white shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)]"
                                 >
                                     <div

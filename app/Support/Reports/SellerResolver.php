@@ -4,6 +4,7 @@ namespace App\Support\Reports;
 
 use App\Models\Employee;
 use App\Models\Invoice;
+use App\Models\OrderReturn;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -117,6 +118,82 @@ class SellerResolver
      *
      * NEVER uses created_by_name (that's the creator, not the seller).
      */
+    /**
+     * Resolve the effective seller key of each return. An override belongs to
+     * the override employee (or its retained snapshot); only no-override rows
+     * fall back to the source invoice seller.
+     *
+     * @return array<int, string>
+     */
+    public function returnSellerMap($returnQuery): array
+    {
+        $returns = (clone $returnQuery)
+            ->select([
+                'returns.id',
+                'returns.invoice_id',
+                'returns.sales_attribution_employee_id',
+                'returns.sales_attribution_name',
+            ])
+            ->get();
+
+        if ($returns->isEmpty()) {
+            return [];
+        }
+
+        $overrideEmployeeNames = Employee::query()
+            ->whereIn(
+                'id',
+                $returns->pluck('sales_attribution_employee_id')->filter()->unique()->values()->all(),
+            )
+            ->pluck('name', 'id')
+            ->all();
+        $invoiceIds = $returns->pluck('invoice_id')->filter()->unique()->values()->all();
+        $invoiceSellerMap = $invoiceIds === []
+            ? []
+            : $this->invoiceSellerMap(Invoice::query()->whereIn('id', $invoiceIds));
+
+        $map = [];
+        foreach ($returns as $return) {
+            $overrideEmployeeId = $return->sales_attribution_employee_id;
+            if ($overrideEmployeeId !== null && isset($overrideEmployeeNames[$overrideEmployeeId])) {
+                $map[$return->id] = "employee:{$overrideEmployeeId}";
+
+                continue;
+            }
+            if (filled($return->sales_attribution_name)) {
+                $map[$return->id] = "snapshot:{$return->sales_attribution_name}";
+
+                continue;
+            }
+
+            $map[$return->id] = $invoiceSellerMap[$return->invoice_id] ?? 'unknown';
+        }
+
+        return $map;
+    }
+
+    public function originalSellerNameForReturn(OrderReturn $return): string
+    {
+        $invoice = $return->relationLoaded('invoice') ? $return->invoice : $return->invoice()->first();
+
+        return $this->displayNameForInvoice($invoice);
+    }
+
+    public function displayNameForReturn(OrderReturn $return): string
+    {
+        $override = $return->relationLoaded('salesAttributionEmployee')
+            ? $return->salesAttributionEmployee
+            : ($return->sales_attribution_employee_id ? Employee::find($return->sales_attribution_employee_id) : null);
+        if ($override?->name) {
+            return $override->name;
+        }
+        if (filled($return->sales_attribution_name)) {
+            return $return->sales_attribution_name;
+        }
+
+        return $this->originalSellerNameForReturn($return);
+    }
+
     private function resolveKey(
         $createdBy,
         $sellerName,
@@ -217,23 +294,9 @@ class SellerResolver
      */
     public function aggregateReturnsBySeller($returnQuery, string $valueExpr): array
     {
-        $returnRows = (clone $returnQuery)->select('id', 'invoice_id')->get();
-        if ($returnRows->isEmpty()) {
+        $returnSellerMap = $this->returnSellerMap($returnQuery);
+        if ($returnSellerMap === []) {
             return [];
-        }
-
-        $invoiceIds = $returnRows->pluck('invoice_id')->filter()->unique()->values()->all();
-        if (empty($invoiceIds)) {
-            return [];
-        }
-
-        $invoiceSellerMap = $this->invoiceSellerMap(
-            Invoice::whereIn('id', $invoiceIds)
-        );
-
-        $returnSellerMap = [];
-        foreach ($returnRows as $ret) {
-            $returnSellerMap[$ret->id] = $invoiceSellerMap[$ret->invoice_id] ?? 'unknown';
         }
 
         $rows = DB::table('returns')
@@ -256,23 +319,9 @@ class SellerResolver
      */
     public function aggregateReturnItemsBySeller($returnQuery, string $itemExpr): array
     {
-        $returnRows = (clone $returnQuery)->select('id', 'invoice_id')->get();
-        if ($returnRows->isEmpty()) {
+        $returnSellerMap = $this->returnSellerMap($returnQuery);
+        if ($returnSellerMap === []) {
             return [];
-        }
-
-        $invoiceIds = $returnRows->pluck('invoice_id')->filter()->unique()->values()->all();
-        if (empty($invoiceIds)) {
-            return [];
-        }
-
-        $invoiceSellerMap = $this->invoiceSellerMap(
-            Invoice::whereIn('id', $invoiceIds)
-        );
-
-        $returnSellerMap = [];
-        foreach ($returnRows as $ret) {
-            $returnSellerMap[$ret->id] = $invoiceSellerMap[$ret->invoice_id] ?? 'unknown';
         }
 
         $returnIds = array_keys($returnSellerMap);
@@ -736,9 +785,12 @@ class SellerResolver
      */
     public function filterReturnsBySeller($returnQuery, string $sellerKey)
     {
-        return $returnQuery->whereHas('invoice', function ($q) use ($sellerKey) {
-            $this->filterBySeller($q, $sellerKey);
-        });
+        $returnIds = array_keys(array_filter(
+            $this->returnSellerMap(clone $returnQuery),
+            fn (string $key): bool => $key === $sellerKey,
+        ));
+
+        return $returnQuery->whereIn('returns.id', $returnIds);
     }
 
     /**

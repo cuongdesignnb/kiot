@@ -153,6 +153,7 @@ class Role extends Model
                         'returns.view' => 'Xem phiếu trả hàng',
                         'returns.create' => 'Tạo phiếu trả hàng',
                         'returns.cancel' => 'Hủy phiếu trả hàng (Step 24.0B)',
+                        'returns.sales_attribution.edit' => 'Điều chỉnh người chịu doanh số trả hàng',
                         'returns.print' => 'In phiếu trả hàng',
                         'returns.export' => 'Xuất file trả hàng',
                     ],

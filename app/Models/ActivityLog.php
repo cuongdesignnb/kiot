@@ -83,6 +83,8 @@ class ActivityLog extends Model
 
     const ACTION_RETURN_RECEIVER_UPDATE = 'return_receiver_update';
 
+    const ACTION_RETURN_SALES_ATTRIBUTION_UPDATE = 'return_sales_attribution_update';
+
     // Nhập hàng — trả NCC (Step 24.0C standardized)
     const ACTION_PURCHASE_RETURN_CREATE = 'purchase_return_create';
 
@@ -283,6 +285,7 @@ class ActivityLog extends Model
         'invoice_cancel_time_lock_override' => 'Hủy hóa đơn quá hạn (override)',
         'return_create' => 'Tạo phiếu trả hàng',
         'return_cancel' => 'Hủy phiếu trả hàng',
+        'return_sales_attribution_update' => 'Điều chỉnh người chịu doanh số trả hàng',
         'purchase_return_create' => 'Tạo phiếu trả nhà cung cấp',
         'purchase_return_cancel' => 'Hủy phiếu trả nhà cung cấp',
         'damage_create' => 'Tạo phiếu xuất hủy',
@@ -391,6 +394,7 @@ class ActivityLog extends Model
         'invoice_cancel_time_lock_override' => '🔓',
         'return_create' => '↩️',
         'return_cancel' => '🚫',
+        'return_sales_attribution_update' => '👤',
         'purchase_return_create' => '📤',
         'purchase_return_cancel' => '🚫',
         'damage_create' => '🧯',
