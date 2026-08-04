@@ -22,6 +22,11 @@ const statusClass = (status) => ({
     'bg-gray-50 text-gray-500 border-gray-200': status === 'draft',
     'bg-red-50 text-red-600 border-red-200': status === 'cancelled',
 });
+const formatDateTime = (value) => {
+    if (!value) return '—';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('vi-VN');
+};
 
 const cancelReturn = () => {
     if (!confirm(`Bạn có chắc muốn hủy phiếu trả hàng ${ret.code}? Tồn kho và công nợ sẽ được hoàn lại.`)) return;
@@ -81,11 +86,11 @@ const cancelReturn = () => {
                         </div>
                         <div>
                             <div class="text-gray-400 mb-1">Thời gian giao dịch</div>
-                            <div class="font-medium">{{ new Date(ret.return_date || ret.created_at).toLocaleString('vi-VN') }}</div>
+                            <div class="font-medium">{{ formatDateTime(ret.return_date || ret.created_at) }}</div>
                         </div>
-                        <div title="Thời gian giao dịch được dùng trong báo cáo và công nợ. Thời điểm ghi nhận là lúc hệ thống lưu hoàn tất chứng từ.">
+                        <div title="Thời gian giao dịch được dùng trong báo cáo và công nợ. Thời điểm ghi nhận là lúc chứng từ được nhập hoặc ghi nhận vào hệ thống.">
                             <div class="text-gray-400 mb-1">Thời điểm ghi nhận</div>
-                            <div class="font-medium">{{ new Date(ret.created_at).toLocaleString('vi-VN') }}</div>
+                            <div class="font-medium">{{ formatDateTime(ret.created_at) }}</div>
                         </div>
                         <div>
                             <div class="text-gray-400 mb-1">Phương thức</div>

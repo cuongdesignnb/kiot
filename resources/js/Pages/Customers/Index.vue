@@ -349,6 +349,7 @@ const entryDisplayTime = (entry) =>
     entry?.time ||
     entry?.business_time ||
     entry?.transaction_date ||
+    entry?.purchase_date ||
     entry?.return_date ||
     entry?.created_at ||
     "";
@@ -4087,7 +4088,7 @@ const createdDateRange = computed({
                     <div class="px-6 py-3 grid grid-cols-2 gap-x-8 gap-y-2 text-sm border-b bg-gray-50">
                         <div><span class="text-gray-500">Người tạo:</span> <span class="font-medium">{{ invoiceDetail.data.created_by_name }}</span></div>
                         <div><span class="text-gray-500">Thời gian giao dịch:</span> <span class="font-medium">{{ invoiceDetail.data.business_time }}</span></div>
-                        <div title="Thời gian giao dịch được dùng trong báo cáo và công nợ. Thời điểm ghi nhận là lúc hệ thống lưu hoàn tất chứng từ."><span class="text-gray-500">Thời điểm ghi nhận trên hệ thống:</span> <span class="font-medium">{{ invoiceDetail.data.recorded_at }}</span></div>
+                        <div title="Thời gian giao dịch được dùng trong báo cáo và công nợ. Thời điểm ghi nhận là lúc chứng từ được nhập hoặc ghi nhận vào hệ thống."><span class="text-gray-500">Thời điểm ghi nhận trên hệ thống:</span> <span class="font-medium">{{ invoiceDetail.data.recorded_at || '—' }}</span></div>
                         <div><span class="text-gray-500">Khách hàng:</span> <span class="font-medium">{{ invoiceDetail.data.customer_name }}</span> <span class="text-gray-400">{{ invoiceDetail.data.customer_code }}</span></div>
                         <div v-if="invoiceDetail.data.payment_method"><span class="text-gray-500">Thanh toán:</span> <span class="font-medium">{{ invoiceDetail.data.payment_method }}</span></div>
                     </div>
@@ -4238,7 +4239,7 @@ const createdDateRange = computed({
                             <div class="grid grid-cols-2 md:grid-cols-3 gap-x-8 gap-y-3 bg-gray-50 p-4 rounded border border-gray-100">
                                 <div><span class="text-gray-500">Khách hàng:</span> <span class="font-semibold text-gray-800 ml-1">{{ debtVoucherDetailModal.data.customer_name }}</span></div>
                                 <div><span class="text-gray-500">Thời gian giao dịch:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.business_time }}</span></div>
-                                <div title="Thời gian giao dịch được dùng trong báo cáo và công nợ. Thời điểm ghi nhận là lúc hệ thống lưu hoàn tất chứng từ."><span class="text-gray-500">Thời điểm ghi nhận trên hệ thống:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.recorded_at }}</span></div>
+                                <div title="Thời gian giao dịch được dùng trong báo cáo và công nợ. Thời điểm ghi nhận là lúc chứng từ được nhập hoặc ghi nhận vào hệ thống."><span class="text-gray-500">Thời điểm ghi nhận trên hệ thống:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.recorded_at || '—' }}</span></div>
                                 <div><span class="text-gray-500">Người tạo:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.created_by_name }}</span></div>
                                 <div><span class="text-gray-500">Người bán:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.seller_name }}</span></div>
                                 <div><span class="text-gray-500">Chi nhánh:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.branch_name || '-' }}</span></div>
@@ -4316,7 +4317,7 @@ const createdDateRange = computed({
                             <div class="grid grid-cols-2 md:grid-cols-3 gap-x-8 gap-y-3 bg-gray-50 p-4 rounded border border-gray-100">
                                 <div><span class="text-gray-500">Nhà cung cấp:</span> <span class="font-semibold text-gray-800 ml-1">{{ debtVoucherDetailModal.data.supplier_name }}</span> <span class="text-gray-400">({{ debtVoucherDetailModal.data.supplier_code }})</span></div>
                                 <div><span class="text-gray-500">Thời gian giao dịch:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.business_time }}</span></div>
-                                <div><span class="text-gray-500">Thời điểm ghi nhận trên hệ thống:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.recorded_at }}</span></div>
+                                <div title="Thời gian giao dịch được dùng trong báo cáo và công nợ. Thời điểm ghi nhận là lúc chứng từ được nhập hoặc ghi nhận vào hệ thống."><span class="text-gray-500">Thời điểm ghi nhận trên hệ thống:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.recorded_at || '—' }}</span></div>
                                 <div><span class="text-gray-500">Người tạo:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.user_name }}</span></div>
                                 <div><span class="text-gray-500">Nhân viên:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.employee_name || '-' }}</span></div>
                                 <div><span class="text-gray-500">Thanh toán:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.payment_method || '-' }}</span></div>

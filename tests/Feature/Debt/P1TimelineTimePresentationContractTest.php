@@ -12,6 +12,7 @@ use App\Services\CustomerDebtDocumentTimelineService;
 use App\Services\SupplierDebtDocumentTimelineService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
 class P1TimelineTimePresentationContractTest extends TestCase
@@ -32,7 +33,7 @@ class P1TimelineTimePresentationContractTest extends TestCase
         ]);
     }
 
-    public function test_detail_time_metadata_is_read_only_and_keeps_all_financial_timeline_snapshots_byte_identical(): void
+    public function test_detail_time_requests_do_not_mutate_customer_supplier_or_dual_role_timelines(): void
     {
         $customer = $this->partner('CUSTOMER', true, false);
         $supplier = $this->partner('SUPPLIER', false, true);
@@ -65,16 +66,22 @@ class P1TimelineTimePresentationContractTest extends TestCase
         ]);
         $purchase->forceFill(['created_at' => $recordedAt])->saveQuietly();
 
-        $return = OrderReturn::query()->create([
+        $returnBusinessTime = Carbon::parse('2026-07-11 09:58:09');
+        $returnRecordedAt = $recordedAt;
+        $returnPayload = [
             'code' => 'TH-P1-'.uniqid(),
             'customer_id' => $customer->id,
             'invoice_id' => $invoice->id,
             'status' => 'completed',
             'total' => 1_000_000,
             'paid_to_customer' => 0,
-            'return_date' => Carbon::parse('2026-07-11 09:58:09'),
-            'created_at' => $recordedAt,
-        ]);
+            'created_at' => $returnRecordedAt,
+        ];
+        if (Schema::hasColumn('returns', 'return_date')) {
+            $returnPayload['return_date'] = $returnBusinessTime;
+        }
+        $return = OrderReturn::query()->create($returnPayload);
+        $returnUsesBusinessDate = Schema::hasColumn('returns', 'return_date');
 
         $purchaseReturn = PurchaseReturn::query()->create([
             'code' => 'THN-P1-'.uniqid(),
@@ -146,9 +153,9 @@ class P1TimelineTimePresentationContractTest extends TestCase
             ->get("/returns/{$return->id}/show")
             ->assertOk()
             ->assertInertia(fn ($page) => $page
-                ->where('returnOrder.business_time', '11/07/2026 10:02')
+                ->where('returnOrder.business_time', $returnUsesBusinessDate ? '11/07/2026 09:58' : '11/07/2026 10:02')
                 ->where('returnOrder.recorded_at', '11/07/2026 10:02')
-                ->where('returnOrder.business_time_source', 'created_at')
+                ->where('returnOrder.business_time_source', $returnUsesBusinessDate ? 'return_date' : 'created_at')
                 ->where('returnOrder.recorded_time_source', 'created_at')
             )
             ->assertSee('TH-P1-');

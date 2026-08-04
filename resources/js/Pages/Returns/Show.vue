@@ -58,9 +58,9 @@ const cancelReturn = () => {
                         <div class="text-gray-500">Thời gian giao dịch</div>
                         <div class="font-semibold">{{ returnOrder.business_time }}</div>
                     </div>
-                    <div title="Thời gian giao dịch được dùng trong báo cáo và công nợ. Thời điểm ghi nhận là lúc hệ thống lưu hoàn tất chứng từ.">
+                    <div title="Thời gian giao dịch được dùng trong báo cáo và công nợ. Thời điểm ghi nhận là lúc chứng từ được nhập hoặc ghi nhận vào hệ thống.">
                         <div class="text-gray-500">Thời điểm ghi nhận trên hệ thống</div>
-                        <div class="font-semibold">{{ returnOrder.recorded_at }}</div>
+                        <div class="font-semibold">{{ returnOrder.recorded_at || '—' }}</div>
                     </div>
                     <div>
                         <div class="text-gray-500">Người bán gốc</div>

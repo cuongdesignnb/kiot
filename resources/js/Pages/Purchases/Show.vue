@@ -19,7 +19,13 @@ const cancelIdempotencyKey = ref('');
 const updateIdempotencyKey = ref('');
 const { can } = usePermission();
 
-const formatDate = (val) => val ? new Date(val).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+const formatDate = (val) => {
+    if (!val) return '—';
+    const date = new Date(val);
+    return Number.isNaN(date.getTime())
+        ? '—'
+        : date.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+};
 
 const totalQty = props.purchase.items?.reduce((s, i) => s + (Number(i.quantity) || 0), 0) || 0;
 const totalProducts = props.purchase.items?.length || 0;
@@ -208,7 +214,7 @@ const paymentMethodLabel = (method) => {
                             <span class="text-gray-500 w-28 flex-shrink-0">Thời gian giao dịch:</span>
                             <span class="text-gray-700">{{ formatDate(purchase.purchase_date || purchase.created_at) }}</span>
                         </div>
-                        <div class="flex gap-2" title="Thời gian giao dịch được dùng trong báo cáo và công nợ. Thời điểm ghi nhận là lúc hệ thống lưu hoàn tất chứng từ.">
+                        <div class="flex gap-2" title="Thời gian giao dịch được dùng trong báo cáo và công nợ. Thời điểm ghi nhận là lúc chứng từ được nhập hoặc ghi nhận vào hệ thống.">
                             <span class="text-gray-500 w-32 flex-shrink-0">Thời điểm ghi nhận:</span>
                             <span class="text-gray-700">{{ formatDate(purchase.created_at) }}</span>
                         </div>
