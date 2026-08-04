@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\OrderReturn;
 
+use App\Enums\ReturnStatus;
 use App\Models\ActivityLog;
 use App\Models\CashFlow;
 use App\Models\Category;
@@ -10,6 +11,7 @@ use App\Models\Employee;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\OrderReturn;
+use App\Models\PartnerDebtOperation;
 use App\Models\Product;
 use App\Models\ReturnItem;
 use App\Models\SerialImei;
@@ -96,6 +98,45 @@ class ReturnCancelResoldSerialGuardTest extends TestCase
         $this->assertGreaterThan(0, StockMovement::where('ref_id', $return->id)->count());
     }
 
+    public function test_blocked_cancel_can_retry_with_the_same_idempotency_key_after_serial_is_safe_again(): void
+    {
+        [$return, $product, $customer, $originalInvoice, $serials] = $this->persistedCustomerReturnScenario();
+        $resale = Invoice::create([
+            'code' => 'HD-RESOLD-RETRY-'.uniqid(),
+            'subtotal' => 100000,
+            'total' => 100000,
+        ]);
+        $serials[0]->update(['status' => 'sold', 'invoice_id' => $resale->id, 'sold_at' => now()]);
+        $idempotencyKey = 'return-cancel-safe-retry-'.uniqid();
+
+        $this->actingAs($this->admin)
+            ->withHeader('Idempotency-Key', $idempotencyKey)
+            ->postJson(route('returns.cancel', $return))
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('serial_ids');
+        $this->assertSame(0, PartnerDebtOperation::query()
+            ->where('idempotency_key', $idempotencyKey)
+            ->count());
+
+        $serials[0]->update(['status' => 'in_stock', 'invoice_id' => null, 'sold_at' => null]);
+
+        $this->actingAs($this->admin)
+            ->withHeader('Idempotency-Key', $idempotencyKey)
+            ->postJson(route('returns.cancel', $return))
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertSame(ReturnStatus::CANCELLED, $return->fresh()->status);
+        $this->assertSame('sold', $serials[0]->fresh()->status);
+        $this->assertSame($originalInvoice->id, $serials[0]->fresh()->invoice_id);
+        $this->assertSame(1, PartnerDebtOperation::query()
+            ->where('idempotency_key', $idempotencyKey)
+            ->where('status', 'committed')
+            ->count());
+        $this->assertSame(100000.0, (float) $customer->fresh()->debt_amount);
+        $this->assertLessThan(1, (float) $product->fresh()->stock_quantity);
+    }
+
     private function scenario(int $serialCount = 1, bool $withCustomer = true): array
     {
         $category = Category::firstOrCreate(['name' => 'Return cancel guard category']);
@@ -167,6 +208,89 @@ class ReturnCancelResoldSerialGuardTest extends TestCase
         ]);
 
         return [$return, $product, $customer, $invoice, $serials->all()];
+    }
+
+    private function persistedCustomerReturnScenario(): array
+    {
+        $category = Category::firstOrCreate(['name' => 'Return cancel retry category']);
+        $product = Product::create([
+            'sku' => 'RETURN-CANCEL-RETRY-'.uniqid(),
+            'name' => 'Return cancel retry serial product',
+            'cost_price' => 40000,
+            'retail_price' => 100000,
+            'stock_quantity' => 0,
+            'inventory_total_cost' => 0,
+            'is_active' => true,
+            'has_serial' => true,
+            'category_id' => $category->id,
+        ]);
+        $customer = Customer::create([
+            'code' => 'KH-CANCEL-RETRY-'.uniqid(),
+            'name' => 'Customer cancel retry',
+            'phone' => '092'.random_int(1000000, 9999999),
+            'is_customer' => true,
+            'debt_amount' => 100000,
+            'total_spent' => 0,
+        ]);
+        $seller = Employee::create([
+            'code' => 'NV-CANCEL-RETRY-'.uniqid(),
+            'name' => 'Seller cancel retry',
+            'is_active' => true,
+        ]);
+        $invoice = Invoice::create([
+            'code' => 'HD-CANCEL-RETRY-'.uniqid(),
+            'customer_id' => $customer->id,
+            'created_by' => $seller->id,
+            'seller_name' => $seller->name,
+            'subtotal' => 100000,
+            'total' => 100000,
+        ]);
+        $invoiceItem = InvoiceItem::create([
+            'invoice_id' => $invoice->id,
+            'product_id' => $product->id,
+            'quantity' => 1,
+            'price' => 100000,
+            'cost_price' => 40000,
+            'subtotal' => 100000,
+        ]);
+        $serial = SerialImei::create([
+            'product_id' => $product->id,
+            'serial_number' => 'SN-CANCEL-RETRY-'.uniqid(),
+            'status' => 'sold',
+            'invoice_id' => $invoice->id,
+            'sold_at' => now(),
+            'cost_price' => 40000,
+            'original_cost' => 40000,
+        ]);
+        $receiver = Employee::create([
+            'code' => 'NV-CANCEL-RETRY-RECEIVER-'.uniqid(),
+            'name' => 'Receiver cancel retry',
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($this->admin)->post(route('returns.store'), [
+            'invoice_id' => $invoice->id,
+            'received_by_employee_id' => $receiver->id,
+            'customer_id' => $customer->id,
+            'subtotal' => 100000,
+            'discount' => 0,
+            'fee_type' => 'amount',
+            'fee_value' => 0,
+            'total' => 100000,
+            'paid_to_customer' => 0,
+            'items' => [[
+                'product_id' => $product->id,
+                'invoice_item_id' => $invoiceItem->id,
+                'qty' => 1,
+                'price' => 100000,
+                'discount' => 0,
+                'serial_ids' => [$serial->id],
+            ]],
+        ])->assertRedirect();
+
+        $return = OrderReturn::query()->where('invoice_id', $invoice->id)->latest('id')->firstOrFail();
+
+        return [$return, $product, $customer, $invoice, [$serial]];
     }
 
     private function snapshot(OrderReturn $return, Product $product, Customer $customer, array $serials): array

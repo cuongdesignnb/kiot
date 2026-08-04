@@ -109,16 +109,6 @@ class SellerResolver
     }
 
     /**
-     * HOTFIX 24.28B — Determine seller key for a single invoice.
-     *
-     * Resolution:
-     * 1. created_by present → employee:<id> if employee exists, else snapshot or unknown
-     * 2. created_by NULL + seller_name present → match employee or snapshot
-     * 3. Both NULL → unknown
-     *
-     * NEVER uses created_by_name (that's the creator, not the seller).
-     */
-    /**
      * Resolve the effective seller key of each return. An override belongs to
      * the override employee (or its retained snapshot); only no-override rows
      * fall back to the source invoice seller.
@@ -194,6 +184,12 @@ class SellerResolver
         return $this->originalSellerNameForReturn($return);
     }
 
+    /**
+     * Determine seller key for a single invoice without using its creator snapshot.
+     *
+     * Resolution: known created_by employee, then an unambiguous seller_name
+     * employee match, then a seller-name snapshot, otherwise unknown.
+     */
     private function resolveKey(
         $createdBy,
         $sellerName,

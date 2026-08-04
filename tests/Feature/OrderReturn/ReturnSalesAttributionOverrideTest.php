@@ -3,6 +3,7 @@
 namespace Tests\Feature\OrderReturn;
 
 use App\Models\ActivityLog;
+use App\Models\CashFlow;
 use App\Models\Category;
 use App\Models\Customer;
 use App\Models\Employee;
@@ -12,8 +13,10 @@ use App\Models\OrderReturn;
 use App\Models\Product;
 use App\Models\ReturnItem;
 use App\Models\Role;
+use App\Models\SerialImei;
 use App\Models\User;
 use App\Support\Reports\SellerResolver;
+use Carbon\Carbon;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
@@ -35,6 +38,10 @@ class ReturnSalesAttributionOverrideTest extends TestCase
     private Invoice $invoice;
 
     private OrderReturn $return;
+
+    private CashFlow $cashFlow;
+
+    private SerialImei $serial;
 
     protected function setUp(): void
     {
@@ -103,6 +110,26 @@ class ReturnSalesAttributionOverrideTest extends TestCase
             'cost_price' => 40000,
             'import_price' => 40000,
         ]);
+        $this->serial = SerialImei::create([
+            'product_id' => $this->product->id,
+            'serial_number' => 'SN-RETURN-ATTR-'.uniqid(),
+            'status' => 'in_stock',
+            'cost_price' => 40000,
+            'original_cost' => 40000,
+        ]);
+        $this->cashFlow = CashFlow::create([
+            'code' => 'PC-RETURN-ATTR-'.uniqid(),
+            'type' => 'payment',
+            'amount' => 100000,
+            'time' => now(),
+            'target_type' => 'Khach hang',
+            'target_id' => $this->customer->id,
+            'target_name' => $this->customer->name,
+            'reference_type' => 'OrderReturn',
+            'reference_code' => $this->return->code,
+            'description' => 'Return attribution financial snapshot',
+            'status' => 'completed',
+        ]);
     }
 
     public function test_migration_adds_only_nullable_sales_attribution_metadata_to_returns(): void
@@ -129,6 +156,8 @@ class ReturnSalesAttributionOverrideTest extends TestCase
             'customer' => $this->customer->fresh()->only(['debt_amount', 'total_spent']),
             'product' => $this->product->fresh()->only(['stock_quantity', 'inventory_total_cost', 'cost_price']),
             'return_item' => $this->return->items()->first()->only(['product_id', 'quantity', 'price', 'cost_price', 'serial_ids']),
+            'serial' => $this->serial->fresh()->only(['status', 'invoice_id', 'sold_at', 'cost_price', 'original_cost']),
+            'cash_flow' => $this->cashFlowSnapshot($this->cashFlow),
         ];
 
         $response = $this->actingAs($this->admin)->patchJson(
@@ -157,6 +186,8 @@ class ReturnSalesAttributionOverrideTest extends TestCase
         $this->assertSame($before['customer'], $this->customer->fresh()->only(array_keys($before['customer'])));
         $this->assertSame($before['product'], $this->product->fresh()->only(array_keys($before['product'])));
         $this->assertSame($before['return_item'], $this->return->items()->first()->only(array_keys($before['return_item'])));
+        $this->assertSame($before['serial'], $this->serial->fresh()->only(array_keys($before['serial'])));
+        $this->assertSame($before['cash_flow'], $this->cashFlowSnapshot($this->cashFlow));
 
         $log = ActivityLog::query()
             ->where('action', ActivityLog::ACTION_RETURN_SALES_ATTRIBUTION_UPDATE)
@@ -230,6 +261,35 @@ class ReturnSalesAttributionOverrideTest extends TestCase
         $this->assertNull($this->return->sales_attribution_name);
         $this->assertSame("employee:{$this->sellerA->id}", app(SellerResolver::class)
             ->returnSellerMap(OrderReturn::query()->whereKey($this->return->id))[$this->return->id]);
+
+        $rows = collect($this->actingAs($this->admin)
+            ->get('/reports/employees?concern=sales&view=report')
+            ->assertOk()
+            ->viewData('page')['props']['reportRows']);
+        $rowA = $rows->firstWhere('seller_key', "employee:{$this->sellerA->id}");
+        $rowB = $rows->firstWhere('seller_key', "employee:{$this->sellerB->id}");
+        $this->assertSame(100000, (int) $rowA['returns']);
+        $this->assertTrue($rowB === null || (int) $rowB['returns'] === 0);
+    }
+
+    public function test_override_keeps_the_return_in_its_original_report_month(): void
+    {
+        $returnDate = Carbon::parse('2026-07-11 09:58:00');
+        $this->return->forceFill(['created_at' => $returnDate, 'updated_at' => $returnDate])->save();
+
+        $this->actingAs($this->admin)->patchJson(route('returns.update-sales-attribution', $this->return), [
+            'sales_attribution_employee_id' => $this->sellerB->id,
+            'reason' => 'Giu ky bao cao theo ngay phieu tra hang.',
+        ])->assertOk();
+
+        $rows = collect($this->actingAs($this->admin)
+            ->get('/reports/employees?concern=sales&view=report&period=custom&date_from=2026-07-01&date_to=2026-07-31')
+            ->assertOk()
+            ->viewData('page')['props']['reportRows']);
+        $rowB = $rows->firstWhere('seller_key', "employee:{$this->sellerB->id}");
+
+        $this->assertSame(100000, (int) $rowB['returns']);
+        $this->assertSame('2026-07-11', $rowB['children'][0]['date']);
     }
 
     public function test_inactive_cancelled_and_unauthorized_requests_are_rejected_without_mutation(): void
@@ -304,6 +364,17 @@ class ReturnSalesAttributionOverrideTest extends TestCase
         $snapshot = $fresh->only($fields);
         $snapshot['created_at'] = $fresh->created_at?->toISOString();
         $snapshot['updated_at'] = $fresh->updated_at?->toISOString();
+
+        return $snapshot;
+    }
+
+    private function cashFlowSnapshot(CashFlow $cashFlow): array
+    {
+        $fresh = $cashFlow->fresh();
+        $snapshot = $fresh->only([
+            'type', 'amount', 'time', 'target_type', 'target_id', 'reference_type', 'reference_code', 'status',
+        ]);
+        $snapshot['time'] = $fresh->time?->toISOString();
 
         return $snapshot;
     }

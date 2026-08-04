@@ -15,7 +15,6 @@ return new class extends Migration
                     ->nullable()
                     ->constrained('employees')
                     ->nullOnDelete();
-                $table->index('sales_attribution_employee_id', 'returns_sales_attribution_employee_id_index');
             }
 
             if (! Schema::hasColumn('returns', 'sales_attribution_name')) {
@@ -69,7 +68,6 @@ return new class extends Migration
         Schema::table('returns', function (Blueprint $table) {
             if (Schema::hasColumn('returns', 'sales_attribution_employee_id')) {
                 $table->dropForeign(['sales_attribution_employee_id']);
-                $table->dropIndex('returns_sales_attribution_employee_id_index');
                 $table->dropColumn('sales_attribution_employee_id');
             }
 

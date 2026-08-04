@@ -96,7 +96,7 @@ three-line backend safety message rather than using a validation alert.
 
 | Check | Result |
 | --- | --- |
-| attribution + resold-serial feature suite | PASS — 9 tests / 87 assertions |
+| attribution + resold-serial feature suite | PASS — 11 tests / 109 assertions |
 | related seller/report/return/debt/serial regression suite | PASS — 51 tests / 213 assertions |
 | disposable-MySQL migration rollback then re-apply | PASS |
 | frontend production build | PASS |
@@ -107,9 +107,45 @@ three-line backend safety message rather than using a validation alert.
 The attribution suite covers default behavior, override, reset, duplicate
 payload/no duplicate log, inactive and cancelled rejections, RBAC, snapshot
 fallback, report/filter/daily/profit/COGS transfer, and unchanged financial and
-inventory state. The guard suite covers one or multiple serials with a resold
-serial, exact Vietnamese error text, full no-mutation snapshots, and the safe
-serial cancellation baseline.
+inventory state. Its non-mutation snapshot explicitly covers invoice,
+return_items, customer debt, customer total spent, stock, inventory total cost,
+serial, and cash flow. It also proves an override remains in the report month
+of the return document and that reset puts the return deduction back on the
+original invoice seller. The guard suite covers one or multiple serials with a
+resold serial, exact Vietnamese error text, full no-mutation snapshots, the
+safe serial cancellation baseline, and retrying the same Idempotency-Key after
+a blocked cancellation once the serial is safe again.
+
+### Final independent review gate
+
+The final review covered all 16 PR files. It corrected a duplicate/misplaced
+`SellerResolver` PHPDoc and removed the explicit
+`returns_sales_attribution_employee_id_index`: MySQL already creates the
+single FK-supporting `returns_sales_attribution_employee_id_foreign` index for
+`foreignId()->constrained()`. A fresh disposable MySQL migration run confirmed
+exactly that one index. The migration rolled back cleanly (all attribution
+columns absent) and re-applied cleanly.
+
+| Check | Result |
+| --- | --- |
+| `ReturnSalesAttributionOverrideTest` | PASS — 7 tests / 76 assertions |
+| `ReturnCancelResoldSerialGuardTest` | PASS — 4 tests / 33 assertions |
+| `SellerResolver`, `EmployeeReport`, `OrderReturn`, `RR08`, `SerialImei` filters | PASS |
+| `CustomerDebt` filter | BASELINE — 21 failed, 1 skipped, 79 passed / 396 assertions at both base `84707bc` and PR head; debt/timeline core files are not changed by this PR |
+| full PHP lint for every changed PHP file | PASS |
+| `git diff --check` | PASS |
+| `npm run build` | PASS |
+| Pint on dirty PR files | PASS |
+| full-repository `vendor/bin/pint --test` | pre-existing baseline failure — 899 files, 2 errors, 514 style issues |
+
+Browser evidence from the prior disposable local QA remains valid for
+override, reset, and Vietnamese inline reason validation. The final requested
+browser-triggered resold-serial 422 could not be repeated because the in-app
+browser no longer had an agent-owned tab and the only available Chrome window
+was user-owned and unrelated. The backend feature test proves the 422,
+Vietnamese message, no partial mutation, and idempotency retry contract, but a
+fresh manual browser cancellation check remains required before Ready for
+Review.
 
 An exploratory broad PHPUnit regex sweep also matched 890 unrelated
 customer/supplier debt-timeline suites. A pre-reset exploratory run reported 63
