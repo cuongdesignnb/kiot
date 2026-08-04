@@ -116,6 +116,7 @@ class OrderReturnController extends Controller
     public function show(OrderReturn $return)
     {
         $return->load(['customer', 'items.product', 'invoice.creator', 'receivedByEmployee']);
+        $businessTime = BusinessDateTime::nullable($return->return_date) ?? $return->created_at;
 
         // Step 22.1B (read-only): map serial_ids → display names.
         $allSerialIds = [];
@@ -139,6 +140,10 @@ class OrderReturnController extends Controller
                 'code' => $return->code,
                 'status' => $return->status,
                 'created_at' => $return->created_at?->format('d/m/Y H:i'),
+                'business_time' => $businessTime?->format('d/m/Y H:i') ?? '',
+                'recorded_at' => $return->created_at?->format('d/m/Y H:i') ?? '',
+                'business_time_source' => $return->return_date ? 'return_date' : 'created_at',
+                'recorded_time_source' => 'created_at',
                 'created_by_name' => $return->created_by_name,
                 'original_seller_name' => app(\App\Support\Reports\SellerResolver::class)
                     ->displayNameForInvoice($return->invoice),

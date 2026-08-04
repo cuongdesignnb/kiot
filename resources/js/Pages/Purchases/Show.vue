@@ -205,8 +205,12 @@ const paymentMethodLabel = (method) => {
                             </div>
                         </div>
                         <div class="flex gap-2">
-                            <span class="text-gray-500 w-28 flex-shrink-0">Thời gian:</span>
+                            <span class="text-gray-500 w-28 flex-shrink-0">Thời gian giao dịch:</span>
                             <span class="text-gray-700">{{ formatDate(purchase.purchase_date || purchase.created_at) }}</span>
+                        </div>
+                        <div class="flex gap-2" title="Thời gian giao dịch được dùng trong báo cáo và công nợ. Thời điểm ghi nhận là lúc hệ thống lưu hoàn tất chứng từ.">
+                            <span class="text-gray-500 w-32 flex-shrink-0">Thời điểm ghi nhận:</span>
+                            <span class="text-gray-700">{{ formatDate(purchase.created_at) }}</span>
                         </div>
                         <div class="flex gap-2">
                             <span class="text-gray-500 w-32 flex-shrink-0">Trạng thái:</span>

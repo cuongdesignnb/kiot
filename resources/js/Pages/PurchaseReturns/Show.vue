@@ -80,8 +80,12 @@ const cancelReturn = () => {
                             <div class="font-medium text-blue-600">{{ ret.supplier?.name || '—' }}</div>
                         </div>
                         <div>
-                            <div class="text-gray-400 mb-1">Ngày trả</div>
+                            <div class="text-gray-400 mb-1">Thời gian giao dịch</div>
                             <div class="font-medium">{{ new Date(ret.return_date || ret.created_at).toLocaleString('vi-VN') }}</div>
+                        </div>
+                        <div title="Thời gian giao dịch được dùng trong báo cáo và công nợ. Thời điểm ghi nhận là lúc hệ thống lưu hoàn tất chứng từ.">
+                            <div class="text-gray-400 mb-1">Thời điểm ghi nhận</div>
+                            <div class="font-medium">{{ new Date(ret.created_at).toLocaleString('vi-VN') }}</div>
                         </div>
                         <div>
                             <div class="text-gray-400 mb-1">Phương thức</div>

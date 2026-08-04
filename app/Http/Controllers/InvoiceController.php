@@ -730,6 +730,9 @@ class InvoiceController extends Controller
     public function detail(Invoice $invoice)
     {
         $invoice->load(['customer', 'items.product']);
+        $businessTime = $invoice->transaction_date
+            ?? ($invoice->sale_time ? Carbon::parse($invoice->sale_time) : $invoice->created_at);
+        $recordedAt = $invoice->lock_started_at ?? $invoice->created_at;
 
         return response()->json([
             'id' => $invoice->id,
@@ -737,6 +740,10 @@ class InvoiceController extends Controller
             'status' => $invoice->status,
             'created_at' => $invoice->created_at ? $invoice->created_at->format('d/m/Y H:i') : '',
             'transaction_date' => $invoice->transaction_date ? $invoice->transaction_date->format('d/m/Y H:i') : '',
+            'business_time' => $businessTime?->format('d/m/Y H:i') ?? '',
+            'recorded_at' => $recordedAt?->format('d/m/Y H:i') ?? '',
+            'business_time_source' => $invoice->transaction_date ? 'transaction_date' : ($invoice->sale_time ? 'sale_time' : 'created_at'),
+            'recorded_time_source' => $invoice->lock_started_at ? 'lock_started_at' : 'created_at',
             'created_by_name' => $invoice->created_by_name ?? 'Admin',
             'customer_name' => $invoice->customer->name ?? 'Khách lẻ',
             'customer_code' => $invoice->customer->code ?? '',

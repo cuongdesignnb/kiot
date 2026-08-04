@@ -1073,12 +1073,17 @@ class SupplierController extends Controller
                 return $notFound();
             }
             $purchase->load(['supplier', 'items.product', 'user', 'employee']);
+            $businessTime = $purchase->purchase_date ?? $purchase->created_at;
 
             return response()->json([
                 'success' => true, 'type' => 'purchase', 'title' => 'Phiếu nhập hàng', 'code' => $purchase->code,
                 'data' => [
                     'id' => $purchase->id, 'code' => $purchase->code, 'status' => $purchase->status,
                     'purchase_date' => optional($purchase->purchase_date ?? $purchase->created_at)->format('d/m/Y H:i'),
+                    'business_time' => $businessTime?->format('d/m/Y H:i') ?? '',
+                    'recorded_at' => $purchase->created_at?->format('d/m/Y H:i') ?? '',
+                    'business_time_source' => $purchase->purchase_date ? 'purchase_date' : 'created_at',
+                    'recorded_time_source' => 'created_at',
                     'supplier_name' => $purchase->supplier->name ?? '', 'supplier_code' => $purchase->supplier->code ?? '',
                     'user_name' => $purchase->user->name ?? 'Admin', 'note' => $purchase->note,
                     'total_amount' => $purchase->total_amount, 'discount' => $purchase->discount,
@@ -1098,12 +1103,17 @@ class SupplierController extends Controller
                 return $notFound();
             }
             $return->loadMissing(['items.product']);
+            $businessTime = $return->return_date ?? $return->created_at;
 
             return response()->json([
                 'success' => true, 'type' => 'purchase_return', 'title' => 'Trả hàng nhập', 'code' => $return->code,
                 'data' => [
                     'id' => $return->id, 'code' => $return->code, 'status' => $return->status,
                     'return_date' => optional($return->return_date ?? $return->created_at)->format('d/m/Y H:i'),
+                    'business_time' => $businessTime?->format('d/m/Y H:i') ?? '',
+                    'recorded_at' => $return->created_at?->format('d/m/Y H:i') ?? '',
+                    'business_time_source' => $return->return_date ? 'return_date' : 'created_at',
+                    'recorded_time_source' => 'created_at',
                     'total_amount' => $return->total_amount, 'note' => $return->note,
                     'items' => $return->items->map(fn ($it) => [
                         'product_code' => $it->product->code ?? '', 'product_name' => $it->product->name ?? '',
@@ -1161,12 +1171,19 @@ class SupplierController extends Controller
                 return $notFound();
             }
             $invoice->load(['items.product']);
+            $businessTime = $invoice->transaction_date
+                ?? ($invoice->sale_time ? \Carbon\Carbon::parse($invoice->sale_time) : $invoice->created_at);
+            $recordedAt = $invoice->lock_started_at ?? $invoice->created_at;
 
             return response()->json([
                 'success' => true, 'type' => 'invoice', 'title' => 'Hóa đơn', 'code' => $invoice->code,
                 'data' => [
                     'id' => $invoice->id, 'code' => $invoice->code, 'status' => $invoice->status,
                     'created_at' => optional($invoice->created_at)->format('d/m/Y H:i'),
+                    'business_time' => $businessTime?->format('d/m/Y H:i') ?? '',
+                    'recorded_at' => $recordedAt?->format('d/m/Y H:i') ?? '',
+                    'business_time_source' => $invoice->transaction_date ? 'transaction_date' : ($invoice->sale_time ? 'sale_time' : 'created_at'),
+                    'recorded_time_source' => $invoice->lock_started_at ? 'lock_started_at' : 'created_at',
                     'total' => $invoice->total, 'discount' => $invoice->discount, 'customer_paid' => $invoice->customer_paid,
                     'items' => $invoice->items->map(fn ($it) => [
                         'product_code' => $it->product->code ?? '', 'product_name' => $it->product->name ?? '',

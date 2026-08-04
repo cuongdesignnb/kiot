@@ -55,8 +55,12 @@ const cancelReturn = () => {
             <div class="bg-white rounded-lg border border-gray-200 p-5 mb-6">
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                     <div>
-                        <div class="text-gray-500">Ngày tạo</div>
-                        <div class="font-semibold">{{ returnOrder.created_at }}</div>
+                        <div class="text-gray-500">Thời gian giao dịch</div>
+                        <div class="font-semibold">{{ returnOrder.business_time }}</div>
+                    </div>
+                    <div title="Thời gian giao dịch được dùng trong báo cáo và công nợ. Thời điểm ghi nhận là lúc hệ thống lưu hoàn tất chứng từ.">
+                        <div class="text-gray-500">Thời điểm ghi nhận trên hệ thống</div>
+                        <div class="font-semibold">{{ returnOrder.recorded_at }}</div>
                     </div>
                     <div>
                         <div class="text-gray-500">Người bán gốc</div>

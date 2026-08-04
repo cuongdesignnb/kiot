@@ -1381,12 +1381,19 @@ class CustomerController extends Controller
             }
 
             $invoice->load(['customer', 'items.product', 'branch', 'employee']);
+            $businessTime = $invoice->transaction_date
+                ?? ($invoice->sale_time ? \Carbon\Carbon::parse($invoice->sale_time) : $invoice->created_at);
+            $recordedAt = $invoice->lock_started_at ?? $invoice->created_at;
 
             $data = [
                 'id' => $invoice->id,
                 'code' => $invoice->code,
                 'status' => $invoice->status,
                 'created_at' => $invoice->created_at ? $invoice->created_at->format('d/m/Y H:i') : '',
+                'business_time' => $businessTime?->format('d/m/Y H:i') ?? '',
+                'recorded_at' => $recordedAt?->format('d/m/Y H:i') ?? '',
+                'business_time_source' => $invoice->transaction_date ? 'transaction_date' : ($invoice->sale_time ? 'sale_time' : 'created_at'),
+                'recorded_time_source' => $invoice->lock_started_at ? 'lock_started_at' : 'created_at',
                 'created_by_name' => $invoice->created_by_name ?? 'Admin',
                 'seller_name' => $invoice->seller_name ?? ($invoice->employee->name ?? 'Admin'),
                 'customer_name' => $invoice->customer->name ?? 'Khách lẻ',
@@ -1439,6 +1446,7 @@ class CustomerController extends Controller
             }
 
             $purchase->load(['supplier', 'items.product', 'user', 'employee']);
+            $businessTime = $purchase->purchase_date ?? $purchase->created_at;
 
             $data = [
                 'id' => $purchase->id,
@@ -1446,6 +1454,10 @@ class CustomerController extends Controller
                 'status' => $purchase->status,
                 'status_label' => $purchase->status === 'completed' ? 'Đã nhập hàng' : ($purchase->status === 'returned' ? 'Đã trả hàng' : ($purchase->status === 'cancelled' ? 'Đã hủy' : ucfirst($purchase->status))),
                 'purchase_date' => $purchase->purchase_date ? $purchase->purchase_date->format('d/m/Y H:i') : ($purchase->created_at ? $purchase->created_at->format('d/m/Y H:i') : ''),
+                'business_time' => $businessTime?->format('d/m/Y H:i') ?? '',
+                'recorded_at' => $purchase->created_at?->format('d/m/Y H:i') ?? '',
+                'business_time_source' => $purchase->purchase_date ? 'purchase_date' : 'created_at',
+                'recorded_time_source' => 'created_at',
                 'user_name' => $purchase->user->name ?? 'Admin',
                 'employee_name' => $purchase->employee->name ?? null,
                 'supplier_name' => $purchase->supplier->name ?? '',

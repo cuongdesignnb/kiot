@@ -9,6 +9,7 @@ import SortableHeader from "@/Components/SortableHeader.vue";
 import SidebarFilter from "@/Components/Filters/SidebarFilter.vue";
 import DateTimePicker from "@/Components/DateTimePicker.vue";
 import MoneyInput from "@/Components/MoneyInput.vue";
+import TransactionTimeHelpTooltip from "@/Components/TransactionTimeHelpTooltip.vue";
 import { useFilters } from "@/composables/useFilters.js";
 import { nowDatetimeLocal } from "@/utils/dateTime.js";
 import axios from "axios";
@@ -24,7 +25,7 @@ const formatDateTime = (val) => {
 const supplierEntryDisplayTime = (entry) =>
     entry?.display_time ||
     entry?.time ||
-    entry?.recorded_at ||
+    entry?.business_time ||
     entry?.transaction_date ||
     entry?.purchase_date ||
     entry?.return_date ||
@@ -527,7 +528,8 @@ const supplierVoucherDisplayRows = computed(() => {
     return [
         { label: 'Mã phiếu', value: emptyText(data.code || supplierVoucher.payload?.code) },
         { label: 'Trạng thái', value: formatVoucherStatus(data.status || data.type) },
-        { label: 'Ngày nhập', value: formatVoucherDateTime(data.purchase_date || data.return_date || data.time || data.created_at) },
+        { label: 'Thời gian giao dịch', value: formatVoucherDateTime(data.business_time || data.purchase_date || data.return_date || data.time || data.created_at) },
+        { label: 'Thời điểm ghi nhận trên hệ thống', value: formatVoucherDateTime(data.recorded_at || data.created_at) },
         { label: 'Nhà cung cấp', value: emptyText(data.supplier_name || data.target_name) },
         { label: 'Mã nhà cung cấp', value: emptyText(data.supplier_code) },
         { label: 'Người tạo', value: emptyText(data.user_name) },
@@ -1343,6 +1345,7 @@ const submitActivate = (supplier) => {
                                                                 :title="getSupplierHistorySortTooltip(supplier.id)"
                                                             >
                                                                 Thời gian
+                                                                <TransactionTimeHelpTooltip />
                                                                 <span class="ml-1 text-[10px]">{{ getSupplierTabSort(supplier.id, 'history').direction === 'desc' ? '▼' : '▲' }}</span>
                                                             </th>
                                                             <th class="px-3 py-2">Loại phiếu</th>
@@ -1424,6 +1427,7 @@ const submitActivate = (supplier) => {
                                                                 :title="getSupplierTabSort(supplier.id, 'debt').direction === 'desc' ? 'Đang sắp xếp: mới nhất trước' : 'Đang sắp xếp: cũ nhất trước'"
                                                             >
                                                                 Thời gian
+                                                                <TransactionTimeHelpTooltip />
                                                                 <span class="ml-1 text-[10px]">{{ getSupplierTabSort(supplier.id, 'debt').direction === 'desc' ? '▼' : '▲' }}</span>
                                                             </th>
                                                             <th class="px-3 py-2">Loại</th>
@@ -1879,7 +1883,8 @@ const submitActivate = (supplier) => {
                     <div class="px-6 py-3 grid grid-cols-2 gap-x-8 gap-y-2 text-sm border-b bg-gray-50">
                         <div><span class="text-gray-500">Người tạo:</span> <span class="font-medium">{{ purchaseDetail.data.user_name }}</span></div>
                         <div v-if="purchaseDetail.data.employee_name"><span class="text-gray-500">Người nhận:</span> <span class="font-medium">{{ purchaseDetail.data.employee_name }}</span></div>
-                        <div><span class="text-gray-500">Ngày nhập:</span> <span class="font-medium">{{ purchaseDetail.data.purchase_date }}</span></div>
+                        <div><span class="text-gray-500">Thời gian giao dịch:</span> <span class="font-medium">{{ purchaseDetail.data.business_time }}</span></div>
+                        <div><span class="text-gray-500">Thời điểm ghi nhận trên hệ thống:</span> <span class="font-medium">{{ purchaseDetail.data.recorded_at }}</span></div>
                         <div><span class="text-gray-500">NCC:</span> <span class="font-medium">{{ purchaseDetail.data.supplier_name }}</span> <span class="text-gray-400">{{ purchaseDetail.data.supplier_code }}</span></div>
                     </div>
                     <!-- Items table -->
