@@ -111,11 +111,14 @@ inventory state. The guard suite covers one or multiple serials with a resold
 serial, exact Vietnamese error text, full no-mutation snapshots, and the safe
 serial cancellation baseline.
 
-An exploratory broad PHPUnit regex sweep also matched unrelated
-customer/supplier debt-timeline suites. It reported 63 failures and 9 errors in
-those timeline/report contracts; they were not investigated because none of the
-affected core files are changed here. The scoped report/return/debt/serial
-suites above are the release regression gate for this PR and pass.
+An exploratory broad PHPUnit regex sweep also matched 890 unrelated
+customer/supplier debt-timeline suites. A pre-reset exploratory run reported 63
+failures and 9 errors in those timeline/report contracts; a subsequent fresh
+schema single-process run reached the 10-minute QA command limit before it
+completed. Neither result is attributed to this change because none of the
+affected timeline-core files are changed here. The scoped
+report/return/debt/serial suites above are the release regression gate for this
+PR and pass.
 
 ### Browser QA (disposable local fixture)
 
