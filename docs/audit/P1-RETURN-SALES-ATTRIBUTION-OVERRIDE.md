@@ -138,14 +138,61 @@ columns absent) and re-applied cleanly.
 | Pint on dirty PR files | PASS |
 | full-repository `vendor/bin/pint --test` | pre-existing baseline failure — 899 files, 2 errors, 514 style issues |
 
-Browser evidence from the prior disposable local QA remains valid for
-override, reset, and Vietnamese inline reason validation. The final requested
-browser-triggered resold-serial 422 could not be repeated because the in-app
-browser no longer had an agent-owned tab and the only available Chrome window
-was user-owned and unrelated. The backend feature test proves the 422,
-Vietnamese message, no partial mutation, and idempotency retry contract, but a
-fresh manual browser cancellation check remains required before Ready for
-Review.
+### Final isolated browser cancellation QA
+
+The final resold-serial cancellation QA ran on 2026-08-04 with
+Playwright-managed Chromium in a disposable `%TEMP%` directory. It used a
+fresh, local MySQL 8 container (`kiot_pr42_browser_mysql`) and a Laravel server
+bound only to `http://127.0.0.1:8892`. No user Chrome window, user browser
+profile, production server, production credentials, or production database was
+accessed.
+
+The fixture contained original invoice A, a non-cancelled return with its
+stored `ReturnItem.serial_ids`, and the same serial already sold on invoice B.
+The serial was `sold` and linked to invoice B before either cancellation
+request. The browser signed in through the normal login UI: `GET /login` was
+200, the XSRF and session cookies were issued, the login POST succeeded, and
+the authenticated return detail was 200. This application deliberately has no
+`meta[name="csrf-token"]` in `resources/views/app.blade.php`; the same-origin
+browser fetch used Laravel's issued `XSRF-TOKEN` cookie in the standard
+`X-XSRF-TOKEN` header. CSRF middleware remained enabled and no cookie was
+injected or hard-coded.
+
+The direct JSON `POST /returns/1/cancel` returned HTTP 422 with
+`errors.serial_ids`. Its Vietnamese message identified the resold serial and
+invoice, instructed the user to use “Điều chỉnh người chịu doanh số trả hàng”,
+and stated that stock, debt, and serial were unchanged. The UI then opened the
+same detail route, accepted only its native confirmation dialog, and rendered
+the same three-line Vietnamese message in `[role="alert"]`. No validation alert
+was used. The screenshot and response evidence are kept outside the source
+tree in `C:\Users\cuong\AppData\Local\Temp\kiot-pr42-browser-qa`.
+
+Canonical pre- and post-request database snapshots covered the return, return
+items, serial, product stock/cost, customer debt/spend, and counts for return
+cash flows, stock movements, cancellation logs, and
+`customer_return_cancel` partner-debt operations. The SHA-256 values are
+identical: `829ed8e91b20807bbb02c614417d68c0700522bf92adcdd437143b91091d9621`.
+
+```text
+BROWSER_CANCEL_422_QA=PASS
+DIRECT_JSON_HTTP_422=PASS
+UI_INLINE_VALIDATION=PASS
+VIETNAMESE_MESSAGE=PASS
+NO_PARTIAL_MUTATION=PASS
+BROWSER_ENGINE=PLAYWRIGHT_MANAGED_CHROMIUM
+USER_CHROME_ACCESSED=NO
+RETURN_STATUS_UNCHANGED=YES
+SERIAL_STATE_UNCHANGED=YES
+SERIAL_RESALE_INVOICE_UNCHANGED=YES
+PRODUCT_STOCK_UNCHANGED=YES
+INVENTORY_TOTAL_COST_UNCHANGED=YES
+CUSTOMER_DEBT_UNCHANGED=YES
+CUSTOMER_TOTAL_SPENT_UNCHANGED=YES
+CASHFLOW_UNCHANGED=YES
+STOCK_MOVEMENT_UNCHANGED=YES
+CANCEL_LOG_UNCHANGED=YES
+PARTNER_DEBT_OPERATION_UNCHANGED=YES
+```
 
 An exploratory broad PHPUnit regex sweep also matched 890 unrelated
 customer/supplier debt-timeline suites. A pre-reset exploratory run reported 63
@@ -166,7 +213,7 @@ PR and pass.
 | Override | Select `Browser Seller B` and save | Detail refreshed with adjusted state, reason, actor and timestamp | PASS |
 | Index read-only view | Original and effective seller are distinguishable | List showed original A and adjusted B in separate columns | PASS |
 | Reset | Select original-seller option and save | Detail returned to default attribution while retaining audit reason/time | PASS |
-| Resold serial guard | Cancellation must not mutate a resold serial return | Native confirmation was reached in browser; exact request/no-mutation outcome is covered by the feature guard suite | PASS (automated guard evidence) |
+| Resold serial guard | Cancellation must return 422 and not mutate a resold serial return | Direct JSON returned `422/errors.serial_ids`; UI confirmation rendered the same inline Vietnamese `[role="alert"]`; canonical snapshots were identical | PASS |
 
 The local QA server used an isolated MySQL container and a dedicated test
 database. No production data, credentials, server, or database was used.
