@@ -25,14 +25,14 @@ class CanonicalPartnerDebtEventService
     ) {}
 
     /** @return Collection<int, array<string, mixed>> */
-    public function build(Customer $partner): Collection
+    public function build(Customer $partner, array $options = []): Collection
     {
         if (! $partner->exists) {
             return collect();
         }
 
-        $entries = $this->customerSource->events($partner)
-            ->concat($this->supplierSource->events($partner))
+        $entries = $this->customerSource->events($partner, $options)
+            ->concat($this->supplierSource->events($partner, $options))
             ->map(fn (array $entry): array => $this->normalize($partner, $entry));
 
         return $this->canonicalize($entries);

@@ -628,10 +628,18 @@ class PartnerDebtParityAuditService
                 ->filter(fn (array $entry): bool => (string) ($entry['code'] ?? '') !== '')
                 ->values();
         }
+        $customerEntries = $customerEntries
+            ->concat($this->historicalLedgerEvidence($customerDocument['_entries'] ?? [], 'customer_debts'))
+            ->unique(fn (array $entry): string => ($entry['source'] ?? '').'|'.($entry['code'] ?? ''))
+            ->values();
         $supplierEntries = collect($supplierDocument['_excluded_entries'] ?? [])
             ->map(fn ($entry): array => (array) $entry)
             ->where('source', 'supplier_debt_transactions')
             ->filter(fn (array $entry): bool => (string) ($entry['code'] ?? '') !== '')
+            ->values();
+        $supplierEntries = $supplierEntries
+            ->concat($this->historicalLedgerEvidence($supplierDocument['_entries'] ?? [], 'supplier_debt_transactions'))
+            ->unique(fn (array $entry): string => ($entry['source'] ?? '').'|'.($entry['code'] ?? ''))
             ->values();
         $entries = $customerEntries->concat($supplierEntries)->values();
 
@@ -648,6 +656,25 @@ class PartnerDebtParityAuditService
             'technical_customer_total' => (float) $customerEntries->sum('amount'),
             'technical_supplier_total' => (float) $supplierEntries->sum('amount'),
         ];
+    }
+
+    /** @return Collection<int, array{code: string, amount: float, source: string}> */
+    private function historicalLedgerEvidence(iterable $entries, string $source): Collection
+    {
+        return collect($entries)
+            ->map(fn ($entry): array => (array) $entry)
+            ->filter(fn (array $entry): bool => in_array((string) ($entry['event_kind'] ?? ''), [
+                'opening_balance',
+                'persisted_ledger_checkpoint',
+            ], true))
+            ->filter(fn (array $entry): bool => (string) ($entry['source_table'] ?? '') === $source)
+            ->map(fn (array $entry): array => [
+                'code' => (string) ($entry['source_code'] ?? $entry['code'] ?? ''),
+                'amount' => (float) ($entry['document_amount'] ?? abs((float) ($entry['amount'] ?? 0))),
+                'source' => $source,
+            ])
+            ->filter(fn (array $entry): bool => $entry['code'] !== '')
+            ->values();
     }
 
     private function parityDifferences(array $row): array

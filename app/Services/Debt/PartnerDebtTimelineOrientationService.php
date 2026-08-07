@@ -31,7 +31,9 @@ class PartnerDebtTimelineOrientationService
         $isSupplier = (bool) $role['persisted_supplier'];
         $isDualRole = $isCustomer && $isSupplier;
         $applicable = $orientation === 'customer' ? $isCustomer : $isSupplier;
-        $canonical = $this->events->build($partner);
+        $canonical = empty($options)
+            ? $this->events->build($partner)
+            : $this->events->build($partner, $options);
         $applicableEvents = $applicable
             ? $this->applicableEvents($canonical, $isDualRole, $orientation)
             : collect();
@@ -54,6 +56,7 @@ class PartnerDebtTimelineOrientationService
         );
 
         [$displayEntries, $rawFinal] = $this->displayEntries($applicableEvents, $orientation);
+        $excludedLedgerEntries = $this->excludedLedgerEntries($applicableEvents);
         $difference = $rawFinal - $target;
         $hasMismatch = $applicable && abs($difference) > self::TOLERANCE;
         $identityHash = $this->events->identityHash($applicableEvents);
@@ -79,6 +82,7 @@ class PartnerDebtTimelineOrientationService
             'raw_final_balance' => $rawFinal,
             'difference' => $difference,
             'has_mismatch' => $hasMismatch,
+            'canonical_entry_count' => $applicableEvents->count(),
             'entry_count' => $displayEntries->count(),
             'source_identity_hash' => $identityHash,
         ];
@@ -133,7 +137,7 @@ class PartnerDebtTimelineOrientationService
             'has_virtual_opening_balance' => false,
             'role_integrity_status' => $role['role_integrity_status'],
             'role_integrity_warning' => (bool) $role['has_role_integrity_mismatch'],
-            'excluded_ledger_entries' => [],
+            'excluded_ledger_entries' => $excludedLedgerEntries,
         ];
 
         return array_merge($contract, [
@@ -188,6 +192,12 @@ class PartnerDebtTimelineOrientationService
      */
     private function displayEntries(Collection $events, string $orientation): array
     {
+        // The canonical reducer deliberately keeps every persisted allocation
+        // event.  The partner screen, however, is a document view: one real
+        // supplier-payment voucher must render once even when it allocates to
+        // many purchases.  Consolidation is therefore display-only and runs
+        // after canonical selection but before running balances are projected.
+        $events = $this->consolidateSupplierPaymentDocuments($events);
         $customerRunning = 0.0;
         $supplierRunning = 0.0;
         $chronological = $events->map(function (array $event) use (
@@ -253,5 +263,337 @@ class PartnerDebtTimelineOrientationService
         $rawFinal = $orientation === 'customer' ? $customerRunning : $supplierRunning;
 
         return [$chronological->reverse()->values(), $rawFinal];
+    }
+
+    /**
+     * Collapse allocation rows belonging to the same authoritative CashFlow
+     * document for display only.  The returned row keeps the first canonical
+     * identity and carries every hidden identity in metadata so exports and
+     * audits can still inspect the complete evidence stream.
+     *
+     * @param  Collection<int, array<string, mixed>>  $events
+     * @return Collection<int, array<string, mixed>>
+     */
+    private function consolidateSupplierPaymentDocuments(Collection $events): Collection
+    {
+        $rows = [];
+        $groupIndexes = [];
+
+        foreach ($events->values() as $event) {
+            $groupKey = $this->supplierPaymentDisplayGroupKey($event);
+            if ($groupKey === null) {
+                $rows[] = $event;
+
+                continue;
+            }
+
+            if (! array_key_exists($groupKey, $groupIndexes)) {
+                $groupIndexes[$groupKey] = count($rows);
+                $rows[] = $this->initializeSupplierPaymentDisplayRow($event, $groupKey);
+
+                continue;
+            }
+
+            $index = $groupIndexes[$groupKey];
+            $representative = $rows[$index];
+            $rows[$index] = $this->mergeSupplierPaymentDisplayRow($representative, $event);
+        }
+
+        return collect($rows)->values();
+    }
+
+    /**
+     * Preserve source-level technical mirror evidence for audit consumers
+     * without putting those rows back into the canonical balance.
+     *
+     * @param  Collection<int, array<string, mixed>>  $events
+     * @return array<int, array<string, mixed>>
+     */
+    private function excludedLedgerEntries(Collection $events): array
+    {
+        return $events
+            ->filter(fn (array $event): bool => (bool) (($event['metadata']['excluded_from_document_balance'] ?? false)))
+            ->map(function (array $event): array {
+                $metadata = (array) ($event['metadata'] ?? []);
+
+                return [
+                    'code' => $metadata['code'] ?? $metadata['source_code'] ?? $metadata['reference_code'] ?? null,
+                    'amount' => (float) ($metadata['amount'] ?? $metadata['document_amount'] ?? 0.0),
+                    'reason' => $metadata['excluded_reason'] ?? 'technical_ledger_excluded_from_document_timeline',
+                    // The event's generic source (usually `ledger`) is not the
+                    // persisted document table used by the audit contract. Keep
+                    // the concrete source table whenever it is available.
+                    'source' => $event['source_table'] ?? $metadata['source_table'] ?? $metadata['source'] ?? null,
+                ];
+            })
+            ->filter(fn (array $entry): bool => (string) ($entry['code'] ?? '') !== '')
+            ->unique(fn (array $entry): string => implode('|', [
+                (string) ($entry['source'] ?? ''),
+                (string) ($entry['code'] ?? ''),
+            ]))
+            ->values()
+            ->all();
+    }
+
+    /** @return array<string, mixed> */
+    private function initializeSupplierPaymentDisplayRow(array $event, string $groupKey): array
+    {
+        $metadata = (array) ($event['metadata'] ?? []);
+        $cashFlowId = $event['detail_id'] ?? ($metadata['detail_reference_id'] ?? null);
+        $cashFlowCode = $event['detail_code'] ?? ($metadata['detail_reference_code'] ?? null);
+        $allocationIsActual = (bool) ($metadata['allocation_is_actual'] ?? false);
+        $allocationTotal = $allocationIsActual
+            ? (float) ($metadata['original_allocated_amount'] ?? $metadata['allocated_amount'] ?? 0.0)
+            : 0.0;
+        $paymentAmount = abs((float) ($event['supplier_delta'] ?? 0.0));
+        $unallocatedAmount = $allocationIsActual
+            ? max(0.0, $paymentAmount - $allocationTotal)
+            : 0.0;
+        $allocationMismatch = (bool) ($metadata['payment_allocation_mismatch'] ?? false)
+            || ($allocationIsActual && $unallocatedAmount > 0.01);
+        $needsManualReview = (bool) ($metadata['needs_manual_review'] ?? false) || $allocationMismatch;
+        $canonicalIdentities = [(string) ($event['event_identity'] ?? '')];
+        $displayMetadata = array_merge($metadata, [
+            'allocation_count' => $allocationIsActual ? 1 : 0,
+            'allocation_total' => $allocationTotal,
+            'purchase_ids' => $allocationIsActual && ($metadata['reference_id'] ?? null) !== null
+                ? [(int) $metadata['reference_id']]
+                : [],
+            'purchase_codes' => $allocationIsActual && ($metadata['reference_code'] ?? null) !== null
+                ? [(string) $metadata['reference_code']]
+                : [],
+            'allocation_purchase_ids' => $allocationIsActual && ($metadata['reference_id'] ?? null) !== null
+                ? [(int) $metadata['reference_id']]
+                : [],
+            'allocation_purchase_codes' => $allocationIsActual && ($metadata['reference_code'] ?? null) !== null
+                ? [(string) $metadata['reference_code']]
+                : [],
+            'payment_amount' => $paymentAmount,
+            'payment_cash_flow_id' => $cashFlowId,
+            'payment_cash_flow_code' => $cashFlowCode,
+            'payment_allocation_mismatch' => $allocationMismatch,
+            'needs_manual_review' => $needsManualReview,
+            'unallocated_amount' => $unallocatedAmount,
+            'canonical_event_identities' => $canonicalIdentities,
+            'canonical_event_count' => 1,
+            'display_group_key' => $groupKey,
+            'display_projection' => 'supplier_payment_document',
+            'reference_type' => 'SupplierPayment',
+            'reference_id' => $cashFlowId,
+            'reference_code' => $cashFlowCode,
+            'parent_document_code' => $cashFlowCode,
+            'payment_for_code' => $cashFlowCode,
+            'linked_document_code' => $cashFlowCode,
+            'linked_document_label' => $cashFlowCode ? 'Thanh toán NCC '.$cashFlowCode : null,
+            'document_group_key' => $cashFlowCode ?: (string) $cashFlowId,
+            'document_group_type' => 'supplier_payment',
+            'document_group_parent_code' => $cashFlowCode,
+            'document_group_time' => $event['business_time'] ?? null,
+            'document_group_sequence' => $event['event_order'] ?? null,
+            'sort_group_key' => $cashFlowCode ?: (string) $cashFlowId,
+            'sort_group_time' => $event['business_time'] ?? null,
+            'sort_group_sequence' => $event['event_order'] ?? null,
+        ]);
+
+        return array_merge($event, [
+            'allocation_count' => $displayMetadata['allocation_count'],
+            'allocation_total' => $allocationTotal,
+            'purchase_ids' => $displayMetadata['purchase_ids'],
+            'purchase_codes' => $displayMetadata['purchase_codes'],
+            'allocation_purchase_ids' => $displayMetadata['purchase_ids'],
+            'allocation_purchase_codes' => $displayMetadata['purchase_codes'],
+            'payment_amount' => $paymentAmount,
+            'payment_cash_flow_id' => $cashFlowId,
+            'payment_cash_flow_code' => $cashFlowCode,
+            'payment_allocation_mismatch' => $allocationMismatch,
+            'needs_manual_review' => $needsManualReview,
+            'unallocated_amount' => $unallocatedAmount,
+            'canonical_event_identities' => $canonicalIdentities,
+            'canonical_event_count' => 1,
+            'display_group_key' => $groupKey,
+            'display_projection' => 'supplier_payment_document',
+            'reference_type' => 'SupplierPayment',
+            'reference_id' => $cashFlowId,
+            'reference_code' => $cashFlowCode,
+            'parent_document_code' => $cashFlowCode,
+            'payment_for_code' => $cashFlowCode,
+            'linked_document_code' => $cashFlowCode,
+            'linked_document_label' => $cashFlowCode ? 'Thanh toán NCC '.$cashFlowCode : null,
+            'document_group_key' => $cashFlowCode ?: (string) $cashFlowId,
+            'document_group_type' => 'supplier_payment',
+            'document_group_parent_code' => $cashFlowCode,
+            'document_group_time' => $event['business_time'] ?? null,
+            'document_group_sequence' => $event['event_order'] ?? null,
+            'sort_group_key' => $cashFlowCode ?: (string) $cashFlowId,
+            'sort_group_time' => $event['business_time'] ?? null,
+            'sort_group_sequence' => $event['event_order'] ?? null,
+            'metadata' => $displayMetadata,
+        ]);
+    }
+
+    /**
+     * Group only by the real CashFlow identity.  Codes, timestamps and
+     * amounts are intentionally not part of the key because they can collide.
+     */
+    private function supplierPaymentDisplayGroupKey(array $event): ?string
+    {
+        if ((string) ($event['domain'] ?? '') !== 'supplier'
+            || (string) ($event['event_kind'] ?? '') !== 'supplier_payment'
+            || (string) ($event['source_type'] ?? $event['source_table'] ?? '') !== 'cash_flows'
+            || ! (bool) ($event['is_real_voucher'] ?? false)
+            || (bool) ($event['is_fallback'] ?? false)
+        ) {
+            return null;
+        }
+
+        $cashFlowId = $event['detail_id']
+            ?? ($event['metadata']['detail_reference_id'] ?? null)
+            ?? ($event['metadata']['reference_id'] ?? null);
+        if ($cashFlowId === null || (string) $cashFlowId === '') {
+            return null;
+        }
+
+        return implode('|', ['cash_flows', (string) $cashFlowId, 'supplier_payment']);
+    }
+
+    /** @return array<string, mixed> */
+    private function mergeSupplierPaymentDisplayRow(array $representative, array $event): array
+    {
+        $representativeMetadata = (array) ($representative['metadata'] ?? []);
+        $eventMetadata = (array) ($event['metadata'] ?? []);
+        $canonicalIdentities = array_values(array_unique(array_merge(
+            (array) ($representative['canonical_event_identities'] ?? [$representative['event_identity'] ?? '']),
+            (array) ($event['canonical_event_identities'] ?? [$event['event_identity'] ?? '']),
+        )));
+
+        $supplierDelta = (float) ($representative['supplier_delta'] ?? 0.0)
+            + (float) ($event['supplier_delta'] ?? 0.0);
+        $customerDelta = (float) ($representative['customer_delta'] ?? 0.0)
+            + (float) ($event['customer_delta'] ?? 0.0);
+
+        $representativeAllocationCount = array_key_exists('allocation_count', $representative)
+            ? (int) $representative['allocation_count']
+            : ((bool) ($representativeMetadata['allocation_is_actual'] ?? false) ? 1 : 0);
+        $eventAllocationCount = array_key_exists('allocation_count', $event)
+            ? (int) $event['allocation_count']
+            : ((bool) ($eventMetadata['allocation_is_actual'] ?? false) ? 1 : 0);
+        $representativeAllocationTotal = array_key_exists('allocation_total', $representative)
+            ? (float) $representative['allocation_total']
+            : (float) ($representativeMetadata['original_allocated_amount']
+                ?? $representativeMetadata['allocated_amount']
+                ?? 0.0);
+        $eventAllocationTotal = array_key_exists('allocation_total', $event)
+            ? (float) $event['allocation_total']
+            : (float) ($eventMetadata['original_allocated_amount']
+                ?? $eventMetadata['allocated_amount']
+                ?? 0.0);
+        $allocationCount = $representativeAllocationCount + $eventAllocationCount;
+        $allocationTotal = $representativeAllocationTotal + $eventAllocationTotal;
+        $eventIsActualAllocation = (bool) ($eventMetadata['allocation_is_actual'] ?? false);
+        $eventPurchaseReferenceId = $eventIsActualAllocation
+            ? ($eventMetadata['reference_id'] ?? null)
+            : null;
+        $eventPurchaseReferenceCode = $eventIsActualAllocation
+            ? ($eventMetadata['reference_code'] ?? null)
+            : null;
+        $purchaseIds = array_values(array_unique(array_filter(array_merge(
+            (array) ($representative['allocation_purchase_ids'] ?? $representative['purchase_ids'] ?? []),
+            (array) ($event['allocation_purchase_ids'] ?? []),
+            [$eventPurchaseReferenceId],
+        ), fn ($id): bool => $id !== null && (string) $id !== '')));
+        $purchaseCodes = array_values(array_unique(array_filter(array_merge(
+            (array) ($representative['allocation_purchase_codes'] ?? $representative['purchase_codes'] ?? []),
+            (array) ($event['allocation_purchase_codes'] ?? []),
+            [$eventPurchaseReferenceCode],
+        ), fn ($code): bool => $code !== null && (string) $code !== '')));
+        // The voucher amount is the absolute canonical effect of the whole
+        // CashFlow group (allocations plus any persisted unallocated residue).
+        $paymentAmount = abs($supplierDelta);
+        $cashFlowId = $representative['detail_id']
+            ?? ($representativeMetadata['detail_reference_id'] ?? null);
+        $cashFlowCode = $representative['detail_code']
+            ?? ($representativeMetadata['detail_reference_code'] ?? null);
+        $hasActualAllocations = $allocationCount > 0;
+        $unallocatedAmount = $hasActualAllocations
+            ? max(0.0, $paymentAmount - $allocationTotal)
+            : 0.0;
+        $allocationMismatch = (bool) ($representative['payment_allocation_mismatch'] ?? false)
+            || (bool) ($event['payment_allocation_mismatch'] ?? false)
+            || ($hasActualAllocations && $unallocatedAmount > 0.01);
+        $needsManualReview = (bool) ($representative['needs_manual_review'] ?? false)
+            || (bool) ($event['needs_manual_review'] ?? false)
+            || $allocationMismatch;
+        $documentGroupKey = $cashFlowCode ?: (string) $cashFlowId;
+
+        $metadata = array_merge($representativeMetadata, [
+            'allocation_count' => $allocationCount,
+            'allocation_total' => $allocationTotal,
+            'purchase_ids' => $purchaseIds,
+            'purchase_codes' => $purchaseCodes,
+            'allocation_purchase_ids' => $purchaseIds,
+            'allocation_purchase_codes' => $purchaseCodes,
+            'payment_amount' => $paymentAmount,
+            'payment_cash_flow_id' => $cashFlowId,
+            'payment_cash_flow_code' => $cashFlowCode,
+            'payment_allocation_mismatch' => $allocationMismatch,
+            'needs_manual_review' => $needsManualReview,
+            'unallocated_amount' => $unallocatedAmount,
+            'canonical_event_identities' => $canonicalIdentities,
+            'canonical_event_count' => count($canonicalIdentities),
+            'display_group_key' => implode('|', ['cash_flows', (string) $cashFlowId, 'supplier_payment']),
+            'display_projection' => 'supplier_payment_document',
+            'reference_type' => 'SupplierPayment',
+            'reference_id' => $cashFlowId,
+            'reference_code' => $cashFlowCode,
+            'parent_document_code' => $cashFlowCode,
+            'payment_for_code' => $cashFlowCode,
+            'linked_document_code' => $cashFlowCode,
+            'linked_document_label' => $cashFlowCode ? 'Thanh toán NCC '.$cashFlowCode : null,
+            'document_group_key' => $documentGroupKey,
+            'document_group_type' => 'supplier_payment',
+            'document_group_parent_code' => $cashFlowCode,
+            'document_group_time' => $representative['business_time'] ?? null,
+            'document_group_sequence' => $representative['event_order'] ?? null,
+            'sort_group_key' => $documentGroupKey,
+            'sort_group_time' => $representative['business_time'] ?? null,
+            'sort_group_sequence' => $representative['event_order'] ?? null,
+        ]);
+
+        return array_merge($representative, [
+            'customer_delta' => $customerDelta,
+            'supplier_delta' => $supplierDelta,
+            'allocation_count' => $allocationCount,
+            'allocation_total' => $allocationTotal,
+            'purchase_ids' => $purchaseIds,
+            'purchase_codes' => $purchaseCodes,
+            'allocation_purchase_ids' => $purchaseIds,
+            'allocation_purchase_codes' => $purchaseCodes,
+            'payment_amount' => $paymentAmount,
+            'payment_cash_flow_id' => $cashFlowId,
+            'payment_cash_flow_code' => $cashFlowCode,
+            'payment_allocation_mismatch' => $allocationMismatch,
+            'needs_manual_review' => $needsManualReview,
+            'unallocated_amount' => $unallocatedAmount,
+            'canonical_event_identities' => $canonicalIdentities,
+            'canonical_event_count' => count($canonicalIdentities),
+            'display_group_key' => $metadata['display_group_key'],
+            'display_projection' => 'supplier_payment_document',
+            'reference_type' => 'SupplierPayment',
+            'reference_id' => $cashFlowId,
+            'reference_code' => $cashFlowCode,
+            'parent_document_code' => $cashFlowCode,
+            'payment_for_code' => $cashFlowCode,
+            'linked_document_code' => $cashFlowCode,
+            'linked_document_label' => $cashFlowCode ? 'Thanh toán NCC '.$cashFlowCode : null,
+            'document_group_key' => $documentGroupKey,
+            'document_group_type' => 'supplier_payment',
+            'document_group_parent_code' => $cashFlowCode,
+            'document_group_time' => $representative['business_time'] ?? null,
+            'document_group_sequence' => $representative['event_order'] ?? null,
+            'sort_group_key' => $documentGroupKey,
+            'sort_group_time' => $representative['business_time'] ?? null,
+            'sort_group_sequence' => $representative['event_order'] ?? null,
+            'metadata' => $metadata,
+        ]);
     }
 }
