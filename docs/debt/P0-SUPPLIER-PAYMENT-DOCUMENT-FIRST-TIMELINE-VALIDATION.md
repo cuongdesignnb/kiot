@@ -5,13 +5,12 @@ STATUS=P0_SUPPLIER_PAYMENT_TIMELINE_REMEDIATION_COMPLETE
 REPOSITORY=cuongdesignnb/kiot
 BASE_BRANCH=production-customer-group
 BASE_SHA=095262ddce192923ffe00ab9e036c1841e2e61c1
-OLD_HEAD=7f717cc287ba35f8d40c7f174588223826ea2841
-NEW_HEAD=SEE_FINAL_HANDOFF_GIT_REV_PARSE_HEAD
+REVIEWED_CODE_HEAD=1325fb31e3e24f46be24eae4c8b5709e9dbfde27
 BRANCH=codex/p0-supplier-payment-document-first-timeline
-PR_CREATED=NO
+PR_CREATED=TO_BE_CAPTURED_AFTER_DRAFT_CREATION
 MERGE_RUN=NO
 DEPLOY_RUN=NO
-NEXT_GATE=FINAL_INDEPENDENT_RE_REVIEW
+NEXT_GATE=PR_CI_AND_FINAL_REVIEW
 ```
 
 ## Scope and safety
@@ -19,9 +18,33 @@ NEXT_GATE=FINAL_INDEPENDENT_RE_REVIEW
 The remediation is limited to supplier-payment display projection semantics and
 its disposable regression fixtures. Canonical allocation events remain the
 source of truth; consolidation occurs only after canonical selection. No
-migration, backfill, manual debt correction, production connection, production
-write, merge, or deployment was performed. `DEBT_OFFSET_WRITE_MODE=legacy` was
-unchanged.
+migration, backfill, manual debt correction, production connection by this
+agent, production write, merge, or deployment was performed.
+`DEBT_OFFSET_WRITE_MODE=legacy` was unchanged.
+
+The operator separately supplied a read-only production audit/evidence snapshot.
+That operator evidence is distinguished from agent activity below; no password,
+host secret, `.env` value, or credential is recorded here.
+
+```text
+AGENT_PRODUCTION_ACCESSED=NO
+AGENT_PRODUCTION_WRITE=NO
+OPERATOR_PRODUCTION_READ_ONLY_AUDIT=YES
+OPERATOR_PRODUCTION_DB_MUTATED=NO
+
+PRODUCTION_DB_ENGINE=MariaDB
+PRODUCTION_DB_VERSION=10.11.10-MariaDB-log
+PRODUCTION_LARAVEL_CONNECTION=mysql
+PRODUCTION_SERVER_CHARSET=utf8mb4
+PRODUCTION_SERVER_COLLATION=utf8mb4_general_ci
+PRODUCTION_DATABASE_CHARSET=utf8mb4
+PRODUCTION_DATABASE_COLLATION=utf8mb4_general_ci
+PRODUCTION_LARAVEL_MYSQL_CHARSET=utf8mb4
+PRODUCTION_LARAVEL_MYSQL_COLLATION=utf8mb4_unicode_ci
+PRODUCTION_TABLE_COLLATION=utf8mb4_unicode_ci
+PRODUCTION_TABLE_COUNT=120
+PRODUCTION_SUPPORTS_UTF8MB4_0900_AI_CI=NO
+```
 
 Docker was used only for disposable local validation. `kiot_pr31_mariadb` was
 used for the MariaDB gate and `kiot_pr31_mysql8` for the MySQL gate. The local
@@ -87,9 +110,13 @@ MYSQL_COLLATION=utf8mb4_unicode_ci (explicit Laravel connection; disposable DB d
 MYSQL_FOCUSED_TESTS=PASS (19 tests, 815 assertions)
 ```
 
-The MariaDB test process explicitly set `DB_CONNECTION=mysql`,
-`DB_CHARSET=utf8mb4`, and `DB_COLLATION=utf8mb4_unicode_ci`. No production
-database was queried.
+The earlier MariaDB local failure was caused by the disposable environment
+falling back to MySQL-only `utf8mb4_0900_ai_ci`. Production explicitly uses
+`utf8mb4_unicode_ci` through `DB_COLLATION`, and all 120 production tables are
+`utf8mb4_unicode_ci`. The corrected MariaDB 10.11 local gate explicitly used
+`DB_CONNECTION=mysql`, `DB_CHARSET=utf8mb4`, and
+`DB_COLLATION=utf8mb4_unicode_ci`, reproduced the compatible configuration, and
+passed.
 
 ## Regression gates
 
@@ -101,6 +128,11 @@ PURCHASE_CANCEL_CONTRACT=A remains -2000000; B original -3000000 plus exactly +3
 CSV_DOCUMENT_EXPORT_ONE_PAYMENT_ONE_ROW=PASS
 XLSX_DOCUMENT_EXPORT_ONE_PAYMENT_ONE_ROW=PASS
 EXPORT_REGRESSION=PASS (new fixture: 1 test; existing supplier export suite: 6 tests, 23 assertions)
+EXACT_12_ALLOCATION_FIXTURE=PASS
+RESIDUAL_ALLOCATION_METADATA=PASS
+STANDALONE_PAYMENT_ALLOCATION_METADATA=PASS
+MYSQL_FOCUSED=PASS
+MARIADB_FOCUSED=PASS
 
 LEGACY_ROLE_ASSERTION_BASELINE_PROVEN=YES
 BASE_EXIT_CODE=1
@@ -149,10 +181,20 @@ FRONTEND_BUILD=PASS (Vite 5.4.21)
 DIFF_CHECK=PASS
 MIGRATION_ADDED=NO
 BACKFILL_RUN=NO
-PRODUCTION_ACCESSED=NO
-PRODUCTION_READ_ONLY_AUDIT=NOT_RUN (explicitly prohibited by task)
-PRODUCTION_DATABASE_CHANGED=NO
+AGENT_PRODUCTION_ACCESS=NO
+OPERATOR_PRODUCTION_READ_ONLY_AUDIT=YES
+PRODUCTION_DB_MUTATED=NO
 PRODUCTION_DEPLOYED=NO
+```
+
+```text
+MIGRATION=NO
+BACKFILL=NO
+MANUAL_DB_UPDATE=NO
+DEBT_RECALCULATION=NO
+DEPENDENCY_CHANGED=NO
+FRONTEND_SOURCE_CHANGED=NO
+PRODUCTION_CONFIG_CHANGED=NO
 ```
 
 The full canonical identity hash is not claimed unchanged: false technical
