@@ -1330,7 +1330,14 @@ class SupplierDebtDomainEventSource
         }
 
         if ((bool) ($options['canonical'] ?? false)) {
-            $entries = $this->addPersistedLedgerCheckpoints($entries, $supplierDebts);
+            $entries = $this->addPersistedLedgerCheckpoints(
+                $entries,
+                $supplierDebts,
+                $purchases,
+                $supplierPayments,
+                $offsets,
+                $offsetCancellationLedgerCodes,
+            );
         }
 
         // Deduplicate only the canonical source identity. Voucher codes are
@@ -1813,8 +1820,14 @@ class SupplierDebtDomainEventSource
      * @param  Collection<int, SupplierDebtTransaction>  $transactions
      * @return Collection<int, array<string, mixed>>
      */
-    private function addPersistedLedgerCheckpoints(Collection $entries, Collection $transactions): Collection
-    {
+    private function addPersistedLedgerCheckpoints(
+        Collection $entries,
+        Collection $transactions,
+        Collection $purchases,
+        Collection $cashFlows,
+        Collection $offsets,
+        array $offsetCancellationLedgerCodes,
+    ): Collection {
         $timeline = $entries
             ->filter(fn (array $entry): bool => (string) ($entry['domain'] ?? '') === 'supplier'
                 && (bool) ($entry['affects_document_balance'] ?? true))
@@ -1828,6 +1841,16 @@ class SupplierDebtDomainEventSource
 
         $markers = $transactions
             ->filter(fn (SupplierDebtTransaction $transaction): bool => (int) ($transaction->purchase_id ?? 0) === 0)
+            ->reject(fn (SupplierDebtTransaction $transaction): bool => $this->supplierLedgerPaymentIsDocumentEvidence(
+                $transaction,
+                $purchases,
+                $cashFlows,
+            ))
+            ->reject(fn (SupplierDebtTransaction $transaction): bool => $this->supplierLedgerOffsetIsDocumentEvidence(
+                $transaction,
+                $offsets,
+                $offsetCancellationLedgerCodes,
+            ))
             ->map(fn (SupplierDebtTransaction $transaction): array => [
                 'kind' => 'checkpoint',
                 'time' => $this->normalizeSortableTime($transaction->created_at),
@@ -1897,6 +1920,20 @@ class SupplierDebtDomainEventSource
             });
 
         return $entries->concat($checkpoints)->values();
+    }
+
+    private function supplierLedgerOffsetIsDocumentEvidence(
+        SupplierDebtTransaction $transaction,
+        Collection $offsets,
+        array $offsetCancellationLedgerCodes,
+    ): bool {
+        $code = (string) ($transaction->code ?? '');
+        if ($code === '' || ! in_array((string) $transaction->type, ['offset', 'adjustment'], true)) {
+            return false;
+        }
+
+        return $offsets->contains(fn (DebtOffset $offset): bool => (string) ($offset->code ?? '') === $code)
+            || in_array($code, $offsetCancellationLedgerCodes, true);
     }
 
     private function classifySupplierDebt(SupplierDebtTransaction $stx): array
