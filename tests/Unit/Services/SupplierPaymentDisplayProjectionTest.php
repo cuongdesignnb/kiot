@@ -63,6 +63,12 @@ class SupplierPaymentDisplayProjectionTest extends TestCase
         $this->assertTrue($row['payment_allocation_mismatch']);
         $this->assertTrue($row['needs_manual_review']);
         $this->assertSame(922, (int) $row['payment_cash_flow_id']);
+        $this->assertSame('SupplierPayment', $row['reference_type']);
+        $this->assertSame(922, (int) $row['reference_id']);
+        $this->assertSame('PCPN260807154515978', $row['reference_code']);
+        $this->assertSame('PCPN260807154515978', $row['document_group_parent_code']);
+        $this->assertSame('supplier_payment', $row['document_group_type']);
+        $this->assertNotSame('PN1', $row['parent_document_code']);
         $this->assertCount(12, $row['purchase_ids']);
         $this->assertCount(13, $row['canonical_event_identities']);
         $this->assertSame(

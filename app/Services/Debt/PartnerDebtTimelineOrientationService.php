@@ -378,6 +378,21 @@ class PartnerDebtTimelineOrientationService
             'canonical_event_count' => 1,
             'display_group_key' => $groupKey,
             'display_projection' => 'supplier_payment_document',
+            'reference_type' => 'SupplierPayment',
+            'reference_id' => $cashFlowId,
+            'reference_code' => $cashFlowCode,
+            'parent_document_code' => $cashFlowCode,
+            'payment_for_code' => $cashFlowCode,
+            'linked_document_code' => $cashFlowCode,
+            'linked_document_label' => $cashFlowCode ? 'Thanh toán NCC '.$cashFlowCode : null,
+            'document_group_key' => $cashFlowCode ?: (string) $cashFlowId,
+            'document_group_type' => 'supplier_payment',
+            'document_group_parent_code' => $cashFlowCode,
+            'document_group_time' => $event['business_time'] ?? null,
+            'document_group_sequence' => $event['event_order'] ?? null,
+            'sort_group_key' => $cashFlowCode ?: (string) $cashFlowId,
+            'sort_group_time' => $event['business_time'] ?? null,
+            'sort_group_sequence' => $event['event_order'] ?? null,
         ]);
 
         return array_merge($event, [
@@ -397,6 +412,21 @@ class PartnerDebtTimelineOrientationService
             'canonical_event_count' => 1,
             'display_group_key' => $groupKey,
             'display_projection' => 'supplier_payment_document',
+            'reference_type' => 'SupplierPayment',
+            'reference_id' => $cashFlowId,
+            'reference_code' => $cashFlowCode,
+            'parent_document_code' => $cashFlowCode,
+            'payment_for_code' => $cashFlowCode,
+            'linked_document_code' => $cashFlowCode,
+            'linked_document_label' => $cashFlowCode ? 'Thanh toán NCC '.$cashFlowCode : null,
+            'document_group_key' => $cashFlowCode ?: (string) $cashFlowId,
+            'document_group_type' => 'supplier_payment',
+            'document_group_parent_code' => $cashFlowCode,
+            'document_group_time' => $event['business_time'] ?? null,
+            'document_group_sequence' => $event['event_order'] ?? null,
+            'sort_group_key' => $cashFlowCode ?: (string) $cashFlowId,
+            'sort_group_time' => $event['business_time'] ?? null,
+            'sort_group_sequence' => $event['event_order'] ?? null,
             'metadata' => $displayMetadata,
         ]);
     }
@@ -460,14 +490,14 @@ class PartnerDebtTimelineOrientationService
         $allocationCount = $representativeAllocationCount + $eventAllocationCount;
         $allocationTotal = $representativeAllocationTotal + $eventAllocationTotal;
         $purchaseIds = array_values(array_unique(array_filter(array_merge(
-            (array) ($representative['purchase_ids'] ?? []),
-            (array) ($event['purchase_ids'] ?? []),
-            [$representativeMetadata['reference_id'] ?? null, $eventMetadata['reference_id'] ?? null],
+            (array) ($representative['allocation_purchase_ids'] ?? $representative['purchase_ids'] ?? []),
+            (array) ($event['allocation_purchase_ids'] ?? []),
+            [$eventMetadata['reference_id'] ?? null],
         ), fn ($id): bool => $id !== null && (string) $id !== '')));
         $purchaseCodes = array_values(array_unique(array_filter(array_merge(
-            (array) ($representative['purchase_codes'] ?? []),
-            (array) ($event['purchase_codes'] ?? []),
-            [$representativeMetadata['reference_code'] ?? null, $eventMetadata['reference_code'] ?? null],
+            (array) ($representative['allocation_purchase_codes'] ?? $representative['purchase_codes'] ?? []),
+            (array) ($event['allocation_purchase_codes'] ?? []),
+            [$eventMetadata['reference_code'] ?? null],
         ), fn ($code): bool => $code !== null && (string) $code !== '')));
         // The voucher amount is the absolute canonical effect of the whole
         // CashFlow group (allocations plus any persisted unallocated residue).
@@ -486,6 +516,7 @@ class PartnerDebtTimelineOrientationService
         $needsManualReview = (bool) ($representative['needs_manual_review'] ?? false)
             || (bool) ($event['needs_manual_review'] ?? false)
             || $allocationMismatch;
+        $documentGroupKey = $cashFlowCode ?: (string) $cashFlowId;
 
         $metadata = array_merge($representativeMetadata, [
             'allocation_count' => $allocationCount,
@@ -502,12 +533,23 @@ class PartnerDebtTimelineOrientationService
             'unallocated_amount' => $unallocatedAmount,
             'canonical_event_identities' => $canonicalIdentities,
             'canonical_event_count' => count($canonicalIdentities),
-            'display_group_key' => implode('|', [
-                'cash_flows',
-                (string) ($representative['detail_id'] ?? $representativeMetadata['detail_reference_id'] ?? ''),
-                'supplier_payment',
-            ]),
+            'display_group_key' => implode('|', ['cash_flows', (string) $cashFlowId, 'supplier_payment']),
             'display_projection' => 'supplier_payment_document',
+            'reference_type' => 'SupplierPayment',
+            'reference_id' => $cashFlowId,
+            'reference_code' => $cashFlowCode,
+            'parent_document_code' => $cashFlowCode,
+            'payment_for_code' => $cashFlowCode,
+            'linked_document_code' => $cashFlowCode,
+            'linked_document_label' => $cashFlowCode ? 'Thanh toán NCC '.$cashFlowCode : null,
+            'document_group_key' => $documentGroupKey,
+            'document_group_type' => 'supplier_payment',
+            'document_group_parent_code' => $cashFlowCode,
+            'document_group_time' => $representative['business_time'] ?? null,
+            'document_group_sequence' => $representative['event_order'] ?? null,
+            'sort_group_key' => $documentGroupKey,
+            'sort_group_time' => $representative['business_time'] ?? null,
+            'sort_group_sequence' => $representative['event_order'] ?? null,
         ]);
 
         return array_merge($representative, [
@@ -529,6 +571,21 @@ class PartnerDebtTimelineOrientationService
             'canonical_event_count' => count($canonicalIdentities),
             'display_group_key' => $metadata['display_group_key'],
             'display_projection' => 'supplier_payment_document',
+            'reference_type' => 'SupplierPayment',
+            'reference_id' => $cashFlowId,
+            'reference_code' => $cashFlowCode,
+            'parent_document_code' => $cashFlowCode,
+            'payment_for_code' => $cashFlowCode,
+            'linked_document_code' => $cashFlowCode,
+            'linked_document_label' => $cashFlowCode ? 'Thanh toán NCC '.$cashFlowCode : null,
+            'document_group_key' => $documentGroupKey,
+            'document_group_type' => 'supplier_payment',
+            'document_group_parent_code' => $cashFlowCode,
+            'document_group_time' => $representative['business_time'] ?? null,
+            'document_group_sequence' => $representative['event_order'] ?? null,
+            'sort_group_key' => $documentGroupKey,
+            'sort_group_time' => $representative['business_time'] ?? null,
+            'sort_group_sequence' => $representative['event_order'] ?? null,
             'metadata' => $metadata,
         ]);
     }

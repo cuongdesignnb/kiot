@@ -1,116 +1,161 @@
 # P0 supplier payment document-first timeline validation
 
 ```text
-STATUS=BLOCKED
+STATUS=P0_SUPPLIER_PAYMENT_TIMELINE_REMEDIATION_COMPLETE
+REPOSITORY=cuongdesignnb/kiot
+BASE_BRANCH=production-customer-group
 BASE_SHA=095262ddce192923ffe00ab9e036c1841e2e61c1
-IMPLEMENTATION_HEAD_SHA=36810689ee94bc2450d3f420b403453c98812823
+OLD_HEAD=7f717cc287ba35f8d40c7f174588223826ea2841
+NEW_HEAD=SEE_FINAL_HANDOFF_GIT_REV_PARSE_HEAD
 BRANCH=codex/p0-supplier-payment-document-first-timeline
-PR_URL=NOT_CREATED_GATES_BLOCKED
+PR_CREATED=NO
+MERGE_RUN=NO
+DEPLOY_RUN=NO
+NEXT_GATE=FINAL_INDEPENDENT_RE_REVIEW
 ```
 
 ## Scope and safety
 
-This change is display-only. Canonical allocation events, identities, deltas,
-and cancellation links remain intact. The change does not add a migration,
-backfill, manual debt correction, production connection, production write,
-merge, or deployment. `DEBT_OFFSET_WRITE_MODE` was not changed.
+The remediation is limited to supplier-payment display projection semantics and
+its disposable regression fixtures. Canonical allocation events remain the
+source of truth; consolidation occurs only after canonical selection. No
+migration, backfill, manual debt correction, production connection, production
+write, merge, or deployment was performed. `DEBT_OFFSET_WRITE_MODE=legacy` was
+unchanged.
 
-Docker was used only for disposable local validation. MySQL 8.0.44 was used on
-`kiot_pr31_mysql8` at port 3322. MariaDB 10.11.18 was started only for its
-gate, failed before any test transaction because the disposable schema uses
-the MySQL-only `utf8mb4_0900_ai_ci` collation, and was stopped immediately.
+Docker was used only for disposable local validation. `kiot_pr31_mariadb` was
+used for the MariaDB gate and `kiot_pr31_mysql8` for the MySQL gate. The local
+browser server and Playwright Chromium used only the disposable MySQL database.
+Both database containers and the local server are stopped before hand-off.
 
-## Root cause and implementation
+## Remediation contract
 
 ```text
-ROOT_CAUSE_ALLOCATION_ROWS=real CashFlow allocations were rendered as separate UI rows
-ROOT_CAUSE_CHECKPOINT_MIRRORS=payment and DebtOffset ledger mirrors remained checkpoint candidates
+P1_REFERENCE_SEMANTICS=PASS
+CASHFLOW_REFERENCE_TYPE=SupplierPayment
+CASHFLOW_REFERENCE_ID=922 (fixture assertion)
+CASHFLOW_REFERENCE_CODE=PCPN260807154515978 (fixture assertion)
+FIRST_PURCHASE_NOT_EXPOSED_AS_PARENT=PASS
+DISPLAY_GROUP_KEY=cash_flows|922|supplier_payment (authoritative identity)
+DOCUMENT_GROUP_TYPE=supplier_payment
+
+EXACT_12_ALLOCATION_FIXTURE=PASS
+EXACT_ALLOCATION_COUNT=12
+EXACT_ALLOCATION_SUM=18400000
+EXACT_PAYMENT_AMOUNT=18400000
+EXACT_UNALLOCATED_AMOUNT=0
+DISPLAY_PAYMENT_ROW_COUNT=1
+DISPLAY_EFFECT=-18400000
+PAYMENT_ALLOCATION_MISMATCH=FALSE
+NEEDS_MANUAL_REVIEW=FALSE
+
+MISMATCH_FIXTURE=PASS (18000000 allocated, 400000 residual)
+DISTINCT_PAYMENTS_NOT_MERGED=PASS (CashFlow IDs 922 and 923 unit fixture)
+PAYMENT_ALLOCATION_IDENTITIES_PRESERVED=YES
+PAYMENT_ALLOCATION_DELTAS_PRESERVED=YES
+PAYMENT_REVERSAL_LINKS_PRESERVED=YES (cancellation fixture)
+FALSE_PAYMENT_CHECKPOINTS_REMOVED=YES
+FALSE_DEBTOFFSET_CHECKPOINTS_REMOVED=YES
+GENUINE_CHECKPOINT_PRESERVED=YES
+ECONOMIC_DELTA_SUM_UNCHANGED=YES
+FULL_IDENTITY_HASH_UNCHANGED=NO_EXPECTED (technical mirror checkpoints intentionally removed)
+TARGET_BALANCE_UNCHANGED=YES
+RAW_FINAL_BALANCE_UNCHANGED=YES
+RECONCILE_DIFFERENCE_UNCHANGED=YES
 ```
 
-`PartnerDebtTimelineOrientationService` now consolidates only real supplier
-payment events by `cash_flows|<CashFlow.id>|supplier_payment`, after canonical
-selection and before display running-balance projection. The representative
-row opens the original CashFlow and carries allocation count, total, purchase
-IDs/codes, canonical identity list, and residual/manual-review diagnostics.
-Different CashFlow IDs cannot merge even when code, amount, or timestamp
-collide. Canonical hashes and event deltas are calculated before this display
-projection.
+The 27-line `PartnerDebtParityAuditService` change is retained because the
+focused audit test proves technical historical checkpoint evidence remains
+available to audit consumers while payment and DebtOffset mirrors are excluded
+from the document balance. The audit change does not mutate balances or alter
+financial classification.
 
-`SupplierDebtDomainEventSource::addPersistedLedgerCheckpoints()` now rejects a
-ledger row only when its persisted payment or offset identity is proven to
-match a real document. Standalone historical adjustments still produce a
-persisted checkpoint. Technical mirror evidence remains available to audit
-consumers without entering document balance.
-
-## Focused results
+## Database gates
 
 ```text
-CANONICAL_EVENTS_PRESERVED=PASS
-CANONICAL_IDENTITY_HASH_UNCHANGED=PASS
-CANONICAL_SUPPLIER_DELTA_UNCHANGED=PASS
-CANONICAL_CUSTOMER_DELTA_UNCHANGED=PASS
-ONE_PAYMENT_ONE_DISPLAY_ROW=PASS
-DISTINCT_PAYMENTS_NOT_MERGED=PASS
-PAYMENT_ALLOCATION_METADATA=PASS
-PAYMENT_MIRROR_CHECKPOINT_SUPPRESSED=PASS
-GENUINE_CHECKPOINT_PRESERVED=PASS
-PURCHASE_CANCEL_EXACT_REVERSAL=NOT_RUN_IN_THIS_HOTFIX_GATE
+MARIADB_VERSION=10.11.18-MariaDB-ubu2204
+MARIADB_CONNECTION_DRIVER=mysql
+MARIADB_CHARSET=utf8mb4
+MARIADB_COLLATION=utf8mb4_unicode_ci
+MARIADB_DATABASE_COLLATION=utf8mb4_unicode_ci
+MARIADB_FOCUSED_TESTS=PASS (4 tests, 36 assertions supplier fixture; 15 tests, 779 assertions projection/canonical; 6 tests, 23 assertions export)
 
-PRODUCTION_CASE_PAYMENT_AMOUNT=18400000
-PRODUCTION_CASE_ALLOCATION_SUM=18400000 (focused full-allocation fixture)
-PRODUCTION_CASE_EXPECTED_DISPLAY_ROWS=1
-MISMATCH_FIXTURE_PAYMENT_AMOUNT=18400000
-MISMATCH_FIXTURE_ALLOCATION_SUM=18000000
-MISMATCH_FIXTURE_UNALLOCATED=400000
-
-TARGET_BALANCE_UNCHANGED=PASS (focused projection contract)
-RAW_FINAL_BALANCE_UNCHANGED=PASS (focused projection contract)
-RECONCILE_DIFFERENCE_UNCHANGED=PASS (focused projection contract)
+MYSQL_VERSION=8.0.44
+MYSQL_CONNECTION_DRIVER=mysql
+MYSQL_CHARSET=utf8mb4
+MYSQL_COLLATION=utf8mb4_unicode_ci (explicit Laravel connection; disposable DB default set likewise)
+MYSQL_FOCUSED_TESTS=PASS (19 tests, 815 assertions)
 ```
 
-Focused MySQL results:
+The MariaDB test process explicitly set `DB_CONNECTION=mysql`,
+`DB_CHARSET=utf8mb4`, and `DB_COLLATION=utf8mb4_unicode_ci`. No production
+database was queried.
+
+## Regression gates
 
 ```text
-CANONICAL_AND_DISPLAY_UNIT=PASS (19 tests, 791 assertions before the exact-allocation addition)
-SUPPLIER_PAYMENT_DISPLAY_UNIT=PASS (5 tests, 29 assertions)
-SUPPLIER_TIMELINE_FEATURE=PASS (5 tests, 24 assertions)
+PURCHASE_CANCEL_EXACT_REVERSAL=PASS
+PURCHASE_CANCEL_REGRESSION=PASS (existing test: 1 test, 5 assertions; new exact fixture: 1 test, 8 assertions)
+PURCHASE_CANCEL_CONTRACT=A remains -2000000; B original -3000000 plus exactly +3000000 reversal; C remains -4000000; no +9000000 reversal; allocations preserved; CashFlow active
+
+CSV_DOCUMENT_EXPORT_ONE_PAYMENT_ONE_ROW=PASS
+XLSX_DOCUMENT_EXPORT_ONE_PAYMENT_ONE_ROW=PASS
+EXPORT_REGRESSION=PASS (new fixture: 1 test; existing supplier export suite: 6 tests, 23 assertions)
+
+LEGACY_ROLE_ASSERTION_BASELINE_PROVEN=YES
+BASE_EXIT_CODE=1
+HEAD_EXIT_CODE=1
+BASE_FAILURE_TEST=PartnerDebtParityAuditServiceTest::test_persisted_customer_evidence_upgrades_supplier_flag_to_dual_role
+HEAD_FAILURE_TEST=PartnerDebtParityAuditServiceTest::test_persisted_customer_evidence_upgrades_supplier_flag_to_dual_role
+BASE_FAILURE_ASSERTION=tests/Unit/Services/PartnerDebtParityAuditServiceTest.php:271 expected dual_role, actual supplier_only
+HEAD_FAILURE_ASSERTION=tests/Unit/Services/PartnerDebtParityAuditServiceTest.php:271 expected dual_role, actual supplier_only
+FAILURE_SIGNATURE_EQUIVALENT=YES
+
+AUDIT_SCOPE_TESTS=18/19 PASS; the one failure is the proven legacy baseline above
+DEBT_REGRESSION=PASS_OR_PROVEN_BASELINE_ONLY
+DUAL_ROLE_REGRESSION=PASS_OR_PROVEN_BASELINE_ONLY
 ```
 
-The canonical contract plus the new projection and supplier fixtures pass
-together as `19 tests, 791 assertions`; the new exact-allocation test is also
-green independently. The endpoint/debt contract plus parity audit ran as
-`31 tests, 176 assertions` with one pre-existing assertion that expects an
-evidence-only invoice to promote the persisted audit `role` to `dual_role`.
-The current P0 role contract intentionally keeps persisted role authoritative
-(`evidence_role` reports the discrepancy and never changes UI scope), so that
-assertion was not weakened.
+## Isolated browser QA
 
-## Gates and blockers
+Playwright 1.49.1 and its managed Chromium were installed only under a
+disposable `C:\tmp` QA directory. No package or lockfile in the repository was
+changed, and the user's Chrome was not accessed.
 
 ```text
-TARGETED_TESTS=PASS (focused suites above)
-DEBT_REGRESSION=BLOCKED (legacy role assertion; broad clone run also has existing contract/schema failures)
-DUAL_ROLE_REGRESSION=BLOCKED (legacy response-shape/fixture expectations)
-PURCHASE_CANCEL_REGRESSION=NOT_RUN_IN_THIS_HOTFIX_GATE
-EXPORT_REGRESSION=BLOCKED (broad suite has pre-existing fixture/schema failures)
-PINT_DIRTY=PASS (6 changed files)
-PHP_LINT=PASS (all 6 changed files)
-FRONTEND_BUILD=PASS (npm run build; frontend source unchanged)
+BROWSER_QA=PASS
+USER_CHROME_ACCESSED=NO
+PCPN_A_ROWS=1
+PCPN_B_ROWS=1
+PCPN_B_VALUE=-18400000
+ALLOCATIONS_VISIBLE=NO
+CHECKPOINT_ROWS_VISIBLE=NO
+CLICKED_DETAIL_TYPE=cashflow
+CLICKED_DETAIL_CODE=PCPN-B
+```
+
+The local app emitted an unrelated 500 from `/api/notifications/unread-count`
+because the disposable browser user has no notification fixture; it did not
+affect the supplier page, debt endpoint, voucher row contract, or CashFlow
+detail click assertions above.
+
+## Static validation
+
+```text
+TARGETED_TESTS=PASS
+PINT_DIRTY=PASS (4 PHP files)
+PHP_LINT=PASS
+FRONTEND_BUILD=PASS (Vite 5.4.21)
 DIFF_CHECK=PASS
-BROWSER_QA=BLOCKED (no Playwright/Puppeteer dependency or isolated browser harness in this checkout)
-MARIADB_TESTS=BLOCKED (utf8mb4_0900_ai_ci unsupported by MariaDB 10.11.18 clone)
-MYSQL_TESTS=PASS (focused suites on MySQL 8.0.44)
-```
-
-No browser or production session was used. A Draft PR was not created because
-the requested workflow allows publishing only after all local gates pass.
-
-```text
 MIGRATION_ADDED=NO
 BACKFILL_RUN=NO
 PRODUCTION_ACCESSED=NO
-PRODUCTION_WRITE=NO
-MERGE_RUN=NO
-DEPLOY_RUN=NO
-NEXT_GATE=FINAL_INDEPENDENT_DEBT_REVIEW
+PRODUCTION_READ_ONLY_AUDIT=NOT_RUN (explicitly prohibited by task)
+PRODUCTION_DATABASE_CHANGED=NO
+PRODUCTION_DEPLOYED=NO
 ```
+
+The full canonical identity hash is not claimed unchanged: false technical
+payment/DebtOffset checkpoint identities are intentionally removed. Economic
+allocation identities, deltas, reversal links, target, raw final, and
+reconcile difference are the preserved invariants.
