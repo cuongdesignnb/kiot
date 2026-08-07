@@ -196,20 +196,18 @@ class InvoiceUpdateService
     public function validateLockAndPermissions(Invoice $invoice, array $payload, array $context): ?string
     {
         // E-invoice block — absolute, even with override
-        if (Setting::get('block_edit_cancel_einvoice', false) && ! empty($invoice->einvoice_code)) {
+        $policy = app(InvoiceEditPolicyService::class);
+        if ($policy->isEinvoiceBlocked($invoice)) {
             return 'Không thể sửa hóa đơn đã xuất hóa đơn điện tử.';
         }
 
         $changePlan = $this->buildChangePlan($invoice, $payload);
-        $orderChangeTime = Setting::get('order_change_time', 24);
-        $lockRef = $invoice->lock_started_at ?? $invoice->created_at;
-        $isOverdue = Carbon::parse($lockRef)->diffInHours(now()) > $orderChangeTime;
         $user = $context['user'] ?? auth()->user();
+        $hints = $policy->hints($invoice, $user);
 
-        if ($isOverdue) {
-            $hasOverride = $user && $user->hasPermission('invoices.override_time_lock');
-            if (! $hasOverride) {
-                return "Đã quá thời gian cho phép chỉnh sửa ({$orderChangeTime} giờ). Cần quyền override.";
+        if ($hints['is_time_locked']) {
+            if (! $hints['can_override_time_lock']) {
+                return "Đã quá thời gian cho phép chỉnh sửa ({$hints['order_change_time_hours']} giờ). Cần quyền override.";
             }
             $reason = $context['time_lock_override_reason'] ?? null;
             if (! $reason || strlen(trim($reason)) < 5) {
@@ -218,8 +216,7 @@ class InvoiceUpdateService
         }
 
         if ($changePlan['date_changed']) {
-            $hasDatePerm = $user && $user->hasPermission('invoices.change_transaction_date');
-            if (! $hasDatePerm) {
+            if (! $hints['can_change_transaction_date']) {
                 return 'Cần quyền invoices.change_transaction_date để đổi ngày hóa đơn.';
             }
             $reason = $context['transaction_date_change_reason'] ?? null;

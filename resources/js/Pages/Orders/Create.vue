@@ -85,6 +85,9 @@ const createInitialTab = (index) => ({
     receivedByEmployeeId: '',
     sellerEmployeeId: '',
     orderDate: formatDatetimeLocal(new Date()),
+    invoiceEditPolicy: null,
+    originalTransactionDate: null,
+    transactionDateTouched: false,
     
     isDelivery: false,
     receiverName: '',
@@ -136,9 +139,168 @@ const closeTab = (index) => {
 const submitRef = ref(false);
 const returnFormError = ref('');
 const editFormErrors = ref({});
+const showInvoiceEditConfirmation = ref(false);
+const pendingInvoiceUpdatePayload = ref(null);
+const invoiceEditReasonErrors = ref({});
+const invoiceEditReasons = ref({
+    timeLockOverride: '',
+    transactionDateChange: '',
+});
+
+const resetInvoiceEditReasonState = () => {
+    showInvoiceEditConfirmation.value = false;
+    pendingInvoiceUpdatePayload.value = null;
+    invoiceEditReasonErrors.value = {};
+    invoiceEditReasons.value = {
+        timeLockOverride: '',
+        transactionDateChange: '',
+    };
+};
+
+const activeInvoiceEditContextKey = computed(() => {
+    const tabId = activeTab.value?.id ?? '';
+    const invoiceId = activeTab.value?.editing_invoice_id ?? '';
+
+    return `${tabId}:${invoiceId}`;
+});
+
+watch(activeInvoiceEditContextKey, (next, previous) => {
+    if (next !== previous) {
+        resetInvoiceEditReasonState();
+    }
+});
 
 const clearEditFormErrors = () => {
     editFormErrors.value = {};
+};
+
+const datetimeAtMinute = (value) => {
+    if (!value) return '';
+    const date = new Date(value);
+
+    return Number.isNaN(date.getTime()) ? String(value).slice(0, 16) : formatDatetimeLocal(date);
+};
+
+const transactionDateChanged = () => {
+    if (!activeTab.value?.editing_invoice_id) return false;
+
+    const original = activeTab.value.originalTransactionDate;
+    if (!original) {
+        return activeTab.value.transactionDateTouched && Boolean(activeTab.value.orderDate);
+    }
+
+    return datetimeAtMinute(original) !== datetimeAtMinute(activeTab.value.orderDate);
+};
+
+const editReasonRequirements = () => {
+    const policy = activeTab.value?.invoiceEditPolicy || {};
+    const dateChanged = transactionDateChanged();
+
+    if (policy.is_einvoice_blocked) {
+        return { blockedMessage: 'Không thể sửa hóa đơn đã xuất hóa đơn điện tử.', dateChanged };
+    }
+    if (policy.is_time_locked && !policy.can_override_time_lock) {
+        return {
+            blockedMessage: 'Hóa đơn đã quá thời gian cho phép chỉnh sửa.\nTài khoản hiện tại không có quyền sửa hóa đơn quá hạn.',
+            dateChanged,
+        };
+    }
+    if (dateChanged && !policy.can_change_transaction_date) {
+        return {
+            blockedMessage: 'Tài khoản hiện tại không có quyền thay đổi thời gian giao dịch của hóa đơn.',
+            dateChanged,
+        };
+    }
+
+    return {
+        requiresTimeLockOverride: Boolean(policy.is_time_locked),
+        requiresTransactionDateReason: dateChanged,
+        dateChanged,
+    };
+};
+
+const formatEditDate = (value) => {
+    if (!value) return '—';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '—';
+
+    return date.toLocaleString('vi-VN', {
+        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    });
+};
+
+const validateInvoiceEditReason = (value, field, label) => {
+    const trimmed = String(value ?? '').trim();
+    if (!trimmed) {
+        invoiceEditReasonErrors.value[field] = `Vui lòng nhập ${label.toLowerCase()}.`;
+    } else if (trimmed.length < 5) {
+        invoiceEditReasonErrors.value[field] = `${label} phải có ít nhất 5 ký tự.`;
+    } else if (trimmed.length > 500) {
+        invoiceEditReasonErrors.value[field] = `${label} không được vượt quá 500 ký tự.`;
+    }
+
+    return trimmed;
+};
+
+const submitInvoiceUpdate = (payload) => {
+    submitRef.value = true;
+    router.put(`/invoices/${activeTab.value.editing_invoice_id}`, payload, {
+        headers: { "Idempotency-Key": activeTab.value.idempotencyKey },
+        onSuccess: () => {
+            submitRef.value = false;
+            resetInvoiceEditReasonState();
+        },
+        onError: (errors) => {
+            submitRef.value = false;
+            const reasonErrors = {};
+            ['time_lock_override_reason', 'transaction_date_change_reason'].forEach((field) => {
+                if (errors?.[field]) reasonErrors[field] = errors[field];
+            });
+            if (Object.keys(reasonErrors).length > 0) {
+                invoiceEditReasonErrors.value = reasonErrors;
+                pendingInvoiceUpdatePayload.value = payload;
+                showInvoiceEditConfirmation.value = true;
+                return;
+            }
+            editFormErrors.value = errors || {};
+        },
+        onFinish: () => {
+            submitRef.value = false;
+        },
+    });
+};
+
+const confirmInvoiceEditUpdate = () => {
+    const payload = pendingInvoiceUpdatePayload.value;
+    const requirements = editReasonRequirements();
+    if (!payload || requirements.blockedMessage) return;
+
+    invoiceEditReasonErrors.value = {};
+    if (requirements.requiresTimeLockOverride) {
+        const reason = validateInvoiceEditReason(
+            invoiceEditReasons.value.timeLockOverride,
+            'time_lock_override_reason',
+            'Lý do sửa hóa đơn quá thời gian cho phép'
+        );
+        payload.time_lock_override_reason = reason;
+    }
+    if (requirements.requiresTransactionDateReason) {
+        const reason = validateInvoiceEditReason(
+            invoiceEditReasons.value.transactionDateChange,
+            'transaction_date_change_reason',
+            'Lý do thay đổi thời gian giao dịch'
+        );
+        payload.transaction_date_change_reason = reason;
+    }
+    if (Object.keys(invoiceEditReasonErrors.value).length > 0) return;
+
+    showInvoiceEditConfirmation.value = false;
+    pendingInvoiceUpdatePayload.value = null;
+    submitInvoiceUpdate(payload);
+};
+
+const cancelInvoiceEditConfirmation = () => {
+    resetInvoiceEditReasonState();
 };
 
 const defaultReceiverForInvoice = (invoice) => {
@@ -616,21 +778,25 @@ const save = async () => {
             if (!payload.is_delivery) {
                 payload.cod_amount = 0;
             }
-            // Update existing invoice — use Inertia callbacks
-            router.put(`/invoices/${activeTab.value.editing_invoice_id}`, payload, {
-                headers: { "Idempotency-Key": activeTab.value.idempotencyKey },
-                onSuccess: () => {
-                    submitRef.value = false;
-                    // Inertia will redirect to invoices.index via backend
-                },
-                onError: (errors) => {
-                    submitRef.value = false;
-                    editFormErrors.value = errors || {};
-                },
-                onFinish: () => {
-                    submitRef.value = false;
-                },
-            });
+            if (transactionDateChanged()) {
+                payload.transaction_date = activeTab.value.orderDate || null;
+            }
+
+            const requirements = editReasonRequirements();
+            if (requirements.blockedMessage) {
+                editFormErrors.value = { form: requirements.blockedMessage };
+                submitRef.value = false;
+                return;
+            }
+            if (requirements.requiresTimeLockOverride || requirements.requiresTransactionDateReason) {
+                pendingInvoiceUpdatePayload.value = payload;
+                invoiceEditReasonErrors.value = {};
+                showInvoiceEditConfirmation.value = true;
+                submitRef.value = false;
+                return;
+            }
+
+            submitInvoiceUpdate(payload);
             return; // Don't reset tab — Inertia handles the redirect
         } else {
             const endpoint = isReturn ? '/returns' : '/orders';
@@ -719,6 +885,14 @@ const selectInvoiceForEdit = (invoice) => {
     activeTab.value.note = invoice.note || '';
     activeTab.value.paymentMethod = invoice.payment_method || 'Tiền mặt';
     activeTab.value.sellerEmployeeId = invoice.created_by ? Number(invoice.created_by) : '';
+    activeTab.value.invoiceEditPolicy = invoice.edit_policy || {};
+    activeTab.value.originalTransactionDate = invoice.edit_policy?.original_transaction_date
+        || invoice.transaction_date
+        || null;
+    activeTab.value.transactionDateTouched = false;
+    activeTab.value.orderDate = formatDatetimeLocal(
+        activeTab.value.originalTransactionDate || invoice.created_at || new Date()
+    );
     
     activeTab.value.deliveryFee = moneyNumber(invoice.delivery_fee);
     activeTab.value.otherFees = moneyNumber(invoice.other_fees);
@@ -877,7 +1051,7 @@ onUnmounted(() => {
             <svg class="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
             {{ usePage().props.flash.success }}
         </div>
-        <div v-if="editFormErrors.form" class="bg-red-500 text-white px-4 py-2 text-sm flex items-center gap-2 flex-shrink-0 z-[60]">
+        <div v-if="editFormErrors.form" class="bg-red-500 text-white px-4 py-2 text-sm flex items-center gap-2 flex-shrink-0 z-[60] whitespace-pre-line">
             {{ editFormErrors.form }}
         </div>
         <!-- Header POS (Blue) -->
@@ -1122,6 +1296,7 @@ onUnmounted(() => {
                             compact
                             placeholder="dd/MM/yyyy HH:mm"
                             input-class="text-[12px] text-gray-500 border border-gray-200 rounded px-1.5 py-0.5 outline-none focus:border-blue-500 cursor-pointer w-[150px]"
+                            @update:modelValue="activeTab.transactionDateTouched = true"
                             @click.stop
                        />
                     </div>
@@ -1132,6 +1307,7 @@ onUnmounted(() => {
                             compact
                             placeholder="dd/MM/yyyy HH:mm"
                             input-class="text-[12px] text-gray-500 border border-gray-200 rounded px-1.5 py-0.5 outline-none focus:border-blue-500 cursor-pointer w-[150px]"
+                            @update:modelValue="activeTab.transactionDateTouched = true"
                         />
                     </div>
                     
@@ -1334,6 +1510,72 @@ onUnmounted(() => {
                 </div>
             </div>
 
+        </div>
+    </div>
+
+    <!-- Invoice edit audit-reason confirmation -->
+    <div
+        v-if="showInvoiceEditConfirmation"
+        class="fixed inset-0 z-[110] flex items-center justify-center bg-black/40 p-4"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="invoice-edit-confirmation-title"
+        data-testid="invoice-edit-confirmation-modal"
+    >
+        <div class="w-full max-w-lg rounded-lg bg-white shadow-xl">
+            <div class="flex items-start justify-between border-b border-gray-200 px-5 py-4">
+                <div>
+                    <h2 id="invoice-edit-confirmation-title" class="text-lg font-bold text-gray-900">Xác nhận sửa hóa đơn</h2>
+                    <p class="mt-1 text-sm text-gray-600">Hóa đơn {{ props.invoice?.code || activeTab.name }} cần bổ sung thông tin audit trước khi cập nhật.</p>
+                </div>
+                <button type="button" class="text-gray-400 hover:text-gray-700" aria-label="Đóng" @click="cancelInvoiceEditConfirmation">×</button>
+            </div>
+
+            <div class="space-y-4 px-5 py-4">
+                <div v-if="editReasonRequirements().requiresTimeLockOverride" class="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                    Hóa đơn đã quá thời gian chỉnh sửa cho phép ({{ activeTab.invoiceEditPolicy?.order_change_time_hours }} giờ — đã trôi {{ activeTab.invoiceEditPolicy?.lock_age_hours }} giờ).
+                </div>
+
+                <div v-if="editReasonRequirements().requiresTimeLockOverride">
+                    <label for="time-lock-override-reason" class="mb-1 block text-sm font-semibold text-gray-800">Lý do sửa hóa đơn quá thời gian cho phép <span class="text-red-600">*</span></label>
+                    <textarea
+                        id="time-lock-override-reason"
+                        v-model="invoiceEditReasons.timeLockOverride"
+                        data-testid="time-lock-override-reason"
+                        rows="3"
+                        maxlength="500"
+                        class="w-full rounded border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                        :class="{ 'border-red-500': invoiceEditReasonErrors.time_lock_override_reason }"
+                        @input="delete invoiceEditReasonErrors.time_lock_override_reason"
+                    ></textarea>
+                    <p v-if="invoiceEditReasonErrors.time_lock_override_reason" role="alert" class="mt-1 text-sm text-red-600">{{ invoiceEditReasonErrors.time_lock_override_reason }}</p>
+                </div>
+
+                <div v-if="editReasonRequirements().requiresTransactionDateReason">
+                    <p class="mb-2 text-sm text-gray-700">
+                        Thời gian giao dịch đã được thay đổi từ
+                        <strong>{{ formatEditDate(activeTab.originalTransactionDate) }}</strong>
+                        → <strong>{{ formatEditDate(activeTab.orderDate) }}</strong>
+                    </p>
+                    <label for="transaction-date-change-reason" class="mb-1 block text-sm font-semibold text-gray-800">Lý do thay đổi thời gian giao dịch <span class="text-red-600">*</span></label>
+                    <textarea
+                        id="transaction-date-change-reason"
+                        v-model="invoiceEditReasons.transactionDateChange"
+                        data-testid="transaction-date-change-reason"
+                        rows="3"
+                        maxlength="500"
+                        class="w-full rounded border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                        :class="{ 'border-red-500': invoiceEditReasonErrors.transaction_date_change_reason }"
+                        @input="delete invoiceEditReasonErrors.transaction_date_change_reason"
+                    ></textarea>
+                    <p v-if="invoiceEditReasonErrors.transaction_date_change_reason" role="alert" class="mt-1 text-sm text-red-600">{{ invoiceEditReasonErrors.transaction_date_change_reason }}</p>
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-3 border-t border-gray-200 px-5 py-4">
+                <button type="button" class="rounded border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50" @click="cancelInvoiceEditConfirmation">Hủy</button>
+                <button type="button" data-testid="confirm-invoice-update" class="rounded bg-[#0062c3] px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700" @click="confirmInvoiceEditUpdate">Xác nhận cập nhật</button>
+            </div>
         </div>
     </div>
 

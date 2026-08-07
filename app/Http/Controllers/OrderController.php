@@ -17,6 +17,7 @@ use App\Models\Setting;
 use App\Services\CustomerDebtService;
 use App\Services\Integrations\PcWebsite\PcInventoryReservationService;
 use App\Services\Integrations\PcWebsite\PcOrderImportService;
+use App\Services\InvoiceEditPolicyService;
 use App\Services\LockPeriodService;
 use App\Services\MovingAvgCostingService;
 use App\Services\OrderPaymentSummaryService;
@@ -156,6 +157,10 @@ class OrderController extends Controller
             }
             if ($invoice && $request->input('action', 'edit') === 'edit') {
                 $this->hydrateInvoiceEditSerials($invoice);
+                $invoice->setAttribute(
+                    'edit_policy',
+                    app(InvoiceEditPolicyService::class)->hints($invoice, $request->user())
+                );
             }
         }
 
