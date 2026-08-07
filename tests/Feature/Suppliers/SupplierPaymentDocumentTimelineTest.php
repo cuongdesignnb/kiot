@@ -100,6 +100,16 @@ class SupplierPaymentDocumentTimelineTest extends TestCase
         $this->assertSame($payment->code, $row['document_group_parent_code']);
         $this->assertSame('supplier_payment', $row['document_group_type']);
         $this->assertNotSame('PN-DISPLAY-1', $row['parent_document_code']);
+        $this->assertSame($purchases->pluck('id')->sort()->values()->all(), collect($row['allocation_purchase_ids'])
+            ->map(fn ($id): int => (int) $id)
+            ->sort()
+            ->values()
+            ->all());
+        $this->assertSame($purchases->pluck('code')->sort()->values()->all(), collect($row['allocation_purchase_codes'])
+            ->map(fn ($code): string => (string) $code)
+            ->sort()
+            ->values()
+            ->all());
         $this->assertCount(13, $row['canonical_event_identities']);
         $this->assertSame(13, (int) $row['canonical_event_count']);
     }

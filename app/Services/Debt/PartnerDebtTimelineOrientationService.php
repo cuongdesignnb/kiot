@@ -489,15 +489,22 @@ class PartnerDebtTimelineOrientationService
                 ?? 0.0);
         $allocationCount = $representativeAllocationCount + $eventAllocationCount;
         $allocationTotal = $representativeAllocationTotal + $eventAllocationTotal;
+        $eventIsActualAllocation = (bool) ($eventMetadata['allocation_is_actual'] ?? false);
+        $eventPurchaseReferenceId = $eventIsActualAllocation
+            ? ($eventMetadata['reference_id'] ?? null)
+            : null;
+        $eventPurchaseReferenceCode = $eventIsActualAllocation
+            ? ($eventMetadata['reference_code'] ?? null)
+            : null;
         $purchaseIds = array_values(array_unique(array_filter(array_merge(
             (array) ($representative['allocation_purchase_ids'] ?? $representative['purchase_ids'] ?? []),
             (array) ($event['allocation_purchase_ids'] ?? []),
-            [$eventMetadata['reference_id'] ?? null],
+            [$eventPurchaseReferenceId],
         ), fn ($id): bool => $id !== null && (string) $id !== '')));
         $purchaseCodes = array_values(array_unique(array_filter(array_merge(
             (array) ($representative['allocation_purchase_codes'] ?? $representative['purchase_codes'] ?? []),
             (array) ($event['allocation_purchase_codes'] ?? []),
-            [$eventMetadata['reference_code'] ?? null],
+            [$eventPurchaseReferenceCode],
         ), fn ($code): bool => $code !== null && (string) $code !== '')));
         // The voucher amount is the absolute canonical effect of the whole
         // CashFlow group (allocations plus any persisted unallocated residue).

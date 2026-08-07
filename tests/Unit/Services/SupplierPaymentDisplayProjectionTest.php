@@ -38,6 +38,8 @@ class SupplierPaymentDisplayProjectionTest extends TestCase
         $events->push($this->paymentEvent('922', -400_000, null, false, 0, [
             'payment_allocation_mismatch' => true,
             'needs_manual_review' => true,
+            'reference_id' => 922,
+            'reference_code' => 'PCPN260807154515978',
         ]));
 
         $supplier = $this->orientation($events);
@@ -69,12 +71,56 @@ class SupplierPaymentDisplayProjectionTest extends TestCase
         $this->assertSame('PCPN260807154515978', $row['document_group_parent_code']);
         $this->assertSame('supplier_payment', $row['document_group_type']);
         $this->assertNotSame('PN1', $row['parent_document_code']);
-        $this->assertCount(12, $row['purchase_ids']);
+        $this->assertSame(range(1, 12), collect($row['allocation_purchase_ids'])
+            ->map(fn ($id): int => (int) $id)
+            ->sort()
+            ->values()
+            ->all());
+        $expectedPurchaseCodes = collect(range(1, 12))->map(fn (int $id): string => 'PN'.$id)->sort()->values()->all();
+        $this->assertSame($expectedPurchaseCodes, collect($row['allocation_purchase_codes'])
+            ->map(fn ($code): string => (string) $code)
+            ->sort()
+            ->values()
+            ->all());
+        $this->assertSame(range(1, 12), collect($row['purchase_ids'])
+            ->map(fn ($id): int => (int) $id)
+            ->sort()
+            ->values()
+            ->all());
+        $this->assertSame($expectedPurchaseCodes, collect($row['purchase_codes'])
+            ->map(fn ($code): string => (string) $code)
+            ->sort()
+            ->values()
+            ->all());
         $this->assertCount(13, $row['canonical_event_identities']);
         $this->assertSame(
             hash('sha256', $events->pluck('event_identity')->implode("\n")),
             $timeline['source_identity_hash'],
         );
+    }
+
+    public function test_standalone_cash_flow_document_reference_is_not_allocation_metadata(): void
+    {
+        $events = collect([$this->paymentEvent('922', -400_000, null, false, 0, [
+            'reference_id' => 922,
+            'reference_code' => 'PCPN260807154515978',
+        ])]);
+        $partner = new Customer;
+        $partner->forceFill([
+            'id' => 20,
+            'is_supplier' => true,
+            'supplier_debt_amount' => -400_000,
+        ]);
+
+        $row = collect($this->orientation($events)->supplier($partner)['entries'])->sole();
+
+        $this->assertSame(0, (int) $row['allocation_count']);
+        $this->assertSame([], $row['allocation_purchase_ids']);
+        $this->assertSame([], $row['allocation_purchase_codes']);
+        $this->assertSame('SupplierPayment', $row['reference_type']);
+        $this->assertSame(922, (int) $row['reference_id']);
+        $this->assertSame('PCPN260807154515978', $row['reference_code']);
+        $this->assertSame('supplier_payment', $row['document_group_type']);
     }
 
     public function test_distinct_cash_flows_are_never_merged_by_timestamp_code_or_amount(): void
