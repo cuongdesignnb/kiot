@@ -147,6 +147,29 @@ const invoiceEditReasons = ref({
     transactionDateChange: '',
 });
 
+const resetInvoiceEditReasonState = () => {
+    showInvoiceEditConfirmation.value = false;
+    pendingInvoiceUpdatePayload.value = null;
+    invoiceEditReasonErrors.value = {};
+    invoiceEditReasons.value = {
+        timeLockOverride: '',
+        transactionDateChange: '',
+    };
+};
+
+const activeInvoiceEditContextKey = computed(() => {
+    const tabId = activeTab.value?.id ?? '';
+    const invoiceId = activeTab.value?.editing_invoice_id ?? '';
+
+    return `${tabId}:${invoiceId}`;
+});
+
+watch(activeInvoiceEditContextKey, (next, previous) => {
+    if (next !== previous) {
+        resetInvoiceEditReasonState();
+    }
+});
+
 const clearEditFormErrors = () => {
     editFormErrors.value = {};
 };
@@ -225,6 +248,7 @@ const submitInvoiceUpdate = (payload) => {
         headers: { "Idempotency-Key": activeTab.value.idempotencyKey },
         onSuccess: () => {
             submitRef.value = false;
+            resetInvoiceEditReasonState();
         },
         onError: (errors) => {
             submitRef.value = false;
@@ -276,9 +300,7 @@ const confirmInvoiceEditUpdate = () => {
 };
 
 const cancelInvoiceEditConfirmation = () => {
-    showInvoiceEditConfirmation.value = false;
-    pendingInvoiceUpdatePayload.value = null;
-    invoiceEditReasonErrors.value = {};
+    resetInvoiceEditReasonState();
 };
 
 const defaultReceiverForInvoice = (invoice) => {

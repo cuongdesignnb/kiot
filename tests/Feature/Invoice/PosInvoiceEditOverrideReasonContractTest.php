@@ -298,6 +298,38 @@ class PosInvoiceEditOverrideReasonContractTest extends TestCase
         $this->assertStringNotContainsString('window.alert', $source);
     }
 
+    public function test_pos_component_resets_reason_state_on_cancel_context_change_and_success(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Orders/Create.vue'));
+
+        $this->assertMatchesRegularExpression(
+            '/const resetInvoiceEditReasonState = \(\) => \{[\s\S]*?showInvoiceEditConfirmation\.value = false;[\s\S]*?pendingInvoiceUpdatePayload\.value = null;[\s\S]*?invoiceEditReasonErrors\.value = \{\};[\s\S]*?timeLockOverride: \'\',[\s\S]*?transactionDateChange: \'\',[\s\S]*?\};/',
+            $source
+        );
+        $this->assertMatchesRegularExpression(
+            '/const cancelInvoiceEditConfirmation = \(\) => \{\s*resetInvoiceEditReasonState\(\);\s*\};/',
+            $source
+        );
+        $this->assertStringContainsString('const activeInvoiceEditContextKey = computed(() => {', $source);
+        $this->assertStringContainsString('return `${tabId}:${invoiceId}`;', $source);
+        $this->assertStringContainsString('watch(activeInvoiceEditContextKey, (next, previous) => {', $source);
+        $this->assertStringContainsString('resetInvoiceEditReasonState();', $source);
+        $this->assertMatchesRegularExpression(
+            '/onSuccess: \(\) => \{\s*submitRef\.value = false;\s*resetInvoiceEditReasonState\(\);\s*\}/',
+            $source
+        );
+    }
+
+    public function test_pos_component_preserves_reason_state_for_same_context_backend_validation(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Orders/Create.vue'));
+
+        $this->assertMatchesRegularExpression(
+            '/onError: \(errors\) => \{[\s\S]*?if \(Object\.keys\(reasonErrors\)\.length > 0\) \{[\s\S]*?pendingInvoiceUpdatePayload\.value = payload;[\s\S]*?showInvoiceEditConfirmation\.value = true;[\s\S]*?return;[\s\S]*?\}/',
+            $source
+        );
+    }
+
     private function user(array $permissions): User
     {
         $name = 'pos-edit-reason-'.uniqid();
