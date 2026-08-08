@@ -109,27 +109,95 @@ BRANCH_OPTION_QUERIES=0
 INERTIA_BYTES=32804
 ```
 
-## PR46 base integration validation
+## Independent review benchmark correction
+
+The independent review found that the earlier combined base/head benchmark was
+not credible: both sides reported the PR45 head query and payload contract.
+The cause was verified before this correction. The benchmark used one shared
+optimized Composer vendor tree. Its `autoload_classmap.php` pointed
+`PurchaseController` at the PR45 head source, so the base process had the base
+worktree path but executed the head controller. This is a benchmark harness
+isolation failure, not an application regression.
+
+```text
+INVALID_BENCHMARK_ROOT_CAUSE=SHARED_OPTIMIZED_COMPOSER_VENDOR_AUTOLOAD_CLASSMAP_POINTED_BASE_BOOTSTRAP_AT_PR45_HEAD_SOURCE
+INVALID_BASE_QUERY_COUNT=11
+INVALID_HEAD_QUERY_COUNT=11
+CORRECT_BASE_SUMMARY_QUERY_COUNT=6
+CORRECT_HEAD_SUMMARY_QUERY_COUNT=2
+CORRECT_BASE_QUERY_COUNT=15
+CORRECT_HEAD_QUERY_COUNT=11
+CORRECT_BASE_PAYLOAD_BYTES=106239
+CORRECT_HEAD_PAYLOAD_BYTES=88644
+INVALID_COMBINED_BENCHMARK_SUPERSEDED=YES
+```
+
+The corrected run used physically separate worktrees, separately generated
+optimized Composer autoload files, separate disposable databases, identical
+deterministic fixtures, independent PHP CLI processes, and
+`opcache.enable_cli=0`. The runtime source identity was printed from each
+application process and the controller hashes differ:
+
+```text
+BASE_WORKTREE=D:\Kiot\pr45-correction-base
+HEAD_WORKTREE=D:\Kiot\pr45-correction-head
+BASE_GIT_HEAD=b933cfd7248a909fb90f6ba15943795669f23bce
+HEAD_GIT_HEAD=8d4e44c94a77b6ff0ae1e2af84c6933b5369fd7a
+BASE_CONTROLLER_SHA256=8b2f77e29eb60ead41f8bc4610676c3a00268c78741ad9cf02d7debcc0262a6a
+HEAD_CONTROLLER_SHA256=10e4f1e312a87418639ec1c5364bbba9dc0d3c0ea93c3399412406cb23429e5c
+BASE_RUNTIME_CONTROLLER_FILE=D:\Kiot\pr45-correction-base\app\Http\Controllers\PurchaseController.php
+HEAD_RUNTIME_CONTROLLER_FILE=D:\Kiot\pr45-correction-head\app\Http\Controllers\PurchaseController.php
+BASE_VENDOR_ISOLATED=YES
+HEAD_VENDOR_ISOLATED=YES
+OPCACHE_CLI=0
+PHP_PROCESS_ISOLATION=PASS
+PURCHASE_COUNT_EQUAL=YES
+PURCHASE_ITEM_COUNT_EQUAL=YES
+SUPPLIER_COUNT_EQUAL=YES
+EMPLOYEE_COUNT_EQUAL=YES
+PRODUCT_COUNT_EQUAL=YES
+FIXTURE_CHECKSUM=b7a2f4093216550606b732330d6254b1c605e98514409f5b995a3b07870bf0b5
+FIXTURE_CHECKSUM_EQUAL=YES
+```
+
+The corrected benchmark was measured from the same deterministic fixture with
+four samples per scenario: the first was discarded and the median of the
+remaining three warm samples was recorded. The corrected base/head run, not
+the superseded combined measurement, is the authoritative evidence below.
+
+## Corrected PR46 base integration validation
 
 The historical table above is retained as the original performance evidence;
-it was measured before the PR46 base was integrated. The following gate uses
+it was measured before the PR46 base was integrated. The corrected gate uses
 two independent disposable MariaDB 10.11 databases with the same complete
 migration set and the same 10,000-purchase fixture. The base worktree is
 `b933cfd7248a909fb90f6ba15943795669f23bce`; the rebased PR45 code worktree is
-`8d4e44c94a77b6ff0ae1e2af84c6933b5369fd7a`.
+`8d4e44c94a77b6ff0ae1e2af84c6933b5369fd7a`. The earlier combined table has
+been replaced because it used the invalid shared-autoload setup described
+above.
 
 ```text
-MARIADB_VERSION=10.11.18-MariaDB-ubu2204
-BASE_DATABASE=pr45_base
-HEAD_DATABASE=pr45_head
+MARIADB_VERSION=10.11
+BASE_DATABASE=pr45_correction_base
+HEAD_DATABASE=pr45_correction_head
 BASE_MIGRATIONS=181
 HEAD_MIGRATIONS=181
 FIXTURE_PARITY=PASS
-APP_SETTINGS_QUERY_COUNT_FULL=2
-APP_SETTINGS_QUERY_COUNT_PARTIAL=0
-PURCHASE_SUMMARY_QUERY_COUNT_FULL=2
-PURCHASE_SUMMARY_QUERY_COUNT_PARTIAL=2
+BASE_APP_SETTINGS_QUERY_COUNT_FULL=2
+HEAD_APP_SETTINGS_QUERY_COUNT_FULL=2
+BASE_APP_SETTINGS_QUERY_COUNT_PARTIAL=0
+HEAD_APP_SETTINGS_QUERY_COUNT_PARTIAL=0
+BASE_PURCHASE_SUMMARY_QUERY_COUNT_FULL=6
+HEAD_PURCHASE_SUMMARY_QUERY_COUNT_FULL=2
+BASE_PURCHASE_SUMMARY_QUERY_COUNT_PARTIAL=6
+HEAD_PURCHASE_SUMMARY_QUERY_COUNT_PARTIAL=2
 STATIC_FILTER_OPTION_QUERIES_PARTIAL=0
+BASE_ITEM_FIELDS=14
+HEAD_ITEM_FIELDS=8
+BASE_SUMMARY_SANITY_GATE=PASS
+HEAD_SUMMARY_SANITY_GATE=PASS
+BASE_PAYLOAD_SANITY_GATE=PASS
+BASE_PAYLOAD_BYTES_GT_HEAD=YES
 ```
 
 Normalized route measurements (four runs per scenario, first discarded,
@@ -137,30 +205,36 @@ median of three warm runs) were:
 
 | Scenario | Base ms | Head ms | Base DB ms | Head DB ms | Queries base/head | Payload bytes base/head |
 |---|---:|---:|---:|---:|---:|---:|
-| full initial purchases | 57.341 | 59.353 | 32.59 | 33.50 | 11 / 11 | 96180 / 96180 |
-| this_month | 56.833 | 58.622 | 31.96 | 33.16 | 11 / 11 | 96203 / 96203 |
-| all | 88.796 | 88.879 | 62.86 | 63.28 | 11 / 11 | 96201 / 96201 |
-| search purchase | 115.699 | 114.548 | 96.31 | 95.35 | 11 / 11 | 66414 / 66414 |
-| search supplier | 130.969 | 130.235 | 104.62 | 104.72 | 11 / 11 | 95327 / 95327 |
-| search product | 154.046 | 151.664 | 127.20 | 125.57 | 11 / 11 | 96261 / 96261 |
-| has_debt | 88.900 | 89.706 | 63.54 | 64.55 | 11 / 11 | 96162 / 96162 |
-| sort purchase date | 88.190 | 89.302 | 62.72 | 63.30 | 11 / 11 | 96264 / 96264 |
-| sort need pay | 87.714 | 89.918 | 62.95 | 64.25 | 11 / 11 | 96290 / 96290 |
-| page 2 | 87.810 | 88.951 | 62.52 | 63.33 | 11 / 11 | 96208 / 96208 |
-| partial filter reload | 93.192 | 93.156 | 89.87 | 90.05 | 8 / 8 | 2562 / 2562 |
+| full initial purchases | 113.357 | 96.924 | 77.14 | 70.00 | 15 / 11 | 106239 / 88644 |
+| this_month | 112.728 | 97.424 | 77.59 | 70.96 | 15 / 11 | 106239 / 88644 |
+| all | 102.422 | 91.963 | 67.26 | 63.75 | 15 / 11 | 106113 / 88518 |
+| search purchase | 196.298 | 118.690 | 175.46 | 98.41 | 15 / 11 | 59830 / 58955 |
+| search supplier | 266.719 | 131.315 | 215.41 | 103.28 | 15 / 11 | 104862 / 87362 |
+| search product | 268.370 | 152.481 | 231.21 | 124.20 | 15 / 11 | 106678 / 89122 |
+| has_debt | 115.074 | 96.829 | 79.23 | 69.80 | 15 / 11 | 106427 / 88832 |
+| sort purchase date | 121.944 | 96.787 | 81.89 | 69.74 | 16 / 11 | 106974 / 89379 |
+| sort need pay | 116.967 | 99.097 | 79.92 | 70.02 | 15 / 11 | 106884 / 89283 |
+| page 2 | 115.317 | 98.036 | 78.72 | 69.45 | 15 / 11 | 106354 / 88754 |
+| partial filter reload | 185.646 | 110.372 | 175.95 | 106.23 | 15 / 8 | 3528 / 2653 |
 ```
 
-The measurements prove base-to-head request, query-count, and payload parity
-on the integrated fixture. Timing deltas are local-run noise rather than a
-new optimization claim. The PR46 settings contract separately proves that
-full Inertia requests use two settings queries and partial filter reloads do
-not refetch `app_settings` or static filter options.
+For the comparable `this_month` scenario, the corrected request median changed
+from 112.728 ms on base to 97.424 ms on head, a measured improvement of
+13.58%. For `search product`, the corrected request median changed from
+268.370 ms to 152.481 ms. These are local benchmark observations, not a new
+correctness requirement. The query and payload differences are expected from
+the actual PR45 source change; financial results and filter results remain
+parity-gated separately. The PR46 settings contract proves that full Inertia
+requests use two settings queries and partial filter reloads do not refetch
+`app_settings` or static filter options.
 
 ```text
-COMBINED_MARIADB_GATE=PASS
-COMBINED_BROWSER_QA=PASS
-BASE_HEAD_REQUEST_PARITY=PASS
-BASE_HEAD_PAYLOAD_PARITY=PASS
+CORRECTED_MARIADB_GATE=PASS
+BASE_HEAD_FINANCIAL_RESULT_PARITY=PASS
+BASE_HEAD_FILTER_RESULT_PARITY=PASS
+BASE_HEAD_ITEM_FIELD_CONTRACT=PASS
+BASE_QUERY_COUNT_DELTA=4
+BASE_PAYLOAD_REDUCTION=PASS
 FINANCIAL_SUMMARY_PARITY=PASS
 FILTER_RESULT_PARITY=PASS
 EXPANDED_ITEM_PARITY=PASS
