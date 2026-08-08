@@ -1,6 +1,6 @@
 <script setup>
 import { formatVND as formatCurrency } from '@/utils/money';
-import { ref, computed, watch, onBeforeUnmount } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import axios from 'axios';
 import QuickCreateCustomerModal from '@/Components/QuickCreateCustomerModal.vue';
@@ -22,7 +22,9 @@ const localSuppliers = ref([...(props.suppliers || [])]);
 const showCreateSupplierModal = ref(false);
 
 const onSupplierCreated = (supplier) => {
-    localSuppliers.value.push(supplier);
+    if (!localSuppliers.value.find(s => s.id === supplier.id)) {
+        localSuppliers.value.push(supplier);
+    }
     selectedSupplierId.value = supplier.id;
 };
 
@@ -40,44 +42,19 @@ const selectedSupplier = computed(() => {
     return localSuppliers.value.find(s => s.id === selectedSupplierId.value) || null;
 });
 
-const truthyFlag = (value) =>
-    value === true ||
-    value === 1 ||
-    value === '1' ||
-    value === 'true';
+const supplierDebtById = ref({});
+const supplierDebtLoadingById = ref({});
+const supplierDebtErrorById = ref({});
+const supplierDebtRequestTokenById = ref({});
 
-const supplierDisplayBalance = (supplier) => {
-    if (!supplier) return 0;
+const supplierDebtFor = (supplier) =>
+    supplierDebtById.value[String(supplier?.id || '')] || null;
 
-    if (
-        supplier.supplier_picker_display_balance !== undefined ||
-        supplier.supplier_screen_debt !== undefined ||
-        supplier.supplier_oriented_balance !== undefined ||
-        supplier.supplier_display_balance !== undefined ||
-        supplier.supplier_list_debt_amount !== undefined
-    ) {
-        return Number(
-            supplier.supplier_picker_display_balance ??
-            supplier.supplier_screen_debt ??
-            supplier.supplier_oriented_balance ??
-            supplier.supplier_display_balance ??
-            supplier.supplier_list_debt_amount ??
-            0
-        );
-    }
+const supplierDisplayBalance = (debt) => {
+    if (!debt || debt.supplier_picker_display_balance === undefined) return null;
 
-    const payable = Number(supplier.supplier_payable_balance ?? supplier.supplier_debt_amount ?? 0);
-    const receivable = Number(supplier.customer_receivable_balance ?? supplier.debt_amount ?? 0);
-
-    return truthyFlag(supplier.is_dual_role_partner) || truthyFlag(supplier.is_customer)
-        ? payable - receivable
-        : payable;
+    return Number(debt.supplier_picker_display_balance);
 };
-
-const withSupplierDisplayDebt = (supplier) => ({
-    ...supplier,
-    supplier_picker_display_balance: supplierDisplayBalance(supplier),
-});
 
 watch(supplierSearchQuery, (val) => {
     if (!val) {
@@ -91,7 +68,7 @@ watch(supplierSearchQuery, (val) => {
         isSearchingSupplier.value = true;
         try {
             const response = await axios.get('/api/suppliers/search', { params: { search: val } });
-            filteredSuppliers.value = (response.data || []).map(withSupplierDisplayDebt);
+            filteredSuppliers.value = response.data || [];
         } catch (e) {
             console.error('Error fetching suppliers:', e);
         } finally {
@@ -128,6 +105,63 @@ const getLocalDatetime = (val) => {
 };
 
 const selectedSupplierId = ref(props.purchase.supplier_id || '');
+
+const selectedSupplierDebt = computed(() => supplierDebtFor(selectedSupplier.value));
+const selectedSupplierDebtLoaded = computed(() => {
+    const id = String(selectedSupplierId.value || '');
+
+    return id !== '' && Object.prototype.hasOwnProperty.call(supplierDebtById.value, id);
+});
+const selectedSupplierDebtLoading = computed(() =>
+    Boolean(supplierDebtLoadingById.value[String(selectedSupplierId.value || '')])
+);
+const selectedSupplierDebtError = computed(() =>
+    supplierDebtErrorById.value[String(selectedSupplierId.value || '')] || ''
+);
+
+const hydrateSupplierDebt = async (supplierId) => {
+    const id = String(supplierId || '');
+    if (!id || selectedSupplierDebtLoaded.value && id === String(selectedSupplierId.value)) return;
+    if (supplierDebtLoadingById.value[id]) return;
+
+    const token = `${Date.now()}-${Math.random()}`;
+    supplierDebtRequestTokenById.value[id] = token;
+    supplierDebtLoadingById.value = { ...supplierDebtLoadingById.value, [id]: true };
+    const errors = { ...supplierDebtErrorById.value };
+    delete errors[id];
+    supplierDebtErrorById.value = errors;
+
+    try {
+        const response = await axios.get(`/purchases/suppliers/${id}/debt-display`);
+
+        if (supplierDebtRequestTokenById.value[id] !== token) return;
+
+        supplierDebtById.value = { ...supplierDebtById.value, [id]: response.data };
+    } catch (error) {
+        if (supplierDebtRequestTokenById.value[id] !== token) return;
+
+        supplierDebtErrorById.value = {
+            ...supplierDebtErrorById.value,
+            [id]: 'Không thể tải công nợ nhà cung cấp.',
+        };
+    } finally {
+        if (supplierDebtRequestTokenById.value[id] === token) {
+            supplierDebtLoadingById.value = { ...supplierDebtLoadingById.value, [id]: false };
+            const tokens = { ...supplierDebtRequestTokenById.value };
+            delete tokens[id];
+            supplierDebtRequestTokenById.value = tokens;
+        }
+    }
+};
+
+watch(selectedSupplierId, (supplierId) => {
+    hydrateSupplierDebt(supplierId);
+});
+
+onMounted(() => {
+    hydrateSupplierDebt(selectedSupplierId.value);
+});
+
 const selectedEmployeeId = ref(
     props.purchase.employee_id
         ? `employee:${props.purchase.employee_id}`
@@ -243,6 +277,7 @@ watch(searchQuery, (val) => {
 
 onBeforeUnmount(() => {
     if (searchTimeout) clearTimeout(searchTimeout);
+    if (supplierSearchTimeout) clearTimeout(supplierSearchTimeout);
 });
 
 const selectProduct = (product) => {
@@ -333,7 +368,7 @@ const currentPurchaseDebt = computed(() => Math.max(0, currentPurchaseBalance.va
 const purchaseOverpaidAmount = computed(() => Math.max(0, -currentPurchaseBalance.value));
 
 const oldSupplierBalance = computed(
-    () => supplierDisplayBalance(selectedSupplier.value)
+    () => supplierDisplayBalance(selectedSupplierDebt.value) ?? 0
 );
 const oldSupplierDebt = computed(() => Math.max(0, oldSupplierBalance.value));
 const oldSupplierCredit = computed(() => Math.max(0, -oldSupplierBalance.value));
@@ -713,6 +748,9 @@ const goToCreateProduct = () => {
                             </div>
 
                             <div v-if="selectedSupplier" class="mt-1 pt-2 border-t border-dashed border-gray-200 space-y-1">
+                                <div v-if="selectedSupplierDebtLoading" class="text-[12px] text-gray-500">Đang tải công nợ...</div>
+                                <div v-else-if="selectedSupplierDebtError" role="alert" class="text-[12px] text-red-600">{{ selectedSupplierDebtError }}</div>
+                                <template v-else-if="selectedSupplierDebtLoaded">
                                 <div class="flex justify-between items-center text-[12px]">
                                     <label class="text-gray-500">
                                         <template v-if="oldSupplierCredit > 0">Số dư hiện tại NCC đang dư</template>
@@ -738,6 +776,7 @@ const goToCreateProduct = () => {
                                         {{ formatCurrency(projectedSupplierCredit > 0 ? projectedSupplierCredit : projectedSupplierDebt) }}
                                     </div>
                                 </div>
+                                </template>
                             </div>
 
                             <!-- Payment Method -->

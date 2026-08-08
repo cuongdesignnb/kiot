@@ -126,6 +126,9 @@ Route::middleware('auth')->group(function () {
 
     // ===== PURCHASES =====
     Route::get('/purchases/create', [PurchaseController::class, 'create'])->name('purchases.create')->middleware('permission:purchases.create');
+    Route::get('/purchases/suppliers/{supplier}/debt-display', [PurchaseController::class, 'supplierDebtDisplay'])
+        ->name('purchases.suppliers.debt-display')
+        ->middleware('permission:purchases.create|purchases.edit');
     Route::middleware('permission:purchases.view')->group(function () {
         Route::get('/purchases', [PurchaseController::class, 'index'])->name('purchases.index');
         Route::get('/purchases/{purchase}/detail', [PurchaseController::class, 'detail']);
