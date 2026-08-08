@@ -22,6 +22,7 @@ const { filters, setSort, reset } = useFilters({
     initial: props.filters,
     route: "/purchases",
     defaults: { date_filter: "this_month" },
+    only: ["purchases", "summary", "filters"],
 });
 
 const allStatuses = computed(() => props.filterOptions?.statuses || [
@@ -314,6 +315,14 @@ const cancelPurchase = (order) => {
                             <tr @click="goToDetail(order.id)" class="hover:bg-blue-50/40 cursor-pointer transition-colors" :class="{ 'bg-[#f4f7fe]': isExpanded(order.id), 'border-l-2 border-l-green-500': isExpanded(order.id) }">
                                 <td class="px-3 py-2 text-center" @click.stop><input type="checkbox" class="rounded border-gray-300" /></td>
                                 <td class="px-3 py-2 text-center text-gray-300">
+                                    <button
+                                        type="button"
+                                        data-testid="purchase-expand-toggle"
+                                        class="inline-flex h-5 w-5 items-center justify-center rounded text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                                        :aria-expanded="isExpanded(order.id)"
+                                        :aria-label="isExpanded(order.id) ? 'Thu gọn chi tiết phiếu nhập' : 'Mở rộng chi tiết phiếu nhập'"
+                                        @click.stop="toggleExpand(order.id)"
+                                    >{{ isExpanded(order.id) ? '−' : '+' }}</button>
                                     <svg class="w-4 h-4 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path></svg>
                                 </td>
                                 <td v-if="isColVisible('code')" class="px-2 py-2 text-blue-600 font-medium">{{ order.code }}</td>
