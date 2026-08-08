@@ -155,6 +155,11 @@ with the minimum settings/admin fixture, and is not a production copy. No
 production database command was run. The QA server and database container are
 stopped and removed after evidence collection.
 
+```text
+QA_DOCKER_CONTAINER=kiot_pr46_settings_mariadb REMOVED
+QA_ANONYMOUS_VOLUME=9b364ba317591bbd2cfe82fcc9cb35b59dbc6b4defac069fc6c9cd080e59917d REMOVED
+```
+
 ## Changed files
 
 ```text
