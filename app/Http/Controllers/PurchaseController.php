@@ -179,8 +179,8 @@ class PurchaseController extends Controller
         // we also accept NULL to be tolerant of any pre-default rows.
         $suppliers = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
             ->where('is_supplier', true)
-            ->get()
-            ->map(fn (Customer $supplier) => $this->withSupplierDebtDisplayAliases($supplier));
+            ->orderBy('name')
+            ->get(['id', 'code', 'name', 'phone', 'is_customer', 'is_supplier']);
 
         $purchaseOrderInfo = null;
         if ($request->has('purchase_order_id')) {
@@ -626,10 +626,10 @@ class PurchaseController extends Controller
 
         $suppliers = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
             ->where('is_supplier', true)
-            ->get()
-            ->map(fn (Customer $supplier) => $this->withSupplierDebtDisplayAliases($supplier));
+            ->orderBy('name')
+            ->get(['id', 'code', 'name', 'phone', 'is_customer', 'is_supplier']);
         if ($purchase->supplier && ! $suppliers->contains('id', $purchase->supplier_id)) {
-            $suppliers->push($this->withSupplierDebtDisplayAliases($purchase->supplier));
+            $suppliers->push($purchase->supplier->only(['id', 'code', 'name', 'phone', 'is_customer', 'is_supplier']));
         }
 
         $priceBooks = \App\Models\PriceBook::where('is_active', true)->get();
@@ -642,6 +642,19 @@ class PurchaseController extends Controller
             'showRetailPrice' => $priceBooks->contains('enable_retail_price', true),
             'showTechnicianPrice' => $priceBooks->contains('enable_technician_price', true),
             'bankAccounts' => \App\Models\BankAccount::where('status', 'active')->get(),
+        ]);
+    }
+
+    public function supplierDebtDisplay(Customer $supplier)
+    {
+        $supplier = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
+            ->whereKey($supplier->getKey())
+            ->where('is_supplier', true)
+            ->firstOrFail();
+
+        return response()->json([
+            'id' => (int) $supplier->id,
+            ...PartnerDebtDisplayBalance::responseAliases($supplier),
         ]);
     }
 
@@ -1471,14 +1484,5 @@ class PurchaseController extends Controller
         $serial = preg_replace('/[\x00-\x1F\x7F-\x9F]/u', '', (string) $serial) ?? '';
 
         return strtoupper(trim($serial));
-    }
-
-    private function withSupplierDebtDisplayAliases(Customer $supplier): Customer
-    {
-        foreach (PartnerDebtDisplayBalance::aliases($supplier) as $key => $value) {
-            $supplier->{$key} = $value;
-        }
-
-        return $supplier;
     }
 }

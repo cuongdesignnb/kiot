@@ -314,14 +314,7 @@ class SupplierController extends Controller
         }
 
         $suppliers = $query->orderBy('name')->limit(20)
-            ->get(['id', 'code', 'name', 'phone', 'debt_amount', 'supplier_debt_amount', 'is_customer', 'is_supplier'])
-            ->map(function (Customer $supplier) {
-                foreach (PartnerDebtDisplayBalance::aliases($supplier) as $key => $value) {
-                    $supplier->{$key} = $value;
-                }
-
-                return $supplier;
-            });
+            ->get(['id', 'code', 'name', 'phone', 'is_customer', 'is_supplier']);
 
         return response()->json($suppliers);
     }

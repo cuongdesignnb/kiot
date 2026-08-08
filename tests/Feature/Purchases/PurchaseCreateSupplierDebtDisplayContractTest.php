@@ -4,6 +4,7 @@ namespace Tests\Feature\Purchases;
 
 use App\Models\Customer;
 use App\Models\User;
+use App\Support\Debt\PartnerDebtDisplayBalance;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
 
@@ -11,7 +12,7 @@ class PurchaseCreateSupplierDebtDisplayContractTest extends TestCase
 {
     use DatabaseTransactions;
 
-    public function test_purchase_create_supplier_payload_keeps_raw_debt_and_adds_supplier_screen_balance(): void
+    public function test_purchase_create_supplier_payload_is_lightweight_and_debt_endpoint_keeps_canonical_aliases(): void
     {
         $admin = User::create([
             'name' => 'Admin Purchase Display Contract',
@@ -38,14 +39,20 @@ class PurchaseCreateSupplierDebtDisplayContractTest extends TestCase
         $row = collect($props['suppliers'] ?? [])->firstWhere('id', $partner->id);
 
         $this->assertNotNull($row);
-        $this->assertSame(205_000.0, (float) $row['supplier_debt_amount']);
-        $this->assertSame(0.0, (float) $row['customer_receivable_balance']);
-        $this->assertSame(0.0, (float) $row['supplier_payable_balance']);
-        $this->assertSame(0.0, (float) $row['supplier_screen_debt']);
-        $this->assertSame(0.0, (float) $row['supplier_oriented_balance']);
-        $this->assertSame(0.0, (float) $row['supplier_picker_display_balance']);
-        $this->assertTrue($row['debt_has_mismatch']);
-        $this->assertSame('net_balance', $row['debt_display_contract']);
+        $this->assertSame(
+            ['id', 'code', 'name', 'phone', 'is_customer', 'is_supplier'],
+            array_keys($row)
+        );
+
+        $debtResponse = $this->actingAs($admin)
+            ->getJson("/purchases/suppliers/{$partner->id}/debt-display");
+        $debtResponse->assertOk();
+        $debt = $debtResponse->json();
+        $this->assertSame($partner->id, $debt['id']);
+
+        foreach (PartnerDebtDisplayBalance::responseAliases($partner->fresh()) as $key => $value) {
+            $this->assertEquals($value, $debt[$key], "canonical alias {$key} must remain unchanged");
+        }
 
         $searchResponse = $this->actingAs($admin)
             ->getJson('/api/suppliers/search?search='.urlencode($partner->code));
@@ -53,13 +60,13 @@ class PurchaseCreateSupplierDebtDisplayContractTest extends TestCase
 
         $searchRow = collect($searchResponse->json())->firstWhere('id', $partner->id);
         $this->assertNotNull($searchRow);
-        $this->assertSame(205_000.0, (float) $searchRow['supplier_debt_amount']);
-        $this->assertSame(0.0, (float) $searchRow['supplier_oriented_balance']);
-        $this->assertSame(0.0, (float) $searchRow['supplier_picker_display_balance']);
-        $this->assertTrue($searchRow['debt_has_mismatch']);
+        $this->assertSame(
+            ['id', 'code', 'name', 'phone', 'is_customer', 'is_supplier'],
+            array_keys($searchRow)
+        );
     }
 
-    public function test_purchase_create_supplier_picker_keeps_raw_payable_for_supplier_only(): void
+    public function test_supplier_only_debt_remains_available_from_lazy_endpoint(): void
     {
         $admin = User::create([
             'name' => 'Admin Purchase Supplier Only Contract',
@@ -86,11 +93,15 @@ class PurchaseCreateSupplierDebtDisplayContractTest extends TestCase
         $row = collect($props['suppliers'] ?? [])->firstWhere('id', $supplier->id);
 
         $this->assertNotNull($row);
-        $this->assertSame(600_000.0, (float) $row['supplier_debt_amount']);
-        $this->assertSame(0.0, (float) $row['supplier_screen_debt']);
-        $this->assertSame(0.0, (float) $row['supplier_oriented_balance']);
-        $this->assertSame(0.0, (float) $row['supplier_picker_display_balance']);
-        $this->assertTrue($row['debt_has_mismatch']);
-        $this->assertSame('supplier_payable', $row['debt_display_contract']);
+        $this->assertArrayNotHasKey('supplier_debt_amount', $row);
+
+        $debtResponse = $this->actingAs($admin)
+            ->getJson("/purchases/suppliers/{$supplier->id}/debt-display");
+        $debtResponse->assertOk();
+        $debt = $debtResponse->json();
+
+        $this->assertSame(600_000.0, (float) $debt['debt_stored_projection']['supplier_payable']);
+        $this->assertTrue($debt['debt_has_mismatch']);
+        $this->assertSame('supplier_payable', $debt['debt_display_contract']);
     }
 }
