@@ -26,6 +26,8 @@ class PurchaseController extends Controller
 {
     use FilterableIndex;
 
+    protected bool $purchaseDateColumnAvailable = false;
+
     protected function configurePurchaseFilters(): void
     {
         $this->searchable = ['code', 'note'];
@@ -34,7 +36,8 @@ class PurchaseController extends Controller
             'items' => ['product_name'],
         ];
         $this->sortable = ['code', 'created_at', 'total_amount', 'discount', 'paid_amount', 'debt_amount', 'status', 'purchase_date'];
-        $this->dateColumn = \Illuminate\Support\Facades\Schema::hasColumn('purchases', 'purchase_date')
+        $this->purchaseDateColumnAvailable = \Illuminate\Support\Facades\Schema::hasColumn('purchases', 'purchase_date');
+        $this->dateColumn = $this->purchaseDateColumnAvailable
             ? \Illuminate\Support\Facades\DB::raw('COALESCE(purchases.purchase_date, purchases.created_at)')
             : 'created_at';
         $this->creatorColumn = 'employee_id';
@@ -45,62 +48,62 @@ class PurchaseController extends Controller
     {
         $this->configurePurchaseFilters();
 
-        $query = Purchase::with(['supplier:id,code,name', 'items', 'employee:id,name', 'user:id,name'])
-            ->when($request->filled('has_debt'), function ($q) use ($request) {
-                if ((string) $request->input('has_debt') === '1') {
-                    $q->where('debt_amount', '>', 0);
-                } else {
-                    $q->where(function ($qq) {
-                        $qq->whereNull('debt_amount')->orWhere('debt_amount', '<=', 0);
-                    });
-                }
-            })
-            ->when($request->filled('sort_by') && in_array($request->sort_by, ['need_pay', 'purchase_date']), function ($q) use ($request) {
-                $dir = ($request->sort_dir ?? $request->sort_direction) === 'asc' ? 'asc' : 'desc';
-                if ($request->sort_by === 'need_pay') {
-                    $q->orderByRaw("(total_amount - COALESCE(discount, 0)) $dir");
-                } elseif ($request->sort_by === 'purchase_date') {
-                    $expr = \Illuminate\Support\Facades\Schema::hasColumn('purchases', 'purchase_date')
-                        ? "COALESCE(purchase_date, created_at) $dir"
-                        : "created_at $dir";
-                    $q->orderByRaw($expr);
-                }
-            });
-
-        // Only apply standard sort if not using computed sort
-        if (! in_array($request->sort_by, ['need_pay', 'purchase_date'])) {
-            $this->applyFilters($query, $request);
-        } else {
-            // Apply everything except sort
-            $originalSortable = $this->sortable;
-            $this->sortable = [];
-            $this->applyFilters($query, $request);
-            $this->sortable = $originalSortable;
+        // The purchases screen opens on the current month. Keep an explicit
+        // `date_filter=all` request available for reports and exports.
+        if (! $request->filled('date_filter')) {
+            $request->merge(['date_filter' => 'this_month']);
         }
+
+        $query = Purchase::with([
+            'supplier:id,code,name',
+            'items:id,purchase_id,product_code,product_name,quantity,price,discount,subtotal',
+            'employee:id,name',
+            'user:id,name',
+        ]);
+        $this->applyPurchaseIndexFilters($query, $request);
 
         $purchases = $query->paginate(20)->withQueryString();
 
-        // Summary using same filters
+        // Summary uses the same filters as the page, but intentionally no
+        // ORDER BY. One aggregate keeps purchase totals from being multiplied
+        // by the purchase_items join; the quantity total is the only second
+        // query that needs that join.
         $summaryQuery = Purchase::query();
-        $this->applyFilters($summaryQuery, $request);
+        // Keep the legacy summary contract: `has_debt` filters the page rows,
+        // while the financial footer remains the unfiltered purchase summary.
+        $this->applyPurchaseIndexFilters($summaryQuery, $request, false, false);
         if (! $request->filled('status')) {
             $summaryQuery->where('status', '!=', 'cancelled');
         }
 
+        $summaryAggregate = (clone $summaryQuery)->selectRaw(
+            'COALESCE(SUM(total_amount), 0) AS total_amount,
+             COALESCE(SUM(discount), 0) AS total_discount,
+             COALESCE(SUM(paid_amount), 0) AS total_paid,
+             COALESCE(SUM(debt_amount), 0) AS total_debt,
+             COUNT(*) AS total_count'
+        )->first();
+
         $summary = [
-            'total_amount' => (clone $summaryQuery)->sum('total_amount'),
-            'total_discount' => (clone $summaryQuery)->sum('discount'),
-            'total_paid' => (clone $summaryQuery)->sum('paid_amount'),
-            'total_debt' => (clone $summaryQuery)->sum('debt_amount'),
-            'total_count' => (clone $summaryQuery)->count(),
+            'total_amount' => $summaryAggregate->total_amount ?? 0,
+            'total_discount' => $summaryAggregate->total_discount ?? 0,
+            'total_paid' => $summaryAggregate->total_paid ?? 0,
+            'total_debt' => $summaryAggregate->total_debt ?? 0,
+            'total_count' => (int) ($summaryAggregate->total_count ?? 0),
             'total_items' => (clone $summaryQuery)->join('purchase_items', 'purchases.id', '=', 'purchase_items.purchase_id')->sum('purchase_items.quantity'),
         ];
 
-        $suppliers = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
-            ->where('is_supplier', true)
-            ->orderBy('name')
-            ->get(['id', 'code', 'name']);
-        $employees = \App\Models\Employee::where('is_active', true)->orderBy('name')->get(['id', 'code', 'name']);
+        $partialData = array_filter(array_map('trim', explode(',', (string) $request->header('X-Inertia-Partial-Data', ''))));
+        $loadFilterOptions = $partialData === [] || (bool) array_intersect($partialData, ['suppliers', 'employees', 'filterOptions']);
+        $suppliers = $loadFilterOptions
+            ? app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
+                ->where('is_supplier', true)
+                ->orderBy('name')
+                ->get(['id', 'code', 'name'])
+            : collect();
+        $employees = $loadFilterOptions
+            ? \App\Models\Employee::where('is_active', true)->orderBy('name')->get(['id', 'code', 'name'])
+            : collect();
 
         return Inertia::render('Purchases/Index', [
             'purchases' => $purchases,
@@ -111,7 +114,7 @@ class PurchaseController extends Controller
             'suppliers' => $suppliers,
             'employees' => $employees,
             'filterOptions' => [
-                'branches' => \App\Models\Branch::select('id', 'name')->get(),
+                'branches' => $loadFilterOptions ? \App\Models\Branch::select('id', 'name')->get() : [],
                 'statuses' => PurchaseStatus::options(),
                 'suppliers' => $suppliers->map(fn ($s) => ['value' => $s->id, 'label' => $s->name]),
                 'employees' => $employees->map(fn ($e) => ['value' => $e->id, 'label' => $e->name]),
@@ -122,6 +125,47 @@ class PurchaseController extends Controller
                 ],
             ],
         ]);
+    }
+
+    /**
+     * Apply the purchases index filters without mutating the shared trait's
+     * sort configuration. The summary calls this with sorting disabled.
+     */
+    protected function applyPurchaseIndexFilters($query, Request $request, bool $withSort = true, bool $withDebt = true): void
+    {
+        if ($withDebt && $request->filled('has_debt')) {
+            if ((string) $request->input('has_debt') === '1') {
+                $query->where('debt_amount', '>', 0);
+            } else {
+                $query->where(function ($qq) {
+                    $qq->whereNull('debt_amount')->orWhere('debt_amount', '<=', 0);
+                });
+            }
+        }
+
+        $this->applySearch($query, $request);
+        $this->applyStatus($query, $request);
+        $this->applyScalarFilters($query, $request);
+        $this->applyCreator($query, $request);
+        $this->applyDateRange($query, $request);
+
+        if (! $withSort) {
+            return;
+        }
+
+        if (in_array($request->input('sort_by'), ['need_pay', 'purchase_date'], true)) {
+            $dir = ($request->input('sort_dir') ?? $request->input('sort_direction')) === 'asc' ? 'asc' : 'desc';
+            if ($request->input('sort_by') === 'need_pay') {
+                $query->orderByRaw("(total_amount - COALESCE(discount, 0)) $dir");
+            } else {
+                $expr = $this->purchaseDateColumnAvailable
+                    ? "COALESCE(purchase_date, created_at) $dir"
+                    : "created_at $dir";
+                $query->orderByRaw($expr);
+            }
+        } else {
+            $this->applySort($query, $request);
+        }
     }
 
     public function create(Request $request)
