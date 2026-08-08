@@ -3,9 +3,11 @@
 ## Scope and safety
 
 ```text
-BASE_SHA=d0b448cd1ec34d40567fbc4b4c6ad30a9c756cdb
-REVIEWED_CODE_HEAD=e486f1f7e93bb3fd433e5135092b6ab9748a0f7c
-BENCHMARK_SOURCE_SHA=e486f1f7e93bb3fd433e5135092b6ab9748a0f7c
+ORIGINAL_BENCHMARK_BASE_SHA=d0b448cd1ec34d40567fbc4b4c6ad30a9c756cdb
+ORIGINAL_PURCHASE_CODE_HEAD=e486f1f7e93bb3fd433e5135092b6ab9748a0f7c
+CURRENT_PRODUCTION_BASE_SHA=b933cfd7248a909fb90f6ba15943795669f23bce
+REBASED_PR45_CODE_HEAD=8d4e44c94a77b6ff0ae1e2af84c6933b5369fd7a
+PR46_INTEGRATION_VALIDATED=YES
 MIGRATION_ADDED=NO
 BACKFILL=NO
 PRODUCTION_ACCESSED=NO
@@ -105,6 +107,68 @@ SUPPLIER_OPTION_QUERIES=0
 EMPLOYEE_OPTION_QUERIES=0
 BRANCH_OPTION_QUERIES=0
 INERTIA_BYTES=32804
+```
+
+## PR46 base integration validation
+
+The historical table above is retained as the original performance evidence;
+it was measured before the PR46 base was integrated. The following gate uses
+two independent disposable MariaDB 10.11 databases with the same complete
+migration set and the same 10,000-purchase fixture. The base worktree is
+`b933cfd7248a909fb90f6ba15943795669f23bce`; the rebased PR45 code worktree is
+`8d4e44c94a77b6ff0ae1e2af84c6933b5369fd7a`.
+
+```text
+MARIADB_VERSION=10.11.18-MariaDB-ubu2204
+BASE_DATABASE=pr45_base
+HEAD_DATABASE=pr45_head
+BASE_MIGRATIONS=181
+HEAD_MIGRATIONS=181
+FIXTURE_PARITY=PASS
+APP_SETTINGS_QUERY_COUNT_FULL=2
+APP_SETTINGS_QUERY_COUNT_PARTIAL=0
+PURCHASE_SUMMARY_QUERY_COUNT_FULL=2
+PURCHASE_SUMMARY_QUERY_COUNT_PARTIAL=2
+STATIC_FILTER_OPTION_QUERIES_PARTIAL=0
+```
+
+Normalized route measurements (four runs per scenario, first discarded,
+median of three warm runs) were:
+
+| Scenario | Base ms | Head ms | Base DB ms | Head DB ms | Queries base/head | Payload bytes base/head |
+|---|---:|---:|---:|---:|---:|---:|
+| full initial purchases | 57.341 | 59.353 | 32.59 | 33.50 | 11 / 11 | 96180 / 96180 |
+| this_month | 56.833 | 58.622 | 31.96 | 33.16 | 11 / 11 | 96203 / 96203 |
+| all | 88.796 | 88.879 | 62.86 | 63.28 | 11 / 11 | 96201 / 96201 |
+| search purchase | 115.699 | 114.548 | 96.31 | 95.35 | 11 / 11 | 66414 / 66414 |
+| search supplier | 130.969 | 130.235 | 104.62 | 104.72 | 11 / 11 | 95327 / 95327 |
+| search product | 154.046 | 151.664 | 127.20 | 125.57 | 11 / 11 | 96261 / 96261 |
+| has_debt | 88.900 | 89.706 | 63.54 | 64.55 | 11 / 11 | 96162 / 96162 |
+| sort purchase date | 88.190 | 89.302 | 62.72 | 63.30 | 11 / 11 | 96264 / 96264 |
+| sort need pay | 87.714 | 89.918 | 62.95 | 64.25 | 11 / 11 | 96290 / 96290 |
+| page 2 | 87.810 | 88.951 | 62.52 | 63.33 | 11 / 11 | 96208 / 96208 |
+| partial filter reload | 93.192 | 93.156 | 89.87 | 90.05 | 8 / 8 | 2562 / 2562 |
+```
+
+The measurements prove base-to-head request, query-count, and payload parity
+on the integrated fixture. Timing deltas are local-run noise rather than a
+new optimization claim. The PR46 settings contract separately proves that
+full Inertia requests use two settings queries and partial filter reloads do
+not refetch `app_settings` or static filter options.
+
+```text
+COMBINED_MARIADB_GATE=PASS
+COMBINED_BROWSER_QA=PASS
+BASE_HEAD_REQUEST_PARITY=PASS
+BASE_HEAD_PAYLOAD_PARITY=PASS
+FINANCIAL_SUMMARY_PARITY=PASS
+FILTER_RESULT_PARITY=PASS
+EXPANDED_ITEM_PARITY=PASS
+SETTING_VALUE_PARITY=PASS
+N_PLUS_ONE=PASS
+COALESCE_DATE_FILTER_FULL_SCAN=YES
+SUBSTRING_SEARCH_FULL_SCAN=YES
+INDEX_MIGRATION_REQUIRED=NO
 ```
 
 ## Query breakdown
@@ -207,9 +271,25 @@ values in the browser.
 
 ```text
 BROWSER_ENGINE=Codex In-app Browser
-ORIGIN=http://127.0.0.1:8895
+ORIGIN=http://127.0.0.1:8897
 AUTHENTICATED_SESSION=PASS (login UI, then dashboard)
 PURCHASES_RENDER=PASS
+APP_SETTINGS_AVAILABLE=PASS
+FILTER_OPTIONS_AVAILABLE=PASS
+DEFAULT_FILTER_SCOPE=this_month
+SUPPLIER_FILTER=PASS
+SUPPLIER_DEBT_FILTER=PASS
+DATE_FILTER=PASS
+SEARCH_PURCHASE_CODE=PASS
+SEARCH_SUPPLIER=PASS
+SEARCH_PRODUCT=PASS
+SORT_PURCHASE_DATE=PASS
+SORT_NEED_PAY=PASS
+PARTIAL_RELOAD=PASS
+APP_SETTINGS_REFETCHED_ON_PARTIAL=NO
+STATIC_FILTER_OPTIONS_REFETCHED=NO
+FILTER_CHANGE_DUPLICATE_REQUESTS=0
+HTTP_500=0
 DEFAULT_FILTER=PASS — Tháng này
 STATUS_FILTER=PASS
 SEARCH=PASS
@@ -218,6 +298,10 @@ PAGE_2=PASS — 25-row synthetic fixture, rows 21–25 shown
 EXPAND_COLLAPSE=PASS — local state only, no navigation/request
 CONSOLE_ERRORS=0
 ```
+
+Filter-change request evidence is based on the single Inertia request observed
+per interaction in the disposable server trace together with the partial
+reload contract test; no browser network request was duplicated.
 
 The QA origin used only a disposable MariaDB-backed local server. No user
 Chrome/profile, production cookie, production server, or production database
@@ -234,6 +318,14 @@ SECRET_SCAN=PASS — no new secrets in changed files
 DEBUG_OUTPUT_SCAN=PASS — no debug output in changed files
 MARIADB_GATE=PASS — migrations + 10k/50k benchmark + browser QA
 MYSQL8_GATE=PASS — MySQL 8.0.44 complete migrations/schema; extended benchmark intentionally not required after MariaDB primary gate
+```
+
+Combined regression evidence:
+
+```text
+PR46_SETTINGS_TEST=4 tests / 68 assertions PASS
+PR45_PERFORMANCE_CONTRACT=4 tests / 23 assertions PASS
+SELECTED_PURCHASE_REGRESSION=37 tests / 194 assertions PASS
 ```
 
 ## Changed files
