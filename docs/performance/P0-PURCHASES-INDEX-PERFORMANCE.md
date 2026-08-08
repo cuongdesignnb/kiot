@@ -4,7 +4,8 @@
 
 ```text
 BASE_SHA=d0b448cd1ec34d40567fbc4b4c6ad30a9c756cdb
-HEAD_SHA=e486f1f7e93bb3fd433e5135092b6ab9748a0f7c
+REVIEWED_CODE_HEAD=e486f1f7e93bb3fd433e5135092b6ab9748a0f7c
+BENCHMARK_SOURCE_SHA=e486f1f7e93bb3fd433e5135092b6ab9748a0f7c
 MIGRATION_ADDED=NO
 BACKFILL=NO
 PRODUCTION_ACCESSED=NO
@@ -139,6 +140,35 @@ leading-wildcard substring semantics, so a normal B-tree index would not make
 these predicates selective. The measured improvement comes from query
 collapse, selected columns, partial reloads, and removing redundant metadata
 work; no speculative index migration was added.
+
+The residual plan limitation is explicit and accepted for this performance-only
+change:
+
+```text
+COALESCE_DATE_FILTER_FULL_SCAN=YES
+SUBSTRING_SEARCH_FULL_SCAN=YES
+```
+
+The 50% improvement target was aspirational, not a correctness gate. The
+validated contract remains:
+
+```text
+DEFAULT_DATE_FILTER_BEFORE=all
+DEFAULT_DATE_FILTER_AFTER=this_month
+SUMMARY_QUERY_COUNT_BEFORE=6
+SUMMARY_QUERY_COUNT_AFTER=2
+THIS_MONTH_MS_BEFORE=88.079
+THIS_MONTH_MS_AFTER=66.291
+THIS_MONTH_IMPROVEMENT=24.74%
+SEARCH_PRODUCT_MS_BEFORE=265.566
+SEARCH_PRODUCT_MS_AFTER=151.997
+QUERY_COUNT_BEFORE=15
+QUERY_COUNT_AFTER=11
+N_PLUS_ONE=PASS
+FILTER_RESULT_PARITY=PASS
+FINANCIAL_SUMMARY_PARITY=PASS
+EXPANDED_ITEM_PARITY=PASS
+```
 
 ## Correctness evidence
 
