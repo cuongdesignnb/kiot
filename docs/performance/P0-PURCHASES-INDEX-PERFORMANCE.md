@@ -341,6 +341,29 @@ debt, search, sorting, and page 2 was equal for every comparable scenario.
 Expanded rows use the selected item fields and retained the same displayed
 values in the browser.
 
+Independent review revalidation after the benchmark correction:
+
+```text
+PR46_SETTINGS_AND_PR45_PERFORMANCE=8 tests / 91 assertions PASS
+SELECTED_PURCHASE_REGRESSION=33 tests / 171 assertions PASS
+FRONTEND_BUILD=PASS
+PINT_CHANGED_PR_FILES=PASS
+PHP_LINT_CHANGED_PR_FILES=PASS
+DIFF_CHECK=PASS
+SECRET_SCAN=PASS
+DEBUG_OUTPUT_SCAN=PASS
+APPLICATION_CODE_CHANGED_AFTER_REVIEW=NO
+TEST_CODE_CHANGED_AFTER_REVIEW=NO
+MIGRATION_CHANGED_AFTER_REVIEW=NO
+MARIADB_GATE=PASS
+MYSQL8_GATE=PASS
+```
+
+The repository-wide `vendor/bin/pint --test` invocation reports pre-existing
+baseline style debt (910 files, 2 errors, 517 style issues); it did not modify
+any file. The PR-scoped Pint check for the two changed PHP files passed and is
+the applicable gate for this documentation-only correction.
+
 ## Browser QA evidence
 
 ```text
