@@ -17,25 +17,34 @@ class Setting extends Model
     ];
 
     /**
+     * Resolve the persisted value using the setting's declared type.
+     */
+    public function resolvedValue()
+    {
+        switch ($this->type) {
+            case 'boolean':
+                return filter_var($this->value, FILTER_VALIDATE_BOOLEAN);
+            case 'number':
+                return (float) $this->value;
+            case 'json':
+                return json_decode($this->value, true);
+            default:
+                return $this->value;
+        }
+    }
+
+    /**
      * Get a setting value by key.
      */
     public static function get($key, $default = null)
     {
         $setting = self::where('key', $key)->first();
-        if (!$setting)
-            return $default;
 
-        $value = $setting->value;
-        switch ($setting->type) {
-            case 'boolean':
-                return filter_var($value, FILTER_VALIDATE_BOOLEAN);
-            case 'number':
-                return (float) $value;
-            case 'json':
-                return json_decode($value, true);
-            default:
-                return $value;
+        if (! $setting) {
+            return $default;
         }
+
+        return $setting->resolvedValue();
     }
 
     /**

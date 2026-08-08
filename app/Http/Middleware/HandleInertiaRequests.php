@@ -2,7 +2,9 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\Setting;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 use Inertia\Middleware;
 
 class HandleInertiaRequests extends Middleware
@@ -52,24 +54,27 @@ class HandleInertiaRequests extends Middleware
                 'require_distinct_applier' => (bool) config('debt.offsets.require_distinct_applier', false),
             ],
             'flash' => [
-                'success' => fn() => $request->session()->get('success'),
-                'error' => fn() => $request->session()->get('error'),
-                'print_id' => fn() => $request->session()->get('print_id'),
-                'new_employee_id' => fn() => $request->session()->get('new_employee_id'),
+                'success' => fn () => $request->session()->get('success'),
+                'error' => fn () => $request->session()->get('error'),
+                'print_id' => fn () => $request->session()->get('print_id'),
+                'new_employee_id' => fn () => $request->session()->get('new_employee_id'),
             ],
             'app_settings' => function () {
                 try {
-                    if (!\Illuminate\Support\Facades\Schema::hasTable('settings'))
+                    if (! Schema::hasTable('settings')) {
                         return [];
-                    $settings = [];
-                    foreach (\App\Models\Setting::all() as $s) {
-                        $settings[$s->key] = \App\Models\Setting::get($s->key);
                     }
+
+                    $settings = [];
+                    foreach (Setting::query()->get(['key', 'value', 'type']) as $setting) {
+                        $settings[$setting->key] = $setting->resolvedValue();
+                    }
+
                     return $settings;
                 } catch (\Exception $e) {
                     return [];
                 }
-            }
+            },
         ];
     }
 }
