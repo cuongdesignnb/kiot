@@ -2169,6 +2169,7 @@ const submitPayment = async () => {
             payment_date: paymentForm.payment_date,
             payment_method: paymentForm.payment_method,
             note: paymentForm.note,
+            amount: paymentRows.value.reduce((total, row) => total + Number(row.amount || 0), 0),
             payments: paymentRows.value.map((row) => ({
                 payslip_id: row.payslip_id,
                 amount: Number(row.amount),

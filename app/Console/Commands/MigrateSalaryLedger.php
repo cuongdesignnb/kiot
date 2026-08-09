@@ -6,10 +6,11 @@ use App\Models\CashFlow;
 use App\Models\Employee;
 use App\Models\EmployeeSalaryLedgerEntry;
 use App\Models\PaysheetPayment;
-use App\Models\Payslip;
+use App\Services\PayrollDocumentParityService;
 use App\Services\PayrollLedgerService;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 class MigrateSalaryLedger extends Command
@@ -23,7 +24,7 @@ class MigrateSalaryLedger extends Command
 
     protected $description = 'Audit or migrate legacy payroll data into the employee salary ledger';
 
-    public function handle(PayrollLedgerService $ledger): int
+    public function handle(PayrollLedgerService $ledger, PayrollDocumentParityService $parity): int
     {
         $mode = (string) $this->option('legacy-balance');
         if (! in_array($mode, ['report', 'opening'], true)) {
@@ -92,11 +93,23 @@ class MigrateSalaryLedger extends Command
             'openings_skipped' => 0,
             'anomalies' => 0,
             'opening_total' => 0,
+            'accrual_missing_count' => 0,
+            'accrual_missing_total' => 0,
+            'accrual_amount_mismatch_count' => 0,
+            'accrual_duplicate_count' => 0,
+            'accrual_zero_salary_count' => 0,
+            'payment_missing_count' => 0,
+            'payment_missing_total' => 0,
+            'payment_amount_mismatch_count' => 0,
+            'payment_duplicate_count' => 0,
+            'backfill_ambiguous' => 0,
         ];
         $rows = [];
 
         if ($backfillDocuments && $schemaReady) {
-            $this->backfillDocuments($ledger, $apply, $employeeCode, $stats);
+            if (! $this->backfillDocuments($ledger, $parity, $apply, $employeeCode, $stats)) {
+                return self::FAILURE;
+            }
         }
 
         (clone $employeeQuery)
@@ -173,8 +186,17 @@ class MigrateSalaryLedger extends Command
             ['Opening balance total', $stats['opening_total']],
             ['Payroll accrual created', $stats['accruals_created']],
             ['Payroll accrual skipped', $stats['accruals_skipped']],
+            ['Payroll accrual missing candidates', $stats['accrual_missing_count']],
+            ['Payroll accrual missing total', $stats['accrual_missing_total']],
+            ['Payroll accrual amount mismatches', $stats['accrual_amount_mismatch_count']],
+            ['Payroll accrual duplicates', $stats['accrual_duplicate_count']],
+            ['Payroll accrual zero salary', $stats['accrual_zero_salary_count']],
             ['Salary payment created', $stats['payments_created']],
             ['Salary payment skipped', $stats['payments_skipped']],
+            ['Salary payment missing candidates', $stats['payment_missing_count']],
+            ['Salary payment missing total', $stats['payment_missing_total']],
+            ['Salary payment amount mismatches', $stats['payment_amount_mismatch_count']],
+            ['Salary payment duplicates', $stats['payment_duplicate_count']],
             ['Anomalies', $stats['anomalies']],
             ['CashFlow created', CashFlow::count() - $cashFlowsBefore],
             ['Payment created', PaysheetPayment::count() - $paymentsBefore],
@@ -186,26 +208,84 @@ class MigrateSalaryLedger extends Command
 
     private function backfillDocuments(
         PayrollLedgerService $ledger,
+        PayrollDocumentParityService $parity,
         bool $apply,
         string $employeeCode,
         array &$stats
-    ): void {
-        Payslip::query()
-            ->whereHas('paysheet', fn ($query) => $query->where('status', 'locked'))
-            ->when($employeeCode !== '', fn ($query) => $query->whereHas('employee', fn ($employee) => $employee->where('code', $employeeCode)))
-            ->with(['employee', 'paysheet'])
-            ->orderBy('id')
-            ->each(function (Payslip $slip) use ($ledger, $apply, &$stats) {
-                $key = "legacy:payroll_accrual:{$slip->id}";
-                if (EmployeeSalaryLedgerEntry::query()->where('idempotency_key', $key)->exists()) {
+    ): bool {
+        $filters = $employeeCode !== '' ? ['employee-code' => $employeeCode] : [];
+        $missingAccruals = [];
+        $missingPayments = [];
+
+        foreach ($parity->lockedPayslips($filters) as $slip) {
+            $classification = $parity->classifyAccrual($slip);
+            switch ($classification['classification']) {
+                case 'EXACT':
                     $stats['accruals_skipped']++;
+                    break;
+                case 'MISSING':
+                    $stats['accrual_missing_count']++;
+                    $stats['accrual_missing_total'] += $classification['expected_amount'];
+                    $missingAccruals[] = $slip;
+                    break;
+                case 'AMOUNT_MISMATCH':
+                    $stats['accrual_amount_mismatch_count']++;
+                    break;
+                case 'DUPLICATE':
+                    $stats['accrual_duplicate_count']++;
+                    break;
+                case 'ZERO_SALARY':
+                    $stats['accrual_zero_salary_count']++;
+                    $stats['accruals_skipped']++;
+                    break;
+            }
+        }
 
-                    return;
-                }
-                if (! $apply) {
-                    return;
-                }
+        foreach ($parity->payments($filters) as $payment) {
+            if (! $payment->employee || ! $payment->payslip || ! $payment->paysheet) {
+                $stats['anomalies']++;
 
+                continue;
+            }
+            $classification = $parity->classifyPayment($payment);
+            switch ($classification['classification']) {
+                case 'EXACT':
+                    $stats['payments_skipped']++;
+                    break;
+                case 'MISSING':
+                    $stats['payment_missing_count']++;
+                    $stats['payment_missing_total'] += (int) $payment->amount;
+                    $missingPayments[] = $payment;
+                    break;
+                case 'AMOUNT_MISMATCH':
+                    $stats['payment_amount_mismatch_count']++;
+                    break;
+                case 'DUPLICATE':
+                    $stats['payment_duplicate_count']++;
+                    break;
+            }
+        }
+
+        $ambiguous = $stats['accrual_amount_mismatch_count']
+            + $stats['accrual_duplicate_count']
+            + $stats['payment_amount_mismatch_count']
+            + $stats['payment_duplicate_count'];
+        $stats['backfill_ambiguous'] = $ambiguous;
+        $this->line('Semantic backfill candidates: accruals='.$stats['accrual_missing_count'].'/'.$stats['accrual_missing_total']
+            .', payments='.$stats['payment_missing_count'].'/'.$stats['payment_missing_total']);
+        $this->line('Semantic mismatches or duplicates: '.$ambiguous);
+
+        if ($apply && $ambiguous > 0) {
+            $this->error('Backfill stopped: semantic mismatches or duplicate document identities require manual review. No backfill rows were written.');
+
+            return false;
+        }
+        if (! $apply) {
+            return true;
+        }
+
+        DB::transaction(function () use ($ledger, $parity, $missingAccruals, $missingPayments, &$stats) {
+            foreach ($missingAccruals as $slip) {
                 $ledger->appendEntry([
                     'employee_id' => $slip->employee_id,
                     'paysheet_id' => $slip->paysheet_id,
@@ -216,34 +296,13 @@ class MigrateSalaryLedger extends Command
                     'reference_id' => $slip->id,
                     'amount' => (int) $slip->total_salary,
                     'event_at' => $slip->paysheet->locked_at ?? $slip->updated_at,
-                    'note' => 'Backfill phiếu lương legacy',
-                    'idempotency_key' => $key,
+                    'note' => 'Backfill semantic payroll accrual lịch sử',
+                    'idempotency_key' => $parity->accrualIdempotencyKey($slip),
                 ]);
                 $stats['accruals_created']++;
-            });
+            }
 
-        PaysheetPayment::query()
-            ->where('status', 'active')
-            ->when($employeeCode !== '', fn ($query) => $query->whereHas('employee', fn ($employee) => $employee->where('code', $employeeCode)))
-            ->with('employee')
-            ->orderBy('paid_at')
-            ->orderBy('id')
-            ->each(function (PaysheetPayment $payment) use ($ledger, $apply, &$stats) {
-                if (! $payment->employee) {
-                    $stats['anomalies']++;
-
-                    return;
-                }
-                $key = "legacy:salary_payment:{$payment->id}";
-                if (EmployeeSalaryLedgerEntry::query()->where('idempotency_key', $key)->exists()) {
-                    $stats['payments_skipped']++;
-
-                    return;
-                }
-                if (! $apply) {
-                    return;
-                }
-
+            foreach ($missingPayments as $payment) {
                 $ledger->appendEntry([
                     'employee_id' => $payment->employee_id,
                     'paysheet_id' => $payment->paysheet_id,
@@ -255,11 +314,14 @@ class MigrateSalaryLedger extends Command
                     'amount' => -(int) $payment->amount,
                     'event_at' => $payment->paid_at ?? $payment->created_at,
                     'payment_method' => $payment->method,
-                    'note' => 'Backfill thanh toán legacy',
-                    'idempotency_key' => $key,
+                    'note' => 'Backfill semantic salary payment lịch sử',
+                    'idempotency_key' => $parity->paymentIdempotencyKey($payment),
                 ]);
                 $stats['payments_created']++;
-            });
+            }
+        });
+
+        return true;
     }
 
     private function openingBalanceIdempotencyKey(int $employeeId, int $amount, Carbon $date): string

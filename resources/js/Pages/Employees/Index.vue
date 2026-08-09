@@ -313,6 +313,7 @@ const submitSalaryPayment = async (printAfter = false) => {
             payment_date: salaryPayment.payment_date,
             payment_method: salaryPayment.payment_method,
             note: salaryPayment.note,
+            amount: Number(salaryPayment.amount),
             payments,
         }, {
             headers: { "Idempotency-Key": `employee-payment-ui:${form.id}:${Date.now()}` },

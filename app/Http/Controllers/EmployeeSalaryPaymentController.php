@@ -43,6 +43,7 @@ class EmployeeSalaryPaymentController extends Controller
             'payments' => 'required|array|min:1',
             'payments.*.payslip_id' => 'required|integer|exists:payslips,id',
             'payments.*.amount' => 'required|integer|min:1',
+            'amount' => 'nullable|integer|min:1',
             'override_reason' => 'nullable|string|min:10|max:1000',
         ]);
 
@@ -53,7 +54,19 @@ class EmployeeSalaryPaymentController extends Controller
         );
         $payload['payment_date'] = $eventAt;
 
-        $slipIds = collect($payload['payments'])->pluck('payslip_id')->all();
+        $slipIds = collect($payload['payments'])->pluck('payslip_id')->map(fn ($id) => (int) $id)->all();
+        if (count($slipIds) !== count(array_unique($slipIds))) {
+            throw ValidationException::withMessages([
+                'payments' => 'Mỗi phiếu lương chỉ được chọn một lần trong một lần thanh toán.',
+            ]);
+        }
+        $allocatedAmount = (int) collect($payload['payments'])->sum(fn ($item) => (int) $item['amount']);
+        if ($allocatedAmount <= 0 || (isset($payload['amount']) && (int) $payload['amount'] !== $allocatedAmount)) {
+            throw ValidationException::withMessages([
+                'amount' => 'Tổng số tiền thanh toán phải khớp với số tiền phân bổ cho các phiếu lương.',
+            ]);
+        }
+        $payload['amount'] = $allocatedAmount;
         $slips = Payslip::query()
             ->with('paysheet:id,status,code')
             ->whereIn('id', $slipIds)
@@ -61,9 +74,9 @@ class EmployeeSalaryPaymentController extends Controller
             ->get()
             ->keyBy('id');
 
-        if ($slips->count() !== count(array_unique($slipIds))) {
+        if ($slips->count() !== count($slipIds)) {
             throw ValidationException::withMessages([
-                'payments' => 'Phieu luong khong thuoc nhan vien dang thanh toan.',
+                'payments' => 'Phiếu lương không thuộc nhân viên đang thanh toán.',
             ]);
         }
 
@@ -71,12 +84,12 @@ class EmployeeSalaryPaymentController extends Controller
             $slip = $slips[(int) $item['payslip_id']];
             if ($slip->paysheet?->status !== 'locked') {
                 throw ValidationException::withMessages([
-                    "payments.{$index}.payslip_id" => 'Chi thanh toan phieu luong thuoc bang luong da chot.',
+                    "payments.{$index}.payslip_id" => 'Chỉ thanh toán phiếu lương thuộc bảng lương đã chốt.',
                 ]);
             }
             if ((int) $item['amount'] > (int) $slip->remaining) {
                 throw ValidationException::withMessages([
-                    "payments.{$index}.amount" => 'So tien tra vuot so con can tra cua phieu luong.',
+                    "payments.{$index}.amount" => 'Số tiền thanh toán vượt quá số còn phải trả của phiếu lương.',
                 ]);
             }
         }
@@ -87,18 +100,26 @@ class EmployeeSalaryPaymentController extends Controller
             $payload['payments'],
         ]));
 
-        $created = DB::transaction(function () use ($payload, $service, $slips, $key) {
+        $created = DB::transaction(function () use ($employee, $payload, $service, $slips, $key) {
+            Employee::query()->lockForUpdate()->findOrFail($employee->id);
+
             return collect($payload['payments'])
                 ->groupBy(fn ($item) => $slips[(int) $item['payslip_id']]->paysheet_id)
                 ->flatMap(function (Collection $items, int $paysheetId) use ($payload, $service, $key) {
                     $paysheet = Paysheet::query()->findOrFail($paysheetId);
+                    $sheetPayload = [
+                        ...$payload,
+                        'amount' => (int) $items->sum(fn ($item) => (int) $item['amount']),
+                    ];
 
-                    return $service->pay(
+                    $result = $service->pay(
                         $paysheet,
                         $items->values()->all(),
-                        $payload,
+                        $sheetPayload,
                         "{$key}:paysheet:{$paysheetId}"
                     );
+
+                    return $result;
                 })
                 ->values();
         });
