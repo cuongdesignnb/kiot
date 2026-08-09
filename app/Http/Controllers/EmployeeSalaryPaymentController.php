@@ -9,8 +9,6 @@ use App\Services\PayrollAccessService;
 use App\Services\PayrollDateGuard;
 use App\Services\SalaryPaymentService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class EmployeeSalaryPaymentController extends Controller
@@ -60,6 +58,7 @@ class EmployeeSalaryPaymentController extends Controller
                 'payments' => 'Mỗi phiếu lương chỉ được chọn một lần trong một lần thanh toán.',
             ]);
         }
+
         $allocatedAmount = (int) collect($payload['payments'])->sum(fn ($item) => (int) $item['amount']);
         if ($allocatedAmount <= 0 || (isset($payload['amount']) && (int) $payload['amount'] !== $allocatedAmount)) {
             throw ValidationException::withMessages([
@@ -67,6 +66,9 @@ class EmployeeSalaryPaymentController extends Controller
             ]);
         }
         $payload['amount'] = $allocatedAmount;
+
+        // This is a read-only resolution step. The shared service re-reads
+        // and locks every document in its deterministic order before writes.
         $slips = Payslip::query()
             ->with('paysheet:id,status,code')
             ->whereIn('id', $slipIds)
@@ -80,49 +82,25 @@ class EmployeeSalaryPaymentController extends Controller
             ]);
         }
 
-        foreach ($payload['payments'] as $index => $item) {
-            $slip = $slips[(int) $item['payslip_id']];
-            if ($slip->paysheet?->status !== 'locked') {
-                throw ValidationException::withMessages([
-                    "payments.{$index}.payslip_id" => 'Chỉ thanh toán phiếu lương thuộc bảng lương đã chốt.',
-                ]);
-            }
-            if ((int) $item['amount'] > (int) $slip->remaining) {
-                throw ValidationException::withMessages([
-                    "payments.{$index}.amount" => 'Số tiền thanh toán vượt quá số còn phải trả của phiếu lương.',
-                ]);
-            }
-        }
-
         $key = $request->header('Idempotency-Key') ?: 'employee-payment:'.sha1(json_encode([
             $employee->id,
             (string) $eventAt,
             $payload['payments'],
         ]));
+        $allocations = $slips
+            ->groupBy('paysheet_id')
+            ->sortKeys()
+            ->map(fn ($items, $paysheetId) => [
+                'paysheet_id' => (int) $paysheetId,
+                'items' => collect($payload['payments'])
+                    ->filter(fn ($item) => $items->pluck('id')->contains((int) $item['payslip_id']))
+                    ->values()
+                    ->all(),
+            ])
+            ->values()
+            ->all();
 
-        $created = DB::transaction(function () use ($employee, $payload, $service, $slips, $key) {
-            Employee::query()->lockForUpdate()->findOrFail($employee->id);
-
-            return collect($payload['payments'])
-                ->groupBy(fn ($item) => $slips[(int) $item['payslip_id']]->paysheet_id)
-                ->flatMap(function (Collection $items, int $paysheetId) use ($payload, $service, $key) {
-                    $paysheet = Paysheet::query()->findOrFail($paysheetId);
-                    $sheetPayload = [
-                        ...$payload,
-                        'amount' => (int) $items->sum(fn ($item) => (int) $item['amount']),
-                    ];
-
-                    $result = $service->pay(
-                        $paysheet,
-                        $items->values()->all(),
-                        $sheetPayload,
-                        "{$key}:paysheet:{$paysheetId}"
-                    );
-
-                    return $result;
-                })
-                ->values();
-        });
+        $created = $service->payAllocations($allocations, $payload, $key);
 
         return response()->json([
             'success' => true,

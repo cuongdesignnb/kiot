@@ -102,6 +102,9 @@ class MigrateSalaryLedger extends Command
             'payment_missing_total' => 0,
             'payment_amount_mismatch_count' => 0,
             'payment_duplicate_count' => 0,
+            'cancelled_payment_exact_count' => 0,
+            'cancelled_payment_anomaly_count' => 0,
+            'cancelled_payment_anomaly_total' => 0,
             'backfill_ambiguous' => 0,
         ];
         $rows = [];
@@ -197,6 +200,9 @@ class MigrateSalaryLedger extends Command
             ['Salary payment missing total', $stats['payment_missing_total']],
             ['Salary payment amount mismatches', $stats['payment_amount_mismatch_count']],
             ['Salary payment duplicates', $stats['payment_duplicate_count']],
+            ['Cancelled payment exact lifecycles', $stats['cancelled_payment_exact_count']],
+            ['Cancelled payment lifecycle anomalies', $stats['cancelled_payment_anomaly_count']],
+            ['Cancelled payment anomaly total', $stats['cancelled_payment_anomaly_total']],
             ['Anomalies', $stats['anomalies']],
             ['CashFlow created', CashFlow::count() - $cashFlowsBefore],
             ['Payment created', PaysheetPayment::count() - $paymentsBefore],
@@ -238,10 +244,13 @@ class MigrateSalaryLedger extends Command
                     $stats['accrual_zero_salary_count']++;
                     $stats['accruals_skipped']++;
                     break;
+                case 'EXACT_ZERO':
+                    $stats['accruals_skipped']++;
+                    break;
             }
         }
 
-        foreach ($parity->payments($filters) as $payment) {
+        foreach ($parity->activePayments($filters) as $payment) {
             if (! $payment->employee || ! $payment->payslip || ! $payment->paysheet) {
                 $stats['anomalies']++;
 
@@ -266,17 +275,30 @@ class MigrateSalaryLedger extends Command
             }
         }
 
+        foreach ($parity->cancelledPayments($filters) as $payment) {
+            $lifecycle = $parity->classifyCancelledPayment($payment);
+            if ($lifecycle['anomalies'] === []) {
+                $stats['cancelled_payment_exact_count']++;
+
+                continue;
+            }
+
+            $stats['cancelled_payment_anomaly_count'] += count($lifecycle['anomalies']);
+            $stats['cancelled_payment_anomaly_total'] += (int) $payment->amount;
+        }
+
         $ambiguous = $stats['accrual_amount_mismatch_count']
             + $stats['accrual_duplicate_count']
             + $stats['payment_amount_mismatch_count']
-            + $stats['payment_duplicate_count'];
+            + $stats['payment_duplicate_count']
+            + $stats['cancelled_payment_anomaly_count'];
         $stats['backfill_ambiguous'] = $ambiguous;
         $this->line('Semantic backfill candidates: accruals='.$stats['accrual_missing_count'].'/'.$stats['accrual_missing_total']
             .', payments='.$stats['payment_missing_count'].'/'.$stats['payment_missing_total']);
         $this->line('Semantic mismatches or duplicates: '.$ambiguous);
 
         if ($apply && $ambiguous > 0) {
-            $this->error('Backfill stopped: semantic mismatches or duplicate document identities require manual review. No backfill rows were written.');
+            $this->error('Backfill stopped: semantic mismatches, duplicate document identities, or cancelled payment lifecycle anomalies require manual review. No backfill rows were written.');
 
             return false;
         }

@@ -11,6 +11,7 @@ use App\Models\PaysheetPayment;
 use App\Models\Payslip;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class PayrollCrossScreenSettlementParityTest extends TestCase
@@ -97,6 +98,77 @@ class PayrollCrossScreenSettlementParityTest extends TestCase
         $this->assertSame(400_000, (int) $sheet->fresh()->total_paid);
         $this->assertSame(600_000, (int) $sheet->fresh()->total_remaining);
         $this->assertSame(1, CashFlow::where('reference_type', 'PaysheetPayment')->count());
+    }
+
+    public function test_multi_paysheet_employee_payment_is_atomic_when_a_later_allocation_fails(): void
+    {
+        [$firstSheet, $firstSlip] = $this->lockedPaysheet('BL-ATOMIC-01', 'PL-ATOMIC-01', 1_000_000, '2026-10-01');
+        [$secondSheet, $secondSlip] = $this->lockedPaysheet('BL-ATOMIC-02', 'PL-ATOMIC-02', 2_000_000, '2026-11-01');
+        $before = [
+            'payments' => PaysheetPayment::count(),
+            'ledger' => EmployeeSalaryLedgerEntry::count(),
+            'cashflows' => CashFlow::count(),
+            'first_slip' => $firstSlip->fresh()->only(['paid_amount', 'remaining', 'payment_status']),
+            'second_slip' => $secondSlip->fresh()->only(['paid_amount', 'remaining', 'payment_status']),
+            'first_sheet' => $firstSheet->fresh()->only(['total_paid', 'total_remaining', 'payment_status']),
+            'second_sheet' => $secondSheet->fresh()->only(['total_paid', 'total_remaining', 'payment_status']),
+        ];
+
+        $this->postJson("/api/employees/{$this->employee->id}/salary-payments", [
+            'amount' => 3_100_000,
+            'payment_date' => '2026-11-15 10:00:00',
+            'payment_method' => 'cash',
+            'payments' => [
+                ['payslip_id' => $firstSlip->id, 'amount' => 1_000_000],
+                ['payslip_id' => $secondSlip->id, 'amount' => 2_100_000],
+            ],
+        ], ['Idempotency-Key' => 'parity-multi-sheet-atomic'])->assertStatus(422);
+
+        $this->assertSame($before['payments'], PaysheetPayment::count());
+        $this->assertSame($before['ledger'], EmployeeSalaryLedgerEntry::count());
+        $this->assertSame($before['cashflows'], CashFlow::count());
+        $this->assertSame($before['first_slip'], $firstSlip->fresh()->only(['paid_amount', 'remaining', 'payment_status']));
+        $this->assertSame($before['second_slip'], $secondSlip->fresh()->only(['paid_amount', 'remaining', 'payment_status']));
+        $this->assertSame($before['first_sheet'], $firstSheet->fresh()->only(['total_paid', 'total_remaining', 'payment_status']));
+        $this->assertSame($before['second_sheet'], $secondSheet->fresh()->only(['total_paid', 'total_remaining', 'payment_status']));
+    }
+
+    public function test_employee_and_paysheet_entry_points_use_the_same_lock_order(): void
+    {
+        [$directSheet, $directSlip] = $this->lockedPaysheet('BL-LOCK-01', 'PL-LOCK-01', 1_000_000, '2026-12-01');
+        [$employeeSheet, $employeeSlip] = $this->lockedPaysheet('BL-LOCK-02', 'PL-LOCK-02', 1_000_000, '2027-01-01');
+        $orders = [];
+        DB::listen(function ($query) use (&$orders): void {
+            if (! str_contains(strtolower($query->sql), 'for update')) {
+                return;
+            }
+            if (preg_match('/from [`"]?(paysheets|payslips|employees)[`"]?/i', $query->sql, $matches)) {
+                $orders[] = strtolower($matches[1]);
+            }
+        });
+
+        $this->postJson("/api/paysheets/{$directSheet->id}/pay", [
+            'amount' => 100_000,
+            'payment_date' => '2026-12-05 09:00:00',
+            'payment_method' => 'cash',
+            'payments' => [['payslip_id' => $directSlip->id, 'amount' => 100_000]],
+        ], ['Idempotency-Key' => 'parity-lock-direct'])->assertOk();
+        $directOrder = array_values(array_unique($orders));
+
+        $orders = [];
+        $this->postJson("/api/employees/{$this->employee->id}/salary-payments", [
+            'amount' => 100_000,
+            'payment_date' => '2027-01-05 09:00:00',
+            'payment_method' => 'cash',
+            'payments' => [['payslip_id' => $employeeSlip->id, 'amount' => 100_000]],
+        ], ['Idempotency-Key' => 'parity-lock-employee'])->assertOk();
+        $employeeOrder = array_values(array_unique($orders));
+
+        $this->assertSame(['paysheets', 'payslips', 'employees'], $directOrder);
+        $this->assertSame($directOrder, $employeeOrder);
+        $this->assertSame(1_800_000, (int) $this->employee->fresh()->salary_balance_cache);
+        $this->assertSame(900_000, (int) $directSlip->fresh()->remaining);
+        $this->assertSame(900_000, (int) $employeeSlip->fresh()->remaining);
     }
 
     public function test_employee_allocation_total_mismatch_and_overpayment_do_not_mutate_documents(): void

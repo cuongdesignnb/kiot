@@ -479,7 +479,12 @@ class PaysheetController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $service->pay($paysheet, $payload['payments'], $payload, $key),
+            'data' => $service->payAllocations([
+                [
+                    'paysheet_id' => $paysheet->id,
+                    'items' => $payload['payments'],
+                ],
+            ], $payload, $key),
         ]);
     }
 

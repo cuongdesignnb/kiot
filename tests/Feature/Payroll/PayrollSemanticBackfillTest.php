@@ -9,6 +9,8 @@ use App\Models\Paysheet;
 use App\Models\PaysheetPayment;
 use App\Models\Payslip;
 use App\Models\User;
+use App\Services\PayrollDocumentParityService;
+use App\Services\PayrollReconciliationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
 use Tests\TestCase;
@@ -116,6 +118,11 @@ class PayrollSemanticBackfillTest extends TestCase
         ]);
         $paymentCount = PaysheetPayment::count();
 
+        $dryRun = Artisan::call('payroll:migrate-salary-ledger', ['--backfill-documents' => true]);
+        $this->assertSame(0, $dryRun);
+        $this->assertStringContainsString('payments=1/250000', Artisan::output());
+        $this->assertSame(0, EmployeeSalaryLedgerEntry::where('type', EmployeeSalaryLedgerEntry::TYPE_SALARY_PAYMENT)->count());
+
         Artisan::call('payroll:migrate-salary-ledger', [
             '--backfill-documents' => true,
             '--apply' => true,
@@ -149,6 +156,176 @@ class PayrollSemanticBackfillTest extends TestCase
         $this->assertSame(1, $exitCode);
         $this->assertSame($before, EmployeeSalaryLedgerEntry::count());
         $this->assertStringContainsString('mismatches or duplicate', Artisan::output());
+    }
+
+    public function test_zero_salary_with_nonzero_effective_accrual_is_not_hidden(): void
+    {
+        [$sheet, $slip] = $this->lockedPaysheet(1, 0);
+        $this->accrual($sheet, $slip, 100_000, 'zero-salary-nonzero-accrual');
+
+        $classification = app(PayrollDocumentParityService::class)->classifyAccrual($slip->fresh());
+
+        $this->assertSame('AMOUNT_MISMATCH', $classification['classification']);
+        $this->assertSame(1, $classification['entry_count']);
+        $this->assertSame(100_000, $classification['actual_amount']);
+    }
+
+    public function test_cancelled_payment_missing_original_is_audit_only_and_blocks_apply(): void
+    {
+        [$sheet, $slip] = $this->lockedPaysheet(1, 1_000_000);
+        $payment = $this->payment($sheet, $slip, 500_000, 'cancelled');
+        $before = EmployeeSalaryLedgerEntry::count();
+
+        $report = app(PayrollReconciliationService::class)->audit(['employee' => $this->employee->id]);
+        $this->assertTrue(collect($report['document_issues'])->contains('issue', 'CANCELLED_PAYMENT_MISSING_ORIGINAL_LEDGER'));
+
+        $exitCode = Artisan::call('payroll:migrate-salary-ledger', [
+            '--backfill-documents' => true,
+            '--apply' => true,
+        ]);
+
+        $this->assertSame(1, $exitCode);
+        $this->assertSame($before, EmployeeSalaryLedgerEntry::count());
+        $this->assertDatabaseHas('paysheet_payments', ['id' => $payment->id, 'status' => 'cancelled']);
+    }
+
+    public function test_cancelled_payment_with_missing_reversal_is_audit_only_and_blocks_apply(): void
+    {
+        [$sheet, $slip] = $this->lockedPaysheet(1, 1_000_000);
+        $payment = $this->payment($sheet, $slip, 500_000, 'cancelled');
+        $this->accrual($sheet, $slip, 1_000_000, 'cancelled-accrual');
+        $original = EmployeeSalaryLedgerEntry::create([
+            'employee_id' => $this->employee->id,
+            'branch_id' => $this->branch->id,
+            'paysheet_id' => $sheet->id,
+            'payslip_id' => $slip->id,
+            'code' => $payment->code,
+            'type' => EmployeeSalaryLedgerEntry::TYPE_SALARY_PAYMENT,
+            'reference_type' => 'paysheet_payment',
+            'reference_id' => $payment->id,
+            'amount' => -500_000,
+            'is_effective' => true,
+            'status' => 'reversed',
+            'event_at' => $payment->paid_at,
+            'idempotency_key' => 'cancelled-original-only',
+        ]);
+        $before = EmployeeSalaryLedgerEntry::count();
+
+        $issues = collect(app(PayrollReconciliationService::class)
+            ->audit(['employee' => $this->employee->id])['document_issues'])->pluck('issue');
+        $this->assertTrue($issues->contains('CANCELLED_PAYMENT_MISSING_REVERSAL'));
+
+        $exitCode = Artisan::call('payroll:migrate-salary-ledger', [
+            '--backfill-documents' => true,
+            '--apply' => true,
+        ]);
+
+        $this->assertSame(1, $exitCode);
+        $this->assertSame($before, EmployeeSalaryLedgerEntry::count());
+        $this->assertDatabaseHas('employee_salary_ledger_entries', ['id' => $original->id, 'status' => 'reversed']);
+    }
+
+    public function test_cancelled_payment_exact_lifecycle_is_not_repaired(): void
+    {
+        [$sheet, $slip] = $this->lockedPaysheet(1, 1_000_000);
+        $payment = $this->payment($sheet, $slip, 500_000, 'cancelled');
+        $this->accrual($sheet, $slip, 1_000_000, 'cancelled-exact-accrual');
+        $original = EmployeeSalaryLedgerEntry::create([
+            'employee_id' => $this->employee->id,
+            'branch_id' => $this->branch->id,
+            'paysheet_id' => $sheet->id,
+            'payslip_id' => $slip->id,
+            'code' => $payment->code,
+            'type' => EmployeeSalaryLedgerEntry::TYPE_SALARY_PAYMENT,
+            'reference_type' => 'paysheet_payment',
+            'reference_id' => $payment->id,
+            'amount' => -500_000,
+            'is_effective' => true,
+            'status' => 'reversed',
+            'event_at' => $payment->paid_at,
+            'idempotency_key' => 'cancelled-exact-original',
+        ]);
+        EmployeeSalaryLedgerEntry::create([
+            'employee_id' => $this->employee->id,
+            'branch_id' => $this->branch->id,
+            'paysheet_id' => $sheet->id,
+            'payslip_id' => $slip->id,
+            'original_entry_id' => $original->id,
+            'code' => 'H'.$payment->code,
+            'type' => EmployeeSalaryLedgerEntry::TYPE_CANCEL_REVERSE,
+            'reference_type' => 'paysheet_payment',
+            'reference_id' => $payment->id,
+            'amount' => 500_000,
+            'is_effective' => true,
+            'status' => 'valid',
+            'event_at' => $payment->paid_at,
+            'idempotency_key' => 'cancelled-exact-reversal',
+        ]);
+        $before = EmployeeSalaryLedgerEntry::count();
+
+        $issues = collect(app(PayrollReconciliationService::class)
+            ->audit(['employee' => $this->employee->id])['document_issues'])->pluck('issue');
+        $this->assertFalse($issues->contains('CANCELLED_PAYMENT_MISSING_REVERSAL'));
+        $this->assertFalse($issues->contains('CANCELLED_PAYMENT_MISSING_ORIGINAL_LEDGER'));
+
+        $exitCode = Artisan::call('payroll:migrate-salary-ledger', [
+            '--backfill-documents' => true,
+            '--apply' => true,
+        ]);
+
+        $this->assertSame(0, $exitCode);
+        $this->assertSame($before, EmployeeSalaryLedgerEntry::count());
+    }
+
+    public function test_cancelled_payment_wrong_reversal_amount_blocks_apply(): void
+    {
+        [$sheet, $slip] = $this->lockedPaysheet(1, 1_000_000);
+        $payment = $this->payment($sheet, $slip, 500_000, 'cancelled');
+        $this->accrual($sheet, $slip, 1_000_000, 'cancelled-wrong-accrual');
+        $original = EmployeeSalaryLedgerEntry::create([
+            'employee_id' => $this->employee->id,
+            'branch_id' => $this->branch->id,
+            'paysheet_id' => $sheet->id,
+            'payslip_id' => $slip->id,
+            'code' => $payment->code,
+            'type' => EmployeeSalaryLedgerEntry::TYPE_SALARY_PAYMENT,
+            'reference_type' => 'paysheet_payment',
+            'reference_id' => $payment->id,
+            'amount' => -500_000,
+            'is_effective' => true,
+            'status' => 'reversed',
+            'event_at' => $payment->paid_at,
+            'idempotency_key' => 'cancelled-wrong-original',
+        ]);
+        EmployeeSalaryLedgerEntry::create([
+            'employee_id' => $this->employee->id,
+            'branch_id' => $this->branch->id,
+            'paysheet_id' => $sheet->id,
+            'payslip_id' => $slip->id,
+            'original_entry_id' => $original->id,
+            'code' => 'H'.$payment->code,
+            'type' => EmployeeSalaryLedgerEntry::TYPE_CANCEL_REVERSE,
+            'reference_type' => 'paysheet_payment',
+            'reference_id' => $payment->id,
+            'amount' => 400_000,
+            'is_effective' => true,
+            'status' => 'valid',
+            'event_at' => $payment->paid_at,
+            'idempotency_key' => 'cancelled-wrong-reversal',
+        ]);
+        $before = EmployeeSalaryLedgerEntry::count();
+
+        $issues = collect(app(PayrollReconciliationService::class)
+            ->audit(['employee' => $this->employee->id])['document_issues'])->pluck('issue');
+        $this->assertTrue($issues->contains('CANCELLED_PAYMENT_REVERSAL_AMOUNT_MISMATCH'));
+
+        $exitCode = Artisan::call('payroll:migrate-salary-ledger', [
+            '--backfill-documents' => true,
+            '--apply' => true,
+        ]);
+
+        $this->assertSame(1, $exitCode);
+        $this->assertSame($before, EmployeeSalaryLedgerEntry::count());
     }
 
     private function lockedPaysheet(int $number, int $amount): array
@@ -201,6 +378,21 @@ class PayrollSemanticBackfillTest extends TestCase
             'status' => 'valid',
             'event_at' => $sheet->locked_at,
             'idempotency_key' => $key,
+        ]);
+    }
+
+    private function payment(Paysheet $sheet, Payslip $slip, int $amount, string $status): PaysheetPayment
+    {
+        return PaysheetPayment::create([
+            'code' => 'TTPL-SEMANTIC-'.$slip->id,
+            'paysheet_id' => $sheet->id,
+            'payslip_id' => $slip->id,
+            'employee_id' => $this->employee->id,
+            'amount' => $amount,
+            'status' => $status,
+            'method' => 'cash',
+            'paid_at' => '2026-06-30 08:00:00',
+            'idempotency_key' => 'semantic-payment-'.$slip->id,
         ]);
     }
 }
