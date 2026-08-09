@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue';
 import axios from 'axios';
 import MoneyInput from '@/Components/MoneyInput.vue';
+import ProductImageManager from '@/Components/ProductImageManager.vue';
 
 const props = defineProps({
     show: { type: Boolean, default: false },
@@ -16,6 +17,7 @@ const emit = defineEmits(['close', 'created']);
 
 const creating = ref(false);
 const errors = ref({});
+const imageManagerKey = ref(0);
 
 const form = ref({
     name: '',
@@ -28,6 +30,8 @@ const form = ref({
     technician_price: 0,
     has_serial: false,
     warranty_months: 0,
+    images: [],
+    primary_image_index: null,
 });
 
 const localCategories = ref([]);
@@ -60,12 +64,23 @@ const reset = () => {
         technician_price: 0,
         has_serial: false,
         warranty_months: 0,
+        images: [],
+        primary_image_index: null,
     };
     errors.value = {};
+    imageManagerKey.value++;
 };
 
 watch(() => props.show, (val) => {
-    if (val) reset();
+    if (val) {
+        reset();
+        return;
+    }
+
+    // Unmount the uploader while the modal is closed so local object URLs are revoked.
+    imageManagerKey.value++;
+    form.value.images = [];
+    form.value.primary_image_index = null;
 });
 
 // Inline quick-create for category / brand inside this modal.
@@ -146,11 +161,19 @@ const submit = async () => {
             cost_price: Number(form.value.cost_price) || 0,
             retail_price: Number(form.value.retail_price) || 0,
             technician_price: Number(form.value.technician_price) || 0,
-            has_serial: !!form.value.has_serial,
+            has_serial: form.value.has_serial ? '1' : '0',
             warranty_months: Number(form.value.warranty_months) || 0,
         };
+        const body = new FormData();
+        Object.entries(payload).forEach(([key, value]) => {
+            if (value !== null && value !== undefined) body.append(key, String(value));
+        });
+        form.value.images.forEach((file) => body.append('images[]', file));
+        if (form.value.primary_image_index !== null) {
+            body.append('primary_image_index', String(form.value.primary_image_index));
+        }
         const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-        const res = await axios.post('/products/quick-store', payload, {
+        const res = await axios.post('/products/quick-store', body, {
             headers: { 'X-CSRF-TOKEN': token, 'Accept': 'application/json' },
         });
         if (res.data?.success && res.data.product) {
@@ -172,7 +195,10 @@ const submit = async () => {
     }
 };
 
-const close = () => emit('close');
+const close = () => {
+    if (creating.value) return;
+    emit('close');
+};
 </script>
 
 <template>
@@ -180,10 +206,25 @@ const close = () => emit('close');
         <div class="bg-white rounded-lg shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 sticky top-0 bg-white z-10">
                 <h2 class="text-lg font-bold text-gray-800">Tạo hàng hóa</h2>
-                <button @click="close" type="button" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+                <button @click="close" type="button" :disabled="creating" class="text-gray-400 hover:text-gray-600 text-2xl leading-none disabled:cursor-not-allowed disabled:opacity-50">&times;</button>
             </div>
 
             <form @submit.prevent="submit" class="p-6">
+                <section class="mb-6 rounded-lg border border-gray-200 bg-gray-50 p-4" aria-labelledby="quick-create-images-title">
+                    <div class="mb-3">
+                        <h3 id="quick-create-images-title" class="text-sm font-semibold text-gray-800">Ảnh sản phẩm</h3>
+                        <p class="mt-1 text-xs text-gray-500">Bạn có thể chọn một hoặc nhiều ảnh. Ảnh đầu tiên sẽ là ảnh chính nếu bạn chưa chọn ảnh khác.</p>
+                    </div>
+                    <ProductImageManager
+                        :key="imageManagerKey"
+                        v-model:files="form.images"
+                        v-model:primary-index="form.primary_image_index"
+                    />
+                    <p v-if="errors.images || errors.primary_image_index || errors.primary_index" class="mt-2 text-xs text-red-600">
+                        {{ errors.images || errors.primary_image_index || errors.primary_index }}
+                    </p>
+                </section>
+
                 <div class="grid grid-cols-2 gap-x-6 gap-y-4">
                     <div class="col-span-2">
                         <label class="block text-sm font-semibold text-gray-700 mb-1">Tên hàng <span class="text-red-500">*</span></label>
@@ -280,7 +321,7 @@ const close = () => emit('close');
                 </div>
 
                 <div class="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
-                    <button type="button" @click="close" class="px-5 py-2.5 border border-gray-300 rounded text-sm font-medium text-gray-700 hover:bg-gray-50">Bỏ qua</button>
+                    <button type="button" @click="close" :disabled="creating" class="px-5 py-2.5 border border-gray-300 rounded text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50">Bỏ qua</button>
                     <button type="submit" :disabled="creating || !form.name.trim()" class="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium disabled:opacity-50 flex items-center gap-2">
                         <svg v-if="creating" class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
                         <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
