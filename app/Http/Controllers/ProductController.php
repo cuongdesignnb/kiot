@@ -16,6 +16,7 @@ use App\Services\ProductExcel\ProductExcelFieldCatalog;
 use App\Services\ProductExcel\ProductExcelImportService;
 use App\Services\ProductSearchService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rules\File;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
@@ -420,6 +421,8 @@ class ProductController extends Controller
      */
     public function quickStore(Request $request)
     {
+        $maxImageCount = max(1, (int) config('integrations.pc_website.product_images.max_count', 12));
+        $maxImageSizeKb = max(1, (int) config('integrations.pc_website.product_images.max_size_kb', 5120));
         $validatedData = $request->validate([
             'name' => 'required|string|max:255',
             'sku' => 'nullable|string|unique:products,sku',
@@ -430,6 +433,9 @@ class ProductController extends Controller
             'retail_price' => 'numeric|min:0',
             'technician_price' => 'nullable|numeric|min:0',
             'has_serial' => 'boolean',
+            'images' => ['nullable', 'array', 'max:'.$maxImageCount],
+            'images.*' => ['file', File::types(['jpg', 'jpeg', 'png', 'webp'])->max($maxImageSizeKb)],
+            'primary_image_index' => ['nullable', 'integer', 'min:0'],
         ]);
 
         $validatedData['type'] = 'standard';
@@ -437,6 +443,12 @@ class ProductController extends Controller
         $validatedData['min_stock'] = 0;
         $validatedData['sell_directly'] = true;
         $validatedData['is_active'] = true;
+
+        $images = $validatedData['images'] ?? [];
+        $primaryImageIndex = isset($validatedData['primary_image_index'])
+            ? (int) $validatedData['primary_image_index']
+            : null;
+        unset($validatedData['images'], $validatedData['primary_image_index']);
 
         if (empty($validatedData['sku'])) {
             do {
@@ -455,23 +467,38 @@ class ProductController extends Controller
         $technicianPriceQuick = $validatedData['technician_price'] ?? 0;
         unset($validatedData['technician_price']);
 
-        $product = Product::create($validatedData);
+        $product = DB::transaction(function () use ($validatedData, $technicianPriceQuick, $images, $primaryImageIndex, $request) {
+            $product = Product::create($validatedData);
 
-        // Save technician_price to active price books if provided
-        if ($technicianPriceQuick > 0) {
-            $activeBooks = PriceBook::where('is_active', true)
-                ->where('enable_technician_price', true)->get();
-            foreach ($activeBooks as $book) {
-                PriceBookProduct::updateOrCreate(
-                    ['price_book_id' => $book->id, 'product_id' => $product->id],
-                    ['technician_price' => $technicianPriceQuick, 'price' => $product->retail_price ?? 0]
-                );
+            // Save technician_price to active price books if provided.
+            if ($technicianPriceQuick > 0) {
+                $activeBooks = PriceBook::where('is_active', true)
+                    ->where('enable_technician_price', true)->get();
+                foreach ($activeBooks as $book) {
+                    PriceBookProduct::updateOrCreate(
+                        ['price_book_id' => $book->id, 'product_id' => $product->id],
+                        ['technician_price' => $technicianPriceQuick, 'price' => $product->retail_price ?? 0]
+                    );
+                }
             }
-        }
+
+            if (! empty($images)) {
+                app(\App\Services\ProductImages\ProductImageService::class)
+                    ->uploadMany($product, $images, $primaryImageIndex, $request->user());
+            }
+
+            return $product;
+        });
+
+        $product->refresh()->load('images');
+        $imagePayload = $product->images->map->integrationPayload()->values()->all();
 
         return response()->json([
             'success' => true,
-            'product' => $product,
+            'product' => array_merge($product->toArray(), [
+                'primary_image' => collect($imagePayload)->firstWhere('is_primary', true),
+                'images' => $imagePayload,
+            ]),
         ]);
     }
 
