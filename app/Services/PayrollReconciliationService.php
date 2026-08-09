@@ -6,13 +6,14 @@ use App\Models\CashFlow;
 use App\Models\Employee;
 use App\Models\EmployeeSalaryLedgerEntry;
 use App\Models\PaysheetPayment;
-use App\Models\Payslip;
 use App\Models\SalaryAdvance;
 use App\Models\SalaryAdvanceApplication;
 use Illuminate\Database\Eloquent\Builder;
 
 class PayrollReconciliationService
 {
+    public function __construct(private PayrollDocumentParityService $parity) {}
+
     public function audit(array $filters = []): array
     {
         $section = $filters['section'] ?? 'all';
@@ -31,6 +32,7 @@ class PayrollReconciliationService
         $documentIssues = collect();
         if (in_array($section, ['all', 'payments'], true)) {
             $documentIssues = $documentIssues->concat($this->paymentIssues($filters));
+            $documentIssues = $documentIssues->concat($this->documentParityIssues($filters));
         }
         if (in_array($section, ['all', 'advances'], true)) {
             $documentIssues = $documentIssues->concat($this->advanceIssues($filters));
@@ -50,6 +52,10 @@ class PayrollReconciliationService
                 'advance_issue_count' => $documentIssues->where('group', 'advance')->count(),
                 'negative_balance_count' => $rows->filter(fn ($row) => in_array('NEGATIVE_BALANCE', $row['issues'], true))->count(),
                 'outstanding_advance_count' => $rows->filter(fn ($row) => in_array('OUTSTANDING_ADVANCE', $row['issues'], true))->count(),
+                'semantic_document_issue_count' => $documentIssues->filter(fn (array $issue) => str_contains((string) $issue['issue'], 'PAYROLL_')
+                    || str_contains((string) $issue['issue'], 'SALARY_PAYMENT_')
+                    || str_contains((string) $issue['issue'], 'PAYSLIP_')
+                    || str_contains((string) $issue['issue'], 'PAYSHEET_'))->count(),
             ],
         ];
     }
@@ -178,6 +184,151 @@ class PayrollReconciliationService
         });
     }
 
+    private function documentParityIssues(array $filters)
+    {
+        $issues = collect();
+        $slips = $this->parity->lockedPayslips($filters);
+        foreach ($slips as $slip) {
+            $accrual = $this->parity->classifyAccrual($slip);
+            $accrualIssue = match ($accrual['classification']) {
+                'MISSING' => 'MISSING_PAYROLL_ACCRUAL',
+                'AMOUNT_MISMATCH' => 'PAYROLL_ACCRUAL_AMOUNT_MISMATCH',
+                'DUPLICATE' => 'DUPLICATE_PAYROLL_ACCRUAL',
+                default => null,
+            };
+            if ($accrualIssue) {
+                $issues->push($this->documentIssue(
+                    'payroll_document',
+                    $accrualIssue,
+                    $slip->employee,
+                    $slip->code,
+                    $slip->id,
+                    [
+                        'paysheet_id' => $slip->paysheet_id,
+                        'expected_amount' => $accrual['expected_amount'],
+                        'actual_amount' => $accrual['actual_amount'],
+                        'entry_count' => $accrual['entry_count'],
+                    ]
+                ));
+            }
+
+            $settlement = $this->parity->payslipSettlement($slip);
+            if (! $settlement['paid_matches']) {
+                $issues->push($this->documentIssue(
+                    'payroll_document',
+                    'PAYSLIP_PAID_AMOUNT_MISMATCH',
+                    $slip->employee,
+                    $slip->code,
+                    $slip->id,
+                    $settlement
+                ));
+            }
+            if (! $settlement['remaining_matches']) {
+                $issues->push($this->documentIssue(
+                    'payroll_document',
+                    'PAYSLIP_REMAINING_MISMATCH',
+                    $slip->employee,
+                    $slip->code,
+                    $slip->id,
+                    $settlement
+                ));
+            }
+        }
+
+        foreach ($slips->groupBy('paysheet_id') as $sheetSlips) {
+            $sheet = $sheetSlips->first()->paysheet;
+            if (! $sheet) {
+                continue;
+            }
+            $settlement = $this->parity->paysheetSettlement($sheet);
+            if (! $settlement['paid_matches']) {
+                $issues->push($this->documentIssue(
+                    'payroll_document',
+                    'PAYSHEET_TOTAL_PAID_MISMATCH',
+                    $sheetSlips->first()->employee,
+                    $sheet->code,
+                    $sheet->id,
+                    $settlement
+                ));
+            }
+            if (! $settlement['remaining_matches']) {
+                $issues->push($this->documentIssue(
+                    'payroll_document',
+                    'PAYSHEET_TOTAL_REMAINING_MISMATCH',
+                    $sheetSlips->first()->employee,
+                    $sheet->code,
+                    $sheet->id,
+                    $settlement
+                ));
+            }
+        }
+
+        foreach ($this->parity->activePayments($filters) as $payment) {
+            $paymentParity = $this->parity->classifyPayment($payment);
+            $paymentIssue = match ($paymentParity['classification']) {
+                'MISSING' => 'MISSING_SALARY_PAYMENT_LEDGER',
+                'AMOUNT_MISMATCH' => 'SALARY_PAYMENT_LEDGER_MISMATCH',
+                'DUPLICATE' => 'DUPLICATE_SALARY_PAYMENT_LEDGER',
+                default => null,
+            };
+            if ($paymentIssue) {
+                $issues->push($this->documentIssue(
+                    'payroll_document',
+                    $paymentIssue,
+                    $payment->employee,
+                    $payment->code,
+                    $payment->id,
+                    [
+                        'paysheet_id' => $payment->paysheet_id,
+                        'payslip_id' => $payment->payslip_id,
+                        'expected_amount' => $paymentParity['expected_amount'],
+                        'actual_amount' => $paymentParity['actual_amount'],
+                        'entry_count' => $paymentParity['entry_count'],
+                    ]
+                ));
+            }
+        }
+
+        foreach ($this->parity->cancelledPayments($filters) as $payment) {
+            $lifecycle = $this->parity->classifyCancelledPayment($payment);
+            foreach ($lifecycle['anomalies'] as $anomaly) {
+                $paymentIssue = match ($anomaly) {
+                    'CANCELLED_MISSING_ORIGINAL_PAYMENT_LEDGER' => 'CANCELLED_PAYMENT_MISSING_ORIGINAL_LEDGER',
+                    'CANCELLED_ORIGINAL_AMOUNT_MISMATCH' => 'CANCELLED_PAYMENT_ORIGINAL_AMOUNT_MISMATCH',
+                    'CANCELLED_DUPLICATE_ORIGINAL_PAYMENT_LEDGER' => 'CANCELLED_PAYMENT_DUPLICATE_ORIGINAL_LEDGER',
+                    'CANCELLED_MISSING_REVERSAL' => 'CANCELLED_PAYMENT_MISSING_REVERSAL',
+                    'CANCELLED_REVERSAL_AMOUNT_MISMATCH' => 'CANCELLED_PAYMENT_REVERSAL_AMOUNT_MISMATCH',
+                    'CANCELLED_DUPLICATE_REVERSAL' => 'CANCELLED_PAYMENT_DUPLICATE_REVERSAL',
+                    default => null,
+                };
+                if (! $paymentIssue) {
+                    continue;
+                }
+
+                $issues->push($this->documentIssue(
+                    'payroll_document',
+                    $paymentIssue,
+                    $payment->employee,
+                    $payment->code,
+                    $payment->id,
+                    [
+                        'paysheet_id' => $payment->paysheet_id,
+                        'payslip_id' => $payment->payslip_id,
+                        'lifecycle_classification' => $anomaly,
+                        'expected_original_amount' => $lifecycle['expected_original_amount'],
+                        'actual_original_amount' => $lifecycle['actual_original_amount'],
+                        'expected_reversal_amount' => $lifecycle['expected_reversal_amount'],
+                        'actual_reversal_amount' => $lifecycle['actual_reversal_amount'],
+                        'original_count' => $lifecycle['original_count'],
+                        'reversal_count' => $lifecycle['reversal_count'],
+                    ]
+                ));
+            }
+        }
+
+        return $issues;
+    }
+
     private function paymentRequiresActiveCashFlow(PaysheetPayment $payment): bool
     {
         return ! $this->paymentIsCancelled($payment);
@@ -222,7 +373,7 @@ class PayrollReconciliationService
             });
     }
 
-    private function documentIssue(string $group, string $issue, ?Employee $employee, ?string $code, int $id): array
+    private function documentIssue(string $group, string $issue, ?Employee $employee, ?string $code, int $id, array $details = []): array
     {
         return [
             'group' => $group,
@@ -233,6 +384,7 @@ class PayrollReconciliationService
             'employee_name' => $employee?->name,
             'document_code' => $code,
             'document_id' => $id,
+            ...$details,
         ];
     }
 
@@ -259,6 +411,18 @@ class PayrollReconciliationService
             'ADVANCE_WITHOUT_LEDGER',
             'ADVANCE_WITHOUT_CASHFLOW',
             'ADVANCE_APPLICATION_MISMATCH' => 'CRITICAL',
+            'MISSING_PAYROLL_ACCRUAL',
+            'PAYROLL_ACCRUAL_AMOUNT_MISMATCH',
+            'DUPLICATE_PAYROLL_ACCRUAL',
+            'MISSING_SALARY_PAYMENT_LEDGER',
+            'SALARY_PAYMENT_LEDGER_MISMATCH',
+            'DUPLICATE_SALARY_PAYMENT_LEDGER' => 'CRITICAL',
+            'CANCELLED_PAYMENT_MISSING_ORIGINAL_LEDGER',
+            'CANCELLED_PAYMENT_ORIGINAL_AMOUNT_MISMATCH',
+            'CANCELLED_PAYMENT_DUPLICATE_ORIGINAL_LEDGER',
+            'CANCELLED_PAYMENT_MISSING_REVERSAL',
+            'CANCELLED_PAYMENT_REVERSAL_AMOUNT_MISMATCH',
+            'CANCELLED_PAYMENT_DUPLICATE_REVERSAL' => 'CRITICAL',
             'CACHE_MISMATCH',
             'MISSING_CACHE',
             'PAYSLIP_REMAINING_MISMATCH' => 'HIGH',

@@ -20,78 +20,210 @@ class SalaryPaymentService
 
     public function pay(Paysheet $paysheet, array $items, array $meta, string $idempotencyKey): array
     {
-        return DB::transaction(function () use ($paysheet, $items, $meta, $idempotencyKey) {
-            $sheet = Paysheet::query()->lockForUpdate()->findOrFail($paysheet->id);
-            if ($sheet->status !== 'locked') {
-                throw ValidationException::withMessages(['paysheet' => 'Chi bang luong da chot moi duoc thanh toan.']);
-            }
+        return $this->payAllocations([
+            [
+                'paysheet_id' => $paysheet->id,
+                'items' => $items,
+            ],
+        ], $meta, $idempotencyKey);
+    }
 
-            $created = [];
-            foreach ($items as $item) {
-                $slip = Payslip::where('paysheet_id', $sheet->id)
-                    ->lockForUpdate()
-                    ->findOrFail($item['payslip_id']);
-                $paymentKey = "{$idempotencyKey}:{$slip->id}";
-                $existing = PaysheetPayment::where('idempotency_key', $paymentKey)->first();
-                if ($existing) {
-                    $this->cashFlows->ensureForPayment($existing);
-                    $created[] = $existing->fresh('cashFlow');
-
-                    continue;
-                }
-
-                $this->syncSlip($slip);
-                $amount = (int) $item['amount'];
-                if ($slip->payment_status === 'paid' || $amount > (int) $slip->remaining) {
+    /**
+     * Persist one atomic payment request using one deterministic lock order.
+     *
+     * Every caller resolves its documents before entering this method. This
+     * method then locks all paysheets ASC, all payslips ASC, and all employees
+     * ASC before validating remaining amounts or writing any document.
+     */
+    public function payAllocations(array $allocations, array $meta, string $idempotencyKey): array
+    {
+        return DB::transaction(function () use ($allocations, $meta, $idempotencyKey) {
+            $normalized = collect($allocations)->map(function (array $allocation): array {
+                $paysheetId = (int) ($allocation['paysheet_id'] ?? 0);
+                $items = array_values($allocation['items'] ?? []);
+                if ($paysheetId <= 0 || $items === []) {
                     throw ValidationException::withMessages([
-                        "payments.{$slip->id}.amount" => 'So tien tra vuot so con phai tra.',
+                        'payments' => 'Phải chọn ít nhất một phiếu lương để thanh toán.',
                     ]);
                 }
 
-                $employee = Employee::query()->lockForUpdate()->findOrFail($slip->employee_id);
-                $payment = PaysheetPayment::create([
-                    'code' => null,
-                    'paysheet_id' => $sheet->id,
-                    'payslip_id' => $slip->id,
-                    'employee_id' => $slip->employee_id,
-                    'amount' => $amount,
-                    'status' => 'active',
-                    'method' => $meta['payment_method'],
-                    'notes' => $meta['note'] ?? null,
-                    'paid_at' => $meta['payment_date'],
-                    'created_by' => auth()->id(),
-                    'idempotency_key' => $paymentKey,
-                ]);
-                $payment->update([
-                    'code' => 'TTPL'.str_pad((string) $payment->id, 6, '0', STR_PAD_LEFT),
-                ]);
+                return [
+                    'paysheet_id' => $paysheetId,
+                    'items' => $items,
+                ];
+            })->values()->all();
 
-                $this->cashFlows->ensureForPayment($payment);
-
-                $this->ledger->append($employee, [
-                    'paysheet_id' => $sheet->id,
-                    'payslip_id' => $slip->id,
-                    'code' => $payment->code,
-                    'type' => EmployeeSalaryLedgerEntry::TYPE_SALARY_PAYMENT,
-                    'reference_type' => 'paysheet_payment',
-                    'reference_id' => $payment->id,
-                    'amount' => -$amount,
-                    'event_at' => $meta['payment_date'],
-                    'payment_method' => $meta['payment_method'],
-                    'note' => $meta['note'] ?? null,
-                    'idempotency_key' => "salary_payment:{$payment->id}",
+            if ($normalized === []) {
+                throw ValidationException::withMessages([
+                    'payments' => 'Phải chọn ít nhất một phiếu lương để thanh toán.',
                 ]);
-
-                $this->syncSlip($slip);
-                $created[] = $payment->fresh('cashFlow');
             }
 
-            $sheet->recalculateTotals();
-            ActivityLog::log('salary_payment_create', "Thanh toan bang luong {$sheet->code}", $sheet, [
-                'payment_ids' => collect($created)->pluck('id')->all(),
-            ]);
+            $allItems = collect($normalized)->flatMap(fn (array $allocation) => $allocation['items'])->values();
+            $payslipIds = $allItems->pluck('payslip_id')->map(fn ($id) => (int) $id)->values();
+            if ($payslipIds->contains(fn (int $id) => $id <= 0)
+                || $payslipIds->count() !== $payslipIds->unique()->count()) {
+                throw ValidationException::withMessages([
+                    'payments' => 'Mỗi phiếu lương chỉ được xuất hiện một lần trong một lần thanh toán.',
+                ]);
+            }
 
-            return $created;
+            $itemTotal = (int) $allItems->sum(fn (array $item) => (int) ($item['amount'] ?? 0));
+            $requestedAmount = array_key_exists('amount', $meta) && $meta['amount'] !== null
+                ? (int) $meta['amount']
+                : null;
+            if ($itemTotal <= 0 || ($requestedAmount !== null && $requestedAmount !== $itemTotal)) {
+                throw ValidationException::withMessages([
+                    'amount' => 'Tổng số tiền thanh toán phải khớp với số tiền phân bổ cho các phiếu lương.',
+                ]);
+            }
+
+            $sheetIds = collect($normalized)
+                ->pluck('paysheet_id')
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->sort()
+                ->values()
+                ->all();
+            $slipIds = $payslipIds->unique()->sort()->values()->all();
+
+            $sheets = Paysheet::query()
+                ->whereIn('id', $sheetIds)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get()
+                ->keyBy('id');
+            if ($sheets->count() !== count($sheetIds)) {
+                throw ValidationException::withMessages([
+                    'paysheet' => 'Không tìm thấy bảng lương cần thanh toán.',
+                ]);
+            }
+
+            $slips = Payslip::query()
+                ->whereIn('id', $slipIds)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get()
+                ->keyBy('id');
+            if ($slips->count() !== count($slipIds)) {
+                throw ValidationException::withMessages([
+                    'payments' => 'Không tìm thấy phiếu lương cần thanh toán.',
+                ]);
+            }
+
+            $employeeIds = $slips->pluck('employee_id')->map(fn ($id) => (int) $id)->unique()->sort()->values()->all();
+            $employees = Employee::query()
+                ->whereIn('id', $employeeIds)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get()
+                ->keyBy('id');
+            if ($employees->count() !== count($employeeIds)) {
+                throw ValidationException::withMessages([
+                    'payments' => 'Không tìm thấy nhân viên của phiếu lương.',
+                ]);
+            }
+
+            foreach ($normalized as $allocation) {
+                $sheet = $sheets->get($allocation['paysheet_id']);
+                if ($sheet->status !== 'locked') {
+                    throw ValidationException::withMessages([
+                        'paysheet' => 'Chỉ bảng lương đã chốt mới được thanh toán.',
+                    ]);
+                }
+
+                foreach ($allocation['items'] as $item) {
+                    $slip = $slips->get((int) $item['payslip_id']);
+                    if (! $slip || (int) $slip->paysheet_id !== (int) $sheet->id) {
+                        throw ValidationException::withMessages([
+                            'payments' => 'Phiếu lương không thuộc bảng lương đang thanh toán.',
+                        ]);
+                    }
+                    if ((int) ($item['amount'] ?? 0) <= 0) {
+                        throw ValidationException::withMessages([
+                            "payments.{$slip->id}.amount" => 'Số tiền thanh toán phải lớn hơn 0.',
+                        ]);
+                    }
+                }
+            }
+
+            $createdBySheet = [];
+            foreach ($normalized as $allocation) {
+                $sheet = $sheets->get($allocation['paysheet_id']);
+                foreach ($allocation['items'] as $item) {
+                    $slip = $slips->get((int) $item['payslip_id']);
+                    $amount = (int) $item['amount'];
+                    $paymentKey = "{$idempotencyKey}:{$slip->id}";
+                    $existing = PaysheetPayment::query()
+                        ->where('idempotency_key', $paymentKey)
+                        ->lockForUpdate()
+                        ->first();
+                    if ($existing) {
+                        if ((int) $existing->amount !== $amount || (int) $existing->payslip_id !== (int) $slip->id) {
+                            throw ValidationException::withMessages([
+                                "payments.{$slip->id}.amount" => 'Idempotency-Key đã được dùng cho một số tiền khác.',
+                            ]);
+                        }
+                        $this->cashFlows->ensureForPayment($existing);
+                        $createdBySheet[$sheet->id][] = $existing->fresh('cashFlow');
+
+                        continue;
+                    }
+
+                    $remaining = $this->remainingFor($slip);
+                    if ($amount > $remaining) {
+                        throw ValidationException::withMessages([
+                            "payments.{$slip->id}.amount" => 'Số tiền thanh toán vượt quá số còn phải trả của phiếu lương.',
+                        ]);
+                    }
+
+                    $employee = $employees->get((int) $slip->employee_id);
+                    $payment = PaysheetPayment::create([
+                        'code' => null,
+                        'paysheet_id' => $sheet->id,
+                        'payslip_id' => $slip->id,
+                        'employee_id' => $slip->employee_id,
+                        'amount' => $amount,
+                        'status' => 'active',
+                        'method' => $meta['payment_method'],
+                        'notes' => $meta['note'] ?? null,
+                        'paid_at' => $meta['payment_date'],
+                        'created_by' => auth()->id(),
+                        'idempotency_key' => $paymentKey,
+                    ]);
+                    $payment->update([
+                        'code' => 'TTPL'.str_pad((string) $payment->id, 6, '0', STR_PAD_LEFT),
+                    ]);
+
+                    $this->cashFlows->ensureForPayment($payment);
+                    $this->ledger->append($employee, [
+                        'paysheet_id' => $sheet->id,
+                        'payslip_id' => $slip->id,
+                        'code' => $payment->code,
+                        'type' => EmployeeSalaryLedgerEntry::TYPE_SALARY_PAYMENT,
+                        'reference_type' => 'paysheet_payment',
+                        'reference_id' => $payment->id,
+                        'amount' => -$amount,
+                        'event_at' => $meta['payment_date'],
+                        'payment_method' => $meta['payment_method'],
+                        'note' => $meta['note'] ?? null,
+                        'idempotency_key' => "salary_payment:{$payment->id}",
+                    ]);
+
+                    $this->syncSlip($slip);
+                    $createdBySheet[$sheet->id][] = $payment->fresh('cashFlow');
+                }
+            }
+
+            foreach ($createdBySheet as $sheetId => $payments) {
+                $sheet = $sheets->get((int) $sheetId);
+                $sheet->recalculateTotals();
+                ActivityLog::log('salary_payment_create', "Thanh toán bảng lương {$sheet->code}", $sheet, [
+                    'payment_ids' => collect($payments)->pluck('id')->all(),
+                ]);
+            }
+
+            return collect($createdBySheet)->flatten(1)->values()->all();
         });
     }
 
@@ -128,7 +260,7 @@ class SalaryPaymentService
             $this->syncSlip($slip);
             $slip->paysheet->recalculateTotals();
 
-            ActivityLog::log('salary_payment_cancel', "Huy thanh toan {$locked->code}", $locked, ['reason' => $reason]);
+            ActivityLog::log('salary_payment_cancel', "Hủy thanh toán {$locked->code}", $locked, ['reason' => $reason]);
 
             return $locked->fresh();
         });
@@ -146,5 +278,15 @@ class SalaryPaymentService
             'remaining' => $remaining,
             'payment_status' => $remaining === 0 ? 'paid' : ($settled > 0 ? 'partial' : 'unpaid'),
         ]);
+    }
+
+    private function remainingFor(Payslip $slip): int
+    {
+        $paid = (int) PaysheetPayment::query()
+            ->where('payslip_id', $slip->id)
+            ->where('status', 'active')
+            ->sum('amount');
+
+        return max((int) $slip->total_salary - $paid - (int) $slip->applied_advance, 0);
     }
 }

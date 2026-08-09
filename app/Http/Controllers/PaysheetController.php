@@ -459,11 +459,12 @@ class PaysheetController extends Controller
     {
         $payload = $request->validate([
             'payment_date' => 'required|date',
-            'payment_method' => 'required|in:cash,bank,bank_transfer,ewallet',
+            'payment_method' => 'required|in:cash,bank,bank_transfer,ewallet,other',
             'note' => 'nullable|string|max:1000',
             'payments' => 'required|array|min:1',
             'payments.*.payslip_id' => 'required|integer|exists:payslips,id',
             'payments.*.amount' => 'required|integer|min:1',
+            'amount' => 'nullable|integer|min:1',
             'override_reason' => 'nullable|string|min:10|max:1000',
         ]);
         $paysheet = Paysheet::findOrFail($id);
@@ -478,7 +479,12 @@ class PaysheetController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $service->pay($paysheet, $payload['payments'], $payload, $key),
+            'data' => $service->payAllocations([
+                [
+                    'paysheet_id' => $paysheet->id,
+                    'items' => $payload['payments'],
+                ],
+            ], $payload, $key),
         ]);
     }
 
