@@ -183,6 +183,21 @@ CROSS_SCREEN_LOCK_ORDER_IDENTICAL=PASS
 MULTI_PAYSHEET_PAYMENT_ATOMIC=PASS
 ```
 
+Combined current-base integration evidence was run in a disposable worktree
+based on the current `production-customer-group` head, without rebasing or
+creating a synthetic merge commit:
+
+```text
+CURRENT_BASE_INTEGRATION_SHA=a4e58974b93df4664c4c043c0f536bbd8e7e970d
+CURRENT_BASE_INTEGRATION=PASS
+QUICK_CREATE_BASE_REGRESSION=PASS
+CURRENT_BASE_STEP2413=14 tests / 57 assertions PASS
+CURRENT_BASE_PAYROLL_TARGETED=51 tests / 371 assertions PASS
+CURRENT_BASE_PAYROLL_SUITE=134 tests / 737 assertions PASS
+CURRENT_BASE_FRONTEND_BUILD=PASS
+CURRENT_BASE_DIFF_CHECK=PASS
+```
+
 The four-missing-accrual semantic fixture passed dry-run/apply/idempotency
 coverage with no payment or cashflow creation. The isolated browser fixture
 also passed the cross-screen settlement flow below.
