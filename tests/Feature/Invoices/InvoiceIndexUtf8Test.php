@@ -20,6 +20,9 @@ class InvoiceIndexUtf8Test extends TestCase
             'Ã‚',
             'Ã¢â‚¬â€',
             'Ã¢â‚¬â€œ',
+            "\u{00E1}\u{00BB}",
+            "\u{00E2}\u{0027}\u{00AB}",
+            "\u{00EF}\u{00BF}\u{00BD}",
         ];
 
         foreach ($patterns as $pattern) {
@@ -37,8 +40,12 @@ class InvoiceIndexUtf8Test extends TestCase
             'Người bán',
             'Khách hàng',
             'Khách đã trả',
+            'Hủy',
         ] as $label) {
             $this->assertStringContainsString($label, $contents, "Invoice index must contain UTF-8 label {$label}");
         }
+
+        $this->assertStringContainsString('formatCurrency(cancellingInvoice.total)', $contents);
+        $this->assertStringNotContainsString('cancellingInvoice.total || 0).toLocaleString', $contents);
     }
 }

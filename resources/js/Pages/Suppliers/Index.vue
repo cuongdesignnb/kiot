@@ -2043,7 +2043,7 @@ const submitActivate = (supplier) => {
                         v-if="(Number(deactivateConfirm.supplier.supplier_debt_amount) || 0) > 0"
                         class="px-3 py-2 bg-amber-50 border border-amber-200 rounded text-amber-800 text-xs"
                     >
-                        NCC còn nợ phải trả: <strong class="tabular-nums">{{ Number(deactivateConfirm.supplier.supplier_debt_amount).toLocaleString('vi-VN') }}đ</strong>.
+                        NCC còn nợ phải trả: <strong class="tabular-nums">{{ formatCurrency(deactivateConfirm.supplier.supplier_debt_amount) }}</strong>.
                         Bạn vẫn có thể thanh toán/đối chiếu sau khi ngừng hoạt động.
                     </div>
                 </div>
