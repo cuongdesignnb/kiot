@@ -757,7 +757,7 @@ loadTasks();
                                             class="accent-blue-600"
                                         />
                                         <span class="text-sm font-medium text-blue-700">{{ s.serial_number }}</span>
-                                        <span class="text-xs text-gray-400 ml-auto">GV: {{ formatCurrency(s.cost_price || 0) }}đ</span>
+                                        <span class="text-xs text-gray-400 ml-auto">GV: {{ formatCurrency(s.cost_price || 0) }}</span>
                                     </label>
                                 </div>
                                 <p v-if="selectedSerialIds.length" class="text-xs text-blue-600 mt-1">Đã chọn {{ selectedSerialIds.length }} serial</p>

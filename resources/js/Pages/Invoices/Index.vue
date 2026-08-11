@@ -985,7 +985,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                                     d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
                                                                 ></path>
                                                             </svg>
-                                                            Há»§y
+                                                            Hủy
                                                         </button>
                                                     </div>
                                                     <div class="flex gap-2">
@@ -1275,7 +1275,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                         <div class="text-gray-500">Khách hàng</div>
                         <div class="text-gray-800">{{ cancellingInvoice.customer?.name || 'Khách lẻ' }}</div>
                         <div class="text-gray-500">Tổng tiền</div>
-                        <div class="text-gray-800 tabular-nums">{{ Number(cancellingInvoice.total || 0).toLocaleString('vi-VN') }} â'«</div>
+                        <div class="text-gray-800 tabular-nums">{{ formatCurrency(cancellingInvoice.total) }}</div>
                         <div class="text-gray-500">Trạng thái</div>
                         <div class="text-gray-800">{{ cancellingInvoice.status }}</div>
                     </div>

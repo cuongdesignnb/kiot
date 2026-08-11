@@ -1620,7 +1620,7 @@ const bonusCalcLabel = (calc) => {
                                                             <MoneyInput v-model="d.amount" :min="0" input-class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" />
                                                         </div>
                                                         <div v-if="d.calculation_type === 'per_minute' && d.per_minutes" class="text-[10px] text-gray-400 mt-0.5">
-                                                            Trừ {{ formatCurrency(d.amount || 0) }}đ / {{ d.per_minutes }} phút
+                                                            Trừ {{ formatCurrency(d.amount || 0) }} / {{ d.per_minutes }} phút
                                                         </div>
                                                     </td>
                                                     <td class="px-1 py-1"><button type="button" @click="salaryForm.custom_deductions.splice(i, 1)" class="text-red-400 hover:text-red-600">&times;</button></td>
