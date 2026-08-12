@@ -15,8 +15,8 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 use Tests\TestCase;
 
 /**
- * HOTFIX 24.17C / Kiot standard follow-up: supplier debt export keeps
- * Vietnamese dd/mm/yyyy handling, but must not include customer-side sale lines.
+ * HOTFIX 24.17C / parity follow-up: supplier dual-role debt export keeps
+ * Vietnamese dd/mm/yyyy handling and includes shared customer-side details.
  */
 class HOTFIX2417CSupplierDebtExcelSaleLinesAndDateFormatTest extends TestCase
 {
@@ -25,10 +25,10 @@ class HOTFIX2417CSupplierDebtExcelSaleLinesAndDateFormatTest extends TestCase
     private function admin(): User
     {
         return User::create([
-            'name'     => 'Admin 2417C',
-            'email'    => 'admin-2417c-' . uniqid() . '@test.local',
+            'name' => 'Admin 2417C',
+            'email' => 'admin-2417c-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
-            'role_id'  => null,
+            'role_id' => null,
         ]);
     }
 
@@ -40,27 +40,27 @@ class HOTFIX2417CSupplierDebtExcelSaleLinesAndDateFormatTest extends TestCase
     private function dualRolePartner(string $name = 'NCC+KH 2417C'): Customer
     {
         return Customer::create([
-            'code'                 => 'NCC-2417C-' . uniqid(),
-            'name'                 => $name,
-            'phone'                => '09' . random_int(10000000, 99999999),
-            'debt_amount'          => 0,
+            'code' => 'NCC-2417C-'.uniqid(),
+            'name' => $name,
+            'phone' => '09'.random_int(10000000, 99999999),
+            'debt_amount' => 0,
             'supplier_debt_amount' => 0,
-            'is_customer'          => true,
-            'is_supplier'          => true,
+            'is_customer' => true,
+            'is_supplier' => true,
         ]);
     }
 
     private function product(string $name, string $sku, int $cost = 100_000, int $retail = 200_000): Product
     {
         return Product::create([
-            'sku'                  => $sku,
-            'name'                 => $name,
-            'cost_price'           => $cost,
-            'retail_price'         => $retail,
-            'stock_quantity'       => 100,
+            'sku' => $sku,
+            'name' => $name,
+            'cost_price' => $cost,
+            'retail_price' => $retail,
+            'stock_quantity' => 100,
             'inventory_total_cost' => $cost * 100,
-            'has_serial'           => false,
-            'category_id'          => $this->category()->id,
+            'has_serial' => false,
+            'category_id' => $this->category()->id,
         ]);
     }
 
@@ -71,14 +71,16 @@ class HOTFIX2417CSupplierDebtExcelSaleLinesAndDateFormatTest extends TestCase
     private function saleInvoice(Customer $partner, array $lines, ?Carbon $when = null): Invoice
     {
         $total = 0;
-        foreach ($lines as $l) $total += ((int) $l['qty']) * ((int) $l['price']);
+        foreach ($lines as $l) {
+            $total += ((int) $l['qty']) * ((int) $l['price']);
+        }
         $inv = Invoice::create([
-            'code'           => 'HD-2417C-' . uniqid(),
-            'customer_id'    => $partner->id,
-            'subtotal'       => $total,
-            'total'          => $total,
-            'customer_paid'  => 0,
-            'status'         => 'active',
+            'code' => 'HD-2417C-'.uniqid(),
+            'customer_id' => $partner->id,
+            'subtotal' => $total,
+            'total' => $total,
+            'customer_paid' => 0,
+            'status' => 'active',
         ]);
         if ($when) {
             $inv->created_at = $when;
@@ -89,30 +91,32 @@ class HOTFIX2417CSupplierDebtExcelSaleLinesAndDateFormatTest extends TestCase
             InvoiceItem::create([
                 'invoice_id' => $inv->id,
                 'product_id' => $l['product_id'],
-                'quantity'   => $l['qty'],
-                'price'      => $l['price'],
+                'quantity' => $l['qty'],
+                'price' => $l['price'],
                 'cost_price' => $l['cost'] ?? 0,
-                'serial'     => $l['serial'] ?? null,
+                'serial' => $l['serial'] ?? null,
             ]);
         }
+
         return $inv;
     }
 
     private function purchase(Customer $sup, int $total, Carbon $when): Purchase
     {
         $p = Purchase::create([
-            'code'          => 'PN-' . uniqid(),
-            'supplier_id'   => $sup->id,
-            'user_id'       => null,
-            'total_amount'  => $total,
-            'paid_amount'   => 0,
-            'debt_amount'   => $total,
-            'status'        => 'completed',
+            'code' => 'PN-'.uniqid(),
+            'supplier_id' => $sup->id,
+            'user_id' => null,
+            'total_amount' => $total,
+            'paid_amount' => 0,
+            'debt_amount' => $total,
+            'status' => 'completed',
             'purchase_date' => $when,
         ]);
         $p->created_at = $when;
         $p->updated_at = $when;
         $p->save();
+
         return $p;
     }
 
@@ -121,7 +125,7 @@ class HOTFIX2417CSupplierDebtExcelSaleLinesAndDateFormatTest extends TestCase
         $res = $this->actingAs($actor)->get("/api/suppliers/{$partnerId}/export-debt?{$query}");
         $res->assertOk();
         $body = $res->streamedContent() ?: $res->getContent();
-        $tmp  = tempnam(sys_get_temp_dir(), 'cnct-c-') . '.xlsx';
+        $tmp = tempnam(sys_get_temp_dir(), 'cnct-c-').'.xlsx';
         file_put_contents($tmp, $body);
         try {
             return IOFactory::load($tmp);
@@ -130,17 +134,17 @@ class HOTFIX2417CSupplierDebtExcelSaleLinesAndDateFormatTest extends TestCase
         }
     }
 
-    // TC-01 - supplier debt export must not include customer-side sale details
+    // TC-01 - dual-role supplier export includes shared invoice details
     public function test_invoice_sale_detail_lines_are_not_exported_in_supplier_debt(): void
     {
-        $admin   = $this->admin();
+        $admin = $this->admin();
         $partner = $this->dualRolePartner();
         $product = $this->product('Tai nghe Sony WH-1000XM5', 'SKU-WH1000XM5', 5_000_000, 8_000_000);
         $this->saleInvoice($partner, [
             ['product_id' => $product->id, 'qty' => 2, 'price' => 8_000_000, 'cost' => 5_000_000],
         ]);
 
-        $wb    = $this->downloadWorkbook(
+        $wb = $this->downloadWorkbook(
             $partner->id,
             'format=xlsx&date_preset=all&include_detail=1&columns[]=quantity&columns[]=unit_price&columns[]=cost&columns[]=line_total',
             $admin
@@ -150,44 +154,48 @@ class HOTFIX2417CSupplierDebtExcelSaleLinesAndDateFormatTest extends TestCase
 
         $flat = '';
         foreach ($cells as $row) {
-            foreach ($row as $val) $flat .= "\t" . (string) $val;
+            foreach ($row as $val) {
+                $flat .= "\t".(string) $val;
+            }
         }
-        $this->assertStringNotContainsString('SKU-WH1000XM5', $flat, 'customer-side sale SKU must not appear in supplier debt export');
-        $this->assertStringNotContainsString('Tai nghe Sony WH-1000XM5', $flat, 'customer-side sale product must not appear in supplier debt export');
-        $this->assertStringNotContainsString('16000000', $flat, 'customer-side sale total must not appear in supplier debt export');
+        $this->assertStringContainsString('SKU-WH1000XM5', $flat, 'shared invoice SKU must appear in supplier parity export');
+        $this->assertStringContainsString('Tai nghe Sony WH-1000XM5', $flat, 'shared invoice product must appear in supplier parity export');
+        $this->assertStringContainsString('16000000', $flat, 'shared invoice effect must remain in canonical parity export');
     }
 
-    // TC-02 - multi-item customer invoice is still excluded from supplier debt
+    // TC-02 - multi-item customer invoice details are complete on supplier side
     public function test_invoice_sale_multiple_items_are_all_excluded_from_supplier_debt(): void
     {
-        $admin   = $this->admin();
+        $admin = $this->admin();
         $partner = $this->dualRolePartner();
-        $p1      = $this->product('Bàn phím cơ Keychron K8', 'SKU-K8');
-        $p2      = $this->product('Chuột Logitech MX Master 3S', 'SKU-MXM3S');
+        $p1 = $this->product('Bàn phím cơ Keychron K8', 'SKU-K8');
+        $p2 = $this->product('Chuột Logitech MX Master 3S', 'SKU-MXM3S');
         $this->saleInvoice($partner, [
             ['product_id' => $p1->id, 'qty' => 1, 'price' => 3_000_000],
             ['product_id' => $p2->id, 'qty' => 1, 'price' => 2_500_000],
         ]);
 
-        $wb    = $this->downloadWorkbook(
+        $wb = $this->downloadWorkbook(
             $partner->id,
             'format=xlsx&date_preset=all&include_detail=1&columns[]=quantity&columns[]=unit_price&columns[]=line_total',
             $admin
         );
         $sheet = $wb->getSheetByName('CNCT');
         $cells = $sheet->toArray(null, true, false, false);
-        $flat  = '';
+        $flat = '';
         foreach ($cells as $row) {
-            foreach ($row as $val) $flat .= "\t" . (string) $val;
+            foreach ($row as $val) {
+                $flat .= "\t".(string) $val;
+            }
         }
-        $this->assertStringNotContainsString('Bàn phím cơ Keychron K8', $flat);
-        $this->assertStringNotContainsString('Chuột Logitech MX Master 3S', $flat);
+        $this->assertStringContainsString('Bàn phím cơ Keychron K8', $flat);
+        $this->assertStringContainsString('Chuột Logitech MX Master 3S', $flat);
     }
 
     // ── TC-03 — backend accepts dd/mm/yyyy custom date ──
     public function test_custom_date_accepts_vietnamese_dd_mm_yyyy(): void
     {
-        $admin   = $this->admin();
+        $admin = $this->admin();
         $partner = $this->dualRolePartner();
         $this->purchase($partner, 1_000_000, Carbon::create(2026, 4, 15, 9, 0));
 
@@ -200,7 +208,7 @@ class HOTFIX2417CSupplierDebtExcelSaleLinesAndDateFormatTest extends TestCase
     // ── TC-04 — `01/04/2026` is parsed as 1-April, NOT 4-January ──
     public function test_custom_date_does_not_parse_as_us_format(): void
     {
-        $admin   = $this->admin();
+        $admin = $this->admin();
         $partner = $this->dualRolePartner();
         // Transaction on 30/04/2026 — must be included by a Vietnamese
         // `01/04/2026 → 30/04/2026` window. If the backend parsed
@@ -209,19 +217,21 @@ class HOTFIX2417CSupplierDebtExcelSaleLinesAndDateFormatTest extends TestCase
         // technically the row would still appear. The discriminator
         // is the inverse: a row dated 02/01/2026 (Jan 2) must NOT
         // appear inside an April-only window.
-        $inJan  = $this->purchase($partner, 500_000, Carbon::create(2026, 1, 2, 9, 0));
-        $inApr  = $this->purchase($partner, 600_000, Carbon::create(2026, 4, 30, 9, 0));
+        $inJan = $this->purchase($partner, 500_000, Carbon::create(2026, 1, 2, 9, 0));
+        $inApr = $this->purchase($partner, 600_000, Carbon::create(2026, 4, 30, 9, 0));
 
-        $wb    = $this->downloadWorkbook(
+        $wb = $this->downloadWorkbook(
             $partner->id,
             'format=xlsx&date_preset=custom&date_from=01/04/2026&date_to=30/04/2026',
             $admin
         );
         $sheet = $wb->getSheetByName('CNCT');
         $cells = $sheet->toArray(null, true, false, false);
-        $flat  = '';
+        $flat = '';
         foreach ($cells as $row) {
-            foreach ($row as $val) $flat .= "\t" . (string) $val;
+            foreach ($row as $val) {
+                $flat .= "\t".(string) $val;
+            }
         }
         $this->assertStringContainsString($inApr->code, $flat, 'in-window April row must appear');
         $this->assertStringNotContainsString($inJan->code, $flat,
@@ -231,7 +241,7 @@ class HOTFIX2417CSupplierDebtExcelSaleLinesAndDateFormatTest extends TestCase
     // ── TC-05 — impossible calendar dates trip 422, not 500 ──
     public function test_invalid_vietnamese_date_returns_422(): void
     {
-        $admin   = $this->admin();
+        $admin = $this->admin();
         $partner = $this->dualRolePartner();
 
         $res = $this->actingAs($admin)->get(
