@@ -128,7 +128,7 @@ class HOTFIX2417BSupplierDebtExcelFormatTest extends TestCase
                 $flat .= ' '.(string) $val;
             }
         }
-        $this->assertStringContainsString('Công nợ chi tiết nhà cung cấp', $flat);
+        $this->assertStringContainsString('CÔNG NỢ CHI TIẾT NHÀ CUNG CẤP', $flat);
     }
 
     // ── TC-04 — all KiotViet-like headers present ──

@@ -2,6 +2,8 @@
 
 namespace App\Services\Exports;
 
+use App\Exceptions\PartnerDebtExportContractException;
+
 /**
  * Reads the orientation-specific canonical display effect for an export.
  * Generic `amount` is accepted only for legacy rows which carry no canonical
@@ -12,9 +14,16 @@ class PartnerDebtExportEffectResolver
 {
     public function resolve(array $entry, string $orientation): float
     {
+        if (($entry['reference_only'] ?? false)
+            || ($entry['is_reference_only'] ?? false)
+            || (array_key_exists('affects_canonical_balance', $entry) && ! (bool) $entry['affects_canonical_balance'])
+            || (array_key_exists('affects_debt_balance', $entry) && ! (bool) $entry['affects_debt_balance'])) {
+            return 0.0;
+        }
+
         $keys = $orientation === 'supplier'
-            ? ['supplier_display_effect', 'supplier_effect', 'display_effect']
-            : ['customer_display_effect', 'customer_effect', 'display_effect'];
+            ? ['supplier_display_effect', 'supplier_effect']
+            : ['customer_display_effect', 'customer_effect'];
 
         foreach ($keys as $key) {
             if (array_key_exists($key, $entry) && is_numeric($entry[$key])) {
@@ -23,7 +32,21 @@ class PartnerDebtExportEffectResolver
         }
 
         if ($this->hasCanonicalEvidence($entry)) {
-            return 0.0;
+            throw new PartnerDebtExportContractException('missing_orientation_effect', [
+                'event_identity' => (string) ($entry['event_identity'] ?? ''),
+                'event_kind' => (string) ($entry['event_kind'] ?? ''),
+                'reference_type' => (string) ($entry['reference_type'] ?? ''),
+                'reference_id' => (string) ($entry['reference_id'] ?? ''),
+                'orientation' => $orientation,
+                'available_effect_fields' => array_values(array_filter(
+                    array_keys($entry),
+                    static fn (string $key): bool => str_contains($key, 'effect'),
+                )),
+            ]);
+        }
+
+        if (array_key_exists('display_effect', $entry) && is_numeric($entry['display_effect'])) {
+            return (float) $entry['display_effect'];
         }
 
         return is_numeric($entry['amount'] ?? null) ? (float) $entry['amount'] : 0.0;

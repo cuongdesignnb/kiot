@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services\Exports;
 
+use App\Exceptions\PartnerDebtExportContractException;
 use App\Services\Exports\PartnerDebtExportEffectResolver;
 use PHPUnit\Framework\TestCase;
 
@@ -27,15 +28,22 @@ class DualRolePartnerDebtExcelParityTest extends TestCase
         $this->assertSame(0.0, $customer + $supplier);
     }
 
-    public function test_canonical_entry_does_not_fall_back_to_generic_amount(): void
+    public function test_canonical_entry_missing_supplier_effect_fails_closed(): void
     {
         $resolver = new PartnerDebtExportEffectResolver;
 
-        $this->assertSame(0.0, $resolver->resolve([
-            'event_identity' => 'dual|debt_offsets|5|debt_offset|receivable',
-            'reference_type' => 'DebtOffset',
-            'reference_id' => 5,
-            'amount' => 700000,
-        ], 'supplier'));
+        try {
+            $resolver->resolve([
+                'event_identity' => 'dual|debt_offsets|5|debt_offset|receivable',
+                'event_kind' => 'debt_offset',
+                'reference_type' => 'DebtOffset',
+                'reference_id' => 5,
+                'amount' => 700000,
+            ], 'supplier');
+            self::fail('Canonical entries must not silently become a zero effect.');
+        } catch (PartnerDebtExportContractException $exception) {
+            $this->assertStringContainsString('missing_orientation_effect', $exception->getMessage());
+            $this->assertSame('supplier', $exception->context()['orientation']);
+        }
     }
 }

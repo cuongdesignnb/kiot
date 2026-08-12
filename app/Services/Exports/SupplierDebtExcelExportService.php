@@ -41,9 +41,11 @@ class SupplierDebtExcelExportService
 
     private PartnerDebtExportEffectResolver $effects;
 
+    private PartnerDebtExportRunningBalanceResolver $runningBalances;
+
     public const SHEET_NAME = 'CNCT';
 
-    public const REPORT_TITLE = 'Công nợ chi tiết nhà cung cấp';
+    public const REPORT_TITLE = 'CÔNG NỢ CHI TIẾT NHÀ CUNG CẤP';
 
     private const HEADERS = [
         'Thời gian',
@@ -59,12 +61,13 @@ class SupplierDebtExcelExportService
         'Ghi nợ',
         'Ghi có',
         'Số dư sau GD',
+        'Ghi chú',
     ];
 
     private const COL_WIDTHS = [
         'A' => 14, 'B' => 18, 'C' => 35, 'D' => 10, 'E' => 8, 'F' => 14,
         'G' => 14, 'H' => 12, 'I' => 14, 'J' => 14, 'K' => 15, 'L' => 15,
-        'M' => 16,
+        'M' => 16, 'N' => 28,
     ];
 
     public function __construct(
@@ -82,6 +85,7 @@ class SupplierDebtExcelExportService
         $this->includeDetail = $includeDetail;
         $this->documents = new PartnerDebtExportDocumentResolver;
         $this->effects = new PartnerDebtExportEffectResolver;
+        $this->runningBalances = new PartnerDebtExportRunningBalanceResolver;
         // Detail-column toggles control whether each per-line cell is
         // populated; the column itself stays on the sheet so the
         // KiotViet-style layout (Thời gian → Ghi có) is consistent.
@@ -194,7 +198,7 @@ class SupplierDebtExcelExportService
     private function writeTitle($sheet, int $row): int
     {
         $sheet->setCellValue('A'.$row, self::REPORT_TITLE);
-        $sheet->mergeCells('A'.$row.':M'.$row);
+        $sheet->mergeCells('A'.$row.':N'.$row);
         $sheet->getStyle('A'.$row)
             ->getFont()->setBold(true)->setSize(16);
         $sheet->getStyle('A'.$row)
@@ -210,7 +214,7 @@ class SupplierDebtExcelExportService
             );
         }
         $sheet->setCellValue('A'.$row, $rangeText);
-        $sheet->mergeCells('A'.$row.':M'.$row);
+        $sheet->mergeCells('A'.$row.':N'.$row);
         $sheet->getStyle('A'.$row)
             ->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
         $sheet->getStyle('A'.$row)
@@ -279,7 +283,7 @@ class SupplierDebtExcelExportService
             $col = Coordinate::stringFromColumnIndex($i + 1);
             $sheet->setCellValue($col.$row, $h);
         }
-        $range = 'A'.$row.':M'.$row;
+        $range = 'A'.$row.':N'.$row;
         $sheet->getStyle($range)->getFont()->setBold(true);
         $sheet->getStyle($range)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
         $sheet->getStyle($range)->getFill()
@@ -310,7 +314,7 @@ class SupplierDebtExcelExportService
             // Document header row.
             $sheet->setCellValue('A'.$row, $whenStr);
             $sheet->setCellValue('B'.$row, $e['code'] ?? '');
-            $sheet->setCellValue('C'.$row, $e['type_label'] ?? '');
+            $sheet->setCellValue('C'.$row, $this->documents->contextLabel($e, $e['type_label'] ?? ''));
             if ($debitVal !== null) {
                 $sheet->setCellValue('K'.$row, $debitVal);
             }
@@ -318,6 +322,10 @@ class SupplierDebtExcelExportService
                 $sheet->setCellValue('L'.$row, $creditVal);
             }
             $sheet->setCellValue('M'.$row, $this->entryRunningBalance($e));
+            $contextNote = $this->documents->contextNote($e);
+            if ($contextNote !== '') {
+                $sheet->setCellValue('N'.$row, $contextNote);
+            }
             $sheet->getStyle('B'.$row.':C'.$row)->getFont()->setBold(true);
             $sheet->getStyle('A'.$row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
             $sheet->getStyle('K'.$row.':M'.$row)
@@ -349,8 +357,11 @@ class SupplierDebtExcelExportService
                     if ($this->columns['line_total']) {
                         $sheet->setCellValue('J'.$row, $line['line_total'] ?? '');
                     }
+                    if ($this->columns['note']) {
+                        $sheet->setCellValue('N'.$row, $line['note'] ?? '');
+                    }
                     $sheet->getStyle('C'.$row)->getFont()->setItalic(true);
-                    $sheet->getStyle('E'.$row.':J'.$row)
+                    $sheet->getStyle('E'.$row.':M'.$row)
                         ->getNumberFormat()->setFormatCode('#,##0');
                     $row++;
                 }
@@ -374,7 +385,7 @@ class SupplierDebtExcelExportService
         if ($lastBodyRow < $headerRow) {
             $lastBodyRow = $headerRow;
         }
-        $whole = 'A'.$headerRow.':M'.$lastBodyRow;
+        $whole = 'A'.$headerRow.':N'.$lastBodyRow;
         // Wipe whatever per-row borders were drawn earlier in the build
         // by re-applying NONE first.
         $sheet->getStyle($whole)->getBorders()->getAllBorders()
@@ -382,7 +393,7 @@ class SupplierDebtExcelExportService
 
         // Hair horizontal separators between rows below the header.
         if ($lastBodyRow > $headerRow) {
-            $bodyRange = 'A'.($headerRow + 1).':M'.$lastBodyRow;
+            $bodyRange = 'A'.($headerRow + 1).':N'.$lastBodyRow;
             $sheet->getStyle($bodyRange)->getBorders()->getBottom()
                 ->setBorderStyle(Border::BORDER_HAIR);
         }
@@ -390,7 +401,7 @@ class SupplierDebtExcelExportService
         // Outer medium frame + thicker line under the header row.
         $sheet->getStyle($whole)->getBorders()->getOutline()
             ->setBorderStyle(Border::BORDER_MEDIUM);
-        $sheet->getStyle('A'.$headerRow.':M'.$headerRow)
+        $sheet->getStyle('A'.$headerRow.':N'.$headerRow)
             ->getBorders()->getBottom()
             ->setBorderStyle(Border::BORDER_MEDIUM);
     }
@@ -405,7 +416,7 @@ class SupplierDebtExcelExportService
         $now = Carbon::now();
         $dateText = sprintf('Ngày %d tháng %d năm %d', $now->day, $now->month, $now->year);
         $sheet->setCellValue('J'.$row, $dateText);
-        $sheet->mergeCells('J'.$row.':M'.$row);
+        $sheet->mergeCells('J'.$row.':N'.$row);
         $sheet->getStyle('J'.$row)
             ->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
         $sheet->getStyle('J'.$row)->getFont()->setItalic(true);
@@ -415,7 +426,7 @@ class SupplierDebtExcelExportService
         $blocks = [
             ['range' => 'A:B', 'merge' => 'A%d:B%d', 'label' => 'Nhà cung cấp'],
             ['range' => 'F:G', 'merge' => 'F%d:G%d', 'label' => 'Người lập biểu'],
-            ['range' => 'J:M', 'merge' => 'J%d:M%d', 'label' => 'TM Công ty'],
+            ['range' => 'J:N', 'merge' => 'J%d:N%d', 'label' => 'TM Công ty'],
         ];
         foreach ($blocks as $b) {
             $merge = sprintf($b['merge'], $signatureRow, $signatureRow);
@@ -533,11 +544,7 @@ class SupplierDebtExcelExportService
 
     private function entryRunningBalance(array $entry): float
     {
-        return (float) ($entry['supplier_display_running_balance']
-            ?? $entry['supplier_running_balance']
-            ?? $entry['debt_remain']
-            ?? $entry['running_balance']
-            ?? 0);
+        return $this->runningBalances->resolve($entry, 'supplier');
     }
 
     private function resolveStoreInfo(): array

@@ -32,6 +32,9 @@ class PartnerDebtExportDocumentResolver
     /** @var array<string,bool> */
     private array $preloaded = [];
 
+    /** @var array<string,array<int,object>> */
+    private array $legacyDocumentsByTypeCode = [];
+
     /**
      * Resolve a canonical event to an export document identity.
      *
@@ -74,6 +77,7 @@ class PartnerDebtExportDocumentResolver
      */
     public function preload(array $entries, ?string $orientation = null): void
     {
+        $this->preloadLegacyDocuments($entries);
         $idsByType = [];
         foreach ($entries as $entry) {
             $identity = $this->resolve($entry);
@@ -87,6 +91,10 @@ class PartnerDebtExportDocumentResolver
 
         foreach ($idsByType as $type => $ids) {
             $ids = array_values(array_unique(array_map('intval', $ids)));
+            $ids = array_values(array_filter($ids, fn (int $id): bool => ! isset($this->documents[$type.':'.$id])));
+            if ($ids === []) {
+                continue;
+            }
             if ($type === 'Purchase') {
                 foreach (Purchase::query()->whereIn('id', $ids)->get() as $document) {
                     $this->storeDocument('Purchase', $document);
@@ -107,10 +115,21 @@ class PartnerDebtExportDocumentResolver
             }
         }
 
-        $this->preloadDetailLines('Invoice', InvoiceItem::query()->with('product:id,sku,name'), $idsByType['Invoice'] ?? []);
-        $this->preloadDetailLines('Purchase', PurchaseItem::query()->with('product:id,sku,name'), $idsByType['Purchase'] ?? []);
-        $this->preloadDetailLines('PurchaseReturn', PurchaseReturnItem::query()->with('product:id,sku,name'), $idsByType['PurchaseReturn'] ?? []);
-        $this->preloadDetailLines('OrderReturn', ReturnItem::query()->with('product:id,sku,name'), $idsByType['OrderReturn'] ?? []);
+        $productWithUnits = static fn ($query) => $query
+            ->select(['id', 'sku', 'name'])
+            ->with('units:id,product_id,unit_name,conversion_rate,is_base_unit');
+        if (($idsByType['Invoice'] ?? []) !== []) {
+            $this->preloadDetailLines('Invoice', InvoiceItem::query()->with(['product' => $productWithUnits]), $idsByType['Invoice']);
+        }
+        if (($idsByType['Purchase'] ?? []) !== []) {
+            $this->preloadDetailLines('Purchase', PurchaseItem::query()->with(['product' => $productWithUnits]), $idsByType['Purchase']);
+        }
+        if (($idsByType['PurchaseReturn'] ?? []) !== []) {
+            $this->preloadDetailLines('PurchaseReturn', PurchaseReturnItem::query()->with(['product' => $productWithUnits]), $idsByType['PurchaseReturn']);
+        }
+        if (($idsByType['OrderReturn'] ?? []) !== []) {
+            $this->preloadDetailLines('OrderReturn', ReturnItem::query()->with(['product' => $productWithUnits]), $idsByType['OrderReturn']);
+        }
 
         foreach ($idsByType as $type => $ids) {
             foreach (array_unique(array_map('intval', $ids)) as $id) {
@@ -217,11 +236,11 @@ class PartnerDebtExportDocumentResolver
         return [
             'code' => (string) ($product?->sku ?? $item->product_code ?? ''),
             'name' => $name,
-            'unit' => '',
+            'unit' => $this->productUnitName($product),
             'quantity' => $quantity,
             'unit_price' => $price,
             'discount' => $discount,
-            'vat' => '',
+            'vat' => $this->persistedVat($item, $product),
             'cost' => $item->cost_price !== null
                 ? (float) $item->cost_price
                 : (float) ($item->import_price ?? $price),
@@ -243,7 +262,7 @@ class PartnerDebtExportDocumentResolver
         $isAdjustment = $this->isAdjustment($entry, $eventKind);
         $isCancellation = str_contains($eventKind, 'cancel') || str_contains($eventKind, 'reversal');
 
-        [$type, $id, $source] = $this->firstIdentity($entry, $isPayment || $isAdjustment);
+        [$type, $id, $source] = $this->firstIdentity($entry);
         if ((! $type || $id <= 0) && $isCancellation) {
             [$type, $id] = $this->parseIdentity((string) ($entry['reversal_of'] ?? $entry['reversal_of_event_identity'] ?? ''));
             $source = 'reversal_of';
@@ -284,7 +303,7 @@ class PartnerDebtExportDocumentResolver
     }
 
     /** @return array{0:?string,1:int,2:?string} */
-    private function firstIdentity(array $entry, bool $contextOnly): array
+    private function firstIdentity(array $entry): array
     {
         foreach ([
             ['reference_type', 'reference_id', 'reference'],
@@ -342,13 +361,23 @@ class PartnerDebtExportDocumentResolver
             return [null, 0];
         }
 
-        $model = match ($type) {
-            'Invoice' => \App\Models\Invoice::query()->whereIn('code', $codes)->first(),
-            'Purchase' => Purchase::query()->whereIn('code', $codes)->first(),
-            'PurchaseReturn' => \App\Models\PurchaseReturn::query()->whereIn('code', $codes)->first(),
-            'OrderReturn' => OrderReturn::query()->whereIn('code', $codes)->first(),
-            default => null,
-        };
+        $model = null;
+        foreach ($codes as $candidate) {
+            $model = $this->legacyDocumentsByTypeCode[$type][strtolower($candidate)] ?? null;
+            if ($model !== null) {
+                break;
+            }
+        }
+
+        if ($model === null) {
+            $model = match ($type) {
+                'Invoice' => \App\Models\Invoice::query()->whereIn('code', $codes)->first(),
+                'Purchase' => Purchase::query()->whereIn('code', $codes)->first(),
+                'PurchaseReturn' => \App\Models\PurchaseReturn::query()->whereIn('code', $codes)->first(),
+                'OrderReturn' => OrderReturn::query()->whereIn('code', $codes)->first(),
+                default => null,
+            };
+        }
         if (! $model) {
             return [null, 0];
         }
@@ -359,6 +388,141 @@ class PartnerDebtExportDocumentResolver
         }
 
         return [$type, (int) $model->id];
+    }
+
+    /**
+     * Batch legacy code lookup for exports. The one-entry fallback in
+     * legacyCodeLookup() remains for callers that use the resolver directly,
+     * while exporter preload never performs one query per event.
+     */
+    private function preloadLegacyDocuments(array $entries): void
+    {
+        $codesByType = [];
+        foreach ($entries as $entry) {
+            if ($this->isPayment($entry, strtolower((string) ($entry['event_kind'] ?? ''))) ||
+                $this->isAdjustment($entry, strtolower((string) ($entry['event_kind'] ?? '')))) {
+                continue;
+            }
+
+            $type = $this->normalizeType($entry['reference_type'] ?? $entry['detail_type'] ?? null);
+            if ($type === null) {
+                continue;
+            }
+            $rawCodes = [
+                trim((string) ($entry['code'] ?? '')),
+                trim((string) ($entry['reference_code'] ?? '')),
+            ];
+            foreach ($rawCodes as $code) {
+                if ($code === '') {
+                    continue;
+                }
+                $codesByType[$type][] = $code;
+                $codesByType[$type][] = (string) preg_replace('/^(HUY-|CANCEL-)/i', '', $code);
+            }
+        }
+
+        foreach ($codesByType as $type => $codes) {
+            $codes = array_values(array_unique(array_filter($codes)));
+            if ($codes === []) {
+                continue;
+            }
+            $models = match ($type) {
+                'Invoice' => \App\Models\Invoice::query()->whereIn('code', $codes)->get(),
+                'Purchase' => Purchase::query()->whereIn('code', $codes)->get(),
+                'PurchaseReturn' => \App\Models\PurchaseReturn::query()->whereIn('code', $codes)->get(),
+                'OrderReturn' => OrderReturn::query()->whereIn('code', $codes)->get(),
+                default => collect(),
+            };
+            foreach ($models as $model) {
+                $this->storeDocument($type, $model);
+                $this->legacyDocumentsByTypeCode[$type][strtolower((string) $model->code)] = $model;
+                if ($type === 'Purchase') {
+                    $this->discounts[$type.':'.$model->id] = (float) ($model->discount ?? 0);
+                }
+            }
+        }
+    }
+
+    public function contextLabel(array $entry, string $fallback): string
+    {
+        $eventKind = strtolower((string) ($entry['event_kind'] ?? ''));
+        if (! $this->isPayment($entry, $eventKind) && ! $this->isAdjustment($entry, $eventKind)) {
+            return $fallback;
+        }
+
+        if (in_array(strtolower(trim($fallback)), ['payment', 'supplier payment', 'customer payment'], true)) {
+            $fallback = 'Thanh toán';
+        }
+        $parts = [$fallback];
+        $method = trim((string) ($entry['payment_method'] ?? ''));
+        if ($method !== '') {
+            $parts[] = match (strtolower($method)) {
+                'cash', 'tien_mat' => 'Tiền mặt',
+                'bank', 'bank_transfer', 'transfer' => 'Chuyển khoản',
+                default => $method,
+            };
+        }
+        $linkedCode = trim((string) ($entry['payment_for_code'] ?? $entry['linked_document_code'] ?? ''));
+        $linkedLabel = trim((string) ($entry['linked_document_label'] ?? ''));
+        if ($linkedCode !== '' || $linkedLabel !== '') {
+            $parts[] = 'cho '.trim($linkedLabel.' '.$linkedCode);
+        }
+
+        return implode(' · ', $parts);
+    }
+
+    public function contextNote(array $entry): string
+    {
+        $parts = [];
+        foreach (['note', 'description'] as $key) {
+            $value = trim((string) ($entry[$key] ?? ''));
+            if ($value !== '') {
+                $parts[] = $value;
+            }
+        }
+        foreach ([
+            'original_cash_flow_amount' => 'Tiền gốc',
+            'non_debt_cash_amount' => 'Tiền không ghi nợ',
+        ] as $key => $label) {
+            if (array_key_exists($key, $entry) && is_numeric($entry[$key])) {
+                $parts[] = $label.': '.number_format((float) $entry[$key], 0, ',', '.');
+            }
+        }
+
+        $identity = $this->resolve($entry);
+        $documentKey = $this->documentKey($identity);
+        $documentNote = $documentKey !== null
+            ? trim((string) ($this->documents[$documentKey]->note ?? ''))
+            : '';
+        if ($documentNote !== '' && ! in_array($documentNote, $parts, true)) {
+            $parts[] = $documentNote;
+        }
+
+        return implode(' · ', $parts);
+    }
+
+    private function productUnitName(?object $product): string
+    {
+        if ($product === null || ! method_exists($product, 'relationLoaded') || ! $product->relationLoaded('units')) {
+            return '';
+        }
+
+        $unit = $product->units->first(static fn (object $item): bool => (bool) $item->is_base_unit)
+            ?? $product->units->first();
+
+        return trim((string) ($unit?->unit_name ?? ''));
+    }
+
+    private function persistedVat(object $item, ?object $product): string|float
+    {
+        foreach (['vat', 'vat_rate', 'tax', 'tax_rate', 'vat_amount', 'tax_amount'] as $key) {
+            $value = $item->{$key} ?? $product?->{$key};
+            if ($value !== null && $value !== '') {
+                return is_numeric($value) ? (float) $value : (string) $value;
+            }
+        }
+
+        return '';
     }
 
     /** @return array{0:?string,1:int} */
