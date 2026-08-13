@@ -87,6 +87,12 @@ class CustomerDebtExcelExportService
     public function build(): Spreadsheet
     {
         $this->documents->preload($this->entries);
+        $this->entries = $this->runningBalances->project(
+            $this->entries,
+            'customer',
+            $this->effects,
+            $this->documents,
+        );
         $inWindow = array_values(array_filter($this->entries, fn (array $entry) => $this->isInWindow($entry)));
         $opening = $this->computeOpeningDebt();
         $debit = 0.0;

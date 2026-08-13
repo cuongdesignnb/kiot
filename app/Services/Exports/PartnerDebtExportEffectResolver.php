@@ -17,6 +17,7 @@ class PartnerDebtExportEffectResolver
         if (($entry['reference_only'] ?? false)
             || ($entry['is_reference_only'] ?? false)
             || (array_key_exists('affects_canonical_balance', $entry) && ! (bool) $entry['affects_canonical_balance'])
+            || (array_key_exists('affects_document_balance', $entry) && ! (bool) $entry['affects_document_balance'])
             || (array_key_exists('affects_debt_balance', $entry) && ! (bool) $entry['affects_debt_balance'])) {
             return 0.0;
         }

@@ -2,16 +2,13 @@
 
 namespace App\Services;
 
-use App\Models\ActivityLog;
 use App\Models\CashFlow;
 use App\Models\Customer;
 use App\Models\CustomerPaymentAllocation;
 use App\Models\Invoice;
 use App\Services\Debt\PartnerDebtMutationCoordinator;
 use App\Services\Debt\PartnerDebtRoleResolver;
-use App\Support\Status\BusinessStatus;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class CustomerPaymentService
@@ -142,108 +139,16 @@ class CustomerPaymentService
         ?string $reason = null,
         ?string $idempotencyKey = null,
     ): string {
-        $flowSnapshot = CashFlow::withTrashed()->findOrFail($cashFlow->id);
-        if (in_array($flowSnapshot->reference_type, [
-            'Invoice',
-            'Order',
-            'OrderReturn',
-            'Purchase',
-            'PurchaseReturn',
-            'SupplierPayment',
-        ], true)) {
-            return self::SOURCE_DOCUMENT_REQUIRED;
-        }
-        if (! $flowSnapshot->target_id) {
-            return $this->cancelUnlinkedFlow($flowSnapshot, $reason);
+        $normalizedReason = trim((string) ($reason ?? ''));
+        if (mb_strlen($normalizedReason) < 5) {
+            $normalizedReason = 'Hủy phiếu thu '.$cashFlow->code;
         }
 
-        $payloadHash = hash('sha256', json_encode([
-            'cash_flow_id' => (int) $flowSnapshot->id,
-            'reason' => $reason,
-        ], JSON_UNESCAPED_UNICODE));
-
-        return $this->coordinator->execute(
-            (int) $flowSnapshot->target_id,
-            'customer_payment_cancel',
-            $payloadHash,
-            function (Customer $lockedPartner) use ($flowSnapshot, $reason): string {
-                return $this->cancelUnlinkedFlow($flowSnapshot, $reason, $lockedPartner);
-            },
+        return app(CashFlowCancellationService::class)->cancel(
+            $cashFlow,
+            $normalizedReason,
             $idempotencyKey,
         );
-    }
-
-    private function cancelUnlinkedFlow(
-        CashFlow $cashFlow,
-        ?string $reason,
-        ?Customer $lockedPartner = null,
-    ): string {
-        return DB::transaction(function () use ($cashFlow, $reason, $lockedPartner): string {
-            $flow = CashFlow::withTrashed()->lockForUpdate()->findOrFail($cashFlow->id);
-            if (! BusinessStatus::isValidCashFlow($flow->status) || $flow->trashed()) {
-                return self::ALREADY_CANCELLED;
-            }
-
-            if ($flow->reference_type === 'DebtPayment') {
-                $this->cancelDebtPayment($flow);
-            } elseif (in_array($flow->reference_type, [
-                'Invoice',
-                'Order',
-                'OrderReturn',
-                'Purchase',
-                'PurchaseReturn',
-                'SupplierPayment',
-            ], true)) {
-                return self::SOURCE_DOCUMENT_REQUIRED;
-            }
-
-            if ($lockedPartner && $flow->reference_type !== 'DebtPayment') {
-                $amount = (float) $flow->amount;
-                $isCustomer = in_array((string) $flow->target_type, PartnerDebtRoleResolver::CUSTOMER_TARGET_TYPES, true);
-                $isSupplier = in_array((string) $flow->target_type, PartnerDebtRoleResolver::SUPPLIER_TARGET_TYPES, true);
-                if ($isCustomer) {
-                    if (! (bool) $lockedPartner->is_customer) {
-                        throw ValidationException::withMessages([
-                            'target_id' => 'Doi tac khong co vai tro khach hang da duoc luu.',
-                        ]);
-                    }
-                    $originalDelta = $flow->type === 'receipt' ? -$amount : $amount;
-                    $lockedPartner->debt_amount = (float) $lockedPartner->debt_amount - $originalDelta;
-                } elseif ($isSupplier) {
-                    if (! (bool) $lockedPartner->is_supplier) {
-                        throw ValidationException::withMessages([
-                            'target_id' => 'Doi tac khong co vai tro nha cung cap da duoc luu.',
-                        ]);
-                    }
-                    $originalDelta = $flow->type === 'payment' ? -$amount : $amount;
-                    $lockedPartner->supplier_debt_amount = (float) $lockedPartner->supplier_debt_amount - $originalDelta;
-                }
-                $lockedPartner->save();
-                $this->coordinator->checkpoint('projection');
-            }
-
-            $flow->status = 'cancelled';
-            $flow->cancel_reason = $reason;
-            $flow->cancelled_by = auth()->id();
-            $flow->cancelled_at = now();
-            $flow->save();
-            $flow->delete();
-            $this->coordinator->checkpoint('evidence');
-
-            ActivityLog::log(
-                'cashflow_cancel',
-                "Huy phieu {$flow->code}, so tien: ".number_format($flow->amount),
-                $flow,
-                [
-                    'amount' => (float) $flow->amount,
-                    'reference_type' => $flow->reference_type,
-                    'reference_code' => $flow->reference_code,
-                    'cancel_reason' => $reason,
-                ],
-            );
-
-            return self::CANCELLED;
-        });
     }
 
     public function isFinanciallyLinked(CashFlow $cashFlow): bool
@@ -337,57 +242,5 @@ class CustomerPaymentService
         }
 
         return $allocations;
-    }
-
-    private function cancelDebtPayment(CashFlow $flow): void
-    {
-        $allocations = CustomerPaymentAllocation::query()
-            ->where('cash_flow_id', $flow->id)
-            ->lockForUpdate()
-            ->get();
-
-        foreach ($allocations as $allocation) {
-            $invoice = Invoice::query()->lockForUpdate()->find($allocation->invoice_id);
-            if ($invoice) {
-                $invoice->customer_paid = max(
-                    0.0,
-                    (float) $invoice->customer_paid - (float) $allocation->amount
-                );
-                $invoice->save();
-            }
-        }
-
-        if ($flow->target_id && (float) $flow->amount > 0) {
-            app(CustomerDebtService::class)->recordAdjustment(
-                (int) $flow->target_id,
-                (float) $flow->amount,
-                "Huy phieu thu {$flow->code}",
-                ['ref_code' => $flow->code, 'type' => 'payment_cancel']
-            );
-        }
-    }
-
-    private function cancelInvoicePayment(CashFlow $flow): void
-    {
-        $invoice = Invoice::query()
-            ->where('code', $flow->reference_code)
-            ->lockForUpdate()
-            ->first();
-        if (! $invoice || BusinessStatus::isCancelled($invoice->status)) {
-            return;
-        }
-
-        $reversalAmount = min((float) $flow->amount, max(0.0, (float) $invoice->customer_paid));
-        $invoice->customer_paid = (float) $invoice->customer_paid - $reversalAmount;
-        $invoice->save();
-
-        if ($invoice->customer_id && $reversalAmount >= 0.01) {
-            app(CustomerDebtService::class)->recordAdjustment(
-                (int) $invoice->customer_id,
-                $reversalAmount,
-                "Huy phieu thu {$flow->code} cua hoa don {$invoice->code}",
-                ['ref_code' => $invoice->code, 'type' => 'payment_cancel']
-            );
-        }
     }
 }

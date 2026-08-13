@@ -192,8 +192,11 @@ Route::middleware('auth')->group(function () {
     Route::get('/stock-takes', [StockTakeController::class, 'index'])->name('stock-takes.index')->middleware('permission:stock_takes.view');
     Route::middleware('permission:stock_takes.create')->group(function () {
         Route::get('/stock-takes/create', [StockTakeController::class, 'create'])->name('stock-takes.create');
+        Route::get('/stock-takes/{id}/edit', [StockTakeController::class, 'edit'])->name('stock-takes.edit');
         Route::post('/stock-takes', [StockTakeController::class, 'store'])->name('stock-takes.store');
         Route::put('/stock-takes/{id}', [StockTakeController::class, 'update'])->name('stock-takes.update');
+        Route::get('/stock-takes/products/{product}/serials', [StockTakeController::class, 'productSerials'])
+            ->name('stock-takes.products.serials');
     });
     // Step 24.0B: tách quyền cân bằng / hủy kiểm kho.
     Route::post('/stock-takes/{id}/balance', [StockTakeController::class, 'balance'])->name('stock-takes.balance')->middleware('permission:stock_takes.balance');

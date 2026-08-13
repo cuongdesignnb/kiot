@@ -115,6 +115,12 @@ class SupplierDebtExcelExportService
     public function build(): Spreadsheet
     {
         $this->documents->preload($this->entries, 'supplier');
+        $this->entries = $this->runningBalances->project(
+            $this->entries,
+            'supplier',
+            $this->effects,
+            $this->documents,
+        );
 
         // Filter entries into the display window — but compute opening
         // / period totals against the FULL ledger we were handed.

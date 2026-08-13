@@ -32,12 +32,16 @@
         .sign-col .sign-name { font-size: 11px; color: #999; }
         .btn-print { display: block; margin: 15px auto 0; padding: 8px 24px; background: #2563eb; color: #fff; border: none; border-radius: 4px; font-size: 13px; cursor: pointer; }
         .btn-print:hover { background: #1d4ed8; }
+        .cancelled-banner { border: 2px solid #b91c1c; color: #b91c1c; font-weight: 800; letter-spacing: 1px; padding: 6px; text-align: center; margin-bottom: 10px; transform: rotate(-3deg); }
         @media print { body { margin: 0; } .receipt { max-width: none; } .no-print { display: none !important; } }
     </style>
 </head>
 <body>
     @php $isReceipt = $cashFlow->type === 'receipt'; @endphp
     <div class="receipt">
+        @if($cashFlow->status === 'cancelled' || $cashFlow->trashed())
+            <div class="cancelled-banner">ĐÃ HỦY</div>
+        @endif
         <div class="header">
             <div class="company-name">{{ config('app.name', 'KiotViet') }}</div>
         </div>
@@ -89,6 +93,15 @@
             <div class="note-label">Ghi chú:</div>
             <div>{{ $cashFlow->description }}</div>
         </div>
+        @endif
+
+        @if($cashFlow->status === 'cancelled' || $cashFlow->trashed())
+            <div class="note-box">
+                <div class="note-label">Thông tin hủy:</div>
+                <div>Lý do: {{ $cashFlow->cancel_reason ?: 'Không có' }}</div>
+                <div>Người hủy: {{ $cashFlow->cancelledBy?->name ?: 'Không xác định' }}</div>
+                <div>Thời gian: {{ $cashFlow->cancelled_at?->format('d/m/Y H:i:s') ?: '' }}</div>
+            </div>
         @endif
 
         <div class="sign-area">

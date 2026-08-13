@@ -1229,7 +1229,7 @@ class PurchaseController extends Controller
                 (int) $purchase->supplier_id,
                 'purchase_cancel',
                 $payloadHash,
-                function () use ($purchase, $cancelReason): Purchase {
+                function (\App\Models\Customer $lockedSupplier, ?\App\Models\PartnerDebtOperation $operation = null) use ($purchase, $cancelReason): Purchase {
                     $purchase = Purchase::with(['items', 'supplier'])->lockForUpdate()->findOrFail($purchase->id);
 
                     $costingMethod = \App\Models\Setting::get('inventory_costing_method', 'average');
@@ -1314,6 +1314,12 @@ class PurchaseController extends Controller
                             $cashFlow->delete();
                         }
                     }
+
+                    app(\App\Services\CashFlowCancellationService::class)->recordPurchaseAllocationReversals(
+                        $purchase,
+                        $cancelReason,
+                        $operation,
+                    );
 
                     // Giữ items cho audit trail (không xóa)
                     $purchase->status = 'cancelled';

@@ -2,6 +2,7 @@
 
 namespace App\Services\Exports;
 
+use App\Models\CashFlow;
 use App\Models\InvoiceItem;
 use App\Models\OrderReturn;
 use App\Models\Purchase;
@@ -34,6 +35,9 @@ class PartnerDebtExportDocumentResolver
 
     /** @var array<string,array<int,object>> */
     private array $legacyDocumentsByTypeCode = [];
+
+    /** @var array<int,object> */
+    private array $paymentSources = [];
 
     /**
      * Resolve a canonical event to an export document identity.
@@ -112,6 +116,19 @@ class PartnerDebtExportDocumentResolver
                 foreach (OrderReturn::query()->whereIn('id', $ids)->get() as $document) {
                     $this->storeDocument('OrderReturn', $document);
                 }
+            }
+        }
+
+        $cashFlowIds = array_values(array_unique(array_filter(array_map(
+            static fn (array $entry): int => (int) ($entry['detail_reference_id'] ?? 0),
+            array_filter(
+                $entries,
+                fn (array $entry): bool => $this->isPayment($entry, strtolower((string) ($entry['event_kind'] ?? ''))),
+            ),
+        ))));
+        if ($cashFlowIds !== []) {
+            foreach (CashFlow::query()->whereIn('id', $cashFlowIds)->get() as $cashFlow) {
+                $this->paymentSources[(int) $cashFlow->id] = $cashFlow;
             }
         }
 
@@ -454,7 +471,8 @@ class PartnerDebtExportDocumentResolver
             $fallback = 'Thanh toán';
         }
         $parts = [$fallback];
-        $method = trim((string) ($entry['payment_method'] ?? ''));
+        $payment = $this->paymentSource($entry);
+        $method = trim((string) ($payment?->payment_method ?? $entry['payment_method'] ?? ''));
         if ($method !== '') {
             $parts[] = match (strtolower($method)) {
                 'cash', 'tien_mat' => 'Tiền mặt',
@@ -462,10 +480,21 @@ class PartnerDebtExportDocumentResolver
                 default => $method,
             };
         }
-        $linkedCode = trim((string) ($entry['payment_for_code'] ?? $entry['linked_document_code'] ?? ''));
+        $linkedCode = $this->firstLinkedCode($entry, $payment);
         $linkedLabel = trim((string) ($entry['linked_document_label'] ?? ''));
-        if ($linkedCode !== '' || $linkedLabel !== '') {
-            $parts[] = 'cho '.trim($linkedLabel.' '.$linkedCode);
+        if ($linkedLabel !== ''
+            && $payment?->code
+            && $this->containsCode($linkedLabel, (string) $payment->code)) {
+            $linkedLabel = '';
+        }
+        if ($linkedCode !== '') {
+            $reference = 'cho '.$linkedCode;
+            if ($linkedLabel !== '' && ! $this->containsCode($linkedLabel, $linkedCode)) {
+                $reference .= ' ('.$linkedLabel.')';
+            }
+            $parts[] = $reference;
+        } elseif ($linkedLabel !== '') {
+            $parts[] = $linkedLabel;
         }
 
         return implode(' · ', $parts);
@@ -477,6 +506,13 @@ class PartnerDebtExportDocumentResolver
         foreach (['note', 'description'] as $key) {
             $value = trim((string) ($entry[$key] ?? ''));
             if ($value !== '') {
+                $parts[] = $value;
+            }
+        }
+        $payment = $this->paymentSource($entry);
+        foreach (['note', 'description'] as $key) {
+            $value = trim((string) ($payment?->{$key} ?? ''));
+            if ($value !== '' && ! in_array($value, $parts, true)) {
                 $parts[] = $value;
             }
         }
@@ -499,6 +535,44 @@ class PartnerDebtExportDocumentResolver
         }
 
         return implode(' · ', $parts);
+    }
+
+    private function paymentSource(array $entry): ?object
+    {
+        $id = (int) ($entry['detail_reference_id'] ?? 0);
+
+        return $id > 0 ? ($this->paymentSources[$id] ?? null) : null;
+    }
+
+    private function firstLinkedCode(array $entry, ?object $payment): string
+    {
+        $ownCode = trim((string) ($entry['code'] ?? ''));
+        foreach ([
+            $entry['payment_for_code'] ?? null,
+            $entry['linked_document_code'] ?? null,
+            $entry['reference_code'] ?? null,
+        ] as $code) {
+            $code = trim((string) $code);
+            if ($code !== ''
+                && strcasecmp($code, (string) ($payment?->code ?? '')) !== 0
+                && strcasecmp($code, $ownCode) !== 0) {
+                return $code;
+            }
+        }
+
+        $persistedReference = trim((string) ($payment?->reference_code ?? ''));
+        if ($persistedReference !== ''
+            && strcasecmp($persistedReference, (string) ($payment?->code ?? '')) !== 0
+            && strcasecmp($persistedReference, $ownCode) !== 0) {
+            return $persistedReference;
+        }
+
+        return '';
+    }
+
+    private function containsCode(string $label, string $code): bool
+    {
+        return stripos($label, $code) !== false;
     }
 
     private function productUnitName(?object $product): string

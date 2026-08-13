@@ -277,6 +277,13 @@ class SupplierPaymentDocumentTimelineTest extends TestCase
         $this->assertFalse($after->contains(fn (array $event): bool => ($event['event_kind'] ?? '') === 'supplier_payment_cancel_reversal'
             && abs((float) $event['supplier_delta'] - 9_000_000.0) < 0.01));
         $this->assertSame(3, DB::table('supplier_payment_allocations')->where('payment_id', $payment->id)->count());
+        $cancelledAllocationId = DB::table('supplier_payment_allocations')
+            ->where('payment_id', $payment->id)
+            ->where('purchase_id', $purchaseB->id)
+            ->value('id');
+        $this->assertSame(1, DB::table('supplier_payment_allocation_reversals')
+            ->where('allocation_id', $cancelledAllocationId)
+            ->count());
         $this->assertSame('active', (string) $payment->fresh()->status);
     }
 

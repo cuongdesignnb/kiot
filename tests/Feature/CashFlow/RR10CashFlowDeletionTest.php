@@ -244,12 +244,10 @@ class RR10CashFlowDeletionTest extends TestCase
     }
 
     /* ═══════════════════════════════════════════════════════════════════════
-     *  TC-RR10-05: CashFlowController@destroy đã đúng — regression guard
+     *  TC-RR10-05: CashFlowController@destroy preserves the audit row
      *
-     *  CashFlowController@destroy (dòng 189-190):
-     *    $cashFlow->update(['status' => 'cancelled']);
-     *    $cashFlow->delete(); // soft-delete
-     *  → Chuẩn.
+     *  Cash-book cancellation is a status transition. The voucher remains
+     *  queryable for audit and is not physically/soft deleted.
      * ═══════════════════════════════════════════════════════════════════════ */
 
     public function test_cashflow_controller_destroy_sets_cancelled_status(): void
@@ -267,15 +265,20 @@ class RR10CashFlowDeletionTest extends TestCase
         ]);
 
         $this->actingAs($this->admin)
-             ->delete(route('cash_flows.destroy', $cashFlow->id));
+             ->delete(
+                 route('cash_flows.destroy', $cashFlow->id),
+                 ['cancel_reason' => 'Điều chỉnh phiếu RR10'],
+                 ['Idempotency-Key' => 'rr10-cashflow-cancel-'.uniqid()],
+             );
 
-        $trashed = CashFlow::withTrashed()->find($cashFlow->id);
-        $this->assertNotNull($trashed, 'CashFlow phải còn sau destroy (SoftDeletes)');
-        $this->assertNotNull($trashed->deleted_at, 'CashFlow phải bị soft-delete');
+        $cancelled = CashFlow::withTrashed()->find($cashFlow->id);
+        $this->assertNotNull($cancelled, 'CashFlow phải còn để phục vụ audit');
+        $this->assertNull($cancelled->deleted_at, 'CashFlow hủy trực tiếp tại Sổ quỹ không được soft-delete');
         $this->assertEquals(
             'cancelled',
-            $trashed->status,
-            "CashFlowController@destroy phải set status='cancelled'"
+            $cancelled->status,
+            "CashFlowController@destroy phải set status='cancelled'",
         );
+        $this->assertSame('Điều chỉnh phiếu RR10', $cancelled->cancel_reason);
     }
 }

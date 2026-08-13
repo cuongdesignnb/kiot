@@ -12,19 +12,21 @@ const props = defineProps({
     branches: Array,
     categories: Array,
     stockTakeCode: String,
+    stockTake: Object,
 });
 
 const page = usePage();
 const currentUser = computed(() => page.props.auth?.user);
 
-const transactionDate = ref(nowDatetimeLocal());
+const transactionDate = ref(props.stockTake?.created_at ? new Date(props.stockTake.created_at).toISOString().slice(0, 16) : nowDatetimeLocal());
 
-const selectedBranch = ref('');
+const selectedBranch = ref(props.stockTake?.branch_id ?? '');
 
 const searchQuery = ref('');
 const showSuggestions = ref(false);
+const unknownSerialMessage = ref('');
 const items = ref([]);
-const note = ref("");
+const note = ref(props.stockTake?.note || "");
 const submitRef = ref(false);
 const filteredProducts = ref([]);
 const isSearchingProduct = ref(false);
@@ -32,16 +34,31 @@ const activeTab = ref("all");
 const showCategoryModal = ref(false);
 const isLoadingCategoryProducts = ref(false);
 let isRevertingBranch = false;
+const isEditing = computed(() => Boolean(props.stockTake?.id));
 
 const toNumber = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
 
-const diffQty = (item) => toNumber(item.actual_stock) - toNumber(item.system_stock);
+const isSerialItem = (item) => Boolean(item.has_serial);
+const serialActualStock = (item) => item.serials_loaded
+    ? item.serials.filter((serial) => serial.actual_present === true).length
+    : null;
+const itemActualStock = (item) => isSerialItem(item) ? serialActualStock(item) : item.actual_stock;
+const itemIsChecked = (item) => isSerialItem(item)
+    ? Boolean(item.serials_loaded && item.serials.every((serial) => serial.actual_present !== null))
+    : Boolean(item.checked && item.actual_stock !== null && item.actual_stock !== "");
+const serialHasIntegrityMismatch = (item) => isSerialItem(item)
+    && item.serials_loaded
+    && item.integrity_match === false;
+const diffQty = (item) => {
+    const actual = itemActualStock(item);
+    return actual === null || actual === undefined ? 0 : toNumber(actual) - toNumber(item.system_stock);
+};
 const diffValue = (item) => diffQty(item) * toNumber(item.cost_price_snapshot ?? item.cost_price);
 
-const checkedItems = computed(() => items.value.filter((item) => item.checked));
-const uncheckedItems = computed(() => items.value.filter((item) => !item.checked));
-const matchedItems = computed(() => items.value.filter((item) => item.checked && diffQty(item) === 0));
-const diffItems = computed(() => items.value.filter((item) => item.checked && diffQty(item) !== 0));
+const checkedItems = computed(() => items.value.filter(itemIsChecked));
+const uncheckedItems = computed(() => items.value.filter((item) => !itemIsChecked(item)));
+const matchedItems = computed(() => items.value.filter((item) => itemIsChecked(item) && !serialHasIntegrityMismatch(item) && diffQty(item) === 0));
+const diffItems = computed(() => items.value.filter((item) => itemIsChecked(item) && (serialHasIntegrityMismatch(item) || diffQty(item) !== 0)));
 
 const visibleItems = computed(() => {
     if (activeTab.value === "matched") return matchedItems.value;
@@ -57,6 +74,36 @@ const totalDiffDecrease = computed(() => checkedItems.value.filter((item) => dif
 const totalDiffValue = computed(() => checkedItems.value.reduce((sum, item) => sum + diffValue(item), 0));
 
 let searchTimeout = null;
+let searchRequestId = 0;
+const searchProducts = async (rawValue) => {
+    const val = String(rawValue || '').trim();
+    const requestId = ++searchRequestId;
+    if (!val) {
+        filteredProducts.value = [];
+        showSuggestions.value = false;
+        unknownSerialMessage.value = '';
+        return [];
+    }
+    isSearchingProduct.value = true;
+    try {
+        const response = await axios.get("/api/stock-takes/products", {
+            params: {
+                search: val,
+                branch_id: selectedBranch.value || undefined,
+                active_only: 1,
+                inventory_only: 1,
+            },
+        });
+        if (requestId === searchRequestId) filteredProducts.value = response.data;
+        return response.data;
+    } catch (error) {
+        if (requestId === searchRequestId) filteredProducts.value = [];
+        return [];
+    } finally {
+        if (requestId === searchRequestId) isSearchingProduct.value = false;
+    }
+};
+
 watch(searchQuery, (val) => {
     if (!val) {
         filteredProducts.value = [];
@@ -65,24 +112,7 @@ watch(searchQuery, (val) => {
     }
     showSuggestions.value = true;
     if (searchTimeout) clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(async () => {
-        isSearchingProduct.value = true;
-        try {
-            const response = await axios.get("/api/stock-takes/products", {
-                params: {
-                    search: val,
-                    branch_id: selectedBranch.value || undefined,
-                    active_only: 1,
-                    inventory_only: 1,
-                },
-            });
-            filteredProducts.value = response.data;
-        } catch (error) {
-            console.error("Product search failed:", error);
-        } finally {
-            isSearchingProduct.value = false;
-        }
-    }, 300);
+    searchTimeout = setTimeout(() => searchProducts(val), 300);
 });
 
 watch(selectedBranch, (newBranch, oldBranch) => {
@@ -111,7 +141,57 @@ const normalizeProduct = (product) => ({
     cost_price_snapshot: Number(product.cost_price_snapshot ?? product.cost_price ?? 0),
     checked: false,
     has_serial: Boolean(product.has_serial),
+    matched_serial_numbers: product.matched_serial_numbers || [],
+    serials: [],
+    serials_loaded: false,
+    serial_loading: false,
+    serial_error: null,
+    aggregate_stock: Number(product.system_stock ?? product.stock_quantity ?? 0),
+    serial_stock_count: null,
+    integrity_match: null,
+    unknown_serials: [],
 });
+
+const hydrateDraftItem = (item) => {
+    const product = item.product || {};
+    const savedSerials = item.serial_checks || item.serialChecks || [];
+    const hasSerial = Boolean(product.has_serial || savedSerials.length);
+
+    return {
+        ...normalizeProduct(product),
+        product_id: item.product_id,
+        sku: product.sku,
+        barcode: product.barcode,
+        name: product.name,
+        unit_name: item.unit_name || product.unit_name || product.unit || "Cái",
+        category_id: item.category_id ?? product.category_id,
+        system_stock: Number(item.system_stock_snapshot ?? item.system_stock ?? product.stock_quantity ?? 0),
+        actual_stock: item.actual_stock === null || item.actual_stock === undefined ? null : Number(item.actual_stock),
+        cost_price_snapshot: Number(item.cost_price_snapshot ?? product.cost_price ?? 0),
+        checked: Boolean(item.checked),
+        has_serial: hasSerial,
+        serials: savedSerials.map((serial) => ({
+            id: serial.serial_imei_id ?? serial.id,
+            serial_imei_id: serial.serial_imei_id ?? serial.id,
+            serial_number: serial.serial_number_snapshot ?? serial.serial_number,
+            status: serial.status_snapshot ?? serial.status,
+            repair_status: serial.repair_status_snapshot ?? serial.repair_status,
+            cost_price: serial.cost_price_snapshot ?? serial.cost_price,
+            actual_present: serial.actual_present,
+        })),
+        serials_loaded: hasSerial && savedSerials.length > 0,
+        serial_loading: false,
+        serial_error: null,
+        aggregate_stock: Number(item.system_stock_snapshot ?? item.system_stock ?? product.stock_quantity ?? 0),
+        serial_stock_count: savedSerials.length,
+        integrity_match: hasSerial ? Number(item.system_stock_snapshot ?? item.system_stock ?? 0) === savedSerials.length : null,
+        unknown_serials: item.unknown_serials || [],
+    };
+};
+
+if (isEditing.value) {
+    items.value = (props.stockTake.items || []).map(hydrateDraftItem);
+}
 
 const addProducts = (products) => {
     let added = 0;
@@ -125,10 +205,78 @@ const addProducts = (products) => {
     return added;
 };
 
-const selectProduct = (product) => {
-    addProducts([product]);
+const refreshSerialDerivedState = (item) => {
+    if (!isSerialItem(item) || !item.serials_loaded) return;
+    item.actual_stock = serialActualStock(item);
+    item.checked = itemIsChecked(item);
+};
+
+const loadSerials = async (item, markSerialNumber = null) => {
+    if (!isSerialItem(item)) return;
+    const requestId = (item.serial_request_id || 0) + 1;
+    item.serial_request_id = requestId;
+    item.serial_loading = true;
+    item.serial_error = null;
+    try {
+        const response = await axios.get(`/stock-takes/products/${item.product_id}/serials`);
+        if (requestId !== item.serial_request_id) return;
+        item.aggregate_stock = Number(response.data.aggregate_stock ?? item.system_stock);
+        item.serial_stock_count = Number(response.data.serial_stock_count ?? 0);
+        item.integrity_match = Boolean(response.data.integrity_match);
+        item.serials = (response.data.serials || []).map((serial) => ({
+            ...serial,
+            actual_present: null,
+        }));
+        item.serials_loaded = true;
+        const serialToMark = markSerialNumber || item.matched_serial_numbers?.[0];
+        if (serialToMark) {
+            const matched = item.serials.find((serial) => serial.serial_number === serialToMark);
+            if (matched) matched.actual_present = true;
+        }
+        refreshSerialDerivedState(item);
+    } catch (error) {
+        if (requestId === item.serial_request_id) {
+            item.serial_error = "Không tải được danh sách Serial/IMEI";
+            item.serials_loaded = false;
+        }
+    } finally {
+        if (requestId === item.serial_request_id) item.serial_loading = false;
+    }
+};
+
+const selectProduct = async (product) => {
+    const productId = product.product_id ?? product.id;
+    const existing = items.value.find((item) => item.product_id === productId);
+    if (!existing) addProducts([product]);
+    const item = existing || items.value.find((candidate) => candidate.product_id === productId);
+    if (item?.has_serial) {
+        const matchedSerialNumber = product.matched_serial_numbers?.[0] || null;
+        if (item.serials_loaded && matchedSerialNumber) {
+            const matched = item.serials.find((serial) => serial.serial_number === matchedSerialNumber);
+            if (matched) markSerial(item, matched, true);
+        } else if (!item.serials_loaded) {
+            await loadSerials(item, matchedSerialNumber);
+        }
+    }
     searchQuery.value = "";
     showSuggestions.value = false;
+    unknownSerialMessage.value = '';
+};
+
+const submitSearch = async () => {
+    const products = await searchProducts(searchQuery.value);
+    if (products[0]) {
+        await selectProduct(products[0]);
+        return;
+    }
+    const unknown = String(searchQuery.value || '').trim();
+    if (unknown) {
+        const serialItems = items.value.filter(isSerialItem);
+        if (serialItems.length === 1 && !serialItems[0].unknown_serials.includes(unknown)) {
+            serialItems[0].unknown_serials.push(unknown);
+        }
+        unknownSerialMessage.value = `Serial ${unknown} không có trong tồn hệ thống.`;
+    }
 };
 
 const hideSuggestions = () => {
@@ -146,15 +294,27 @@ const markChecked = (item) => {
     item.checked = item.actual_stock !== null && item.actual_stock !== "";
 };
 
-const markMatched = (item) => {
+const markSerial = (item, serial, present) => {
+    serial.actual_present = present;
+    refreshSerialDerivedState(item);
+};
+
+const markMatched = async (item) => {
+    if (isSerialItem(item)) {
+        if (!item.serials_loaded) await loadSerials(item);
+        if (!item.serials_loaded) return;
+        item.serials.forEach((serial) => { serial.actual_present = true; });
+        refreshSerialDerivedState(item);
+        return;
+    }
     item.actual_stock = toNumber(item.system_stock);
     item.checked = true;
 };
 
-const markAllMatched = () => {
+const markAllMatched = async () => {
     if (!items.value.length) return;
     if (!confirm("Đánh dấu tất cả hàng trong phiếu là khớp tồn kho?")) return;
-    items.value.forEach(markMatched);
+    for (const item of items.value) await markMatched(item);
 };
 
 const loadCategoryProducts = async (options) => {
@@ -182,8 +342,16 @@ const loadCategoryProducts = async (options) => {
 
 const payloadItems = computed(() => items.value.map((item) => ({
     product_id: item.product_id,
-    actual_stock: item.checked ? item.actual_stock : null,
-    checked: Boolean(item.checked),
+    actual_stock: itemIsChecked(item) ? itemActualStock(item) : null,
+    checked: itemIsChecked(item),
+    ...(isSerialItem(item) ? {
+        serials: item.serials.map((serial) => ({
+            serial_imei_id: serial.serial_imei_id ?? serial.id,
+            serial_number: serial.serial_number,
+            actual_present: serial.actual_present,
+        })),
+        unknown_serials: item.unknown_serials || [],
+    } : {}),
 })));
 
 const save = async (status) => {
@@ -195,16 +363,42 @@ const save = async (status) => {
         alert("Vui lòng chọn ít nhất 1 hàng hóa để kiểm kho.");
         return;
     }
+    if (status === "balanced" && items.value.some((item) => isSerialItem(item) && (item.serial_loading || !item.serials_loaded || item.serial_error))) {
+        alert("Không thể hoàn thành khi danh sách Serial/IMEI chưa tải xong hoặc tải lỗi.");
+        return;
+    }
+    if (status === "balanced" && items.value.some((item) => isSerialItem(item) && serialHasIntegrityMismatch(item))) {
+        alert("Tồn số lượng và Serial đang lệch. Phiếu chưa thể hoàn thành.");
+        return;
+    }
     if (status === "balanced" && uncheckedItems.value.length > 0) {
         alert("Không thể hoàn thành khi còn hàng chưa kiểm.");
         return;
     }
-    if (status === "balanced" && items.value.some((item) => item.checked && (item.actual_stock === null || item.actual_stock === ""))) {
+    if (status === "balanced" && items.value.some((item) => itemIsChecked(item) && (itemActualStock(item) === null || itemActualStock(item) === ""))) {
         alert("Không thể hoàn thành khi còn dòng chưa nhập số thực tế.");
         return;
     }
 
     submitRef.value = true;
+    if (isEditing.value) {
+        try {
+            const response = await axios.put(`/stock-takes/${props.stockTake.id}`, {
+                branch_id: selectedBranch.value,
+                note: note.value,
+                items: payloadItems.value,
+            });
+            if (response.data?.success) {
+                router.visit('/stock-takes');
+            }
+        } catch (error) {
+            alert(error.response?.data?.message || 'Không thể cập nhật phiếu kiểm kho.');
+        } finally {
+            submitRef.value = false;
+        }
+        return;
+    }
+
     router.post("/stock-takes", {
         code: props.stockTakeCode,
         status,
@@ -235,7 +429,7 @@ const save = async (status) => {
                         <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                             <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                         </div>
-                        <input v-model="searchQuery" @focus="showSuggestions = true" @blur="hideSuggestions" type="text" class="w-full pl-9 pr-3 py-[7px] border-none text-gray-800 rounded-sm focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white" placeholder="Tìm hàng hóa theo mã, tên hoặc barcode">
+                        <input v-model="searchQuery" @focus="showSuggestions = true" @blur="hideSuggestions" @keydown.enter.prevent="submitSearch" type="text" class="w-full pl-9 pr-3 py-[7px] border-none text-gray-800 rounded-sm focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white" placeholder="Tìm hàng hóa theo mã, tên, barcode hoặc Serial/IMEI">
 
                         <div v-if="showSuggestions" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded-sm z-50 max-h-[300px] overflow-auto text-black">
                             <div v-if="isSearchingProduct" class="p-3 text-sm text-gray-500 text-center">Đang tìm kiếm...</div>
@@ -251,6 +445,9 @@ const save = async (status) => {
                                     <div class="text-[12px] text-gray-400">Tồn: {{ product.system_stock ?? product.stock_quantity ?? 0 }}</div>
                                 </div>
                             </div>
+                        </div>
+                        <div v-if="unknownSerialMessage" class="absolute left-0 right-0 top-full mt-1 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800 z-40">
+                            {{ unknownSerialMessage }}
                         </div>
                     </div>
 
@@ -293,7 +490,8 @@ const save = async (status) => {
                             </tr>
                         </thead>
                         <tbody v-if="visibleItems.length > 0">
-                            <tr v-for="(item, index) in visibleItems" :key="item.product_id" class="border-b border-gray-100 hover:bg-[#f0f9ff]/40 transition-colors">
+                            <template v-for="(item, index) in visibleItems" :key="item.product_id">
+                            <tr class="border-b border-gray-100 hover:bg-[#f0f9ff]/40 transition-colors">
                                 <td class="p-3 text-center text-gray-500 group relative w-12">
                                     <span class="group-hover:hidden">{{ index + 1 }}</span>
                                     <button @click="removeItem(item)" class="hidden group-hover:flex items-center justify-center w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full mx-auto" title="Xóa">
@@ -305,18 +503,41 @@ const save = async (status) => {
                                 <td class="p-3 text-center w-16">{{ item.unit_name }}</td>
                                 <td class="p-3 text-right w-24">{{ item.system_stock }}</td>
                                 <td class="p-3 text-center w-28">
-                                    <input type="number" v-model.number="item.actual_stock" @input="markChecked(item)" min="0" class="w-20 border border-gray-300 rounded-sm py-1.5 px-2 text-right outline-none focus:border-blue-500 text-[13px] transition-colors mx-auto block font-semibold shadow-inner bg-blue-50/30">
+                                    <input v-if="!isSerialItem(item)" type="number" v-model.number="item.actual_stock" @input="markChecked(item)" min="0" class="w-20 border border-gray-300 rounded-sm py-1.5 px-2 text-right outline-none focus:border-blue-500 text-[13px] transition-colors mx-auto block font-semibold shadow-inner bg-blue-50/30">
+                                    <span v-else class="font-semibold text-blue-700">{{ itemActualStock(item) ?? "-" }}</span>
                                 </td>
                                 <td class="p-3 text-center">
                                     <button @click="markMatched(item)" class="px-2 py-1 rounded border border-gray-300 hover:bg-gray-50 text-gray-700">Khớp</button>
                                 </td>
-                                <td class="p-3 text-right font-medium w-24" :class="{'text-red-500': item.checked && diffQty(item) < 0, 'text-green-500': item.checked && diffQty(item) > 0}">
-                                    {{ item.checked ? diffQty(item) : "-" }}
+                                <td class="p-3 text-right font-medium w-24" :class="{'text-red-500': itemIsChecked(item) && diffQty(item) < 0, 'text-green-500': itemIsChecked(item) && diffQty(item) > 0}">
+                                    {{ itemIsChecked(item) ? diffQty(item) : "-" }}
                                 </td>
                                 <td class="p-3 font-bold text-gray-800 text-right w-[120px]">
-                                    {{ item.checked ? formatCurrency(diffValue(item)) : "-" }}
+                                    {{ itemIsChecked(item) ? formatCurrency(diffValue(item)) : "-" }}
                                 </td>
                             </tr>
+                            <tr v-if="isSerialItem(item)" class="bg-gray-50 border-b border-gray-200">
+                                <td></td>
+                                <td colspan="8" class="px-3 pb-3">
+                                    <div v-if="item.serial_loading" class="text-xs text-gray-500 py-2">Đang tải Serial/IMEI...</div>
+                                    <div v-else-if="item.serial_error" class="text-xs text-red-600 py-2">{{ item.serial_error }}</div>
+                                    <div v-else-if="!item.serials_loaded" class="py-2">
+                                        <button @click="loadSerials(item)" class="text-xs text-blue-700 hover:underline">Tải Serial/IMEI</button>
+                                    </div>
+                                    <div v-else>
+                                        <div v-if="!item.integrity_match" class="mb-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                                            Tồn số lượng: {{ item.aggregate_stock }} · Serial đang tồn: {{ item.serial_stock_count }} · Dữ liệu tồn kho và Serial đang lệch.
+                                        </div>
+                                        <div v-for="serial in item.serials" :key="serial.id" class="flex items-center gap-3 rounded px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100">
+                                            <span class="text-gray-400">↳</span>
+                                            <span class="font-mono flex-1">{{ serial.serial_number }}</span>
+                                            <button @click="markSerial(item, serial, true)" :class="serial.actual_present === true ? 'bg-green-100 text-green-700 border-green-300' : 'border-gray-300 text-gray-600'" class="rounded border px-2 py-0.5">Có</button>
+                                            <button @click="markSerial(item, serial, false)" :class="serial.actual_present === false ? 'bg-red-100 text-red-700 border-red-300' : 'border-gray-300 text-gray-600'" class="rounded border px-2 py-0.5">Thiếu</button>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                            </template>
                         </tbody>
                     </table>
 
@@ -387,7 +608,7 @@ const save = async (status) => {
                     <button @click="save('draft')" :disabled="submitRef" class="flex-1 bg-[#005bb5] hover:bg-[#00478f] text-white font-semibold py-2.5 rounded flex items-center justify-center gap-2 transition-colors disabled:opacity-50">
                         Lưu tạm
                     </button>
-                    <button @click="save('balanced')" :disabled="submitRef" class="flex-1 bg-[#10b981] hover:bg-[#059669] text-white font-semibold py-2.5 rounded flex items-center justify-center gap-2 transition-colors disabled:opacity-50">
+                    <button v-if="!isEditing" @click="save('balanced')" :disabled="submitRef" class="flex-1 bg-[#10b981] hover:bg-[#059669] text-white font-semibold py-2.5 rounded flex items-center justify-center gap-2 transition-colors disabled:opacity-50">
                         Hoàn thành
                     </button>
                 </div>

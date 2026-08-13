@@ -127,4 +127,9 @@ class CashFlow extends Model
     {
         return $this->hasMany(CustomerPaymentAllocation::class);
     }
+
+    public function cancelledBy()
+    {
+        return $this->belongsTo(User::class, 'cancelled_by');
+    }
 }

@@ -7,6 +7,7 @@ use App\Models\ActivityLog;
 use App\Models\BankAccount;
 use App\Models\CashFlow;
 use App\Models\Customer;
+use App\Services\CashFlowCancellationService;
 use App\Services\CustomerPaymentService;
 use App\Services\Debt\PartnerDebtMutationCoordinator;
 use App\Services\Debt\PartnerDebtRoleResolver;
@@ -33,9 +34,19 @@ class CashFlowController extends Controller
     {
         $this->configureCashFlowFilters();
 
-        $query = CashFlow::query();
+        $cancelledStatuses = (array) $request->input('status', []);
+        $query = in_array('cancelled', $cancelledStatuses, true)
+            ? CashFlow::withTrashed()
+            : CashFlow::active();
+        $query->with('cancelledBy');
         $this->applyFilters($query, $request);
         $cashFlows = $query->paginate(15)->withQueryString();
+        $cashFlows->getCollection()->transform(function (CashFlow $cashFlow): CashFlow {
+            $cashFlow->setAttribute('cancel_policy', app(CashFlowCancellationService::class)->policy($cashFlow));
+            $cashFlow->setAttribute('cancelled_by_name', $cashFlow->cancelledBy?->name);
+
+            return $cashFlow;
+        });
 
         // Summary metrics
         $totalReceipts = CashFlow::active()->where('type', 'receipt')->sum('amount');
@@ -49,10 +60,10 @@ class CashFlowController extends Controller
             ->where('is_supplier', true)
             ->get(['id', 'name', 'phone']);
 
-        $savedReceiptCategories = CashFlow::where('type', 'receipt')
+        $savedReceiptCategories = CashFlow::active()->where('type', 'receipt')
             ->whereNotNull('category')->where('category', '!=', '')
             ->distinct()->pluck('category')->toArray();
-        $savedPaymentCategories = CashFlow::where('type', 'payment')
+        $savedPaymentCategories = CashFlow::active()->where('type', 'payment')
             ->whereNotNull('category')->where('category', '!=', '')
             ->distinct()->pluck('category')->toArray();
 
@@ -232,6 +243,10 @@ class CashFlowController extends Controller
 
     public function update(Request $request, CashFlow $cashFlow)
     {
+        if ($cashFlow->status === 'cancelled' || $cashFlow->trashed()) {
+            return back()->with('error', 'Phiếu đã hủy không được phép sửa.');
+        }
+
         if (app(CustomerPaymentService::class)->isFinanciallyLinked($cashFlow)) {
             return back()->with('error', 'Phieu lien ket chung tu tai chinh khong duoc sua truc tiep. Hay huy va tao lai.');
         }
@@ -299,25 +314,39 @@ class CashFlowController extends Controller
             'cancel_reason.min' => 'Lý do hủy phải có ít nhất 5 ký tự.',
         ]);
 
+        $idempotencyKey = trim((string) $request->header('Idempotency-Key', ''));
+        if ($idempotencyKey === '' || mb_strlen($idempotencyKey) < 16 || mb_strlen($idempotencyKey) > 191) {
+            $message = 'Idempotency-Key phải có từ 16 đến 191 ký tự.';
+
+            return $request->wantsJson()
+                ? response()->json(['success' => false, 'status' => CashFlowCancellationService::MANUAL_REVIEW_REQUIRED, 'message' => $message], 422)
+                : back()->with('error', $message);
+        }
+
         $cashFlow = CashFlow::withTrashed()->findOrFail($cash_flow);
 
         // Lock period check
         app(LockPeriodService::class)->assertNotLocked($cashFlow->time, 'cashflow_cancel');
 
-        $status = app(CustomerPaymentService::class)->cancel(
+        $status = app(CashFlowCancellationService::class)->cancel(
             $cashFlow,
             trim($validated['cancel_reason']),
-            $request->header('Idempotency-Key'),
+            $idempotencyKey,
         );
-        if ($status === CustomerPaymentService::ALREADY_CANCELLED) {
-            $message = 'Phieu thu nay da bi huy truoc do.';
+        if ($status === CashFlowCancellationService::ALREADY_CANCELLED) {
+            $message = 'Phiếu thu/chi này đã bị hủy trước đó.';
 
             return $request->wantsJson()
-                ? response()->json(['success' => false, 'status' => $status, 'message' => $message], 409)
-                : back()->with('error', $message);
+                ? response()->json(['success' => true, 'status' => $status, 'message' => $message])
+                : back()->with('success', $message);
         }
-        if ($status === CustomerPaymentService::SOURCE_DOCUMENT_REQUIRED) {
-            $message = 'Phiếu thu/chi này phát sinh từ chứng từ nguồn. Vui lòng hủy chứng từ gốc để hệ thống tự đảo kho, công nợ và sổ quỹ.';
+        if (in_array($status, [
+            CashFlowCancellationService::SOURCE_DOCUMENT_REQUIRED,
+            CashFlowCancellationService::MANUAL_REVIEW_REQUIRED,
+        ], true)) {
+            $message = $status === CashFlowCancellationService::MANUAL_REVIEW_REQUIRED
+                ? 'Không xác định được chủ chứng từ. Phiếu được khóa để tránh đảo sai công nợ.'
+                : 'Phiếu thu/chi này phát sinh từ chứng từ nguồn. Vui lòng hủy chứng từ gốc để hệ thống tự đảo kho, công nợ và sổ quỹ.';
 
             return $request->wantsJson()
                 ? response()->json(['success' => false, 'status' => $status, 'message' => $message], 422)
@@ -327,17 +356,18 @@ class CashFlowController extends Controller
         if ($request->wantsJson()) {
             return response()->json([
                 'success' => true,
-                'status' => CustomerPaymentService::CANCELLED,
-                'message' => 'Huy phieu thanh cong.',
+                'status' => CashFlowCancellationService::CANCELLED,
+                'message' => 'Hủy phiếu thành công.',
             ]);
         }
 
         return redirect()->back()->with('success', 'Huy phieu thanh cong.');
     }
 
-    public function print(CashFlow $cashFlow)
+    public function print($cash_flow)
     {
-        $cashFlow->load('bankAccount');
+        $cashFlow = CashFlow::withTrashed()->findOrFail($cash_flow);
+        $cashFlow->load(['bankAccount', 'cancelledBy']);
 
         return view('prints.cashflow', compact('cashFlow'));
     }
@@ -345,13 +375,30 @@ class CashFlowController extends Controller
     public function export(Request $request)
     {
         $this->configureCashFlowFilters();
-        $query = CashFlow::query();
+        $cancelledStatuses = (array) $request->input('status', []);
+        $query = in_array('cancelled', $cancelledStatuses, true)
+            ? CashFlow::withTrashed()
+            : CashFlow::active();
+        $query->with('cancelledBy');
         $this->applyFilters($query, $request);
         $flows = $query->get();
 
         return \App\Services\CsvService::export(
-            ['Mã phiếu', 'Thời gian', 'Loại', 'Giá trị', 'Người nộp/nhận', 'Hạng mục', 'Phương thức', 'Ghi chú'],
-            $flows->map(fn ($f) => [$f->code, $f->time, $f->type === 'receipt' ? 'Thu' : 'Chi', $f->amount, $f->target_name, $f->category, $f->payment_method === 'cash' ? 'Tiền mặt' : 'Chuyển khoản', $f->description]),
+            ['Mã phiếu', 'Thời gian', 'Loại', 'Giá trị', 'Người nộp/nhận', 'Hạng mục', 'Phương thức', 'Ghi chú', 'Trạng thái', 'Lý do hủy', 'Người hủy', 'Thời gian hủy'],
+            $flows->map(fn ($f) => [
+                $f->code,
+                $f->time,
+                $f->type === 'receipt' ? 'Thu' : 'Chi',
+                $f->amount,
+                $f->target_name,
+                $f->category,
+                $f->payment_method === 'cash' ? 'Tiền mặt' : 'Chuyển khoản',
+                $f->description,
+                $f->status === 'cancelled' || $f->trashed() ? 'Đã hủy' : 'Đã ghi nhận',
+                $f->cancel_reason,
+                $f->cancelledBy?->name,
+                $f->cancelled_at,
+            ]),
             'so_quy.csv'
         );
     }
