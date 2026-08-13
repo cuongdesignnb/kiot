@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Exceptions\PartnerMergeException;
 use App\Models\CashFlow;
 use App\Models\Customer;
 use App\Models\CustomerGroup;
@@ -21,6 +22,7 @@ use App\Services\PartnerRoleService;
 use App\Support\Debt\PartnerDebtDisplayBalance;
 use App\Support\Filters\DateRangePresets;
 use App\Support\Filters\FilterableIndex;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -797,11 +799,19 @@ class CustomerController extends Controller
 
     public function searchForMerge(Request $request)
     {
-        $q = $request->input('q');
-        $type = $request->input('type'); // 'customer' or 'supplier'
-        $exclude = $request->input('exclude');
+        $validated = $request->validate([
+            'q' => 'nullable|string|max:100',
+            'type' => 'required|in:customer,supplier',
+            'exclude' => 'nullable|integer|exists:customers,id',
+        ]);
+        $q = trim((string) ($validated['q'] ?? ''));
+        $type = $validated['type'];
+        $exclude = $validated['exclude'] ?? null;
 
-        $results = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
+        $query = app(\App\Services\PartnerTransactionGuard::class)->availablePartners();
+        $this->applyMergeBranchScope($query, $request);
+
+        $results = $query
             ->when($q, function ($query, $q) {
                 $query->where(function ($qb) use ($q) {
                     $qb->where('name', 'LIKE', "%{$q}%")
@@ -878,16 +888,26 @@ class CustomerController extends Controller
         $validated = $request->validate([
             'merge_with_id' => 'required|integer|exists:customers,id',
         ]);
+        $idempotency = Validator::make(
+            ['idempotency_key' => $request->header('Idempotency-Key')],
+            ['idempotency_key' => 'required|string|min:16|max:191'],
+        )->validate();
 
+        $this->assertMergeBranchScope($customer, $request);
         $target = Customer::findOrFail($validated['merge_with_id']);
+        $this->assertMergeBranchScope($target, $request);
         $preview = app(PartnerMergeService::class)->merge(
             $customer,
             $target,
-            $request->header('Idempotency-Key'),
+            $idempotency['idempotency_key'],
         );
 
         if ($request->wantsJson()) {
-            return response()->json(['success' => true, 'merge' => $preview]);
+            return response()->json([
+                'success' => true,
+                'status' => $preview['status'],
+                'merge' => $preview,
+            ]);
         }
 
         return back()->with('success', "Đã gộp thành công vào {$target->name} ({$target->code}).");
@@ -898,12 +918,45 @@ class CustomerController extends Controller
         $validated = $request->validate([
             'target_id' => 'required|integer|exists:customers,id',
         ]);
+        $this->assertMergeBranchScope($customer, $request);
+        $target = Customer::findOrFail($validated['target_id']);
+        $this->assertMergeBranchScope($target, $request);
 
         return response()->json(
             app(PartnerMergeService::class)->preview(
                 $customer,
-                Customer::findOrFail($validated['target_id'])
+                $target,
             )
+        );
+    }
+
+    private function applyMergeBranchScope(Builder $query, Request $request): void
+    {
+        $user = $request->user();
+        if (! Setting::get('customer_manage_by_branch', false) || ! $user || $user->isAdmin()) {
+            return;
+        }
+
+        $branchIds = array_values(array_unique(array_map('intval', $user->getAccessibleBranchIds())));
+        $query->where(function (Builder $branchQuery) use ($branchIds): void {
+            $branchQuery->whereNull('branch_id');
+            if ($branchIds !== []) {
+                $branchQuery->orWhereIn('branch_id', $branchIds);
+            }
+        });
+    }
+
+    private function assertMergeBranchScope(Customer $partner, Request $request): void
+    {
+        $query = Customer::query()->whereKey($partner->id);
+        $this->applyMergeBranchScope($query, $request);
+        if ($query->exists()) {
+            return;
+        }
+
+        throw PartnerMergeException::forbidden(
+            'PARTNER_MERGE_BRANCH_FORBIDDEN',
+            'Bạn không được gộp đối tác ngoài phạm vi chi nhánh được phép.'
         );
     }
 

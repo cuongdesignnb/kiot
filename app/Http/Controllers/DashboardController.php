@@ -56,7 +56,7 @@ class DashboardController extends Controller
         $thisMonthCost = $metricsMonth['cogs_net'];
 
         // Tổng chi phí (phiếu chi) tháng này - trừ các khoản trả NCC (đã tính vào giá vốn)
-        $thisMonthExpenses = CashFlow::active()->where('type', 'payment')
+        $thisMonthExpenses = CashFlow::active()->cashImpacting()->where('type', 'payment')
             ->where('created_at', '>=', $startOfMonth)
             ->where(function ($q) {
                 $q->where('category', '!=', 'Chi tiền trả NCC')
@@ -112,10 +112,10 @@ class DashboardController extends Controller
             if ($weekStart->gt(Carbon::now())) break;
 
             $cashFlowChart['labels'][] = 'Tuần ' . $w;
-            $cashFlowChart['receipts'][] = (float) CashFlow::active()->where('type', 'receipt')
+            $cashFlowChart['receipts'][] = (float) CashFlow::active()->cashImpacting()->where('type', 'receipt')
                 ->whereNotIn('category', ['Thu nợ khách hàng', 'Điều chỉnh công nợ'])
                 ->whereBetween('created_at', [$weekStart, $weekEnd])->sum('amount');
-            $cashFlowChart['payments'][] = (float) CashFlow::active()->where('type', 'payment')
+            $cashFlowChart['payments'][] = (float) CashFlow::active()->cashImpacting()->where('type', 'payment')
                 ->whereBetween('created_at', [$weekStart, $weekEnd])->sum('amount');
         }
 

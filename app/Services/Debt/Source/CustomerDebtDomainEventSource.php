@@ -1597,7 +1597,7 @@ class CustomerDebtDomainEventSource
             'PurchaseReturn' => 'purchase_returns',
             'CustomerDebt' => 'customer_debts',
             'SupplierDebtTransaction' => 'supplier_debt_transactions',
-            'DebtOffset', 'DebtOffsetCancel' => 'debt_offsets',
+            'DebtOffset', 'DebtOffsetCancel', 'DebtOffsetReversal' => 'debt_offsets',
             default => 'cash_flows',
         };
     }
@@ -1767,6 +1767,7 @@ class CustomerDebtDomainEventSource
             'DebtOffset',
             DebtOffset::class,
             'DebtOffsetCancel',
+            'DebtOffsetReversal',
         ], true)) {
             return false;
         }

@@ -49,8 +49,8 @@ class CashFlowController extends Controller
         });
 
         // Summary metrics
-        $totalReceipts = CashFlow::active()->where('type', 'receipt')->sum('amount');
-        $totalPayments = CashFlow::active()->where('type', 'payment')->sum('amount');
+        $totalReceipts = CashFlow::active()->cashImpacting()->where('type', 'receipt')->sum('amount');
+        $totalPayments = CashFlow::active()->cashImpacting()->where('type', 'payment')->sum('amount');
         $fundBalance = $totalReceipts - $totalPayments;
 
         $customers = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()

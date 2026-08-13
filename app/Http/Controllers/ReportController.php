@@ -172,13 +172,13 @@ class ReportController extends Controller
         $grossProfit = $m['gross_profit'];
 
         // Operating expenses from CashFlow (type = 'payment'), excluding NCC payments (already in COGS)
-        $expenseQuery = CashFlow::active()->nonPayrollForExpense()->where('type', 'payment')
+        $expenseQuery = CashFlow::active()->cashImpacting()->nonPayrollForExpense()->where('type', 'payment')
             ->whereBetween('created_at', [$dateFrom, $dateTo])
             ->where('category', '!=', 'Chi tiền trả NCC');
         $totalExpenses = (float) $expenseQuery->sum('amount');
 
         // Expense breakdown by category
-        $expenseCategories = CashFlow::active()->nonPayrollForExpense()->where('type', 'payment')
+        $expenseCategories = CashFlow::active()->cashImpacting()->nonPayrollForExpense()->where('type', 'payment')
             ->whereBetween('created_at', [$dateFrom, $dateTo])
             ->where('category', '!=', 'Chi tiền trả NCC')
             ->select('category', DB::raw('SUM(amount) as total'))
@@ -192,7 +192,7 @@ class ReportController extends Controller
             ]);
 
         // Other income (type = 'receipt', not from sales)
-        $otherIncome = (float) CashFlow::active()->where('type', 'receipt')
+        $otherIncome = (float) CashFlow::active()->cashImpacting()->where('type', 'receipt')
             ->where('category', '!=', 'Bán hàng')
             ->whereBetween('created_at', [$dateFrom, $dateTo])
             ->sum('amount');
@@ -200,7 +200,7 @@ class ReportController extends Controller
         $netProfit = $netRevenue - $cogs - $totalExpenses + $otherIncome;
 
         // Previous period expenses (also excluding NCC payments)
-        $prevExpenses = (float) CashFlow::active()->nonPayrollForExpense()->where('type', 'payment')
+        $prevExpenses = (float) CashFlow::active()->cashImpacting()->nonPayrollForExpense()->where('type', 'payment')
             ->whereBetween('created_at', [$prevFrom, $prevTo])
             ->where('category', '!=', 'Chi tiền trả NCC')
             ->sum('amount');

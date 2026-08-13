@@ -10,6 +10,12 @@ class CashFlow extends Model
 {
     use SoftDeletes;
 
+    public const LEDGER_ONLY_REFERENCE_TYPES = [
+        'DebtOffset',
+        'DebtOffsetCancel',
+        'DebtOffsetReversal',
+    ];
+
     /**
      * Override soft-delete cho single model: tự động set status='cancelled'.
      * Bắt khi gọi $cashFlow->delete() trên 1 instance.
@@ -78,6 +84,18 @@ class CashFlow extends Model
                 ->orWhere('status', '!=', 'cancelled');
         })
             ->whereNull('deleted_at');
+    }
+
+    /**
+     * Debt-offset vouchers are audit mirrors for the partner ledger. They do
+     * not move money and therefore must not affect cash totals or P&L.
+     */
+    public function scopeCashImpacting($query)
+    {
+        return $query->where(function ($referenceQuery) {
+            $referenceQuery->whereNull('reference_type')
+                ->orWhereNotIn('reference_type', self::LEDGER_ONLY_REFERENCE_TYPES);
+        });
     }
 
     public function scopePayrollRelated($query)
