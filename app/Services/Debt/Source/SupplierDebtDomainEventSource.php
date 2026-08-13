@@ -561,7 +561,7 @@ class SupplierDebtDomainEventSource
             ->whereIn('target_type', PartnerDebtRoleResolver::SUPPLIER_TARGET_TYPES)
             ->where(function ($query): void {
                 $query->whereNull('reference_type')
-                    ->orWhereIn('reference_type', ['', 'CashFlow']);
+                    ->orWhereIn('reference_type', ['', 'CashFlow', 'SupplierPayment']);
             })
             ->get()
             ->filter(fn (CashFlow $cashFlow): bool => $cashFlow->trashed()
@@ -1789,21 +1789,24 @@ class SupplierDebtDomainEventSource
      * Persisted payment evidence for a purchase.
      *
      * paid_amount can include acquisition costs that never mutate supplier
-     * payable. total_amount - debt_amount is the persisted amount which did
-     * reduce the purchase obligation; a negative debt intentionally permits
-     * an overpayment credit. Older rows which never persisted a positive
-     * remaining debt are capped by their smaller paid_amount instead.
+     * payable. The persisted purchase obligation is the net document amount
+     * after the document discount, less the remaining debt; a negative debt
+     * intentionally permits an overpayment credit. Older rows which never
+     * persisted a positive remaining debt are capped by their smaller
+     * paid_amount instead.
      */
     private function purchasePaymentObligation(Purchase $purchase): float
     {
         $total = max(0.0, (float) $purchase->total_amount);
+        $discount = max(0.0, (float) ($purchase->discount ?? 0));
+        $netTotal = max(0.0, $total - $discount);
         $debt = (float) $purchase->debt_amount;
         $paid = max(0.0, (float) $purchase->paid_amount);
-        if (abs($debt) <= 0.01 && $paid < $total - 0.01) {
+        if (abs($debt) <= 0.01 && $paid < $netTotal - 0.01) {
             return $paid;
         }
 
-        return max(0.0, $total - $debt);
+        return max(0.0, $netTotal - $debt);
     }
 
     /**
@@ -2125,7 +2128,9 @@ class SupplierDebtDomainEventSource
             return true;
         }
         if ($type !== 'payment') {
-            return false;
+            // The cancellation audit row mirrors the cancelled PCPN. The
+            // cash-flow source emits the exact original + reversal pair.
+            return $type === 'payment_cancel' && str_starts_with($code, 'HPCPN');
         }
 
         if ($code !== '' && $cashFlows->contains(fn (CashFlow $cashFlow) => (string) $cashFlow->code === $code || (string) $cashFlow->reference_code === $code

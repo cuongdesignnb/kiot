@@ -28,41 +28,42 @@ class HOTFIX2417BSupplierDebtExcelFormatTest extends TestCase
     private function admin(): User
     {
         return User::create([
-            'name'     => 'Admin 2417B',
-            'email'    => 'admin-2417b-' . uniqid() . '@test.local',
+            'name' => 'Admin 2417B',
+            'email' => 'admin-2417b-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
-            'role_id'  => null,
+            'role_id' => null,
         ]);
     }
 
     private function supplier(string $name = 'NCC 2417B'): Customer
     {
         return Customer::create([
-            'code'                 => 'NCC-2417B-' . uniqid(),
-            'name'                 => $name,
-            'phone'                => '09' . random_int(10000000, 99999999),
-            'debt_amount'          => 0,
+            'code' => 'NCC-2417B-'.uniqid(),
+            'name' => $name,
+            'phone' => '09'.random_int(10000000, 99999999),
+            'debt_amount' => 0,
             'supplier_debt_amount' => 0,
-            'is_customer'          => false,
-            'is_supplier'          => true,
+            'is_customer' => false,
+            'is_supplier' => true,
         ]);
     }
 
     private function purchase(Customer $supplier, int $total, Carbon $when, string $codePrefix = 'PN'): Purchase
     {
         $p = Purchase::create([
-            'code'          => $codePrefix . '-' . uniqid(),
-            'supplier_id'   => $supplier->id,
-            'user_id'       => null,
-            'total_amount'  => $total,
-            'paid_amount'   => 0,
-            'debt_amount'   => $total,
-            'status'        => 'completed',
+            'code' => $codePrefix.'-'.uniqid(),
+            'supplier_id' => $supplier->id,
+            'user_id' => null,
+            'total_amount' => $total,
+            'paid_amount' => 0,
+            'debt_amount' => $total,
+            'status' => 'completed',
             'purchase_date' => $when,
         ]);
         $p->created_at = $when;
         $p->updated_at = $when;
         $p->save();
+
         return $p;
     }
 
@@ -71,7 +72,7 @@ class HOTFIX2417BSupplierDebtExcelFormatTest extends TestCase
         $res = $this->actingAs($actor)->get("/api/suppliers/{$supplierId}/export-debt?{$query}");
         $res->assertOk();
         $body = $res->streamedContent() ?: $res->getContent();
-        $tmp  = tempnam(sys_get_temp_dir(), 'cnct-') . '.xlsx';
+        $tmp = tempnam(sys_get_temp_dir(), 'cnct-').'.xlsx';
         file_put_contents($tmp, $body);
         try {
             return IOFactory::load($tmp);
@@ -84,7 +85,7 @@ class HOTFIX2417BSupplierDebtExcelFormatTest extends TestCase
     public function test_export_xlsx_returns_excel_response(): void
     {
         $admin = $this->admin();
-        $sup   = $this->supplier();
+        $sup = $this->supplier();
         $this->purchase($sup, 1_000_000, Carbon::now());
 
         $res = $this->actingAs($admin)->get(
@@ -103,7 +104,7 @@ class HOTFIX2417BSupplierDebtExcelFormatTest extends TestCase
     public function test_workbook_has_cnct_sheet(): void
     {
         $admin = $this->admin();
-        $sup   = $this->supplier();
+        $sup = $this->supplier();
         $this->purchase($sup, 500_000, Carbon::now());
 
         $wb = $this->downloadWorkbook($sup->id, 'format=xlsx&date_preset=all', $admin);
@@ -114,38 +115,42 @@ class HOTFIX2417BSupplierDebtExcelFormatTest extends TestCase
     public function test_workbook_has_report_title(): void
     {
         $admin = $this->admin();
-        $sup   = $this->supplier();
+        $sup = $this->supplier();
         $this->purchase($sup, 500_000, Carbon::now());
 
-        $wb    = $this->downloadWorkbook($sup->id, 'format=xlsx&date_preset=all', $admin);
+        $wb = $this->downloadWorkbook($sup->id, 'format=xlsx&date_preset=all', $admin);
         $sheet = $wb->getSheetByName('CNCT');
         $cells = $sheet->toArray(null, true, true, false);
 
         $flat = '';
         foreach ($cells as $row) {
-            foreach ($row as $val) $flat .= ' ' . (string) $val;
+            foreach ($row as $val) {
+                $flat .= ' '.(string) $val;
+            }
         }
-        $this->assertStringContainsString('Công nợ chi tiết nhà cung cấp', $flat);
+        $this->assertStringContainsString('CÔNG NỢ CHI TIẾT NHÀ CUNG CẤP', $flat);
     }
 
     // ── TC-04 — all KiotViet-like headers present ──
     public function test_workbook_has_kiotviet_like_headers(): void
     {
         $admin = $this->admin();
-        $sup   = $this->supplier();
+        $sup = $this->supplier();
         $this->purchase($sup, 500_000, Carbon::now());
 
-        $wb    = $this->downloadWorkbook($sup->id, 'format=xlsx&date_preset=all&include_detail=1', $admin);
+        $wb = $this->downloadWorkbook($sup->id, 'format=xlsx&date_preset=all&include_detail=1', $admin);
         $sheet = $wb->getSheetByName('CNCT');
         $cells = $sheet->toArray(null, true, true, false);
-        $flat  = '';
+        $flat = '';
         foreach ($cells as $row) {
-            foreach ($row as $val) $flat .= "\t" . (string) $val;
+            foreach ($row as $val) {
+                $flat .= "\t".(string) $val;
+            }
         }
 
         foreach (['Thời gian', 'Mã', 'Diễn giải', 'ĐVT', 'SL', 'Đơn giá',
-                  'Giảm giá', 'VAT', 'Giá nhập/trả', 'Thành tiền',
-                  'Ghi nợ', 'Ghi có'] as $h) {
+            'Giảm giá', 'VAT', 'Giá nhập/trả', 'Thành tiền',
+            'Ghi nợ', 'Ghi có'] as $h) {
             $this->assertStringContainsString($h, $flat, "header `{$h}` must appear");
         }
     }
@@ -154,19 +159,19 @@ class HOTFIX2417BSupplierDebtExcelFormatTest extends TestCase
     public function test_purchase_entry_has_line_items(): void
     {
         $admin = $this->admin();
-        $sup   = $this->supplier();
-        $p     = $this->purchase($sup, 750_000, Carbon::now());
+        $sup = $this->supplier();
+        $p = $this->purchase($sup, 750_000, Carbon::now());
         PurchaseItem::create([
-            'purchase_id'  => $p->id,
+            'purchase_id' => $p->id,
             'product_name' => 'Linh kiện 2417B',
             'product_code' => 'LK-2417B',
-            'quantity'     => 3,
-            'price'        => 250_000,
-            'discount'     => 0,
-            'subtotal'     => 750_000,
+            'quantity' => 3,
+            'price' => 250_000,
+            'discount' => 0,
+            'subtotal' => 750_000,
         ]);
 
-        $wb    = $this->downloadWorkbook(
+        $wb = $this->downloadWorkbook(
             $sup->id,
             'format=xlsx&date_preset=all&include_detail=1&columns[]=quantity&columns[]=unit_price&columns[]=line_total',
             $admin
@@ -175,13 +180,17 @@ class HOTFIX2417BSupplierDebtExcelFormatTest extends TestCase
         $cells = $sheet->toArray(null, true, true, true);
 
         $purchaseRow = null;
-        $detailRow   = null;
+        $detailRow = null;
         foreach ($cells as $idx => $row) {
-            if (in_array($p->code, $row, true)) $purchaseRow = $idx;
-            if (in_array('Linh kiện 2417B', $row, true)) $detailRow = $idx;
+            if (in_array($p->code, $row, true)) {
+                $purchaseRow = $idx;
+            }
+            if (in_array('Linh kiện 2417B', $row, true)) {
+                $detailRow = $idx;
+            }
         }
         $this->assertNotNull($purchaseRow, 'purchase code row must appear');
-        $this->assertNotNull($detailRow,   'detail line row must appear');
+        $this->assertNotNull($detailRow, 'detail line row must appear');
         $this->assertGreaterThan($purchaseRow, $detailRow, 'detail must sit BELOW its document');
     }
 
@@ -189,11 +198,11 @@ class HOTFIX2417BSupplierDebtExcelFormatTest extends TestCase
     public function test_payment_entry_has_credit_amount(): void
     {
         $admin = $this->admin();
-        $sup   = $this->supplier();
+        $sup = $this->supplier();
         $this->purchase($sup, 500_000, Carbon::now());
 
         CashFlow::create([
-            'code' => 'PCPN-' . uniqid(),
+            'code' => 'PCPN-'.uniqid(),
             'type' => 'payment',
             'amount' => 200_000,
             'target_type' => 'Nha cung cap',
@@ -206,7 +215,7 @@ class HOTFIX2417BSupplierDebtExcelFormatTest extends TestCase
             'created_at' => Carbon::now(),
         ]);
 
-        $wb    = $this->downloadWorkbook($sup->id, 'format=xlsx&date_preset=all', $admin);
+        $wb = $this->downloadWorkbook($sup->id, 'format=xlsx&date_preset=all', $admin);
         $sheet = $wb->getSheetByName('CNCT');
         // Read raw cell values (no number-format applied) so the
         // assertion compares against the stored numeric, not "200,000".
@@ -229,20 +238,22 @@ class HOTFIX2417BSupplierDebtExcelFormatTest extends TestCase
     public function test_custom_date_filter_excludes_out_of_range_entries(): void
     {
         $admin = $this->admin();
-        $sup   = $this->supplier();
-        $pIn   = $this->purchase($sup, 100_000, Carbon::create(2026, 5, 5, 9, 0));
-        $pOut  = $this->purchase($sup, 200_000, Carbon::create(2026, 5, 20, 9, 0));
+        $sup = $this->supplier();
+        $pIn = $this->purchase($sup, 100_000, Carbon::create(2026, 5, 5, 9, 0));
+        $pOut = $this->purchase($sup, 200_000, Carbon::create(2026, 5, 20, 9, 0));
 
-        $wb    = $this->downloadWorkbook(
+        $wb = $this->downloadWorkbook(
             $sup->id,
             'format=xlsx&date_preset=custom&date_from=2026-05-01&date_to=2026-05-10',
             $admin
         );
         $sheet = $wb->getSheetByName('CNCT');
         $cells = $sheet->toArray(null, true, true, false);
-        $flat  = '';
+        $flat = '';
         foreach ($cells as $row) {
-            foreach ($row as $val) $flat .= ' ' . (string) $val;
+            foreach ($row as $val) {
+                $flat .= ' '.(string) $val;
+            }
         }
 
         $this->assertStringContainsString($pIn->code, $flat, 'in-window purchase must appear');
@@ -253,8 +264,8 @@ class HOTFIX2417BSupplierDebtExcelFormatTest extends TestCase
     public function test_legacy_csv_with_explicit_mode_still_works(): void
     {
         $admin = $this->admin();
-        $sup   = $this->supplier();
-        $p     = $this->purchase($sup, 400_000, Carbon::now());
+        $sup = $this->supplier();
+        $p = $this->purchase($sup, 400_000, Carbon::now());
 
         $res = $this->actingAs($admin)->get("/api/suppliers/{$sup->id}/export-debt?mode=legacy");
         $res->assertOk();
@@ -275,7 +286,7 @@ class HOTFIX2417BSupplierDebtExcelFormatTest extends TestCase
         $purchase = $this->purchase($sup, 1_000_000, Carbon::create(2026, 6, 1, 9, 0), 'PN-DOC');
 
         CashFlow::create([
-            'code' => 'PCPN-DOC-' . uniqid(),
+            'code' => 'PCPN-DOC-'.uniqid(),
             'type' => 'payment',
             'amount' => 400_000,
             'target_type' => 'Nhà cung cấp',
@@ -289,7 +300,7 @@ class HOTFIX2417BSupplierDebtExcelFormatTest extends TestCase
         ]);
 
         \App\Models\PurchaseReturn::create([
-            'code' => 'NCCRETURN-DOC-' . uniqid(),
+            'code' => 'NCCRETURN-DOC-'.uniqid(),
             'supplier_id' => $sup->id,
             'status' => 'completed',
             'total_amount' => 100_000,
@@ -297,12 +308,13 @@ class HOTFIX2417BSupplierDebtExcelFormatTest extends TestCase
             'created_at' => Carbon::create(2026, 6, 1, 11, 0),
         ]);
 
-        $adjustmentCode = 'DCCNC-DOC-' . uniqid();
+        $adjustmentCode = 'DCCNC-DOC-'.uniqid();
         SupplierDebtTransaction::create([
             'supplier_id' => $sup->id,
             'code' => $adjustmentCode,
             'type' => 'adjustment',
             'amount' => -50_000,
+            'debt_remain' => 550_000,
             'note' => 'Document timeline adjustment',
             'recorded_at' => Carbon::create(2026, 6, 1, 12, 0),
             'created_at' => Carbon::create(2026, 6, 1, 12, 0),
@@ -336,7 +348,7 @@ class HOTFIX2417BSupplierDebtExcelFormatTest extends TestCase
         $purchase = $this->purchase($partner, 2_000_000, Carbon::create(2026, 6, 2, 9, 0), 'PN-DUAL');
 
         $invoice = \App\Models\Invoice::create([
-            'code' => 'HD-DUAL-EXPORT-' . uniqid(),
+            'code' => 'HD-DUAL-EXPORT-'.uniqid(),
             'customer_id' => $partner->id,
             'status' => 'Hoàn thành',
             'total' => 500_000,
@@ -361,7 +373,7 @@ class HOTFIX2417BSupplierDebtExcelFormatTest extends TestCase
     public function test_debt_transactions_json_endpoint_unchanged(): void
     {
         $admin = $this->admin();
-        $sup   = $this->supplier();
+        $sup = $this->supplier();
         $this->purchase($sup, 600_000, Carbon::now());
 
         $res = $this->actingAs($admin)->getJson("/api/suppliers/{$sup->id}/debt-transactions");

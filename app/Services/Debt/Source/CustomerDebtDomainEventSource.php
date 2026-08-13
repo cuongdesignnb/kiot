@@ -859,6 +859,62 @@ class CustomerDebtDomainEventSource
                 ]));
             }
 
+            // A cancelled PCPN is still visible on the dual-role customer
+            // side as the same original + reversal mirror pair. Its
+            // payment_cancel ledger row is evidence only and is excluded
+            // below to avoid counting it twice.
+            $cancelledSupplierPayments = CashFlow::withTrashed()
+                ->where('target_id', $customer->id)
+                ->where('type', 'payment')
+                ->where('reference_type', 'SupplierPayment')
+                ->get()
+                ->filter(fn (CashFlow $cashFlow): bool => $cashFlow->trashed()
+                    || BusinessStatus::isCancelled($cashFlow->status));
+            foreach ($cancelledSupplierPayments as $cashFlow) {
+                $businessTime = $cashFlow->time ?: $cashFlow->created_at;
+                $cancelledAt = $cashFlow->cancelled_at ?: $cashFlow->updated_at ?: $businessTime;
+                $originalIdentity = "supplier|cash_flows|{$cashFlow->id}|supplier_payment|payable";
+                $common = [
+                    'code' => $cashFlow->code,
+                    'domain' => 'supplier',
+                    'document_amount' => (float) $cashFlow->amount,
+                    'amount' => (float) $cashFlow->amount,
+                    'reference_type' => 'SupplierPayment',
+                    'reference_id' => $cashFlow->id,
+                    'reference_code' => $cashFlow->reference_code,
+                    'detail_available' => true,
+                    'detail_modal_type' => 'cash_flow',
+                    'detail_reference_id' => $cashFlow->id,
+                    'detail_reference_code' => $cashFlow->code,
+                    'is_real_voucher' => true,
+                    'is_virtual_fallback' => false,
+                    'source' => 'document_first',
+                ];
+                $entries->push($this->createEntry(array_merge($common, [
+                    'id' => 'cancelled-supplier-payment-original-'.$cashFlow->id,
+                    'display_type' => 'Thanh toán NCC',
+                    'event_kind' => 'supplier_payment',
+                    'display_effect' => +(float) $cashFlow->amount,
+                    'customer_display_effect' => +(float) $cashFlow->amount,
+                    'time' => $businessTime,
+                    'display_time' => $businessTime,
+                    'created_at' => $cashFlow->created_at,
+                    'source_status' => 'cancelled',
+                ])));
+                $entries->push($this->createEntry(array_merge($common, [
+                    'id' => 'cancelled-supplier-payment-reversal-'.$cashFlow->id,
+                    'display_type' => 'Hủy thanh toán NCC',
+                    'event_kind' => 'supplier_payment_cancel_reversal',
+                    'display_effect' => -(float) $cashFlow->amount,
+                    'customer_display_effect' => -(float) $cashFlow->amount,
+                    'time' => $cancelledAt,
+                    'display_time' => $cancelledAt,
+                    'created_at' => $cancelledAt,
+                    'source_status' => 'cancelled',
+                    'reversal_of_event_identity' => $originalIdentity,
+                ])));
+            }
+
             // Fallback Purchase payments (TTNH)
             foreach ($purchases as $p) {
                 if ((float) $p->paid_amount > 0) {
@@ -942,7 +998,10 @@ class CustomerDebtDomainEventSource
             // Other supplier transactions (adjustments, offsets, etc.)
             $otherSupplierTxs = SupplierDebtTransaction::where('supplier_id', $customer->id)
                 ->whereNotIn('type', ['purchase', 'return', 'payment'])
-                ->get();
+                ->get()
+                ->reject(fn (SupplierDebtTransaction $transaction): bool => (string) $transaction->type === 'payment_cancel'
+                    && str_starts_with((string) $transaction->code, 'HPCPN'))
+                ->values();
 
             foreach ($otherSupplierTxs as $stx) {
                 $businessTime = Schema::hasColumn('supplier_debt_transactions', 'recorded_at')
@@ -1538,7 +1597,7 @@ class CustomerDebtDomainEventSource
             'PurchaseReturn' => 'purchase_returns',
             'CustomerDebt' => 'customer_debts',
             'SupplierDebtTransaction' => 'supplier_debt_transactions',
-            'DebtOffset', 'DebtOffsetCancel' => 'debt_offsets',
+            'DebtOffset', 'DebtOffsetCancel', 'DebtOffsetReversal' => 'debt_offsets',
             default => 'cash_flows',
         };
     }
@@ -1708,6 +1767,7 @@ class CustomerDebtDomainEventSource
             'DebtOffset',
             DebtOffset::class,
             'DebtOffsetCancel',
+            'DebtOffsetReversal',
         ], true)) {
             return false;
         }

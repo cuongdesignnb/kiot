@@ -8,6 +8,7 @@ use App\Models\CustomerDebt;
 use App\Models\Invoice;
 use App\Models\Order;
 use App\Models\PartnerMerge;
+use App\Models\Purchase;
 use App\Services\CustomerDebtService;
 use App\Services\CustomerPaymentService;
 use App\Services\InvoiceSaleService;
@@ -94,7 +95,7 @@ class SapoDebtParityTest extends TestCase
         app(CustomerPaymentService::class)->collect($customer, 1_500_000);
 
         $next = Invoice::create([
-            'code' => 'HD-NEXT-' . uniqid(),
+            'code' => 'HD-NEXT-'.uniqid(),
             'customer_id' => $customer->id,
             'subtotal' => 1_500_000,
             'total' => 1_500_000,
@@ -138,7 +139,8 @@ class SapoDebtParityTest extends TestCase
 
     public function test_merge_marker_is_zero_and_does_not_double_customer_debt(): void
     {
-        $source = $this->customer(300_000, 0, true, false);
+        $source = $this->customer(0, 0, true, false);
+        $this->receivableInvoice($source, 300_000);
         $target = $this->customer(0, 0, false, true);
 
         $result = app(PartnerMergeService::class)->merge($source, $target);
@@ -153,7 +155,9 @@ class SapoDebtParityTest extends TestCase
 
     public function test_dual_role_net_zero_remains_zero_with_reference_only_marker(): void
     {
-        $source = $this->customer(200_000, 200_000, true, true);
+        $source = $this->customer(0, 0, true, true);
+        $this->receivableInvoice($source, 200_000);
+        $this->supplierPayablePurchase($source, 200_000);
         $target = $this->customer(0, 0, true, true);
 
         $result = app(PartnerMergeService::class)->merge($source, $target);
@@ -244,8 +248,8 @@ class SapoDebtParityTest extends TestCase
         bool $isSupplier = false
     ): Customer {
         return Customer::create([
-            'code' => 'PARTNER-' . uniqid(),
-            'name' => 'Partner ' . uniqid(),
+            'code' => 'PARTNER-'.uniqid(),
+            'name' => 'Partner '.uniqid(),
             'debt_amount' => $debt,
             'supplier_debt_amount' => $supplierDebt,
             'total_spent' => 0,
@@ -260,7 +264,7 @@ class SapoDebtParityTest extends TestCase
     private function receivableInvoice(Customer $customer, float $total): Invoice
     {
         $invoice = Invoice::create([
-            'code' => 'HD-RECEIVABLE-' . uniqid(),
+            'code' => 'HD-RECEIVABLE-'.uniqid(),
             'customer_id' => $customer->id,
             'subtotal' => $total,
             'total' => $total,
@@ -273,10 +277,26 @@ class SapoDebtParityTest extends TestCase
         return $invoice;
     }
 
+    private function supplierPayablePurchase(Customer $supplier, float $total): Purchase
+    {
+        $purchase = Purchase::create([
+            'code' => 'PN-PAYABLE-'.uniqid(),
+            'supplier_id' => $supplier->id,
+            'status' => 'completed',
+            'total_amount' => $total,
+            'paid_amount' => 0,
+            'debt_amount' => $total,
+            'purchase_date' => now(),
+        ]);
+        $supplier->increment('supplier_debt_amount', $total);
+
+        return $purchase;
+    }
+
     private function order(float $total, float $deposit): Order
     {
         return Order::create([
-            'code' => 'ORDER-' . uniqid(),
+            'code' => 'ORDER-'.uniqid(),
             'status' => 'confirmed',
             'total_price' => $total,
             'total_payment' => $total,
@@ -287,7 +307,7 @@ class SapoDebtParityTest extends TestCase
     private function orderInvoice(Order $order, float $customerPaid, float $depositApplied): Invoice
     {
         return Invoice::create([
-            'code' => 'HD-ORDER-' . uniqid(),
+            'code' => 'HD-ORDER-'.uniqid(),
             'order_id' => $order->id,
             'subtotal' => $order->total_payment,
             'total' => $order->total_payment,

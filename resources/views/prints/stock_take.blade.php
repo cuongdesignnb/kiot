@@ -25,6 +25,7 @@
         .items .r { text-align: right; }
         .items .product-name { font-weight: 500; }
         .items .product-sku { font-size: 10px; color: #888; }
+        .items .serial-row td { padding: 2px 2px 2px 12px; border-bottom: none; font-size: 10px; color: #555; }
         .sep { border: none; border-top: 1px dashed #999; margin: 8px 0; }
         .sum-row { display: flex; justify-content: space-between; padding: 2px 0; font-size: 13px; }
         .sum-total { font-weight: bold; font-size: 14px; border-top: 1px solid #333; padding-top: 5px; margin-top: 4px; }
@@ -89,6 +90,13 @@
                     <td class="r {{ $item->diff_qty > 0 ? 'diff-plus' : ($item->diff_qty < 0 ? 'diff-minus' : '') }}">{{ $item->diff_qty > 0 ? '+' : '' }}{{ $item->diff_qty }}</td>
                     <td class="r">{{ format_vnd(abs($item->diff_value ?? 0)) }}</td>
                 </tr>
+                @if($item->serialChecks->isNotEmpty())
+                    @foreach($item->serialChecks as $serialCheck)
+                    <tr class="serial-row">
+                        <td colspan="5">↳ Serial: {{ $serialCheck->serial_number_snapshot }} {{ $serialCheck->actual_present === true ? '✓' : 'Thiếu' }}</td>
+                    </tr>
+                    @endforeach
+                @endif
                 @endforeach
             </tbody>
         </table>

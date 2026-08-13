@@ -22,6 +22,7 @@ class StockTakeItem extends Model
         'cost_price_snapshot',
         'unit_name',
         'category_id',
+        'unknown_serials',
     ];
 
     protected $casts = [
@@ -29,6 +30,7 @@ class StockTakeItem extends Model
         'checked' => 'boolean',
         'diff_value' => 'decimal:2',
         'cost_price_snapshot' => 'decimal:2',
+        'unknown_serials' => 'array',
     ];
 
     public function product()
@@ -39,5 +41,10 @@ class StockTakeItem extends Model
     public function stockTake()
     {
         return $this->belongsTo(StockTake::class);
+    }
+
+    public function serialChecks()
+    {
+        return $this->hasMany(StockTakeItemSerial::class);
     }
 }

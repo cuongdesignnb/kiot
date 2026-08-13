@@ -71,7 +71,8 @@ Route::middleware('auth')->group(function () {
     Route::delete('/products/{product}/serials/{serial}', [ProductController::class, 'destroySerial'])->name('products.serials.destroy')->middleware('permission:serials.delete');
 
     // ===== CUSTOMERS =====
-    Route::get('/customers/search-for-merge', [CustomerController::class, 'searchForMerge']);
+    Route::get('/customers/search-for-merge', [CustomerController::class, 'searchForMerge'])
+        ->middleware(['permission:customers.edit', 'permission:suppliers.edit']);
     Route::middleware('permission:customers.view')->group(function () {
         Route::get('/customers', [CustomerController::class, 'index'])->name('customers.index');
         Route::get('/customers/{customer}/sales-history', [CustomerController::class, 'salesHistory']);
@@ -83,8 +84,10 @@ Route::middleware('auth')->group(function () {
     Route::post('/customers', [CustomerController::class, 'store'])->name('customers.store')->middleware('permission:customers.create');
     Route::put('/customers/{customer}', [CustomerController::class, 'update'])->name('customers.update')->middleware('permission:customers.edit');
     Route::delete('/customers/{customer}', [CustomerController::class, 'destroy'])->name('customers.destroy')->middleware('permission:customers.delete');
-    Route::post('/customers/{customer}/merge', [CustomerController::class, 'merge'])->middleware('permission:customers.edit');
-    Route::get('/customers/{customer}/merge-preview', [CustomerController::class, 'mergePreview'])->middleware('permission:customers.view');
+    Route::post('/customers/{customer}/merge', [CustomerController::class, 'merge'])
+        ->middleware(['permission:customers.edit', 'permission:suppliers.edit']);
+    Route::get('/customers/{customer}/merge-preview', [CustomerController::class, 'mergePreview'])
+        ->middleware(['permission:customers.edit', 'permission:suppliers.edit']);
     Route::post('/customers/{customer}/debt-offset', [CustomerController::class, 'debtOffset'])->middleware('permission:customers.edit');
     Route::post('/customers/{customer}/cancel-debt-offset/{debtOffset}', [CustomerController::class, 'cancelDebtOffset'])->middleware('permission:customers.edit');
     Route::get('/customers/{customer}/debt-offset-history', [CustomerController::class, 'debtOffsetHistory'])->middleware('permission:customers.view');
@@ -192,8 +195,11 @@ Route::middleware('auth')->group(function () {
     Route::get('/stock-takes', [StockTakeController::class, 'index'])->name('stock-takes.index')->middleware('permission:stock_takes.view');
     Route::middleware('permission:stock_takes.create')->group(function () {
         Route::get('/stock-takes/create', [StockTakeController::class, 'create'])->name('stock-takes.create');
+        Route::get('/stock-takes/{id}/edit', [StockTakeController::class, 'edit'])->name('stock-takes.edit');
         Route::post('/stock-takes', [StockTakeController::class, 'store'])->name('stock-takes.store');
         Route::put('/stock-takes/{id}', [StockTakeController::class, 'update'])->name('stock-takes.update');
+        Route::get('/stock-takes/products/{product}/serials', [StockTakeController::class, 'productSerials'])
+            ->name('stock-takes.products.serials');
     });
     // Step 24.0B: tách quyền cân bằng / hủy kiểm kho.
     Route::post('/stock-takes/{id}/balance', [StockTakeController::class, 'balance'])->name('stock-takes.balance')->middleware('permission:stock_takes.balance');

@@ -4,7 +4,6 @@ namespace App\Http\Controllers;
 
 use App\Models\CashFlow;
 use App\Models\Customer;
-use App\Models\Employee;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\Order;
@@ -12,7 +11,6 @@ use App\Models\OrderReturn;
 use App\Models\Product;
 use App\Models\Purchase;
 use Carbon\Carbon;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Inertia\Inertia;
@@ -31,12 +29,12 @@ class DashboardController extends Controller
         // ═══════════════════════════════════════
 
         // Doanh thu hôm nay (từ hóa đơn) — loại hóa đơn đã hủy
-        $todayRevenue = Invoice::whereDate('created_at', $today)->where('status','!=','Đã hủy')->sum('total');
-        $yesterdayRevenue = Invoice::whereDate('created_at', $today->copy()->subDay())->where('status','!=','Đã hủy')->sum('total');
+        $todayRevenue = Invoice::whereDate('created_at', $today)->where('status', '!=', 'Đã hủy')->sum('total');
+        $yesterdayRevenue = Invoice::whereDate('created_at', $today->copy()->subDay())->where('status', '!=', 'Đã hủy')->sum('total');
 
         // Đơn hàng hôm nay (không tính đơn đã hủy)
-        $todayOrders = Invoice::whereDate('created_at', $today)->where('status','!=','Đã hủy')->count();
-        $yesterdayOrders = Invoice::whereDate('created_at', $today->copy()->subDay())->where('status','!=','Đã hủy')->count();
+        $todayOrders = Invoice::whereDate('created_at', $today)->where('status', '!=', 'Đã hủy')->count();
+        $yesterdayOrders = Invoice::whereDate('created_at', $today->copy()->subDay())->where('status', '!=', 'Đã hủy')->count();
 
         // Tổng tồn kho
         $totalProductsInStock = Product::sum('stock_quantity');
@@ -56,11 +54,11 @@ class DashboardController extends Controller
         $thisMonthCost = $metricsMonth['cogs_net'];
 
         // Tổng chi phí (phiếu chi) tháng này - trừ các khoản trả NCC (đã tính vào giá vốn)
-        $thisMonthExpenses = CashFlow::active()->where('type', 'payment')
+        $thisMonthExpenses = CashFlow::active()->cashImpacting()->where('type', 'payment')
             ->where('created_at', '>=', $startOfMonth)
             ->where(function ($q) {
                 $q->where('category', '!=', 'Chi tiền trả NCC')
-                  ->orWhereNull('category');
+                    ->orWhereNull('category');
             })
             ->sum('amount') ?? 0;
 
@@ -109,13 +107,15 @@ class DashboardController extends Controller
         for ($w = 1; $w <= min($weeksInMonth + 1, 5); $w++) {
             $weekStart = $startOfMonth->copy()->addDays(($w - 1) * 7);
             $weekEnd = $weekStart->copy()->addDays(6)->endOfDay();
-            if ($weekStart->gt(Carbon::now())) break;
+            if ($weekStart->gt(Carbon::now())) {
+                break;
+            }
 
-            $cashFlowChart['labels'][] = 'Tuần ' . $w;
-            $cashFlowChart['receipts'][] = (float) CashFlow::active()->where('type', 'receipt')
+            $cashFlowChart['labels'][] = 'Tuần '.$w;
+            $cashFlowChart['receipts'][] = (float) CashFlow::active()->cashImpacting()->where('type', 'receipt')
                 ->whereNotIn('category', ['Thu nợ khách hàng', 'Điều chỉnh công nợ'])
                 ->whereBetween('created_at', [$weekStart, $weekEnd])->sum('amount');
-            $cashFlowChart['payments'][] = (float) CashFlow::active()->where('type', 'payment')
+            $cashFlowChart['payments'][] = (float) CashFlow::active()->cashImpacting()->where('type', 'payment')
                 ->whereBetween('created_at', [$weekStart, $weekEnd])->sum('amount');
         }
 
@@ -125,14 +125,14 @@ class DashboardController extends Controller
         $topProducts = InvoiceItem::select('product_id', DB::raw('SUM(quantity) as total_qty'), DB::raw('SUM(quantity * price) as total_revenue'))
             ->whereHas('invoice', function ($q) use ($startOfMonth) {
                 $q->where('created_at', '>=', $startOfMonth)
-                  ->where('status', '!=', 'Đã hủy');
+                    ->where('status', '!=', 'Đã hủy');
             })
             ->groupBy('product_id')
             ->orderByDesc('total_qty')
             ->limit(10)
             ->with('product:id,name,sku')
             ->get()
-            ->map(fn($item) => [
+            ->map(fn ($item) => [
                 'name' => $item->product->name ?? 'N/A',
                 'sku' => $item->product->sku ?? '',
                 'qty' => (int) $item->total_qty,
@@ -177,12 +177,12 @@ class DashboardController extends Controller
         // 8. TOP SẢN PHẨM THEO DOANH THU
         // ═══════════════════════════════════════
         $topProductsByRevenue = InvoiceItem::select(
-                'product_id',
-                DB::raw('SUM(quantity) as total_qty'),
-                DB::raw('SUM(quantity * price) as total_revenue'),
-                DB::raw('SUM(quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), 0)) as total_cost')
-            )
-            ->whereHas('invoice', fn($q) => $q->where('created_at', '>=', $startOfMonth)->where('status', '!=', 'Đã hủy'))
+            'product_id',
+            DB::raw('SUM(quantity) as total_qty'),
+            DB::raw('SUM(quantity * price) as total_revenue'),
+            DB::raw('SUM(quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), 0)) as total_cost')
+        )
+            ->whereHas('invoice', fn ($q) => $q->where('created_at', '>=', $startOfMonth)->where('status', '!=', 'Đã hủy'))
             ->groupBy('product_id')
             ->orderByDesc('total_revenue')
             ->limit(10)
@@ -194,6 +194,7 @@ class DashboardController extends Controller
                 if ($totalCost == 0 && $item->product) {
                     $totalCost = (float) ($item->product->cost_price ?? 0) * (int) $item->total_qty;
                 }
+
                 return [
                     'name' => $item->product->name ?? 'N/A',
                     'sku' => $item->product->sku ?? '',
@@ -208,12 +209,12 @@ class DashboardController extends Controller
         // 9. TOP SẢN PHẨM THEO LỢI NHUẬN
         // ═══════════════════════════════════════
         $allProductSales = InvoiceItem::select(
-                'product_id',
-                DB::raw('SUM(quantity) as total_qty'),
-                DB::raw('SUM(quantity * price) as total_revenue'),
-                DB::raw('SUM(quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), 0)) as total_cost')
-            )
-            ->whereHas('invoice', fn($q) => $q->where('created_at', '>=', $startOfMonth)->where('status', '!=', 'Đã hủy'))
+            'product_id',
+            DB::raw('SUM(quantity) as total_qty'),
+            DB::raw('SUM(quantity * price) as total_revenue'),
+            DB::raw('SUM(quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), 0)) as total_cost')
+        )
+            ->whereHas('invoice', fn ($q) => $q->where('created_at', '>=', $startOfMonth)->where('status', '!=', 'Đã hủy'))
             ->groupBy('product_id')
             ->with('product:id,name,sku,cost_price')
             ->get()
@@ -222,6 +223,7 @@ class DashboardController extends Controller
                 if ($totalCost == 0 && $item->product) {
                     $totalCost = (float) ($item->product->cost_price ?? 0) * (int) $item->total_qty;
                 }
+
                 return [
                     'name' => $item->product->name ?? 'N/A',
                     'sku' => $item->product->sku ?? '',
@@ -246,7 +248,7 @@ class DashboardController extends Controller
             ->limit(10)
             ->with('customer:id,name,phone,code')
             ->get()
-            ->map(fn($inv) => [
+            ->map(fn ($inv) => [
                 'name' => $inv->customer->name ?? 'N/A',
                 'phone' => $inv->customer->phone ?? '',
                 'code' => $inv->customer->code ?? '',
@@ -264,7 +266,7 @@ class DashboardController extends Controller
             ->limit(10)
             ->with('customer:id,name,phone,code')
             ->get()
-            ->map(fn($inv) => [
+            ->map(fn ($inv) => [
                 'name' => $inv->customer->name ?? 'N/A',
                 'phone' => $inv->customer->phone ?? '',
                 'code' => $inv->customer->code ?? '',
@@ -284,7 +286,7 @@ class DashboardController extends Controller
             ->limit(10)
             ->with('employee:id,name')
             ->get()
-            ->map(fn($inv) => [
+            ->map(fn ($inv) => [
                 'name' => $inv->employee->name ?? 'N/A',
                 'invoices' => (int) $inv->invoice_count,
                 'revenue' => (float) $inv->total_revenue,
@@ -297,7 +299,7 @@ class DashboardController extends Controller
             ->orderBy('stock_quantity', 'asc')
             ->limit(50)
             ->get(['id', 'name', 'sku', 'stock_quantity', 'cost_price', 'retail_price'])
-            ->map(fn($p) => [
+            ->map(fn ($p) => [
                 'id' => $p->id,
                 'name' => $p->name,
                 'sku' => $p->sku,
@@ -358,14 +360,14 @@ class DashboardController extends Controller
             'branches' => \App\Models\Branch::all(),
 
             // Step 24.1 — Operational control metrics
-            'serialControl'        => $opDash->getSerialControl(),
+            'serialControl' => $opDash->getSerialControl(),
             'stockTransferControl' => $opDash->getStockTransferControl(),
-            'repairControl'        => $opDash->getRepairControl(),
-            'warrantyControl'      => $opDash->getWarrantyControl(),
-            'inventoryRisk'        => $opDash->getInventoryRisk(),
-            'financeControl'       => $opDash->getFinanceControl(),
-            'highRiskActivities'   => $opDash->getHighRiskActivities(auth()->user()),
-            'canViewAuditLog'      => auth()->user() ? auth()->user()->hasPermission('system.audit.view') : false,
+            'repairControl' => $opDash->getRepairControl(),
+            'warrantyControl' => $opDash->getWarrantyControl(),
+            'inventoryRisk' => $opDash->getInventoryRisk(),
+            'financeControl' => $opDash->getFinanceControl(),
+            'highRiskActivities' => $opDash->getHighRiskActivities(auth()->user()),
+            'canViewAuditLog' => auth()->user() ? auth()->user()->hasPermission('system.audit.view') : false,
         ]);
     }
 }

@@ -421,7 +421,7 @@ class InvoiceController extends Controller
         }
 
         try {
-            $cancelMutation = function () use ($invoice, $cancelReason, $isOverdue, $validated): Invoice {
+            $cancelMutation = function (?\App\Models\PartnerDebtOperation $operation = null) use ($invoice, $cancelReason, $isOverdue, $validated): Invoice {
                 $invoice = Invoice::query()->lockForUpdate()->findOrFail($invoice->id);
                 if ($invoice->status === 'Đã hủy') {
                     throw new \InvalidArgumentException('Hóa đơn này đã được hủy trước đó.');
@@ -504,6 +504,11 @@ class InvoiceController extends Controller
                         $cashFlow->delete();
                     }
                 }
+                app(\App\Services\CashFlowCancellationService::class)->recordInvoiceAllocationReversals(
+                    $invoice,
+                    $cancelReason,
+                    $operation,
+                );
                 $cancelledCashFlowCount = $relatedCashFlows->count();
                 app(PartnerDebtMutationCoordinator::class)->checkpoint('evidence');
                 $invoice->status = 'cancelled';
@@ -579,19 +584,19 @@ class InvoiceController extends Controller
                     $customerId,
                     'invoice_cancel',
                     $payloadHash,
-                    function (\App\Models\Customer $lockedCustomer) use ($cancelMutation): Invoice {
+                    function (\App\Models\Customer $lockedCustomer, ?\App\Models\PartnerDebtOperation $operation = null) use ($cancelMutation): Invoice {
                         if (! (bool) $lockedCustomer->is_customer) {
                             throw \Illuminate\Validation\ValidationException::withMessages([
                                 'customer_id' => 'Doi tac khong co vai tro khach hang da duoc luu.',
                             ]);
                         }
 
-                        return DB::transaction($cancelMutation);
+                        return DB::transaction(fn (): Invoice => $cancelMutation($operation));
                     },
                     $request->header('Idempotency-Key'),
                 );
             } else {
-                DB::transaction($cancelMutation);
+                DB::transaction(fn (): Invoice => $cancelMutation());
             }
 
             return redirect()->route('invoices.index')->with('success', 'Hóa đơn đã được hủy thành công. Tồn kho và công nợ đã hoàn lại.');

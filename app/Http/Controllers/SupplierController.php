@@ -558,6 +558,8 @@ class SupplierController extends Controller
         $headers = array_merge($headers, $appendDetailCols);
 
         $rows = collect();
+        $documentResolver = app(\App\Services\Exports\PartnerDebtExportDocumentResolver::class);
+        $documentResolver->preload($filtered->all(), 'supplier');
         foreach ($filtered as $t) {
             $when = $this->supplierDebtEntryExportTime($t);
             $base = [
@@ -571,7 +573,7 @@ class SupplierController extends Controller
             $rows->push(array_merge($base, array_fill(0, count($appendDetailCols), '')));
 
             if ($includeDetail && count($appendDetailCols) > 0) {
-                foreach ($this->loadDebtExportDetailLines($t) as $line) {
+                foreach ($documentResolver->loadDetailLines($t) as $line) {
                     $detail = [];
                     foreach ($selectedCols as $col) {
                         if (! array_key_exists($col, $detailColumnMap)) {
@@ -726,64 +728,8 @@ class SupplierController extends Controller
 
     private function loadDebtExportDetailLines(array $entry): array
     {
-        $id = $entry['id'] ?? '';
-        if (! is_string($id) || ! str_contains($id, '-')) {
-            return [];
-        }
-
-        [$prefix, $rawId] = explode('-', $id, 2);
-        $rawId = (int) $rawId;
-        if ($rawId <= 0) {
-            return [];
-        }
-
-        if (in_array($prefix, ['pur', 'purchase'], true)) {
-            $items = \App\Models\PurchaseItem::where('purchase_id', $rawId)->get();
-
-            return $items->map(fn ($i) => [
-                'unit' => '',
-                'quantity' => $i->quantity ?? 0,
-                'unit_price' => $i->price ?? 0,
-                'discount' => $i->discount ?? 0,
-                'vat' => '',
-                'cost' => $i->price ?? 0,
-                'line_total' => $i->subtotal ?? 0,
-                'note' => $i->product_name ?? $i->product_code ?? '',
-            ])->all();
-        }
-
-        if (in_array($prefix, ['pret', 'purchase_return'], true)) {
-            $items = \App\Models\PurchaseReturnItem::where('purchase_return_id', $rawId)->get();
-
-            return $items->map(fn ($i) => [
-                'unit' => '',
-                'quantity' => $i->quantity ?? 0,
-                'unit_price' => $i->price ?? 0,
-                'discount' => '',
-                'vat' => '',
-                'cost' => $i->price ?? 0,
-                'line_total' => $i->subtotal ?? 0,
-                'note' => $i->product_name ?? $i->product_code ?? '',
-            ])->all();
-        }
-
-        if (in_array($prefix, ['inv', 'invoice'], true)) {
-            $items = \App\Models\InvoiceItem::where('invoice_id', $rawId)->get();
-
-            return $items->map(fn ($i) => [
-                'unit' => '',
-                'quantity' => $i->quantity ?? 0,
-                'unit_price' => $i->price ?? 0,
-                'discount' => $i->discount ?? 0,
-                'vat' => '',
-                'cost' => $i->price ?? 0,
-                'line_total' => ($i->price ?? 0) * ($i->quantity ?? 0) - ($i->discount ?? 0),
-                'note' => $i->product_name ?? '',
-            ])->all();
-        }
-
-        // payment, adjustment, discount, customer_payment, return, ... → no line detail.
-        return [];
+        return app(\App\Services\Exports\PartnerDebtExportDocumentResolver::class)
+            ->loadDetailLines($entry);
     }
 
     public function exportPurchaseHistory($id)

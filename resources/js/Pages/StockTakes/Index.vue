@@ -85,6 +85,8 @@ const itemSystemStock = (item) => toNumber(item.system_stock_snapshot ?? item.sy
 const savedDiff = (item) => toNumber(item.diff_qty);
 const savedDiffValue = (item) => toNumber(item.diff_value);
 const stockTakeTotal = (stockTake, key, fallback = 0) => stockTake[key] ?? fallback;
+const isSerialItem = (item) => Boolean(item.product?.has_serial || item.serialChecks?.length);
+const serialChecks = (item) => item.serial_checks || item.serialChecks || [];
 
 // Cân bằng kho
 const balanceStockTake = async (stockTake) => {
@@ -627,11 +629,13 @@ const cancelStockTake = async (stockTake) => {
                                                                 ></td>
                                                             </tr>
                                                             <!-- Actual items -->
-                                                            <tr
+                                                            <template
                                                                 v-for="item in stockTake.items"
                                                                 :key="item.id"
-                                                                class="border-b border-gray-100 hover:bg-gray-50"
                                                             >
+                                                                <tr
+                                                                    class="border-b border-gray-100 hover:bg-gray-50"
+                                                                >
                                                                 <td
                                                                     class="p-3 text-blue-600 font-medium"
                                                                 >
@@ -689,6 +693,19 @@ const cancelStockTake = async (stockTake) => {
                                                                     }}
                                                                 </td>
                                                             </tr>
+                                                            <tr v-if="isSerialItem(item)" class="bg-gray-50 border-b border-gray-200">
+                                                                <td></td>
+                                                                <td colspan="5" class="px-3 pb-3">
+                                                                    <div v-for="check in serialChecks(item)" :key="check.id || check.serial_number_snapshot" class="flex items-center gap-3 px-3 py-1 text-xs text-gray-700">
+                                                                        <span class="text-gray-400">↳</span>
+                                                                        <span class="font-mono flex-1">{{ check.serial_number_snapshot }}</span>
+                                                                        <span :class="check.actual_present === true ? 'text-green-700' : 'text-red-700'">
+                                                                            {{ check.actual_present === true ? 'Có thực tế' : 'Thiếu' }}
+                                                                        </span>
+                                                                    </div>
+                                                                </td>
+                                                            </tr>
+                                                            </template>
                                                         </tbody>
                                                     </table>
                                                 </div>
@@ -802,6 +819,14 @@ const cancelStockTake = async (stockTake) => {
                                                 class="bg-gray-50 p-4 border-t flex justify-between items-center rounded-b"
                                             >
                                                 <div class="flex gap-3">
+                                                    <Link
+                                                        v-if="stockTake.status === 'draft'"
+                                                        :href="`/stock-takes/${stockTake.id}/edit`"
+                                                        @click.stop
+                                                        class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded font-medium flex items-center gap-2"
+                                                    >
+                                                        Cập nhật số lượng
+                                                    </Link>
                                                     <button
                                                         v-if="stockTake.status !== 'cancelled'"
                                                         @click.stop="cancelStockTake(stockTake)"

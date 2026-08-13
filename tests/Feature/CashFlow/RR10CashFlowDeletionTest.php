@@ -3,7 +3,6 @@
 namespace Tests\Feature\CashFlow;
 
 use App\Models\CashFlow;
-use App\Models\Category;
 use App\Models\User;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
@@ -40,10 +39,10 @@ class RR10CashFlowDeletionTest extends TestCase
         parent::setUp();
 
         $this->admin = User::create([
-            'name'     => 'Admin RR10',
-            'email'    => 'admin-rr10-' . uniqid() . '@test.local',
+            'name' => 'Admin RR10',
+            'email' => 'admin-rr10-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
-            'role_id'  => null,
+            'role_id' => null,
         ]);
     }
 
@@ -59,18 +58,18 @@ class RR10CashFlowDeletionTest extends TestCase
 
     public function test_cancel_purchase_cashflow_must_set_status_cancelled(): void
     {
-        $refCode = 'PUR-RR10-' . uniqid();
+        $refCode = 'PUR-RR10-'.uniqid();
 
         $cashFlow = CashFlow::create([
-            'code'           => 'CF-PUR-' . uniqid(),
-            'type'           => 'payment',
-            'amount'         => 3000000,
-            'time'           => now(),
-            'category'       => 'Mua hàng',
+            'code' => 'CF-PUR-'.uniqid(),
+            'type' => 'payment',
+            'amount' => 3000000,
+            'time' => now(),
+            'category' => 'Mua hàng',
             'reference_type' => 'Purchase',
             'reference_code' => $refCode,
-            'description'    => 'Test RR10-01',
-            'status'         => 'active',
+            'description' => 'Test RR10-01',
+            'status' => 'active',
         ]);
 
         $cashFlowId = $cashFlow->id;
@@ -90,8 +89,8 @@ class RR10CashFlowDeletionTest extends TestCase
             'cancelled',
             $trashed->status,
             "CashFlow Purchase phải có status='cancelled' sau khi hủy. "
-            . "Hiện tại: status = '{$trashed->status}'. "
-            . "PurchaseController chỉ gọi ->delete() mà KHÔNG set status='cancelled' trước."
+            ."Hiện tại: status = '{$trashed->status}'. "
+            ."PurchaseController chỉ gọi ->delete() mà KHÔNG set status='cancelled' trước."
         );
     }
 
@@ -106,18 +105,18 @@ class RR10CashFlowDeletionTest extends TestCase
 
     public function test_cancel_order_return_cashflow_must_set_status_cancelled(): void
     {
-        $refCode = 'TH-RR10-' . uniqid();
+        $refCode = 'TH-RR10-'.uniqid();
 
         $cashFlow = CashFlow::create([
-            'code'           => 'CF-OR-' . uniqid(),
-            'type'           => 'payment',
-            'amount'         => 500000,
-            'time'           => now(),
-            'category'       => 'Trả hàng khách',
+            'code' => 'CF-OR-'.uniqid(),
+            'type' => 'payment',
+            'amount' => 500000,
+            'time' => now(),
+            'category' => 'Trả hàng khách',
             'reference_type' => 'OrderReturn',
             'reference_code' => $refCode,
-            'description'    => 'Test RR10-02',
-            'status'         => 'active',
+            'description' => 'Test RR10-02',
+            'status' => 'active',
         ]);
 
         $cashFlowId = $cashFlow->id;
@@ -134,8 +133,8 @@ class RR10CashFlowDeletionTest extends TestCase
             'cancelled',
             $trashed->status,
             "CashFlow OrderReturn phải có status='cancelled' sau khi hủy. "
-            . "Hiện tại: status = '{$trashed->status}'. "
-            . "OrderReturnController chỉ gọi ->delete() mà KHÔNG set status='cancelled'."
+            ."Hiện tại: status = '{$trashed->status}'. "
+            ."OrderReturnController chỉ gọi ->delete() mà KHÔNG set status='cancelled'."
         );
     }
 
@@ -150,18 +149,18 @@ class RR10CashFlowDeletionTest extends TestCase
 
     public function test_cancel_purchase_return_cashflow_must_set_status_cancelled(): void
     {
-        $refCode = 'TN-RR10-' . uniqid();
+        $refCode = 'TN-RR10-'.uniqid();
 
         $cashFlow = CashFlow::create([
-            'code'           => 'CF-PR-' . uniqid(),
-            'type'           => 'receipt',
-            'amount'         => 800000,
-            'time'           => now(),
-            'category'       => 'Trả hàng NCC',
+            'code' => 'CF-PR-'.uniqid(),
+            'type' => 'receipt',
+            'amount' => 800000,
+            'time' => now(),
+            'category' => 'Trả hàng NCC',
             'reference_type' => 'PurchaseReturn',
             'reference_code' => $refCode,
-            'description'    => 'Test RR10-03',
-            'status'         => 'active',
+            'description' => 'Test RR10-03',
+            'status' => 'active',
         ]);
 
         $cashFlowId = $cashFlow->id;
@@ -178,8 +177,8 @@ class RR10CashFlowDeletionTest extends TestCase
             'cancelled',
             $trashed->status,
             "CashFlow PurchaseReturn phải có status='cancelled' sau khi hủy. "
-            . "Hiện tại: status = '{$trashed->status}'. "
-            . "PurchaseReturnController chỉ gọi ->delete() mà KHÔNG set status='cancelled'."
+            ."Hiện tại: status = '{$trashed->status}'. "
+            ."PurchaseReturnController chỉ gọi ->delete() mà KHÔNG set status='cancelled'."
         );
     }
 
@@ -196,28 +195,28 @@ class RR10CashFlowDeletionTest extends TestCase
     {
         // CashFlow active
         $cf1 = CashFlow::create([
-            'code'           => 'CF-RR10-ACT-' . uniqid(),
-            'type'           => 'receipt',
-            'amount'         => 1000000,
-            'time'           => now(),
-            'category'       => 'Thu tiền',
+            'code' => 'CF-RR10-ACT-'.uniqid(),
+            'type' => 'receipt',
+            'amount' => 1000000,
+            'time' => now(),
+            'category' => 'Thu tiền',
             'reference_type' => 'Test',
             'reference_code' => 'TEST-RR10-SCOPE',
-            'description'    => 'Active CashFlow',
-            'status'         => 'active',
+            'description' => 'Active CashFlow',
+            'status' => 'active',
         ]);
 
         // CashFlow soft-deleted nhưng status vẫn active (bug pattern khi chỉ gọi delete())
         $cf2 = CashFlow::create([
-            'code'           => 'CF-RR10-DEL-' . uniqid(),
-            'type'           => 'receipt',
-            'amount'         => 9000000,
-            'time'           => now(),
-            'category'       => 'Thu tiền',
+            'code' => 'CF-RR10-DEL-'.uniqid(),
+            'type' => 'receipt',
+            'amount' => 9000000,
+            'time' => now(),
+            'category' => 'Thu tiền',
             'reference_type' => 'Test',
             'reference_code' => 'TEST-RR10-SCOPE',
-            'description'    => 'Soft-deleted but status active',
-            'status'         => 'active',
+            'description' => 'Soft-deleted but status active',
+            'status' => 'active',
         ]);
 
         // Soft-delete cf2 WITHOUT status cancelled (simulates current bug)
@@ -236,46 +235,49 @@ class RR10CashFlowDeletionTest extends TestCase
         $this->assertEquals(
             1000000,
             (float) $withTrashedActive,
-            "withTrashed()->active() phải chỉ trả 1.000.000 (cf1). "
-            . "Nếu = 10.000.000 thì CashFlow bị trashed nhưng status vẫn 'active' "
-            . "→ cần set status='cancelled' trước khi soft-delete. "
-            . "Thực tế: " . number_format($withTrashedActive)
+            'withTrashed()->active() phải chỉ trả 1.000.000 (cf1). '
+            ."Nếu = 10.000.000 thì CashFlow bị trashed nhưng status vẫn 'active' "
+            ."→ cần set status='cancelled' trước khi soft-delete. "
+            .'Thực tế: '.number_format($withTrashedActive)
         );
     }
 
     /* ═══════════════════════════════════════════════════════════════════════
-     *  TC-RR10-05: CashFlowController@destroy đã đúng — regression guard
+     *  TC-RR10-05: CashFlowController@destroy preserves the audit row
      *
-     *  CashFlowController@destroy (dòng 189-190):
-     *    $cashFlow->update(['status' => 'cancelled']);
-     *    $cashFlow->delete(); // soft-delete
-     *  → Chuẩn.
+     *  Cash-book cancellation is a status transition. The voucher remains
+     *  queryable for audit and is not physically/soft deleted.
      * ═══════════════════════════════════════════════════════════════════════ */
 
     public function test_cashflow_controller_destroy_sets_cancelled_status(): void
     {
         $cashFlow = CashFlow::create([
-            'code'           => 'CF-RR10-CTR-' . uniqid(),
-            'type'           => 'payment',
-            'amount'         => 500000,
-            'time'           => now(),
-            'category'       => 'Chi phí',
+            'code' => 'CF-RR10-CTR-'.uniqid(),
+            'type' => 'payment',
+            'amount' => 500000,
+            'time' => now(),
+            'category' => 'Chi phí',
             'reference_type' => 'Manual',
             'reference_code' => 'MANUAL-RR10',
-            'description'    => 'Test RR10-05 controller destroy',
-            'status'         => 'active',
+            'description' => 'Test RR10-05 controller destroy',
+            'status' => 'active',
         ]);
 
         $this->actingAs($this->admin)
-             ->delete(route('cash_flows.destroy', $cashFlow->id));
+            ->delete(
+                route('cash_flows.destroy', $cashFlow->id),
+                ['cancel_reason' => 'Điều chỉnh phiếu RR10'],
+                ['Idempotency-Key' => 'rr10-cashflow-cancel-'.uniqid()],
+            );
 
-        $trashed = CashFlow::withTrashed()->find($cashFlow->id);
-        $this->assertNotNull($trashed, 'CashFlow phải còn sau destroy (SoftDeletes)');
-        $this->assertNotNull($trashed->deleted_at, 'CashFlow phải bị soft-delete');
+        $cancelled = CashFlow::withTrashed()->find($cashFlow->id);
+        $this->assertNotNull($cancelled, 'CashFlow phải còn để phục vụ audit');
+        $this->assertNull($cancelled->deleted_at, 'CashFlow hủy trực tiếp tại Sổ quỹ không được soft-delete');
         $this->assertEquals(
             'cancelled',
-            $trashed->status,
-            "CashFlowController@destroy phải set status='cancelled'"
+            $cancelled->status,
+            "CashFlowController@destroy phải set status='cancelled'",
         );
+        $this->assertSame('Điều chỉnh phiếu RR10', $cancelled->cancel_reason);
     }
 }

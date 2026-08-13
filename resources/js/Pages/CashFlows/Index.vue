@@ -9,6 +9,7 @@ import SidebarFilter from "@/Components/Filters/SidebarFilter.vue";
 import DateTimePicker from "@/Components/DateTimePicker.vue";
 import MoneyInput from "@/Components/MoneyInput.vue";
 import { useFilters } from "@/composables/useFilters.js";
+import { usePermission } from "@/composables/usePermission.js";
 import { nowDatetimeLocal, toDatetimeLocalValue } from "@/utils/dateTime.js";
 
 const props = defineProps({
@@ -26,6 +27,7 @@ const { filters, setSort, reset } = useFilters({
     initial: props.filters,
     route: "/cash-flows",
 });
+const { can } = usePermission();
 
 const handleSort = (field, direction) => setSort(field, direction);
 
@@ -438,33 +440,65 @@ const submitFormAndPrint = () => {
 };
 
 const cancelIdempotencyKeys = new Map();
+const cancelModalOpen = ref(false);
+const cancelFlow = ref(null);
+const cancelReason = ref("");
+const cancelError = ref("");
+const cancelSubmitting = ref(false);
 
-const deleteFlow = (id) => {
-    if (
-        confirm(
-            "Bạn có chắc chắn muốn huỷ phiếu này? Hành động này không thể hoàn tác.",
-        )
-    ) {
-        const cancelReason = window.prompt("Nhập lý do hủy phiếu thu/chi:");
-        if (cancelReason === null) return;
-        if (cancelReason.trim().length < 5) {
-            alert("Lý do hủy phải có ít nhất 5 ký tự.");
-            return;
-        }
-        const idempotencyKey =
-            cancelIdempotencyKeys.get(id) || crypto.randomUUID();
-        cancelIdempotencyKeys.set(id, idempotencyKey);
-        router.delete(`/cash-flows/${id}`, {
-            data: { cancel_reason: cancelReason.trim() },
-            headers: { "Idempotency-Key": idempotencyKey },
-            preserveScroll: true,
-            preserveState: true,
-            onSuccess: () => {
-                cancelIdempotencyKeys.delete(id);
-                expandedRow.value = null;
-            },
-        });
+const openCancelModal = (flow) => {
+    if (!flow || flow.status === "cancelled" || !flow.cancel_policy?.allowed) {
+        return;
     }
+    cancelFlow.value = flow;
+    cancelReason.value = "";
+    cancelError.value = "";
+    cancelModalOpen.value = true;
+};
+
+const closeCancelModal = () => {
+    if (cancelSubmitting.value) return;
+    cancelModalOpen.value = false;
+    cancelFlow.value = null;
+    cancelReason.value = "";
+    cancelError.value = "";
+};
+
+const deleteFlow = (flow) => openCancelModal(flow);
+
+const submitCancellation = () => {
+    const flow = cancelFlow.value;
+    const reason = cancelReason.value.trim();
+    if (!flow) return;
+    if (reason.length < 5) {
+        cancelError.value = "Lý do hủy phải có ít nhất 5 ký tự.";
+        return;
+    }
+
+    const idempotencyKey =
+        cancelIdempotencyKeys.get(flow.id) || crypto.randomUUID();
+    cancelIdempotencyKeys.set(flow.id, idempotencyKey);
+    cancelSubmitting.value = true;
+    router.delete(`/cash-flows/${flow.id}`, {
+        data: { cancel_reason: reason },
+        headers: { "Idempotency-Key": idempotencyKey },
+        preserveScroll: true,
+        preserveState: true,
+        onSuccess: () => {
+            cancelIdempotencyKeys.delete(flow.id);
+            expandedRow.value = null;
+            closeCancelModal();
+        },
+        onError: (errors) => {
+            cancelError.value =
+                errors?.cancel_reason ||
+                errors?.message ||
+                "Không thể hủy phiếu. Vui lòng kiểm tra lại trạng thái chứng từ.";
+        },
+        onFinish: () => {
+            cancelSubmitting.value = false;
+        },
+    });
 };
 
 const printFlow = (flow) => {
@@ -635,6 +669,12 @@ const printFlow = (flow) => {
                                     class="px-4 py-3 font-medium text-blue-600 hover:underline"
                                 >
                                     {{ flow.code }}
+                                    <span
+                                        v-if="flow.status === 'cancelled'"
+                                        class="ml-2 rounded bg-gray-200 px-2 py-0.5 text-[11px] font-semibold text-gray-600"
+                                    >
+                                        Đã hủy
+                                    </span>
                                 </td>
                                 <td class="px-4 py-3 text-gray-600">
                                     {{
@@ -722,8 +762,14 @@ const printFlow = (flow) => {
                                                     {{ flow.code }}
                                                 </h3>
                                                 <span
+                                                    v-if="flow.status === 'cancelled'"
+                                                    class="px-2 py-0.5 rounded text-xs font-semibold bg-gray-200 text-gray-700"
+                                                    >Đã hủy</span
+                                                >
+                                                <span
+                                                    v-else
                                                     class="px-2 py-0.5 rounded text-xs font-semibold bg-green-100 text-green-700"
-                                                    >Đã thanh toán</span
+                                                    >Đã ghi nhận</span
                                                 >
                                                 <span
                                                     v-if="
@@ -897,13 +943,36 @@ const printFlow = (flow) => {
                                                     }}
                                                 </div>
                                             </div>
+                                            <div
+                                                v-if="flow.status === 'cancelled'"
+                                                class="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[13px] text-gray-600"
+                                            >
+                                                <div class="font-semibold text-gray-700">
+                                                    Phiếu đã hủy
+                                                </div>
+                                                <div>Lý do: {{ flow.cancel_reason || "Không có" }}</div>
+                                                <div>
+                                                    Người hủy:
+                                                    {{ flow.cancelled_by_name || "Không xác định" }}
+                                                    <span v-if="flow.cancelled_at">
+                                                        · {{ new Date(flow.cancelled_at).toLocaleString("vi-VN") }}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <div
+                                                v-else-if="flow.cancel_policy && !flow.cancel_policy.allowed"
+                                                class="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] text-amber-800"
+                                            >
+                                                {{ flow.cancel_policy.message }}
+                                            </div>
                                         </div>
 
                                         <div
                                             class="flex justify-between items-center"
                                         >
                                             <button
-                                                @click="deleteFlow(flow.id)"
+                                                v-if="can('cash_flows.delete') && flow.status !== 'cancelled' && flow.cancel_policy?.allowed"
+                                                @click="deleteFlow(flow)"
                                                 class="px-5 py-1.5 border border-red-500 rounded text-red-500 hover:bg-red-50 font-medium text-[14px] transition-colors"
                                             >
                                                 Hủy phiếu
@@ -912,6 +981,7 @@ const printFlow = (flow) => {
                                                 class="flex items-center gap-2"
                                             >
                                                 <button
+                                                    v-if="flow.status !== 'cancelled'"
                                                     @click="
                                                         openModal(
                                                             flow.type,
@@ -1772,6 +1842,73 @@ const printFlow = (flow) => {
                 </form>
             </div>
         </div>
+        <!-- Cash-flow cancellation modal -->
+        <div
+            v-if="cancelModalOpen"
+            class="fixed inset-0 z-[120] flex items-center justify-center bg-gray-900/50 backdrop-blur-sm"
+            @click.self="closeCancelModal"
+        >
+            <div class="w-full max-w-lg overflow-hidden rounded-lg bg-white shadow-2xl mx-4">
+                <div class="flex items-center justify-between border-b border-gray-200 px-5 py-4">
+                    <h3 class="text-base font-bold text-gray-800">Hủy phiếu thu/chi</h3>
+                    <button
+                        type="button"
+                        class="text-gray-400 hover:text-gray-700"
+                        @click="closeCancelModal"
+                    >
+                        ✕
+                    </button>
+                </div>
+                <form class="space-y-4 p-5" @submit.prevent="submitCancellation">
+                    <div class="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                        <div class="font-semibold">Thao tác này sẽ đảo nghiệp vụ liên quan.</div>
+                        <div v-if="cancelFlow">
+                            Mã phiếu: <strong>{{ cancelFlow.code }}</strong> ·
+                            {{ cancelFlow.type === "receipt" ? "Phiếu thu" : "Phiếu chi" }} ·
+                            {{ formatCurrency(cancelFlow.amount) }}
+                        </div>
+                        <div v-if="cancelFlow?.cancel_policy?.message" class="mt-1">
+                            {{ cancelFlow.cancel_policy.message }}
+                        </div>
+                    </div>
+                    <div>
+                        <label class="mb-1 block text-sm font-semibold text-gray-700">
+                            Lý do hủy <span class="text-red-500">*</span>
+                        </label>
+                        <textarea
+                            v-model="cancelReason"
+                            rows="4"
+                            minlength="5"
+                            maxlength="500"
+                            required
+                            class="w-full rounded border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                            placeholder="Nhập lý do hủy phiếu (tối thiểu 5 ký tự)"
+                        ></textarea>
+                        <div v-if="cancelError" class="mt-1 text-sm text-red-600">
+                            {{ cancelError }}
+                        </div>
+                    </div>
+                    <div class="flex justify-end gap-2">
+                        <button
+                            type="button"
+                            class="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                            :disabled="cancelSubmitting"
+                            @click="closeCancelModal"
+                        >
+                            Bỏ qua
+                        </button>
+                        <button
+                            type="submit"
+                            class="rounded bg-red-600 px-5 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+                            :disabled="cancelSubmitting"
+                        >
+                            {{ cancelSubmitting ? "Đang xử lý..." : "Đồng ý" }}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
         <!-- Category Modal (Nested) -->
         <div
             v-if="isCategoryModalOpen"
