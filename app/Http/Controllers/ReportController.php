@@ -2,18 +2,18 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ActivityLog;
+use App\Models\Branch;
 use App\Models\CashFlow;
 use App\Models\Category;
 use App\Models\Customer;
 use App\Models\DebtOffset;
-use App\Models\ActivityLog;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\OrderReturn;
 use App\Models\Product;
 use App\Models\SerialImei;
 use App\Models\StockMovement;
-use App\Models\Branch;
 use App\Services\Debt\CanonicalPartnerDebtService;
 use App\Services\ProductSearchService;
 use Carbon\Carbon;
@@ -54,6 +54,7 @@ class ReportController extends Controller
         if ($branchId) {
             $query->where('branch_id', $branchId);
         }
+
         return $query;
     }
 
@@ -74,20 +75,20 @@ class ReportController extends Controller
         // Current period (via MetricService — single source of truth)
         $m = \App\Support\Reports\MetricService::compute($dateFrom, $dateTo, $branchId);
         $invoiceCount = $m['invoice_count'];
-        $revenue      = $m['gross_revenue'];
-        $returns      = $m['return_value'];
-        $netRevenue   = $m['net_revenue'];
-        $totalCost    = $m['cogs_net'];
-        $grossProfit  = $m['gross_profit'];
+        $revenue = $m['gross_revenue'];
+        $returns = $m['return_value'];
+        $netRevenue = $m['net_revenue'];
+        $totalCost = $m['cogs_net'];
+        $grossProfit = $m['gross_profit'];
 
         // Previous period
         $pm = \App\Support\Reports\MetricService::compute($prevFrom, $prevTo, $branchId);
         $prevInvoiceCount = $pm['invoice_count'];
-        $prevRevenue      = $pm['gross_revenue'];
-        $prevReturns      = $pm['return_value'];
-        $prevNetRevenue   = $pm['net_revenue'];
-        $prevTotalCost    = $pm['cogs_net'];
-        $prevGrossProfit  = $pm['gross_profit'];
+        $prevRevenue = $pm['gross_revenue'];
+        $prevReturns = $pm['return_value'];
+        $prevNetRevenue = $pm['net_revenue'];
+        $prevTotalCost = $pm['cogs_net'];
+        $prevGrossProfit = $pm['gross_profit'];
 
         // Chart data — daily breakdown (also via MetricService for consistency)
         $chartLabels = [];
@@ -102,11 +103,11 @@ class ReportController extends Controller
             $dayEnd = $current->copy()->endOfDay();
             $dm = \App\Support\Reports\MetricService::compute($dayStart, $dayEnd, $branchId);
 
-            $chartLabels[]  = $current->format('d/m/Y');
+            $chartLabels[] = $current->format('d/m/Y');
             $chartRevenue[] = $dm['gross_revenue'];
             $chartReturns[] = $dm['return_value'];
-            $chartCost[]    = $dm['cogs_net'];
-            $chartProfit[]  = $dm['gross_profit'];
+            $chartCost[] = $dm['cogs_net'];
+            $chartProfit[] = $dm['gross_profit'];
 
             $current->addDay();
         }
@@ -165,10 +166,10 @@ class ReportController extends Controller
 
         // Net revenue, COGS, gross profit via MetricService
         $m = \App\Support\Reports\MetricService::compute($dateFrom, $dateTo, $branchId);
-        $revenue     = $m['gross_revenue'];
-        $returns     = $m['return_value'];
-        $netRevenue  = $m['net_revenue'];
-        $cogs        = $m['cogs_net'];
+        $revenue = $m['gross_revenue'];
+        $returns = $m['return_value'];
+        $netRevenue = $m['net_revenue'];
+        $cogs = $m['cogs_net'];
         $grossProfit = $m['gross_profit'];
 
         // Operating expenses from CashFlow (type = 'payment'), excluding NCC payments (already in COGS)
@@ -185,7 +186,7 @@ class ReportController extends Controller
             ->groupBy('category')
             ->orderByDesc('total')
             ->get()
-            ->map(fn($row) => [
+            ->map(fn ($row) => [
                 'name' => $row->category ?: 'Khác',
                 'total' => (float) $row->total,
                 'percent' => $netRevenue > 0 ? round(($row->total / $netRevenue) * 100, 2) : 0,
@@ -247,14 +248,16 @@ class ReportController extends Controller
         $soldItems = InvoiceItem::whereHas('invoice', function ($q) use ($dateFrom, $dateTo, $branchId) {
             $q->whereBetween('created_at', [$dateFrom, $dateTo])
                 ->where('status', '!=', 'Đã hủy');
-            if ($branchId) $q->where('branch_id', $branchId);
+            if ($branchId) {
+                $q->where('branch_id', $branchId);
+            }
         })->with('product:id,category_id');
 
         $soldData = $soldItems->get();
         $uniqueProductsSold = $soldData->pluck('product_id')->unique()->count();
         $totalItemsSold = $soldData->sum('quantity');
-        $totalSoldRevenue = $soldData->sum(fn($i) => $i->quantity * $i->price);
-        $totalSoldCost = $soldData->sum(fn($i) => $i->quantity * ($i->cost_price ?? 0));
+        $totalSoldRevenue = $soldData->sum(fn ($i) => $i->quantity * $i->price);
+        $totalSoldCost = $soldData->sum(fn ($i) => $i->quantity * ($i->cost_price ?? 0));
         $avgRevenuePerProduct = $uniqueProductsSold > 0 ? round($totalSoldRevenue / $uniqueProductsSold) : 0;
         $avgProfitPerProduct = $uniqueProductsSold > 0 ? round(($totalSoldRevenue - $totalSoldCost) / $uniqueProductsSold) : 0;
 
@@ -262,7 +265,9 @@ class ReportController extends Controller
         $topGroupsBestSeller = InvoiceItem::whereHas('invoice', function ($q) use ($dateFrom, $dateTo, $branchId) {
             $q->whereBetween('created_at', [$dateFrom, $dateTo])
                 ->where('status', '!=', 'Đã hủy');
-            if ($branchId) $q->where('branch_id', $branchId);
+            if ($branchId) {
+                $q->where('branch_id', $branchId);
+            }
         })
             ->join('products', 'invoice_items.product_id', '=', 'products.id')
             ->join('categories', 'products.category_id', '=', 'categories.id')
@@ -290,7 +295,9 @@ class ReportController extends Controller
         $soldCategoryIds = InvoiceItem::whereHas('invoice', function ($q) use ($dateFrom, $dateTo, $branchId) {
             $q->whereBetween('created_at', [$dateFrom, $dateTo])
                 ->where('status', '!=', 'Đã hủy');
-            if ($branchId) $q->where('branch_id', $branchId);
+            if ($branchId) {
+                $q->where('branch_id', $branchId);
+            }
         })
             ->join('products', 'invoice_items.product_id', '=', 'products.id')
             ->select(
@@ -310,7 +317,9 @@ class ReportController extends Controller
                 $j->on('invoice_items.invoice_id', '=', 'invoices.id')
                     ->whereBetween('invoices.created_at', [$dateFrom, $dateTo])
                     ->where('invoices.status', '!=', 'Đã hủy');
-                if ($branchId) $j->where('invoices.branch_id', $branchId);
+                if ($branchId) {
+                    $j->where('invoices.branch_id', $branchId);
+                }
             })
             ->groupBy('categories.id', 'categories.name')
             ->selectRaw('COALESCE(SUM(invoice_items.quantity), 0) as total_qty')
@@ -318,7 +327,7 @@ class ReportController extends Controller
             ->orderBy('total_qty')
             ->limit(10)
             ->get()
-            ->map(fn($row) => [
+            ->map(fn ($row) => [
                 'name' => $row->name,
                 'qty' => (int) $row->total_qty,
                 'returns' => 0,
@@ -423,7 +432,7 @@ class ReportController extends Controller
             ->orderByDesc('stock_quantity')
             ->limit(10)
             ->get(['id', 'name', 'sku', 'stock_quantity', 'cost_price'])
-            ->map(fn($p) => [
+            ->map(fn ($p) => [
                 'name' => $p->name,
                 'sku' => $p->sku,
                 'stock' => (int) $p->stock_quantity,
@@ -449,7 +458,7 @@ class ReportController extends Controller
             ->orderByDesc(DB::raw('stock_quantity * cost_price'))
             ->limit(10)
             ->get(['id', 'name', 'sku', 'stock_quantity', 'cost_price'])
-            ->map(fn($p) => [
+            ->map(fn ($p) => [
                 'name' => $p->name,
                 'sku' => $p->sku,
                 'stock' => (int) $p->stock_quantity,
@@ -492,7 +501,9 @@ class ReportController extends Controller
                 $j->on('invoice_items.invoice_id', '=', 'invoices.id')
                     ->whereBetween('invoices.created_at', [$dateFrom, $dateTo])
                     ->where('invoices.status', '!=', 'Đã hủy');
-                if ($branchId) $j->where('invoices.branch_id', $branchId);
+                if ($branchId) {
+                    $j->where('invoices.branch_id', $branchId);
+                }
             })
             ->select(
                 'categories.id',
@@ -503,7 +514,7 @@ class ReportController extends Controller
             ->groupBy('categories.id', 'categories.name')
             ->orderByDesc('total_revenue')
             ->get()
-            ->map(fn($row) => [
+            ->map(fn ($row) => [
                 'name' => $row->name,
                 'sold' => (int) $row->total_sold,
                 'returns' => 0,
@@ -548,25 +559,25 @@ class ReportController extends Controller
         // Revenue from new customers
         $newCustomerRevenue = (float) Invoice::active()->whereBetween('created_at', [$dateFrom, $dateTo])
             ->whereIn('customer_id', $newCustomerIds)
-            ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
             ->sum('total');
 
         // Old customers (existed before this period)
         $oldCustomerRevQ = Invoice::active()->whereBetween('created_at', [$dateFrom, $dateTo])
             ->whereNotNull('customer_id')
             ->whereNotIn('customer_id', $newCustomerIds)
-            ->when($branchId, fn($q) => $q->where('branch_id', $branchId));
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId));
         $oldCustomerCount = (clone $oldCustomerRevQ)->distinct('customer_id')->count('customer_id');
         $oldCustomerRevenue = (float) (clone $oldCustomerRevQ)->sum('total');
 
         // Walk-in (no customer_id)
         $walkinRevenue = (float) Invoice::active()->whereBetween('created_at', [$dateFrom, $dateTo])
             ->whereNull('customer_id')
-            ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
             ->sum('total');
         $walkinCount = Invoice::active()->whereBetween('created_at', [$dateFrom, $dateTo])
             ->whereNull('customer_id')
-            ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
             ->count();
 
         // Chart data — weekly breakdown
@@ -585,7 +596,7 @@ class ReportController extends Controller
             $chartLabels[] = $current->format('d/m');
 
             $weekInvQ = Invoice::active()->whereBetween('created_at', [$current, $weekEnd->copy()->endOfDay()])
-                ->when($branchId, fn($q) => $q->where('branch_id', $branchId));
+                ->when($branchId, fn ($q) => $q->where('branch_id', $branchId));
 
             $weekNewCustIds = Customer::whereBetween('created_at', [$dateFrom, $weekEnd])->pluck('id');
 
@@ -639,10 +650,10 @@ class ReportController extends Controller
         // Define 5 segments based on purchase behavior
         $segmentDefs = [
             'Trung thành' => ['color' => '#f59e0b', 'desc' => 'Các khách hàng thường xuyên ghé thăm cửa hàng, đã mua hàng nhiều lần với mức chi tiêu lớn. Họ đóng góp nhiều vào doanh thu của cửa hàng.'],
-            'Thân thiết'  => ['color' => '#3b82f6', 'desc' => 'Các khách hàng có tần suất trung bình hoặc mới mua gần đây với mức chi tiêu đáng kể. Có tiềm năng phát triển thành nhóm Trung thành.'],
-            'Tiềm năng'   => ['color' => '#22c55e', 'desc' => 'Các khách hàng mới mua gần đây với mức chi tiêu trung bình. Có triển vọng trong việc tiếp cận và tạo sự gắn kết.'],
+            'Thân thiết' => ['color' => '#3b82f6', 'desc' => 'Các khách hàng có tần suất trung bình hoặc mới mua gần đây với mức chi tiêu đáng kể. Có tiềm năng phát triển thành nhóm Trung thành.'],
+            'Tiềm năng' => ['color' => '#22c55e', 'desc' => 'Các khách hàng mới mua gần đây với mức chi tiêu trung bình. Có triển vọng trong việc tiếp cận và tạo sự gắn kết.'],
             'Cần quan tâm' => ['color' => '#ef4444', 'desc' => 'Các khách hàng đã từng mua đều đặn, nhưng không quay lại mua hàng trong thời gian gần đây.'],
-            'Sắp rời bỏ'  => ['color' => '#9ca3af', 'desc' => 'Các khách hàng có tần suất thấp và đã rất lâu không quay lại mua hàng.'],
+            'Sắp rời bỏ' => ['color' => '#9ca3af', 'desc' => 'Các khách hàng có tần suất thấp và đã rất lâu không quay lại mua hàng.'],
         ];
 
         $customers = Customer::where('is_customer', true)
@@ -669,11 +680,11 @@ class ReportController extends Controller
         foreach ($customers as $customer) {
             $invoiceCount = Invoice::active()->where('customer_id', $customer->id)
                 ->whereBetween('created_at', [$dateFrom, $dateTo])
-                ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
+                ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
                 ->count();
 
             $lastInvoice = Invoice::active()->where('customer_id', $customer->id)
-                ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
+                ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
                 ->orderByDesc('created_at')
                 ->first(['created_at']);
 
@@ -699,7 +710,7 @@ class ReportController extends Controller
             // Revenue
             $custRevenue = (float) Invoice::active()->where('customer_id', $customer->id)
                 ->whereBetween('created_at', [$dateFrom, $dateTo])
-                ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
+                ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
                 ->sum('total');
             $segments[$segment]['revenue'] += $custRevenue;
 
@@ -715,7 +726,9 @@ class ReportController extends Controller
                 $q->where('customer_id', $customer->id)
                     ->whereBetween('created_at', [$dateFrom, $dateTo])
                     ->where('status', '!=', 'Đã hủy');
-                if ($branchId) $q->where('branch_id', $branchId);
+                if ($branchId) {
+                    $q->where('branch_id', $branchId);
+                }
             })->get();
 
             foreach ($costItems as $item) {
@@ -752,7 +765,7 @@ class ReportController extends Controller
 
         // === Summary Cards ===
         $debtorsQuery = Customer::where('debt_amount', '>', 0)
-            ->when($branchId, fn($q) => $q->where('branch_id', $branchId));
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId));
 
         $debtorCount = (clone $debtorsQuery)->count();
         $totalDebt = (float) (clone $debtorsQuery)->sum('debt_amount');
@@ -761,7 +774,7 @@ class ReportController extends Controller
         $yearStart = Carbon::now()->startOfYear();
         $yearEnd = Carbon::now()->endOfDay();
         $yearRevenue = (float) Invoice::active()->whereBetween('created_at', [$yearStart, $yearEnd])
-            ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
             ->sum('total');
         $yearReturns = (float) OrderReturn::whereBetween('created_at', [$yearStart, $yearEnd])
             ->sum('total');
@@ -783,7 +796,7 @@ class ReportController extends Controller
             // Monthly debt snapshot (approximate: sum of debt_amount at end of period)
             // For simplicity, use invoices unpaid in that month
             $monthRev = (float) Invoice::active()->whereBetween('created_at', [$monthStart, $monthEnd])
-                ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
+                ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
                 ->sum('total');
             $monthRet = (float) OrderReturn::whereBetween('created_at', [$monthStart, $monthEnd])
                 ->sum('total');
@@ -808,7 +821,7 @@ class ReportController extends Controller
 
         // === Bar chart: Lượng khách theo số ngày nợ ===
         $allDebtors = Customer::where('debt_amount', '>', 0)
-            ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
             ->get(['id', 'code', 'name', 'phone', 'debt_amount', 'customer_group']);
 
         $debtByDays = [
@@ -824,7 +837,7 @@ class ReportController extends Controller
         foreach ($allDebtors as $debtor) {
             // Find the last invoice to estimate debt age
             $lastInv = Invoice::active()->where('customer_id', $debtor->id)
-                ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
+                ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
                 ->orderByDesc('created_at')
                 ->first(['created_at']);
             $debtDays = $lastInv ? Carbon::now()->diffInDays($lastInv->created_at) : 0;
@@ -832,7 +845,7 @@ class ReportController extends Controller
             // Customer revenue in period
             $custYearRevenue = (float) Invoice::active()->where('customer_id', $debtor->id)
                 ->whereBetween('created_at', [$yearStart, $yearEnd])
-                ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
+                ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
                 ->sum('total');
             $custDebtRatio = $custYearRevenue > 0
                 ? round(($debtor->debt_amount / $custYearRevenue) * 100, 2)
@@ -850,11 +863,17 @@ class ReportController extends Controller
             ];
 
             // Classify by days
-            if ($debtDays <= 30) $debtByDays['0-30']++;
-            elseif ($debtDays <= 60) $debtByDays['31-60']++;
-            elseif ($debtDays <= 90) $debtByDays['61-90']++;
-            elseif ($debtDays <= 120) $debtByDays['91-120']++;
-            else $debtByDays['>120']++;
+            if ($debtDays <= 30) {
+                $debtByDays['0-30']++;
+            } elseif ($debtDays <= 60) {
+                $debtByDays['31-60']++;
+            } elseif ($debtDays <= 90) {
+                $debtByDays['61-90']++;
+            } elseif ($debtDays <= 120) {
+                $debtByDays['91-120']++;
+            } else {
+                $debtByDays['>120']++;
+            }
         }
 
         // Top 20% by amount
@@ -905,8 +924,8 @@ class ReportController extends Controller
                     $sub->where('debt_amount', '!=', 0)->where('supplier_debt_amount', '!=', 0);
                 });
             })
-            ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
-            ->when($search, fn($q) => $q->where(function ($sub) use ($search) {
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
+            ->when($search, fn ($q) => $q->where(function ($sub) use ($search) {
                 $sub->where('name', 'like', "%{$search}%")
                     ->orWhere('code', 'like', "%{$search}%")
                     ->orWhere('phone', 'like', "%{$search}%");
@@ -926,8 +945,8 @@ class ReportController extends Controller
         // Offset history per partner
         $offsetQuery = DebtOffset::query()
             ->whereIn('customer_id', $partners->pluck('id'))
-            ->when($dateFrom, fn($q) => $q->where('created_at', '>=', $dateFrom))
-            ->when($dateTo, fn($q) => $q->where('created_at', '<=', $dateTo));
+            ->when($dateFrom, fn ($q) => $q->where('created_at', '>=', $dateFrom))
+            ->when($dateTo, fn ($q) => $q->where('created_at', '<=', $dateTo));
 
         $offsetsByPartner = $offsetQuery->get()->groupBy('customer_id');
 
@@ -1016,13 +1035,13 @@ class ReportController extends Controller
                     $sub->where('debt_amount', '!=', 0)->where('supplier_debt_amount', '!=', 0);
                 });
             })
-            ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
             ->orderByRaw('ABS(debt_amount) + ABS(supplier_debt_amount) DESC')
             ->get(['id', 'code', 'name', 'phone', 'debt_amount', 'supplier_debt_amount']);
 
         $offsetsByPartner = DebtOffset::whereIn('customer_id', $partners->pluck('id'))
-            ->when($dateFrom, fn($q) => $q->where('created_at', '>=', $dateFrom))
-            ->when($dateTo, fn($q) => $q->where('created_at', '<=', $dateTo))
+            ->when($dateFrom, fn ($q) => $q->where('created_at', '>=', $dateFrom))
+            ->when($dateTo, fn ($q) => $q->where('created_at', '<=', $dateTo))
             ->where('status', 'active')
             ->get()
             ->groupBy('customer_id');
@@ -1031,9 +1050,10 @@ class ReportController extends Controller
         $csvRows = $partners->map(function ($p) use ($offsetsByPartner, $canonicalDebt) {
             $totalOffset = $offsetsByPartner->get($p->id, collect())->sum('amount');
             $canonical = $canonicalDebt->calculate($p);
+
             return implode(',', [
                 $p->code,
-                '"' . str_replace('"', '""', $p->name) . '"',
+                '"'.str_replace('"', '""', $p->name).'"',
                 $p->phone ?? '',
                 $canonical['customer_balance'],
                 $canonical['supplier_balance'],
@@ -1042,9 +1062,9 @@ class ReportController extends Controller
             ]);
         })->implode("\n");
 
-        return response($csvHeader . $csvRows, 200, [
+        return response($csvHeader.$csvRows, 200, [
             'Content-Type' => 'text/csv; charset=UTF-8',
-            'Content-Disposition' => 'attachment; filename="doi-soat-cong-no-' . now()->format('Y-m-d') . '.csv"',
+            'Content-Disposition' => 'attachment; filename="doi-soat-cong-no-'.now()->format('Y-m-d').'.csv"',
         ]);
     }
 
