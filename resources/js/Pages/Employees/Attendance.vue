@@ -929,7 +929,7 @@ const estimatedWorkInfo = computed(() => {
         })
     if (completeIntervals.length > 0) {
         const workedMinutes = completeIntervals.reduce((sum, minutes) => sum + minutes, 0)
-        return { workedMinutes, workUnits: workedMinutes >= 480 ? 1.0 : 0.5, reason: workedMinutes < 480 ? 'ChÆ°a Ä‘á»§ giá» lÃ m cáº£ ngÃ y' : '' }
+        return { workedMinutes, workUnits: workedMinutes >= 480 ? 1.0 : 0.5, reason: workedMinutes < 480 ? 'Chưa đủ giờ làm cả ngày' : '' }
     }
 
     let checkInVal = hasCheckIn.value ? form.check_in_time : null
