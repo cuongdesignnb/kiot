@@ -144,21 +144,27 @@
                           <template v-if="periodMode === 'month'">
                             <div class="font-semibold truncate" :title="schedule.shift?.name || 'Ca tự do'">{{ (schedule.shift?.name || 'Tự do').substring(0,4) }}</div>
                             <div class="text-[8px] mt-0.5" :class="getTimeTextClass(schedule.timekeeping_record)">
-                              {{ formatCheckTimeShort(schedule.timekeeping_record?.check_in_at) }}
+                               {{ formatCheckTimeShort(schedule.timekeeping_record?.intervals?.[0]?.check_in_at || schedule.timekeeping_record?.check_in_at) }}
                             </div>
                           </template>
                           <template v-else>
                             <div class="font-semibold text-[12px]">{{ schedule.shift?.name || 'Ca tự do' }}</div>
                             <div class="text-[11px] mt-0.5" :class="getTimeTextClass(schedule.timekeeping_record)">
-                              {{ formatCheckTime(schedule.timekeeping_record?.check_in_at) }} - {{ formatCheckTime(schedule.timekeeping_record?.check_out_at) }}
+                               {{ getRecordTimeText(schedule.timekeeping_record) }}
                             </div>
                             <div v-if="getOtInfo(schedule.timekeeping_record)" class="text-[10px] mt-0.5" :class="getOtTextClass(schedule.timekeeping_record)">
                               {{ getOtInfo(schedule.timekeeping_record) }}
+                            </div>
+                            <div v-if="schedule.timekeeping_record" class="text-[10px] mt-0.5 text-gray-500">
+                              {{ schedule.timekeeping_record.worked_minutes || 0 }} phút · {{ Number(schedule.timekeeping_record.work_units || 0) }} công
                             </div>
                             <div v-if="!schedule.timekeeping_record" class="text-[10px] text-gray-400 italic mt-0.5">Chưa chấm công</div>
                           </template>
                         </div>
                       </template>
+                      <div v-if="getDaySummary(empRow.days[day.date]).hasData" class="mt-1 rounded bg-blue-50 px-2 py-1 text-[10px] font-medium text-blue-700">
+                        Tổng: {{ getDaySummary(empRow.days[day.date]).workedMinutes }} phút · {{ getDaySummary(empRow.days[day.date]).hours }} giờ · {{ getDaySummary(empRow.days[day.date]).workUnits }} công
+                      </div>
                     </div>
                   </td>
                 </tr>
@@ -379,6 +385,17 @@
               <input type="time" v-model="form.check_out_time" :disabled="!hasCheckOut" class="px-3 py-1.5 border border-gray-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400 w-28">
             </div>
 
+            <div v-for="(interval, index) in form.intervals.slice(1)" :key="`interval-${index + 1}`" class="mt-3 flex items-center gap-3 flex-wrap">
+              <span class="text-xs text-gray-500 min-w-[130px]">Khoảng {{ index + 2 }}</span>
+              <input v-model="interval.check_in_time" type="time" class="px-3 py-1.5 border border-gray-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-500 w-28">
+              <span class="text-xs text-gray-400">đến</span>
+              <input v-model="interval.check_out_time" type="time" class="px-3 py-1.5 border border-gray-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-500 w-28">
+              <button type="button" @click="removeInterval(index + 1)" class="text-xs text-red-600 hover:underline">Xóa</button>
+            </div>
+            <button v-show="form.attendance_type === 'work'" type="button" @click="addInterval" class="mt-3 text-xs font-medium text-blue-600 hover:underline">
+              + Thêm khoảng Vào–Ra
+            </button>
+
             <!-- Estimated Work Info -->
             <div class="mt-4 p-3 bg-blue-50/50 rounded border border-blue-100 text-xs text-blue-800">
               <template v-if="activeSchedule?.timekeeping_record">
@@ -403,6 +420,9 @@
               <div v-if="estimatedWorkInfo.reason" class="mt-1 text-[10px] text-orange-600 font-medium">
                 Lý do: {{ estimatedWorkInfo.reason }}
               </div>
+            </div>
+            <div v-if="saveError" role="alert" class="mt-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {{ saveError }}
             </div>
           </div>
 
@@ -736,6 +756,7 @@ const getCardClasses = (record) => {
     const type = record.attendance_type || 'work'
     if (type === 'leave_paid') return 'bg-green-50 border border-green-200 text-green-800'
     if (type === 'leave_unpaid') return 'bg-red-50 border border-red-200 text-red-800'
+    if (record.needs_review) return 'bg-orange-50 border border-orange-300 text-orange-800'
     if (!record.check_in_at && !record.check_out_at) return 'bg-gray-50 border border-gray-200 text-gray-500'
     if (Boolean(record.check_in_at) !== Boolean(record.check_out_at)) return 'bg-red-50 border border-red-300 text-red-800'
     if (record.late_minutes > 0 || record.early_minutes > 0) return 'bg-purple-50 border border-purple-200 text-purple-800'
@@ -768,6 +789,28 @@ const formatCheckTimeShort = (dateTimeStr) => {
     return `${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}`
 }
 
+const getRecordTimeText = (record) => {
+    if (!record) return '--'
+    if (Array.isArray(record.intervals) && record.intervals.length > 0) {
+        return record.intervals
+            .map(interval => `${formatCheckTime(interval.check_in_at)} - ${formatCheckTime(interval.check_out_at)}`)
+            .join(', ')
+    }
+    return `${formatCheckTime(record.check_in_at)} - ${formatCheckTime(record.check_out_at)}`
+}
+
+const getDaySummary = (schedules) => {
+    const records = (schedules || []).map(schedule => schedule?.timekeeping_record).filter(Boolean)
+    const workedMinutes = records.reduce((sum, record) => sum + Number(record.worked_minutes || 0), 0)
+    const workUnits = Math.min(1, records.reduce((sum, record) => sum + Number(record.work_units || 0), 0))
+    return {
+        hasData: records.length > 0,
+        workedMinutes,
+        hours: Number((workedMinutes / 60).toFixed(2)),
+        workUnits: Number(workUnits.toFixed(2)),
+    }
+}
+
 const formatDateVietnamese = (dateStr) => {
     if (!dateStr) return ''
     const d = new Date(dateStr)
@@ -789,10 +832,13 @@ const getAttendanceTooltip = (schedule) => {
     if (!record) return 'Chưa có bản ghi chấm công'
 
     const source = record.manual_override || record.source === 'manual' ? 'Thủ công' : 'Thiết bị'
+    const intervals = Array.isArray(record.intervals) && record.intervals.length > 0
+        ? record.intervals.map(interval => `${formatCheckTime(interval.check_in_at)} - ${formatCheckTime(interval.check_out_at)}`).join(', ')
+        : `${formatCheckTime(record.check_in_at)} - ${formatCheckTime(record.check_out_at)}`
     return [
-        `Vào: ${formatCheckTime(record.check_in_at)}`,
-        `Ra: ${formatCheckTime(record.check_out_at)}`,
+        `Khoảng: ${intervals}`,
         `Phút làm: ${record.worked_minutes ?? 0}`,
+        `Phút trong ca: ${record.regular_minutes ?? record.worked_minutes ?? 0}`,
         `Ngày công: ${Number(record.work_units || 0)}`,
         `Muộn/Sớm: ${record.late_minutes || 0}/${record.early_minutes || 0} phút`,
         `Nguồn: ${source}`,
@@ -836,6 +882,7 @@ const recalculate = async () => {
 const isModalOpen = ref(false)
 const activeSchedule = ref(null)
 const isSaving = ref(false)
+const saveError = ref('')
 
 const form = reactive({
     employee_work_schedule_id: '',
@@ -843,12 +890,14 @@ const form = reactive({
     check_in_time: '',
     check_out_time: '',
     ot_minutes: 0,
-    notes: ''
+    notes: '',
+    intervals: []
 })
 
 const statusBadge = computed(() => {
     if (!activeSchedule.value) return null
     const record = activeSchedule.value.timekeeping_record
+    if (record?.needs_review) return { text: 'Cần xử lý', cls: 'bg-orange-100 text-orange-700' }
     if (!record || (!record.check_in_at && !record.check_out_at)) return { text: 'Chưa chấm công', cls: 'bg-yellow-100 text-yellow-700' }
     if (record.attendance_type === 'leave_paid') return { text: 'Nghỉ có phép', cls: 'bg-gray-100 text-gray-600' }
     if (record.attendance_type === 'leave_unpaid') return { text: 'Nghỉ không phép', cls: 'bg-gray-100 text-gray-600' }
@@ -867,6 +916,22 @@ const estimatedWorkInfo = computed(() => {
         return { workedMinutes: 0, workUnits: 0.0, reason: 'Nghỉ không lương' }
     }
 
+    const intervalValues = Array.isArray(form.intervals) ? form.intervals : []
+    const completeIntervals = intervalValues
+        .filter(interval => interval?.check_in_time && interval?.check_out_time)
+        .map(interval => {
+            const [h1, m1] = interval.check_in_time.split(':').map(Number)
+            const [h2, m2] = interval.check_out_time.split(':').map(Number)
+            let start = h1 * 60 + m1
+            let end = h2 * 60 + m2
+            if (end <= start) end += 1440
+            return end - start
+        })
+    if (completeIntervals.length > 0) {
+        const workedMinutes = completeIntervals.reduce((sum, minutes) => sum + minutes, 0)
+        return { workedMinutes, workUnits: workedMinutes >= 480 ? 1.0 : 0.5, reason: workedMinutes < 480 ? 'ChÆ°a Ä‘á»§ giá» lÃ m cáº£ ngÃ y' : '' }
+    }
+
     let checkInVal = hasCheckIn.value ? form.check_in_time : null
     let checkOutVal = hasCheckOut.value ? form.check_out_time : null
 
@@ -882,20 +947,6 @@ const estimatedWorkInfo = computed(() => {
     let workedMinutes = 0
     if (inTime && outTime) {
         let [h1, m1] = inTime.split(':').map(Number)
-        let [h2, m2] = outTime.split(':').map(Number)
-        let t1 = h1 * 60 + m1
-        let t2 = h2 * 60 + m2
-        if (t2 <= t1) t2 += 1440
-        workedMinutes = t2 - t1
-    } else if (inTime && !outTime && schedEndStr) {
-        let [h1, m1] = inTime.split(':').map(Number)
-        let [h2, m2] = schedEndStr.split(':').map(Number)
-        let t1 = h1 * 60 + m1
-        let t2 = h2 * 60 + m2
-        if (t2 <= t1) t2 += 1440
-        workedMinutes = t2 - t1
-    } else if (!inTime && outTime && schedStartStr) {
-        let [h1, m1] = schedStartStr.split(':').map(Number)
         let [h2, m2] = outTime.split(':').map(Number)
         let t1 = h1 * 60 + m1
         let t2 = h2 * 60 + m2
@@ -948,6 +999,12 @@ const openModal = (schedule) => {
     form.attendance_type = rec?.attendance_type || 'work'
     form.check_in_time = rec?.check_in_at ? formatCheckTime(rec.check_in_at) : ''
     form.check_out_time = rec?.check_out_at ? formatCheckTime(rec.check_out_at) : ''
+    form.intervals = rec?.intervals?.length
+        ? rec.intervals.map(interval => ({
+            check_in_time: interval.check_in_at ? formatCheckTime(interval.check_in_at) : '',
+            check_out_time: interval.check_out_at ? formatCheckTime(interval.check_out_at) : '',
+        }))
+        : [{ check_in_time: form.check_in_time, check_out_time: form.check_out_time }]
     form.ot_minutes = rec?.ot_minutes || 0
     form.notes = rec?.notes || ''
     // Modal state
@@ -985,6 +1042,15 @@ watch(hasCheckOut, (checked) => {
 
 const closeModal = () => { isModalOpen.value = false; activeSchedule.value = null }
 
+const addInterval = () => {
+    form.intervals.push({ check_in_time: '', check_out_time: '' })
+}
+
+const removeInterval = (index) => {
+    if (form.intervals.length <= 1) return
+    form.intervals.splice(index, 1)
+}
+
 const deleteRecord = async () => {
     if (!confirm('Bạn muốn hủy chấm công này?')) return
     // Reset to empty state
@@ -993,6 +1059,7 @@ const deleteRecord = async () => {
     form.check_out_time = ''
     form.ot_minutes = 0
     form.notes = ''
+    form.intervals = [{ check_in_time: '', check_out_time: '' }]
     hasCheckIn.value = false
     hasCheckOut.value = false
     hasOT.value = false
@@ -1001,6 +1068,7 @@ const deleteRecord = async () => {
 
 const saveRecord = async () => {
     isSaving.value = true
+    saveError.value = ''
     // Compute OT from hours+minutes
     if (hasOT.value) {
         form.ot_minutes = (parseInt(otHours.value) || 0) * 60 + (parseInt(otMinutes.value) || 0)
@@ -1009,8 +1077,15 @@ const saveRecord = async () => {
     }
     if (!hasCheckIn.value) form.check_in_time = ''
     if (!hasCheckOut.value) form.check_out_time = ''
+    if (!Array.isArray(form.intervals) || form.intervals.length === 0) {
+        form.intervals = [{ check_in_time: '', check_out_time: '' }]
+    }
+    form.intervals[0] = {
+        check_in_time: hasCheckIn.value ? form.check_in_time : '',
+        check_out_time: hasCheckOut.value ? form.check_out_time : '',
+    }
     try {
-        await axios.post('/api/timekeeping-records', form)
+        await axios.post('/api/timekeeping-records', { ...form, intervals: form.intervals })
         await fetchSchedules()
         closeModal()
     } catch(e) {
@@ -1029,6 +1104,7 @@ const saveRecord = async () => {
                 try {
                     await axios.post('/api/timekeeping-records', {
                         ...form,
+                        intervals: form.intervals,
                         confirm_downgrade: true,
                         confirm_clear_time: true
                     })
@@ -1039,7 +1115,7 @@ const saveRecord = async () => {
                     const retryMsg = (retryErrData?.errors ? Object.values(retryErrData.errors).flat().join('\n') : null)
                         || retryErrData?.message
                         || 'Không thể lưu thay đổi sau khi xác nhận!'
-                    alert(retryMsg)
+                    saveError.value = retryMsg
                     console.error(retryErr)
                 } finally {
                     isSaving.value = false
@@ -1049,7 +1125,7 @@ const saveRecord = async () => {
             const msg = (errData?.errors ? Object.values(errData.errors).flat().join('\n') : null)
                 || errData?.message
                 || 'Không thể lưu thay đổi!'
-            alert(msg)
+            saveError.value = msg
             console.error(e)
         }
     }

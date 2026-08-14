@@ -31,10 +31,12 @@ class EmployeeWorkSchedule extends Model
     {
         return $this->belongsTo(Employee::class);
     }
+
     public function branch()
     {
         return $this->belongsTo(Branch::class);
     }
+
     public function shift()
     {
         return $this->belongsTo(Shift::class);
@@ -44,5 +46,10 @@ class EmployeeWorkSchedule extends Model
     public function timekeepingRecord()
     {
         return $this->hasOne(TimekeepingRecord::class, 'employee_work_schedule_id');
+    }
+
+    public function timekeepingIntervals()
+    {
+        return $this->hasMany(TimekeepingInterval::class, 'employee_work_schedule_id');
     }
 }

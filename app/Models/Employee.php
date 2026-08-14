@@ -111,7 +111,9 @@ class Employee extends Model
         return $this->timekeepingRecords()
             ->whereBetween('work_date', [$from, $to])
             ->where('attendance_type', 'work')
-            ->sum('work_units');
+            ->get()
+            ->groupBy(fn ($record) => $record->work_date?->toDateString() ?? (string) $record->work_date)
+            ->sum(fn ($records) => min(1.0, (float) $records->sum('work_units')));
     }
 
     /**
