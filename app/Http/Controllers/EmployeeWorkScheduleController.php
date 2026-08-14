@@ -2,8 +2,8 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
 use App\Models\EmployeeWorkSchedule;
+use Illuminate\Http\Request;
 
 class EmployeeWorkScheduleController extends Controller
 {
@@ -13,15 +13,19 @@ class EmployeeWorkScheduleController extends Controller
             'employee:id,code,name',
             'branch:id,name',
             'shift:id,name,start_time,end_time',
-            'timekeepingRecord:id,employee_work_schedule_id,attendance_type,manual_override,scheduled_start_at,scheduled_end_at,check_in_at,check_out_at,source,late_minutes,early_minutes,ot_minutes,worked_minutes,work_units,notes',
+            'timekeepingRecord:id,employee_work_schedule_id,attendance_type,manual_override,scheduled_start_at,scheduled_end_at,check_in_at,check_out_at,source,late_minutes,early_minutes,ot_minutes,worked_minutes,regular_minutes,needs_review,work_units,notes',
+            'timekeepingRecord.intervals:id,timekeeping_record_id,employee_work_schedule_id,work_date,slot,scheduled_start_at,scheduled_end_at,check_in_at,check_out_at,worked_minutes,source,status,raw',
         ]);
 
-        if ($request->filled('employee_id'))
+        if ($request->filled('employee_id')) {
             $query->where('employee_id', $request->integer('employee_id'));
-        if ($request->filled('from'))
+        }
+        if ($request->filled('from')) {
             $query->whereDate('work_date', '>=', $request->date('from'));
-        if ($request->filled('to'))
+        }
+        if ($request->filled('to')) {
             $query->whereDate('work_date', '<=', $request->date('to'));
+        }
 
         return response()->json([
             'success' => true,
@@ -58,13 +62,14 @@ class EmployeeWorkScheduleController extends Controller
             ]
         );
 
-        return response()->json(['success' => true, 'data' => $schedule->load('shift', 'employee', 'timekeepingRecord')]);
+        return response()->json(['success' => true, 'data' => $schedule->load('shift', 'employee', 'timekeepingRecord.intervals')]);
     }
 
     public function destroy($id)
     {
         $schedule = EmployeeWorkSchedule::findOrFail($id);
         $schedule->delete();
+
         return response()->json(['success' => true]);
     }
 

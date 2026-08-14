@@ -983,7 +983,7 @@
                                                                                 <span class="text-gray-600">Lương chính</span>
                                                                                 <span class="font-medium">{{ formatMoney(slip.base_salary) }}</span>
                                                                             </div>
-                                                                            <div class="px-4 py-1.5 text-xs text-gray-400 bg-gray-50" v-if="slip.details?.work_units !== undefined">
+                                                                             <div class="px-4 py-1.5 text-xs text-gray-400 bg-gray-50" v-if="slip.details?.work_units !== undefined">
                                                                                 Ngày công: {{ slip.details?.work_units ?? slip.work_units }}/{{ slip.details?.standard_work_units ?? '-' }}
                                                                                 <template v-if="slip.details?.paid_leave_units > 0"> (nghỉ phép: {{ slip.details.paid_leave_units }})</template>
                                                                             </div>
@@ -992,7 +992,13 @@
                                                                                 <span class="text-gray-600">Làm thêm</span>
                                                                                 <span class="font-medium" :class="slip.ot_pay > 0 ? 'text-green-600' : ''">{{ slip.ot_pay > 0 ? '+' : '' }}{{ formatMoney(slip.ot_pay) }}</span>
                                                                             </div>
-                                                                            <div class="px-4 py-1.5 text-xs text-gray-400 bg-gray-50" v-if="slip.details?.ot_minutes > 0 || slip.details?.holiday_pay > 0">
+                                                                             <div class="px-4 py-1.5 text-xs text-gray-400 bg-gray-50" v-if="slip.details?.total_worked_minutes !== undefined">
+                                                                                 Giờ làm: {{ formatWorkedHours(slip.details?.total_worked_minutes ?? 0) }} · Trong ca: {{ formatWorkedHours(slip.details?.total_regular_minutes ?? slip.details?.total_worked_minutes ?? 0) }}
+                                                                             </div>
+                                                                             <div class="px-4 py-1.5 text-xs text-gray-400 bg-gray-50" v-if="slip.details?.salary_type === 'hourly'">
+                                                                                 Đơn giá giờ: {{ formatMoney(slip.details?.hourly_rate ?? 0) }}
+                                                                             </div>
+                                                                             <div class="px-4 py-1.5 text-xs text-gray-400 bg-gray-50" v-if="slip.details?.ot_minutes > 0 || slip.details?.holiday_pay > 0">
                                                                                 <span v-if="slip.details?.ot_minutes > 0">OT: {{ Math.round(slip.details.ot_minutes / 60 * 10) / 10 }}h</span>
                                                                                 <span v-if="slip.details?.ot_minutes > 0 && slip.details?.holiday_pay > 0"> · </span>
                                                                                 <span v-if="slip.details?.holiday_pay > 0">Ngày lễ/nghỉ: +{{ formatMoney(slip.details.holiday_pay) }}</span>
@@ -1841,6 +1847,11 @@ const editSummary = computed(() => {
 const formatNumber = (v) => {
     if (!v && v !== 0) return '0';
     return new Intl.NumberFormat('vi-VN').format(v);
+};
+
+const formatWorkedHours = (minutes) => {
+    const value = Number(minutes || 0) / 60;
+    return `${Number.isInteger(value) ? value : value.toFixed(2)}h`;
 };
 
 const parseNumber = (str) => {

@@ -2,17 +2,18 @@
 
 namespace App\Services;
 
+use App\Models\CommissionTable;
 use App\Models\Employee;
 use App\Models\EmployeeWorkSchedule;
 use App\Models\Holiday;
-use App\Models\SalaryTemplate;
-use App\Models\CommissionTable;
-use App\Models\Order;
 use App\Models\Invoice;
+use App\Models\Order;
 use App\Models\OrderReturn;
-use App\Support\Reports\SellerResolver;
-use App\Models\WorkdaySetting;
+use App\Models\SalaryTemplate;
 use App\Models\Setting;
+use App\Models\TimekeepingSetting;
+use App\Models\WorkdaySetting;
+use App\Support\Reports\SellerResolver;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
@@ -24,7 +25,7 @@ class SalaryCalculationService
     public function calculateForEmployee(Employee $employee, Carbon $from, Carbon $to, ?float $standardWorkingDaysOverride = null): array
     {
         $setting = $employee->salarySetting;
-        if (!$setting) {
+        if (! $setting) {
             return $this->emptyResult();
         }
 
@@ -39,10 +40,10 @@ class SalaryCalculationService
         $hasDeduction = $setting->has_deduction ?? ($template->has_deduction ?? false);
         $bonusType = $setting->bonus_type ?? ($template->bonus_type ?? 'personal_revenue');
         $bonusCalculation = $setting->bonus_calculation ?? ($template->bonus_calculation ?? 'total_revenue');
-        $bonusList = !empty($setting->custom_bonuses) ? collect($setting->custom_bonuses) : ($template ? $template->bonuses : collect());
-        $commissionList = !empty($setting->custom_commissions) ? collect($setting->custom_commissions) : ($template ? $template->commissions : collect());
-        $allowanceList = !empty($setting->custom_allowances) ? collect($setting->custom_allowances) : ($template ? $template->allowances : collect());
-        $deductionList = !empty($setting->custom_deductions) ? collect($setting->custom_deductions) : ($template ? $template->deductions : collect());
+        $bonusList = ! empty($setting->custom_bonuses) ? collect($setting->custom_bonuses) : ($template ? $template->bonuses : collect());
+        $commissionList = ! empty($setting->custom_commissions) ? collect($setting->custom_commissions) : ($template ? $template->commissions : collect());
+        $allowanceList = ! empty($setting->custom_allowances) ? collect($setting->custom_allowances) : ($template ? $template->allowances : collect());
+        $deductionList = ! empty($setting->custom_deductions) ? collect($setting->custom_deductions) : ($template ? $template->deductions : collect());
 
         // Step 24.12 — paysheet-level standard_working_days override.
         // When set, use the user-supplied value (e.g. 25 or 26) as the
@@ -65,20 +66,44 @@ class SalaryCalculationService
         $officialHolidayDates = Holiday::whereBetween('holiday_date', [$from, $to])
             ->where('status', 'active')
             ->pluck('holiday_date')
-            ->map(fn($d) => Carbon::parse($d)->toDateString())
+            ->map(fn ($d) => Carbon::parse($d)->toDateString())
             ->toArray();
 
         // Tính ngày công: áp dụng hệ số nhân cho ngày nghỉ/lễ
         // VD: CN (holiday_rate=200%) → 1 ngày = 2 units, Lễ (tet_rate=300%) → 1 ngày = 3 units
         $workUnits = 0;
         $normalWorkUnits = 0; // Ngày công thật (không nhân hệ số, dùng cho hiển thị)
-        foreach ($records->where('attendance_type', 'work') as $rec) {
-            $units = (float) $rec->work_units;
+        $workRecords = $records->where('attendance_type', 'work');
+        $timekeepingSetting = TimekeepingSetting::where('branch_id', $employee->branch_id)->first()
+            ?? TimekeepingSetting::whereNull('branch_id')->first();
+        $standardDailyMinutes = $timekeepingSetting?->standard_hours_per_day
+            ? max(1, (int) round((float) $timekeepingSetting->standard_hours_per_day * 60))
+            : max(1, (int) Setting::get('attendance_standard_work_minutes', 480));
+        $halfWorkEnabled = (bool) Setting::get('attendance_half_work_enabled', true);
+        $halfWorkMaxMinutes = (int) Setting::get('attendance_half_work_max_minutes', 480);
+        $halfWorkMinMinutes = (int) Setting::get('attendance_half_work_min_minutes', 0);
+        $payrollSetting = \App\Models\PayrollSetting::first();
+        $lateHalfDayEnabled = (bool) ($payrollSetting->late_half_day_enabled ?? false);
+        $lateHalfDayThreshold = (int) ($payrollSetting->late_half_day_threshold ?? 120);
+
+        foreach ($workRecords->groupBy(fn ($record) => Carbon::parse($record->work_date)->toDateString()) as $dateRecords) {
+            $minutes = (int) $dateRecords->sum('worked_minutes');
+            $lateMinutesForDay = (int) $dateRecords->sum('late_minutes');
+            $units = $this->calculateDailyWorkUnits(
+                $minutes,
+                $standardDailyMinutes,
+                $halfWorkEnabled,
+                $halfWorkMinMinutes,
+                $halfWorkMaxMinutes,
+                $lateHalfDayEnabled,
+                $lateMinutesForDay,
+                $lateHalfDayThreshold
+            );
+            $sample = $dateRecords->first();
             $multiplier = 1;
-            if ($rec->is_holiday && $units > 0) {
-                $dateStr = Carbon::parse($rec->work_date)->toDateString();
-                $isOfficialHoliday = in_array($dateStr, $officialHolidayDates);
-                $multiplier = $isOfficialHoliday ? $holidayMultiplier : $restDayMultiplier;
+            if ($sample?->is_holiday && $units > 0) {
+                $dateStr = Carbon::parse($sample->work_date)->toDateString();
+                $multiplier = in_array($dateStr, $officialHolidayDates) ? $holidayMultiplier : $restDayMultiplier;
             }
             $workUnits += $units * $multiplier;
             $normalWorkUnits += $units;
@@ -92,14 +117,18 @@ class SalaryCalculationService
         $earlyTotalMinutes = $records->sum('early_minutes');
 
         // Tổng phút làm thực tế (dùng cho lương giờ)
-        $totalWorkedMinutes = $records->where('attendance_type', 'work')->sum('worked_minutes');
+        $totalWorkedMinutes = (int) $workRecords->sum('worked_minutes');
+        $totalRegularMinutes = (int) $workRecords->sum(fn ($record) => $record->regular_minutes !== null
+                ? $record->regular_minutes
+                : max(0, (int) $record->worked_minutes - (int) $record->ot_minutes)
+        );
+        $totalOvertimeMinutes = (int) $workRecords->sum('ot_minutes');
 
         // Tính lương cơ bản theo loại lương
         $baseSalary = $setting->base_salary;
         if ($setting->salary_type === 'hourly') {
             // Lương theo giờ: tổng giờ làm thực tế × đơn giá giờ
-            $totalWorkedHours = $totalWorkedMinutes / 60;
-            $baseSalary = $totalWorkedHours * $setting->base_salary;
+            $baseSalary = ($totalRegularMinutes / 60) * $setting->base_salary;
         } elseif ($setting->salary_type === 'by_workday') {
             // Theo ngày công chuẩn: tính theo tỷ lệ ngày công thực tế / ngày công chuẩn
             // VD: lương 10tr, công chuẩn 26, đi 20 → 10tr × 20/26 = 7.69tr
@@ -171,7 +200,7 @@ class SalaryCalculationService
             if ($tiers->isNotEmpty()) {
                 foreach ($records->where('late_minutes', '>', 0) as $rec) {
                     $mins = (int) $rec->late_minutes;
-                    $matched = $tiers->first(fn($t) => $mins >= (int) $t['minutes']);
+                    $matched = $tiers->first(fn ($t) => $mins >= (int) $t['minutes']);
                     if ($matched) {
                         $tierMinutes = (int) $matched['minutes'];
                         $tierAmount = (float) $matched['amount'];
@@ -234,7 +263,7 @@ class SalaryCalculationService
             $officialHolidayDates = Holiday::whereBetween('holiday_date', [$from, $to])
                 ->where('status', 'active')
                 ->pluck('holiday_date')
-                ->map(fn($d) => Carbon::parse($d)->toDateString())
+                ->map(fn ($d) => Carbon::parse($d)->toDateString())
                 ->toArray();
 
             $typeLabels = [
@@ -278,7 +307,9 @@ class SalaryCalculationService
                 ];
 
                 foreach ($otByType as $type => $mins) {
-                    if ($mins <= 0) continue;
+                    if ($mins <= 0) {
+                        continue;
+                    }
                     $rate = $typeRates[$type];
                     $hours = round($mins / 60, 2);
                     $amount = round($hours * $hourlyRate * $rate);
@@ -327,7 +358,9 @@ class SalaryCalculationService
                 ];
 
                 foreach ($otByType as $type => $mins) {
-                    if ($mins <= 0) continue;
+                    if ($mins <= 0) {
+                        continue;
+                    }
                     $rate = $typeRates[$type];
                     $hours = round($mins / 60, 2);
                     $amount = round($hours * $hourlyRate * $rate);
@@ -357,7 +390,7 @@ class SalaryCalculationService
         // ===== ĐÁNH GIÁ NĂNG SUẤT SỬA CHỮA (chỉ khi module bật) =====
         $repairPerformance = null;
         if (Setting::get('repair_performance_salary_enabled', false) && class_exists(RepairService::class)) {
-            $repairService = new RepairService();
+            $repairService = new RepairService;
             $repairPerformance = $repairService->getEmployeePerformance($employee->id, $from->toDateString(), $to->toDateString());
             if ($repairPerformance['assigned'] > 0) {
                 $factor = $repairPerformance['salary_percent'] / 100;
@@ -376,10 +409,14 @@ class SalaryCalculationService
             'ot_pay' => round($otPay),
             'holiday_pay' => round($holidayPay),
             'ot_minutes' => $otMinutes,
+            'salary_type' => $setting->salary_type,
+            'hourly_rate' => $setting->salary_type === 'hourly' ? round($setting->base_salary) : null,
             'standard_work_units' => $standardWorkUnits,
             'work_units' => $totalUnits,
             'normal_work_units' => $normalWorkUnits, // Ngày công thật (không nhân hệ số)
             'total_worked_minutes' => $totalWorkedMinutes,
+            'total_regular_minutes' => $totalRegularMinutes,
+            'total_overtime_minutes' => $totalOvertimeMinutes,
             'paid_leave_units' => $paidLeaveUnits,
             'late_count' => $lateCount,
             'late_minutes' => $lateTotalMinutes,
@@ -437,7 +474,9 @@ class SalaryCalculationService
 
             for ($i = 0; $i < $sortedTiers->count(); $i++) {
                 $tier = $sortedTiers[$i];
-                if ($revenue < $tier->revenue_from) break;
+                if ($revenue < $tier->revenue_from) {
+                    break;
+                }
 
                 $nextThreshold = ($i + 1 < $sortedTiers->count()) ? $sortedTiers[$i + 1]->revenue_from : $revenue;
                 $tierRevenue = min($remainingRevenue, $nextThreshold - $tier->revenue_from);
@@ -473,7 +512,9 @@ class SalaryCalculationService
         $details = [];
 
         foreach ($template->commissions as $commission) {
-            if ($revenue < $commission->revenue_from) continue;
+            if ($revenue < $commission->revenue_from) {
+                continue;
+            }
 
             if ($commission->commission_table_id && $commission->commissionTable) {
                 // Dùng bảng hoa hồng
@@ -612,8 +653,8 @@ class SalaryCalculationService
 
         if ($bonusCalculation === 'total_revenue') {
             $matchedTier = $bonusList
-                ->filter(fn($b) => data_get($b, 'revenue_from') <= $revenue)
-                ->sortByDesc(fn($b) => data_get($b, 'revenue_from'))
+                ->filter(fn ($b) => data_get($b, 'revenue_from') <= $revenue)
+                ->sortByDesc(fn ($b) => data_get($b, 'revenue_from'))
                 ->first();
 
             if ($matchedTier) {
@@ -631,13 +672,15 @@ class SalaryCalculationService
                 ];
             }
         } else {
-            $sortedTiers = $bonusList->sortBy(fn($b) => data_get($b, 'revenue_from'))->values();
+            $sortedTiers = $bonusList->sortBy(fn ($b) => data_get($b, 'revenue_from'))->values();
             $remainingRevenue = $revenue;
 
             for ($i = 0; $i < $sortedTiers->count(); $i++) {
                 $tier = $sortedTiers[$i];
                 $from = data_get($tier, 'revenue_from');
-                if ($revenue < $from) break;
+                if ($revenue < $from) {
+                    break;
+                }
 
                 $nextThreshold = ($i + 1 < $sortedTiers->count()) ? data_get($sortedTiers[$i + 1], 'revenue_from') : $revenue;
                 $tierRevenue = min($remainingRevenue, $nextThreshold - $from);
@@ -674,7 +717,9 @@ class SalaryCalculationService
 
         foreach ($commissionList as $commission) {
             $revenueFrom = data_get($commission, 'revenue_from', 0);
-            if ($revenue < $revenueFrom) continue;
+            if ($revenue < $revenueFrom) {
+                continue;
+            }
 
             $tableId = data_get($commission, 'commission_table_id');
             if ($tableId) {
@@ -757,7 +802,7 @@ class SalaryCalculationService
         Collection $deductionList,
         int $lateCount, int $lateTotalMinutes,
         int $earlyLeaveCount, int $earlyTotalMinutes,
-        Collection $records = null
+        ?Collection $records = null
     ): array {
         $amount = 0;
         $details = [];
@@ -772,7 +817,7 @@ class SalaryCalculationService
 
             // Per-employee custom deductions: chỉ có name + amount (cố định/tháng)
             // Template deductions: có đầy đủ category + calc_type
-            if (!$category) {
+            if (! $category) {
                 // Simple fixed deduction (per-employee)
                 $dedAmount = $amt;
             } else {
@@ -825,8 +870,11 @@ class SalaryCalculationService
             // Tổng số phút (cho per_minute calc_type)
             $totalMinutes = 0;
             if ($calcType === 'per_minute') {
-                if ($category === 'late') $totalMinutes = $lateTotalMinutes;
-                elseif ($category === 'early_leave') $totalMinutes = $earlyTotalMinutes;
+                if ($category === 'late') {
+                    $totalMinutes = $lateTotalMinutes;
+                } elseif ($category === 'early_leave') {
+                    $totalMinutes = $earlyTotalMinutes;
+                }
             }
 
             $amount += $dedAmount;
@@ -884,7 +932,7 @@ class SalaryCalculationService
                 $q->where('paid_leave', false)->orWhereNull('paid_leave');
             })
             ->pluck('holiday_date')
-            ->map(fn($d) => Carbon::parse($d)->toDateString())
+            ->map(fn ($d) => Carbon::parse($d)->toDateString())
             ->toArray();
 
         // Ngày lễ có paid_leave=true vẫn đếm vào công chuẩn (không trừ)
@@ -895,10 +943,10 @@ class SalaryCalculationService
 
         while ($current->lte($endDate)) {
             $dayKey = $dayMap[$current->dayOfWeek] ?? 'sun';
-            $isWorkday = !empty($weekDays[$dayKey]);
+            $isWorkday = ! empty($weekDays[$dayKey]);
             $isUnpaidHoliday = in_array($current->toDateString(), $holidays, true);
 
-            if ($isWorkday && !$isUnpaidHoliday) {
+            if ($isWorkday && ! $isUnpaidHoliday) {
                 $units += 1;
             }
 
@@ -917,7 +965,7 @@ class SalaryCalculationService
         $endDate = $to->copy()->endOfDay();
         $sellerKey = "employee:{$employee->id}";
 
-        $resolver = new SellerResolver();
+        $resolver = new SellerResolver;
 
         $invoiceQ = Invoice::whereBetween('created_at', [$startDate, $endDate])
             ->where('status', '!=', 'Đã hủy');
@@ -940,7 +988,9 @@ class SalaryCalculationService
      */
     private function getBranchRevenue(Employee $employee, Carbon $from, Carbon $to): float
     {
-        if (!$employee->branch_id) return 0;
+        if (! $employee->branch_id) {
+            return 0;
+        }
 
         $startDate = $from->copy()->startOfDay();
         $endDate = $to->copy()->endOfDay();
@@ -966,7 +1016,7 @@ class SalaryCalculationService
         $endDate = $to->copy()->endOfDay();
         $sellerKey = "employee:{$employee->id}";
 
-        $resolver = new SellerResolver();
+        $resolver = new SellerResolver;
 
         $invoiceQ = Invoice::whereBetween('created_at', [$startDate, $endDate])
             ->where('status', '!=', 'Đã hủy');
@@ -976,25 +1026,56 @@ class SalaryCalculationService
             ->where('status', '!=', 'Đã hủy');
         $returnQ = $resolver->filterReturnsBySeller($returnQ, $sellerKey);
 
-        $empGrossRevenue     = $resolver->aggregateBySeller(clone $invoiceQ, 'SUM(subtotal)');
-        $empInvoiceDiscount  = $resolver->aggregateBySeller(clone $invoiceQ, 'SUM(discount)');
-        $empReturnSubtotal   = $resolver->aggregateReturnsBySeller(clone $returnQ, 'SUM(subtotal)');
-        $empCogsSold         = $resolver->cogsSoldBySeller(clone $invoiceQ);
-        $empCogsReturned     = $resolver->cogsReturnedBySeller(clone $returnQ);
+        $empGrossRevenue = $resolver->aggregateBySeller(clone $invoiceQ, 'SUM(subtotal)');
+        $empInvoiceDiscount = $resolver->aggregateBySeller(clone $invoiceQ, 'SUM(discount)');
+        $empReturnSubtotal = $resolver->aggregateReturnsBySeller(clone $returnQ, 'SUM(subtotal)');
+        $empCogsSold = $resolver->cogsSoldBySeller(clone $invoiceQ);
+        $empCogsReturned = $resolver->cogsReturnedBySeller(clone $returnQ);
 
-        $grossRevenue          = $empGrossRevenue[$sellerKey] ?? 0;
-        $invoiceDiscount       = $empInvoiceDiscount[$sellerKey] ?? 0;
-        $revenueAfterDiscount  = $grossRevenue - $invoiceDiscount;
-        $returnValue           = $empReturnSubtotal[$sellerKey] ?? 0;
-        $netRevenue            = $revenueAfterDiscount - $returnValue;
+        $grossRevenue = $empGrossRevenue[$sellerKey] ?? 0;
+        $invoiceDiscount = $empInvoiceDiscount[$sellerKey] ?? 0;
+        $revenueAfterDiscount = $grossRevenue - $invoiceDiscount;
+        $returnValue = $empReturnSubtotal[$sellerKey] ?? 0;
+        $netRevenue = $revenueAfterDiscount - $returnValue;
 
-        $cogsSold              = $empCogsSold[$sellerKey] ?? 0;
-        $cogsReturned          = $empCogsReturned[$sellerKey] ?? 0;
-        $totalCogs             = $cogsSold - $cogsReturned;
+        $cogsSold = $empCogsSold[$sellerKey] ?? 0;
+        $cogsReturned = $empCogsReturned[$sellerKey] ?? 0;
+        $totalCogs = $cogsSold - $cogsReturned;
 
-        $grossProfit           = $netRevenue - $totalCogs;
+        $grossProfit = $netRevenue - $totalCogs;
 
         return (float) $grossProfit;
+    }
+
+    private function calculateDailyWorkUnits(
+        int $workedMinutes,
+        int $standardMinutes,
+        bool $halfWorkEnabled,
+        int $halfWorkMinMinutes,
+        int $halfWorkMaxMinutes,
+        bool $lateHalfDayEnabled,
+        int $lateMinutes,
+        int $lateHalfDayThreshold
+    ): float {
+        if ($workedMinutes <= 0) {
+            return 0.0;
+        }
+
+        if ($workedMinutes >= $standardMinutes) {
+            return 1.0;
+        }
+
+        if ($halfWorkEnabled) {
+            $units = $workedMinutes >= $halfWorkMinMinutes && $workedMinutes <= $halfWorkMaxMinutes ? 0.5 : 0.0;
+        } else {
+            $units = $workedMinutes >= ($standardMinutes / 2) ? 1.0 : 0.5;
+        }
+
+        if ($lateHalfDayEnabled && $lateMinutes >= $lateHalfDayThreshold && $units > 0.5) {
+            return 0.5;
+        }
+
+        return $units;
     }
 
     private function emptyResult(): array
@@ -1002,7 +1083,8 @@ class SalaryCalculationService
         return [
             'base' => 0, 'base_salary_full' => 0, 'bonus' => 0, 'commission' => 0,
             'allowances' => 0, 'deductions' => 0, 'ot_pay' => 0, 'holiday_pay' => 0,
-            'ot_minutes' => 0, 'standard_work_units' => 0, 'work_units' => 0,
+            'ot_minutes' => 0, 'salary_type' => null, 'hourly_rate' => null,
+            'standard_work_units' => 0, 'work_units' => 0,
             'paid_leave_units' => 0, 'late_count' => 0, 'late_minutes' => 0,
             'early_leave_count' => 0, 'early_minutes' => 0,
             'personal_revenue' => 0, 'total' => 0, 'late_penalty' => 0, 'details' => [],

@@ -27,6 +27,8 @@ class TimekeepingRecord extends Model
         'early_minutes',
         'ot_minutes',
         'worked_minutes',
+        'regular_minutes',
+        'needs_review',
         'work_units',
         'is_holiday',
         'holiday_multiplier',
@@ -41,6 +43,7 @@ class TimekeepingRecord extends Model
         'check_in_at' => 'datetime',
         'check_out_at' => 'datetime',
         'manual_override' => 'boolean',
+        'needs_review' => 'boolean',
         'is_holiday' => 'boolean',
         'work_units' => 'decimal:2',
         'holiday_multiplier' => 'decimal:2',
@@ -51,16 +54,24 @@ class TimekeepingRecord extends Model
     {
         return $this->belongsTo(Employee::class);
     }
+
     public function schedule()
     {
         return $this->belongsTo(EmployeeWorkSchedule::class, 'employee_work_schedule_id');
     }
+
     public function shift()
     {
         return $this->belongsTo(Shift::class);
     }
+
     public function branch()
     {
         return $this->belongsTo(Branch::class);
+    }
+
+    public function intervals()
+    {
+        return $this->hasMany(TimekeepingInterval::class);
     }
 }
