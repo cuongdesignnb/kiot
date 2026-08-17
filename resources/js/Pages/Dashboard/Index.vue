@@ -2,7 +2,7 @@
 import { formatVND as fmt } from '@/utils/money';
 import { Head, Link, router } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 
 import {
   Chart as ChartJS,
@@ -47,6 +47,11 @@ const props = defineProps({
     topCustomersByRevenue: Array,
     topCustomersByQty: Array,
     topEmployees: Array,
+    topCustomerRankings: Array,
+    topEmployeeRankings: Array,
+    rankingPeriod: { type: String, default: 'month' },
+    rankingPeriodLabel: { type: String, default: 'tháng này' },
+    rankingMetric: { type: String, default: 'revenue' },
     inventoryProducts: Array,
     lowStockProducts: Array,
     recentInvoices: Array,
@@ -67,8 +72,52 @@ const props = defineProps({
 
 // Tab states
 const productRankTab = ref('revenue'); // 'revenue' | 'profit' | 'qty'
-const customerRankTab = ref('revenue'); // 'revenue' | 'qty'
 const inventoryFilter = ref('all'); // 'all' | 'low' | 'out'
+const rankingPeriod = ref(props.rankingPeriod || 'month');
+const rankingMetric = ref(props.rankingMetric || 'revenue');
+
+const rankingPeriodOptions = [
+    { value: 'month', label: 'Tháng này' },
+    { value: 'quarter', label: 'Quý này' },
+    { value: 'year', label: 'Năm nay' },
+];
+const rankingMetricOptions = [
+    { value: 'revenue', label: 'Doanh thu' },
+    { value: 'orders', label: 'Số đơn' },
+    { value: 'profit', label: 'Lợi nhuận' },
+];
+
+const activeCustomerRankings = computed(() => props.topCustomerRankings || props.topCustomersByRevenue || []);
+const activeEmployeeRankings = computed(() => props.topEmployeeRankings || props.topEmployees || []);
+
+const rankingValue = (row) => rankingMetric.value === 'orders' ? Number(row.orders || 0) : Number(row.value || 0);
+const rankingValueText = (row) => rankingMetric.value === 'orders'
+    ? String(Number(row.orders || 0)) + ' đơn'
+    : fmt(rankingValue(row));
+const rankingSecondaryText = (row) => rankingMetric.value === 'orders'
+    ? 'Doanh thu ' + fmt(row.revenue)
+    : String(Number(row.orders || row.invoices || 0)) + ' đơn';
+const rankingBarWidth = (row, rows) => {
+    const max = Math.max(...rows.map(item => Math.max(0, rankingValue(item))), 1);
+    return String(Math.min(100, Math.max(0, rankingValue(row)) / max * 100)) + '%';
+};
+
+watch([rankingPeriod, rankingMetric], ([period, metric]) => {
+    router.reload({
+        data: { ranking_period: period, ranking_metric: metric },
+        only: ['topCustomerRankings', 'topEmployeeRankings', 'topCustomersByRevenue', 'topCustomersByQty', 'topEmployees', 'rankingPeriod', 'rankingPeriodLabel', 'rankingMetric'],
+        preserveState: true,
+        preserveScroll: true,
+    });
+});
+
+watch(() => props.rankingPeriod, value => {
+    if (value && value !== rankingPeriod.value) rankingPeriod.value = value;
+});
+
+watch(() => props.rankingMetric, value => {
+    if (value && value !== rankingMetric.value) rankingMetric.value = value;
+});
 
 const fmtShort = (v) => {
     const n = Number(v || 0);
@@ -584,18 +633,42 @@ const orderStatusOptions = {
             </div>
 
             <!-- Top khách hàng + Top nhân viên -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 px-5 py-4 mb-5">
+                <div class="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3">
+                    <div>
+                        <h2 class="font-bold text-gray-800 text-[15px]">🏆 Xếp hạng bán hàng <span class="text-xs text-gray-400 font-normal">{{ rankingPeriodLabel }}</span></h2>
+                        <p class="text-xs text-gray-400 mt-1">Có thể xem theo kỳ và xếp hạng theo doanh thu, số đơn hoặc lợi nhuận.</p>
+                    </div>
+                    <div class="flex flex-col sm:flex-row gap-2">
+                        <div class="flex gap-1 bg-gray-100 rounded-lg p-0.5">
+                            <button
+                                v-for="option in rankingPeriodOptions"
+                                :key="option.value"
+                                @click="rankingPeriod = option.value"
+                                :class="rankingPeriod === option.value ? 'bg-white shadow text-indigo-700' : 'text-gray-500'"
+                                class="px-3 py-1.5 text-xs font-semibold rounded-md transition"
+                            >{{ option.label }}</button>
+                        </div>
+                        <div class="flex gap-1 bg-gray-100 rounded-lg p-0.5">
+                            <button
+                                v-for="option in rankingMetricOptions"
+                                :key="option.value"
+                                @click="rankingMetric = option.value"
+                                :class="rankingMetric === option.value ? 'bg-white shadow text-indigo-700' : 'text-gray-500'"
+                                class="px-3 py-1.5 text-xs font-semibold rounded-md transition"
+                            >{{ option.label }}</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
                 <!-- Top khách hàng -->
                 <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                     <div class="px-5 py-4 border-b border-gray-100 flex justify-between items-center">
-                        <h2 class="font-bold text-gray-800 text-[15px]">👤 Top khách hàng <span class="text-xs text-gray-400 font-normal">tháng này</span></h2>
-                        <div class="flex gap-1 bg-gray-100 rounded-lg p-0.5">
-                            <button @click="customerRankTab = 'revenue'" :class="customerRankTab === 'revenue' ? 'bg-white shadow text-indigo-700' : 'text-gray-500'" class="px-3 py-1 text-xs font-semibold rounded-md transition">Doanh thu</button>
-                            <button @click="customerRankTab = 'qty'" :class="customerRankTab === 'qty' ? 'bg-white shadow text-indigo-700' : 'text-gray-500'" class="px-3 py-1 text-xs font-semibold rounded-md transition">Số đơn</button>
-                        </div>
+                        <h2 class="font-bold text-gray-800 text-[15px]">👤 Top khách hàng <span class="text-xs text-gray-400 font-normal">{{ rankingPeriodLabel }}</span></h2>
                     </div>
                     <div class="divide-y divide-gray-50">
-                        <div v-for="(c, idx) in (customerRankTab === 'qty' ? topCustomersByQty : topCustomersByRevenue) || []" :key="idx" class="px-5 py-3 flex items-center justify-between hover:bg-gray-50/50 transition">
+                        <div v-for="(c, idx) in activeCustomerRankings" :key="idx" class="px-5 py-3 flex items-center justify-between hover:bg-gray-50/50 transition">
                             <div class="flex items-center gap-3 min-w-0">
                                 <span class="flex-shrink-0 w-6 h-6 rounded-full text-white text-[10px] font-bold flex items-center justify-center" :class="idx < 3 ? 'bg-indigo-500' : 'bg-gray-300'">{{ idx + 1 }}</span>
                                 <div class="min-w-0">
@@ -604,37 +677,37 @@ const orderStatusOptions = {
                                 </div>
                             </div>
                             <div class="text-right flex-shrink-0 ml-2">
-                                <p class="text-sm font-bold text-indigo-600 font-mono">{{ fmt(c.revenue) }}</p>
-                                <p class="text-[10px] text-gray-400">{{ c.orders }} đơn</p>
+                                <p class="text-sm font-bold text-indigo-600 font-mono">{{ rankingValueText(c) }}</p>
+                                <p class="text-[10px] text-gray-400">{{ rankingSecondaryText(c) }}</p>
                             </div>
                         </div>
-                        <div v-if="!(customerRankTab === 'qty' ? topCustomersByQty : topCustomersByRevenue)?.length" class="px-5 py-8 text-center text-gray-400 text-sm">Chưa có dữ liệu</div>
+                        <div v-if="!activeCustomerRankings.length" class="px-5 py-8 text-center text-gray-400 text-sm">Chưa có dữ liệu</div>
                     </div>
                 </div>
 
                 <!-- Top nhân viên -->
                 <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                     <div class="px-5 py-4 border-b border-gray-100">
-                        <h2 class="font-bold text-gray-800 text-[15px]">⭐ Top nhân viên bán hàng <span class="text-xs text-gray-400 font-normal">tháng này</span></h2>
+                        <h2 class="font-bold text-gray-800 text-[15px]">⭐ Top nhân viên bán hàng <span class="text-xs text-gray-400 font-normal">{{ rankingPeriodLabel }}</span></h2>
                     </div>
                     <div class="divide-y divide-gray-50">
-                        <div v-for="(e, idx) in topEmployees || []" :key="idx" class="px-5 py-3 flex items-center justify-between hover:bg-gray-50/50 transition">
+                        <div v-for="(e, idx) in activeEmployeeRankings" :key="idx" class="px-5 py-3 flex items-center justify-between hover:bg-gray-50/50 transition">
                             <div class="flex items-center gap-3">
                                 <span class="flex-shrink-0 w-6 h-6 rounded-full text-white text-[10px] font-bold flex items-center justify-center" :class="idx === 0 ? 'bg-yellow-500' : idx === 1 ? 'bg-gray-400' : idx === 2 ? 'bg-amber-600' : 'bg-gray-200 text-gray-600'">{{ idx + 1 }}</span>
                                 <div>
                                     <p class="text-sm font-semibold text-gray-800">{{ e.name }}</p>
-                                    <p class="text-[10px] text-gray-400">{{ e.invoices }} hóa đơn</p>
+                                    <p class="text-[10px] text-gray-400">{{ rankingSecondaryText(e) }}</p>
                                 </div>
                             </div>
                             <div class="text-right">
-                                <p class="text-sm font-bold text-emerald-600 font-mono">{{ fmt(e.revenue) }}</p>
+                                <p class="text-sm font-bold text-emerald-600 font-mono">{{ rankingValueText(e) }}</p>
                                 <!-- Revenue bar -->
                                 <div class="w-24 h-1.5 bg-gray-100 rounded-full mt-1">
-                                    <div class="h-full rounded-full bg-gradient-to-r from-emerald-400 to-emerald-600" :style="{width: Math.min(100, (e.revenue / ((topEmployees || [])[0]?.revenue || 1)) * 100) + '%'}"></div>
+                                    <div class="h-full rounded-full bg-gradient-to-r from-emerald-400 to-emerald-600" :style="{width: rankingBarWidth(e, activeEmployeeRankings)}"></div>
                                 </div>
                             </div>
                         </div>
-                        <div v-if="!topEmployees?.length" class="px-5 py-8 text-center text-gray-400 text-sm">Chưa có dữ liệu</div>
+                        <div v-if="!activeEmployeeRankings.length" class="px-5 py-8 text-center text-gray-400 text-sm">Chưa có dữ liệu</div>
                     </div>
                 </div>
             </div>

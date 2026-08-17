@@ -11,18 +11,41 @@ use App\Models\OrderReturn;
 use App\Models\Product;
 use App\Models\Purchase;
 use Carbon\Carbon;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Inertia\Inertia;
 
 class DashboardController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
         $today = Carbon::today();
         $startOfMonth = Carbon::now()->startOfMonth();
         $startOfLastMonth = Carbon::now()->subMonth()->startOfMonth();
         $endOfLastMonth = Carbon::now()->subMonth()->endOfMonth();
+
+        $rankingPeriod = $request->query('ranking_period', 'month');
+        if (! in_array($rankingPeriod, ['month', 'quarter', 'year'], true)) {
+            $rankingPeriod = 'month';
+        }
+
+        $rankingMetric = $request->query('ranking_metric', 'revenue');
+        if (! in_array($rankingMetric, ['revenue', 'orders', 'profit'], true)) {
+            $rankingMetric = 'revenue';
+        }
+
+        $rankingStart = match ($rankingPeriod) {
+            'quarter' => Carbon::now()->startOfQuarter(),
+            'year' => Carbon::now()->startOfYear(),
+            default => Carbon::now()->startOfMonth(),
+        };
+        $rankingEnd = Carbon::now()->endOfDay();
+        $rankingPeriodLabel = match ($rankingPeriod) {
+            'quarter' => 'quý này',
+            'year' => 'năm nay',
+            default => 'tháng này',
+        };
 
         // ═══════════════════════════════════════
         // 1. KEY METRICS
@@ -237,61 +260,71 @@ class DashboardController extends Controller
             ->values();
 
         // ═══════════════════════════════════════
-        // 10. TOP KHÁCH HÀNG
+        // 10. TOP KHÁCH HÀNG / NHÂN VIÊN BÁN HÀNG
         // ═══════════════════════════════════════
-        $topCustomersByRevenue = Invoice::select('customer_id', DB::raw('COUNT(*) as order_count'), DB::raw('SUM(total) as total_revenue'))
-            ->whereNotNull('customer_id')
-            ->where('created_at', '>=', $startOfMonth)
-            ->where('status', '!=', 'Đã hủy')
-            ->groupBy('customer_id')
-            ->orderByDesc('total_revenue')
-            ->limit(10)
-            ->with('customer:id,name,phone,code')
-            ->get()
-            ->map(fn ($inv) => [
-                'name' => $inv->customer->name ?? 'N/A',
-                'phone' => $inv->customer->phone ?? '',
-                'code' => $inv->customer->code ?? '',
-                'orders' => (int) $inv->order_count,
-                'revenue' => (float) $inv->total_revenue,
-            ]);
+        // Doanh thu và số đơn lấy từ invoices; lợi nhuận dùng cùng công thức
+        // lợi nhuận gộp hiện có của dashboard: doanh thu dòng hàng - giá vốn.
+        $buildRankings = function (string $groupColumn, string $relation) use ($rankingStart, $rankingEnd, $rankingMetric) {
+            $relationshipFields = $relation === 'customer'
+                ? 'customer:id,name,phone,code'
+                : 'creator:id,name';
 
-        // Top khách theo số lượng đơn
-        $topCustomersByQty = Invoice::select('customer_id', DB::raw('COUNT(*) as order_count'), DB::raw('SUM(total) as total_revenue'))
-            ->whereNotNull('customer_id')
-            ->where('created_at', '>=', $startOfMonth)
-            ->where('status', '!=', 'Đã hủy')
-            ->groupBy('customer_id')
-            ->orderByDesc('order_count')
-            ->limit(10)
-            ->with('customer:id,name,phone,code')
-            ->get()
-            ->map(fn ($inv) => [
-                'name' => $inv->customer->name ?? 'N/A',
-                'phone' => $inv->customer->phone ?? '',
-                'code' => $inv->customer->code ?? '',
-                'orders' => (int) $inv->order_count,
-                'revenue' => (float) $inv->total_revenue,
-            ]);
+            $sales = Invoice::query()
+                ->select(
+                    "$groupColumn as ranking_id",
+                    DB::raw('COUNT(*) as order_count'),
+                    DB::raw('SUM(total) as total_revenue')
+                )
+                ->whereNotNull($groupColumn)
+                ->whereBetween('created_at', [$rankingStart, $rankingEnd])
+                ->where('status', '!=', 'Đã hủy')
+                ->whereHas($relation)
+                ->groupBy($groupColumn)
+                ->with($relationshipFields)
+                ->get();
 
-        // ═══════════════════════════════════════
-        // 11. TOP NHÂN VIÊN BÁN HÀNG
-        // ═══════════════════════════════════════
-        $topEmployees = Invoice::select('created_by', DB::raw('COUNT(*) as invoice_count'), DB::raw('SUM(total) as total_revenue'))
-            ->whereNotNull('created_by')
-            ->where('created_at', '>=', $startOfMonth)
-            ->where('status', '!=', 'Đã hủy')
-            ->whereHas('creator')
-            ->groupBy('created_by')
-            ->orderByDesc('total_revenue')
-            ->limit(10)
-            ->with('creator:id,name')
-            ->get()
-            ->map(fn ($inv) => [
-                'name' => $inv->creator->name ?? 'N/A',
-                'invoices' => (int) $inv->invoice_count,
-                'revenue' => (float) $inv->total_revenue,
-            ]);
+            $profits = InvoiceItem::query()
+                ->join('invoices', 'invoice_items.invoice_id', '=', 'invoices.id')
+                ->leftJoin('products', 'invoice_items.product_id', '=', 'products.id')
+                ->select(
+                    "invoices.$groupColumn as ranking_id",
+                    DB::raw('COALESCE(SUM(invoice_items.quantity * invoice_items.price), 0) as item_revenue'),
+                    DB::raw('COALESCE(SUM(invoice_items.quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0)), 0) as item_cost')
+                )
+                ->whereNotNull("invoices.$groupColumn")
+                ->whereBetween('invoices.created_at', [$rankingStart, $rankingEnd])
+                ->where('invoices.status', '!=', 'Đã hủy')
+                ->groupBy("invoices.$groupColumn")
+                ->get()
+                ->keyBy('ranking_id');
+
+            return $sales->map(function ($row) use ($relation, $profits, $rankingMetric) {
+                $entity = $row->{$relation};
+                $profitRow = $profits->get($row->ranking_id);
+                $revenue = (float) $row->total_revenue;
+                $profit = (float) ($profitRow?->item_revenue ?? 0) - (float) ($profitRow?->item_cost ?? 0);
+                $orders = (int) $row->order_count;
+                $value = match ($rankingMetric) {
+                    'orders' => $orders,
+                    'profit' => $profit,
+                    default => $revenue,
+                };
+
+                return [
+                    'name' => $entity->name ?? 'N/A',
+                    'phone' => $entity->phone ?? '',
+                    'code' => $entity->code ?? '',
+                    'orders' => $orders,
+                    'invoices' => $orders,
+                    'revenue' => $revenue,
+                    'profit' => $profit,
+                    'value' => $value,
+                ];
+            })->sortByDesc('value')->take(10)->values();
+        };
+
+        $topCustomerRankings = $buildRankings('customer_id', 'customer');
+        $topEmployeeRankings = $buildRankings('created_by', 'creator');
 
         // ═══════════════════════════════════════
         // 12. BẢNG TỒN KHO ĐẦY ĐỦ
@@ -348,9 +381,14 @@ class DashboardController extends Controller
             'topProducts' => $topProducts,
             'topProductsByRevenue' => $topProductsByRevenue,
             'topProductsByProfit' => $allProductSales,
-            'topCustomersByRevenue' => $topCustomersByRevenue,
-            'topCustomersByQty' => $topCustomersByQty,
-            'topEmployees' => $topEmployees,
+            'topCustomersByRevenue' => $topCustomerRankings,
+            'topCustomersByQty' => $topCustomerRankings,
+            'topEmployees' => $topEmployeeRankings,
+            'topCustomerRankings' => $topCustomerRankings,
+            'topEmployeeRankings' => $topEmployeeRankings,
+            'rankingPeriod' => $rankingPeriod,
+            'rankingPeriodLabel' => $rankingPeriodLabel,
+            'rankingMetric' => $rankingMetric,
             'inventoryProducts' => $inventoryProducts,
             'lowStockProducts' => $lowStockProducts,
             'recentInvoices' => $recentInvoices,
