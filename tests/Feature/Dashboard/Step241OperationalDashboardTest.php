@@ -8,6 +8,7 @@ use App\Models\Category;
 use App\Models\Customer;
 use App\Models\Employee;
 use App\Models\Invoice;
+use App\Models\InvoiceItem;
 use App\Models\Product;
 use App\Models\Role;
 use App\Models\SerialImei;
@@ -126,6 +127,63 @@ class Step241OperationalDashboardTest extends TestCase
             ->where('topEmployees.0.invoices', 2)
             ->where('topEmployees.0.revenue', 200000)
         );
+    }
+
+    public function test_dashboard_rankings_support_year_and_profit_metric(): void
+    {
+        $admin = $this->adminUser();
+        $seller = Employee::create([
+            'code' => 'NV-'.uniqid(),
+            'name' => 'Nhân viên lợi nhuận',
+            'is_active' => true,
+        ]);
+        $customer = Customer::create([
+            'code' => 'KH-'.uniqid(),
+            'name' => 'Khách hàng lợi nhuận',
+            'phone' => '0900000000',
+            'is_customer' => true,
+        ]);
+        $category = Category::create(['name' => 'Dashboard ranking']);
+        $product = Product::create([
+            'sku' => 'P-'.uniqid(),
+            'name' => 'Sản phẩm ranking',
+            'cost_price' => 40000,
+            'retail_price' => 100000,
+            'stock_quantity' => 0,
+            'inventory_total_cost' => 0,
+            'category_id' => $category->id,
+            'is_active' => true,
+        ]);
+        $invoice = Invoice::create([
+            'code' => 'HD-'.uniqid(),
+            'status' => 'Hoàn thành',
+            'total' => 200000,
+            'customer_id' => $customer->id,
+            'created_by' => $seller->id,
+            'created_by_name' => $admin->name,
+            'seller_name' => $seller->name,
+            'created_at' => now()->subMonth(),
+            'updated_at' => now()->subMonth(),
+        ]);
+        InvoiceItem::create([
+            'invoice_id' => $invoice->id,
+            'product_id' => $product->id,
+            'quantity' => 2,
+            'price' => 100000,
+            'cost_price' => 40000,
+            'subtotal' => 200000,
+            'discount' => 0,
+        ]);
+
+        $this->actingAs($admin)->get('/?ranking_period=year&ranking_metric=profit')
+            ->assertInertia(fn ($page) => $page
+                ->where('rankingPeriod', 'year')
+                ->where('rankingMetric', 'profit')
+                ->where('topCustomerRankings.0.name', 'Khách hàng lợi nhuận')
+                ->where('topCustomerRankings.0.profit', 120000)
+                ->where('topEmployeeRankings.0.name', 'Nhân viên lợi nhuận')
+                ->where('topEmployeeRankings.0.value', 120000)
+            );
     }
 
     // ═══ TC-04 ═══
