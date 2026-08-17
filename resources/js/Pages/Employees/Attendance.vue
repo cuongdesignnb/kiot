@@ -588,6 +588,18 @@ const changePeriod = (offset) => {
 watch(periodMode, () => { fetchSchedules() })
 
 // === Grouping by Shift (KiotViet style) ===
+const shiftDisplayOrder = ['Giờ hành chính', 'Ca sáng', 'Ca chiều']
+
+const shiftDisplayRank = (shiftName) => {
+    const rank = shiftDisplayOrder.indexOf((shiftName || '').trim())
+    return rank === -1 ? shiftDisplayOrder.length : rank
+}
+
+const compareShiftNames = (a, b) => {
+    const rankDifference = shiftDisplayRank(a) - shiftDisplayRank(b)
+    return rankDifference || (a || '').localeCompare(b || '')
+}
+
 const shiftGroups = computed(() => {
     const map = {}
     schedules.value.forEach(s => {
@@ -602,7 +614,7 @@ const shiftGroups = computed(() => {
         }
         map[shiftKey].schedules.push(s)
     })
-    return Object.values(map).sort((a, b) => a.shiftName.localeCompare(b.shiftName))
+    return Object.values(map).sort((a, b) => compareShiftNames(a.shiftName, b.shiftName))
 })
 
 const filteredShiftGroups = computed(() => {
@@ -679,7 +691,7 @@ const monthlyShiftEmployeeRows = computed(() => {
             })
             .sort((a, b) => (a.employee?.name || '').localeCompare(b.employee?.name || ''))
     })).filter(g => g.employees.length > 0)
-    .sort((a, b) => (a.shiftName || '').localeCompare(b.shiftName || ''))
+    .sort((a, b) => compareShiftNames(a.shiftName, b.shiftName))
 })
 
 const monthlyEmployeeRows = computed(() => {

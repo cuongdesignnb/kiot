@@ -277,17 +277,18 @@ class DashboardController extends Controller
         // ═══════════════════════════════════════
         // 11. TOP NHÂN VIÊN BÁN HÀNG
         // ═══════════════════════════════════════
-        $topEmployees = Invoice::select('employee_id', DB::raw('COUNT(*) as invoice_count'), DB::raw('SUM(total) as total_revenue'))
-            ->whereNotNull('employee_id')
+        $topEmployees = Invoice::select('created_by', DB::raw('COUNT(*) as invoice_count'), DB::raw('SUM(total) as total_revenue'))
+            ->whereNotNull('created_by')
             ->where('created_at', '>=', $startOfMonth)
             ->where('status', '!=', 'Đã hủy')
-            ->groupBy('employee_id')
+            ->whereHas('creator')
+            ->groupBy('created_by')
             ->orderByDesc('total_revenue')
             ->limit(10)
-            ->with('employee:id,name')
+            ->with('creator:id,name')
             ->get()
             ->map(fn ($inv) => [
-                'name' => $inv->employee->name ?? 'N/A',
+                'name' => $inv->creator->name ?? 'N/A',
                 'invoices' => (int) $inv->invoice_count,
                 'revenue' => (float) $inv->total_revenue,
             ]);

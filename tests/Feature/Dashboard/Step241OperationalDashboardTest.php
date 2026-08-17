@@ -2,23 +2,24 @@
 
 namespace Tests\Feature\Dashboard;
 
-use Tests\TestCase;
-use Illuminate\Foundation\Testing\RefreshDatabase;
-use App\Models\User;
-use App\Models\Role;
-use App\Models\Product;
-use App\Models\Category;
-use App\Models\Branch;
-use App\Models\Customer;
-use App\Models\SerialImei;
-use App\Models\Task;
-use App\Models\StockTransfer;
-use App\Models\Warranty;
 use App\Models\ActivityLog;
+use App\Models\Branch;
+use App\Models\Category;
+use App\Models\Customer;
+use App\Models\Employee;
 use App\Models\Invoice;
+use App\Models\Product;
+use App\Models\Role;
+use App\Models\SerialImei;
+use App\Models\StockTransfer;
+use App\Models\Task;
+use App\Models\User;
+use App\Models\Warranty;
 use App\Services\TaskService;
 use App\Support\Reports\OperationalDashboardService;
 use Carbon\Carbon;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\TestCase;
 
 /**
  * STEP 24.1 — Operational Dashboard.
@@ -30,11 +31,12 @@ class Step241OperationalDashboardTest extends TestCase
     private function userWith(array $permissions): User
     {
         $role = Role::create([
-            'name' => 'role-' . uniqid(),
+            'name' => 'role-'.uniqid(),
             'display_name' => 'Test',
             'permissions' => $permissions,
             'is_system' => false,
         ]);
+
         return User::factory()->create(['role_id' => $role->id]);
     }
 
@@ -45,6 +47,7 @@ class Step241OperationalDashboardTest extends TestCase
             'permissions' => ['*'],
             'is_system' => true,
         ]);
+
         return User::factory()->create(['role_id' => $role->id]);
     }
 
@@ -88,13 +91,50 @@ class Step241OperationalDashboardTest extends TestCase
         );
     }
 
+    public function test_dashboard_top_employees_uses_canonical_seller_field(): void
+    {
+        $admin = $this->adminUser();
+        $seller = Employee::create([
+            'code' => 'NV-'.uniqid(),
+            'name' => 'Nhân viên bán hàng',
+            'is_active' => true,
+        ]);
+
+        Invoice::create([
+            'code' => 'HD-'.uniqid(),
+            'status' => 'Hoàn thành',
+            'total' => 125000,
+            'created_by' => $seller->id,
+            'created_by_name' => $admin->name,
+            'seller_name' => $seller->name,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        Invoice::create([
+            'code' => 'HD-'.uniqid(),
+            'status' => 'Hoàn thành',
+            'total' => 75000,
+            'created_by' => $seller->id,
+            'created_by_name' => $admin->name,
+            'seller_name' => $seller->name,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAs($admin)->get('/')->assertInertia(fn ($page) => $page
+            ->where('topEmployees.0.name', 'Nhân viên bán hàng')
+            ->where('topEmployees.0.invoices', 2)
+            ->where('topEmployees.0.revenue', 200000)
+        );
+    }
+
     // ═══ TC-04 ═══
 
     public function test_serial_control_counts_statuses(): void
     {
         $cat = Category::firstOrCreate(['name' => 'C']);
         $product = Product::create([
-            'sku' => 'P-' . uniqid(), 'name' => 'P',
+            'sku' => 'P-'.uniqid(), 'name' => 'P',
             'cost_price' => 1000, 'retail_price' => 1500,
             'stock_quantity' => 0, 'inventory_total_cost' => 0,
             'has_serial' => true, 'category_id' => $cat->id,
@@ -118,7 +158,7 @@ class Step241OperationalDashboardTest extends TestCase
     {
         $cat = Category::firstOrCreate(['name' => 'C']);
         $product = Product::create([
-            'sku' => 'P-MM-' . uniqid(), 'name' => 'Mismatch',
+            'sku' => 'P-MM-'.uniqid(), 'name' => 'Mismatch',
             'cost_price' => 1000, 'retail_price' => 1500,
             'stock_quantity' => 5, // Khai báo 5
             'inventory_total_cost' => 5000,
@@ -172,7 +212,7 @@ class Step241OperationalDashboardTest extends TestCase
     {
         $admin = $this->adminUser();
         $this->actingAs($admin);
-        $customer = Customer::create(['code' => 'KH-' . uniqid(), 'name' => 'KH', 'phone' => '0', 'is_customer' => true]);
+        $customer = Customer::create(['code' => 'KH-'.uniqid(), 'name' => 'KH', 'phone' => '0', 'is_customer' => true]);
 
         $service = app(TaskService::class);
         $task = $service->createTask([
@@ -198,7 +238,7 @@ class Step241OperationalDashboardTest extends TestCase
     {
         $cat = Category::firstOrCreate(['name' => 'C']);
         $product = Product::create([
-            'sku' => 'P-' . uniqid(), 'name' => 'P',
+            'sku' => 'P-'.uniqid(), 'name' => 'P',
             'cost_price' => 1000, 'retail_price' => 1500,
             'stock_quantity' => 0, 'inventory_total_cost' => 0,
             'has_serial' => false, 'category_id' => $cat->id,
@@ -264,7 +304,7 @@ class Step241OperationalDashboardTest extends TestCase
         $this->actingAs($admin);
         $cat = Category::firstOrCreate(['name' => 'C']);
         $product = Product::create([
-            'sku' => 'P-' . uniqid(), 'name' => 'P',
+            'sku' => 'P-'.uniqid(), 'name' => 'P',
             'cost_price' => 1000, 'retail_price' => 1500,
             'stock_quantity' => 5, 'inventory_total_cost' => 5000,
             'has_serial' => true, 'category_id' => $cat->id, 'is_active' => true,
