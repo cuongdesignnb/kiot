@@ -271,7 +271,7 @@ class DashboardController extends Controller
 
             $sales = Invoice::query()
                 ->select(
-                    "$groupColumn as ranking_id",
+                    $groupColumn,
                     DB::raw('COUNT(*) as order_count'),
                     DB::raw('SUM(total) as total_revenue')
                 )
@@ -298,9 +298,9 @@ class DashboardController extends Controller
                 ->get()
                 ->keyBy('ranking_id');
 
-            return $sales->map(function ($row) use ($relation, $profits, $rankingMetric) {
+            return $sales->map(function ($row) use ($groupColumn, $relation, $profits, $rankingMetric) {
                 $entity = $row->{$relation};
-                $profitRow = $profits->get($row->ranking_id);
+                $profitRow = $profits->get($row->{$groupColumn});
                 $revenue = (float) $row->total_revenue;
                 $profit = (float) ($profitRow?->item_revenue ?? 0) - (float) ($profitRow?->item_cost ?? 0);
                 $orders = (int) $row->order_count;
