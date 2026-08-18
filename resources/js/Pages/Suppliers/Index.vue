@@ -552,7 +552,8 @@ const supplierVoucherDisplayRows = computed(() => {
 
 const filteredDebt = (id) => {
     const raw = supplierDebt[id];
-    const data = Array.isArray(raw) ? raw : (raw?.entries || []);
+    const data = (Array.isArray(raw) ? raw : (raw?.entries || []))
+        .filter((entry) => !isReconciliationCheckpoint(entry));
     if (debtFilter.value === 'all') return data;
     return data.filter(d => d.type === debtFilter.value || d.event_kind === debtFilter.value);
 };
