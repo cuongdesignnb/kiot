@@ -229,6 +229,7 @@ class PurchaseController extends Controller
         $request->validate([
             'supplier_id' => 'required|exists:customers,id',
             'employee_id' => 'nullable|string',
+            'status' => 'nullable|string|in:draft,completed',
             'purchase_date' => 'nullable|date',
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|exists:products,id',

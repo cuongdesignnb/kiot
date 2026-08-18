@@ -159,6 +159,7 @@ const discount = ref(0);
 const paidAmount = ref(0);
 const note = ref('');
 const submitRef = ref(false);
+const purchaseSubmitError = ref('');
 const paymentMethod = ref('cash');
 const bankAccountInfo = ref('');
 
@@ -296,6 +297,7 @@ const hasMeaningfulDraft = computed(() =>
 );
 
 const saveBrowserDraft = (silent = false) => {
+    if (submitRef.value) return;
     if (!hasMeaningfulDraft.value) return;
 
     const snapshot = buildDraftSnapshot();
@@ -308,6 +310,8 @@ const saveBrowserDraft = (silent = false) => {
 };
 
 const clearBrowserDraft = () => {
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = null;
     localStorage.removeItem(PURCHASE_DRAFT_KEY);
     pendingDraft.value = null;
     showRestoreDraftBanner.value = false;
@@ -556,15 +560,23 @@ const debtAmount = currentPurchaseDebt;
 const submitIdempotencyKey = ref('');
 
 const save = () => {
+    if (submitRef.value) return;
+
     if (items.value.length === 0) {
-        alert("Vui lòng chọn ít nhất 1 hàng hóa để nhập hàng.");
+        purchaseSubmitError.value = 'Vui lòng chọn ít nhất 1 hàng hóa để nhập hàng.';
         return;
     }
     if (!selectedSupplierId.value) {
-        alert("Vui lòng chọn nhà cung cấp!");
+        purchaseSubmitError.value = 'Vui lòng chọn nhà cung cấp.';
         return;
     }
 
+    // “Hoàn thành” is a distinct command. A restored browser draft must
+    // never be able to downgrade this action back to status=draft.
+    status.value = 'completed';
+    purchaseSubmitError.value = '';
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = null;
     submitRef.value = true;
     submitIdempotencyKey.value ||= crypto.randomUUID();
     
@@ -600,8 +612,7 @@ const save = () => {
             submitIdempotencyKey.value = '';
         },
         onError: (errors) => {
-            const firstError = firstErrorMessage(errors);
-            if (firstError) alert(firstError);
+            purchaseSubmitError.value = firstErrorMessage(errors) || 'Không thể lưu phiếu nhập. Vui lòng kiểm tra lại thông tin.';
         },
         onFinish: () => {
             submitRef.value = false;
@@ -633,6 +644,9 @@ const localBrands = ref([...(props.brands || [])]);
         <div v-if="page.props.flash?.success" class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 text-sm flex items-center gap-2">
             <svg class="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
             {{ page.props.flash.success }}
+        </div>
+        <div v-if="purchaseSubmitError" role="alert" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 text-sm">
+            {{ purchaseSubmitError }}
         </div>
 
         <!-- Restore Draft Banner -->
@@ -1010,12 +1024,12 @@ const localBrands = ref([...(props.brands || [])]);
                     <button
                         type="button"
                         @click="saveBrowserDraft(false)"
-                        :disabled="!hasMeaningfulDraft"
+                        :disabled="!hasMeaningfulDraft || submitRef"
                         class="w-full bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 font-bold py-2.5 rounded text-[14px] transition-colors disabled:opacity-50"
                     >
                         Lưu nháp
                     </button>
-                    <button @click="save" :disabled="submitRef" class="w-full bg-[#2ebc5b] hover:bg-[#209644] text-white font-bold py-3 rounded text-[15px] uppercase tracking-wide transition-colors flex justify-center items-center gap-2 disabled:opacity-50">
+                    <button type="button" @click="save" :disabled="submitRef" :aria-busy="submitRef" class="w-full bg-[#2ebc5b] hover:bg-[#209644] text-white font-bold py-3 rounded text-[15px] uppercase tracking-wide transition-colors flex justify-center items-center gap-2 disabled:opacity-50">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Hoàn thành
                     </button>
                     <div class="mt-2 text-center">

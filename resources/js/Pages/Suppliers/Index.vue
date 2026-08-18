@@ -630,6 +630,8 @@ const debtNote = ref('');
 const debtDate = ref('');
 const debtSubmitting = ref(false);
 const debtIdempotencyKey = ref('');
+const debtDateError = ref('');
+const debtFormError = ref('');
 
 const debtActionLabels = {
     payment: 'Thanh toán công nợ',
@@ -645,14 +647,20 @@ const openDebtAction = (supplier, type) => {
     // Mặc định ngày điều chỉnh = hiện tại
     debtDate.value = nowDatetimeLocal();
     debtIdempotencyKey.value = crypto.randomUUID();
+    debtDateError.value = '';
+    debtFormError.value = '';
     showDebtModal.value = true;
 };
 
 const submitDebtAction = async () => {
+    if (debtSubmitting.value) return;
+
     // Payment/discount: amount must be > 0. Adjustment: any value allowed
     if (debtActionType.value !== 'adjustment' && !debtAmount.value) return;
     if (debtActionType.value === 'adjustment' && (debtAmount.value === null || debtAmount.value === '')) return;
     debtSubmitting.value = true;
+    debtDateError.value = '';
+    debtFormError.value = '';
     const id = debtActionSupplier.value.id;
     try {
         if (debtActionType.value === 'payment') {
@@ -684,7 +692,12 @@ const submitDebtAction = async () => {
         // Refresh page to update summary
         router.reload({ only: ['suppliers', 'summary'] });
     } catch (e) {
-        alert(e.response?.data?.message || 'Lỗi xử lý.');
+        const response = e.response?.data || {};
+        const dateErrors = response.errors?.date;
+        debtDateError.value = Array.isArray(dateErrors) ? dateErrors[0] : (dateErrors || '');
+        debtFormError.value = debtDateError.value
+            ? ''
+            : (response.message || 'Không thể ghi nhận thanh toán. Dữ liệu chưa được thay đổi.');
     } finally {
         debtSubmitting.value = false;
     }
@@ -1676,7 +1689,9 @@ const submitActivate = (supplier) => {
                             placeholder="dd/MM/yyyy HH:mm"
                             input-class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none"
                         />
+                        <p v-if="debtDateError" role="alert" class="mt-1 text-sm text-red-600">{{ debtDateError }}</p>
                     </div>
+                    <p v-if="debtFormError" role="alert" class="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{{ debtFormError }}</p>
                     <div>
                         <label class="block text-sm font-semibold text-gray-700 mb-1">Ghi chú</label>
                         <input v-model="debtNote" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" :placeholder="debtActionLabels[debtActionType]" />
