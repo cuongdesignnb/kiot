@@ -15,6 +15,7 @@ use App\Services\PartnerAlreadyExistsException;
 use App\Services\PartnerRoleService;
 use App\Support\Debt\PartnerDebtDisplayBalance;
 use App\Support\Filters\FilterableIndex;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -1168,11 +1169,14 @@ class SupplierController extends Controller
             'allocations' => 'nullable|array',
             'allocations.*.purchase_id' => 'required_with:allocations|exists:purchases,id',
             'allocations.*.amount' => 'required_with:allocations|numeric|min:0',
-            'date' => 'nullable|date',
+            // DateTimePicker displays dd/MM/yyyy HH:mm while API clients may
+            // send the canonical yyyy-MM-ddTHH:mm value. Parse both formats
+            // explicitly so a valid Vietnamese display value never becomes a
+            // raw Carbon 500 error.
+            'date' => 'nullable|string|max:32',
         ]);
         $totalPay = abs((float) $data['amount']);
         $mode = $data['mode'] ?? 'auto';
-        $paidAt = ! empty($data['date']) ? \Carbon\Carbon::parse($data['date']) : now();
         $payloadHash = hash('sha256', json_encode([
             'supplier_id' => (int) $id,
             'amount' => $totalPay,
@@ -1183,6 +1187,7 @@ class SupplierController extends Controller
         ], JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION));
 
         try {
+            $paidAt = $this->parseSupplierPaymentDate($data['date'] ?? null);
             $result = app(PartnerDebtMutationCoordinator::class)->execute(
                 (int) $id,
                 'supplier_payment_collect',
@@ -1205,17 +1210,16 @@ class SupplierController extends Controller
                     );
                     $currentDebt = (float) $supplier->supplier_debt_amount;
 
-                    // Resolve and validate every affected purchase before any
-                    // cash-flow, allocation, ledger, or projection row is written.
-                    // This makes an invalid backdated payment a clean 422 instead
-                    // of a late 500 after partial work has started.
+                    // Resolve every affected purchase before any cash-flow,
+                    // allocation, ledger, or projection row is written.
                     $allocations = $this->supplierPaymentAllocations(
                         (int) $id,
                         $totalPay,
                         $mode,
                         (array) ($data['allocations'] ?? []),
+                        $paidAt,
                     );
-                    $this->assertSupplierPaymentDateAllowed((int) $id, $paidAt, $allocations);
+                    $this->assertSupplierPaymentDateAllowed($paidAt);
 
                     $code = 'PCPN'.date('ymdHis').random_int(100, 999);
                     $cashFlow = CashFlow::create([
@@ -1298,7 +1302,34 @@ class SupplierController extends Controller
         ]);
     }
 
-    private function assertSupplierPaymentDateAllowed(int $supplierId, \Carbon\Carbon $paidAt, array $allocations): void
+    private function parseSupplierPaymentDate(?string $value): Carbon
+    {
+        if ($value === null || trim($value) === '') {
+            return now();
+        }
+
+        $value = trim($value);
+        foreach (['Y-m-d\\TH:i', 'Y-m-d H:i:s', 'Y-m-d H:i', 'd/m/Y H:i', 'd/m/Y H:i:s', 'Y-m-d', 'd/m/Y'] as $format) {
+            try {
+                $parsed = Carbon::createFromFormat($format, $value);
+                if ($parsed !== false && $parsed->format($format) === $value) {
+                    return $parsed;
+                }
+            } catch (\Throwable) {
+                // Try the next supported representation.
+            }
+        }
+
+        try {
+            return Carbon::parse($value);
+        } catch (\Throwable) {
+            throw ValidationException::withMessages([
+                'date' => 'Ngày thanh toán không hợp lệ. Vui lòng nhập dd/MM/yyyy HH:mm.',
+            ]);
+        }
+    }
+
+    private function assertSupplierPaymentDateAllowed(Carbon $paidAt): void
     {
         $lockPeriod = app(\App\Services\LockPeriodService::class);
         if ($lockPeriod->isLocked($paidAt)) {
@@ -1306,40 +1337,6 @@ class SupplierController extends Controller
 
             throw ValidationException::withMessages([
                 'date' => 'Không thể ghi nhận thanh toán vào kỳ đã khóa sổ'.($lockDate ? " (trước {$lockDate})." : '.'),
-            ]);
-        }
-
-        $purchaseIds = collect($allocations)
-            ->pluck('purchase_id')
-            ->map(fn ($purchaseId): int => (int) $purchaseId)
-            ->filter()
-            ->unique()
-            ->values();
-
-        if ($purchaseIds->isEmpty()) {
-            return;
-        }
-
-        $earliestPurchase = Purchase::query()
-            ->where('supplier_id', $supplierId)
-            ->whereIn('id', $purchaseIds)
-            ->lockForUpdate()
-            ->get()
-            ->map(fn (Purchase $purchase): array => [
-                'code' => (string) $purchase->code,
-                'date' => $purchase->purchase_date ?: $purchase->created_at,
-            ])
-            ->filter(fn (array $row): bool => $row['date'] !== null)
-            ->sortBy(fn (array $row) => $row['date']->getTimestamp())
-            ->first();
-
-        if ($earliestPurchase && $paidAt->lt($earliestPurchase['date'])) {
-            throw ValidationException::withMessages([
-                'date' => sprintf(
-                    'Ngày thanh toán không được trước ngày ghi nhận công nợ của phiếu nhập %s (%s).',
-                    $earliestPurchase['code'],
-                    $earliestPurchase['date']->format('d/m/Y H:i'),
-                ),
             ]);
         }
     }
@@ -1457,6 +1454,7 @@ class SupplierController extends Controller
         float $paymentAmount,
         string $mode,
         array $requested,
+        ?Carbon $paidAt = null,
     ): array {
         $remaining = $paymentAmount;
         $allocations = [];
@@ -1485,6 +1483,14 @@ class SupplierController extends Controller
                         'allocations' => 'Phân bổ vượt công nợ còn lại của phiếu nhập.',
                     ]);
                 }
+                if ($paidAt && $this->purchaseOccursAfter($purchase, $paidAt)) {
+                    throw ValidationException::withMessages([
+                        'date' => sprintf(
+                            'Ngày thanh toán không được phân bổ vào phiếu nhập %s phát sinh sau thời điểm thanh toán.',
+                            $purchase->code,
+                        ),
+                    ]);
+                }
                 if ($amount > $remaining + 0.01) {
                     throw ValidationException::withMessages([
                         'allocations' => 'Tổng phân bổ vượt số tiền thanh toán.',
@@ -1501,6 +1507,21 @@ class SupplierController extends Controller
             ->where('supplier_id', $supplierId)
             ->where('status', 'completed')
             ->where('debt_amount', '>', 0)
+            ->when($paidAt, function ($query) use ($paidAt): void {
+                $query->where(function ($dateQuery) use ($paidAt): void {
+                    $dateQuery
+                        ->where(function ($purchaseDateQuery) use ($paidAt): void {
+                            $purchaseDateQuery
+                                ->whereNotNull('purchase_date')
+                                ->where('purchase_date', '<=', $paidAt);
+                        })
+                        ->orWhere(function ($createdDateQuery) use ($paidAt): void {
+                            $createdDateQuery
+                                ->whereNull('purchase_date')
+                                ->where('created_at', '<=', $paidAt);
+                        });
+                });
+            })
             ->orderBy('purchase_date')
             ->orderBy('id')
             ->lockForUpdate()
@@ -1517,6 +1538,13 @@ class SupplierController extends Controller
         }
 
         return $allocations;
+    }
+
+    private function purchaseOccursAfter(Purchase $purchase, Carbon $paidAt): bool
+    {
+        $purchaseAt = $purchase->purchase_date ?: $purchase->created_at;
+
+        return $purchaseAt !== null && $paidAt->lt($purchaseAt);
     }
 
     private function persistSupplierPaymentAllocation(
