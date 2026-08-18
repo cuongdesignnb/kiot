@@ -19,6 +19,7 @@ class PartnerDebtExportRunningBalanceResolver
         string $orientation,
         PartnerDebtExportEffectResolver $effects,
         PartnerDebtExportDocumentResolver $documents,
+        float $openingBalance = 0.0,
     ): array {
         $ordered = [];
         foreach (array_values($entries) as $index => $entry) {
@@ -27,7 +28,7 @@ class PartnerDebtExportRunningBalanceResolver
         }
 
         usort($ordered, function (array $left, array $right): int {
-            foreach (['event_sort_time', 'business_time', 'display_time', 'time', 'created_at'] as $key) {
+            foreach (['business_time', 'event_sort_time', 'display_time', 'time', 'created_at'] as $key) {
                 $comparison = strcmp((string) ($left[$key] ?? ''), (string) ($right[$key] ?? ''));
                 if ($comparison !== 0) {
                     return $comparison;
@@ -51,7 +52,7 @@ class PartnerDebtExportRunningBalanceResolver
                 : ((int) $left['_export_original_index'] <=> (int) $right['_export_original_index']);
         });
 
-        $running = 0.0;
+        $running = $openingBalance;
         $projected = array_fill(0, count($ordered), []);
         foreach ($ordered as $entry) {
             $effect = $effects->resolveForExport($entry, $orientation, $documents);

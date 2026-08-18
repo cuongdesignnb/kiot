@@ -32,13 +32,12 @@ class CustomerDebtExcelExportService
         'Ghi nợ',
         'Ghi có',
         'Số dư sau GD',
-        'Ghi chú',
     ];
 
     private const COL_WIDTHS = [
         'A' => 14, 'B' => 18, 'C' => 35, 'D' => 10, 'E' => 8, 'F' => 14,
         'G' => 14, 'H' => 12, 'I' => 14, 'J' => 14, 'K' => 15, 'L' => 15,
-        'M' => 16, 'N' => 28,
+        'M' => 16,
     ];
 
     /** @var array<int,array<string,mixed>> */
@@ -59,14 +58,15 @@ class CustomerDebtExcelExportService
         private ?Carbon $from,
         private ?Carbon $to,
         private bool $includeDetail,
-        array $selectedColumns
+        array $selectedColumns,
+        private float $openingAdjustment = 0.0,
     ) {
         $this->entries = $entries;
         $this->documents = new PartnerDebtExportDocumentResolver;
         $this->effects = new PartnerDebtExportEffectResolver;
         $this->runningBalances = new PartnerDebtExportRunningBalanceResolver;
 
-        foreach (['unit', 'quantity', 'unit_price', 'discount', 'vat', 'cost', 'line_total', 'note'] as $column) {
+        foreach (['unit', 'quantity', 'unit_price', 'discount', 'vat', 'cost', 'line_total'] as $column) {
             $this->columns[$column] = in_array($column, $selectedColumns, true);
         }
     }
@@ -92,6 +92,7 @@ class CustomerDebtExcelExportService
             'customer',
             $this->effects,
             $this->documents,
+            $this->openingAdjustment,
         );
         $inWindow = array_values(array_filter($this->entries, fn (array $entry) => $this->isInWindow($entry)));
         $opening = $this->computeOpeningDebt();
@@ -141,7 +142,7 @@ class CustomerDebtExcelExportService
     private function writeTitle($sheet, int $row): int
     {
         $sheet->setCellValue('A'.$row, self::REPORT_TITLE);
-        $sheet->mergeCells('A'.$row.':N'.$row);
+        $sheet->mergeCells('A'.$row.':M'.$row);
         $sheet->getStyle('A'.$row)->getFont()->setBold(true)->setSize(16);
         $sheet->getStyle('A'.$row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
         $row++;
@@ -152,7 +153,7 @@ class CustomerDebtExcelExportService
         }
 
         $sheet->setCellValue('A'.$row, $rangeText);
-        $sheet->mergeCells('A'.$row.':N'.$row);
+        $sheet->mergeCells('A'.$row.':M'.$row);
         $sheet->getStyle('A'.$row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
         $sheet->getStyle('A'.$row)->getFont()->setItalic(true);
 
@@ -209,7 +210,7 @@ class CustomerDebtExcelExportService
             $sheet->setCellValue(Coordinate::stringFromColumnIndex($i + 1).$row, $header);
         }
 
-        $range = 'A'.$row.':N'.$row;
+        $range = 'A'.$row.':M'.$row;
         $sheet->getStyle($range)->getFont()->setBold(true);
         $sheet->getStyle($range)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
         $sheet->getStyle($range)->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB('E7EEF7');
@@ -234,10 +235,6 @@ class CustomerDebtExcelExportService
                 $sheet->setCellValue('L'.$row, abs($effect));
             }
             $sheet->setCellValue('M'.$row, $this->entryRunningBalance($entry));
-            $contextNote = $this->documents->contextNote($entry);
-            if ($contextNote !== '') {
-                $sheet->setCellValue('N'.$row, $contextNote);
-            }
             $sheet->getStyle('B'.$row.':C'.$row)->getFont()->setBold(true);
             $sheet->getStyle('A'.$row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
             $sheet->getStyle('K'.$row.':M'.$row)->getNumberFormat()->setFormatCode('#,##0');
@@ -268,9 +265,6 @@ class CustomerDebtExcelExportService
                     if ($this->columns['line_total']) {
                         $sheet->setCellValue('J'.$row, $line['line_total'] ?? '');
                     }
-                    if ($this->columns['note']) {
-                        $sheet->setCellValue('N'.$row, $line['note'] ?? '');
-                    }
                     $sheet->getStyle('C'.$row)->getFont()->setItalic(true);
                     $sheet->getStyle('E'.$row.':M'.$row)->getNumberFormat()->setFormatCode('#,##0');
                     $row++;
@@ -292,23 +286,23 @@ class CustomerDebtExcelExportService
             $lastBodyRow = $headerRow;
         }
 
-        $whole = 'A'.$headerRow.':N'.$lastBodyRow;
+        $whole = 'A'.$headerRow.':M'.$lastBodyRow;
         $sheet->getStyle($whole)->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_NONE);
         if ($lastBodyRow > $headerRow) {
-            $sheet->getStyle('A'.($headerRow + 1).':N'.$lastBodyRow)
+            $sheet->getStyle('A'.($headerRow + 1).':M'.$lastBodyRow)
                 ->getBorders()
                 ->getBottom()
                 ->setBorderStyle(Border::BORDER_HAIR);
         }
         $sheet->getStyle($whole)->getBorders()->getOutline()->setBorderStyle(Border::BORDER_MEDIUM);
-        $sheet->getStyle('A'.$headerRow.':N'.$headerRow)->getBorders()->getBottom()->setBorderStyle(Border::BORDER_MEDIUM);
+        $sheet->getStyle('A'.$headerRow.':M'.$headerRow)->getBorders()->getBottom()->setBorderStyle(Border::BORDER_MEDIUM);
     }
 
     private function writeFooter($sheet, int $row): void
     {
         $now = Carbon::now();
         $sheet->setCellValue('J'.$row, sprintf('Ngày %d tháng %d năm %d', $now->day, $now->month, $now->year));
-        $sheet->mergeCells('J'.$row.':N'.$row);
+        $sheet->mergeCells('J'.$row.':M'.$row);
         $sheet->getStyle('J'.$row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
         $sheet->getStyle('J'.$row)->getFont()->setItalic(true);
         $row += 2;
@@ -316,7 +310,7 @@ class CustomerDebtExcelExportService
         foreach ([
             ['cell' => 'A', 'range' => 'A%d:B%d', 'label' => 'Khách hàng'],
             ['cell' => 'F', 'range' => 'F%d:G%d', 'label' => 'Người lập biểu'],
-            ['cell' => 'J', 'range' => 'J%d:N%d', 'label' => 'TM Công ty'],
+            ['cell' => 'J', 'range' => 'J%d:M%d', 'label' => 'TM Công ty'],
         ] as $block) {
             $range = sprintf($block['range'], $row, $row);
             $sheet->setCellValue($block['cell'].$row, $block['label']);
@@ -329,7 +323,7 @@ class CustomerDebtExcelExportService
         foreach ([
             ['cell' => 'A', 'range' => 'A%d:B%d'],
             ['cell' => 'F', 'range' => 'F%d:G%d'],
-            ['cell' => 'J', 'range' => 'J%d:N%d'],
+            ['cell' => 'J', 'range' => 'J%d:M%d'],
         ] as $block) {
             $range = sprintf($block['range'], $row, $row);
             $sheet->setCellValue($block['cell'].$row, '(Ký, họ tên)');
@@ -360,10 +354,10 @@ class CustomerDebtExcelExportService
     private function computeOpeningDebt(): float
     {
         if (! $this->from) {
-            return 0.0;
+            return $this->openingAdjustment;
         }
 
-        $opening = 0.0;
+        $opening = $this->openingAdjustment;
         foreach ($this->entries as $entry) {
             $ts = $this->entryDate($entry);
             if ($ts && $ts->lessThan($this->from)) {
@@ -381,9 +375,9 @@ class CustomerDebtExcelExportService
 
     private function entryTime(array $entry): ?Carbon
     {
-        $raw = $entry['display_time']
+        $raw = $entry['business_time']
+            ?? $entry['display_time']
             ?? $entry['time']
-            ?? $entry['business_time']
             ?? $entry['transaction_date']
             ?? $entry['purchase_date']
             ?? $entry['return_date']
@@ -403,9 +397,9 @@ class CustomerDebtExcelExportService
 
     private function formatEntryTime(array $entry): string
     {
-        $raw = $entry['display_time']
+        $raw = $entry['business_time']
+            ?? $entry['display_time']
             ?? $entry['time']
-            ?? $entry['business_time']
             ?? $entry['transaction_date']
             ?? $entry['purchase_date']
             ?? $entry['return_date']

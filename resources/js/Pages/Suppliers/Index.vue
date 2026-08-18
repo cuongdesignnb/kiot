@@ -24,9 +24,9 @@ const formatDateTime = (val) => {
 };
 
 const supplierEntryDisplayTime = (entry) =>
+    entry?.business_time ||
     entry?.display_time ||
     entry?.time ||
-    entry?.business_time ||
     entry?.transaction_date ||
     entry?.purchase_date ||
     entry?.return_date ||
@@ -199,7 +199,6 @@ const debtExportForm = reactive({
         vat: true,
         cost: true,
         line_total: true,
-        note: true,
     },
 });
 
@@ -246,7 +245,6 @@ const debtExportColumnOptions = [
     { key: 'vat', label: 'VAT' },
     { key: 'cost', label: 'Giá nhập/trả' },
     { key: 'line_total', label: 'Thành tiền' },
-    { key: 'note', label: 'Ghi chú dòng' },
 ];
 
 const openSupplierDebtExportModal = (supplier) => {
@@ -393,22 +391,6 @@ const supplierDebtEntryBalance = (entry, id) => {
     return null;
 };
 
-const supplierDebtEntryBadge = (entry, id) => {
-    if (!isSupplierPartnerTimeline(id)) return '';
-    if (entry?.is_reconciliation_checkpoint || entry?.event_kind === 'persisted_ledger_checkpoint') return 'Không phải phiếu';
-    if (entry?.badge_label === 'Đã hạch toán') return '';
-    if (entry?.affects_partner_net === false) return entry?.badge_label || '';
-    return entry?.badge_label || (
-        entry?.domain === 'customer' || entry?.source_ledger === 'customer_receivable'
-            ? 'Phải thu KH'
-            : (entry?.domain === 'supplier' || entry?.source_ledger === 'supplier_payable' ? 'Phải trả NCC' : '')
-    );
-};
-
-const isReconciliationCheckpoint = (entry) => Boolean(
-    entry?.is_reconciliation_checkpoint || entry?.event_kind === 'persisted_ledger_checkpoint',
-);
-
 const loadSupplierDebt = async (id, page = null) => {
     supplierDataLoading[id] = true;
     const targetPage = page ?? supplierDebtPage[id] ?? 1;
@@ -464,7 +446,6 @@ const openSupplierHistoryRow = (row) => {
 const supplierVoucher = reactive({ show: false, loading: false, error: '', payload: null });
 const openSupplierVoucherDetail = async (entry, supplierId) => {
     if (!entry?.code) return;
-    if (isReconciliationCheckpoint(entry)) return;
     // STEP 10B — fallback rows have no real voucher to open.
     if (entry?.is_virtual_fallback) {
         alert('Đây là dòng tạm tính từ phiếu nhập, chưa có phiếu chi/thu thật để mở.');
@@ -552,8 +533,7 @@ const supplierVoucherDisplayRows = computed(() => {
 
 const filteredDebt = (id) => {
     const raw = supplierDebt[id];
-    const data = (Array.isArray(raw) ? raw : (raw?.entries || []))
-        .filter((entry) => !isReconciliationCheckpoint(entry));
+    const data = Array.isArray(raw) ? raw : (raw?.entries || []);
     if (debtFilter.value === 'all') return data;
     return data.filter(d => d.type === debtFilter.value || d.event_kind === debtFilter.value);
 };
@@ -611,19 +591,6 @@ const sortedSupplierHistory = (supplierId) => {
     return [...data].sort((a, b) => {
         const av = parseSupplierTabTime(a.transaction_at || a.purchase_date || a.return_date || a.created_at);
         const bv = parseSupplierTabTime(b.transaction_at || b.purchase_date || b.return_date || b.created_at);
-        return sort.direction === 'desc' ? bv - av : av - bv;
-    });
-};
-
-const sortedSupplierDebt = (supplierId) => {
-    // Start from filteredDebt so the type filter still applies.
-    // Each entry already carries the correct `debt_remain` (computed on the
-    // server in chronological order), so reordering display is safe.
-    const data = filteredDebt(supplierId);
-    const sort = getSupplierTabSort(supplierId, 'debt');
-    return [...data].sort((a, b) => {
-        const av = parseSupplierTabTime(supplierEntryDisplayTime(a));
-        const bv = parseSupplierTabTime(supplierEntryDisplayTime(b));
         return sort.direction === 'desc' ? bv - av : av - bv;
     });
 };
@@ -1463,14 +1430,9 @@ const submitActivate = (supplier) => {
                                                     <thead class="bg-gray-50 text-gray-600 text-xs uppercase">
                                                         <tr>
                                                             <th class="px-3 py-2">Mã phiếu</th>
-                                                            <th
-                                                                class="px-3 py-2 cursor-pointer select-none hover:text-gray-900"
-                                                                @click.stop="toggleSupplierTabTimeSort(supplier.id, 'debt')"
-                                                                :title="getSupplierTabSort(supplier.id, 'debt').direction === 'desc' ? 'Đang sắp xếp: mới nhất trước' : 'Đang sắp xếp: cũ nhất trước'"
-                                                            >
+                                                            <th class="px-3 py-2">
                                                                 Thời gian
                                                                 <TransactionTimeHelpTooltip />
-                                                                <span class="ml-1 text-[10px]">{{ getSupplierTabSort(supplier.id, 'debt').direction === 'desc' ? '▼' : '▲' }}</span>
                                                             </th>
                                                             <th class="px-3 py-2">Loại</th>
                                                             <th class="px-3 py-2 text-right">Giá trị</th>
@@ -1480,35 +1442,19 @@ const submitActivate = (supplier) => {
                                                     <tbody class="divide-y">
                                                         <tr v-if="!filteredDebt(supplier.id)?.length"><td colspan="5" class="px-3 py-6 text-center text-gray-400">Chưa có giao dịch công nợ.</td></tr>
                                                         <tr
-                                                            v-for="d in sortedSupplierDebt(supplier.id)"
+                                                            v-for="d in filteredDebt(supplier.id)"
                                                             :key="`${d.source_ledger || d.domain || d.source || 'debt'}-${d.type || d.event_kind || 'row'}-${d.id}-${d.code}-${d.time || d.created_at || d.date}`"
-                                                            :class="isReconciliationCheckpoint(d) ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-gray-50'"
+                                                            class="hover:bg-gray-50"
                                                         >
                                                             <td class="px-3 py-2 font-semibold"
-                                                                :class="isReconciliationCheckpoint(d) || d.is_virtual_fallback ? 'text-amber-700 cursor-help' : 'text-blue-600 cursor-pointer hover:underline'"
-                                                                :title="isReconciliationCheckpoint(d) ? (d.badge_title || 'Đây là dòng đối chiếu lịch sử, không phải phiếu giao dịch.') : (d.is_virtual_fallback ? (d.badge_title || 'Dòng tạm tính, chưa có chứng từ thu/chi thật để mở.') : '')"
+                                                                :class="d.is_virtual_fallback ? 'text-amber-700' : 'text-blue-600 cursor-pointer hover:underline'"
                                                                 @click="openSupplierVoucherDetail(d, supplier.id)"
                                                             >
-                                                                <span v-if="isReconciliationCheckpoint(d)">Đối chiếu lịch sử</span>
-                                                                <span v-else>{{ d.code }}</span>
-                                                                <span v-if="isReconciliationCheckpoint(d) && d.reference_code" class="block text-[10px] font-normal text-amber-700">Nguồn: {{ d.reference_code }}</span>
+                                                                <span>{{ d.code }}</span>
                                                             </td>
                                                             <td class="px-3 py-2">{{ formatDateTime(supplierEntryDisplayTime(d)) }}</td>
                                                             <td class="px-3 py-2">
-                                                                <div class="flex items-center gap-2">
-                                                                    <span>{{ d.type_label || d.display_type || d.type }}</span>
-                                                                    <span
-                                                                        v-if="d.is_virtual_fallback"
-                                                                        class="inline-flex items-center rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 cursor-help"
-                                                                        :title="d.badge_title || 'Tạm tính từ phiếu nhập — chưa có phiếu chi/thu thật.'"
-                                                                    >Tạm tính</span>
-                                                                    <span
-                                                                        v-if="supplierDebtEntryBadge(d, supplier.id)"
-                                                                        class="inline-flex items-center rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600"
-                                                                    >
-                                                                        {{ supplierDebtEntryBadge(d, supplier.id) }}
-                                                                    </span>
-                                                                </div>
+                                                                <span>{{ d.type_label || d.display_type || d.type }}</span>
                                                             </td>
                                                             <td
                                                                 class="px-3 py-2 text-right font-semibold"
@@ -2176,7 +2122,7 @@ const submitActivate = (supplier) => {
                         <h3 class="text-sm font-semibold text-gray-700 mb-2">Thông tin xuất file</h3>
                         <div class="bg-gray-50 border border-gray-200 rounded px-3 py-2 text-xs text-gray-600 mb-3">
                             <span class="font-semibold text-gray-700">Tổng quan luôn có:</span>
-                            Thời gian, Mã chứng từ, Loại, Giá trị, Nợ cần trả nhà cung cấp, Ghi chú.
+                            Thời gian, Mã chứng từ, Loại, Giá trị, Nợ cần trả nhà cung cấp.
                         </div>
                         <label class="flex items-center gap-2 mb-2 cursor-pointer">
                             <input type="checkbox" v-model="debtExportForm.include_detail" class="rounded" />

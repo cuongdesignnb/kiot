@@ -15,6 +15,7 @@ use App\Services\CustomerDebtService;
 use App\Services\CustomerPaymentDiscountService;
 use App\Services\CustomerPaymentService;
 use App\Services\Debt\PartnerDebtMutationCoordinator;
+use App\Services\Debt\PartnerDebtPublicTimelineService;
 use App\Services\DebtOffsetService;
 use App\Services\PartnerAlreadyExistsException;
 use App\Services\PartnerMergeService;
@@ -621,6 +622,8 @@ class CustomerController extends Controller
             $ledger = app(\App\Services\CustomerDebtDocumentTimelineService::class)->build($customer, $request->all());
         }
 
+        $ledger = app(PartnerDebtPublicTimelineService::class)->project($ledger, 'customer');
+
         // HOTFIX FOLLOW-UP — opt-in server-side pagination to match KiotViet
         // (10/page). Caller activates by sending ?page=N; without that
         // param, the full ledger is returned for backward compat with
@@ -664,7 +667,7 @@ class CustomerController extends Controller
             'allocations.*.invoice_id' => 'required_with:allocations|integer|exists:invoices,id',
             'allocations.*.amount' => 'required_with:allocations|numeric|min:1',
             'note' => 'nullable|string|max:500',
-            'date' => 'nullable|date',
+            'date' => 'nullable|string|max:32',
         ];
         $validated = $request->validate($rules);
         $allocations = $validated['allocations'] ?? [];
@@ -1005,6 +1008,8 @@ class CustomerController extends Controller
         } else {
             $data = app(\App\Services\CustomerDebtDocumentTimelineService::class)->build($customer, $request->all());
         }
+        $data = app(PartnerDebtPublicTimelineService::class)->project($data, 'customer');
+        $openingAdjustment = (float) ($data['summary']['hidden_reconciliation_adjustment'] ?? 0);
         // Normalise to a plain array of associative arrays — historically
         // the export pulled this via getData(true) which produced this shape.
         $entries = collect($data['entries'] ?? [])
@@ -1056,7 +1061,8 @@ class CustomerController extends Controller
                     $from,
                     $to,
                     $includeDetail,
-                    $selectedColumns
+                    $selectedColumns,
+                    $openingAdjustment,
                 ))->download('cong_no_kh_'.($customer->code ?: $customer->id).'.xlsx');
             }
 
@@ -1168,12 +1174,13 @@ class CustomerController extends Controller
 
     private function customerDebtEntryExportRawTime(array $entry)
     {
-        return $entry['display_time']
+        return $entry['business_time']
+            ?? $entry['display_time']
             ?? $entry['time']
-            ?? $entry['recorded_at']
             ?? $entry['transaction_date']
             ?? $entry['purchase_date']
             ?? $entry['return_date']
+            ?? $entry['recorded_at']
             ?? $entry['created_at']
             ?? $entry['date']
             ?? null;
