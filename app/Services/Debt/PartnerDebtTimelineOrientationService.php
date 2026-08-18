@@ -256,6 +256,8 @@ class PartnerDebtTimelineOrientationService
                 'reference_code' => $metadata['reference_code'] ?? $event['source_code'],
                 'reversal_of' => $event['reversal_of_event_identity'] ?? null,
                 'mirror_of' => $event['mirror_of_event_identity'] ?? null,
+                'is_reconciliation_checkpoint' => (bool) ($event['is_reconciliation_checkpoint'] ?? false)
+                    || (string) ($event['event_kind'] ?? '') === 'persisted_ledger_checkpoint',
                 'is_virtual_fallback' => (bool) ($event['is_fallback'] ?? false),
             ]);
         })->values();

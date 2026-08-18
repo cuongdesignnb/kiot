@@ -271,6 +271,13 @@ class SupplierPaymentDisplayProjectionTest extends TestCase
         $this->assertFalse($result->contains('reference_id', 4));
         $this->assertFalse($result->contains('reference_id', 2));
         $this->assertTrue($result->contains('reference_id', 3));
+
+        $checkpoint = $result->firstWhere('reference_id', 3);
+        $this->assertSame('Đối chiếu lịch sử', $checkpoint['display_type']);
+        $this->assertSame('Không phải phiếu', $checkpoint['badge_label']);
+        $this->assertTrue($checkpoint['is_reconciliation_checkpoint']);
+        $this->assertFalse($checkpoint['is_real_voucher']);
+        $this->assertFalse($checkpoint['detail_available']);
     }
 
     private function orientation(Collection $events): PartnerDebtTimelineOrientationService

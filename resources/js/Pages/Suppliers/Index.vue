@@ -395,6 +395,7 @@ const supplierDebtEntryBalance = (entry, id) => {
 
 const supplierDebtEntryBadge = (entry, id) => {
     if (!isSupplierPartnerTimeline(id)) return '';
+    if (entry?.is_reconciliation_checkpoint || entry?.event_kind === 'persisted_ledger_checkpoint') return 'Không phải phiếu';
     if (entry?.badge_label === 'Đã hạch toán') return '';
     if (entry?.affects_partner_net === false) return entry?.badge_label || '';
     return entry?.badge_label || (
@@ -403,6 +404,10 @@ const supplierDebtEntryBadge = (entry, id) => {
             : (entry?.domain === 'supplier' || entry?.source_ledger === 'supplier_payable' ? 'Phải trả NCC' : '')
     );
 };
+
+const isReconciliationCheckpoint = (entry) => Boolean(
+    entry?.is_reconciliation_checkpoint || entry?.event_kind === 'persisted_ledger_checkpoint',
+);
 
 const loadSupplierDebt = async (id, page = null) => {
     supplierDataLoading[id] = true;
@@ -459,6 +464,7 @@ const openSupplierHistoryRow = (row) => {
 const supplierVoucher = reactive({ show: false, loading: false, error: '', payload: null });
 const openSupplierVoucherDetail = async (entry, supplierId) => {
     if (!entry?.code) return;
+    if (isReconciliationCheckpoint(entry)) return;
     // STEP 10B — fallback rows have no real voucher to open.
     if (entry?.is_virtual_fallback) {
         alert('Đây là dòng tạm tính từ phiếu nhập, chưa có phiếu chi/thu thật để mở.');
@@ -546,7 +552,8 @@ const supplierVoucherDisplayRows = computed(() => {
 
 const filteredDebt = (id) => {
     const raw = supplierDebt[id];
-    const data = Array.isArray(raw) ? raw : (raw?.entries || []);
+    const data = (Array.isArray(raw) ? raw : (raw?.entries || []))
+        .filter((entry) => !isReconciliationCheckpoint(entry));
     if (debtFilter.value === 'all') return data;
     return data.filter(d => d.type === debtFilter.value || d.event_kind === debtFilter.value);
 };
@@ -1475,13 +1482,17 @@ const submitActivate = (supplier) => {
                                                         <tr
                                                             v-for="d in sortedSupplierDebt(supplier.id)"
                                                             :key="`${d.source_ledger || d.domain || d.source || 'debt'}-${d.type || d.event_kind || 'row'}-${d.id}-${d.code}-${d.time || d.created_at || d.date}`"
-                                                            class="hover:bg-gray-50"
+                                                            :class="isReconciliationCheckpoint(d) ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-gray-50'"
                                                         >
                                                             <td class="px-3 py-2 font-semibold"
-                                                                :class="d.is_virtual_fallback ? 'text-gray-700 cursor-help' : 'text-blue-600 cursor-pointer hover:underline'"
-                                                                :title="d.is_virtual_fallback ? (d.badge_title || 'Dòng tạm tính, chưa có chứng từ thu/chi thật để mở.') : ''"
+                                                                :class="isReconciliationCheckpoint(d) || d.is_virtual_fallback ? 'text-amber-700 cursor-help' : 'text-blue-600 cursor-pointer hover:underline'"
+                                                                :title="isReconciliationCheckpoint(d) ? (d.badge_title || 'Đây là dòng đối chiếu lịch sử, không phải phiếu giao dịch.') : (d.is_virtual_fallback ? (d.badge_title || 'Dòng tạm tính, chưa có chứng từ thu/chi thật để mở.') : '')"
                                                                 @click="openSupplierVoucherDetail(d, supplier.id)"
-                                                            >{{ d.code }}</td>
+                                                            >
+                                                                <span v-if="isReconciliationCheckpoint(d)">Đối chiếu lịch sử</span>
+                                                                <span v-else>{{ d.code }}</span>
+                                                                <span v-if="isReconciliationCheckpoint(d) && d.reference_code" class="block text-[10px] font-normal text-amber-700">Nguồn: {{ d.reference_code }}</span>
+                                                            </td>
                                                             <td class="px-3 py-2">{{ formatDateTime(supplierEntryDisplayTime(d)) }}</td>
                                                             <td class="px-3 py-2">
                                                                 <div class="flex items-center gap-2">
