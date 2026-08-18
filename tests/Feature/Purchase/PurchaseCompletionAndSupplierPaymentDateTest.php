@@ -92,7 +92,7 @@ class PurchaseCompletionAndSupplierPaymentDateTest extends TestCase
         $this->assertSame(1, Purchase::where('supplier_id', $supplier->id)->count());
     }
 
-    public function test_backdated_supplier_payment_returns_422_without_mutation(): void
+    public function test_backdated_supplier_payment_accepts_vietnamese_display_date_without_allocating_future_purchase(): void
     {
         $admin = $this->admin();
         $supplier = $this->supplier(['supplier_debt_amount' => 100000]);
@@ -103,23 +103,57 @@ class PurchaseCompletionAndSupplierPaymentDateTest extends TestCase
             'paid_amount' => 0,
             'debt_amount' => 100000,
             'status' => 'completed',
-            'purchase_date' => Carbon::parse('2026-08-18 08:30:00'),
+            'purchase_date' => Carbon::parse('2026-07-30 15:23:00'),
         ]);
-
-        $before = $this->financialSnapshot($supplier, $purchase);
 
         $response = $this->actingAs($admin)
             ->postJson("/api/suppliers/{$supplier->id}/payment", [
                 'amount' => 50000,
-                'date' => '2026-08-17 08:30:00',
+                'date' => '30/07/2026 14:09',
             ], [
                 'Idempotency-Key' => 'supplier-payment-date-'.uniqid(),
+            ]);
+
+        $response->assertOk()->assertJsonPath('success', true);
+        $this->assertSame(100000.0, (float) $purchase->fresh()->debt_amount);
+        $this->assertSame(50000.0, (float) $supplier->fresh()->supplier_debt_amount);
+        $this->assertSame(1, CashFlow::where('reference_type', 'SupplierPayment')->where('target_id', $supplier->id)->count());
+        $this->assertSame(1, SupplierDebtTransaction::where('supplier_id', $supplier->id)->where('type', 'payment')->count());
+        $this->assertSame(0, DB::table('supplier_payment_allocations')->where('supplier_id', $supplier->id)->count());
+        $paymentTime = CashFlow::where('target_id', $supplier->id)
+            ->where('reference_type', 'SupplierPayment')
+            ->value('time');
+        $this->assertSame('2026-07-30 14:09:00', Carbon::parse($paymentTime)->format('Y-m-d H:i:s'));
+    }
+
+    public function test_malformed_supplier_payment_date_returns_vietnamese_422_without_mutation(): void
+    {
+        $admin = $this->admin();
+        $supplier = $this->supplier(['supplier_debt_amount' => 100000]);
+        $purchase = Purchase::create([
+            'code' => 'PN-DATE-MALFORMED-'.uniqid(),
+            'supplier_id' => $supplier->id,
+            'total_amount' => 100000,
+            'paid_amount' => 0,
+            'debt_amount' => 100000,
+            'status' => 'completed',
+            'purchase_date' => Carbon::parse('2026-08-18 08:30:00'),
+        ]);
+
+        $before = $this->financialSnapshot($supplier, $purchase);
+        $response = $this->actingAs($admin)
+            ->postJson("/api/suppliers/{$supplier->id}/payment", [
+                'amount' => 50000,
+                'date' => '30/99/2026 14:09',
+            ], [
+                'Idempotency-Key' => 'supplier-payment-malformed-'.uniqid(),
             ]);
 
         $response
             ->assertStatus(422)
             ->assertJsonPath('code', 'SUPPLIER_PAYMENT_DATE_INVALID')
-            ->assertJsonValidationErrors('date');
+            ->assertJsonValidationErrors('date')
+            ->assertJsonPath('errors.date.0', 'Ngày thanh toán không hợp lệ. Vui lòng nhập dd/MM/yyyy HH:mm.');
 
         $this->assertSame($before, $this->financialSnapshot($supplier->fresh(), $purchase->fresh()));
     }
