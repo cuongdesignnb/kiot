@@ -2199,7 +2199,6 @@ class SupplierDebtDomainEventSource
             ?? $entry['is_reference_only']
             ?? false
         );
-        $entry['created_at'] = $this->compatibilityCreatedAt($entry);
 
         return $entry;
     }
@@ -2302,29 +2301,6 @@ class SupplierDebtDomainEventSource
             'supplier', 'adjustment' => 'supplier_payable',
             default => (string) ($entry['source'] ?? 'document_first'),
         };
-    }
-
-    private function compatibilityCreatedAt(array $entry)
-    {
-        $createdAt = $entry['created_at'] ?? null;
-        $displayTime = $entry['display_time'] ?? $entry['time'] ?? null;
-
-        if (! $createdAt || ! $displayTime) {
-            return $createdAt;
-        }
-
-        try {
-            $created = $createdAt instanceof Carbon ? $createdAt : Carbon::parse($createdAt);
-            $display = $displayTime instanceof Carbon ? $displayTime : Carbon::parse($displayTime);
-        } catch (\Throwable) {
-            return $createdAt;
-        }
-
-        if ($created->greaterThan($display) && abs($created->diffInSeconds(Carbon::now())) <= 300) {
-            return $display->toDateTimeString();
-        }
-
-        return $createdAt;
     }
 
     private function getDisplaySequence(array $entry): int

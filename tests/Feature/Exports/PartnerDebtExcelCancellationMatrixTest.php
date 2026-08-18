@@ -135,12 +135,12 @@ class PartnerDebtExcelCancellationMatrixTest extends TestCase
         self::assertSame('', $this->firstDetailValue($customerRows, 'K'));
         self::assertSame('', $this->firstDetailValue($customerRows, 'L'));
         self::assertSame('', $this->firstDetailValue($customerRows, 'M'));
-        self::assertSame('invoice line note', $this->detailValueContaining($customerRows, 'N', 'invoice line note'));
-        self::assertSame('invoice line note', $this->detailValueContaining($supplierRows, 'N', 'invoice line note'));
-        self::assertSame('purchase document note', $this->parentValueByCode($customerRows, 'HUY-'.$purchase->code, 'N'));
-        self::assertSame('purchase document note', $this->parentValueByCode($supplierRows, 'HUY-'.$purchase->code, 'N'));
-        self::assertSame('Ghi chú', $customerRows[10]['N'] ?? null);
-        self::assertSame('Ghi chú', $supplierRows[10]['N'] ?? null);
+        self::assertSame('Số dư sau GD', $customerRows[10]['M'] ?? null);
+        self::assertSame('Số dư sau GD', $supplierRows[10]['M'] ?? null);
+        self::assertTrue($this->columnIsEmpty($customerRows, 'N'));
+        self::assertTrue($this->columnIsEmpty($supplierRows, 'N'));
+        self::assertSame('purchase document note', $purchase->fresh()->note);
+        self::assertSame('invoice line note', InvoiceItem::findOrFail($invoice->items()->first()->id)->note);
     }
 
     /** @param array<int,array<string,mixed>> $rows */
@@ -173,25 +173,14 @@ class PartnerDebtExcelCancellationMatrixTest extends TestCase
     }
 
     /** @param array<int,array<string,mixed>> $rows */
-    private function detailValueContaining(array $rows, string $column, string $expected): mixed
+    private function columnIsEmpty(array $rows, string $column): bool
     {
         foreach ($rows as $row) {
-            if (str_starts_with((string) ($row['B'] ?? ''), 'SKU-CANCEL-')
-                && ($row[$column] ?? '') === $expected) {
-                return $row[$column];
+            if (($row[$column] ?? null) !== null && ($row[$column] ?? '') !== '') {
+                return false;
             }
         }
-        self::fail('detail value not found: '.$expected);
-    }
 
-    /** @param array<int,array<string,mixed>> $rows */
-    private function parentValueByCode(array $rows, string $code, string $column): mixed
-    {
-        foreach ($rows as $row) {
-            if (($row['B'] ?? '') === $code) {
-                return $row[$column] ?? '';
-            }
-        }
-        self::fail('parent row not found: '.$code);
+        return true;
     }
 }

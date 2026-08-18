@@ -34,13 +34,18 @@ class CustomerPaymentService
             throw ValidationException::withMessages(['amount' => 'So tien thanh toan phai lon hon 0.']);
         }
 
+        $paymentTime = $this->parsePaymentTime($paidAt);
+
+        $hashPaymentTime = $paidAt === null || (is_string($paidAt) && trim($paidAt) === '')
+            ? null
+            : $paymentTime->toIso8601String();
         $payloadHash = hash('sha256', json_encode([
             'customer_id' => (int) $customer->id,
             'amount' => $paymentAmount,
             'mode' => $mode,
             'allocations' => $requestedAllocations,
             'note' => $note,
-            'paid_at' => $paidAt instanceof Carbon ? $paidAt->toIso8601String() : $paidAt,
+            'paid_at' => $hashPaymentTime,
         ], JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION));
 
         return $this->coordinator->execute(
@@ -53,7 +58,7 @@ class CustomerPaymentService
                 $mode,
                 $requestedAllocations,
                 $note,
-                $paidAt,
+                $paymentTime,
             ) {
                 if (! (bool) $lockedCustomer->is_customer) {
                     throw ValidationException::withMessages([
@@ -63,11 +68,10 @@ class CustomerPaymentService
                 app(PartnerTransactionGuard::class)->assertCanTransact((int) $customer->id, 'customer_id');
                 $debtBefore = (float) $lockedCustomer->debt_amount;
                 $allocations = $mode === 'manual'
-                    ? $this->resolveManualAllocations($lockedCustomer, $paymentAmount, $requestedAllocations)
-                    : $this->resolveAutomaticAllocations($lockedCustomer, $paymentAmount);
+                    ? $this->resolveManualAllocations($lockedCustomer, $paymentAmount, $requestedAllocations, $paymentTime)
+                    : $this->resolveAutomaticAllocations($lockedCustomer, $paymentAmount, $paymentTime);
                 $allocatedAmount = (float) collect($allocations)->sum('amount');
                 $unallocatedAmount = max(0.0, $paymentAmount - $allocatedAmount);
-                $paymentTime = $paidAt ? Carbon::parse($paidAt) : now();
 
                 $cashFlow = CashFlow::create([
                     'code' => 'PT'.date('ymdHis').random_int(10, 99),
@@ -84,11 +88,6 @@ class CustomerPaymentService
                     'status' => 'active',
                 ]);
                 $this->coordinator->checkpoint('document');
-
-                if ($paidAt) {
-                    $cashFlow->created_at = $paymentTime;
-                    $cashFlow->save();
-                }
 
                 $allocationCodes = [];
                 foreach ($allocations as $allocation) {
@@ -169,11 +168,17 @@ class CustomerPaymentService
         ], true);
     }
 
-    private function resolveAutomaticAllocations(Customer $customer, float $paymentAmount): array
-    {
+    private function resolveAutomaticAllocations(
+        Customer $customer,
+        float $paymentAmount,
+        Carbon $paymentTime,
+    ): array {
         $remaining = $paymentAmount;
         $allocations = [];
-        $invoices = app(CustomerReceivableInvoiceService::class)->query($customer)->get();
+        $invoices = app(CustomerReceivableInvoiceService::class)
+            ->query($customer)
+            ->whereRaw('COALESCE(transaction_date, created_at) <= ?', [$paymentTime->format('Y-m-d H:i:s')])
+            ->get();
 
         foreach ($invoices as $invoice) {
             if ($remaining < 0.01) {
@@ -195,7 +200,8 @@ class CustomerPaymentService
     private function resolveManualAllocations(
         Customer $customer,
         float $paymentAmount,
-        array $requestedAllocations
+        array $requestedAllocations,
+        Carbon $paymentTime,
     ): array {
         $allocations = [];
         $allocatedTotal = 0.0;
@@ -226,6 +232,13 @@ class CustomerPaymentService
                 ]);
             }
 
+            $invoiceTime = $invoice->transaction_date ?? $invoice->created_at;
+            if ($invoiceTime && Carbon::parse($invoiceTime)->greaterThan($paymentTime)) {
+                throw ValidationException::withMessages([
+                    'allocations' => "Không thể phân bổ thanh toán cho hóa đơn {$invoice->code} phát sinh sau ngày thanh toán.",
+                ]);
+            }
+
             $invoiceRemaining = app(CustomerReceivableInvoiceService::class)->remaining($invoice);
             if ($amount > $invoiceRemaining + 0.01) {
                 throw ValidationException::withMessages([
@@ -242,5 +255,35 @@ class CustomerPaymentService
         }
 
         return $allocations;
+    }
+
+    private function parsePaymentTime(Carbon|string|null $value): Carbon
+    {
+        if ($value instanceof Carbon) {
+            return $value->copy();
+        }
+        if ($value === null || trim($value) === '') {
+            return now();
+        }
+
+        $value = trim($value);
+        foreach (['Y-m-d\\TH:i', 'Y-m-d H:i:s', 'Y-m-d H:i', 'd/m/Y H:i', 'd/m/Y H:i:s', 'Y-m-d', 'd/m/Y'] as $format) {
+            try {
+                $parsed = Carbon::createFromFormat('!'.$format, $value);
+                if ($parsed !== false && $parsed->format($format) === $value) {
+                    return $parsed;
+                }
+            } catch (\Throwable) {
+                // Try the next explicit representation.
+            }
+        }
+
+        try {
+            return Carbon::parse($value);
+        } catch (\Throwable) {
+            throw ValidationException::withMessages([
+                'date' => 'Ngày thanh toán không hợp lệ. Vui lòng nhập dd/MM/yyyy HH:mm.',
+            ]);
+        }
     }
 }

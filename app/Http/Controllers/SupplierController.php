@@ -11,6 +11,7 @@ use App\Models\Purchase;
 use App\Models\PurchaseReturn;
 use App\Models\SupplierDebtTransaction;
 use App\Services\Debt\PartnerDebtMutationCoordinator;
+use App\Services\Debt\PartnerDebtPublicTimelineService;
 use App\Services\PartnerAlreadyExistsException;
 use App\Services\PartnerRoleService;
 use App\Support\Debt\PartnerDebtDisplayBalance;
@@ -453,20 +454,22 @@ class SupplierController extends Controller
                 ->build($supplier, $options);
         }
 
+        $ledger = app(PartnerDebtPublicTimelineService::class)->project($ledger, 'supplier');
+        $openingAdjustment = (float) ($ledger['summary']['hidden_reconciliation_adjustment'] ?? 0);
+
         $entries = collect($ledger['entries'] ?? [])
             ->map(fn ($e) => $this->normalizeSupplierDebtExportEntry(is_array($e) ? $e : (array) $e))
             ->all();
 
         if ($mode === 'legacy' && ! $request->hasAny(['date_preset', 'date_from', 'date_to', 'include_detail', 'columns', 'format', 'view'])) {
             return \App\Services\CsvService::export(
-                ['Mã chứng từ', 'Loại', 'Giá trị', 'Còn nợ', 'Ngày', 'Ghi chú'],
+                ['Mã chứng từ', 'Loại', 'Giá trị', 'Còn nợ', 'Ngày'],
                 collect($entries)->map(fn ($t) => [
                     $t['code'],
                     $t['type_label'],
                     $t['amount'],
                     $t['debt_remain'],
                     $this->supplierDebtEntryExportTime($t),
-                    $t['note'] ?? '',
                 ]),
                 "cong_no_ncc_{$id}.csv"
             );
@@ -526,7 +529,8 @@ class SupplierController extends Controller
                 $from,
                 $to,
                 $includeDetail,
-                $selectedCols
+                $selectedCols,
+                $openingAdjustment,
             );
 
             return $service->download("cong_no_ncc_{$id}.xlsx");
@@ -551,7 +555,7 @@ class SupplierController extends Controller
             return true;
         })->values();
 
-        $headers = ['Thời gian', 'Mã chứng từ', 'Loại', 'Giá trị', 'Nợ cần trả nhà cung cấp', 'Ghi chú'];
+        $headers = ['Thời gian', 'Mã chứng từ', 'Loại', 'Giá trị', 'Nợ cần trả nhà cung cấp'];
 
         $detailColumnMap = [
             'unit' => 'ĐVT',
@@ -561,7 +565,6 @@ class SupplierController extends Controller
             'vat' => 'VAT',
             'cost' => 'Giá nhập/trả',
             'line_total' => 'Thành tiền',
-            'note' => 'Ghi chú dòng',
         ];
         $appendDetailCols = $includeDetail
             ? array_values(array_intersect_key($detailColumnMap, array_flip($selectedCols)))
@@ -579,7 +582,6 @@ class SupplierController extends Controller
                 $t['type_label'] ?? '',
                 $t['amount'] ?? 0,
                 $t['debt_remain'] ?? 0,
-                $t['note'] ?? $t['badge_title'] ?? '',
             ];
             $rows->push(array_merge($base, array_fill(0, count($appendDetailCols), '')));
 
@@ -593,7 +595,7 @@ class SupplierController extends Controller
                         $detail[] = $line[$col] ?? '';
                     }
                     $rows->push(array_merge(
-                        ['', '', '', '', '', ''], // chừa cột tổng quan
+                        ['', '', '', '', ''], // chừa cột tổng quan
                         $detail
                     ));
                 }
@@ -628,19 +630,19 @@ class SupplierController extends Controller
             ?? $entry['display_type']
             ?? $entry['badge_label']
             ?? '';
-        $entry['note'] = $entry['note'] ?? $entry['badge_title'] ?? '';
 
         return $entry;
     }
 
     private function supplierDebtEntryExportRawTime(array $entry)
     {
-        return $entry['display_time']
+        return $entry['business_time']
+            ?? $entry['display_time']
             ?? $entry['time']
-            ?? $entry['recorded_at']
             ?? $entry['transaction_date']
             ?? $entry['purchase_date']
             ?? $entry['return_date']
+            ?? $entry['recorded_at']
             ?? $entry['created_at']
             ?? $entry['date']
             ?? null;
@@ -875,6 +877,11 @@ class SupplierController extends Controller
         } else {
             $ledger = app(\App\Services\SupplierDebtDocumentTimelineService::class)->build($supplier, $request->all());
         }
+
+        // Public rows deliberately omit synthetic reconciliation checkpoints
+        // and presentation metadata before pagination. Canonical audit events
+        // remain available inside the timeline services.
+        $ledger = app(PartnerDebtPublicTimelineService::class)->project($ledger, 'supplier');
 
         // HOTFIX FOLLOW-UP — opt-in server-side pagination matching
         // KiotViet (10 rows per page). Caller activates by sending
@@ -1236,10 +1243,6 @@ class SupplierController extends Controller
                         'payment_method' => 'cash',
                         'description' => "Chi thanh toán công nợ NCC {$supplier->name}: ".number_format($totalPay).'đ',
                     ]);
-                    if (! empty($data['date'])) {
-                        $cashFlow->created_at = $paidAt;
-                        $cashFlow->save();
-                    }
                     app(PartnerDebtMutationCoordinator::class)->checkpoint('document');
 
                     foreach ($allocations as $allocation) {
@@ -1264,7 +1267,6 @@ class SupplierController extends Controller
                         'debt_remain' => $currentDebt - $totalPay,
                         'note' => $data['note'] ?? 'Thanh toán công nợ',
                         'user_id' => auth()->id(),
-                        'created_at' => $paidAt,
                     ]);
                     app(PartnerDebtMutationCoordinator::class)->checkpoint('evidence');
 
@@ -1311,7 +1313,7 @@ class SupplierController extends Controller
         $value = trim($value);
         foreach (['Y-m-d\\TH:i', 'Y-m-d H:i:s', 'Y-m-d H:i', 'd/m/Y H:i', 'd/m/Y H:i:s', 'Y-m-d', 'd/m/Y'] as $format) {
             try {
-                $parsed = Carbon::createFromFormat($format, $value);
+                $parsed = Carbon::createFromFormat('!'.$format, $value);
                 if ($parsed !== false && $parsed->format($format) === $value) {
                     return $parsed;
                 }

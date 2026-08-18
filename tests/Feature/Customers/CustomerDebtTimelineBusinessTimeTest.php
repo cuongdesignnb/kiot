@@ -8,9 +8,11 @@ use App\Models\Invoice;
 use App\Models\OrderReturn;
 use App\Models\Purchase;
 use App\Models\User;
+use App\Services\CustomerDebtDocumentTimelineService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Schema;
+use Mockery;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use Tests\TestCase;
 
@@ -22,7 +24,7 @@ class CustomerDebtTimelineBusinessTimeTest extends TestCase
     {
         return User::create([
             'name' => 'Admin Business Time',
-            'email' => 'admin-business-time-' . uniqid() . '@test.local',
+            'email' => 'admin-business-time-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
             'role_id' => null,
         ]);
@@ -31,7 +33,7 @@ class CustomerDebtTimelineBusinessTimeTest extends TestCase
     private function customer(array $overrides = []): Customer
     {
         return Customer::create(array_merge([
-            'code' => 'KH-BTIME-' . uniqid(),
+            'code' => 'KH-BTIME-'.uniqid(),
             'name' => 'Customer Business Time',
             'debt_amount' => 0,
             'supplier_debt_amount' => 0,
@@ -49,7 +51,7 @@ class CustomerDebtTimelineBusinessTimeTest extends TestCase
         $createdAt = Carbon::parse('2026-06-02 16:22:00');
 
         $invoice = Invoice::create([
-            'code' => 'HD-BTIME-' . uniqid(),
+            'code' => 'HD-BTIME-'.uniqid(),
             'customer_id' => $customer->id,
             'subtotal' => 8_600_000,
             'total' => 8_600_000,
@@ -80,7 +82,7 @@ class CustomerDebtTimelineBusinessTimeTest extends TestCase
         $createdAt = Carbon::parse('2026-06-02 16:23:00');
 
         $cashFlow = CashFlow::create([
-            'code' => 'PT-BTIME-' . uniqid(),
+            'code' => 'PT-BTIME-'.uniqid(),
             'type' => 'receipt',
             'amount' => 500_000,
             'time' => $businessTime,
@@ -110,7 +112,7 @@ class CustomerDebtTimelineBusinessTimeTest extends TestCase
     {
         $admin = $this->admin();
         $supplier = $this->customer([
-            'code' => 'NCC-BTIME-' . uniqid(),
+            'code' => 'NCC-BTIME-'.uniqid(),
             'name' => 'Supplier Business Time',
             'is_customer' => false,
             'is_supplier' => true,
@@ -120,7 +122,7 @@ class CustomerDebtTimelineBusinessTimeTest extends TestCase
         $createdAt = Carbon::parse('2026-06-02 10:00:00');
 
         $purchase = Purchase::create([
-            'code' => 'PN-BTIME-' . uniqid(),
+            'code' => 'PN-BTIME-'.uniqid(),
             'supplier_id' => $supplier->id,
             'total_amount' => 1_000_000,
             'paid_amount' => 0,
@@ -146,7 +148,7 @@ class CustomerDebtTimelineBusinessTimeTest extends TestCase
 
     public function test_order_return_timeline_uses_return_date_when_schema_has_column(): void
     {
-        if (!Schema::hasColumn('returns', 'return_date')) {
+        if (! Schema::hasColumn('returns', 'return_date')) {
             $this->markTestSkipped('returns.return_date is not present in this schema.');
         }
 
@@ -156,7 +158,7 @@ class CustomerDebtTimelineBusinessTimeTest extends TestCase
         $createdAt = Carbon::parse('2026-06-02 11:05:00');
 
         $return = OrderReturn::create([
-            'code' => 'TH-BTIME-' . uniqid(),
+            'code' => 'TH-BTIME-'.uniqid(),
             'customer_id' => $customer->id,
             'status' => 'Đã trả',
             'subtotal' => 250_000,
@@ -183,13 +185,14 @@ class CustomerDebtTimelineBusinessTimeTest extends TestCase
         $admin = $this->admin();
         $customer = $this->customer(['debt_amount' => 8_600_000]);
 
-        Invoice::create([
-            'code' => 'HD-CSV-BTIME-' . uniqid(),
+        $invoice = Invoice::create([
+            'code' => 'HD-CSV-BTIME-'.uniqid(),
             'customer_id' => $customer->id,
             'subtotal' => 8_600_000,
             'total' => 8_600_000,
             'customer_paid' => 0,
             'status' => 'Hoàn thành',
+            'note' => 'CUSTOMER CSV SOURCE NOTE',
             'transaction_date' => Carbon::parse('2026-05-24 16:17:00'),
             'created_at' => Carbon::parse('2026-06-02 16:22:00'),
             'updated_at' => Carbon::parse('2026-06-02 16:22:00'),
@@ -202,6 +205,8 @@ class CustomerDebtTimelineBusinessTimeTest extends TestCase
 
         $this->assertStringContainsString('24/05/2026 16:17', $content);
         $this->assertStringNotContainsString('02/06/2026 16:22', $content);
+        $this->assertStringNotContainsString('CUSTOMER CSV SOURCE NOTE', $content);
+        $this->assertSame('CUSTOMER CSV SOURCE NOTE', $invoice->fresh()->note);
     }
 
     public function test_customer_xlsx_export_uses_business_date(): void
@@ -209,13 +214,14 @@ class CustomerDebtTimelineBusinessTimeTest extends TestCase
         $admin = $this->admin();
         $customer = $this->customer(['debt_amount' => 8_600_000]);
 
-        Invoice::create([
-            'code' => 'HD-XLSX-BTIME-' . uniqid(),
+        $invoice = Invoice::create([
+            'code' => 'HD-XLSX-BTIME-'.uniqid(),
             'customer_id' => $customer->id,
             'subtotal' => 8_600_000,
             'total' => 8_600_000,
             'customer_paid' => 0,
             'status' => 'Hoàn thành',
+            'note' => 'CUSTOMER XLSX SOURCE NOTE',
             'transaction_date' => Carbon::parse('2026-05-24 16:17:00'),
             'created_at' => Carbon::parse('2026-06-02 16:22:00'),
             'updated_at' => Carbon::parse('2026-06-02 16:22:00'),
@@ -226,11 +232,12 @@ class CustomerDebtTimelineBusinessTimeTest extends TestCase
 
         $response->assertOk();
         $body = $response->streamedContent() ?: $response->getContent();
-        $tmp = tempnam(sys_get_temp_dir(), 'customer-business-time-') . '.xlsx';
+        $tmp = tempnam(sys_get_temp_dir(), 'customer-business-time-').'.xlsx';
         file_put_contents($tmp, $body);
 
         try {
             $sheet = IOFactory::load($tmp)->getActiveSheet();
+            $highestColumn = $sheet->getHighestColumn();
             $values = [];
             foreach ($sheet->toArray(null, true, true, true) as $row) {
                 foreach ($row as $value) {
@@ -246,6 +253,64 @@ class CustomerDebtTimelineBusinessTimeTest extends TestCase
 
         $this->assertStringContainsString('24/05/2026 16:17', $text);
         $this->assertStringNotContainsString('02/06/2026 16:22', $text);
+        $this->assertStringNotContainsString('CUSTOMER XLSX SOURCE NOTE', $text);
+        $this->assertSame('M', $highestColumn);
+        $this->assertSame('CUSTOMER XLSX SOURCE NOTE', $invoice->fresh()->note);
+    }
+
+    public function test_customer_checkpoint_is_hidden_before_pagination_and_csv_export(): void
+    {
+        $admin = $this->admin();
+        $customer = $this->customer(['debt_amount' => 16]);
+        $entries = collect(range(1, 11))->map(fn (int $index): array => [
+            'code' => $index === 11 ? 'HUY-HD-PAGE-11' : 'HD-PAGE-'.$index,
+            'event_identity' => 'invoice|'.$index,
+            'event_kind' => $index === 11 ? 'invoice_cancel_reversal' : 'customer_sale',
+            'event_order' => $index,
+            'business_time' => sprintf('2026-07-30 14:09:%02d', $index),
+            'display_type' => $index === 11 ? 'Hủy hóa đơn' : 'Bán hàng',
+            'customer_display_effect' => 1,
+            'supplier_display_effect' => -1,
+            'badge_label' => $index === 11 ? 'Phải thu KH' : 'Hóa đơn',
+            'note' => 'CUSTOMER PUBLIC NOTE MUST STAY HIDDEN',
+        ])->push([
+            'code' => 'CHECKPOINT-CUSTOMER-PAGE',
+            'event_identity' => 'checkpoint|customer-page',
+            'event_kind' => 'persisted_ledger_checkpoint',
+            'business_time' => '2026-07-30 14:09:06',
+            'customer_display_effect' => 5,
+            'supplier_display_effect' => -5,
+        ])->all();
+        $timeline = [
+            'entries' => $entries,
+            'summary' => ['target_balance' => 16],
+            'target_balance' => 16,
+        ];
+        $mock = Mockery::mock(CustomerDebtDocumentTimelineService::class);
+        $mock->shouldReceive('build')->twice()->andReturn($timeline);
+        $this->app->instance(CustomerDebtDocumentTimelineService::class, $mock);
+
+        $timelineResponse = $this->actingAs($admin)
+            ->getJson("/customers/{$customer->id}/debt-history?page=1&per_page=10");
+
+        $timelineResponse->assertOk()
+            ->assertJsonPath('pagination.total', 11)
+            ->assertJsonPath('pagination.per_page', 10)
+            ->assertJsonCount(10, 'entries')
+            ->assertJsonPath('summary.virtual_opening_balance', 5);
+        $this->assertFalse(collect($timelineResponse->json('entries'))->contains(
+            fn (array $entry): bool => str_starts_with((string) ($entry['code'] ?? ''), 'CHECKPOINT-'),
+        ));
+
+        $exportResponse = $this->actingAs($admin)->get(
+            "/customers/{$customer->id}/export-debt?format=csv&date_preset=all&include_detail=0",
+        );
+        $exportResponse->assertOk();
+        $csv = $exportResponse->streamedContent() ?: $exportResponse->getContent();
+        $this->assertStringContainsString('HUY-HD-PAGE-11', $csv);
+        $this->assertStringNotContainsString('CHECKPOINT-', $csv);
+        $this->assertStringNotContainsString('Ghi chú', $csv);
+        $this->assertStringNotContainsString('CUSTOMER PUBLIC NOTE MUST STAY HIDDEN', $csv);
     }
 
     private function assertEntryTimeEquals(string $expected, string $actual): void

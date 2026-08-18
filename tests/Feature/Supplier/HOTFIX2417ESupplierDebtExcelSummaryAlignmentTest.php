@@ -154,10 +154,18 @@ class HOTFIX2417ESupplierDebtExcelSummaryAlignmentTest extends TestCase
         $row = $this->findSummaryRow($cells, 'Phát sinh trong kỳ:');
         $this->assertNotNull($row);
         $this->assertEquals(7_000_000, (int) ($row['K'] ?? 0), 'period debit in K');
-        // The canonical timeline also exposes a persisted-ledger checkpoint
-        // when the saved debt_remain requires reconciliation: 2M payment +
-        // 5M checkpoint correction = 7M on the credit side.
-        $this->assertEquals(7_000_000, (int) ($row['L'] ?? 0), 'period credit in L (Ghi có), including persisted checkpoint');
+        // The 5M persisted-ledger checkpoint is presentation-only and is
+        // folded into opening debt. Only the real 2M payment is a period
+        // credit transaction.
+        $this->assertEquals(2_000_000, (int) ($row['L'] ?? 0), 'period credit in L contains real payments only');
+
+        $opening = $this->findSummaryRow($cells, 'Nợ đầu kỳ:');
+        $this->assertNotNull($opening);
+        $this->assertEquals(5_000_000, (int) ($opening['L'] ?? 0), 'hidden checkpoint is absorbed into negative opening debt');
+        $this->assertStringNotContainsString('CHECKPOINT-', implode(' ', array_map(
+            static fn (array $sheetRow): string => implode(' ', array_filter($sheetRow)),
+            $cells,
+        )));
     }
 
     // ── TC-03 — positive opening + closing align with K column ──
@@ -165,10 +173,9 @@ class HOTFIX2417ESupplierDebtExcelSummaryAlignmentTest extends TestCase
     {
         $admin = $this->admin();
         $sup = $this->supplier();
-        // Opening is computed from entries before the window. We
-        // request `preset=all` so opening is 0 (no entries before
-        // window) and closing equals the net period balance. Both are
-        // non-negative here so they must sit in K.
+        // The saved zero target requires a hidden -4M checkpoint. Public
+        // presentation absorbs it into opening debt, while the body retains
+        // only the real purchase and payment rows.
         $this->purchase($sup, 5_000_000, Carbon::now());
         $this->payment($sup, 1_000_000);
 
@@ -181,9 +188,8 @@ class HOTFIX2417ESupplierDebtExcelSummaryAlignmentTest extends TestCase
         $this->assertNotNull($opening);
         $this->assertNotNull($closing);
 
-        // opening = 0 → still sits in K (the >= 0 branch).
-        $this->assertEquals(0, (int) ($opening['K'] ?? 0));
-        $this->assertEmpty($opening['L'] ?? '', 'positive/zero opening must NOT spill into L');
+        $this->assertEmpty($opening['K'] ?? '', 'negative opening must not spill into K');
+        $this->assertEquals(4_000_000, (int) ($opening['L'] ?? 0));
 
         // The persisted ledger checkpoint restores the saved zero balance.
         $this->assertEquals(0, (int) ($closing['K'] ?? 0));

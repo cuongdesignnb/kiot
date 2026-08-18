@@ -18,6 +18,12 @@ class PurchaseCompletionAndSupplierPaymentDateTest extends TestCase
 {
     use DatabaseTransactions;
 
+    protected function tearDown(): void
+    {
+        Carbon::setTestNow();
+        parent::tearDown();
+    }
+
     public function test_completed_purchase_is_persisted_as_completed(): void
     {
         $admin = $this->admin();
@@ -94,6 +100,7 @@ class PurchaseCompletionAndSupplierPaymentDateTest extends TestCase
 
     public function test_backdated_supplier_payment_accepts_vietnamese_display_date_without_allocating_future_purchase(): void
     {
+        Carbon::setTestNow('2026-08-18 16:00:37');
         $admin = $this->admin();
         $supplier = $this->supplier(['supplier_debt_amount' => 100000]);
         $purchase = Purchase::create([
@@ -120,10 +127,31 @@ class PurchaseCompletionAndSupplierPaymentDateTest extends TestCase
         $this->assertSame(1, CashFlow::where('reference_type', 'SupplierPayment')->where('target_id', $supplier->id)->count());
         $this->assertSame(1, SupplierDebtTransaction::where('supplier_id', $supplier->id)->where('type', 'payment')->count());
         $this->assertSame(0, DB::table('supplier_payment_allocations')->where('supplier_id', $supplier->id)->count());
-        $paymentTime = CashFlow::where('target_id', $supplier->id)
+        $cashFlow = CashFlow::where('target_id', $supplier->id)
             ->where('reference_type', 'SupplierPayment')
-            ->value('time');
-        $this->assertSame('2026-07-30 14:09:00', Carbon::parse($paymentTime)->format('Y-m-d H:i:s'));
+            ->firstOrFail();
+        $this->assertSame('2026-07-30 14:09:00', Carbon::parse($cashFlow->time)->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-08-18 16:00:37', Carbon::parse($cashFlow->created_at)->format('Y-m-d H:i:s'));
+        $ledger = SupplierDebtTransaction::where('supplier_id', $supplier->id)
+            ->where('type', 'payment')
+            ->firstOrFail();
+        $this->assertSame('2026-08-18 16:00:37', Carbon::parse($ledger->created_at)->format('Y-m-d H:i:s'));
+
+        $timelineResponse = $this->actingAs($admin)
+            ->getJson("/api/suppliers/{$supplier->id}/debt-transactions?page=1&per_page=100");
+        $timelineResponse->assertOk();
+        $entries = collect($timelineResponse->json('entries'));
+        $paymentCode = $response->json('payment.payment_code');
+        $paymentEntry = $entries->firstWhere('code', $paymentCode);
+        $this->assertNotNull($paymentEntry);
+        $this->assertSame('2026-07-30 14:09:00', Carbon::parse($paymentEntry['business_time'])->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-08-18 16:00:37', Carbon::parse($paymentEntry['created_at'])->format('Y-m-d H:i:s'));
+
+        $purchaseIndex = $entries->search(fn (array $entry): bool => ($entry['code'] ?? null) === $purchase->code);
+        $paymentIndex = $entries->search(fn (array $entry): bool => ($entry['code'] ?? null) === $paymentCode);
+        $this->assertIsInt($purchaseIndex);
+        $this->assertIsInt($paymentIndex);
+        $this->assertTrue($purchaseIndex < $paymentIndex);
     }
 
     public function test_malformed_supplier_payment_date_returns_vietnamese_422_without_mutation(): void

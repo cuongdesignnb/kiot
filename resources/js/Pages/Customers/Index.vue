@@ -208,7 +208,6 @@ const customerDebtExportForm = reactive({
         vat: true,
         cost: true,
         line_total: true,
-        note: true,
     },
 });
 
@@ -252,7 +251,6 @@ const customerDebtExportColumnOptions = [
     { key: 'vat', label: 'VAT' },
     { key: 'cost', label: 'Giá bán/trả' },
     { key: 'line_total', label: 'Thành tiền' },
-    { key: 'note', label: 'Ghi chú dòng' },
 ];
 
 const openCustomerDebtExportModal = (customer) => {
@@ -346,9 +344,9 @@ const formatDateTime = (val) => {
     );
 };
 const entryDisplayTime = (entry) =>
+    entry?.business_time ||
     entry?.display_time ||
     entry?.time ||
-    entry?.business_time ||
     entry?.transaction_date ||
     entry?.purchase_date ||
     entry?.return_date ||
@@ -392,13 +390,6 @@ const getDebtEntryRunningBalance = (entry) => {
         return Number(entry.running_balance);
     }
     return null;
-};
-const customerDebtEntryBadge = (entry) => {
-    if (entry?.source === 'document_first') {
-        return entry?.badge_label || '';
-    }
-    const label = entry?.badge_label || '';
-    return label === 'Đã hạch toán' ? '' : label;
 };
 const formatGender = (val) => {
     if (val === "male") return "Nam";
@@ -2538,8 +2529,6 @@ const createdDateRange = computed({
                                                                 <span
                                                                     v-else-if="entry.code"
                                                                     class="text-gray-700 font-medium"
-                                                                    :class="{ 'cursor-help': entry.is_virtual_fallback }"
-                                                                    :title="entry.is_virtual_fallback ? (entry.badge_title || 'Dòng tạm tính từ hóa đơn, chưa có chứng từ thu thật để mở.') : ''"
                                                                 >
                                                                     {{ entry.code }}
                                                                 </span>
@@ -2570,23 +2559,6 @@ const createdDateRange = computed({
                                                                 <div class="text-xs text-gray-500 font-medium" v-if="entry.payment_for_code">
                                                                     Cho {{ entry.payment_for_code }}
                                                                 </div>
-                                                                <span
-                                                                    v-if="customerDebtEntryBadge(entry)"
-                                                                    class="ml-1 inline-block text-[10px] font-semibold border px-1.5 py-0.5 rounded"
-                                                                    :class="{
-                                                                        'bg-blue-50 text-blue-700 border-blue-200': customerDebtEntryBadge(entry) === 'Ledger',
-                                                                        'bg-purple-50 text-purple-700 border-purple-200': customerDebtEntryBadge(entry) === 'Phiếu nhập',
-                                                                        'bg-green-50 text-green-700 border-green-200': customerDebtEntryBadge(entry) === 'Thanh toán NCC' || customerDebtEntryBadge(entry) === 'Thanh toán HĐ' || customerDebtEntryBadge(entry) === 'Thanh toán',
-                                                                        'bg-amber-50 text-amber-700 border-amber-200': customerDebtEntryBadge(entry) === 'Cần đối soát',
-                                                                        'bg-gray-100 text-gray-600 border-gray-200': !['Ledger', 'Phiếu nhập', 'Thanh toán NCC', 'Thanh toán HĐ', 'Thanh toán', 'Cần đối soát'].includes(customerDebtEntryBadge(entry)),
-                                                                    }"
-                                                                    :title="entry.badge_title || entry.balance_note || ''"
-                                                                >{{ customerDebtEntryBadge(entry) }}</span>
-                                                                <span
-                                                                    v-if="entry.is_virtual_fallback"
-                                                                    class="ml-1 inline-block text-[10px] font-semibold border px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border-amber-200 cursor-help"
-                                                                    :title="entry.badge_title || 'Tạm tính từ hóa đơn — chưa có phiếu thu thật.'"
-                                                                >Tạm tính</span>
                                                             </td>
                                                             <td
                                                                 class="px-3 py-2 text-right font-medium"
@@ -2597,7 +2569,6 @@ const createdDateRange = computed({
                                                                                 ? 'text-green-600'
                                                                                 : 'text-gray-500'
                                                                 "
-                                                                :title="entry.balance_note || (entry.affects_debt_balance === false ? 'Chứng từ tham chiếu, không cộng lại số dư công nợ' : '')"
                                                             >
                                                                 {{
                                                                     (customerDebtEntryDisplayEffect(entry) > 0 ? '+' : '') +
@@ -2615,7 +2586,6 @@ const createdDateRange = computed({
                                                                               ? 'text-green-600 font-semibold'
                                                                               : 'text-gray-500'
                                                                 "
-                                                                :title="getDebtEntryRunningBalance(entry) === null ? (entry.balance_note || 'Chứng từ tham chiếu, không cộng lại số dư công nợ') : ''"
                                                             >
                                                                 <template v-if="getDebtEntryRunningBalance(entry) !== null">
                                                                     <span :class="getDebtEntryRunningBalance(entry) > 0 ? 'text-red-600 font-semibold' : getDebtEntryRunningBalance(entry) < 0 ? 'text-green-600 font-semibold' : 'text-gray-500'">
@@ -4632,7 +4602,7 @@ const createdDateRange = computed({
                         <h3 class="text-sm font-semibold text-gray-700 mb-2">Thông tin xuất file</h3>
                         <div class="bg-gray-50 border border-gray-200 rounded px-3 py-2 text-xs text-gray-600 mb-3">
                             <span class="font-semibold text-gray-700">Tổng quan luôn có:</span>
-                            Thời gian, Mã chứng từ, Loại, Giá trị, Nợ hiện tại/Công nợ, Ghi chú.
+                            Thời gian, Mã chứng từ, Loại, Giá trị, Nợ hiện tại/Công nợ.
                         </div>
                         <label class="flex items-center gap-2 mb-2 cursor-pointer">
                             <input type="checkbox" v-model="customerDebtExportForm.include_detail" class="rounded" />
