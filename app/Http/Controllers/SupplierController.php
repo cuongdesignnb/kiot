@@ -46,7 +46,10 @@ class SupplierController extends Controller
     {
         $this->configureSupplierFilters();
 
-        $query = Customer::where('is_supplier', true);
+        // Keep merged source rows for audit, but hide them from the
+        // operational supplier list. The surviving target remains visible.
+        $query = Customer::where('is_supplier', true)
+            ->whereNull('merged_into_id');
 
         $this->applyFilters($query, $request);
 
@@ -83,13 +86,19 @@ class SupplierController extends Controller
         // Summary totals - use supplier_debt_amount which is maintained by purchase/return flows
         $summary = [
             'total_debt' => Customer::where('is_supplier', true)
+                ->whereNull('merged_into_id')
                 ->where('supplier_debt_amount', '>', 0)
                 ->sum('supplier_debt_amount'),
             'total_bought' => Customer::where('is_supplier', true)
+                ->whereNull('merged_into_id')
                 ->sum('total_bought'),
         ];
 
-        $groups = Customer::where('is_supplier', true)->whereNotNull('customer_group')->distinct()->pluck('customer_group');
+        $groups = Customer::where('is_supplier', true)
+            ->whereNull('merged_into_id')
+            ->whereNotNull('customer_group')
+            ->distinct()
+            ->pluck('customer_group');
 
         $filters = $this->currentFilters($request);
         $filters['partner_type'] = $request->input('partner_type');
@@ -380,7 +389,8 @@ class SupplierController extends Controller
     {
         $this->configureSupplierFilters();
 
-        $query = Customer::where('is_supplier', true);
+        $query = Customer::where('is_supplier', true)
+            ->whereNull('merged_into_id');
         $this->applyFilters($query, $request);
 
         if ($request->filled('partner_type')) {

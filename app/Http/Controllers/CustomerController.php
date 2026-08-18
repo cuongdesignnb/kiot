@@ -224,7 +224,12 @@ class CustomerController extends Controller
     {
         $this->configureCustomerFilters();
 
-        $query = Customer::with('branch')->where('is_customer', true);
+        // Merged source partners remain in `customers` for audit/history, but
+        // they are no longer active customer records and must not appear in
+        // the operational customer list or its totals.
+        $query = Customer::with('branch')
+            ->where('is_customer', true)
+            ->whereNull('merged_into_id');
 
         $hasSupplierDebtColumn = Schema::hasColumn('customers', 'supplier_debt_amount');
 
@@ -310,6 +315,7 @@ class CustomerController extends Controller
             ->map(fn ($g) => ['value' => $g->name, 'label' => $g->name]);
 
         $legacyGroups = Customer::where('is_customer', true)
+            ->whereNull('merged_into_id')
             ->whereNotNull('customer_group')
             ->where('customer_group', '!=', '')
             ->distinct()->pluck('customer_group')
@@ -322,12 +328,19 @@ class CustomerController extends Controller
         // Creators: users who have created customers
         $creators = $capabilities['supportsCreatedByFilter']
             ? \App\Models\User::select('id', 'name')
-                ->whereIn('id', Customer::where('is_customer', true)->whereNotNull('created_by')->distinct()->pluck('created_by'))
+                ->whereIn('id', Customer::where('is_customer', true)
+                    ->whereNull('merged_into_id')
+                    ->whereNotNull('created_by')
+                    ->distinct()
+                    ->pluck('created_by'))
                 ->orderBy('name')->get()
             : collect();
 
         // Delivery areas (distinct cities from customers)
-        $deliveryCities = Customer::where('is_customer', true)->whereNotNull('city')->where('city', '!=', '')
+        $deliveryCities = Customer::where('is_customer', true)
+            ->whereNull('merged_into_id')
+            ->whereNotNull('city')
+            ->where('city', '!=', '')
             ->distinct()->orderBy('city')->pluck('city')
             ->map(fn ($c) => ['value' => $c, 'label' => $c])->values();
 
@@ -964,7 +977,9 @@ class CustomerController extends Controller
     {
         $this->configureCustomerFilters();
 
-        $query = Customer::with('branch')->where('is_customer', true);
+        $query = Customer::with('branch')
+            ->where('is_customer', true)
+            ->whereNull('merged_into_id');
         $this->applyAdvancedCustomerFilters($query, $request);
         $customers = $query->get();
 
