@@ -1182,99 +1182,166 @@ class SupplierController extends Controller
             'date' => $data['date'] ?? null,
         ], JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION));
 
-        $result = app(PartnerDebtMutationCoordinator::class)->execute(
-            (int) $id,
-            'supplier_payment_collect',
-            $payloadHash,
-            function (Customer $supplier, ?PartnerDebtOperation $operation) use (
-                $id,
-                $totalPay,
-                $mode,
-                $data,
-                $paidAt,
-            ): array {
-                if (! (bool) $supplier->is_supplier) {
-                    throw ValidationException::withMessages([
-                        'supplier_id' => 'Đối tác chưa có vai trò nhà cung cấp đã lưu.',
-                    ]);
-                }
-                app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
-                    (int) $supplier->id,
-                    'supplier_id',
-                );
-                $currentDebt = (float) $supplier->supplier_debt_amount;
-                $code = 'PCPN'.date('ymdHis').random_int(100, 999);
-                $cashFlow = CashFlow::create([
-                    'code' => $code,
-                    'type' => 'payment',
-                    'amount' => $totalPay,
-                    'time' => $paidAt,
-                    'category' => 'Chi thanh toán NCC',
-                    'target_type' => 'Nhà cung cấp',
-                    'target_id' => $id,
-                    'target_name' => $supplier->name,
-                    'reference_type' => 'SupplierPayment',
-                    'reference_code' => $code,
-                    'payment_method' => 'cash',
-                    'description' => "Chi thanh toán công nợ NCC {$supplier->name}: ".number_format($totalPay).'đ',
-                ]);
-                if (! empty($data['date'])) {
-                    $cashFlow->created_at = $paidAt;
-                    $cashFlow->save();
-                }
-                app(PartnerDebtMutationCoordinator::class)->checkpoint('document');
-
-                $allocations = $this->supplierPaymentAllocations(
-                    (int) $id,
+        try {
+            $result = app(PartnerDebtMutationCoordinator::class)->execute(
+                (int) $id,
+                'supplier_payment_collect',
+                $payloadHash,
+                function (Customer $supplier, ?PartnerDebtOperation $operation) use (
+                    $id,
                     $totalPay,
                     $mode,
-                    (array) ($data['allocations'] ?? []),
-                );
-                foreach ($allocations as $allocation) {
-                    $purchase = Purchase::query()->lockForUpdate()->findOrFail($allocation['purchase_id']);
-                    $purchase->increment('paid_amount', $allocation['amount']);
-                    $purchase->decrement('debt_amount', $allocation['amount']);
-                    $this->persistSupplierPaymentAllocation(
-                        $cashFlow,
-                        $purchase,
-                        (float) $allocation['amount'],
-                        $mode,
-                        $paidAt,
-                        $operation,
+                    $data,
+                    $paidAt,
+                ): array {
+                    if (! (bool) $supplier->is_supplier) {
+                        throw ValidationException::withMessages([
+                            'supplier_id' => 'Đối tác chưa có vai trò nhà cung cấp đã lưu.',
+                        ]);
+                    }
+                    app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
+                        (int) $supplier->id,
+                        'supplier_id',
                     );
-                }
+                    $currentDebt = (float) $supplier->supplier_debt_amount;
 
-                SupplierDebtTransaction::create([
-                    'supplier_id' => $id,
-                    'code' => $code,
-                    'type' => 'payment',
-                    'amount' => -$totalPay,
-                    'debt_remain' => $currentDebt - $totalPay,
-                    'note' => $data['note'] ?? 'Thanh toán công nợ',
-                    'user_id' => auth()->id(),
-                    'created_at' => $paidAt,
-                ]);
-                app(PartnerDebtMutationCoordinator::class)->checkpoint('evidence');
+                    // Resolve and validate every affected purchase before any
+                    // cash-flow, allocation, ledger, or projection row is written.
+                    // This makes an invalid backdated payment a clean 422 instead
+                    // of a late 500 after partial work has started.
+                    $allocations = $this->supplierPaymentAllocations(
+                        (int) $id,
+                        $totalPay,
+                        $mode,
+                        (array) ($data['allocations'] ?? []),
+                    );
+                    $this->assertSupplierPaymentDateAllowed((int) $id, $paidAt, $allocations);
 
-                $supplier->update(['supplier_debt_amount' => $currentDebt - $totalPay]);
-                app(PartnerDebtMutationCoordinator::class)->checkpoint('projection');
+                    $code = 'PCPN'.date('ymdHis').random_int(100, 999);
+                    $cashFlow = CashFlow::create([
+                        'code' => $code,
+                        'type' => 'payment',
+                        'amount' => $totalPay,
+                        'time' => $paidAt,
+                        'category' => 'Chi thanh toán NCC',
+                        'target_type' => 'Nhà cung cấp',
+                        'target_id' => $id,
+                        'target_name' => $supplier->name,
+                        'reference_type' => 'SupplierPayment',
+                        'reference_code' => $code,
+                        'payment_method' => 'cash',
+                        'description' => "Chi thanh toán công nợ NCC {$supplier->name}: ".number_format($totalPay).'đ',
+                    ]);
+                    if (! empty($data['date'])) {
+                        $cashFlow->created_at = $paidAt;
+                        $cashFlow->save();
+                    }
+                    app(PartnerDebtMutationCoordinator::class)->checkpoint('document');
 
-                return [
-                    'payment_id' => (int) $cashFlow->id,
-                    'payment_code' => (string) $cashFlow->code,
-                    'allocated_amount' => (float) collect($allocations)->sum('amount'),
-                    'payable_before' => $currentDebt,
-                    'payable_after' => $currentDebt - $totalPay,
-                ];
-            },
-            $request->header('Idempotency-Key'),
-        );
+                    foreach ($allocations as $allocation) {
+                        $purchase = Purchase::query()->lockForUpdate()->findOrFail($allocation['purchase_id']);
+                        $purchase->increment('paid_amount', $allocation['amount']);
+                        $purchase->decrement('debt_amount', $allocation['amount']);
+                        $this->persistSupplierPaymentAllocation(
+                            $cashFlow,
+                            $purchase,
+                            (float) $allocation['amount'],
+                            $mode,
+                            $paidAt,
+                            $operation,
+                        );
+                    }
+
+                    SupplierDebtTransaction::create([
+                        'supplier_id' => $id,
+                        'code' => $code,
+                        'type' => 'payment',
+                        'amount' => -$totalPay,
+                        'debt_remain' => $currentDebt - $totalPay,
+                        'note' => $data['note'] ?? 'Thanh toán công nợ',
+                        'user_id' => auth()->id(),
+                        'created_at' => $paidAt,
+                    ]);
+                    app(PartnerDebtMutationCoordinator::class)->checkpoint('evidence');
+
+                    $supplier->update(['supplier_debt_amount' => $currentDebt - $totalPay]);
+                    app(PartnerDebtMutationCoordinator::class)->checkpoint('projection');
+
+                    return [
+                        'payment_id' => (int) $cashFlow->id,
+                        'payment_code' => (string) $cashFlow->code,
+                        'allocated_amount' => (float) collect($allocations)->sum('amount'),
+                        'payable_before' => $currentDebt,
+                        'payable_after' => $currentDebt - $totalPay,
+                    ];
+                },
+                $request->header('Idempotency-Key'),
+            );
+        } catch (ValidationException $e) {
+            $errors = $e->errors();
+            $isDateError = array_key_exists('date', $errors);
+
+            return response()->json([
+                'success' => false,
+                'code' => $isDateError ? 'SUPPLIER_PAYMENT_DATE_INVALID' : 'SUPPLIER_PAYMENT_INVALID',
+                'message' => $isDateError
+                    ? (string) ($errors['date'][0] ?? 'Ngày thanh toán không hợp lệ.')
+                    : 'Thông tin thanh toán chưa hợp lệ.',
+                'errors' => $errors,
+            ], 422);
+        }
 
         return response()->json([
             'success' => true,
             'message' => 'Đã ghi thanh toán.',
             'payment' => $result,
         ]);
+    }
+
+    private function assertSupplierPaymentDateAllowed(int $supplierId, \Carbon\Carbon $paidAt, array $allocations): void
+    {
+        $lockPeriod = app(\App\Services\LockPeriodService::class);
+        if ($lockPeriod->isLocked($paidAt)) {
+            $lockDate = $lockPeriod->getLockDate()?->format('d/m/Y');
+
+            throw ValidationException::withMessages([
+                'date' => 'Không thể ghi nhận thanh toán vào kỳ đã khóa sổ'.($lockDate ? " (trước {$lockDate})." : '.'),
+            ]);
+        }
+
+        $purchaseIds = collect($allocations)
+            ->pluck('purchase_id')
+            ->map(fn ($purchaseId): int => (int) $purchaseId)
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($purchaseIds->isEmpty()) {
+            return;
+        }
+
+        $earliestPurchase = Purchase::query()
+            ->where('supplier_id', $supplierId)
+            ->whereIn('id', $purchaseIds)
+            ->lockForUpdate()
+            ->get()
+            ->map(fn (Purchase $purchase): array => [
+                'code' => (string) $purchase->code,
+                'date' => $purchase->purchase_date ?: $purchase->created_at,
+            ])
+            ->filter(fn (array $row): bool => $row['date'] !== null)
+            ->sortBy(fn (array $row) => $row['date']->getTimestamp())
+            ->first();
+
+        if ($earliestPurchase && $paidAt->lt($earliestPurchase['date'])) {
+            throw ValidationException::withMessages([
+                'date' => sprintf(
+                    'Ngày thanh toán không được trước ngày ghi nhận công nợ của phiếu nhập %s (%s).',
+                    $earliestPurchase['code'],
+                    $earliestPurchase['date']->format('d/m/Y H:i'),
+                ),
+            ]);
+        }
     }
 
     /**
