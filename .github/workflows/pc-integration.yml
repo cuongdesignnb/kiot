@@ -107,6 +107,7 @@ jobs:
       - name: Build frontend
         run: |
           node --test resources/js/tests/posIdempotency.test.mjs
+          node --test resources/js/tests/purchaseLinePricing.test.mjs
           npm run build
 
       - name: Scan tracked source

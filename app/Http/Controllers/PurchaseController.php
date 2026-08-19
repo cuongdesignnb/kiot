@@ -194,10 +194,12 @@ class PurchaseController extends Controller
                             'product_id' => $item->product_id,
                             'name' => $item->product ? $item->product->name : '',
                             'sku' => $item->product ? $item->product->sku : '',
+                            'has_serial' => (bool) ($item->product?->has_serial ?? false),
                             'quantity' => $item->qty,
                             'price' => $item->price,
                             'discount' => 0,
                             'stock_quantity' => $item->product ? $item->product->stock_quantity : 0,
+                            'serials' => [],
                         ];
                     }),
                 ];
@@ -267,6 +269,15 @@ class PurchaseController extends Controller
                     "items.{$i}.product_id" => "Dịch vụ \"{$product->name}\" không quản lý tồn kho nên không thể nhập hàng.",
                 ]);
             }
+
+            $lineSubtotal = ((int) ($item['quantity'] ?? 0) * (float) ($item['price'] ?? 0))
+                - (float) ($item['discount'] ?? 0);
+            if ($lineSubtotal < -0.01) {
+                return back()->withErrors([
+                    "items.{$i}.discount" => 'Giảm giá không được vượt thành tiền trước giảm giá.',
+                ]);
+            }
+
             if (! $product || ! $product->has_serial) {
                 continue;
             }
