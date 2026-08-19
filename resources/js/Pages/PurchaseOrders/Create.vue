@@ -5,6 +5,14 @@ import { ref, computed, watch } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
 import DateTimePicker from '@/Components/DateTimePicker.vue';
+import {
+    preparePurchaseLinePricing,
+    purchaseLinePricingError,
+    purchaseLineTotal,
+    syncPurchaseLineAfterQuantityChange,
+    syncPurchaseLineFromTotal,
+    syncPurchaseLineFromUnitPrice,
+} from '@/utils/purchaseLinePricing.js';
 
 const props = defineProps({
     products: Array,
@@ -17,6 +25,8 @@ const props = defineProps({
 const searchQuery = ref('');
 const showSuggestions = ref(false);
 const items = ref([]);
+
+const preparePurchaseOrderItem = (item) => preparePurchaseLinePricing(item, 'qty');
 
 // Sidebar refs (Vendor & Financials)
 const selectedSupplierId = ref('');
@@ -64,7 +74,7 @@ watch(searchQuery, (val) => {
 const selectProduct = (product) => {
     const existing = items.value.find(i => i.product_id === product.id);
     if (!existing) {
-        items.value.unshift({ 
+        items.value.unshift(preparePurchaseOrderItem({
             product_id: product.id,
             sku: product.sku,
             name: product.name,
@@ -72,9 +82,10 @@ const selectProduct = (product) => {
             price: product.cost_price || 0, // Giá vốn / Giá nhập
             discount: 0,
             stock_quantity: product.stock_quantity || 0,
-        });
+        }));
     } else {
         existing.qty++;
+        syncPurchaseLineAfterQuantityChange(existing, 'qty');
     }
     searchQuery.value = '';
     showSuggestions.value = false;
@@ -88,24 +99,37 @@ const removeItem = (index) => {
     items.value.splice(index, 1);
 };
 
-const itemsComputed = computed(() => {
-    return items.value.map(item => {
-        const qty = parseInt(item.qty) || 0;
-        const price = parseFloat(item.price) || 0;
-        const itemDiscount = parseFloat(item.discount) || 0;
-        return {
-            ...item,
-            total_value: (qty * price) - itemDiscount
-        };
-    });
-});
+const getItemTotal = (item) => purchaseLineTotal(item, 'qty');
 
-const totalAmount = computed(() => itemsComputed.value.reduce((sum, item) => sum + item.total_value, 0));
+const onItemQuantityInput = (item) => {
+    syncPurchaseLineAfterQuantityChange(item, 'qty');
+};
+
+const onItemPriceInput = (item, value) => {
+    item.price = value;
+    syncPurchaseLineFromUnitPrice(item, 'qty');
+};
+
+const onItemDiscountInput = (item, value) => {
+    item.discount = value;
+    syncPurchaseLineFromUnitPrice(item, 'qty', { discountWasEdited: true });
+};
+
+const onItemTotalInput = (item, value) => {
+    syncPurchaseLineFromTotal(item, value, 'qty');
+};
+
+const totalAmount = computed(() => items.value.reduce((sum, item) => sum + getItemTotal(item), 0));
 const totalPayment = computed(() => totalAmount.value - Number(discount.value) + Number(importFee.value) + Number(otherImportFee.value));
 
 const save = async (saveStatus) => {
     if (items.value.length === 0) {
         alert("Vui lòng chọn ít nhất 1 hàng hóa để đặt hàng.");
+        return;
+    }
+    const invalidItem = items.value.find(item => purchaseLinePricingError(item, 'qty'));
+    if (invalidItem) {
+        alert(`${invalidItem.name}: ${purchaseLinePricingError(invalidItem, 'qty')}`);
         return;
     }
 
@@ -123,7 +147,13 @@ const save = async (saveStatus) => {
             discount: Number(discount.value) || 0,
             import_fee: Number(importFee.value) || 0,
             other_import_fee: Number(otherImportFee.value) || 0,
-            items: itemsComputed.value.map(item => ({ ...item, price: Number(item.price) || 0, discount: Number(item.discount) || 0 }))
+            items: items.value.map(item => ({
+                product_id: item.product_id,
+                qty: Number(item.qty) || 0,
+                price: Number(item.price) || 0,
+                discount: Number(item.discount) || 0,
+                total_value: getItemTotal(item),
+            }))
         });
     } catch (e) {
         alert("Có lỗi xảy ra, vui lòng kiểm tra lại dữ liệu.");
@@ -207,11 +237,11 @@ const save = async (saveStatus) => {
                                 <th class="p-3 w-[100px] text-center">Số lượng</th>
                                 <th class="p-3 w-[120px] text-right">Đơn giá</th>
                                 <th class="p-3 w-[100px] text-right">Giảm giá</th>
-                                <th class="p-3 w-[140px] text-right pr-6">Thành tiền</th>
+                                <th class="p-3 w-[140px] text-right pr-6" title="Có thể nhập trực tiếp để hệ thống tự chia đơn giá">Thành tiền</th>
                             </tr>
                         </thead>
                         <tbody v-if="items.length > 0">
-                            <tr v-for="(item, index) in itemsComputed" :key="item.product_id" class="border-b border-gray-100 hover:bg-[#f8fafc] transition-colors">
+                            <tr v-for="(item, index) in items" :key="item.product_id" class="border-b border-gray-100 hover:bg-[#f8fafc] transition-colors">
                                 <td class="p-3 text-center text-gray-500 group relative w-12">
                                     <span class="group-hover:hidden">{{ index + 1 }}</span>
                                     <button @click="removeItem(index)" class="hidden group-hover:flex items-center justify-center w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full mx-auto" title="Xóa">
@@ -222,15 +252,27 @@ const save = async (saveStatus) => {
                                 <td class="p-3 font-medium text-blue-600">{{ item.name }}</td>
                                 <td class="p-3 text-center w-[80px]">Cái</td>
                                 <td class="p-3 text-center w-[100px]">
-                                    <input type="number" v-model="item.qty" min="1" class="w-[70px] border-b border-dashed border-gray-400 py-1 text-center outline-none focus:border-blue-500 text-[13px] hover:bg-yellow-50 font-medium">
+                                    <input type="number" v-model.number="item.qty" @input="onItemQuantityInput(item)" min="1" class="w-[70px] border-b border-dashed border-gray-400 py-1 text-center outline-none focus:border-blue-500 text-[13px] hover:bg-yellow-50 font-medium">
                                 </td>
                                 <td class="p-3 w-[120px]">
-                                    <MoneyInput v-model="item.price" :min="0" input-class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-blue-500 text-[13px] hover:bg-yellow-50 font-medium tracking-wide" />
+                                    <MoneyInput v-model="item.price" :min="0" @update:model-value="value => onItemPriceInput(item, value)" input-class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-blue-500 text-[13px] hover:bg-yellow-50 font-medium tracking-wide" />
                                 </td>
                                 <td class="p-3 w-[100px]">
-                                    <MoneyInput v-model="item.discount" :min="0" input-class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-blue-500 text-[13px] hover:bg-yellow-50" />
+                                    <MoneyInput v-model="item.discount" :min="0" @update:model-value="value => onItemDiscountInput(item, value)" input-class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-blue-500 text-[13px] hover:bg-yellow-50" />
                                 </td>
-                                <td class="p-3 font-bold text-gray-800 text-right w-[140px] pr-6">{{ formatCurrency(item.total_value) }}</td>
+                                <td class="p-3 text-right w-[140px] pr-6">
+                                    <MoneyInput
+                                        v-model="item.line_total"
+                                        :min="0"
+                                        @update:model-value="value => onItemTotalInput(item, value)"
+                                        input-class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-blue-500 text-[13px] hover:bg-yellow-50 font-bold text-gray-800"
+                                        title="Nhập thành tiền để tự tính đơn giá"
+                                    />
+                                    <p v-if="item.line_total_rounding_discount > 0" class="mt-1 text-[10px] text-amber-600" title="Phần lẻ được cộng vào giảm giá dòng để tổng tiền lưu chính xác">
+                                        Làm tròn {{ formatCurrency(item.line_total_rounding_discount) }}
+                                    </p>
+                                    <p v-if="item.line_total_error" class="mt-1 text-[10px] text-red-600">{{ item.line_total_error }}</p>
+                                </td>
                             </tr>
                         </tbody>
                     </table>

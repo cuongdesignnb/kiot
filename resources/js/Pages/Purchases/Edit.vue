@@ -6,6 +6,15 @@ import axios from 'axios';
 import QuickCreateCustomerModal from '@/Components/QuickCreateCustomerModal.vue';
 import DateTimePicker from '@/Components/DateTimePicker.vue';
 import MoneyInput from '@/Components/MoneyInput.vue';
+import {
+    preparePurchaseLinePricing,
+    purchaseLinePricingError,
+    purchaseLineQuantity,
+    purchaseLineTotal,
+    syncPurchaseLineAfterQuantityChange,
+    syncPurchaseLineFromTotal,
+    syncPurchaseLineFromUnitPrice,
+} from '@/utils/purchaseLinePricing.js';
 
 const props = defineProps({
     purchase: Object,
@@ -209,8 +218,13 @@ const removeOtherCost = (index) => {
 const totalOtherCosts = computed(() => otherCosts.value.reduce((s, c) => s + (Number(c.amount) || 0), 0));
 
 // Pre-fill items from existing purchase
+const preparePurchaseItem = (item) => preparePurchaseLinePricing({
+    ...item,
+    serials: Array.isArray(item.serials) ? item.serials : [],
+}, 'quantity');
+
 const items = ref(
-    (props.purchase.items || []).map(item => ({
+    (props.purchase.items || []).map(item => preparePurchaseItem({
         product_id: item.product_id,
         sku: item.product_code || item.product?.sku || '',
         name: item.product_name || item.product?.name || '',
@@ -288,7 +302,7 @@ const selectProduct = (product) => {
 
     const existing = items.value.find(i => i.product_id === product.id);
     if (!existing) {
-        items.value.unshift({
+        items.value.unshift(preparePurchaseItem({
             product_id: product.id,
             sku: product.sku,
             name: product.name,
@@ -303,9 +317,12 @@ const selectProduct = (product) => {
             serialInput: '',
             showSerialArea: !!product.has_serial,
             warranty_months: 0,
-        });
+        }));
     } else {
-        if (!existing.has_serial) existing.quantity++;
+        if (!existing.has_serial) {
+            existing.quantity++;
+            syncPurchaseLineAfterQuantityChange(existing, 'quantity');
+        }
     }
     searchQuery.value = '';
     showSuggestions.value = false;
@@ -329,20 +346,35 @@ const addSerial = (item) => {
     }
     item.serials.push(val);
     item.quantity = item.serials.length;
+    syncPurchaseLineAfterQuantityChange(item, 'quantity');
     item.serialInput = '';
 };
 
 const removeSerial = (item, index) => {
     item.serials.splice(index, 1);
     item.quantity = item.serials.length;
+    syncPurchaseLineAfterQuantityChange(item, 'quantity');
 };
 
-const getItemTotal = (item) => {
-    const qty = item.has_serial ? (item.serials?.length || 0) : (parseInt(item.quantity) || 0);
-    const price = parseFloat(item.price) || 0;
-    const itemDiscount = parseFloat(item.discount) || 0;
-    const total = (qty * price) - itemDiscount;
-    return isNaN(total) ? 0 : total;
+const getItemTotal = (item) => purchaseLineTotal(item, 'quantity');
+const getItemQuantity = (item) => purchaseLineQuantity(item, 'quantity');
+
+const onItemQuantityInput = (item) => {
+    syncPurchaseLineAfterQuantityChange(item, 'quantity');
+};
+
+const onItemPriceInput = (item, value) => {
+    item.price = value;
+    syncPurchaseLineFromUnitPrice(item, 'quantity');
+};
+
+const onItemDiscountInput = (item, value) => {
+    item.discount = value;
+    syncPurchaseLineFromUnitPrice(item, 'quantity', { discountWasEdited: true });
+};
+
+const onItemTotalInput = (item, value) => {
+    syncPurchaseLineFromTotal(item, value, 'quantity');
 };
 
 const totalAmount = computed(() => {
@@ -395,6 +427,11 @@ const save = () => {
     }
     if (!selectedSupplierId.value) {
         formError.value = 'Vui lòng chọn nhà cung cấp.';
+        return;
+    }
+    const invalidItem = items.value.find(item => purchaseLinePricingError(item, 'quantity'));
+    if (invalidItem) {
+        formError.value = `${invalidItem.name}: ${purchaseLinePricingError(invalidItem, 'quantity')}`;
         return;
     }
     submitIdempotencyKey.value ||= crypto.randomUUID();
@@ -522,7 +559,7 @@ const goToCreateProduct = () => {
                                 <th v-if="showTechnicianPrice" class="p-3 w-[120px] text-right">Giá bán thợ</th>
                                 <th class="p-3 w-[100px] text-right">Giảm giá</th>
                                 <th class="p-3 w-[80px] text-center">BH (tháng)</th>
-                                <th class="p-3 w-[140px] text-right pr-6">Thành tiền</th>
+                                <th class="p-3 w-[140px] text-right pr-6" title="Có thể nhập trực tiếp để hệ thống tự chia đơn giá">Thành tiền</th>
                             </tr>
                         </thead>
                         <tbody v-if="items.length > 0">
@@ -544,11 +581,11 @@ const goToCreateProduct = () => {
                                 </td>
                                 <td class="p-3 text-center w-[80px]">Cái</td>
                                 <td class="p-3 text-center w-[100px]">
-                                    <input v-if="!item.has_serial" type="number" v-model="item.quantity" min="1" class="w-[70px] border-b border-dashed border-gray-400 py-1 text-center outline-none focus:border-green-500 text-[13px] hover:bg-green-50 font-medium">
+                                    <input v-if="!item.has_serial" type="number" v-model.number="item.quantity" @input="onItemQuantityInput(item)" min="1" class="w-[70px] border-b border-dashed border-gray-400 py-1 text-center outline-none focus:border-green-500 text-[13px] hover:bg-green-50 font-medium">
                                     <span v-else class="font-medium text-gray-700">{{ item.serials.length }}</span>
                                 </td>
                                 <td class="p-3 w-[120px]">
-                                    <MoneyInput v-model="item.price" :min="0" input-class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-green-500 text-[13px] hover:bg-green-50 font-medium tracking-wide" />
+                                    <MoneyInput v-model="item.price" :min="0" @update:model-value="value => onItemPriceInput(item, value)" input-class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-green-500 text-[13px] hover:bg-green-50 font-medium tracking-wide" />
                                 </td>
                                 <td v-if="showRetailPrice" class="p-3 w-[120px]">
                                     <MoneyInput v-model="item.retail_price" :min="0" input-class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-blue-500 text-[13px] hover:bg-blue-50 font-medium tracking-wide" />
@@ -557,12 +594,25 @@ const goToCreateProduct = () => {
                                     <MoneyInput v-model="item.technician_price" :min="0" input-class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-purple-500 text-[13px] hover:bg-purple-50 font-medium tracking-wide" />
                                 </td>
                                 <td class="p-3 w-[100px]">
-                                    <MoneyInput v-model="item.discount" :min="0" input-class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-green-500 text-[13px] hover:bg-green-50" />
+                                    <MoneyInput v-model="item.discount" :min="0" @update:model-value="value => onItemDiscountInput(item, value)" input-class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-green-500 text-[13px] hover:bg-green-50" />
                                 </td>
                                 <td class="p-3 w-[80px] text-center">
                                     <input type="number" v-model.number="item.warranty_months" min="0" class="w-full border-b border-dashed border-gray-400 py-1 text-center outline-none focus:border-orange-500 text-[13px] hover:bg-orange-50" placeholder="0">
                                 </td>
-                                <td class="p-3 font-bold text-gray-800 text-right w-[140px] pr-6">{{ formatCurrency(getItemTotal(item)) }}</td>
+                                <td class="p-3 text-right w-[140px] pr-6">
+                                    <MoneyInput
+                                        v-model="item.line_total"
+                                        :min="0"
+                                        :disabled="getItemQuantity(item) <= 0"
+                                        @update:model-value="value => onItemTotalInput(item, value)"
+                                        input-class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-green-500 text-[13px] hover:bg-green-50 font-bold text-gray-800 disabled:text-gray-400"
+                                        :title="getItemQuantity(item) > 0 ? 'Nhập thành tiền để tự tính đơn giá' : 'Nhập số lượng hoặc Serial/IMEI trước'"
+                                    />
+                                    <p v-if="item.line_total_rounding_discount > 0" class="mt-1 text-[10px] text-amber-600" title="Phần lẻ được cộng vào giảm giá dòng để tổng tiền lưu chính xác">
+                                        Làm tròn {{ formatCurrency(item.line_total_rounding_discount) }}
+                                    </p>
+                                    <p v-if="item.line_total_error" class="mt-1 text-[10px] text-red-600">{{ item.line_total_error }}</p>
+                                </td>
                             </tr>
                             <!-- Serial/IMEI input row -->
                             <tr v-if="item.has_serial" class="bg-gray-50/50">

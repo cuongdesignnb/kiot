@@ -2,22 +2,21 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
-use Inertia\Inertia;
+use App\Enums\PurchaseOrderStatus;
 use App\Models\ActivityLog;
-use App\Models\PurchaseOrder;
-use App\Models\PurchaseOrderItem;
+use App\Models\Branch;
+use App\Models\Product;
 use App\Models\Purchase;
 use App\Models\PurchaseItem;
-use App\Models\Product;
-use App\Models\Branch;
-use App\Models\Customer;
+use App\Models\PurchaseOrder;
+use App\Models\PurchaseOrderItem;
 use App\Models\Setting;
-use App\Enums\PurchaseOrderStatus;
-use App\Support\Filters\FilterableIndex;
 use App\Services\LockPeriodService;
+use App\Support\Filters\FilterableIndex;
 use Carbon\Carbon;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Inertia\Inertia;
 
 class PurchaseOrderController extends Controller
 {
@@ -51,20 +50,20 @@ class PurchaseOrderController extends Controller
             'branches' => $branches,
             'filters' => $this->currentFilters($request),
             'filterOptions' => [
-                'branches' => $branches->map(fn($b) => ['value' => $b->id, 'label' => $b->name]),
+                'branches' => $branches->map(fn ($b) => ['value' => $b->id, 'label' => $b->name]),
                 'statuses' => PurchaseOrderStatus::options(),
                 'suppliers' => app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
                     ->where('is_supplier', true)
                     ->orderBy('name')
                     ->get(['id', 'name'])
-                    ->map(fn($s) => ['value' => $s->id, 'label' => $s->name]),
+                    ->map(fn ($s) => ['value' => $s->id, 'label' => $s->name]),
             ],
         ]);
     }
 
     public function create()
     {
-        if (!Setting::get('purchase_order_enabled', true)) {
+        if (! Setting::get('purchase_order_enabled', true)) {
             return redirect()->route('purchase-orders.index')->with('error', 'Chức năng đặt hàng nhập đã bị tắt.');
         }
 
@@ -80,25 +79,32 @@ class PurchaseOrderController extends Controller
             'branches' => $branches,
             'suppliers' => $suppliers,
             'defaultBranchId' => $defaultBranch ? $defaultBranch->id : null,
-            'purchaseOrderCode' => 'DDH' . date('YmdHis') // Đơn đặt hàng nhập
+            'purchaseOrderCode' => 'DDH'.date('YmdHis'), // Đơn đặt hàng nhập
         ]);
     }
 
     public function store(Request $request)
     {
-        if (!Setting::get('purchase_order_enabled', true)) {
+        if (! Setting::get('purchase_order_enabled', true)) {
             return back()->with('error', 'Chức năng đặt hàng nhập đã bị tắt.');
         }
 
         $request->validate([
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|exists:products,id',
-            'items.*.qty' => 'required|numeric|min:1',
+            'items.*.qty' => 'required|integer|min:1',
+            'items.*.price' => 'required|numeric|min:0',
+            'items.*.discount' => 'nullable|numeric|min:0',
             'status' => 'required|in:draft,confirmed,partial,completed',
             'branch_id' => 'required|exists:branches,id',
             'supplier_id' => 'nullable|exists:customers,id',
             'expected_date' => 'nullable|date',
-            'note' => 'nullable|string'
+            'order_date' => 'nullable|date',
+            'note' => 'nullable|string',
+            'discount' => 'nullable|numeric|min:0',
+            'import_fee' => 'nullable|numeric|min:0',
+            'other_import_fee' => 'nullable|numeric|min:0',
+            'supplier_deposit' => 'nullable|numeric|min:0',
         ]);
         app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
             $request->filled('supplier_id') ? (int) $request->supplier_id : null,
@@ -116,7 +122,31 @@ class PurchaseOrderController extends Controller
                 'supplier_id'
             );
 
-            $totalAmount = array_sum(array_column($request->items, 'total_value'));
+            $normalizedItems = collect($request->items)->map(function (array $item, int $index): array {
+                $quantity = (int) $item['qty'];
+                $price = round((float) $item['price'], 2);
+                $discount = round((float) ($item['discount'] ?? 0), 2);
+                $totalValue = round(($quantity * $price) - $discount, 2);
+
+                if ($totalValue < -0.01) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        "items.{$index}.discount" => 'Giảm giá không được vượt thành tiền trước giảm giá.',
+                    ]);
+                }
+
+                return [
+                    'product_id' => (int) $item['product_id'],
+                    'qty' => $quantity,
+                    'price' => $price,
+                    'discount' => $discount,
+                    'total_value' => max(0, $totalValue),
+                ];
+            })->values();
+
+            // Never trust a client-supplied total_value. It is presentation
+            // state only; persisted accounting always comes from qty × price
+            // − discount, matching purchase receipt calculation.
+            $totalAmount = $normalizedItems->sum('total_value');
             $discount = $request->input('discount', 0);
             $importFee = $request->input('import_fee', 0);
             $otherImportFee = $request->input('other_import_fee', 0);
@@ -124,7 +154,7 @@ class PurchaseOrderController extends Controller
             $totalPayment = $totalAmount - $discount + $importFee + $otherImportFee;
 
             $purchaseOrder = PurchaseOrder::create([
-                'code' => $request->code ?? 'DDH' . time(),
+                'code' => $request->code ?? 'DDH'.time(),
                 'branch_id' => $request->branch_id,
                 'supplier_id' => $request->supplier_id,
                 'status' => $request->status,
@@ -140,7 +170,7 @@ class PurchaseOrderController extends Controller
                 'ordered_by_name' => $request->ordered_by_name ?? auth()->user()?->name ?? 'Admin',
             ]);
 
-            foreach ($request->items as $item) {
+            foreach ($normalizedItems as $item) {
                 PurchaseOrderItem::create([
                     'purchase_order_id' => $purchaseOrder->id,
                     'product_id' => $item['product_id'],
@@ -148,7 +178,7 @@ class PurchaseOrderController extends Controller
                     'received_qty' => 0,
                     'price' => $item['price'],
                     'discount' => $item['discount'] ?? 0,
-                    'total_value' => $item['total_value']
+                    'total_value' => $item['total_value'],
                 ]);
             }
 
@@ -161,12 +191,17 @@ class PurchaseOrderController extends Controller
                 $purchaseOrder->update(['created_at' => Carbon::parse($request->order_date)]);
             }
 
-            ActivityLog::log('po_create', "Tạo đặt hàng nhập {$purchaseOrder->code}, tổng: " . number_format($purchaseOrder->total_payment), $purchaseOrder);
+            ActivityLog::log('po_create', "Tạo đặt hàng nhập {$purchaseOrder->code}, tổng: ".number_format($purchaseOrder->total_payment), $purchaseOrder);
 
             return redirect()->route('purchase-orders.index')->with('success', 'Tạo phiếu đặt hàng nhập thành công.');
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            DB::rollBack();
+
+            throw $e;
         } catch (\Exception $e) {
             DB::rollBack();
-            return back()->withErrors(['error' => 'Lỗi: ' . $e->getMessage()]);
+
+            return back()->withErrors(['error' => 'Lỗi: '.$e->getMessage()]);
         }
     }
 
@@ -190,7 +225,7 @@ class PurchaseOrderController extends Controller
             'supplier_id'
         );
 
-        $purchaseOrder->update(array_filter($validated, fn($v) => $v !== null));
+        $purchaseOrder->update(array_filter($validated, fn ($v) => $v !== null));
 
         ActivityLog::log('po_update', "Cập nhật đặt hàng nhập {$purchaseOrder->code}", $purchaseOrder);
 
@@ -214,7 +249,7 @@ class PurchaseOrderController extends Controller
 
         $purchaseOrder->update([
             'status' => 'cancelled',
-            'note' => ($purchaseOrder->note ? $purchaseOrder->note . ' | ' : '') . 'Hủy: ' . ($request->reason ?? ''),
+            'note' => ($purchaseOrder->note ? $purchaseOrder->note.' | ' : '').'Hủy: '.($request->reason ?? ''),
         ]);
 
         ActivityLog::log('po_cancel', "Hủy đặt hàng nhập {$purchaseOrder->code}", $purchaseOrder);
@@ -233,7 +268,7 @@ class PurchaseOrderController extends Controller
 
         $purchaseOrder->update([
             'status' => 'finished',
-            'note' => ($purchaseOrder->note ? $purchaseOrder->note . ' | ' : '') . 'Kết thúc: ' . ($request->reason ?? ''),
+            'note' => ($purchaseOrder->note ? $purchaseOrder->note.' | ' : '').'Kết thúc: '.($request->reason ?? ''),
         ]);
 
         ActivityLog::log('po_finish', "Kết thúc đặt hàng nhập {$purchaseOrder->code}", $purchaseOrder);
@@ -249,7 +284,7 @@ class PurchaseOrderController extends Controller
         $purchaseOrder->load('items');
 
         $newPo = PurchaseOrder::create([
-            'code' => 'DDH' . time() . 'C',
+            'code' => 'DDH'.time().'C',
             'branch_id' => $purchaseOrder->branch_id,
             'supplier_id' => $purchaseOrder->supplier_id,
             'status' => 'draft',
@@ -260,7 +295,7 @@ class PurchaseOrderController extends Controller
             'total_payment' => $purchaseOrder->total_payment,
             'supplier_deposit' => 0, // fresh — no deposit carried
             'expected_date' => null,
-            'note' => 'Sao chép từ ' . $purchaseOrder->code,
+            'note' => 'Sao chép từ '.$purchaseOrder->code,
             'created_by_name' => auth()->user()?->name ?? 'Admin',
             'ordered_by_name' => $purchaseOrder->ordered_by_name,
         ]);
@@ -311,12 +346,14 @@ class PurchaseOrderController extends Controller
                 $poItem = $purchaseOrder->items->firstWhere('product_id', $reqItem['product_id']);
                 $receiveQty = $reqItem['quantity'];
 
-                if ($receiveQty <= 0) continue;
+                if ($receiveQty <= 0) {
+                    continue;
+                }
 
                 // Check over-receipt
                 if ($poItem) {
                     $outstanding = $poItem->qty - $poItem->received_qty;
-                    if ($receiveQty > $outstanding && !Setting::get('po_allow_over_receipt', false)) {
+                    if ($receiveQty > $outstanding && ! Setting::get('po_allow_over_receipt', false)) {
                         throw new \Exception("Sản phẩm {$reqItem['product_id']}: nhận {$receiveQty} vượt quá đặt hàng còn lại ({$outstanding}).");
                     }
                 }
@@ -341,7 +378,7 @@ class PurchaseOrderController extends Controller
 
             // Create Purchase (receipt)
             $purchase = Purchase::create([
-                'code' => 'PN' . time() . rand(10, 99),
+                'code' => 'PN'.time().rand(10, 99),
                 'purchase_order_id' => $purchaseOrder->id,
                 'supplier_id' => $purchaseOrder->supplier_id,
                 'total_amount' => $totalAmount,
@@ -350,7 +387,7 @@ class PurchaseOrderController extends Controller
                 'debt_amount' => max(0, $debtAmount),
                 'status' => 'completed',
                 'purchase_date' => now(),
-                'note' => 'Từ đặt hàng nhập ' . $purchaseOrder->code,
+                'note' => 'Từ đặt hàng nhập '.$purchaseOrder->code,
             ]);
 
             // Create receipt items + update stock + update PO received_qty
@@ -389,8 +426,8 @@ class PurchaseOrderController extends Controller
             // Update PO status based on fulfillment
             $purchaseOrder->refresh();
             $purchaseOrder->load('items');
-            $allFulfilled = $purchaseOrder->items->every(fn($item) => $item->received_qty >= $item->qty);
-            $anyReceived = $purchaseOrder->items->contains(fn($item) => $item->received_qty > 0);
+            $allFulfilled = $purchaseOrder->items->every(fn ($item) => $item->received_qty >= $item->qty);
+            $anyReceived = $purchaseOrder->items->contains(fn ($item) => $item->received_qty > 0);
 
             if ($allFulfilled) {
                 $purchaseOrder->update(['status' => 'completed']);
@@ -405,7 +442,8 @@ class PurchaseOrderController extends Controller
             return back()->with('success', "Đã tạo phiếu nhập {$purchase->code} từ đơn đặt hàng.");
         } catch (\Exception $e) {
             DB::rollBack();
-            return back()->with('error', 'Lỗi: ' . $e->getMessage());
+
+            return back()->with('error', 'Lỗi: '.$e->getMessage());
         }
     }
 
@@ -418,7 +456,7 @@ class PurchaseOrderController extends Controller
 
         return \App\Services\CsvService::export(
             ['Mã đặt hàng nhập', 'Thời gian', 'Nhà cung cấp', 'Chi nhánh', 'Tổng tiền', 'Giảm giá', 'Tổng thanh toán', 'Trạng thái', 'Ghi chú'],
-            $orders->map(fn($o) => [$o->code, $o->created_at?->format('d/m/Y H:i'), $o->supplier?->name, $o->branch?->name, $o->total_amount, $o->discount, $o->total_payment, $o->status, $o->note]),
+            $orders->map(fn ($o) => [$o->code, $o->created_at?->format('d/m/Y H:i'), $o->supplier?->name, $o->branch?->name, $o->total_amount, $o->discount, $o->total_payment, $o->status, $o->note]),
             'dat_hang_nhap.csv'
         );
     }
@@ -426,6 +464,7 @@ class PurchaseOrderController extends Controller
     public function print(\App\Models\PurchaseOrder $purchaseOrder)
     {
         $purchaseOrder->load(['items.product', 'branch', 'supplier']);
+
         return view('prints.purchase_order', compact('purchaseOrder'));
     }
 }
