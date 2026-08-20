@@ -18,6 +18,9 @@ const props = defineProps({
     productImages: { type: Array, default: () => [] },
 });
 
+const imageUploadBusy = ref(false);
+const imageUploadError = ref('');
+
 // ===== Serial/IMEI Management =====
 const serials = ref([]);
 const serialLoading = ref(false);
@@ -293,6 +296,7 @@ const quickCreateBrand = async () => {
 };
 
 const submit = () => {
+    if (imageUploadBusy.value || imageUploadError.value) return;
     form.put(`/products/${props.product.id}`);
 };
 
@@ -435,7 +439,9 @@ const generateVariants = () => {
                 </h2>
                 
                 <div class="flex items-center gap-3">
-                    <button @click="submit" :disabled="form.processing" class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded font-medium flex items-center gap-2 transition-colors shadow-sm disabled:opacity-50">
+                    <span v-if="imageUploadBusy" class="text-sm font-medium text-blue-600">Đang chuyển và lưu ảnh WebP…</span>
+                    <span v-else-if="imageUploadError" class="max-w-sm text-right text-sm font-medium text-red-600">Ảnh chưa được lưu. Hãy chọn lại ảnh hợp lệ.</span>
+                    <button @click="submit" :disabled="form.processing || imageUploadBusy || Boolean(imageUploadError)" class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded font-medium flex items-center gap-2 transition-colors shadow-sm disabled:cursor-not-allowed disabled:opacity-50">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
                         Lưu Thay Đổi
                     </button>
@@ -451,7 +457,12 @@ const generateVariants = () => {
                     <!-- Cột Trái: Upload Hình Ảnh -->
                     <div class="w-1/4">
                         <div class="bg-white rounded border border-gray-200 shadow-sm p-4">
-                            <ProductImageManager :product-id="props.product.id" :initial-images="props.productImages" />
+                            <ProductImageManager
+                                :product-id="props.product.id"
+                                :initial-images="props.productImages"
+                                @update:busy="imageUploadBusy = $event"
+                                @update:error="imageUploadError = $event"
+                            />
                             <div class="pt-4 space-y-3">
                                 <label class="flex items-center gap-2 text-sm text-gray-700 font-medium cursor-pointer">
                                     <input type="checkbox" v-model="form.sell_directly" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4">

@@ -10,7 +10,7 @@ const props = defineProps({
     maxCount: { type: Number, default: 12 },
     maxSizeKb: { type: Number, default: 5120 },
 });
-const emit = defineEmits(['update:files', 'update:primaryIndex']);
+const emit = defineEmits(['update:files', 'update:primaryIndex', 'update:busy', 'update:error']);
 
 const items = ref([]);
 const busy = ref(false);
@@ -23,6 +23,8 @@ const hydrate = () => {
 };
 hydrate();
 watch(() => props.initialImages, hydrate, { deep: true });
+watch(busy, (value) => emit('update:busy', value), { immediate: true });
+watch(error, (value) => emit('update:error', value), { immediate: true });
 
 const countLabel = computed(() => `${items.value.length}/${props.maxCount}`);
 
@@ -150,6 +152,7 @@ onBeforeUnmount(() => items.value.filter((item) => ! item.saved).forEach((item) 
             <input class="hidden" type="file" multiple accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" @change="chooseFiles" />
         </label>
         <p class="text-[11px] text-gray-500">Kéo thả để sắp xếp. Nhấn ngôi sao để chọn ảnh đại diện.</p>
+        <p class="text-[11px] text-gray-500">Ảnh được tự động chuyển sang WebP; máy chủ không lưu bản JPG/PNG gốc.</p>
         <p v-if="error" class="rounded bg-red-50 p-2 text-xs text-red-700">{{ error }}</p>
 
         <div class="grid grid-cols-2 gap-2">

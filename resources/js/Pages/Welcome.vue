@@ -24,6 +24,16 @@ const brandFilter = ref(props.filters?.brand_id || "");
 const statusFilter = ref(props.filters?.status || "active");
 const stockFilter = ref(props.filters?.stock_filter || "");
 const typeFilter = ref(props.filters?.type || "");
+const failedProductImageUrls = ref([]);
+
+const canDisplayProductImage = (product) => Boolean(product?.image)
+    && !failedProductImageUrls.value.includes(product.image);
+
+const markProductImageFailed = (url) => {
+    if (url && !failedProductImageUrls.value.includes(url)) {
+        failedProductImageUrls.value = [...failedProductImageUrls.value, url];
+    }
+};
 
 const buildFilterParams = () => {
     const params = {};
@@ -665,10 +675,17 @@ const formatDate = (val) => {
                                     />
                                 </td>
                                 <td class="p-3">
-                                    <div
-                                        class="w-10 h-10 bg-gray-200 rounded flex items-center justify-center text-gray-400"
-                                    >
+                                    <div class="w-10 h-10 bg-gray-200 rounded flex items-center justify-center overflow-hidden text-gray-400">
+                                        <img
+                                            v-if="canDisplayProductImage(product)"
+                                            :src="product.image"
+                                            :alt="`Ảnh ${product.name}`"
+                                            class="h-full w-full object-cover"
+                                            loading="lazy"
+                                            @error="markProductImageFailed(product.image)"
+                                        />
                                         <svg
+                                            v-else
                                             class="w-5 h-5"
                                             fill="none"
                                             stroke="currentColor"
@@ -2352,4 +2369,3 @@ const formatDate = (val) => {
         </Teleport>
     </AppLayout>
 </template>
-
