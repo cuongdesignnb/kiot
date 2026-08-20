@@ -9,6 +9,7 @@ import DateRangeFilter from "@/Components/Filters/DateRangeFilter.vue";
 import DateTimePicker from "@/Components/DateTimePicker.vue";
 import CustomerGroupCombobox from "@/Components/CustomerGroupCombobox.vue";
 import MoneyInput from "@/Components/MoneyInput.vue";
+import MediaPicker from "@/Components/MediaPicker.vue";
 import DebtOffsetRequestModal from "@/Components/DebtOffsets/DebtOffsetRequestModal.vue";
 import TransactionTimeHelpTooltip from "@/Components/TransactionTimeHelpTooltip.vue";
 import { useFilters } from "@/composables/useFilters.js";
@@ -424,6 +425,7 @@ const editForm = useForm({
     email: "", facebook: "", address: "", city: "", district: "", ward: "",
     customer_group: "", note: "", type: "individual",
     invoice_name: "", tax_code: "", invoice_address: "",
+    avatar_media_id: null,
 });
 
 const openEditModal = (customer) => {
@@ -1045,6 +1047,7 @@ const form = useForm({
     invoice_phone: "",
     bank_name: "",
     bank_account: "",
+    avatar_media_id: null,
 
     is_supplier: false,
 });
@@ -3065,20 +3068,13 @@ const createdDateRange = computed({
 
                             <!-- Avatar Circle Upload -->
                             <div class="w-32 flex flex-col items-center mt-2">
-                                <div
-                                    class="w-28 h-28 rounded-full border border-dashed border-gray-400 bg-gray-50 flex items-center justify-center flex-col text-gray-500 cursor-pointer hover:bg-gray-100 transition"
-                                >
-                                    <div
-                                        class="bg-white border shadow-sm px-3 py-1 rounded text-[12px] font-bold text-gray-700"
-                                    >
-                                        Thêm ảnh
-                                    </div>
-                                </div>
-                                <p
-                                    class="text-[11px] text-gray-400 text-center mt-2"
-                                >
-                                    Ảnh không được vượt quá 2MB
-                                </p>
+                                <MediaPicker
+                                    :model-value="form.avatar_media_id ? [form.avatar_media_id] : []"
+                                    :multiple="false"
+                                    collection="customers"
+                                    label="Chọn ảnh"
+                                    @update:model-value="form.avatar_media_id = $event[0] || null"
+                                />
                             </div>
                         </div>
 
@@ -3442,6 +3438,15 @@ const createdDateRange = computed({
                 </div>
                 <div class="flex-1 overflow-y-auto px-6 py-6 custom-scrollbar text-[13.5px]">
                     <form @submit.prevent="submitEdit" class="space-y-5">
+                        <div class="max-w-xs">
+                            <MediaPicker
+                                :model-value="editForm.avatar_media_id ? [editForm.avatar_media_id] : []"
+                                :multiple="false"
+                                collection="customers"
+                                label="Ảnh đại diện"
+                                @update:model-value="editForm.avatar_media_id = $event[0] || null"
+                            />
+                        </div>
                         <div class="grid grid-cols-2 gap-x-6 gap-y-4">
                             <div>
                                 <label class="block text-sm font-semibold text-gray-700 mb-1">Tên khách hàng <span class="text-red-500">*</span></label>

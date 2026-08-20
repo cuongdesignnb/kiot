@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Products;
 
+use App\Models\Media;
 use App\Models\Product;
 use App\Models\ProductImage;
 use App\Models\User;
@@ -65,11 +66,15 @@ class ProductImageManagementTest extends TestCase
             ->assertOk()->assertJsonPath('image.is_primary', true);
         $this->assertSame(1, ProductImage::where('product_id', $this->product->id)->where('is_primary', true)->count());
 
-        $path = $images[0]->storage_path;
+        $media = Media::query()->with('variants')->findOrFail($images[0]->media_id);
+        $paths = $media->variants->pluck('path')->push($media->path)->all();
         $this->actingAs($this->admin)
             ->deleteJson('/products/'.$this->product->id.'/images/'.$images[0]->id)
             ->assertOk();
-        Storage::disk('public')->assertMissing($path);
+        foreach ($paths as $path) {
+            Storage::disk('public')->assertExists($path);
+        }
+        $this->assertDatabaseHas('media', ['id' => $media->id, 'deleted_at' => null]);
         $this->assertSoftDeleted('product_images', ['id' => $images[0]->id]);
         $this->assertSame(1, ProductImage::where('product_id', $this->product->id)->where('is_primary', true)->count());
     }
@@ -100,7 +105,7 @@ class ProductImageManagementTest extends TestCase
         ], ['Accept' => 'application/json'])->assertCreated()->assertJsonCount(1, 'images');
 
         $this->assertSame(1, ProductImage::where('product_id', $this->product->id)->count());
-        $this->assertCount(1, Storage::disk('public')->allFiles());
+        $this->assertCount(4, Storage::disk('public')->allFiles());
     }
 
     public function test_configured_count_and_size_limits_are_enforced(): void
@@ -130,7 +135,7 @@ class ProductImageManagementTest extends TestCase
 
         $image = ProductImage::where('product_id', $this->product->id)->sole();
         $this->assertMatchesRegularExpression(
-            '#^products/'.$this->product->id.'/[0-9a-f-]{36}\.webp$#',
+            '#^media/products/[0-9a-f-]{36}/original\.webp$#',
             $image->storage_path,
         );
         $this->assertStringNotContainsString('..', $image->storage_path);
@@ -145,7 +150,11 @@ class ProductImageManagementTest extends TestCase
         $image = ProductImage::where('product_id', $this->product->id)->sole();
         $this->assertStringEndsWith('.webp', $image->storage_path);
         $this->assertSame('image/webp', $image->mime_type);
-        $this->assertSame([$image->storage_path], Storage::disk('public')->allFiles());
+        $media = Media::query()->with('variants')->findOrFail($image->media_id);
+        $this->assertEqualsCanonicalizing(
+            $media->variants->pluck('path')->all(),
+            Storage::disk('public')->allFiles(),
+        );
         $this->assertFalse(collect(Storage::disk('public')->allFiles())->contains(
             fn (string $path) => preg_match('/\.(?:jpe?g|png)$/i', $path) === 1
         ));

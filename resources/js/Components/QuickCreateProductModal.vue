@@ -32,6 +32,8 @@ const form = ref({
     warranty_months: 0,
     images: [],
     primary_image_index: null,
+    media_ids: [],
+    primary_media_id: null,
 });
 
 const localCategories = ref([]);
@@ -66,6 +68,8 @@ const reset = () => {
         warranty_months: 0,
         images: [],
         primary_image_index: null,
+        media_ids: [],
+        primary_media_id: null,
     };
     errors.value = {};
     imageManagerKey.value++;
@@ -81,6 +85,8 @@ watch(() => props.show, (val) => {
     imageManagerKey.value++;
     form.value.images = [];
     form.value.primary_image_index = null;
+    form.value.media_ids = [];
+    form.value.primary_media_id = null;
 });
 
 // Inline quick-create for category / brand inside this modal.
@@ -172,6 +178,10 @@ const submit = async () => {
         if (form.value.primary_image_index !== null) {
             body.append('primary_image_index', String(form.value.primary_image_index));
         }
+        form.value.media_ids.forEach((id) => body.append('media_ids[]', String(id)));
+        if (form.value.primary_media_id !== null) {
+            body.append('primary_media_id', String(form.value.primary_media_id));
+        }
         const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
         const res = await axios.post('/products/quick-store', body, {
             headers: { 'X-CSRF-TOKEN': token, 'Accept': 'application/json' },
@@ -217,8 +227,8 @@ const close = () => {
                     </div>
                     <ProductImageManager
                         :key="imageManagerKey"
-                        v-model:files="form.images"
-                        v-model:primary-index="form.primary_image_index"
+                        v-model:media-ids="form.media_ids"
+                        v-model:primary-media-id="form.primary_media_id"
                     />
                     <p v-if="errors.images || errors.primary_image_index || errors.primary_index" class="mt-2 text-xs text-red-600">
                         {{ errors.images || errors.primary_image_index || errors.primary_index }}

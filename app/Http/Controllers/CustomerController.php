@@ -228,7 +228,7 @@ class CustomerController extends Controller
         // Merged source partners remain in `customers` for audit/history, but
         // they are no longer active customer records and must not appear in
         // the operational customer list or its totals.
-        $query = Customer::with('branch')
+        $query = Customer::with(['branch', 'avatarMedia'])
             ->where('is_customer', true)
             ->whereNull('merged_into_id');
 
@@ -263,6 +263,7 @@ class CustomerController extends Controller
             $customer->net_debt_label = $netDebt > 0
                 ? 'Khách còn nợ'
                 : ($netDebt < 0 ? 'Mình còn nợ lại' : 'Hết nợ');
+            $customer->avatar_url = $customer->avatarMedia?->publicUrl() ?? $customer->avatar;
 
             // HOTFIX FOLLOW-UP — canonical receivable/payable/net keys.
             // Old `net_debt_amount` retained for backward compatibility;
@@ -435,6 +436,7 @@ class CustomerController extends Controller
                 'invoice_phone' => 'nullable|string|max:255',
                 'bank_name' => 'nullable|string|max:255',
                 'bank_account' => 'nullable|string|max:255',
+                'avatar_media_id' => 'nullable|integer|exists:media,id,status,active',
                 'is_supplier' => 'boolean',
                 'supplier_linking_mode' => 'nullable|in:new,link_existing',
                 'linked_supplier_id' => 'nullable|integer',
@@ -517,6 +519,7 @@ class CustomerController extends Controller
             'tax_code' => 'nullable|string|max:255',
             'invoice_name' => 'nullable|string|max:255',
             'invoice_address' => 'nullable|string',
+            'avatar_media_id' => 'nullable|integer|exists:media,id,status,active',
             'status' => 'nullable|in:active,inactive',
             'is_supplier' => 'boolean',
         ]);

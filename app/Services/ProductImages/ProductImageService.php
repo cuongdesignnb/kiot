@@ -2,97 +2,92 @@
 
 namespace App\Services\ProductImages;
 
+use App\Models\Media;
 use App\Models\Product;
 use App\Models\ProductImage;
 use App\Models\User;
+use App\Services\Media\MediaAssetService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
-use RuntimeException;
-use Throwable;
 
 class ProductImageService
 {
+    public function __construct(private readonly MediaAssetService $mediaAssets) {}
+
     /** @param list<UploadedFile> $files */
     public function uploadMany(Product $product, array $files, ?int $primaryIndex, ?User $actor): array
     {
-        $prepared = array_map(fn (UploadedFile $file) => $this->prepare($file), $files);
-        $newChecksums = collect($prepared)->pluck('checksum')->unique();
-        if ($primaryIndex !== null && ! array_key_exists($primaryIndex, $files)) {
-            throw ValidationException::withMessages(['primary_index' => 'Ảnh đại diện không thuộc danh sách tải lên.']);
+        $media = $this->mediaAssets->uploadMany($files, 'products', $actor);
+
+        return $this->attachMedia($product, collect($media)->pluck('id')->all(), $primaryIndex, $actor);
+    }
+
+    /** @param list<int> $mediaIds */
+    public function attachMedia(Product $product, array $mediaIds, ?int $primaryIndex, ?User $actor): array
+    {
+        if ($primaryIndex !== null && ! array_key_exists($primaryIndex, $mediaIds)) {
+            throw ValidationException::withMessages(['primary_index' => 'Ảnh đại diện không thuộc danh sách đã chọn.']);
         }
 
-        $storedPaths = [];
+        return DB::transaction(function () use ($product, $mediaIds, $primaryIndex, $actor): array {
+            Product::withTrashed()->whereKey($product->id)->lockForUpdate()->firstOrFail();
+            $ids = array_values(array_unique(array_map('intval', $mediaIds)));
+            $media = Media::query()->with('variants')->whereIn('id', $ids)->where('status', 'active')->get()->keyBy('id');
+            if ($media->count() !== count($ids)) {
+                throw ValidationException::withMessages(['media_ids' => 'Một hoặc nhiều ảnh không còn tồn tại hoặc đã bị khóa.']);
+            }
 
-        try {
-            return DB::transaction(function () use ($product, $prepared, $newChecksums, $primaryIndex, $actor, &$storedPaths) {
-                Product::withTrashed()->whereKey($product->id)->lockForUpdate()->firstOrFail();
-                $existingChecksums = $product->images()
-                    ->whereIn('checksum', $newChecksums)
-                    ->pluck('checksum');
-                $maxCount = max(1, (int) config('integrations.pc_website.product_images.max_count', 12));
-                if ($product->images()->count() + $newChecksums->diff($existingChecksums)->count() > $maxCount) {
-                    throw ValidationException::withMessages([
-                        'images' => "Mỗi sản phẩm được tải tối đa {$maxCount} ảnh.",
-                    ]);
-                }
+            $maxCount = max(1, (int) config('integrations.pc_website.product_images.max_count', 12));
+            $attached = $product->images()->with('media')->get();
+            $newIds = collect($ids)->reject(fn (int $id) => $attached->contains('media_id', $id));
+            if ($attached->count() + $newIds->count() > $maxCount) {
+                throw ValidationException::withMessages(['media_ids' => "Mỗi sản phẩm được dùng tối đa {$maxCount} ảnh."]);
+            }
 
-                $disk = (string) config('integrations.pc_website.product_images.disk', 'public');
-                $nextOrder = (int) $product->images()->max('sort_order') + 1;
-                $hasPrimary = $product->images()->where('is_primary', true)->exists();
-                foreach ($prepared as $index => $image) {
-                    $existing = $product->images()->where('checksum', $image['checksum'])->first();
-                    $makePrimary = $primaryIndex === $index || (! $hasPrimary && $primaryIndex === null && $index === 0);
+            $nextOrder = (int) $attached->max('sort_order') + 1;
+            $hasPrimary = $attached->contains('is_primary', true);
+            foreach ($ids as $index => $mediaId) {
+                $asset = $media->get($mediaId);
+                $existing = $attached->firstWhere('media_id', $mediaId);
+                $makePrimary = $primaryIndex === $index || (! $hasPrimary && $primaryIndex === null && $index === 0);
 
-                    if ($existing) {
-                        if ($makePrimary) {
-                            $this->makePrimaryLocked($product, $existing, $actor);
-                            $hasPrimary = true;
-                        }
-
-                        continue;
-                    }
-
-                    $path = 'products/'.$product->id.'/'.Str::uuid().'.webp';
-                    if (! Storage::disk($disk)->put($path, $image['contents'], ['visibility' => 'public'])) {
-                        throw new RuntimeException('Không thể lưu ảnh sản phẩm.');
-                    }
-                    $storedPaths[] = [$disk, $path];
-
+                if ($existing) {
                     if ($makePrimary) {
-                        $this->clearPrimaryLocked($product);
+                        $this->makePrimaryLocked($product, $existing, $actor);
                         $hasPrimary = true;
                     }
 
-                    $product->images()->create([
-                        'storage_disk' => $disk,
-                        'storage_path' => $path,
-                        'original_filename' => $image['original_filename'],
-                        'mime_type' => 'image/webp',
-                        'width' => $image['width'],
-                        'height' => $image['height'],
-                        'file_size' => strlen($image['contents']),
-                        'checksum' => $image['checksum'],
-                        'sort_order' => $nextOrder++,
-                        'is_primary' => $makePrimary,
-                        'primary_product_id' => $makePrimary ? $product->id : null,
-                        'created_by' => $actor?->id,
-                        'updated_by' => $actor?->id,
-                    ]);
+                    continue;
                 }
 
-                $this->syncLegacyImageAndTouch($product);
+                if ($makePrimary) {
+                    $this->clearPrimaryLocked($product);
+                    $hasPrimary = true;
+                }
 
-                return $product->images()->get()->map(fn (ProductImage $image) => $image->integrationPayload())->all();
-            });
-        } catch (Throwable $exception) {
-            foreach ($storedPaths as [$disk, $path]) {
-                Storage::disk($disk)->delete($path);
+                $product->images()->create([
+                    'media_id' => $asset->id,
+                    'storage_disk' => $asset->disk,
+                    'storage_path' => $asset->path,
+                    'original_filename' => $asset->original_name,
+                    'mime_type' => 'image/webp',
+                    'width' => (int) $asset->width,
+                    'height' => (int) $asset->height,
+                    'file_size' => (int) $asset->size,
+                    'checksum' => $asset->checksum,
+                    'sort_order' => $nextOrder++,
+                    'is_primary' => $makePrimary,
+                    'primary_product_id' => $makePrimary ? $product->id : null,
+                    'created_by' => $actor?->id,
+                    'updated_by' => $actor?->id,
+                ]);
             }
-            throw $exception;
-        }
+
+            $this->syncLegacyImageAndTouch($product);
+
+            return $product->images()->with('media.variants')->get()->map->integrationPayload()->all();
+        });
     }
 
     /** @param list<int> $imageIds */
@@ -110,7 +105,7 @@ class ProductImageService
             }
             $this->syncLegacyImageAndTouch($product);
 
-            return $product->images()->get()->map->integrationPayload()->all();
+            return $product->images()->with('media.variants')->get()->map->integrationPayload()->all();
         });
     }
 
@@ -124,92 +119,50 @@ class ProductImageService
             $this->makePrimaryLocked($product, $locked, $actor);
             $this->syncLegacyImageAndTouch($product);
 
-            return $locked->fresh()->integrationPayload();
+            return $locked->fresh(['media.variants'])->integrationPayload();
         });
     }
 
     public function delete(Product $product, ProductImage $image, ?User $actor): void
     {
         $this->assertOwned($product, $image);
-        $disk = $image->storage_disk;
-        $path = $image->storage_path;
-        $contents = Storage::disk($disk)->exists($path) ? Storage::disk($disk)->get($path) : null;
 
-        if ($contents !== null && ! Storage::disk($disk)->delete($path)) {
-            throw new RuntimeException('Không thể xóa file ảnh sản phẩm.');
-        }
+        DB::transaction(function () use ($product, $image, $actor) {
+            Product::withTrashed()->whereKey($product->id)->lockForUpdate()->firstOrFail();
+            $locked = $product->images()->whereKey($image->id)->lockForUpdate()->firstOrFail();
+            $wasPrimary = $locked->is_primary;
+            $legacyDisk = $locked->storage_disk;
+            $legacyPath = $locked->storage_path;
+            $isLegacy = ! $locked->media_id;
 
-        try {
-            DB::transaction(function () use ($product, $image, $actor) {
-                Product::withTrashed()->whereKey($product->id)->lockForUpdate()->firstOrFail();
-                $locked = $product->images()->whereKey($image->id)->lockForUpdate()->firstOrFail();
-                $wasPrimary = $locked->is_primary;
-                $locked->update([
-                    'is_primary' => false,
-                    'primary_product_id' => null,
-                    'updated_by' => $actor?->id,
-                ]);
-                $locked->delete();
-
-                if ($wasPrimary) {
-                    $next = $product->images()->orderBy('sort_order')->orderBy('id')->lockForUpdate()->first();
-                    if ($next) {
-                        $this->makePrimaryLocked($product, $next, $actor);
-                    }
-                }
-                $this->syncLegacyImageAndTouch($product);
-            });
-        } catch (Throwable $exception) {
-            if ($contents !== null) {
-                Storage::disk($disk)->put($path, $contents, ['visibility' => 'public']);
+            $locked->update([
+                'is_primary' => false,
+                'primary_product_id' => null,
+                'updated_by' => $actor?->id,
+            ]);
+            if ($locked->media_id) {
+                // Removing a gallery item is also an unlink from the shared
+                // library. Keep the soft-deleted gallery row for history,
+                // but release the FK so the asset can be deleted when no
+                // other object uses it.
+                $locked->update(['media_id' => null]);
             }
-            throw $exception;
-        }
-    }
+            $locked->delete();
 
-    private function prepare(UploadedFile $file): array
-    {
-        $allowed = ['image/jpeg', 'image/png', 'image/webp'];
-        $mime = (string) $file->getMimeType();
-        if (! in_array($mime, $allowed, true)) {
-            throw ValidationException::withMessages(['images' => 'Chỉ chấp nhận JPG, JPEG, PNG hoặc WebP hợp lệ.']);
-        }
+            if ($wasPrimary) {
+                $next = $product->images()->orderBy('sort_order')->orderBy('id')->lockForUpdate()->first();
+                if ($next) {
+                    $this->makePrimaryLocked($product, $next, $actor);
+                }
+            }
+            $this->syncLegacyImageAndTouch($product);
 
-        $source = file_get_contents($file->getRealPath());
-        $dimensions = $source !== false ? @getimagesizefromstring($source) : false;
-        if ($source === false || $dimensions === false || ! in_array($dimensions['mime'] ?? '', $allowed, true)) {
-            throw ValidationException::withMessages(['images' => 'Nội dung file không phải ảnh hợp lệ.']);
-        }
-
-        $width = (int) $dimensions[0];
-        $height = (int) $dimensions[1];
-        $maxPixels = max(1, (int) config('integrations.pc_website.product_images.max_pixels', 40000000));
-        if ($width * $height > $maxPixels) {
-            throw ValidationException::withMessages(['images' => 'Kích thước điểm ảnh vượt quá giới hạn cấu hình.']);
-        }
-        if (! function_exists('imagecreatefromstring') || ! function_exists('imagewebp')) {
-            throw ValidationException::withMessages(['images' => 'Máy chủ chưa hỗ trợ chuyển đổi ảnh WebP.']);
-        }
-
-        $resource = @imagecreatefromstring($source);
-        if ($resource === false) {
-            throw ValidationException::withMessages(['images' => 'Không thể giải mã ảnh đã tải lên.']);
-        }
-        ob_start();
-        $encoded = imagewebp($resource, null, max(1, min(100, (int) config('integrations.pc_website.product_images.webp_quality', 82))));
-        $contents = ob_get_clean();
-        imagedestroy($resource);
-        if (! $encoded || ! is_string($contents) || $contents === '') {
-            throw ValidationException::withMessages(['images' => 'Không thể tối ưu ảnh sang WebP.']);
-        }
-
-        return [
-            'original_filename' => mb_substr(basename($file->getClientOriginalName()), 0, 255),
-            'width' => $width,
-            'height' => $height,
-            'contents' => $contents,
-            'checksum' => hash('sha256', $contents),
-        ];
+            // A legacy row owns its old file. A media-linked row only removes
+            // the product relation because the asset may be shared elsewhere.
+            if ($isLegacy) {
+                \Illuminate\Support\Facades\Storage::disk($legacyDisk)->delete($legacyPath);
+            }
+        });
     }
 
     private function makePrimaryLocked(Product $product, ProductImage $image, ?User $actor): void
@@ -232,7 +185,7 @@ class ProductImageService
 
     private function syncLegacyImageAndTouch(Product $product): void
     {
-        $primary = $product->images()->where('is_primary', true)->first();
+        $primary = $product->images()->with('media')->where('is_primary', true)->first();
         Product::withTrashed()->whereKey($product->id)->update([
             'image' => $primary?->publicUrl(),
             'updated_at' => now(),

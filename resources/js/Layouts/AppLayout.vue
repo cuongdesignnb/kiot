@@ -492,6 +492,14 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                             Thiết lập
                         </Link>
                         <Link
+                            v-if="can('settings.view')"
+                            href="/settings/media-library"
+                            class="block px-4 py-2.5 hover:bg-gray-100 flex items-center gap-2"
+                        >
+                            <span class="text-sm">🖼️</span>
+                            Thư viện ảnh
+                        </Link>
+                        <Link
                             v-if="can('integrations.view')"
                             href="/settings/integrations/website-pc"
                             class="block px-4 py-2.5 hover:bg-gray-100 flex items-center gap-2"

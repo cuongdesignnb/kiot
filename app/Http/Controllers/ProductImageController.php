@@ -16,10 +16,35 @@ class ProductImageController extends Controller
         $maxCount = max(1, (int) config('integrations.pc_website.product_images.max_count', 12));
         $maxSize = max(1, (int) config('integrations.pc_website.product_images.max_size_kb', 5120));
         $validated = $request->validate([
-            'images' => ['required', 'array', 'min:1', 'max:'.$maxCount],
+            'images' => ['nullable', 'array', 'min:1', 'max:'.$maxCount],
             'images.*' => ['required', File::types(['jpg', 'jpeg', 'png', 'webp'])->max($maxSize)],
+            'media_ids' => ['nullable', 'array', 'min:1', 'max:'.$maxCount],
+            'media_ids.*' => ['required', 'integer', 'distinct', 'exists:media,id,status,active'],
             'primary_index' => ['nullable', 'integer', 'min:0'],
+            'primary_media_id' => ['nullable', 'integer', 'exists:media,id,status,active'],
         ]);
+
+        if (empty($validated['images']) && empty($validated['media_ids'])) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'images' => 'Vui lòng tải lên hoặc chọn ít nhất một ảnh.',
+            ]);
+        }
+
+        if (! empty($validated['media_ids'])) {
+            $primaryIndex = $validated['primary_index'] ?? null;
+            if (! empty($validated['primary_media_id'])) {
+                $primaryIndex = array_search((int) $validated['primary_media_id'], array_map('intval', $validated['media_ids']), true);
+                if ($primaryIndex === false) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'primary_media_id' => 'Ảnh đại diện không thuộc danh sách đã chọn.',
+                    ]);
+                }
+            }
+
+            return response()->json([
+                'images' => $images->attachMedia($product, $validated['media_ids'], $primaryIndex, $request->user()),
+            ], 201);
+        }
 
         return response()->json([
             'images' => $images->uploadMany($product, $validated['images'], $validated['primary_index'] ?? null, $request->user()),

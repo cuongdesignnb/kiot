@@ -337,6 +337,7 @@ Route::middleware('auth')->group(function () {
 
     // ===== SETTINGS =====
     Route::get('/settings', [SettingController::class, 'index'])->middleware('permission:settings.view')->name('settings.index');
+    Route::get('/settings/media-library', [\App\Http\Controllers\MediaLibraryController::class, 'index'])->middleware('permission:settings.view')->name('settings.media-library');
     Route::post('/settings', [SettingController::class, 'update'])->middleware('permission:settings.manage')->name('settings.update');
 
     // Category CRUD from Settings

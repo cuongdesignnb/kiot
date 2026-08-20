@@ -26,6 +26,7 @@ class Employee extends Model
         'salary_balance_calculated_at',
         'notes',
         'avatar',
+        'avatar_media_id',
     ];
 
     protected $casts = [
@@ -38,6 +39,11 @@ class Employee extends Model
     public function branch()
     {
         return $this->belongsTo(Branch::class);
+    }
+
+    public function avatarMedia()
+    {
+        return $this->belongsTo(Media::class, 'avatar_media_id');
     }
 
     public function department()

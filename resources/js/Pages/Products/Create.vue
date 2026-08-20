@@ -4,6 +4,7 @@ import { ref, computed, watch } from 'vue';
 import axios from 'axios';
 import AppLayout from '../../Layouts/AppLayout.vue';
 import ProductImageManager from '../../Components/ProductImageManager.vue';
+import MediaPicker from '../../Components/MediaPicker.vue';
 import MoneyInput from '../../Components/MoneyInput.vue';
 
 const props = defineProps({
@@ -26,6 +27,8 @@ const form = useForm({
     image: '',
     images: [],
     primary_image_index: null,
+    media_ids: [],
+    primary_media_id: null,
     category_id: '',
     brand_id: '',
     cost_price: 0,
@@ -285,6 +288,7 @@ const generateVariants = () => {
             cost_price: existing?.cost_price ?? form.cost_price,
             retail_price: existing?.retail_price ?? form.retail_price,
             stock_quantity: existing?.stock_quantity ?? 0,
+            image_media_id: existing?.image_media_id || null,
             attribute_value_ids: attrValueIds,
         };
     });
@@ -325,8 +329,8 @@ const generateVariants = () => {
                     <div class="w-1/4">
                         <div class="bg-white rounded border border-gray-200 shadow-sm p-4">
                             <ProductImageManager
-                                v-model:files="form.images"
-                                v-model:primary-index="form.primary_image_index"
+                                v-model:media-ids="form.media_ids"
+                                v-model:primary-media-id="form.primary_media_id"
                             />
                             <div class="pt-4 space-y-3">
                                 <label class="flex items-center gap-2 text-sm text-gray-700 font-medium cursor-pointer">
@@ -582,6 +586,7 @@ const generateVariants = () => {
                                                                 <th class="px-2 py-1.5 text-right text-xs font-semibold text-gray-600 w-28">Giá vốn</th>
                                                                 <th class="px-2 py-1.5 text-right text-xs font-semibold text-gray-600 w-28">Giá bán</th>
                                                                 <th class="px-2 py-1.5 text-right text-xs font-semibold text-gray-600 w-20">Tồn kho</th>
+                                                                <th class="px-2 py-1.5 text-center text-xs font-semibold text-gray-600 w-24">Ảnh</th>
                                                             </tr>
                                                         </thead>
                                                         <tbody>
@@ -591,6 +596,7 @@ const generateVariants = () => {
                                                                 <td class="px-2 py-1"><MoneyInput v-model="v.cost_price" input-class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right" /></td>
                                                                 <td class="px-2 py-1"><MoneyInput v-model="v.retail_price" input-class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right" /></td>
                                                                 <td class="px-2 py-1"><input type="number" v-model="v.stock_quantity" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right"></td>
+                                                                <td class="px-2 py-1"><MediaPicker :model-value="v.image_media_id ? [v.image_media_id] : []" :multiple="false" collection="products" label="Chọn" @update:model-value="v.image_media_id = $event[0] || null" /></td>
                                                             </tr>
                                                         </tbody>
                                                     </table>

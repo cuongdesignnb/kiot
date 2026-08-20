@@ -148,8 +148,8 @@ class PcProductSyncService
         $with = [
             'category' => fn ($category) => $category->withTrashed()
                 ->select(['id', 'name', 'code', 'slug', 'parent_id', 'is_active', 'show_on_pc_website', 'deleted_at']),
-            'images' => fn ($images) => $images->select([
-                'id', 'product_id', 'storage_disk', 'storage_path', 'checksum', 'width', 'height', 'sort_order', 'is_primary',
+            'images' => fn ($images) => $images->with('media.variants')->select([
+                'id', 'product_id', 'media_id', 'storage_disk', 'storage_path', 'checksum', 'width', 'height', 'sort_order', 'is_primary',
             ])->orderBy('sort_order')->orderBy('id'),
         ];
         if ($selectedBook) {

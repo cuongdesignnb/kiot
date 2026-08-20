@@ -4,6 +4,7 @@ import { ref, computed, reactive } from "vue";
 import { Head, router, Link, useForm } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import QuickCreateCustomerModal from "@/Components/QuickCreateCustomerModal.vue";
+import MediaPicker from "@/Components/MediaPicker.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
 import SidebarFilter from "@/Components/Filters/SidebarFilter.vue";
@@ -915,6 +916,7 @@ const editForm = useForm({
     invoice_phone: '',
     bank_name: '',
     bank_account: '',
+    avatar_media_id: null,
     is_customer: false,
 });
 
@@ -938,6 +940,7 @@ const openEditModal = (supplier) => {
     editForm.invoice_phone  = supplier.invoice_phone  ?? '';
     editForm.bank_name      = supplier.bank_name      ?? '';
     editForm.bank_account   = supplier.bank_account   ?? '';
+    editForm.avatar_media_id = supplier.avatar_media_id ?? null;
     editForm.is_customer    = !!supplier.is_customer;
     showEditModal.value = true;
 };
@@ -1959,6 +1962,15 @@ const submitActivate = (supplier) => {
                 </div>
 
                 <div class="flex-1 overflow-y-auto px-6 py-4 grid grid-cols-2 gap-4 text-sm">
+                    <div class="col-span-2 max-w-xs">
+                        <MediaPicker
+                            :model-value="editForm.avatar_media_id ? [editForm.avatar_media_id] : []"
+                            :multiple="false"
+                            collection="suppliers"
+                            label="Ảnh đại diện"
+                            @update:model-value="editForm.avatar_media_id = $event[0] || null"
+                        />
+                    </div>
                     <div class="col-span-2 grid grid-cols-2 gap-4">
                         <div>
                             <label class="block text-xs font-medium text-gray-600 mb-1">Mã NCC</label>
