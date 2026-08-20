@@ -454,22 +454,33 @@ class SupplierController extends Controller
                 ->build($supplier, $options);
         }
 
+        $sourceEntries = collect($ledger['entries'] ?? [])
+            ->map(fn ($entry) => is_array($entry) ? $entry : (array) $entry)
+            ->all();
         $ledger = app(PartnerDebtPublicTimelineService::class)->project($ledger, 'supplier');
         $openingAdjustment = (float) ($ledger['summary']['hidden_reconciliation_adjustment'] ?? 0);
 
-        $entries = collect($ledger['entries'] ?? [])
+        $exportDocuments = app(\App\Services\Exports\PartnerDebtExportDocumentResolver::class);
+        $projectedEntries = collect($ledger['entries'] ?? [])
+            ->map(fn ($entry) => is_array($entry) ? $entry : (array) $entry)
+            ->all();
+        $projectedEntries = $exportDocuments->attachSourceNotes($projectedEntries, $sourceEntries);
+        $entries = collect($projectedEntries)
             ->map(fn ($e) => $this->normalizeSupplierDebtExportEntry(is_array($e) ? $e : (array) $e))
             ->all();
 
         if ($mode === 'legacy' && ! $request->hasAny(['date_preset', 'date_from', 'date_to', 'include_detail', 'columns', 'format', 'view'])) {
+            $exportDocuments->preload($entries, 'supplier');
+
             return \App\Services\CsvService::export(
-                ['Mã chứng từ', 'Loại', 'Giá trị', 'Còn nợ', 'Ngày'],
+                ['Mã chứng từ', 'Loại', 'Giá trị', 'Còn nợ', 'Ngày', 'Ghi chú'],
                 collect($entries)->map(fn ($t) => [
                     $t['code'],
                     $t['type_label'],
                     $t['amount'],
                     $t['debt_remain'],
                     $this->supplierDebtEntryExportTime($t),
+                    $exportDocuments->contextNote($t),
                 ]),
                 "cong_no_ncc_{$id}.csv"
             );
@@ -555,7 +566,7 @@ class SupplierController extends Controller
             return true;
         })->values();
 
-        $headers = ['Thời gian', 'Mã chứng từ', 'Loại', 'Giá trị', 'Nợ cần trả nhà cung cấp'];
+        $headers = ['Thời gian', 'Mã chứng từ', 'Loại', 'Giá trị', 'Nợ cần trả nhà cung cấp', 'Ghi chú'];
 
         $detailColumnMap = [
             'unit' => 'ĐVT',
@@ -572,7 +583,7 @@ class SupplierController extends Controller
         $headers = array_merge($headers, $appendDetailCols);
 
         $rows = collect();
-        $documentResolver = app(\App\Services\Exports\PartnerDebtExportDocumentResolver::class);
+        $documentResolver = $exportDocuments;
         $documentResolver->preload($filtered->all(), 'supplier');
         foreach ($filtered as $t) {
             $when = $this->supplierDebtEntryExportTime($t);
@@ -582,6 +593,7 @@ class SupplierController extends Controller
                 $t['type_label'] ?? '',
                 $t['amount'] ?? 0,
                 $t['debt_remain'] ?? 0,
+                $documentResolver->contextNote($t),
             ];
             $rows->push(array_merge($base, array_fill(0, count($appendDetailCols), '')));
 
@@ -595,7 +607,7 @@ class SupplierController extends Controller
                         $detail[] = $line[$col] ?? '';
                     }
                     $rows->push(array_merge(
-                        ['', '', '', '', ''], // chừa cột tổng quan
+                        ['', '', '', '', '', ''], // chừa cột tổng quan
                         $detail
                     ));
                 }
@@ -1108,6 +1120,10 @@ class SupplierController extends Controller
                 return $notFound();
             }
             $cashFlow->load('bankAccount');
+            $ledgerNote = SupplierDebtTransaction::query()
+                ->where('supplier_id', $supplier->id)
+                ->where('code', $cashFlow->code)
+                ->value('note');
 
             return response()->json([
                 'success' => true, 'type' => 'cashflow', 'title' => $cashFlow->type === 'payment' ? 'Phiếu chi' : 'Phiếu thu', 'code' => $cashFlow->code,
@@ -1117,6 +1133,7 @@ class SupplierController extends Controller
                     'category' => $cashFlow->category, 'target_name' => $cashFlow->target_name, 'payment_method' => $cashFlow->payment_method,
                     'bank_account_name' => $cashFlow->bankAccount ? ($cashFlow->bankAccount->bank_name.' - '.$cashFlow->bankAccount->account_number) : null,
                     'reference_type' => $cashFlow->reference_type, 'reference_code' => $cashFlow->reference_code,
+                    'note' => $ledgerNote ?: $cashFlow->description,
                     'description' => $cashFlow->description, 'status' => $cashFlow->status,
                 ],
             ]);
@@ -1141,6 +1158,7 @@ class SupplierController extends Controller
                     'recorded_at' => $recordedAt?->format('d/m/Y H:i') ?? '',
                     'business_time_source' => $invoice->transaction_date ? 'transaction_date' : ($invoice->sale_time ? 'sale_time' : 'created_at'),
                     'recorded_time_source' => $invoice->lock_started_at ? 'lock_started_at' : 'created_at',
+                    'note' => $invoice->note,
                     'total' => $invoice->total, 'discount' => $invoice->discount, 'customer_paid' => $invoice->customer_paid,
                     'items' => $invoice->items->map(fn ($it) => [
                         'product_code' => $it->product->code ?? '', 'product_name' => $it->product->name ?? '',

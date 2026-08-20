@@ -205,7 +205,8 @@ class CustomerDebtTimelineBusinessTimeTest extends TestCase
 
         $this->assertStringContainsString('24/05/2026 16:17', $content);
         $this->assertStringNotContainsString('02/06/2026 16:22', $content);
-        $this->assertStringNotContainsString('CUSTOMER CSV SOURCE NOTE', $content);
+        $this->assertStringContainsString('Ghi chú', $content);
+        $this->assertStringContainsString('CUSTOMER CSV SOURCE NOTE', $content);
         $this->assertSame('CUSTOMER CSV SOURCE NOTE', $invoice->fresh()->note);
     }
 
@@ -253,8 +254,8 @@ class CustomerDebtTimelineBusinessTimeTest extends TestCase
 
         $this->assertStringContainsString('24/05/2026 16:17', $text);
         $this->assertStringNotContainsString('02/06/2026 16:22', $text);
-        $this->assertStringNotContainsString('CUSTOMER XLSX SOURCE NOTE', $text);
-        $this->assertSame('M', $highestColumn);
+        $this->assertStringContainsString('CUSTOMER XLSX SOURCE NOTE', $text);
+        $this->assertSame('N', $highestColumn);
         $this->assertSame('CUSTOMER XLSX SOURCE NOTE', $invoice->fresh()->note);
     }
 
@@ -272,7 +273,7 @@ class CustomerDebtTimelineBusinessTimeTest extends TestCase
             'customer_display_effect' => 1,
             'supplier_display_effect' => -1,
             'badge_label' => $index === 11 ? 'Phải thu KH' : 'Hóa đơn',
-            'note' => 'CUSTOMER PUBLIC NOTE MUST STAY HIDDEN',
+            'note' => 'CUSTOMER NOTE EXPORTED OUTSIDE TIMELINE',
         ])->push([
             'code' => 'CHECKPOINT-CUSTOMER-PAGE',
             'event_identity' => 'checkpoint|customer-page',
@@ -309,8 +310,8 @@ class CustomerDebtTimelineBusinessTimeTest extends TestCase
         $csv = $exportResponse->streamedContent() ?: $exportResponse->getContent();
         $this->assertStringContainsString('HUY-HD-PAGE-11', $csv);
         $this->assertStringNotContainsString('CHECKPOINT-', $csv);
-        $this->assertStringNotContainsString('Ghi chú', $csv);
-        $this->assertStringNotContainsString('CUSTOMER PUBLIC NOTE MUST STAY HIDDEN', $csv);
+        $this->assertStringContainsString('Ghi chú', $csv);
+        $this->assertStringContainsString('CUSTOMER NOTE EXPORTED OUTSIDE TIMELINE', $csv);
     }
 
     private function assertEntryTimeEquals(string $expected, string $actual): void

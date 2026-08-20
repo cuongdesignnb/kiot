@@ -5,6 +5,7 @@ namespace Tests\Feature\Suppliers;
 use App\Models\CashFlow;
 use App\Models\Customer;
 use App\Models\Purchase;
+use App\Models\SupplierDebtTransaction;
 use App\Models\User;
 use App\Services\PartnerDebtLedgerService;
 use Carbon\Carbon;
@@ -24,23 +25,23 @@ class KiotStyleSupplierDebtTimelineTest extends TestCase
     {
         parent::setUp();
         $this->admin = User::create([
-            'name'     => 'Admin KSS ' . uniqid(),
-            'email'    => 'admin-kss-' . uniqid() . '@test.local',
+            'name' => 'Admin KSS '.uniqid(),
+            'email' => 'admin-kss-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
-            'role_id'  => null,
-            'status'   => 'active',
+            'role_id' => null,
+            'status' => 'active',
         ]);
     }
 
     private function supplier(string $code = 'KSS'): Customer
     {
         return Customer::create([
-            'code'                 => $code . '-' . uniqid(),
-            'name'                 => 'NCC KiotStyle ' . $code,
-            'debt_amount'          => 0,
+            'code' => $code.'-'.uniqid(),
+            'name' => 'NCC KiotStyle '.$code,
+            'debt_amount' => 0,
             'supplier_debt_amount' => 0,
-            'is_customer'          => false,
-            'is_supplier'          => true,
+            'is_customer' => false,
+            'is_supplier' => true,
         ]);
     }
 
@@ -52,11 +53,22 @@ class KiotStyleSupplierDebtTimelineTest extends TestCase
         $pn = Purchase::create([
             'code' => 'PN-KSS-001', 'supplier_id' => $sup->id, 'total_amount' => 5_000_000,
             'paid_amount' => 5_000_000, 'status' => 'completed', 'purchase_date' => $base,
+            'note' => 'Ghi chú phiếu nhập NCC',
         ]);
         $cf = CashFlow::create([
             'code' => 'PCPN-KSS-001', 'type' => 'payment', 'amount' => 5_000_000, 'time' => $base->copy()->addMinutes(5),
             'target_type' => 'Nhà cung cấp', 'target_id' => $sup->id,
             'reference_type' => 'Purchase', 'reference_code' => 'PN-KSS-001', 'status' => 'completed',
+            'description' => 'Mô tả hệ thống không được ưu tiên',
+        ]);
+        SupplierDebtTransaction::create([
+            'supplier_id' => $sup->id,
+            'code' => $cf->code,
+            'type' => 'payment',
+            'amount' => -5_000_000,
+            'debt_remain' => 0,
+            'note' => 'Ghi chú người dùng cho phiếu chi',
+            'user_id' => $this->admin->id,
         ]);
 
         $ledger = app(PartnerDebtLedgerService::class)->buildSupplierPayableLedger($sup);
@@ -66,11 +78,23 @@ class KiotStyleSupplierDebtTimelineTest extends TestCase
 
         // Click endpoint opens the purchase
         $res = $this->actingAs($this->admin)->getJson("/api/suppliers/{$sup->id}/debt-voucher-detail?code=PN-KSS-001");
-        $res->assertOk()->assertJson(['success' => true, 'type' => 'purchase']);
+        $res->assertOk()
+            ->assertJson(['success' => true, 'type' => 'purchase'])
+            ->assertJsonPath('data.note', 'Ghi chú phiếu nhập NCC');
 
         // Click endpoint opens the cashflow
         $res2 = $this->actingAs($this->admin)->getJson("/api/suppliers/{$sup->id}/debt-voucher-detail?code=PCPN-KSS-001");
-        $res2->assertOk()->assertJson(['success' => true, 'type' => 'cashflow']);
+        $res2->assertOk()
+            ->assertJson(['success' => true, 'type' => 'cashflow'])
+            ->assertJsonPath('data.note', 'Ghi chú người dùng cho phiếu chi');
+
+        $export = $this->actingAs($this->admin)->get(
+            "/api/suppliers/{$sup->id}/export-debt?format=csv&date_preset=all&include_detail=0",
+        );
+        $export->assertOk();
+        $csv = $export->streamedContent() ?: $export->getContent();
+        $this->assertStringContainsString('Ghi chú người dùng cho phiếu chi', $csv);
+        $this->assertStringNotContainsString('Mô tả hệ thống không được ưu tiên', $csv);
     }
 
     // ── Legacy paid purchase without cashflow → TTNH fallback, flagged + not clickable ──

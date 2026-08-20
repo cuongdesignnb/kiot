@@ -304,6 +304,7 @@ class SupplierPaymentDocumentTimelineTest extends TestCase
         $csv = $csvResponse->streamedContent() ?: $csvResponse->getContent();
         $this->assertSame(1, substr_count($csv, $payment->code));
         $this->assertStringContainsString('-18400000', str_replace([',', '.', ' '], '', $csv));
+        $this->assertStringContainsString('Ghi chú phiếu thanh toán NCC xuất file', $csv);
 
         $xlsxResponse = $this->actingAs($user)->get(
             "/api/suppliers/{$supplier->id}/export-debt?format=xlsx&date_preset=all",
@@ -320,6 +321,7 @@ class SupplierPaymentDocumentTimelineTest extends TestCase
             true,
         ));
         $this->assertCount(1, $matchingRows);
+        $this->assertSame('Ghi chú phiếu thanh toán NCC xuất file', $matchingRows->first()['N']);
     }
 
     /** @return array{Customer, CashFlow} */
@@ -354,6 +356,7 @@ class SupplierPaymentDocumentTimelineTest extends TestCase
             'target_id' => $supplier->id,
             'reference_type' => 'SupplierPayment',
             'time' => now()->subMinute(),
+            'description' => 'Ghi chú phiếu thanh toán NCC xuất file',
         ]);
         $operationUuid = (string) Str::uuid();
         $operationId = DB::table('partner_debt_operations')->insertGetId([

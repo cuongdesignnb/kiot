@@ -171,9 +171,9 @@ const cancelReturn = () => {
                 </div>
 
                 <!-- Note -->
-                <div v-if="ret.note" class="bg-white rounded-lg shadow-sm border border-gray-200 p-5 mb-4">
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5 mb-4">
                     <div class="text-gray-400 text-[12px] mb-1">Ghi chú</div>
-                    <div class="text-[13px]">{{ ret.note }}</div>
+                    <div class="text-[13px]">{{ ret.note || '—' }}</div>
                 </div>
             </div>
         </div>
