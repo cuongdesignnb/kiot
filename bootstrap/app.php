@@ -1,6 +1,7 @@
 <?php
 
 use App\Console\Commands\AuditProductDeletions;
+use App\Console\Commands\MediaLibraryBackfillCommand;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -21,6 +22,7 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withCommands([
         AuditProductDeletions::class,
+        MediaLibraryBackfillCommand::class,
     ])
     ->withMiddleware(function (Middleware $middleware) {
         // Enable Sanctum cookie/session auth for API routes (required for /api/my-tasks, /api/notifications)

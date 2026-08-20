@@ -339,10 +339,12 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 });
 
-// 📁 MEDIA LIBRARY
-Route::prefix('media')->group(function () {
+// 📁 MEDIA LIBRARY — authenticated; assets are shared but never public-write.
+Route::middleware('auth:sanctum')->prefix('media')->group(function () {
     Route::get('/', [\App\Http\Controllers\Api\MediaController::class, 'index']);
     Route::post('/', [\App\Http\Controllers\Api\MediaController::class, 'store']);
+    Route::get('/{media}', [\App\Http\Controllers\Api\MediaController::class, 'show']);
+    Route::get('/{media}/usages', [\App\Http\Controllers\Api\MediaController::class, 'usages']);
     Route::delete('/{media}', [\App\Http\Controllers\Api\MediaController::class, 'destroy']);
 });
 

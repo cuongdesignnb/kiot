@@ -2,6 +2,7 @@
 import { ref, watch, reactive, computed } from 'vue';
 import axios from 'axios';
 import CustomerGroupCombobox from './CustomerGroupCombobox.vue';
+import MediaPicker from './MediaPicker.vue';
 
 const props = defineProps({
     show: { type: Boolean, default: false },
@@ -44,6 +45,7 @@ const form = ref({
     invoice_phone: '',
     bank_name: '',
     bank_account: '',
+    avatar_media_id: null,
     is_supplier: false,
     is_customer: true,
     link_existing_id: null,
@@ -184,7 +186,8 @@ const resetForm = () => {
         customer_group: '', note: '', type: 'individual', invoice_name: '',
         id_card: '', passport: '', tax_code: '', invoice_address: '', invoice_city: '',
         invoice_district: '', invoice_ward: '', invoice_email: '', invoice_phone: '',
-        bank_name: '', bank_account: '', is_supplier: props.isSupplier, is_customer: !props.isSupplier,
+        bank_name: '', bank_account: '', avatar_media_id: null,
+        is_supplier: props.isSupplier, is_customer: !props.isSupplier,
     });
 };
 
@@ -325,6 +328,15 @@ const cancelDualRole = () => {
                     </div>
                     <!-- Basic Info -->
                     <div class="flex gap-8 items-start pb-4 border-b border-gray-100">
+                        <div class="w-32 shrink-0">
+                            <MediaPicker
+                                :model-value="form.avatar_media_id ? [form.avatar_media_id] : []"
+                                :multiple="false"
+                                :collection="isSupplier ? 'suppliers' : 'customers'"
+                                label="Ảnh đại diện"
+                                @update:model-value="form.avatar_media_id = $event[0] || null"
+                            />
+                        </div>
                         <div class="flex-1 grid grid-cols-2 gap-x-6 gap-y-4">
                             <!-- Row 1 -->
                             <div>

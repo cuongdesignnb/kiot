@@ -5,6 +5,7 @@ import axios from 'axios';
 import AppLayout from '../../Layouts/AppLayout.vue';
 import MoneyInput from '../../Components/MoneyInput.vue';
 import ProductImageManager from '../../Components/ProductImageManager.vue';
+import MediaPicker from '../../Components/MediaPicker.vue';
 import { formatVND as formatCurrency } from '@/utils/money';
 
 const props = defineProps({
@@ -164,6 +165,7 @@ const form = useForm({
         cost_price: v.cost_price || 0,
         retail_price: v.retail_price || 0,
         stock_quantity: v.stock_quantity || 0,
+        image_media_id: v.image_media_id || null,
         attribute_value_ids: (v.attribute_values || []).map(av => av.id),
     })),
     // Step 24.9 — warranty / maintenance config
@@ -421,6 +423,7 @@ const generateVariants = () => {
             cost_price: existing?.cost_price ?? form.cost_price,
             retail_price: existing?.retail_price ?? form.retail_price,
             stock_quantity: existing?.stock_quantity ?? 0,
+            image_media_id: existing?.image_media_id || null,
             attribute_value_ids: attrValueIds,
         };
     });
@@ -671,6 +674,7 @@ const generateVariants = () => {
                                                                 <th class="px-2 py-1.5 text-right text-xs font-semibold text-gray-600 w-28">Giá vốn</th>
                                                                 <th class="px-2 py-1.5 text-right text-xs font-semibold text-gray-600 w-28">Giá bán</th>
                                                                 <th class="px-2 py-1.5 text-right text-xs font-semibold text-gray-600 w-20">Tồn kho</th>
+                                                                <th class="px-2 py-1.5 text-center text-xs font-semibold text-gray-600 w-24">Ảnh</th>
                                                             </tr>
                                                         </thead>
                                                         <tbody>
@@ -680,6 +684,7 @@ const generateVariants = () => {
                                                                 <td class="px-2 py-1"><MoneyInput v-model="v.cost_price" input-class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right" /></td>
                                                                 <td class="px-2 py-1"><MoneyInput v-model="v.retail_price" input-class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right" /></td>
                                                                 <td class="px-2 py-1"><input type="number" v-model="v.stock_quantity" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right"></td>
+                                                                <td class="px-2 py-1"><MediaPicker :model-value="v.image_media_id ? [v.image_media_id] : []" :multiple="false" collection="products" label="Chọn" @update:model-value="v.image_media_id = $event[0] || null" /></td>
                                                             </tr>
                                                         </tbody>
                                                     </table>

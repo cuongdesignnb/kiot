@@ -50,7 +50,7 @@ class SupplierController extends Controller
 
         // Keep merged source rows for audit, but hide them from the
         // operational supplier list. The surviving target remains visible.
-        $query = Customer::where('is_supplier', true)
+        $query = Customer::with('avatarMedia')->where('is_supplier', true)
             ->whereNull('merged_into_id');
 
         $this->applyFilters($query, $request);
@@ -78,6 +78,7 @@ class SupplierController extends Controller
         $suppliers = $query->paginate(50)->withQueryString();
 
         $suppliers->getCollection()->transform(function ($supplier) {
+            $supplier->avatar_url = $supplier->avatarMedia?->publicUrl() ?? $supplier->avatar;
             foreach (PartnerDebtDisplayBalance::aliases($supplier) as $key => $value) {
                 $supplier->{$key} = $value;
             }
@@ -160,6 +161,7 @@ class SupplierController extends Controller
                 'invoice_phone' => 'nullable|string|max:255',
                 'bank_name' => 'nullable|string|max:255',
                 'bank_account' => 'nullable|string|max:255',
+                'avatar_media_id' => 'nullable|integer|exists:media,id,status,active',
                 'is_customer' => 'boolean',
                 'supplier_linking_mode' => 'nullable|in:new,link_existing',
                 'linked_customer_id' => 'nullable|integer',
@@ -258,6 +260,7 @@ class SupplierController extends Controller
             'invoice_phone' => 'nullable|string|max:255',
             'bank_name' => 'nullable|string|max:255',
             'bank_account' => 'nullable|string|max:255',
+            'avatar_media_id' => 'nullable|integer|exists:media,id,status,active',
             'is_customer' => 'sometimes|boolean',
         ]);
 
@@ -339,6 +342,7 @@ class SupplierController extends Controller
                 'phone' => 'nullable|string|max:255',
                 'email' => 'nullable|email|max:255',
                 'address' => 'nullable|string',
+                'avatar_media_id' => 'nullable|integer|exists:media,id,status,active',
                 'is_customer' => 'boolean',
                 'supplier_linking_mode' => 'nullable|in:new,link_existing',
                 'linked_customer_id' => 'nullable|integer',

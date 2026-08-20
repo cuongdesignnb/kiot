@@ -13,6 +13,7 @@ class ProductImage extends Model
 
     protected $fillable = [
         'product_id',
+        'media_id',
         'storage_disk',
         'storage_path',
         'original_filename',
@@ -43,8 +44,17 @@ class ProductImage extends Model
         return $this->belongsTo(Product::class);
     }
 
+    public function media(): BelongsTo
+    {
+        return $this->belongsTo(Media::class);
+    }
+
     public function publicUrl(): string
     {
+        if ($this->media) {
+            return $this->media->publicUrl();
+        }
+
         $url = Storage::disk($this->storage_disk)->url($this->storage_path);
         $absolute = str_starts_with($url, 'http://') || str_starts_with($url, 'https://')
             ? $url
@@ -57,12 +67,14 @@ class ProductImage extends Model
     {
         return [
             'id' => $this->id,
+            'media_id' => $this->media_id,
             'url' => $this->publicUrl(),
             'checksum' => $this->checksum,
             'width' => (int) $this->width,
             'height' => (int) $this->height,
             'sort_order' => (int) $this->sort_order,
             'is_primary' => (bool) $this->is_primary,
+            'variants' => $this->media?->payload()['variants'] ?? [],
         ];
     }
 }

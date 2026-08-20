@@ -21,6 +21,7 @@ class Customer extends Model
         'ward',
         'customer_group',
         'avatar',
+        'avatar_media_id',
         'birthday',
         'note',
         'tax_code',
@@ -57,6 +58,11 @@ class Customer extends Model
     public function branch()
     {
         return $this->belongsTo(Branch::class);
+    }
+
+    public function avatarMedia()
+    {
+        return $this->belongsTo(Media::class, 'avatar_media_id');
     }
 
     public function invoices()

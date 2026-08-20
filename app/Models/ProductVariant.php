@@ -11,7 +11,7 @@ class ProductVariant extends Model
     protected $fillable = [
         'product_id', 'sku', 'barcode', 'name',
         'cost_price', 'retail_price', 'stock_quantity',
-        'image', 'is_active',
+        'image', 'image_media_id', 'is_active',
     ];
 
     protected $casts = [
@@ -23,6 +23,11 @@ class ProductVariant extends Model
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class);
+    }
+
+    public function imageMedia(): BelongsTo
+    {
+        return $this->belongsTo(Media::class, 'image_media_id');
     }
 
     public function attributeValues(): BelongsToMany

@@ -2,25 +2,25 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Employee;
-use App\Models\Department;
-use App\Models\JobTitle;
-use App\Models\Branch;
-use App\Models\Shift;
-use App\Models\EmployeeWorkSchedule;
 use App\Models\AttendanceDevice;
+use App\Models\Branch;
+use App\Models\Department;
+use App\Models\Employee;
 use App\Models\EmployeeSalarySetting;
+use App\Models\EmployeeWorkSchedule;
 use App\Models\Holiday;
-use App\Models\Paysheet;
+use App\Models\JobTitle;
 use App\Models\PayrollSetting;
+use App\Models\Paysheet;
 use App\Models\SalaryTemplate;
 use App\Models\Setting;
+use App\Models\Shift;
 use App\Models\TimekeepingSetting;
 use App\Models\WorkdaySetting;
+use App\Support\Filters\FilterableIndex;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
-use App\Support\Filters\FilterableIndex;
 
 class EmployeeController extends Controller
 {
@@ -61,7 +61,7 @@ class EmployeeController extends Controller
 
         $active = [];
         foreach ($labels as $key => $label) {
-            if (!empty($weekDays[$key])) {
+            if (! empty($weekDays[$key])) {
                 $active[] = $label;
             }
         }
@@ -285,7 +285,7 @@ class EmployeeController extends Controller
                 ]
             );
 
-            if (!$setting->created_by) {
+            if (! $setting->created_by) {
                 $setting->created_by = $userId;
                 $setting->save();
             }
@@ -315,7 +315,7 @@ class EmployeeController extends Controller
     {
         $this->configureEmployeeFilters();
 
-        $query = Employee::with(['branch', 'department', 'jobTitle']);
+        $query = Employee::with(['branch', 'department', 'jobTitle', 'avatarMedia']);
 
         // is_active pseudo filter (supports true/false/1/0)
         if ($request->filled('is_active')) {
@@ -330,10 +330,11 @@ class EmployeeController extends Controller
             $salaryBalance = (int) $employee->salary_balance_cache;
             $employee->setAttribute('salary_balance', $salaryBalance);
             $employee->setAttribute('salary_debt_amount', $salaryBalance);
+            $employee->setAttribute('avatar_url', $employee->avatarMedia?->publicUrl() ?? $employee->avatar);
 
             return $employee;
         });
-        if (!auth()->user()?->hasPermission('employee.view_salary_balance')) {
+        if (! auth()->user()?->hasPermission('employee.view_salary_balance')) {
             $employees->getCollection()->each->makeHidden([
                 'balance',
                 'salary_balance_cache',
@@ -381,6 +382,7 @@ class EmployeeController extends Controller
             'department_id' => 'nullable|exists:departments,id',
             'job_title_id' => 'nullable|exists:job_titles,id',
             'notes' => 'nullable|string',
+            'avatar_media_id' => 'nullable|integer|exists:media,id,status,active',
             'is_active' => 'boolean',
         ]);
 
@@ -401,7 +403,7 @@ class EmployeeController extends Controller
     public function update(Request $request, Employee $employee)
     {
         $validated = $request->validate([
-            'code' => 'nullable|string|unique:employees,code,' . $employee->id,
+            'code' => 'nullable|string|unique:employees,code,'.$employee->id,
             'attendance_code' => 'nullable|string|max:50',
             'name' => 'required|string|max:255',
             'phone' => 'nullable|string|max:20',
@@ -411,12 +413,13 @@ class EmployeeController extends Controller
             'department_id' => 'nullable|exists:departments,id',
             'job_title_id' => 'nullable|exists:job_titles,id',
             'notes' => 'nullable|string',
+            'avatar_media_id' => 'nullable|integer|exists:media,id,status,active',
             'is_active' => 'boolean',
         ]);
 
         $becameInactive = $employee->is_active
             && array_key_exists('is_active', $validated)
-            && !$validated['is_active'];
+            && ! $validated['is_active'];
         $employee->update($validated);
         if ($becameInactive && (int) $employee->salary_balance_cache !== 0) {
             \App\Models\ActivityLog::log(
@@ -425,6 +428,7 @@ class EmployeeController extends Controller
                 $employee,
                 ['salary_balance' => (int) $employee->salary_balance_cache]
             );
+
             return redirect()->back()->with('success', 'Đã ngừng hoạt động. Nhân viên vẫn còn số dư nợ/tạm ứng cần xử lý.');
         }
 
@@ -440,6 +444,7 @@ class EmployeeController extends Controller
             return redirect()->back()->with('error', 'Không thể xóa nhân viên đã có dữ liệu lương. Hãy chuyển sang trạng thái nghỉ việc.');
         }
         $employee->delete();
+
         return redirect()->back()->with('success', 'Xóa nhân viên thành công.');
     }
 
@@ -470,7 +475,7 @@ class EmployeeController extends Controller
                     $nextId++;
                 }
 
-                if (!array_key_exists('is_active', $row)) {
+                if (! array_key_exists('is_active', $row)) {
                     $row['is_active'] = true;
                 }
 
@@ -484,7 +489,7 @@ class EmployeeController extends Controller
 
     private function generateEmployeeCode(int $id): string
     {
-        return 'NV' . str_pad((string) $id, 5, '0', STR_PAD_LEFT);
+        return 'NV'.str_pad((string) $id, 5, '0', STR_PAD_LEFT);
     }
 
     public function export(Request $request)
@@ -500,7 +505,7 @@ class EmployeeController extends Controller
 
         return \App\Services\CsvService::export(
             ['Mã NV', 'Mã chấm công', 'Tên nhân viên', 'Điện thoại', 'Email', 'CCCD', 'Chi nhánh', 'Phòng ban', 'Chức danh', 'Trạng thái', 'Ghi chú'],
-            $employees->map(fn($e) => [$e->code, $e->attendance_code, $e->name, $e->phone, $e->email, $e->cccd, $e->branch?->name, $e->department?->name, $e->jobTitle?->name, $e->is_active ? 'Đang làm' : 'Nghỉ việc', $e->notes]),
+            $employees->map(fn ($e) => [$e->code, $e->attendance_code, $e->name, $e->phone, $e->email, $e->cccd, $e->branch?->name, $e->department?->name, $e->jobTitle?->name, $e->is_active ? 'Đang làm' : 'Nghỉ việc', $e->notes]),
             'nhan_vien.csv'
         );
     }
@@ -510,13 +515,16 @@ class EmployeeController extends Controller
         [$headers, $rows] = \App\Services\CsvService::parse($request);
         $count = 0;
         foreach ($rows as $row) {
-            if (count($row) < 3 || empty(trim($row[2] ?? ''))) continue;
+            if (count($row) < 3 || empty(trim($row[2] ?? ''))) {
+                continue;
+            }
             \App\Models\Employee::updateOrCreate(
                 ['code' => trim($row[0])],
                 ['attendance_code' => trim($row[1] ?? ''), 'name' => trim($row[2]), 'phone' => trim($row[3] ?? ''), 'email' => trim($row[4] ?? ''), 'cccd' => trim($row[5] ?? ''), 'notes' => trim($row[10] ?? '')]
             );
             $count++;
         }
+
         return back()->with('success', "Đã nhập {$count} nhân viên từ file.");
     }
 }

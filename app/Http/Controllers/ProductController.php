@@ -280,6 +280,9 @@ class ProductController extends Controller
             'images' => ['nullable', 'array', 'max:'.max(1, (int) config('integrations.pc_website.product_images.max_count', 12))],
             'images.*' => [File::types(['jpg', 'jpeg', 'png', 'webp'])->max(max(1, (int) config('integrations.pc_website.product_images.max_size_kb', 5120)))],
             'primary_image_index' => 'nullable|integer|min:0',
+            'media_ids' => ['nullable', 'array', 'max:'.max(1, (int) config('integrations.pc_website.product_images.max_count', 12))],
+            'media_ids.*' => ['integer', 'distinct', 'exists:media,id,status,active'],
+            'primary_media_id' => ['nullable', 'integer', 'exists:media,id,status,active'],
             'category_id' => 'nullable|exists:categories,id',
             'brand_id' => 'nullable|exists:brands,id',
             'cost_price' => 'numeric|min:0',
@@ -306,6 +309,7 @@ class ProductController extends Controller
             'variants.*.retail_price' => 'numeric|min:0',
             'variants.*.stock_quantity' => 'numeric|min:0',
             'variants.*.attribute_value_ids' => 'nullable|array',
+            'variants.*.image_media_id' => 'nullable|integer|exists:media,id,status,active',
             // Step 24.9 — warranty / maintenance configuration
             'warranty_months' => 'nullable|integer|min:0|max:1200',
             'warranty_policies' => 'nullable|array',
@@ -353,7 +357,15 @@ class ProductController extends Controller
         $variants = $validatedData['variants'] ?? [];
         $images = $validatedData['images'] ?? [];
         $primaryImageIndex = $validatedData['primary_image_index'] ?? null;
-        unset($validatedData['units'], $validatedData['base_unit_name'], $validatedData['variants'], $validatedData['images'], $validatedData['primary_image_index']);
+        $mediaIds = $validatedData['media_ids'] ?? [];
+        $primaryMediaId = $validatedData['primary_media_id'] ?? null;
+        unset($validatedData['units'], $validatedData['base_unit_name'], $validatedData['variants'], $validatedData['images'], $validatedData['primary_image_index'], $validatedData['media_ids'], $validatedData['primary_media_id']);
+
+        if ($primaryMediaId !== null && ! in_array((int) $primaryMediaId, array_map('intval', $mediaIds), true)) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'primary_media_id' => 'Ảnh đại diện không thuộc danh sách đã chọn.',
+            ]);
+        }
 
         $product = Product::create($validatedData);
 
@@ -401,6 +413,8 @@ class ProductController extends Controller
                     'cost_price' => $vData['cost_price'] ?? $product->cost_price,
                     'retail_price' => $vData['retail_price'] ?? $product->retail_price,
                     'stock_quantity' => $vData['stock_quantity'] ?? 0,
+                    'image_media_id' => $vData['image_media_id'] ?? null,
+                    'image' => $this->mediaUrl($vData['image_media_id'] ?? null),
                 ]);
                 if (! empty($vData['attribute_value_ids'])) {
                     $variant->attributeValues()->sync($vData['attribute_value_ids']);
@@ -411,6 +425,13 @@ class ProductController extends Controller
         if (! empty($images)) {
             app(\App\Services\ProductImages\ProductImageService::class)
                 ->uploadMany($product, $images, $primaryImageIndex, $request->user());
+        }
+        if (! empty($mediaIds)) {
+            $primaryIndex = $primaryMediaId === null
+                ? null
+                : array_search((int) $primaryMediaId, array_map('intval', $mediaIds), true);
+            app(\App\Services\ProductImages\ProductImageService::class)
+                ->attachMedia($product, $mediaIds, $primaryIndex === false ? null : $primaryIndex, $request->user());
         }
 
         return redirect()->route('products.index')->with('success', 'Hàng hóa được tạo thành công!');
@@ -436,6 +457,9 @@ class ProductController extends Controller
             'images' => ['nullable', 'array', 'max:'.$maxImageCount],
             'images.*' => ['file', File::types(['jpg', 'jpeg', 'png', 'webp'])->max($maxImageSizeKb)],
             'primary_image_index' => ['nullable', 'integer', 'min:0'],
+            'media_ids' => ['nullable', 'array', 'max:'.$maxImageCount],
+            'media_ids.*' => ['integer', 'distinct', 'exists:media,id,status,active'],
+            'primary_media_id' => ['nullable', 'integer', 'exists:media,id,status,active'],
         ]);
 
         $validatedData['type'] = 'standard';
@@ -448,7 +472,15 @@ class ProductController extends Controller
         $primaryImageIndex = isset($validatedData['primary_image_index'])
             ? (int) $validatedData['primary_image_index']
             : null;
-        unset($validatedData['images'], $validatedData['primary_image_index']);
+        $mediaIds = array_values($validatedData['media_ids'] ?? []);
+        $primaryMediaId = $validatedData['primary_media_id'] ?? null;
+        unset($validatedData['images'], $validatedData['primary_image_index'], $validatedData['media_ids'], $validatedData['primary_media_id']);
+
+        if ($primaryMediaId !== null && ! in_array((int) $primaryMediaId, array_map('intval', $mediaIds), true)) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'primary_media_id' => 'Ảnh đại diện không thuộc danh sách đã chọn.',
+            ]);
+        }
 
         if (empty($validatedData['sku'])) {
             do {
@@ -467,7 +499,7 @@ class ProductController extends Controller
         $technicianPriceQuick = $validatedData['technician_price'] ?? 0;
         unset($validatedData['technician_price']);
 
-        $product = DB::transaction(function () use ($validatedData, $technicianPriceQuick, $images, $primaryImageIndex, $request) {
+        $product = DB::transaction(function () use ($validatedData, $technicianPriceQuick, $images, $primaryImageIndex, $mediaIds, $primaryMediaId, $request) {
             $product = Product::create($validatedData);
 
             // Save technician_price to active price books if provided.
@@ -485,6 +517,13 @@ class ProductController extends Controller
             if (! empty($images)) {
                 app(\App\Services\ProductImages\ProductImageService::class)
                     ->uploadMany($product, $images, $primaryImageIndex, $request->user());
+            }
+            if (! empty($mediaIds)) {
+                $primaryIndex = $primaryMediaId === null
+                    ? null
+                    : array_search((int) $primaryMediaId, array_map('intval', $mediaIds), true);
+                app(\App\Services\ProductImages\ProductImageService::class)
+                    ->attachMedia($product, $mediaIds, $primaryIndex === false ? null : $primaryIndex, $request->user());
             }
 
             return $product;
@@ -504,7 +543,7 @@ class ProductController extends Controller
 
     public function edit(Product $product)
     {
-        $product->load(['variants.attributeValues', 'images']);
+        $product->load(['variants.attributeValues', 'images.media.variants']);
         $priceBooks = PriceBook::where('is_active', true)->get();
         $showTechnician = $priceBooks->contains('enable_technician_price', true);
 
@@ -557,6 +596,7 @@ class ProductController extends Controller
             'variants.*.retail_price' => 'numeric|min:0',
             'variants.*.stock_quantity' => 'numeric|min:0',
             'variants.*.attribute_value_ids' => 'nullable|array',
+            'variants.*.image_media_id' => 'nullable|integer|exists:media,id,status,active',
             // Step 24.9 — warranty / maintenance configuration
             'warranty_months' => 'nullable|integer|min:0|max:1200',
             'warranty_policies' => 'nullable|array',
@@ -627,6 +667,10 @@ class ProductController extends Controller
                             'cost_price' => $vData['cost_price'] ?? $variant->cost_price,
                             'retail_price' => $vData['retail_price'] ?? $variant->retail_price,
                             'stock_quantity' => $vData['stock_quantity'] ?? $variant->stock_quantity,
+                            'image_media_id' => $vData['image_media_id'] ?? $variant->image_media_id,
+                            'image' => array_key_exists('image_media_id', $vData)
+                                ? $this->mediaUrl($vData['image_media_id'])
+                                : $variant->image,
                         ]);
                         if (isset($vData['attribute_value_ids'])) {
                             $variant->attributeValues()->sync($vData['attribute_value_ids']);
@@ -643,6 +687,8 @@ class ProductController extends Controller
                     'cost_price' => $vData['cost_price'] ?? $product->cost_price,
                     'retail_price' => $vData['retail_price'] ?? $product->retail_price,
                     'stock_quantity' => $vData['stock_quantity'] ?? 0,
+                    'image_media_id' => $vData['image_media_id'] ?? null,
+                    'image' => $this->mediaUrl($vData['image_media_id'] ?? null),
                 ]);
                 if (! empty($vData['attribute_value_ids'])) {
                     $variant->attributeValues()->sync($vData['attribute_value_ids']);
@@ -674,6 +720,26 @@ class ProductController extends Controller
         $data['variants'] = [];
 
         return $data;
+    }
+
+    private function mediaUrl(?int $mediaId): ?string
+    {
+        if (! $mediaId) {
+            return null;
+        }
+
+        $media = \App\Models\Media::query()
+            ->whereKey($mediaId)
+            ->where('status', 'active')
+            ->first();
+
+        if (! $media) {
+            throw ValidationException::withMessages([
+                'image_media_id' => 'Ảnh đã chọn không còn tồn tại hoặc đã bị khóa.',
+            ]);
+        }
+
+        return $media->publicUrl();
     }
 
     private function assertCanConvertToService(Product $product): void
