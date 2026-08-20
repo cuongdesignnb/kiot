@@ -65,6 +65,7 @@ class PartnerDebtExportEffectResolver
         if (($identity['document_type'] ?? null) === 'Purchase'
             && ! ($identity['is_payment'] ?? false)
             && in_array($kind, ['purchase', 'purchase_cancel_reversal'], true)
+            && (string) ($entry['purchase_effect_basis'] ?? '') !== 'net_supplier_payable'
         ) {
             $discount = $documents->purchaseDiscount($entry);
             if ($discount > 0 && $effect !== 0.0) {

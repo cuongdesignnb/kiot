@@ -55,6 +55,7 @@ class SupplierDebtDomainEventSource
 
         foreach ($purchases as $p) {
             $businessTime = $p->purchase_date ?: $p->created_at;
+            $payableAmount = $this->purchasePayableAmount($p);
             $entries->push($this->createEntry([
                 'id' => 'purchase-'.$p->id,
                 'code' => $p->code,
@@ -62,10 +63,14 @@ class SupplierDebtDomainEventSource
                 'event_kind' => 'purchase',
                 'domain' => 'supplier',
                 'source_status' => $p->status,
-                'document_amount' => (float) $p->total_amount,
-                'amount' => (float) $p->total_amount,
-                'display_effect' => (float) $p->total_amount,
-                'supplier_display_effect' => (float) $p->total_amount,
+                'document_amount' => $payableAmount,
+                'amount' => $payableAmount,
+                'display_effect' => $payableAmount,
+                'supplier_display_effect' => $payableAmount,
+                'purchase_effect_basis' => 'net_supplier_payable',
+                'purchase_gross_amount' => (float) $p->total_amount,
+                'purchase_discount' => (float) ($p->discount ?? 0),
+                'purchase_other_costs_total' => (float) ($p->other_costs_total ?? 0),
                 'time' => $businessTime,
                 'display_time' => $businessTime,
                 'created_at' => $p->created_at,
@@ -102,10 +107,14 @@ class SupplierDebtDomainEventSource
                     'display_type' => 'Hủy phiếu nhập',
                     'event_kind' => 'purchase_cancel_reversal',
                     'domain' => 'supplier',
-                    'document_amount' => (float) $p->total_amount,
-                    'amount' => -(float) $p->total_amount,
-                    'display_effect' => -(float) $p->total_amount,
-                    'supplier_display_effect' => -(float) $p->total_amount,
+                    'document_amount' => $payableAmount,
+                    'amount' => -$payableAmount,
+                    'display_effect' => -$payableAmount,
+                    'supplier_display_effect' => -$payableAmount,
+                    'purchase_effect_basis' => 'net_supplier_payable',
+                    'purchase_gross_amount' => (float) $p->total_amount,
+                    'purchase_discount' => (float) ($p->discount ?? 0),
+                    'purchase_other_costs_total' => (float) ($p->other_costs_total ?? 0),
                     'time' => $cancelledAt,
                     'display_time' => $cancelledAt,
                     'created_at' => $cancelledAt,
@@ -675,7 +684,7 @@ class SupplierDebtDomainEventSource
                 $cumulativeRefundEvidence = (float) $paymentState['refund_evidence'] + max(0.0, $refundEvidence);
                 $alreadyBackfilled = (float) $paymentState['backfilled_payment'];
                 $requiredHistoricalPayment = min(
-                    max(0.0, (float) $purchase->total_amount),
+                    max(0.0, $this->purchasePayableAmount($purchase)),
                     $cumulativeRefundEvidence,
                 );
                 $additionalHistoricalPayment = max(
@@ -1788,18 +1797,16 @@ class SupplierDebtDomainEventSource
     /**
      * Persisted payment evidence for a purchase.
      *
-     * paid_amount can include acquisition costs that never mutate supplier
-     * payable. The persisted purchase obligation is the net document amount
-     * after the document discount, less the remaining debt; a negative debt
+     * The persisted purchase obligation is the supplier-payable document
+     * amount (items after line discounts, less the document discount, plus
+     * other purchase costs), less the remaining debt. A negative debt
      * intentionally permits an overpayment credit. Older rows which never
      * persisted a positive remaining debt are capped by their smaller
      * paid_amount instead.
      */
     private function purchasePaymentObligation(Purchase $purchase): float
     {
-        $total = max(0.0, (float) $purchase->total_amount);
-        $discount = max(0.0, (float) ($purchase->discount ?? 0));
-        $netTotal = max(0.0, $total - $discount);
+        $netTotal = $this->purchasePayableAmount($purchase);
         $debt = (float) $purchase->debt_amount;
         $paid = max(0.0, (float) $purchase->paid_amount);
         if (abs($debt) <= 0.01 && $paid < $netTotal - 0.01) {
@@ -1807,6 +1814,21 @@ class SupplierDebtDomainEventSource
         }
 
         return max(0.0, $netTotal - $debt);
+    }
+
+    /**
+     * Match PurchaseController's persisted supplier-debt mutation exactly.
+     * total_amount already includes line-level discounts; the document-level
+     * discount reduces payable while other purchase costs increase it.
+     */
+    private function purchasePayableAmount(Purchase $purchase): float
+    {
+        return round(
+            (float) $purchase->total_amount
+                - (float) ($purchase->discount ?? 0)
+                + (float) ($purchase->other_costs_total ?? 0),
+            2,
+        );
     }
 
     /**

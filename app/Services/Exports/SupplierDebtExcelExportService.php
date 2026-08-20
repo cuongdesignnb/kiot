@@ -126,11 +126,9 @@ class SupplierDebtExcelExportService
 
         // Filter entries into the display window — but compute opening
         // / period totals against the FULL ledger we were handed.
-        // HOTFIX 24.17F — use displayEffectFor() everywhere (net of
-        // purchases.discount for `pur-*` entries) so the doc rows in
-        // the body and the period totals in the summary always agree
-        // with each other, even when the underlying ledger pushes a
-        // gross supplier_effect.
+        // Use displayEffectFor() everywhere so document rows and period
+        // totals share the canonical net supplier-payable effect. Legacy
+        // gross purchase rows are still normalized by the export resolver.
         $inWindow = array_values(array_filter($this->entries, fn ($e) => $this->isInWindow($e)));
         $opening = $this->computeOpeningDebt();
         $debit = 0;
@@ -169,16 +167,9 @@ class SupplierDebtExcelExportService
     }
 
     /**
-     * HOTFIX 24.17F — net supplier_effect used for Excel rendering.
-     * For a purchase row, subtract `purchases.discount` so the doc K
-     * (Ghi nợ) value equals the sum of the detail rows' Thành tiền
-     * (line subtotals + a negative "Giảm giá hóa đơn"). Other entry
-     * types pass through unchanged.
-     *
-     * Important — this is a *display* effect only. The underlying
-     * ledger (debt_remain) is computed elsewhere and not touched.
-     * If the ledger ever drifts from this view, fix it in a separate
-     * core-ledger hotfix.
+     * Resolve the canonical supplier effect used for Excel rendering.
+     * Current purchase events already carry the net supplier-payable amount;
+     * the resolver retains compatibility for historical gross fixtures.
      */
     private function displayEffectFor(array $entry): float
     {
@@ -314,7 +305,7 @@ class SupplierDebtExcelExportService
         $row = $startRow;
         foreach ($entries as $e) {
             $whenStr = $this->formatEntryTime($e);
-            // HOTFIX 24.17F — net effect for purchases (gross − doc discount).
+            // Canonical net supplier-payable effect for purchase documents.
             $eff = $this->displayEffectFor($e);
             $debitVal = $eff > 0 ? $eff : null;
             $creditVal = $eff < 0 ? -$eff : null;
