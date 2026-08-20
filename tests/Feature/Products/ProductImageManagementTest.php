@@ -8,6 +8,7 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
 
 class ProductImageManagementTest extends TestCase
@@ -133,5 +134,55 @@ class ProductImageManagementTest extends TestCase
             $image->storage_path,
         );
         $this->assertStringNotContainsString('..', $image->storage_path);
+    }
+
+    public function test_upload_persists_only_webp_and_exposes_primary_image_to_product_list(): void
+    {
+        $this->actingAs($this->admin)->post('/products/'.$this->product->id.'/images', [
+            'images' => [UploadedFile::fake()->image('original-photo.jpg', 120, 100)],
+        ], ['Accept' => 'application/json'])->assertCreated();
+
+        $image = ProductImage::where('product_id', $this->product->id)->sole();
+        $this->assertStringEndsWith('.webp', $image->storage_path);
+        $this->assertSame('image/webp', $image->mime_type);
+        $this->assertSame([$image->storage_path], Storage::disk('public')->allFiles());
+        $this->assertFalse(collect(Storage::disk('public')->allFiles())->contains(
+            fn (string $path) => preg_match('/\.(?:jpe?g|png)$/i', $path) === 1
+        ));
+
+        $expectedUrl = $image->publicUrl();
+        $this->assertSame($expectedUrl, $this->product->fresh()->image);
+
+        $this->actingAs($this->admin)
+            ->get('/products?search=IMAGE-PRODUCT')
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Welcome')
+                ->where('products.data.0.id', $this->product->id)
+                ->where('products.data.0.image', $expectedUrl));
+    }
+
+    public function test_product_list_template_renders_image_and_keeps_broken_url_fallback(): void
+    {
+        $source = file_get_contents(dirname(__DIR__, 3).'/resources/js/Pages/Welcome.vue');
+
+        $this->assertStringContainsString('v-if="canDisplayProductImage(product)"', $source);
+        $this->assertStringContainsString(':src="product.image"', $source);
+        $this->assertStringContainsString('@error="markProductImageFailed(product.image)"', $source);
+        $this->assertStringContainsString('v-else', $source);
+    }
+
+    public function test_product_edit_cannot_navigate_away_while_image_upload_is_pending_or_failed(): void
+    {
+        $resourceRoot = dirname(__DIR__, 3).'/resources/js';
+        $manager = file_get_contents($resourceRoot.'/Components/ProductImageManager.vue');
+        $edit = file_get_contents($resourceRoot.'/Pages/Products/Edit.vue');
+
+        $this->assertStringContainsString("'update:busy'", $manager);
+        $this->assertStringContainsString("'update:error'", $manager);
+        $this->assertStringContainsString('@update:busy="imageUploadBusy = $event"', $edit);
+        $this->assertStringContainsString('@update:error="imageUploadError = $event"', $edit);
+        $this->assertStringContainsString('form.processing || imageUploadBusy || Boolean(imageUploadError)', $edit);
+        $this->assertStringContainsString('if (imageUploadBusy.value || imageUploadError.value) return;', $edit);
     }
 }
