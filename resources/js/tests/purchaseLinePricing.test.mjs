@@ -116,3 +116,43 @@ test('discount greater than gross is rejected by the pricing contract', () => {
 
     assert.match(purchaseLinePricingError(item), /Giảm giá/);
 });
+
+test('POS quantity and entered line total derive the displayed unit price immediately', () => {
+    const item = preparePurchaseLinePricing({
+        product: { id: 42, name: 'Laptop POS' },
+        quantity: 6,
+        price: 0,
+        discount: 0,
+        is_serial_product: true,
+        serials: ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'],
+    });
+
+    syncPurchaseLineFromTotal(item, 12_000_000);
+
+    assert.equal(item.price, 2_000_000);
+    assert.equal(item.line_total, 12_000_000);
+    assert.equal(item.discount, 0);
+    assert.equal(item.product.name, 'Laptop POS');
+    assert.equal(item.serials.length, 6);
+});
+
+test('POS draft round-trip preserves cart data and the operator-entered total mode', () => {
+    const item = preparePurchaseLinePricing({
+        product: { id: 42, sku: 'SP42', name: 'Laptop POS' },
+        quantity: 3,
+        price: 0,
+        discount: 0,
+        is_serial_product: false,
+    });
+    syncPurchaseLineFromTotal(item, 100_000);
+
+    const restored = preparePurchaseLinePricing(JSON.parse(JSON.stringify(item)));
+    restored.quantity = 5;
+    syncPurchaseLineAfterQuantityChange(restored);
+
+    assert.equal(restored.line_total_mode, 'line_total');
+    assert.equal(restored.line_total, 100_000);
+    assert.equal(restored.price, 20_000);
+    assert.equal(restored.discount, 0);
+    assert.deepEqual(restored.product, { id: 42, sku: 'SP42', name: 'Laptop POS' });
+});

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Customer;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\InvoiceItemSerial;
@@ -15,6 +16,7 @@ use App\Services\PosReturnExchangeService;
 use App\Services\ProductSearchService;
 use App\Services\SerialAvailabilityService;
 use App\Support\Customers\CustomerGroupSnapshot;
+use App\Support\Debt\PartnerDebtDisplayBalance;
 use App\Support\Reports\SellerResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -415,7 +417,20 @@ class PosController extends Controller
             'items.*.product_id' => 'required|exists:products,id',
             'items.*.quantity' => 'required|numeric|min:1',
             'items.*.price' => 'required|numeric',
+            'items.*.discount' => 'nullable|numeric|min:0',
         ]);
+
+        foreach ($validated['items'] as $index => $item) {
+            $lineGross = $item['quantity'] * $item['price'];
+            if (($item['discount'] ?? 0) > $lineGross) {
+                return response()->json([
+                    'message' => 'Giảm giá dòng không được vượt thành tiền trước giảm giá.',
+                    'errors' => [
+                        "items.{$index}.discount" => ['Giảm giá dòng không được vượt thành tiền trước giảm giá.'],
+                    ],
+                ], 422);
+            }
+        }
 
         app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
             isset($validated['customer_id']) ? (int) $validated['customer_id'] : null,
@@ -466,12 +481,14 @@ class PosController extends Controller
             }
 
             foreach ($validated['items'] as $item) {
-                $subtotal = ($item['quantity'] * $item['price']);
+                $lineGross = $item['quantity'] * $item['price'];
+                $lineDiscount = $item['discount'] ?? 0;
+                $subtotal = $lineGross - $lineDiscount;
                 $order->items()->create([
                     'product_id' => $item['product_id'],
                     'qty' => $item['quantity'],
                     'price' => $item['price'],
-                    'discount' => 0,
+                    'discount' => $lineDiscount,
                     'subtotal' => $subtotal,
                 ]);
             }
@@ -501,6 +518,7 @@ class PosController extends Controller
         }
 
         $customers = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
+            ->where('is_customer', true)
             ->where(function ($q) use ($search) {
                 $q->where('name', 'LIKE', "%{$search}%")
                     ->orWhere('phone', 'LIKE', "%{$search}%")
@@ -508,9 +526,26 @@ class PosController extends Controller
             })
             ->orderBy('name')
             ->limit(10)
-            ->get(['id', 'code', 'name', 'phone', 'debt_amount', 'customer_group']);
+            ->get(['id', 'code', 'name', 'phone', 'customer_group']);
 
         return response()->json($customers);
+    }
+
+    /**
+     * Load the selected customer's canonical display debt without running the
+     * canonical reducer once for every typeahead result.
+     */
+    public function customerDebtDisplay(Customer $customer)
+    {
+        $customer = app(\App\Services\PartnerTransactionGuard::class)->availablePartners()
+            ->whereKey($customer->getKey())
+            ->where('is_customer', true)
+            ->firstOrFail();
+
+        return response()->json([
+            'id' => (int) $customer->id,
+            ...PartnerDebtDisplayBalance::responseAliases($customer),
+        ]);
     }
 
     /**
