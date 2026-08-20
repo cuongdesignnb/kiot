@@ -279,6 +279,7 @@ Route::middleware('auth')->group(function () {
             ->middleware('permission:returns.create');
         Route::post('/api/pos/quick-order', [PosController::class, 'quickOrder']);
         Route::get('/api/pos/customers', [PosController::class, 'searchCustomers']);
+        Route::get('/api/pos/customers/{customer}/debt-display', [PosController::class, 'customerDebtDisplay']);
         Route::post('/api/pos/customers', [PosController::class, 'quickCreateCustomer']);
     });
 

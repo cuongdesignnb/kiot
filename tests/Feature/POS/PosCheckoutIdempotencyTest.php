@@ -7,12 +7,14 @@ use App\Models\Category;
 use App\Models\Customer;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
+use App\Models\Order;
 use App\Models\PartnerDebtOperation;
 use App\Models\PartnerDebtOperationParticipant;
 use App\Models\Product;
 use App\Models\Role;
 use App\Models\StockMovement;
 use App\Models\User;
+use App\Support\Debt\PartnerDebtDisplayBalance;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
 
@@ -140,6 +142,182 @@ class PosCheckoutIdempotencyTest extends TestCase
         $this->assertSame($before['operations'] + 2, $after['operations']);
         $this->assertSame($before['participants'] + 2, $after['participants']);
         $this->assertSame(8, (int) $this->product->fresh()->stock_quantity);
+    }
+
+    public function test_derived_unit_price_and_rounding_discount_persist_the_exact_pos_line_total(): void
+    {
+        $payload = $this->checkoutPayload([
+            'subtotal' => 100000,
+            'total' => 100000,
+            'customer_paid' => 100000,
+            'items' => [[
+                'product_id' => $this->product->id,
+                'quantity' => 3,
+                'price' => 33334,
+                'discount' => 2,
+                'serial_ids' => [],
+            ]],
+        ]);
+
+        $response = $this->postCheckout($payload, 'pos-line-total-'.uniqid());
+
+        $response->assertOk()->assertJsonPath('success', true);
+        $invoice = Invoice::where('code', $response->json('invoice_code'))->firstOrFail();
+        $line = $invoice->items()->sole();
+
+        $this->assertSame(100000.0, (float) $invoice->subtotal);
+        $this->assertSame(100000.0, (float) $invoice->total);
+        $this->assertSame(3, (int) $line->quantity);
+        $this->assertSame(33334.0, (float) $line->price);
+        $this->assertSame(2.0, (float) $line->discount);
+        $this->assertSame(100000.0, (float) $line->subtotal);
+        $this->assertSame(7, (int) $this->product->fresh()->stock_quantity);
+    }
+
+    public function test_quick_order_preserves_the_derived_line_total_and_rejects_invalid_discount_before_mutation(): void
+    {
+        $valid = $this->actingAs($this->admin)->postJson('/api/pos/quick-order', [
+            'customer_id' => $this->customer->id,
+            'subtotal' => 100000,
+            'discount' => 0,
+            'total' => 100000,
+            'items' => [[
+                'product_id' => $this->product->id,
+                'quantity' => 3,
+                'price' => 33334,
+                'discount' => 2,
+            ]],
+        ]);
+
+        $valid->assertOk()->assertJsonPath('success', true);
+        $order = Order::where('code', $valid->json('order_code'))->firstOrFail();
+        $line = $order->items()->sole();
+
+        $this->assertSame(33334.0, (float) $line->price);
+        $this->assertSame(2.0, (float) $line->discount);
+        $this->assertSame(100000.0, (float) $line->subtotal);
+        $this->assertSame(10, (int) $this->product->fresh()->stock_quantity);
+
+        $orderCount = Order::count();
+        $invalid = $this->actingAs($this->admin)->postJson('/api/pos/quick-order', [
+            'customer_id' => $this->customer->id,
+            'subtotal' => 0,
+            'discount' => 0,
+            'total' => 0,
+            'items' => [[
+                'product_id' => $this->product->id,
+                'quantity' => 1,
+                'price' => 100000,
+                'discount' => 100001,
+            ]],
+        ]);
+
+        $invalid->assertStatus(422)
+            ->assertJsonPath('message', 'Giảm giá dòng không được vượt thành tiền trước giảm giá.')
+            ->assertJsonValidationErrors('items.0.discount');
+        $this->assertSame($orderCount, Order::count());
+        $this->assertSame(10, (int) $this->product->fresh()->stock_quantity);
+    }
+
+    public function test_pos_customer_picker_lazily_uses_canonical_customer_debt_for_dual_role_partner(): void
+    {
+        $dualRole = Customer::create([
+            'code' => 'KH-POS-DUAL-DEBT-'.uniqid(),
+            'name' => 'Tuấn Béo POS canonical debt',
+            'phone' => '091'.random_int(1000000, 9999999),
+            'is_customer' => true,
+            'is_supplier' => true,
+            'status' => 'active',
+            'debt_amount' => 205000,
+            'supplier_debt_amount' => 205000,
+            'total_spent' => 0,
+            'total_bought' => 0,
+        ]);
+        $snapshotColumns = [
+            'debt_amount', 'supplier_debt_amount', 'is_customer', 'is_supplier',
+            'status', 'merged_into_id', 'updated_at',
+        ];
+        $before = Customer::query()
+            ->whereKey($dualRole->id)
+            ->firstOrFail($snapshotColumns)
+            ->toJson();
+
+        $search = $this->actingAs($this->admin)
+            ->getJson('/api/pos/customers?search='.urlencode($dualRole->code));
+
+        $search->assertOk();
+        $row = collect($search->json())->firstWhere('id', $dualRole->id);
+        $this->assertNotNull($row);
+        $this->assertSame(
+            ['id', 'code', 'name', 'phone', 'customer_group'],
+            array_keys($row)
+        );
+        $this->assertArrayNotHasKey('debt_amount', $row);
+        $this->assertArrayNotHasKey('customer_screen_debt', $row);
+
+        $display = $this->actingAs($this->admin)
+            ->getJson("/api/pos/customers/{$dualRole->id}/debt-display");
+
+        $display->assertOk()
+            ->assertJsonPath('id', $dualRole->id)
+            ->assertJsonPath('is_dual_role_partner', true)
+            ->assertJsonPath('debt_display_contract', 'net_balance');
+        $this->assertSame(0.0, (float) $display->json('customer_screen_debt'));
+        $this->assertSame(
+            PartnerDebtDisplayBalance::customerScreen($dualRole->fresh()),
+            (float) $display->json('customer_screen_debt')
+        );
+        $after = Customer::query()
+            ->whereKey($dualRole->id)
+            ->firstOrFail($snapshotColumns)
+            ->toJson();
+        $this->assertSame($before, $after);
+    }
+
+    public function test_pos_customer_debt_endpoint_rejects_non_customer_inactive_and_merged_partners_without_mutation(): void
+    {
+        $supplierOnly = Customer::create([
+            'code' => 'NCC-POS-DEBT-'.uniqid(),
+            'name' => 'Supplier only POS debt',
+            'is_customer' => false,
+            'is_supplier' => true,
+            'status' => 'active',
+        ]);
+        $inactive = Customer::create([
+            'code' => 'KH-POS-INACTIVE-'.uniqid(),
+            'name' => 'Inactive POS debt',
+            'is_customer' => true,
+            'is_supplier' => false,
+            'status' => 'inactive',
+        ]);
+        $merged = Customer::create([
+            'code' => 'KH-POS-MERGED-'.uniqid(),
+            'name' => 'Merged POS debt',
+            'is_customer' => true,
+            'is_supplier' => false,
+            'status' => 'inactive',
+            'merged_into_id' => $this->customer->id,
+            'merged_at' => now(),
+        ]);
+        $ids = [$supplierOnly->id, $inactive->id, $merged->id];
+        $before = Customer::query()
+            ->whereKey($ids)
+            ->get(['id', 'is_customer', 'is_supplier', 'status', 'merged_into_id', 'debt_amount', 'supplier_debt_amount', 'updated_at'])
+            ->keyBy('id')
+            ->toArray();
+
+        foreach ($ids as $id) {
+            $this->actingAs($this->admin)
+                ->getJson("/api/pos/customers/{$id}/debt-display")
+                ->assertNotFound();
+        }
+
+        $after = Customer::query()
+            ->whereKey($ids)
+            ->get(['id', 'is_customer', 'is_supplier', 'status', 'merged_into_id', 'debt_amount', 'supplier_debt_amount', 'updated_at'])
+            ->keyBy('id')
+            ->toArray();
+        $this->assertSame($before, $after);
     }
 
     private function checkoutPayload(array $overrides = []): array

@@ -9,6 +9,13 @@ import DateTimePicker from '@/Components/DateTimePicker.vue';
 import MoneyInput from '@/Components/MoneyInput.vue';
 import { toDatetimeLocalValue } from '@/utils/dateTime.js';
 import {
+    preparePurchaseLinePricing,
+    purchaseLinePricingError,
+    syncPurchaseLineAfterQuantityChange,
+    syncPurchaseLineFromTotal,
+    syncPurchaseLineFromUnitPrice,
+} from '@/utils/purchaseLinePricing.js';
+import {
     POS_DRAFT_SCHEMA_VERSION,
     clearCheckoutAttempt,
     emptyDeliveryState,
@@ -138,7 +145,92 @@ const selectedCustomer = computed({
 });
 const showCustomerDropdown = ref(false);
 const customerSearching = ref(false);
+const customerDebtCache = new Map();
+const customerDebtRequests = new Map();
+const customerDebtVersions = new Map();
+const selectedCustomerDebt = computed(() => Number(selectedCustomer.value?.customer_screen_debt || 0));
+const selectedCustomerDebtLoading = computed(() => Boolean(selectedCustomer.value?.debt_display_loading));
+const selectedCustomerDebtError = computed(() => selectedCustomer.value?.debt_display_error || '');
 let customerTimeout;
+
+const updateCustomerDebtState = (customerId, values) => {
+    tabs.value.forEach((tab) => {
+        if (Number(tab.selectedCustomer?.id) !== Number(customerId)) return;
+
+        // Never display the raw stored receivable. It is only one side of a
+        // dual-role partner and can disagree with the canonical net position.
+        delete tab.selectedCustomer.debt_amount;
+        Object.assign(tab.selectedCustomer, values);
+    });
+};
+
+const invalidateCustomerDebt = (customerId) => {
+    const id = Number(customerId || 0);
+    if (!id) return;
+
+    customerDebtVersions.set(id, (customerDebtVersions.get(id) || 0) + 1);
+    customerDebtCache.delete(id);
+    customerDebtRequests.delete(id);
+};
+
+const hydrateCustomerDebt = async (customer) => {
+    const customerId = Number(customer?.id || 0);
+    if (!customerId) return;
+
+    delete customer.debt_amount;
+
+    const cached = customerDebtCache.get(customerId);
+    if (cached) {
+        updateCustomerDebtState(customerId, cached);
+        return;
+    }
+
+    updateCustomerDebtState(customerId, {
+        debt_display_loading: true,
+        debt_display_error: '',
+    });
+
+    const requestVersion = customerDebtVersions.get(customerId) || 0;
+    let request = customerDebtRequests.get(customerId);
+    if (!request) {
+        request = axios
+            .get(`/api/pos/customers/${encodeURIComponent(customerId)}/debt-display`)
+            .then((response) => response.data);
+        customerDebtRequests.set(customerId, request);
+    }
+
+    try {
+        const data = await request;
+        if ((customerDebtVersions.get(customerId) || 0) !== requestVersion) return;
+
+        const canonicalDebt = Number(data.customer_screen_debt ?? data.customer_display_balance ?? 0);
+        const display = {
+            customer_screen_debt: canonicalDebt,
+            customer_display_balance: canonicalDebt,
+            is_dual_role_partner: Boolean(data.is_dual_role_partner ?? data.is_dual_role),
+            debt_display_contract: data.debt_display_contract || '',
+            debt_display_loading: false,
+            debt_display_error: '',
+        };
+
+        customerDebtCache.set(customerId, display);
+        updateCustomerDebtState(customerId, display);
+    } catch (error) {
+        if ((customerDebtVersions.get(customerId) || 0) !== requestVersion) return;
+
+        console.error('Unable to load canonical customer debt for POS', error);
+        updateCustomerDebtState(customerId, {
+            customer_screen_debt: null,
+            customer_display_balance: null,
+            debt_display_loading: false,
+            debt_display_error: 'Không tải được công nợ',
+        });
+    } finally {
+        if (customerDebtRequests.get(customerId) === request) {
+            customerDebtRequests.delete(customerId);
+        }
+    }
+};
 
 // Tab management
 const addTab = (type = 'sale') => {
@@ -332,7 +424,7 @@ const checkAndHydrateOrderFromUrl = async () => {
                     if (item.has_serial) {
                         loadSerialsForProduct(cartItem);
                     }
-                    return cartItem;
+                    return preparePurchaseLinePricing(cartItem);
                 });
 
                 // Default pay additional: remaining debt (or 0 if negative)
@@ -394,6 +486,10 @@ watch(() => saleMode.value, (newMode) => {
 });
 
 watch(() => selectedCustomer.value, (customer) => {
+    if (customer) {
+        hydrateCustomerDebt(customer);
+    }
+
     if (customer && activeTab.value && activeTab.value.delivery) {
         const d = activeTab.value.delivery;
         if (!d.receiver_name) d.receiver_name = customer.name || '';
@@ -412,6 +508,7 @@ onMounted(() => {
 });
 onUnmounted(() => {
     clearInterval(timeInterval);
+    clearTimeout(customerTimeout);
 });
 
 const searchCustomers = async () => {
@@ -497,6 +594,7 @@ const selectSerialForItem = (item, serialObj) => {
         if (!activeTab.value || activeTab.value.mode !== 'process_order') {
             item.quantity = item.serials.length;
             syncQuantityInput(item);
+            syncPurchaseLineAfterQuantityChange(item);
         }
         normalizeExchangeLineDiscount(item);
     }
@@ -523,6 +621,7 @@ const removeSerialFromItem = (item, idx) => {
     if (!activeTab.value || activeTab.value.mode !== 'process_order') {
         item.quantity = item.serials.length;
         syncQuantityInput(item);
+        syncPurchaseLineAfterQuantityChange(item);
     }
     normalizeExchangeLineDiscount(item);
     searchSerialsForItem(item);
@@ -541,6 +640,7 @@ const selectAllSerialsForItem = (item) => {
     if (!activeTab.value || activeTab.value.mode !== 'process_order') {
         item.quantity = item.serials.length;
         syncQuantityInput(item);
+        syncPurchaseLineAfterQuantityChange(item);
     }
     normalizeExchangeLineDiscount(item);
     item.serialInput = '';
@@ -553,6 +653,7 @@ const deselectAllSerialsForItem = (item) => {
     if (!activeTab.value || activeTab.value.mode !== 'process_order') {
         item.quantity = 0;
         syncQuantityInput(item);
+        syncPurchaseLineAfterQuantityChange(item);
     }
     normalizeExchangeLineDiscount(item);
     searchSerialsForItem(item);
@@ -590,11 +691,19 @@ const loadDraft = () => {
                         ...createNewTab(sanitizedTab.type || 'sale'),
                         ...sanitizedTab,
                         cart: (sanitizedTab.cart || []).map(i => {
-                            i.quantityInput = String(i.quantity ?? '');
-                            if (i.is_serial_product) {
-                                return { ...i, showSerialDropdown: false, serialLoading: false, availableSerials: i.allAvailableSerials || [] };
+                            const restoredItem = {
+                                ...i,
+                                quantityInput: String(i.quantity ?? ''),
+                            };
+                            if (restoredItem.is_serial_product) {
+                                Object.assign(restoredItem, {
+                                    showSerialDropdown: false,
+                                    serialLoading: false,
+                                    availableSerials: restoredItem.allAvailableSerials || [],
+                                });
                             }
-                            return i;
+
+                            return preparePurchaseLinePricing(restoredItem);
                         })
                     };
                 });
@@ -665,7 +774,7 @@ const addToCart = (product) => {
     if (product.has_serial) {
         const existingGroup = cart.value.find(item => item.product.id === product.id && item.is_serial_product);
         if (!existingGroup) {
-            const newItem = {
+            const newItem = preparePurchaseLinePricing({
                 product: product,
                 quantity: 0,
                 quantityInput: '0',
@@ -678,7 +787,7 @@ const addToCart = (product) => {
                 allAvailableSerials: [],
                 availableSerials: [],
                 serialLoading: false,
-            };
+            });
             cart.value.unshift(newItem);
             loadSerialsForProduct(newItem);
         } else {
@@ -693,14 +802,14 @@ const addToCart = (product) => {
     if (existingItem) {
         setCartQuantity(existingItem, (Number(existingItem.quantity) || 0) + 1);
     } else {
-        cart.value.unshift({
+        cart.value.unshift(preparePurchaseLinePricing({
             product: product,
             quantity: 1,
             quantityInput: '1',
             price: product.retail_price,
             discount: 0,
             is_serial_product: false,
-        });
+        }));
     }
 };
 
@@ -815,6 +924,33 @@ const setCartQuantity = (item, qty, options = {}) => {
 
     item.quantity = qty;
     syncQuantityInput(item);
+    syncPurchaseLineAfterQuantityChange(item);
+    return true;
+};
+
+const onCartUnitPriceInput = (item, value) => {
+    item.price = value;
+    syncPurchaseLineFromUnitPrice(item);
+};
+
+const onCartDiscountInput = (item, value) => {
+    item.discount = value;
+    syncPurchaseLineFromUnitPrice(item, 'quantity', { discountWasEdited: true });
+};
+
+const onCartLineTotalInput = (item, value) => {
+    syncPurchaseLineFromTotal(item, value);
+};
+
+const validateCartLinePricingForSubmit = () => {
+    for (const item of cart.value) {
+        item.line_total_error = purchaseLinePricingError(item);
+        if (item.line_total_error) {
+            alert(`${item.product?.name || 'Hàng hóa'}: ${item.line_total_error}`);
+            return false;
+        }
+    }
+
     return true;
 };
 
@@ -951,6 +1087,11 @@ const processCheckout = async () => {
             return;
         }
 
+        if (activeTab.value.mode !== 'process_order' && !validateCartLinePricingForSubmit()) {
+            isCheckingOut.value = false;
+            return;
+        }
+
         // Bán từ Đơn đặt hàng (Xử lý đơn hàng qua POS)
         if (activeTab.value.mode === 'process_order') {
             const invalidSerials = cart.value.filter(i => i.is_serial_product && i.serials.length !== i.targetQuantity);
@@ -1021,6 +1162,7 @@ const processCheckout = async () => {
                     product_id: item.product.id,
                     quantity: item.quantity,
                     price: Number(item.price) || 0,
+                    discount: Number(item.discount) || 0,
                 }))
             };
 
@@ -1093,6 +1235,8 @@ const resetAfterCheckout = (completedTab) => {
     const completedTabIndex = tabs.value.indexOf(completedTab);
     if (completedTabIndex === -1) return;
 
+    const completedCustomerId = completedTab.selectedCustomer?.id;
+    invalidateCustomerDebt(completedCustomerId);
     resetSaleTabAfterSuccess(completedTab);
     if (tabs.value.length > 1) {
         activeTabIndex.value = removeCompletedSaleTab(
@@ -1104,6 +1248,9 @@ const resetAfterCheckout = (completedTab) => {
     saleDate.value = toDatetimeLocalValue(new Date());
     saveDraft();
     searchProducts();
+    if (Number(selectedCustomer.value?.id) === Number(completedCustomerId)) {
+        hydrateCustomerDebt(selectedCustomer.value);
+    }
 };
 
 const handleCheckoutSuccess = (message, completedTab) => {
@@ -1781,6 +1928,7 @@ const submitReturnTab = async (tab) => {
                 { headers: { "Idempotency-Key": rs.idempotencyKey } },
             );
         const created = res.data?.return || res.data;
+        invalidateCustomerDebt(rs.sourceInvoice.customer_id);
         if (hasExchange) {
             const invoice = res.data?.exchange_invoice;
             rs.successResult = {
@@ -2041,14 +2189,38 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                             </template>
                         </div>
                         <div class="col-span-2 text-right">
-                            <MoneyInput v-model="item.price" :min="0" :disabled="activeTab.mode === 'process_order'" input-class="w-full text-right outline-none bg-transparent border-b border-dashed border-gray-300 focus:border-blue-500 py-1 font-semibold text-gray-700 disabled:border-none disabled:bg-transparent" />
+                            <MoneyInput
+                                v-model="item.price"
+                                :min="0"
+                                :disabled="activeTab.mode === 'process_order'"
+                                @update:model-value="value => onCartUnitPriceInput(item, value)"
+                                input-class="w-full text-right outline-none bg-transparent border-b border-dashed border-gray-300 focus:border-blue-500 py-1 font-semibold text-gray-700 disabled:border-none disabled:bg-transparent"
+                            />
                         </div>
                         <div class="col-span-2 text-right">
-                            <div class="font-bold text-gray-900 text-[15px]">{{ formatCurrency(Number(item.price * item.quantity - (item.discount || 0)) || 0) }}</div>
+                            <MoneyInput
+                                v-model="item.line_total"
+                                :min="0"
+                                :disabled="activeTab.mode === 'process_order' || Number(item.quantity) <= 0"
+                                @update:model-value="value => onCartLineTotalInput(item, value)"
+                                input-class="w-full text-right outline-none bg-transparent border-b border-dashed border-gray-300 focus:border-blue-500 py-1 font-bold text-gray-900 text-[15px] disabled:border-none disabled:bg-transparent disabled:text-gray-500"
+                                :title="Number(item.quantity) > 0 ? 'Nhập thành tiền để tự tính đơn giá' : 'Nhập số lượng hoặc chọn Serial/IMEI trước'"
+                            />
                             <div class="flex items-center justify-end gap-1 mt-0.5">
                                 <span class="text-[10px] text-gray-400">CK:</span>
-                                <MoneyInput v-model="item.discount" :min="0" :disabled="activeTab.mode === 'process_order'" input-class="w-16 text-right text-[11px] outline-none bg-transparent border-b border-dashed border-gray-300 focus:border-blue-500 py-0 text-gray-500 disabled:border-none disabled:bg-transparent" placeholder="0" />
+                                <MoneyInput
+                                    v-model="item.discount"
+                                    :min="0"
+                                    :disabled="activeTab.mode === 'process_order'"
+                                    @update:model-value="value => onCartDiscountInput(item, value)"
+                                    input-class="w-16 text-right text-[11px] outline-none bg-transparent border-b border-dashed border-gray-300 focus:border-blue-500 py-0 text-gray-500 disabled:border-none disabled:bg-transparent"
+                                    placeholder="0"
+                                />
                             </div>
+                            <p v-if="item.line_total_rounding_discount > 0" class="mt-1 text-[10px] text-amber-600" title="Phần lẻ được cộng vào giảm giá dòng để tổng tiền lưu chính xác">
+                                Làm tròn {{ formatCurrency(item.line_total_rounding_discount) }}
+                            </p>
+                            <p v-if="item.line_total_error" class="mt-1 text-[10px] text-red-600">{{ item.line_total_error }}</p>
                         </div>
                         <div class="col-span-1 flex justify-center">
                             <button v-if="activeTab.mode !== 'process_order'" @click="removeFromCart(index)" class="text-gray-400 hover:text-red-500 hover:bg-red-50 p-2 rounded-full transition-colors">
@@ -2098,7 +2270,9 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                                 <div class="font-bold text-sm text-blue-800 truncate">{{ selectedCustomer.name }}</div>
                                 <div class="text-xs text-blue-600">
                                     {{ selectedCustomer.phone || 'Chưa có SĐT' }}
-                                    <span v-if="selectedCustomer.debt_amount > 0" class="text-red-500 ml-1">| Nợ: {{ formatCurrency(selectedCustomer.debt_amount || 0) }}</span>
+                                    <span v-if="selectedCustomerDebtLoading" class="text-gray-500 ml-1">| Đang tải nợ...</span>
+                                    <span v-else-if="selectedCustomerDebtError" class="text-amber-600 ml-1">| {{ selectedCustomerDebtError }}</span>
+                                    <span v-else-if="selectedCustomerDebt > 0" class="text-red-500 ml-1">| Nợ: {{ formatCurrency(selectedCustomerDebt) }}</span>
                                 </div>
                             </div>
                         </div>
@@ -2134,7 +2308,6 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                                         <div class="font-semibold text-sm text-gray-800">{{ c.name }}</div>
                                         <div class="text-xs text-gray-500">{{ c.code }} | {{ c.phone || '—' }}</div>
                                     </div>
-                                    <div v-if="c.debt_amount > 0" class="text-xs text-red-500 font-semibold">Nợ: {{ formatCurrency(c.debt_amount || 0) }}</div>
                                 </div>
                             </div>
                         </div>
