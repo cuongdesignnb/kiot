@@ -2,14 +2,14 @@
 
 namespace Tests\Feature\Customers;
 
-use App\Models\Customer;
-use App\Models\User;
-use App\Models\Invoice;
-use App\Models\Purchase;
 use App\Models\CashFlow;
+use App\Models\Customer;
 use App\Models\CustomerDebt;
 use App\Models\CustomerPaymentDiscount;
 use App\Models\CustomerPaymentDiscountAllocation;
+use App\Models\Invoice;
+use App\Models\Purchase;
+use App\Models\User;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
 
@@ -18,6 +18,7 @@ class CustomerDebtVoucherDetailTest extends TestCase
     use DatabaseTransactions;
 
     private User $admin;
+
     private Customer $customer;
 
     protected function setUp(): void
@@ -26,15 +27,15 @@ class CustomerDebtVoucherDetailTest extends TestCase
 
         $this->admin = User::create([
             'name' => 'Admin Test Voucher',
-            'email' => 'admin-voucher-' . uniqid() . '@test.local',
+            'email' => 'admin-voucher-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
             'role_id' => null, // role_id null represents superadmin/admin in this repo
         ]);
 
         $this->customer = Customer::create([
-            'code' => 'KH-VOUCHER-' . uniqid(),
+            'code' => 'KH-VOUCHER-'.uniqid(),
             'name' => 'Khách hàng test voucher',
-            'phone' => '090' . rand(1000000, 9999999),
+            'phone' => '090'.rand(1000000, 9999999),
             'debt_amount' => 100000,
             'is_customer' => true,
         ]);
@@ -46,7 +47,7 @@ class CustomerDebtVoucherDetailTest extends TestCase
     public function test_can_view_invoice_directly_associated_to_customer(): void
     {
         $invoice = Invoice::create([
-            'code' => 'HD' . rand(1000, 9999),
+            'code' => 'HD'.rand(1000, 9999),
             'customer_id' => $this->customer->id,
             'total' => 500000,
             'customer_paid' => 200000,
@@ -54,6 +55,7 @@ class CustomerDebtVoucherDetailTest extends TestCase
             'subtotal' => 500000,
             'discount' => 0,
             'payment_method' => 'Tiền mặt',
+            'note' => 'Ghi chú hóa đơn kiểm thử',
         ]);
 
         $resp = $this->actingAs($this->admin)
@@ -66,6 +68,7 @@ class CustomerDebtVoucherDetailTest extends TestCase
         $resp->assertJsonPath('data.total', '500000.00');
         $resp->assertJsonPath('data.customer_paid', '200000.00');
         $resp->assertJsonPath('data.debt_amount', 300000);
+        $resp->assertJsonPath('data.note', 'Ghi chú hóa đơn kiểm thử');
     }
 
     /**
@@ -74,15 +77,15 @@ class CustomerDebtVoucherDetailTest extends TestCase
     public function test_can_view_invoice_associated_via_ledger(): void
     {
         $otherCustomer = Customer::create([
-            'code' => 'KH-OTHER-' . uniqid(),
+            'code' => 'KH-OTHER-'.uniqid(),
             'name' => 'Khách hàng khác',
-            'phone' => '090' . rand(1000000, 9999999),
+            'phone' => '090'.rand(1000000, 9999999),
             'debt_amount' => 0,
             'is_customer' => true,
         ]);
 
         $invoice = Invoice::create([
-            'code' => 'HD' . rand(1000, 9999),
+            'code' => 'HD'.rand(1000, 9999),
             'customer_id' => $otherCustomer->id, // not this customer
             'total' => 300000,
             'customer_paid' => 100000,
@@ -116,15 +119,15 @@ class CustomerDebtVoucherDetailTest extends TestCase
     public function test_cannot_view_invoice_belonging_to_another_customer(): void
     {
         $otherCustomer = Customer::create([
-            'code' => 'KH-OTHER-' . uniqid(),
+            'code' => 'KH-OTHER-'.uniqid(),
             'name' => 'Khách hàng khác',
-            'phone' => '090' . rand(1000000, 9999999),
+            'phone' => '090'.rand(1000000, 9999999),
             'debt_amount' => 0,
             'is_customer' => true,
         ]);
 
         $invoice = Invoice::create([
-            'code' => 'HD' . rand(1000, 9999),
+            'code' => 'HD'.rand(1000, 9999),
             'customer_id' => $otherCustomer->id,
             'total' => 300000,
             'customer_paid' => 100000,
@@ -145,12 +148,13 @@ class CustomerDebtVoucherDetailTest extends TestCase
     public function test_can_view_purchase_directly_associated_to_supplier(): void
     {
         $purchase = Purchase::create([
-            'code' => 'PN' . rand(1000, 9999),
+            'code' => 'PN'.rand(1000, 9999),
             'supplier_id' => $this->customer->id, // customer role can also act as supplier
             'total_amount' => 800000,
             'paid_amount' => 300000,
             'debt_amount' => 500005, // test using different number to ensure it parses decimal correctly
             'status' => 'completed',
+            'note' => 'Ghi chú phiếu nhập kiểm thử',
         ]);
 
         $resp = $this->actingAs($this->admin)
@@ -163,6 +167,7 @@ class CustomerDebtVoucherDetailTest extends TestCase
         $resp->assertJsonPath('data.total_amount', '800000.00');
         $resp->assertJsonPath('data.paid_amount', '300000.00');
         $resp->assertJsonPath('data.debt_amount', '500005.00');
+        $resp->assertJsonPath('data.note', 'Ghi chú phiếu nhập kiểm thử');
     }
 
     /**
@@ -171,15 +176,15 @@ class CustomerDebtVoucherDetailTest extends TestCase
     public function test_cannot_view_purchase_belonging_to_another_supplier(): void
     {
         $otherSupplier = Customer::create([
-            'code' => 'KH-SUP-' . uniqid(),
+            'code' => 'KH-SUP-'.uniqid(),
             'name' => 'Nhà cung cấp khác',
-            'phone' => '090' . rand(1000000, 9999999),
+            'phone' => '090'.rand(1000000, 9999999),
             'debt_amount' => 0,
             'is_supplier' => true,
         ]);
 
         $purchase = Purchase::create([
-            'code' => 'PN' . rand(1000, 9999),
+            'code' => 'PN'.rand(1000, 9999),
             'supplier_id' => $otherSupplier->id,
             'total_amount' => 800000,
             'paid_amount' => 300000,
@@ -200,13 +205,14 @@ class CustomerDebtVoucherDetailTest extends TestCase
     public function test_can_view_cash_flow_belonging_to_customer(): void
     {
         $cashFlow = CashFlow::create([
-            'code' => 'PT' . rand(1000, 9999),
+            'code' => 'PT'.rand(1000, 9999),
             'type' => 'receipt', // valid enum in database
             'amount' => 150000,
             'target_type' => 'Khách hàng',
             'target_id' => $this->customer->id,
             'target_name' => $this->customer->name,
             'status' => 'completed',
+            'description' => 'Ghi chú phiếu thu kiểm thử',
         ]);
 
         $resp = $this->actingAs($this->admin)
@@ -217,6 +223,7 @@ class CustomerDebtVoucherDetailTest extends TestCase
         $resp->assertJsonPath('type', 'cashflow');
         $resp->assertJsonPath('code', $cashFlow->code);
         $resp->assertJsonPath('data.amount', '150000.00');
+        $resp->assertJsonPath('data.note', 'Ghi chú phiếu thu kiểm thử');
     }
 
     /**
@@ -225,15 +232,15 @@ class CustomerDebtVoucherDetailTest extends TestCase
     public function test_cannot_view_cash_flow_belonging_to_another_customer(): void
     {
         $otherCustomer = Customer::create([
-            'code' => 'KH-OTHER-' . uniqid(),
+            'code' => 'KH-OTHER-'.uniqid(),
             'name' => 'Khách hàng khác',
-            'phone' => '090' . rand(1000000, 9999999),
+            'phone' => '090'.rand(1000000, 9999999),
             'debt_amount' => 0,
             'is_customer' => true,
         ]);
 
         $cashFlow = CashFlow::create([
-            'code' => 'PT' . rand(1000, 9999),
+            'code' => 'PT'.rand(1000, 9999),
             'type' => 'receipt', // valid enum in database
             'amount' => 150000,
             'target_type' => 'Khách hàng',
@@ -255,16 +262,17 @@ class CustomerDebtVoucherDetailTest extends TestCase
     public function test_can_view_payment_discount_and_allocations(): void
     {
         $discount = CustomerPaymentDiscount::create([
-            'code' => 'CKTT' . rand(1000, 9999),
+            'code' => 'CKTT'.rand(1000, 9999),
             'customer_id' => $this->customer->id,
             'amount' => 50000,
             'discount_at' => now(),
             'allocate_to_invoices' => true,
             'status' => 'active',
+            'note' => 'Ghi chú chiết khấu kiểm thử',
         ]);
 
         $invoice = Invoice::create([
-            'code' => 'HD' . rand(1000, 9999),
+            'code' => 'HD'.rand(1000, 9999),
             'customer_id' => $this->customer->id,
             'total' => 200000,
             'customer_paid' => 100000,
@@ -289,6 +297,7 @@ class CustomerDebtVoucherDetailTest extends TestCase
         $resp->assertJsonCount(1, 'data.allocations');
         $resp->assertJsonPath('data.allocations.0.invoice_code', $invoice->code);
         $resp->assertJsonPath('data.allocations.0.amount', '50000.00');
+        $resp->assertJsonPath('data.note', 'Ghi chú chiết khấu kiểm thử');
     }
 
     /**
@@ -296,7 +305,7 @@ class CustomerDebtVoucherDetailTest extends TestCase
      */
     public function test_can_view_ledger_merge_records(): void
     {
-        $mergeCode = 'MERGE-CUSTOMER-' . rand(1000, 9999);
+        $mergeCode = 'MERGE-CUSTOMER-'.rand(1000, 9999);
         CustomerDebt::create([
             'customer_id' => $this->customer->id,
             'ref_code' => $mergeCode,
@@ -325,7 +334,7 @@ class CustomerDebtVoucherDetailTest extends TestCase
     public function test_viewing_voucher_detail_has_no_database_side_effects(): void
     {
         $invoice = Invoice::create([
-            'code' => 'HD' . rand(1000, 9999),
+            'code' => 'HD'.rand(1000, 9999),
             'customer_id' => $this->customer->id,
             'total' => 500000,
             'customer_paid' => 200000,
@@ -354,7 +363,7 @@ class CustomerDebtVoucherDetailTest extends TestCase
     public function test_tthd_fallback_voucher_detail(): void
     {
         $invoice = Invoice::create([
-            'code' => 'HD' . rand(1000, 9999),
+            'code' => 'HD'.rand(1000, 9999),
             'customer_id' => $this->customer->id,
             'total' => 500000,
             'customer_paid' => 200000,
@@ -362,9 +371,10 @@ class CustomerDebtVoucherDetailTest extends TestCase
             'subtotal' => 500000,
             'discount' => 0,
             'payment_method' => 'Tiền mặt',
+            'note' => 'Ghi chú hóa đơn thanh toán tự động',
         ]);
 
-        $tthdCode = 'TTHD' . substr($invoice->code, 2);
+        $tthdCode = 'TTHD'.substr($invoice->code, 2);
 
         $resp = $this->actingAs($this->admin)
             ->getJson("/customers/{$this->customer->id}/debt-voucher-detail?code={$tthdCode}");
@@ -376,6 +386,7 @@ class CustomerDebtVoucherDetailTest extends TestCase
         $resp->assertJsonPath('code', $tthdCode);
         $resp->assertJsonPath('data.amount', 200000);
         $resp->assertJsonPath('data.status', 'completed');
+        $resp->assertJsonPath('data.note', 'Ghi chú hóa đơn thanh toán tự động');
         $resp->assertJsonPath('data.created_at', $invoice->created_at ? $invoice->created_at->format('d/m/Y H:i') : '');
     }
 

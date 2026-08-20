@@ -4133,8 +4133,7 @@ const createdDateRange = computed({
                     </div>
                     <!-- Note & actions -->
                     <div class="px-6 py-3 border-t flex items-center justify-between">
-                        <div v-if="invoiceDetail.data.note" class="text-sm text-gray-500"><span class="font-medium">Ghi chú:</span> {{ invoiceDetail.data.note }}</div>
-                        <div v-else></div>
+                        <div class="text-sm text-gray-500"><span class="font-medium">Ghi chú:</span> {{ invoiceDetail.data.note || '—' }}</div>
                         <a :href="`/invoices/${invoiceDetail.data.id}/print`" target="_blank" class="px-4 py-2 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700">In hóa đơn</a>
                     </div>
                 </template>
@@ -4169,10 +4168,10 @@ const createdDateRange = computed({
                         <div>{{ cbDetailModal.offset.user_name || 'Admin' }}</div>
                     </div>
                     <div class="flex items-start">
-                        <label class="w-40 text-sm text-gray-600 pt-1">Mô tả</label>
+                        <label class="w-40 text-sm text-gray-600 pt-1">Ghi chú</label>
                         <div class="flex-1 text-sm text-gray-700 bg-gray-50 rounded p-2">
                             <span class="text-gray-400">✏</span>
-                            {{ cbDetailModal.offset.note || `Cấn bằng công nợ KH↔NCC` }}
+                            {{ cbDetailModal.offset.note || '—' }}
                         </div>
                     </div>
                 </div>
@@ -4246,10 +4245,10 @@ const createdDateRange = computed({
                                 <div><span class="text-gray-500">Phương thức:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.payment_method || '-' }}</span></div>
                             </div>
 
-                            <!-- Note if exists -->
-                            <div v-if="debtVoucherDetailModal.data.note" class="bg-blue-50/50 text-blue-800 p-3 rounded text-xs border border-blue-100 flex items-start gap-1.5">
+                            <!-- Voucher note -->
+                            <div class="bg-blue-50/50 text-blue-800 p-3 rounded text-xs border border-blue-100 flex items-start gap-1.5">
                                 <span class="text-blue-500">✏️</span>
-                                <div><span class="font-bold">Ghi chú:</span> {{ debtVoucherDetailModal.data.note }}</div>
+                                <div><span class="font-bold">Ghi chú:</span> {{ debtVoucherDetailModal.data.note || '—' }}</div>
                             </div>
 
                             <!-- Items Table -->
@@ -4323,10 +4322,10 @@ const createdDateRange = computed({
                                 <div><span class="text-gray-500">Thanh toán:</span> <span class="font-medium text-gray-800 ml-1">{{ debtVoucherDetailModal.data.payment_method || '-' }}</span></div>
                             </div>
 
-                            <!-- Note if exists -->
-                            <div v-if="debtVoucherDetailModal.data.note" class="bg-blue-50/50 text-blue-800 p-3 rounded text-xs border border-blue-100 flex items-start gap-1.5">
+                            <!-- Voucher note -->
+                            <div class="bg-blue-50/50 text-blue-800 p-3 rounded text-xs border border-blue-100 flex items-start gap-1.5">
                                 <span class="text-blue-500">✏️</span>
-                                <div><span class="font-bold">Ghi chú:</span> {{ debtVoucherDetailModal.data.note }}</div>
+                                <div><span class="font-bold">Ghi chú:</span> {{ debtVoucherDetailModal.data.note || '—' }}</div>
                             </div>
 
                             <!-- Items Table -->
@@ -4423,9 +4422,9 @@ const createdDateRange = computed({
                                 </div>
                             </div>
 
-                            <div v-if="debtVoucherDetailModal.data.description" class="bg-blue-50/50 text-blue-800 p-4 rounded text-xs border border-blue-100 flex items-start gap-1.5">
+                            <div class="bg-blue-50/50 text-blue-800 p-4 rounded text-xs border border-blue-100 flex items-start gap-1.5">
                                 <span class="text-blue-500">✏️</span>
-                                <div><span class="font-bold">Ghi chú/Mô tả:</span> {{ debtVoucherDetailModal.data.description }}</div>
+                                <div><span class="font-bold">Ghi chú:</span> {{ debtVoucherDetailModal.data.note || debtVoucherDetailModal.data.description || '—' }}</div>
                             </div>
                         </div>
 
@@ -4447,9 +4446,9 @@ const createdDateRange = computed({
                             </div>
 
                             <!-- Note -->
-                            <div v-if="debtVoucherDetailModal.data.note" class="bg-blue-50/50 text-blue-800 p-3 rounded text-xs border border-blue-100 flex items-start gap-1.5">
+                            <div class="bg-blue-50/50 text-blue-800 p-3 rounded text-xs border border-blue-100 flex items-start gap-1.5">
                                 <span class="text-blue-500">✏️</span>
-                                <div><span class="font-bold">Ghi chú:</span> {{ debtVoucherDetailModal.data.note }}</div>
+                                <div><span class="font-bold">Ghi chú:</span> {{ debtVoucherDetailModal.data.note || '—' }}</div>
                             </div>
 
                             <!-- Allocations -->
@@ -4507,7 +4506,7 @@ const createdDateRange = computed({
                                                     {{ Number(entry.amount) > 0 ? '+' : '' }}{{ formatCurrency(entry.amount) }}
                                                 </td>
                                                 <td class="px-3 py-2 text-right font-semibold text-gray-800">{{ formatCurrency(entry.debt_total) }}</td>
-                                                <td class="px-3 py-2 text-gray-600">{{ entry.note || '-' }}</td>
+                                                <td class="px-3 py-2 text-gray-600">{{ entry.note || '—' }}</td>
                                             </tr>
                                         </tbody>
                                     </table>
@@ -4602,7 +4601,7 @@ const createdDateRange = computed({
                         <h3 class="text-sm font-semibold text-gray-700 mb-2">Thông tin xuất file</h3>
                         <div class="bg-gray-50 border border-gray-200 rounded px-3 py-2 text-xs text-gray-600 mb-3">
                             <span class="font-semibold text-gray-700">Tổng quan luôn có:</span>
-                            Thời gian, Mã chứng từ, Loại, Giá trị, Nợ hiện tại/Công nợ.
+                            Thời gian, Mã chứng từ, Loại, Giá trị, Nợ hiện tại/Công nợ, Ghi chú.
                         </div>
                         <label class="flex items-center gap-2 mb-2 cursor-pointer">
                             <input type="checkbox" v-model="customerDebtExportForm.include_detail" class="rounded" />

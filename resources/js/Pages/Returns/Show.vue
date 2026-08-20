@@ -159,8 +159,8 @@ const saveSalesAttribution = () => {
                         </div>
                     </div>
                 </div>
-                <div v-if="returnOrder.note" class="mt-3 pt-3 border-t text-sm">
-                    <span class="text-gray-500">Ghi chú:</span> {{ returnOrder.note }}
+                <div class="mt-3 pt-3 border-t text-sm">
+                    <span class="text-gray-500">Ghi chú:</span> {{ returnOrder.note || '—' }}
                 </div>
                 <div v-if="returnOrder.sales_attribution_updated_at" class="mt-3 pt-3 border-t text-sm">
                     <div><span class="text-gray-500">Lý do điều chỉnh doanh số:</span> {{ returnOrder.sales_attribution_reason || '—' }}</div>

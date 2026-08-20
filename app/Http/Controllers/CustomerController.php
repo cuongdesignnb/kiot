@@ -1008,6 +1008,9 @@ class CustomerController extends Controller
         } else {
             $data = app(\App\Services\CustomerDebtDocumentTimelineService::class)->build($customer, $request->all());
         }
+        $sourceEntries = collect($data['entries'] ?? [])
+            ->map(fn ($entry) => is_array($entry) ? $entry : (array) $entry)
+            ->all();
         $data = app(PartnerDebtPublicTimelineService::class)->project($data, 'customer');
         $openingAdjustment = (float) ($data['summary']['hidden_reconciliation_adjustment'] ?? 0);
         // Normalise to a plain array of associative arrays — historically
@@ -1015,6 +1018,8 @@ class CustomerController extends Controller
         $entries = collect($data['entries'] ?? [])
             ->map(fn ($e) => is_array($e) ? $e : (array) $e)
             ->all();
+        $exportDocuments = app(\App\Services\Exports\PartnerDebtExportDocumentResolver::class);
+        $entries = $exportDocuments->attachSourceNotes($entries, $sourceEntries);
 
         $hasQuery = $request->hasAny(['date_preset', 'date_from', 'date_to', 'include_detail', 'columns', 'format']);
 
@@ -1082,9 +1087,11 @@ class CustomerController extends Controller
             })->values()->all();
         }
 
+        $exportDocuments->preload($entries, 'customer');
+
         return \App\Services\CsvService::export(
-            ['Mã chứng từ', 'Loại', 'Giá trị', 'Dư nợ sau GD', 'Ngày'],
-            collect($entries)->map(function ($entry) {
+            ['Mã chứng từ', 'Loại', 'Giá trị', 'Dư nợ sau GD', 'Ngày', 'Ghi chú'],
+            collect($entries)->map(function ($entry) use ($exportDocuments) {
                 $normalized = $this->normalizeCustomerDebtExportEntry(is_array($entry) ? $entry : (array) $entry);
 
                 return [
@@ -1093,6 +1100,7 @@ class CustomerController extends Controller
                     $normalized['amount'],
                     $normalized['balance'],
                     $normalized['time'],
+                    $exportDocuments->contextNote(is_array($entry) ? $entry : (array) $entry),
                 ];
             }),
             "cong_no_kh_{$customer->code}.csv"
@@ -1607,6 +1615,7 @@ class CustomerController extends Controller
                             'bank_account_name' => null,
                             'reference_type' => 'Invoice',
                             'reference_code' => $invoice->code,
+                            'note' => $invoice->note,
                             'description' => 'Thanh toán tự động khi tạo hóa đơn '.$invoice->code,
                             'created_at' => $invoice->created_at ? $invoice->created_at->format('d/m/Y H:i') : '',
                         ],
@@ -1646,6 +1655,7 @@ class CustomerController extends Controller
                 'bank_account_name' => $cashFlow->bankAccount ? ($cashFlow->bankAccount->bank_name.' - '.$cashFlow->bankAccount->account_number) : null,
                 'reference_type' => $cashFlow->reference_type,
                 'reference_code' => $cashFlow->reference_code,
+                'note' => $cashFlow->description,
                 'description' => $cashFlow->description,
                 'status' => $cashFlow->status,
                 'created_at' => $cashFlow->created_at ? $cashFlow->created_at->format('d/m/Y H:i') : '',

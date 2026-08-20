@@ -16,7 +16,7 @@ class SupplierVoucherPresentationTest extends TestCase
         foreach ([
             'Mã phiếu',
             'Trạng thái',
-            'Ngày nhập',
+            'Thời gian giao dịch',
             'Nhà cung cấp',
             'Mã nhà cung cấp',
             'Người tạo',
@@ -25,6 +25,7 @@ class SupplierVoucherPresentationTest extends TestCase
             'Đã thanh toán',
             'Còn phải trả',
             'Phương thức thanh toán',
+            'Ghi chú',
         ] as $label) {
             $this->assertStringContainsString($label, $vue);
         }

@@ -528,6 +528,7 @@ const supplierVoucherDisplayRows = computed(() => {
         { label: 'Đã thanh toán', value: formatVoucherMoney(paidAmount) },
         { label: 'Còn phải trả', value: formatVoucherMoney(debtAmount) },
         { label: 'Phương thức thanh toán', value: formatVoucherPaymentMethod(data.payment_method) },
+        { label: 'Ghi chú', value: emptyText(data.note ?? data.description) },
     ];
 });
 
@@ -1931,8 +1932,7 @@ const submitActivate = (supplier) => {
                     </div>
                     <!-- Note & actions -->
                     <div class="px-6 py-3 border-t flex items-center justify-between">
-                        <div v-if="purchaseDetail.data.note" class="text-sm text-gray-500"><span class="font-medium">Ghi chú:</span> {{ purchaseDetail.data.note }}</div>
-                        <div v-else></div>
+                        <div class="text-sm text-gray-500"><span class="font-medium">Ghi chú:</span> {{ purchaseDetail.data.note || '—' }}</div>
                         <a :href="`/purchases/${purchaseDetail.data.id}`" class="px-4 py-2 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700">Mở phiếu</a>
                     </div>
                 </template>
@@ -2122,7 +2122,7 @@ const submitActivate = (supplier) => {
                         <h3 class="text-sm font-semibold text-gray-700 mb-2">Thông tin xuất file</h3>
                         <div class="bg-gray-50 border border-gray-200 rounded px-3 py-2 text-xs text-gray-600 mb-3">
                             <span class="font-semibold text-gray-700">Tổng quan luôn có:</span>
-                            Thời gian, Mã chứng từ, Loại, Giá trị, Nợ cần trả nhà cung cấp.
+                            Thời gian, Mã chứng từ, Loại, Giá trị, Nợ cần trả nhà cung cấp, Ghi chú.
                         </div>
                         <label class="flex items-center gap-2 mb-2 cursor-pointer">
                             <input type="checkbox" v-model="debtExportForm.include_detail" class="rounded" />

@@ -3,12 +3,16 @@
 namespace App\Services\Exports;
 
 use App\Models\CashFlow;
+use App\Models\CustomerDebt;
+use App\Models\CustomerPaymentDiscount;
+use App\Models\DebtOffset;
 use App\Models\InvoiceItem;
 use App\Models\OrderReturn;
 use App\Models\Purchase;
 use App\Models\PurchaseItem;
 use App\Models\PurchaseReturnItem;
 use App\Models\ReturnItem;
+use App\Models\SupplierDebtTransaction;
 
 /**
  * Resolves canonical debt events to their source document and informational
@@ -38,6 +42,15 @@ class PartnerDebtExportDocumentResolver
 
     /** @var array<int,object> */
     private array $paymentSources = [];
+
+    /** @var array<string,string> */
+    private array $sourceNotes = [];
+
+    /** @var array<string,string> */
+    private array $sourceNotesByCode = [];
+
+    /** @var array<string,int> */
+    private array $sourceNotePrioritiesByCode = [];
 
     /**
      * Resolve a canonical event to an export document identity.
@@ -73,6 +86,43 @@ class PartnerDebtExportDocumentResolver
         }
 
         return $identity;
+    }
+
+    /**
+     * Restore source notes only for an export pipeline after the public
+     * timeline projection has removed presentation metadata. The returned
+     * `_export_note` value is never exposed by the debt timeline API and is
+     * not used by any balance calculation.
+     *
+     * @param  array<int,array<string,mixed>>  $entries
+     * @param  array<int,array<string,mixed>>  $sourceEntries
+     * @return array<int,array<string,mixed>>
+     */
+    public function attachSourceNotes(array $entries, array $sourceEntries): array
+    {
+        $notes = [];
+        foreach ($sourceEntries as $sourceEntry) {
+            $sourceEntry = is_array($sourceEntry) ? $sourceEntry : (array) $sourceEntry;
+            $note = $this->explicitEntryNote($sourceEntry);
+            if ($note === '') {
+                continue;
+            }
+
+            foreach ($this->entryLookupKeys($sourceEntry) as $key) {
+                $notes[$key] = $note;
+            }
+        }
+
+        return array_map(function (array $entry) use ($notes): array {
+            foreach ($this->entryLookupKeys($entry) as $key) {
+                if (isset($notes[$key])) {
+                    $entry['_export_note'] = $notes[$key];
+                    break;
+                }
+            }
+
+            return $entry;
+        }, $entries);
     }
 
     /**
@@ -131,6 +181,8 @@ class PartnerDebtExportDocumentResolver
                 $this->paymentSources[(int) $cashFlow->id] = $cashFlow;
             }
         }
+
+        $this->preloadSourceNotes($entries, $cashFlowIds);
 
         $productWithUnits = static fn ($query) => $query
             ->select(['id', 'sku', 'name'])
@@ -502,39 +554,165 @@ class PartnerDebtExportDocumentResolver
 
     public function contextNote(array $entry): string
     {
-        $parts = [];
+        $identity = $this->resolve($entry);
+        $documentKey = $this->documentKey($identity);
+        if (($identity['is_product_document'] ?? false)
+            && $documentKey !== null
+            && array_key_exists($documentKey, $this->documents)) {
+            return trim((string) ($this->documents[$documentKey]->note ?? ''));
+        }
+
+        $source = $this->sourceNoteForEntry($entry);
+        if ($source !== '') {
+            return $source;
+        }
+
+        $explicit = trim((string) ($entry['_export_note'] ?? $this->explicitEntryNote($entry)));
+        if ($explicit !== '') {
+            return $explicit;
+        }
+
+        $payment = $this->paymentSource($entry);
+
+        return trim((string) ($payment?->description ?? $payment?->note ?? ''));
+    }
+
+    /** @param array<int,array<string,mixed>> $entries */
+    private function preloadSourceNotes(array $entries, array $cashFlowIds): void
+    {
+        $codes = collect($entries)
+            ->flatMap(static fn (array $entry): array => [
+                $entry['code'] ?? null,
+                $entry['detail_reference_code'] ?? null,
+            ])
+            ->filter(static fn ($code): bool => is_string($code) && trim($code) !== '')
+            ->map(static fn (string $code): string => trim($code))
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($cashFlowIds !== [] || $codes !== []) {
+            $cashFlows = CashFlow::withTrashed()
+                ->where(function ($query) use ($cashFlowIds, $codes): void {
+                    if ($cashFlowIds !== []) {
+                        $query->whereIn('id', $cashFlowIds);
+                    }
+                    if ($codes !== []) {
+                        $method = $cashFlowIds !== [] ? 'orWhereIn' : 'whereIn';
+                        $query->{$method}('code', $codes);
+                    }
+                })
+                ->get();
+            foreach ($cashFlows as $cashFlow) {
+                $this->paymentSources[(int) $cashFlow->id] = $cashFlow;
+                $this->storeSourceNote('CashFlow', (int) $cashFlow->id, (string) $cashFlow->code, (string) ($cashFlow->description ?? ''), 40);
+            }
+        }
+
+        if ($codes === []) {
+            return;
+        }
+
+        foreach (CustomerDebt::query()->whereIn('ref_code', $codes)->get() as $debt) {
+            $this->storeSourceNote('CustomerDebt', (int) $debt->id, (string) $debt->ref_code, (string) ($debt->note ?? ''), 70);
+        }
+        foreach (SupplierDebtTransaction::query()->whereIn('code', $codes)->get() as $transaction) {
+            $this->storeSourceNote('SupplierDebtTransaction', (int) $transaction->id, (string) $transaction->code, (string) ($transaction->note ?? ''), 90);
+        }
+        foreach (DebtOffset::query()->whereIn('code', $this->normalizedVoucherCodes($codes))->get() as $offset) {
+            $this->storeSourceNote('DebtOffset', (int) $offset->id, (string) $offset->code, (string) ($offset->note ?? ''), 100);
+        }
+        foreach (CustomerPaymentDiscount::query()->whereIn('code', $codes)->get() as $discount) {
+            $this->storeSourceNote('CustomerPaymentDiscount', (int) $discount->id, (string) $discount->code, (string) ($discount->note ?? ''), 100);
+        }
+    }
+
+    private function storeSourceNote(string $type, int $id, string $code, string $note, int $priority): void
+    {
+        $note = trim($note);
+        if ($note === '') {
+            return;
+        }
+
+        if ($id > 0) {
+            $this->sourceNotes[strtolower($type).':'.$id] = $note;
+        }
+
+        $codeKey = strtolower(trim($code));
+        if ($codeKey === '') {
+            return;
+        }
+
+        if ($priority >= ($this->sourceNotePrioritiesByCode[$codeKey] ?? -1)) {
+            $this->sourceNotesByCode[$codeKey] = $note;
+            $this->sourceNotePrioritiesByCode[$codeKey] = $priority;
+        }
+    }
+
+    private function sourceNoteForEntry(array $entry): string
+    {
+        foreach ([
+            [$entry['reference_type'] ?? null, $entry['reference_id'] ?? null],
+            [$entry['source_type'] ?? null, $entry['source_id'] ?? null],
+            [$entry['detail_type'] ?? null, $entry['detail_id'] ?? null],
+        ] as [$type, $id]) {
+            $type = strtolower(class_basename(trim((string) $type)));
+            $id = $this->normalizeId($id);
+            if ($type !== '' && $id > 0 && isset($this->sourceNotes[$type.':'.$id])) {
+                return $this->sourceNotes[$type.':'.$id];
+            }
+        }
+
+        $code = strtolower(trim((string) ($entry['code'] ?? '')));
+
+        return $code !== '' ? ($this->sourceNotesByCode[$code] ?? '') : '';
+    }
+
+    private function explicitEntryNote(array $entry): string
+    {
         foreach (['note', 'description'] as $key) {
             $value = trim((string) ($entry[$key] ?? ''));
             if ($value !== '') {
-                $parts[] = $value;
-            }
-        }
-        $payment = $this->paymentSource($entry);
-        foreach (['note', 'description'] as $key) {
-            $value = trim((string) ($payment?->{$key} ?? ''));
-            if ($value !== '' && ! in_array($value, $parts, true)) {
-                $parts[] = $value;
-            }
-        }
-        foreach ([
-            'original_cash_flow_amount' => 'Tiền gốc',
-            'non_debt_cash_amount' => 'Tiền không ghi nợ',
-        ] as $key => $label) {
-            if (array_key_exists($key, $entry) && is_numeric($entry[$key])) {
-                $parts[] = $label.': '.number_format((float) $entry[$key], 0, ',', '.');
+                return $value;
             }
         }
 
-        $identity = $this->resolve($entry);
-        $documentKey = $this->documentKey($identity);
-        $documentNote = $documentKey !== null
-            ? trim((string) ($this->documents[$documentKey]->note ?? ''))
-            : '';
-        if ($documentNote !== '' && ! in_array($documentNote, $parts, true)) {
-            $parts[] = $documentNote;
+        return '';
+    }
+
+    /** @return array<int,string> */
+    private function entryLookupKeys(array $entry): array
+    {
+        $keys = [];
+        foreach (['event_identity', 'id'] as $field) {
+            $value = trim((string) ($entry[$field] ?? ''));
+            if ($value !== '') {
+                $keys[] = $field.':'.$value;
+            }
         }
 
-        return implode(' · ', $parts);
+        $code = trim((string) ($entry['code'] ?? ''));
+        if ($code !== '') {
+            $keys[] = 'code:'.strtolower($code).'|'.strtolower((string) ($entry['event_kind'] ?? ''));
+            $keys[] = 'code:'.strtolower($code);
+        }
+
+        return array_values(array_unique($keys));
+    }
+
+    /** @param array<int,string> $codes */
+    private function normalizedVoucherCodes(array $codes): array
+    {
+        return collect($codes)
+            ->flatMap(static fn (string $code): array => [
+                $code,
+                (string) preg_replace('/^(HUY-|CANCEL-)/i', '', $code),
+                str_starts_with($code, 'HCB') ? substr($code, 1) : $code,
+            ])
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
     }
 
     private function paymentSource(array $entry): ?object

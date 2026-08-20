@@ -41,7 +41,7 @@ class SupplierReconciliationCheckpointVisibilityTest extends TestCase
         }
     }
 
-    public function test_checkpoint_is_absorbed_into_excel_opening_without_note_column(): void
+    public function test_checkpoint_is_absorbed_into_excel_opening_with_note_column(): void
     {
         $projected = app(PartnerDebtPublicTimelineService::class)
             ->project($this->timelineFixture(), 'supplier');
@@ -64,9 +64,9 @@ class SupplierReconciliationCheckpointVisibilityTest extends TestCase
             $rows,
         ));
 
-        $this->assertSame('M', $sheet->getHighestColumn());
+        $this->assertSame('N', $sheet->getHighestColumn());
         $this->assertStringNotContainsString('CHECKPOINT-', $text);
-        $this->assertStringNotContainsString('Ghi chú', $text);
+        $this->assertStringContainsString('Ghi chú', $text);
         $this->assertStringContainsString('HUY-PN-SECOND-ORDER', $text);
 
         $cancelRow = collect($rows)->first(fn (array $row): bool => ($row['B'] ?? null) === 'HUY-PN-SECOND-ORDER');
@@ -194,7 +194,7 @@ class SupplierReconciliationCheckpointVisibilityTest extends TestCase
         ));
     }
 
-    public function test_supplier_csv_excludes_checkpoint_and_notes_but_keeps_cancelled_row(): void
+    public function test_supplier_csv_excludes_checkpoint_but_exports_source_notes_and_cancelled_row(): void
     {
         $supplier = Customer::create([
             'code' => 'NCC-CSV-PUBLIC-'.uniqid(),
@@ -223,9 +223,10 @@ class SupplierReconciliationCheckpointVisibilityTest extends TestCase
         $csv = $response->streamedContent() ?: $response->getContent();
         $this->assertStringContainsString('HUY-PN-SECOND-ORDER', $csv);
         $this->assertStringNotContainsString('CHECKPOINT-', $csv);
-        $this->assertStringNotContainsString('Ghi chú', $csv);
-        $this->assertStringNotContainsString('Không xuất ghi chú', $csv);
-        $this->assertStringNotContainsString('Ghi chú nội bộ', $csv);
+        $this->assertStringContainsString('Ghi chú', $csv);
+        $this->assertStringContainsString('Không xuất ghi chú', $csv);
+        $this->assertStringContainsString('Ghi chú nội bộ', $csv);
+        $this->assertStringNotContainsString('Không được đưa ra giao diện', $csv);
     }
 
     private function timelineFixture(): array

@@ -74,8 +74,8 @@ const statusColors = {
                         <div class="font-semibold">{{ invoice.delivery_partner || '---' }}</div>
                     </div>
                 </div>
-                <div v-if="invoice.note" class="mt-3 pt-3 border-t text-sm">
-                    <span class="text-gray-500">Ghi chú:</span> {{ invoice.note }}
+                <div class="mt-3 pt-3 border-t text-sm">
+                    <span class="text-gray-500">Ghi chú:</span> {{ invoice.note || '—' }}
                 </div>
             </div>
 
