@@ -325,6 +325,8 @@ class PosController extends Controller
                 'exchange.items.*.quantity' => 'required|integer|min:1',
                 'exchange.items.*.price' => 'required|numeric|min:0',
                 'exchange.items.*.discount' => 'nullable|numeric|min:0',
+                'exchange.items.*.is_zero_price' => 'nullable|boolean',
+                'exchange.items.*.zero_price_reason' => 'nullable|string|max:255',
                 'exchange.items.*.serial_ids' => 'nullable|array',
                 'exchange.items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
             ], [
