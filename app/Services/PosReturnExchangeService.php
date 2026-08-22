@@ -169,9 +169,10 @@ class PosReturnExchangeService
                     'exchange.items' => 'So luong hang doi phai lon hon 0.',
                 ]);
             }
-            if ($price <= 0) {
+            $zeroPriceReason = trim((string) ($item['zero_price_reason'] ?? ''));
+            if ($price < 0) {
                 throw ValidationException::withMessages([
-                    'exchange.items' => "Đơn giá hàng đổi '{$product->name}' phải lớn hơn 0.",
+                    'exchange.items' => "Đơn giá hàng đổi '{$product->name}' không được âm.",
                 ]);
             }
             $gross = $qty * $price;
@@ -220,6 +221,9 @@ class PosReturnExchangeService
                 'price' => $price,
                 'discount' => $discount,
                 'serial_ids' => $serialIds,
+                'note' => $price === 0.0 && $zeroPriceReason !== ''
+                    ? 'Hàng đổi 0đ: '.$zeroPriceReason
+                    : ($item['note'] ?? null),
             ];
         }
 

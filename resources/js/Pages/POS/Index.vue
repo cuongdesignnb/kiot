@@ -1717,7 +1717,7 @@ const activeExchangeValidationMessage = computed(() => {
         const gross = price * qty;
         const discount = Number(item.discount) || 0;
         if (available <= 0) return `${item.product.name} đã hết tồn kho.`;
-        if (price <= 0) return `Hàng đổi "${item.product.name}" đang có đơn giá 0đ, vui lòng nhập đơn giá.`;
+        if (price < 0) return `Đơn giá hàng đổi "${item.product.name}" không được âm.`;
         if (discount < 0) return `Giảm giá hàng đổi "${item.product.name}" không được âm.`;
         if (discount > gross) return `Giảm giá hàng đổi "${item.product.name}" không được vượt thành tiền dòng.`;
         if (!item.is_serial_product && qty > available) return `${item.product.name} chỉ còn ${available} trong kho.`;
@@ -1918,6 +1918,8 @@ const submitReturnTab = async (tab) => {
                         quantity: item.quantity,
                         price: Number(item.price) || 0,
                         discount: Number(item.discount) || 0,
+                        is_zero_price: (Number(item.price) || 0) === 0,
+                        zero_price_reason: String(item.zero_price_reason || '').trim() || null,
                         serial_ids: item.is_serial_product ? item.serials.map((s) => s.id) : [],
                     })),
                 },
@@ -2834,6 +2836,9 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                                         @update:model-value="() => normalizeExchangeLineDiscount(item)"
                                         input-class="w-full border border-gray-300 rounded px-2 py-1 text-sm text-right"
                                     />
+                                    <div v-if="(Number(item.price) || 0) === 0" class="mt-1 text-right text-[11px] font-medium text-amber-700">
+                                        Hàng 0đ — vẫn xuất kho khi hoàn tất đổi hàng
+                                    </div>
                                 </div>
                                 <div class="col-span-2">
                                     <MoneyInput
