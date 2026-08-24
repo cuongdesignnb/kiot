@@ -27,6 +27,11 @@ class SupplierDebtDomainEventSource
      */
     public function events(Customer $supplier, array $options = []): Collection
     {
+        // `view=partner` was a legacy presentation concern. Passing it into
+        // this evidence source activated a duplicate customer mirror for
+        // dual-role partners. Canonical sources must be domain-only.
+        unset($options['view']);
+
         $payload = $this->build($supplier, array_merge($options, [
             'canonical' => true,
         ]));
@@ -38,7 +43,9 @@ class SupplierDebtDomainEventSource
     {
         $hasSupplierColumn = Schema::hasColumn('customers', 'supplier_debt_amount');
         $isDualRole = $hasSupplierColumn && PartnerDebtDisplayBalance::isDualRole($supplier);
-        $usePartnerTimeline = $isDualRole && (string) ($options['view'] ?? '') === 'partner';
+        // The combined canonical reducer owns dual-role orientation. This
+        // legacy document source must never add a customer-side mirror.
+        $usePartnerTimeline = false;
 
         $entries = collect();
         $purchases = collect();
@@ -319,17 +326,16 @@ class SupplierDebtDomainEventSource
             }
         }
 
-        // 3. Fallback payment from the persisted purchase obligation. The
-        // cash voucher may also contain acquisition costs, which are not
-        // supplier-debt mutations and must not reduce payable a second time.
+        // 3. Legacy fallback is permitted only when this purchase has no
+        // persisted payment evidence at all. A partial real payment is still
+        // authoritative evidence; manufacturing a TTNH remainder would count
+        // the same financial event twice and must instead raise reconciliation.
         foreach ($purchases as $p) {
             $paidAmount = $this->purchasePaymentObligation($p);
             if ($paidAmount > 0) {
                 $coveredAmount = max(0.0, (float) ($realPaymentCoverageByPurchase[$p->code] ?? 0.0));
                 $genericInferredCoveredAmount = max(0.0, (float) ($genericPaymentCoverageByPurchase[$p->code] ?? 0.0));
-                $uncoveredPaidAmount = max(0.0, $paidAmount - $coveredAmount);
-
-                if ($uncoveredPaidAmount > 0.01) {
+                if ($coveredAmount <= 0.01) {
                     $businessTime = $p->purchase_date ?: $p->created_at;
                     $entries->push($this->createEntry([
                         'id' => 'purpay-fallback-'.$p->id,
@@ -337,10 +343,10 @@ class SupplierDebtDomainEventSource
                         'display_type' => 'Thanh toán NCC',
                         'event_kind' => 'supplier_payment_fallback',
                         'domain' => 'supplier',
-                        'document_amount' => $uncoveredPaidAmount,
-                        'amount' => $uncoveredPaidAmount,
-                        'display_effect' => -$uncoveredPaidAmount,
-                        'supplier_display_effect' => -$uncoveredPaidAmount,
+                        'document_amount' => $paidAmount,
+                        'amount' => $paidAmount,
+                        'display_effect' => -$paidAmount,
+                        'supplier_display_effect' => -$paidAmount,
                         'time' => $businessTime,
                         'display_time' => $businessTime,
                         'created_at' => $p->created_at,
@@ -362,7 +368,7 @@ class SupplierDebtDomainEventSource
                         'real_payment_covered_amount' => $coveredAmount,
                         'generic_payment_inferred_covered_amount' => $genericInferredCoveredAmount,
                         'payment_allocation_confidence' => $genericInferredCoveredAmount > 0.01 ? 'inferred' : 'actual_or_direct',
-                        'fallback_uncovered_paid_amount' => $uncoveredPaidAmount,
+                        'fallback_uncovered_paid_amount' => $paidAmount,
                         'document_group_key' => $p->code,
                         'document_group_type' => 'purchase',
                         'document_group_parent_code' => $p->code,

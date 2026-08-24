@@ -27,6 +27,10 @@ class CustomerDebtDomainEventSource
      */
     public function events(Customer $customer, array $options = []): Collection
     {
+        // `view=partner` was part of the retired cross-role mirror path. A
+        // domain evidence source never receives a presentation selector.
+        unset($options['view']);
+
         $payload = $this->build($customer, array_merge($options, [
             'domain_only' => true,
             'canonical' => true,
@@ -39,7 +43,10 @@ class CustomerDebtDomainEventSource
     {
         $hasSupplierColumn = Schema::hasColumn('customers', 'supplier_debt_amount');
         $isDualRole = $hasSupplierColumn && PartnerDebtDisplayBalance::isDualRole($customer);
-        $domainOnly = (bool) ($options['domain_only'] ?? false);
+        // This source is customer-domain evidence only. The canonical reducer
+        // combines it with the supplier-domain source exactly once for
+        // dual-role partners; no caller may re-enable a cross-role mirror.
+        $domainOnly = true;
 
         $entries = collect();
         $purchases = collect();
@@ -275,12 +282,13 @@ class CustomerDebtDomainEventSource
             }
         }
 
-        // 3. Fallback only for the part of invoice.customer_paid that has no
-        // persisted cash-flow allocation. Never count real and fallback twice.
+        // 3. Legacy fallback is permitted only when the invoice has no real
+        // receipt evidence at all. A partial real receipt remains the source
+        // of truth; adding a TTHD remainder would double-count it.
         foreach ($invoices as $invoice) {
             $realAllocated = (float) collect($receiptsByInvoice[$invoice->code] ?? [])->sum('amount');
-            $fallbackAmount = max(0.0, (float) $invoice->customer_paid - $realAllocated);
-            if ($fallbackAmount > 0.01) {
+            $fallbackAmount = (float) $invoice->customer_paid;
+            if ($realAllocated <= 0.01 && $fallbackAmount > 0.01) {
                 $businessTime = $invoice->transaction_date ?: $invoice->created_at;
                 $entries->push($this->createEntry([
                     'id' => 'invpay-fallback-'.$invoice->id,
