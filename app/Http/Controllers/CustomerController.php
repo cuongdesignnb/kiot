@@ -622,7 +622,11 @@ class CustomerController extends Controller
         if ($mode === 'legacy') {
             $ledger = app(\App\Services\PartnerDebtLedgerService::class)->buildCustomerNetLedger($customer);
         } else {
-            $ledger = app(\App\Services\CustomerDebtDocumentTimelineService::class)->build($customer, $request->all());
+            // `view=partner` belonged to the retired cross-role mirror
+            // implementation. It is accepted for backwards-compatible URLs
+            // but must never alter canonical event evidence.
+            $ledger = app(\App\Services\CustomerDebtDocumentTimelineService::class)
+                ->build($customer, $request->except('view'));
         }
 
         $ledger = app(PartnerDebtPublicTimelineService::class)->project($ledger, 'customer');
@@ -1009,7 +1013,8 @@ class CustomerController extends Controller
         if ($mode === 'legacy') {
             $data = app(\App\Services\PartnerDebtLedgerService::class)->buildCustomerNetLedger($customer);
         } else {
-            $data = app(\App\Services\CustomerDebtDocumentTimelineService::class)->build($customer, $request->all());
+            $data = app(\App\Services\CustomerDebtDocumentTimelineService::class)
+                ->build($customer, $request->except('view'));
         }
         $sourceEntries = collect($data['entries'] ?? [])
             ->map(fn ($entry) => is_array($entry) ? $entry : (array) $entry)

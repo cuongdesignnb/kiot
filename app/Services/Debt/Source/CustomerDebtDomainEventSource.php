@@ -27,6 +27,10 @@ class CustomerDebtDomainEventSource
      */
     public function events(Customer $customer, array $options = []): Collection
     {
+        // `view=partner` was part of the retired cross-role mirror path. A
+        // domain evidence source never receives a presentation selector.
+        unset($options['view']);
+
         $payload = $this->build($customer, array_merge($options, [
             'domain_only' => true,
             'canonical' => true,
@@ -39,7 +43,10 @@ class CustomerDebtDomainEventSource
     {
         $hasSupplierColumn = Schema::hasColumn('customers', 'supplier_debt_amount');
         $isDualRole = $hasSupplierColumn && PartnerDebtDisplayBalance::isDualRole($customer);
-        $domainOnly = (bool) ($options['domain_only'] ?? false);
+        // This source is customer-domain evidence only. The canonical reducer
+        // combines it with the supplier-domain source exactly once for
+        // dual-role partners; no caller may re-enable a cross-role mirror.
+        $domainOnly = true;
 
         $entries = collect();
         $purchases = collect();
@@ -49,6 +56,7 @@ class CustomerDebtDomainEventSource
 
         // 1. Invoices
         $invoices = Invoice::where('customer_id', $customer->id)
+            ->with('order')
             ->get()
             ->values();
 
@@ -175,6 +183,29 @@ class CustomerDebtDomainEventSource
             ->reject(fn (CashFlow $cashFlow) => $this->isDebtOffsetEvidenceCashFlow($cashFlow))
             ->values();
 
+        // A historic order deposit is a separate economic payment from the
+        // receipt created when that order becomes an invoice. Some legacy
+        // orders retain the deposit only in orders.amount_paid and the
+        // invoice's order_deposit_applied_amount, with no CashFlow row. Keep
+        // that evidence distinct so a real invoice receipt never causes its
+        // deposit to disappear or become a duplicate TTHD fallback.
+        $orderDepositReceiptCoverageByOrderCode = [];
+        foreach ($receipts as $cashFlow) {
+            if (strcasecmp(trim((string) $cashFlow->reference_type), 'Order') !== 0) {
+                continue;
+            }
+
+            $orderCode = trim((string) $cashFlow->reference_code);
+            if ($orderCode === '') {
+                continue;
+            }
+
+            $coverageKey = strtoupper($orderCode);
+            $orderDepositReceiptCoverageByOrderCode[$coverageKey] =
+                ($orderDepositReceiptCoverageByOrderCode[$coverageKey] ?? 0.0)
+                + (float) $cashFlow->amount;
+        }
+
         // Allocate real receipts first. Legacy DebtPayment vouchers may carry
         // multiple invoice allocations in reference_code (HD...:amount; ...).
         $receiptsByInvoice = [];
@@ -275,12 +306,73 @@ class CustomerDebtDomainEventSource
             }
         }
 
-        // 3. Fallback only for the part of invoice.customer_paid that has no
-        // persisted cash-flow allocation. Never count real and fallback twice.
+        // 3. Legacy fallback is permitted only when the invoice has no real
+        // receipt evidence at all. A partial real receipt remains the source
+        // of truth; adding a TTHD remainder would double-count it. The one
+        // exception is an order deposit applied before the invoice existed:
+        // it is a separate payment event and gets its own evidence below.
         foreach ($invoices as $invoice) {
             $realAllocated = (float) collect($receiptsByInvoice[$invoice->code] ?? [])->sum('amount');
-            $fallbackAmount = max(0.0, (float) $invoice->customer_paid - $realAllocated);
-            if ($fallbackAmount > 0.01) {
+            $invoicePaid = max(0.0, (float) $invoice->customer_paid);
+            $order = $invoice->order;
+            $orderDepositApplied = min(
+                $invoicePaid,
+                max(0.0, (float) ($invoice->order_deposit_applied_amount ?? 0))
+            );
+            $orderCode = trim((string) ($order?->code ?? ''));
+            $orderDepositCovered = $orderCode === ''
+                ? 0.0
+                : max(0.0, (float) ($orderDepositReceiptCoverageByOrderCode[strtoupper($orderCode)] ?? 0.0));
+            $uncoveredOrderDeposit = max(0.0, $orderDepositApplied - $orderDepositCovered);
+
+            if ($uncoveredOrderDeposit > 0.01) {
+                $orderDepositTime = $order?->created_at ?: ($invoice->transaction_date ?: $invoice->created_at);
+                $entries->push($this->createEntry([
+                    'id' => 'order-deposit-fallback-'.$invoice->id,
+                    'code' => $orderCode !== '' ? $orderCode : $invoice->code,
+                    'display_type' => 'Đặt cọc đơn hàng',
+                    'event_kind' => 'order_deposit',
+                    'domain' => 'customer',
+                    'document_amount' => $uncoveredOrderDeposit,
+                    'amount' => $uncoveredOrderDeposit,
+                    'display_effect' => -$uncoveredOrderDeposit,
+                    'customer_display_effect' => -$uncoveredOrderDeposit,
+                    'time' => $orderDepositTime,
+                    'display_time' => $orderDepositTime,
+                    'created_at' => $order?->created_at ?: $invoice->created_at,
+                    'reference_type' => 'Order',
+                    'reference_id' => $order?->id,
+                    'reference_code' => $orderCode ?: $invoice->code,
+                    'parent_document_code' => $invoice->code,
+                    'payment_for_code' => $invoice->code,
+                    'linked_document_code' => $invoice->code,
+                    'linked_document_label' => 'Đặt cọc cho '.$invoice->code,
+                    'is_virtual_fallback' => true,
+                    'is_virtual_payment' => true,
+                    'is_real_voucher' => false,
+                    'detail_available' => false,
+                    'detail_modal_type' => 'none',
+                    'badge_label' => null,
+                    'badge_title' => null,
+                    'source_table' => 'orders',
+                    'source_id' => ($order?->id ?? $invoice->id).':deposit:'.$invoice->id,
+                    'source' => 'legacy_order_deposit',
+                    'legacy_order_deposit' => true,
+                    'order_deposit_applied_amount' => $orderDepositApplied,
+                    'real_order_deposit_covered_amount' => $orderDepositCovered,
+                    'document_group_key' => $invoice->code,
+                    'document_group_type' => 'invoice',
+                    'document_group_parent_code' => $invoice->code,
+                    'document_group_time' => $invoice->transaction_date ?: $invoice->created_at,
+                    'document_group_sequence' => 15,
+                    'sort_group_key' => $invoice->code,
+                    'sort_group_time' => $invoice->transaction_date ?: $invoice->created_at,
+                    'sort_group_sequence' => 15,
+                ]));
+            }
+
+            $fallbackAmount = max(0.0, $invoicePaid - $realAllocated - $orderDepositApplied);
+            if ($realAllocated <= 0.01 && $fallbackAmount > 0.01) {
                 $businessTime = $invoice->transaction_date ?: $invoice->created_at;
                 $entries->push($this->createEntry([
                     'id' => 'invpay-fallback-'.$invoice->id,

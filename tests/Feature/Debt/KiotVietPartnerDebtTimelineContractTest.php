@@ -5,6 +5,7 @@ namespace Tests\Feature\Debt;
 use App\Models\CashFlow;
 use App\Models\Customer;
 use App\Models\Invoice;
+use App\Models\Order;
 use App\Models\Purchase;
 use App\Models\PurchaseReturn;
 use App\Models\SupplierDebtTransaction;
@@ -14,6 +15,7 @@ use App\Services\Debt\PartnerDebtRoleResolver;
 use App\Services\SupplierDebtDocumentTimelineService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Tests\TestCase;
 
@@ -74,6 +76,185 @@ class KiotVietPartnerDebtTimelineContractTest extends TestCase
             $this->assertSame(0.0, (float) $entry['display_delta'] + (float) $supplierEntries[$index]['display_delta']);
             $this->assertSame(0.0, (float) $entry['running_balance'] + (float) $supplierEntries[$index]['running_balance']);
         }
+    }
+
+    public function test_legacy_supplier_partner_view_cannot_duplicate_customer_events_for_a_dual_role_partner(): void
+    {
+        $partner = $this->partner([
+            'code' => 'KH178333171285',
+            'name' => 'Anh Hữu Trần Cung',
+            'is_customer' => true,
+            'is_supplier' => true,
+            'debt_amount' => 0,
+            'supplier_debt_amount' => 15_300_000,
+        ]);
+        $invoiceTime = now()->subDays(48)->setTime(16, 52);
+        $paymentTime = now()->subDays(21)->setTime(11, 3);
+        $cancelledPurchaseTime = now()->subDays(6)->setTime(9, 52);
+        $cancelledAt = now()->subDays(4)->setTime(11, 12);
+        $openPurchaseTime = now()->subDays(4)->setTime(14, 58);
+
+        Invoice::create([
+            'code' => 'HD178333171519',
+            'customer_id' => $partner->id,
+            'status' => 'completed',
+            'total' => 5_600_000,
+            'customer_paid' => 5_600_000,
+            'transaction_date' => $invoiceTime,
+        ]);
+        CashFlow::create([
+            'code' => 'PT26072811032316',
+            'type' => 'receipt',
+            'amount' => 5_600_000,
+            'status' => 'active',
+            'target_type' => 'Customer',
+            'target_id' => $partner->id,
+            'reference_type' => 'Invoice',
+            'reference_code' => 'HD178333171519',
+            'time' => $paymentTime,
+        ]);
+        $cancelledPurchasePayload = [
+            'code' => 'PN20260813100850',
+            'supplier_id' => $partner->id,
+            'status' => 'cancelled',
+            'total_amount' => 13_000_000,
+            'paid_amount' => 0,
+            'debt_amount' => 0,
+            'purchase_date' => $cancelledPurchaseTime,
+        ];
+
+        // Fresh historical schemas do not have purchases.cancelled_at. The
+        // production source must retain its existing updated_at fallback.
+        if (Schema::hasColumn('purchases', 'cancelled_at')) {
+            $cancelledPurchasePayload['cancelled_at'] = $cancelledAt;
+        }
+
+        Purchase::create($cancelledPurchasePayload);
+        Purchase::create([
+            'code' => 'PN20260815145835',
+            'supplier_id' => $partner->id,
+            'status' => 'completed',
+            'total_amount' => 15_300_000,
+            'paid_amount' => 0,
+            'debt_amount' => 15_300_000,
+            'purchase_date' => $openPurchaseTime,
+        ]);
+
+        $customer = app(CustomerDebtDocumentTimelineService::class)->build($partner->fresh());
+        $supplier = app(SupplierDebtDocumentTimelineService::class)->build($partner->fresh(), ['view' => 'partner']);
+        $customerEntries = collect($customer['entries']);
+        $supplierEntries = collect($supplier['entries']);
+
+        $this->assertSame(-15_300_000.0, (float) $customer['raw_final_balance']);
+        $this->assertSame(15_300_000.0, (float) $supplier['raw_final_balance']);
+        $this->assertSame($customer['source_identity_hash'], $supplier['source_identity_hash']);
+        $this->assertSame($customerEntries->pluck('event_identity')->all(), $supplierEntries->pluck('event_identity')->all());
+        $this->assertSame(1, $supplierEntries->where('source_code', 'PT26072811032316')->count());
+        $this->assertFalse($supplierEntries->contains(
+            fn (array $entry): bool => str_starts_with((string) ($entry['source_code'] ?? ''), 'TTHD'),
+        ));
+
+        // Older Supplier tabs sent view=partner. The public endpoint must
+        // ignore it now: callers get the same canonical stream and balance.
+        $withoutLegacyView = $this->actingAs($this->user)
+            ->getJson("/api/suppliers/{$partner->id}/debt-transactions?page=1&per_page=100")
+            ->assertOk();
+        $withLegacyView = $this->actingAs($this->user)
+            ->getJson("/api/suppliers/{$partner->id}/debt-transactions?view=partner&page=1&per_page=100")
+            ->assertOk();
+
+        $this->assertSame(
+            $withoutLegacyView->json('source_identity_hash'),
+            $withLegacyView->json('source_identity_hash'),
+        );
+        $this->assertSame(
+            $withoutLegacyView->json('entries'),
+            $withLegacyView->json('entries'),
+        );
+    }
+
+    public function test_real_customer_receipt_suppresses_a_partial_legacy_invoice_payment_fallback(): void
+    {
+        $customer = $this->partner([
+            'is_customer' => true,
+            'debt_amount' => 0,
+        ]);
+        Invoice::create([
+            'code' => 'HD-REAL-RECEIPT-WINS',
+            'customer_id' => $customer->id,
+            'status' => 'completed',
+            'total' => 100_000,
+            'customer_paid' => 200_000,
+            'transaction_date' => now()->subMinute(),
+        ]);
+        CashFlow::create([
+            'code' => 'PT-REAL-RECEIPT-WINS',
+            'type' => 'receipt',
+            'amount' => 100_000,
+            'status' => 'active',
+            'target_type' => 'Customer',
+            'target_id' => $customer->id,
+            'reference_type' => 'Invoice',
+            'reference_code' => 'HD-REAL-RECEIPT-WINS',
+            'time' => now(),
+        ]);
+
+        $timeline = app(CustomerDebtDocumentTimelineService::class)->build($customer->fresh());
+        $entries = collect($timeline['entries']);
+
+        $this->assertSame(0.0, (float) $timeline['raw_final_balance']);
+        $this->assertSame(1, $entries->where('source_code', 'PT-REAL-RECEIPT-WINS')->count());
+        $this->assertFalse($entries->contains(
+            fn (array $entry): bool => str_starts_with((string) ($entry['source_code'] ?? ''), 'TTHD'),
+        ));
+    }
+
+    public function test_order_deposit_is_distinct_from_a_real_invoice_receipt(): void
+    {
+        $customer = $this->partner([
+            'is_customer' => true,
+            'debt_amount' => 0,
+        ]);
+        $order = Order::create([
+            'code' => 'DH-LEGACY-DEPOSIT',
+            'customer_id' => $customer->id,
+            'status' => 'draft',
+            'total_price' => 400_000,
+            'total_payment' => 400_000,
+            'amount_paid' => 150_000,
+        ]);
+        Invoice::create([
+            'code' => 'HD-LEGACY-DEPOSIT',
+            'order_id' => $order->id,
+            'customer_id' => $customer->id,
+            'status' => 'completed',
+            'total' => 400_000,
+            'customer_paid' => 400_000,
+            'order_deposit_applied_amount' => 150_000,
+            'transaction_date' => now(),
+        ]);
+        CashFlow::create([
+            'code' => 'PT-LEGACY-DEPOSIT',
+            'type' => 'receipt',
+            'amount' => 250_000,
+            'status' => 'active',
+            'target_type' => 'Customer',
+            'target_id' => $customer->id,
+            'reference_type' => 'Invoice',
+            'reference_code' => 'HD-LEGACY-DEPOSIT',
+            'time' => now(),
+        ]);
+
+        $timeline = app(CustomerDebtDocumentTimelineService::class)->build($customer->fresh());
+        $entries = collect($timeline['entries']);
+
+        $this->assertSame(0.0, (float) $timeline['raw_final_balance']);
+        $this->assertSame(1, $entries->where('event_kind', 'order_deposit')->count());
+        $this->assertSame(-150_000.0, (float) $entries->firstWhere('event_kind', 'order_deposit')['display_delta']);
+        $this->assertSame(1, $entries->where('source_code', 'PT-LEGACY-DEPOSIT')->count());
+        $this->assertFalse($entries->contains(
+            fn (array $entry): bool => str_starts_with((string) ($entry['source_code'] ?? ''), 'TTHD'),
+        ));
     }
 
     public function test_purchase_return_and_real_supplier_refund_reduce_payable_by_the_unrefunded_part(): void

@@ -397,10 +397,10 @@ const loadSupplierDebt = async (id, page = null) => {
     const targetPage = page ?? supplierDebtPage[id] ?? 1;
     supplierDebtPage[id] = targetPage;
     try {
+        // Customer and supplier tabs project the same canonical partner event
+        // stream with opposite signs. Never request the retired legacy
+        // cross-role mirror source for dual-role partners.
         const params = { page: targetPage, per_page: supplierDebtPerPage };
-        if (isDualRoleSupplier(id)) {
-            params.view = 'partner';
-        }
         const res = await axios.get(`/api/suppliers/${id}/debt-transactions`, {
             params,
         });

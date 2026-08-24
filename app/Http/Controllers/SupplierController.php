@@ -452,7 +452,10 @@ class SupplierController extends Controller
                 ? $ledgerService->buildSupplierDualRolePartnerTimeline($supplier)
                 : $ledgerService->buildSupplierPayableLedger($supplier);
         } else {
-            $options = $request->except(['page', 'per_page']);
+            // `view=partner` is a retired presentation parameter. Never pass
+            // it into a canonical source because it previously activated a
+            // duplicate cross-role mirror for dual-role partners.
+            $options = $request->except(['page', 'per_page', 'view']);
             $options['mode'] = 'document';
             $ledger = app(\App\Services\SupplierDebtDocumentTimelineService::class)
                 ->build($supplier, $options);
@@ -473,7 +476,7 @@ class SupplierController extends Controller
             ->map(fn ($e) => $this->normalizeSupplierDebtExportEntry(is_array($e) ? $e : (array) $e))
             ->all();
 
-        if ($mode === 'legacy' && ! $request->hasAny(['date_preset', 'date_from', 'date_to', 'include_detail', 'columns', 'format', 'view'])) {
+        if ($mode === 'legacy' && ! $request->hasAny(['date_preset', 'date_from', 'date_to', 'include_detail', 'columns', 'format'])) {
             $exportDocuments->preload($entries, 'supplier');
 
             return \App\Services\CsvService::export(
@@ -891,7 +894,11 @@ class SupplierController extends Controller
                 ? $ledgerService->buildSupplierDualRolePartnerTimeline($supplier)
                 : $ledgerService->buildSupplierPayableLedger($supplier);
         } else {
-            $ledger = app(\App\Services\SupplierDebtDocumentTimelineService::class)->build($supplier, $request->all());
+            // Retire `view=partner` as a source selector while keeping old
+            // bookmarked URLs valid. The supplier orientation is decided by
+            // the canonical projection, never by request input.
+            $ledger = app(\App\Services\SupplierDebtDocumentTimelineService::class)
+                ->build($supplier, $request->except('view'));
         }
 
         // Public rows deliberately omit synthetic reconciliation checkpoints
