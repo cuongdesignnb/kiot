@@ -38,6 +38,11 @@ Nhà cung cấp, làm số cuối cùng thành 9.700.000đ thay vì 15.300.000đ
   chỉ được sinh khi hoàn toàn không có evidence thanh toán thật cho chứng từ.
   Không sinh phần fallback còn lại sau một thanh toán thật vì sẽ nhân đôi một
   tác động kinh tế.
+- Tiền đặt cọc đơn hàng legacy (`orders.amount_paid` đã được áp vào
+  `invoices.order_deposit_applied_amount`) là một khoản thanh toán riêng,
+  không phải phần dư của phiếu thu hóa đơn. Khi chưa có CashFlow tương ứng,
+  timeline ghi nhận nó một lần dưới event `order_deposit`, nên không sinh
+  `TTHD*` giả và không làm gãy việc chuyển đơn POS sang hóa đơn.
 - URL API Nhà cung cấp có/không có `view=partner` trả cùng event stream và cùng
   `source_identity_hash`.
 
@@ -72,8 +77,9 @@ branch, không dùng production dump.
 | `PT26072811032316` đúng một lần | PASS |
 | Fallback `TTHD*` sau phiếu thu thật | Không có |
 | API Supplier với/không `view=partner` | Cùng stream/hash |
-| P0 contract test | 14 tests / 136 assertions PASS |
-| Hai test bổ sung mirror + real receipt | 2 tests / 13 assertions PASS |
+| P0 contract test | 15 tests / 141 assertions PASS |
+| Đặt cọc đơn hàng + phiếu thu hóa đơn thật | PASS |
+| Xử lý đơn POS có đặt cọc legacy | 1 test / 6 assertions PASS |
 | Fresh schema migrations | PASS |
 
 Một nhóm regression timeline cũ đã đỏ ngay ở base

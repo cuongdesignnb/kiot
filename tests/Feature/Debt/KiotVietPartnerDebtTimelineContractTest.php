@@ -5,6 +5,7 @@ namespace Tests\Feature\Debt;
 use App\Models\CashFlow;
 use App\Models\Customer;
 use App\Models\Invoice;
+use App\Models\Order;
 use App\Models\Purchase;
 use App\Models\PurchaseReturn;
 use App\Models\SupplierDebtTransaction;
@@ -203,6 +204,54 @@ class KiotVietPartnerDebtTimelineContractTest extends TestCase
 
         $this->assertSame(0.0, (float) $timeline['raw_final_balance']);
         $this->assertSame(1, $entries->where('source_code', 'PT-REAL-RECEIPT-WINS')->count());
+        $this->assertFalse($entries->contains(
+            fn (array $entry): bool => str_starts_with((string) ($entry['source_code'] ?? ''), 'TTHD'),
+        ));
+    }
+
+    public function test_order_deposit_is_distinct_from_a_real_invoice_receipt(): void
+    {
+        $customer = $this->partner([
+            'is_customer' => true,
+            'debt_amount' => 0,
+        ]);
+        $order = Order::create([
+            'code' => 'DH-LEGACY-DEPOSIT',
+            'customer_id' => $customer->id,
+            'status' => 'draft',
+            'total_price' => 400_000,
+            'total_payment' => 400_000,
+            'amount_paid' => 150_000,
+        ]);
+        Invoice::create([
+            'code' => 'HD-LEGACY-DEPOSIT',
+            'order_id' => $order->id,
+            'customer_id' => $customer->id,
+            'status' => 'completed',
+            'total' => 400_000,
+            'customer_paid' => 400_000,
+            'order_deposit_applied_amount' => 150_000,
+            'transaction_date' => now(),
+        ]);
+        CashFlow::create([
+            'code' => 'PT-LEGACY-DEPOSIT',
+            'type' => 'receipt',
+            'amount' => 250_000,
+            'status' => 'active',
+            'target_type' => 'Customer',
+            'target_id' => $customer->id,
+            'reference_type' => 'Invoice',
+            'reference_code' => 'HD-LEGACY-DEPOSIT',
+            'time' => now(),
+        ]);
+
+        $timeline = app(CustomerDebtDocumentTimelineService::class)->build($customer->fresh());
+        $entries = collect($timeline['entries']);
+
+        $this->assertSame(0.0, (float) $timeline['raw_final_balance']);
+        $this->assertSame(1, $entries->where('event_kind', 'order_deposit')->count());
+        $this->assertSame(-150_000.0, (float) $entries->firstWhere('event_kind', 'order_deposit')['display_delta']);
+        $this->assertSame(1, $entries->where('source_code', 'PT-LEGACY-DEPOSIT')->count());
         $this->assertFalse($entries->contains(
             fn (array $entry): bool => str_starts_with((string) ($entry['source_code'] ?? ''), 'TTHD'),
         ));
