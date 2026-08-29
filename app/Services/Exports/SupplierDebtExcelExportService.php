@@ -56,7 +56,6 @@ class SupplierDebtExcelExportService
         'Đơn giá',
         'Giảm giá',
         'VAT',
-        'Giá nhập/trả',
         'Thành tiền',
         'Ghi nợ',
         'Ghi có',
@@ -66,8 +65,8 @@ class SupplierDebtExcelExportService
 
     private const COL_WIDTHS = [
         'A' => 14, 'B' => 18, 'C' => 35, 'D' => 10, 'E' => 8, 'F' => 14,
-        'G' => 14, 'H' => 12, 'I' => 14, 'J' => 14, 'K' => 15, 'L' => 15,
-        'M' => 16, 'N' => 28,
+        'G' => 14, 'H' => 12, 'I' => 14, 'J' => 15, 'K' => 15, 'L' => 16,
+        'M' => 28,
     ];
 
     public function __construct(
@@ -90,7 +89,8 @@ class SupplierDebtExcelExportService
         // Detail-column toggles control whether each per-line cell is
         // populated; the column itself stays on the sheet so the
         // KiotViet-style layout (Thời gian → Ghi có) is consistent.
-        $allCols = ['unit', 'quantity', 'unit_price', 'discount', 'vat', 'cost', 'line_total', 'note'];
+        // Giá vốn/giá nhập is internal information and is never exported.
+        $allCols = ['unit', 'quantity', 'unit_price', 'discount', 'vat', 'line_total', 'note'];
         $this->columns = [];
         foreach ($allCols as $c) {
             $this->columns[$c] = in_array($c, $selectedColumns, true);
@@ -197,7 +197,7 @@ class SupplierDebtExcelExportService
     private function writeTitle($sheet, int $row): int
     {
         $sheet->setCellValue('A'.$row, self::REPORT_TITLE);
-        $sheet->mergeCells('A'.$row.':N'.$row);
+        $sheet->mergeCells('A'.$row.':M'.$row);
         $sheet->getStyle('A'.$row)
             ->getFont()->setBold(true)->setSize(16);
         $sheet->getStyle('A'.$row)
@@ -213,7 +213,7 @@ class SupplierDebtExcelExportService
             );
         }
         $sheet->setCellValue('A'.$row, $rangeText);
-        $sheet->mergeCells('A'.$row.':N'.$row);
+        $sheet->mergeCells('A'.$row.':M'.$row);
         $sheet->getStyle('A'.$row)
             ->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
         $sheet->getStyle('A'.$row)
@@ -224,11 +224,11 @@ class SupplierDebtExcelExportService
 
     private function writeSupplierAndSummary($sheet, int $row, float $opening, float $debit, float $credit, float $closing): int
     {
-        // HOTFIX 24.17E — keep summary numerics under the same K/L
-        // columns the document body uses (K = "Ghi nợ", L = "Ghi có").
-        // Previously the period row pushed `debit` into column J
+        // HOTFIX 24.17E — keep summary numerics under the same J/K
+        // columns the document body uses (J = "Ghi nợ", K = "Ghi có").
+        // Previously the period row pushed `debit` into column I
         // ("Thành tiền"), which read as "lệch cột" against the body.
-        // Negative opening/closing balances surface in column L as a
+        // Negative opening/closing balances surface in column K as a
         // positive number (credit-side), preserving sign without ever
         // emitting a "-1,234" in the debit column.
 
@@ -236,42 +236,42 @@ class SupplierDebtExcelExportService
         $sheet->setCellValue('B'.$row, $this->supplier->name ?? '');
         $sheet->getStyle('A'.$row.':B'.$row)->getFont()->setBold(true);
 
-        $sheet->setCellValue('I'.$row, 'Nợ đầu kỳ:');
+        $sheet->setCellValue('H'.$row, 'Nợ đầu kỳ:');
         if ($opening >= 0) {
-            $sheet->setCellValue('K'.$row, $opening);
+            $sheet->setCellValue('J'.$row, $opening);
         } else {
-            $sheet->setCellValue('L'.$row, abs($opening));
+            $sheet->setCellValue('K'.$row, abs($opening));
         }
-        $sheet->getStyle('I'.$row)->getFont()->setBold(true);
-        $sheet->getStyle('K'.$row.':L'.$row)->getNumberFormat()->setFormatCode('#,##0');
-        $sheet->getStyle('K'.$row.':L'.$row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+        $sheet->getStyle('H'.$row)->getFont()->setBold(true);
+        $sheet->getStyle('J'.$row.':K'.$row)->getNumberFormat()->setFormatCode('#,##0');
+        $sheet->getStyle('J'.$row.':K'.$row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
         $row++;
 
         $sheet->setCellValue('A'.$row, 'Mã NCC:');
         $sheet->setCellValue('B'.$row, $this->supplier->code ?? '');
         $sheet->getStyle('A'.$row)->getFont()->setBold(true);
 
-        $sheet->setCellValue('I'.$row, 'Phát sinh trong kỳ:');
-        $sheet->setCellValue('K'.$row, $debit);
-        $sheet->setCellValue('L'.$row, $credit);
-        $sheet->getStyle('I'.$row)->getFont()->setBold(true);
-        $sheet->getStyle('K'.$row.':L'.$row)->getNumberFormat()->setFormatCode('#,##0');
-        $sheet->getStyle('K'.$row.':L'.$row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+        $sheet->setCellValue('H'.$row, 'Phát sinh trong kỳ:');
+        $sheet->setCellValue('J'.$row, $debit);
+        $sheet->setCellValue('K'.$row, $credit);
+        $sheet->getStyle('H'.$row)->getFont()->setBold(true);
+        $sheet->getStyle('J'.$row.':K'.$row)->getNumberFormat()->setFormatCode('#,##0');
+        $sheet->getStyle('J'.$row.':K'.$row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
         $row++;
 
         $sheet->setCellValue('A'.$row, 'Điện thoại:');
         $sheet->setCellValue('B'.$row, $this->supplier->phone ?? '');
         $sheet->getStyle('A'.$row)->getFont()->setBold(true);
 
-        $sheet->setCellValue('I'.$row, 'Nợ cuối kỳ:');
+        $sheet->setCellValue('H'.$row, 'Nợ cuối kỳ:');
         if ($closing >= 0) {
-            $sheet->setCellValue('K'.$row, $closing);
+            $sheet->setCellValue('J'.$row, $closing);
         } else {
-            $sheet->setCellValue('L'.$row, abs($closing));
+            $sheet->setCellValue('K'.$row, abs($closing));
         }
-        $sheet->getStyle('I'.$row)->getFont()->setBold(true);
-        $sheet->getStyle('K'.$row.':L'.$row)->getNumberFormat()->setFormatCode('#,##0');
-        $sheet->getStyle('K'.$row.':L'.$row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+        $sheet->getStyle('H'.$row)->getFont()->setBold(true);
+        $sheet->getStyle('J'.$row.':K'.$row)->getNumberFormat()->setFormatCode('#,##0');
+        $sheet->getStyle('J'.$row.':K'.$row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
 
         return $row + 2;
     }
@@ -282,7 +282,7 @@ class SupplierDebtExcelExportService
             $col = Coordinate::stringFromColumnIndex($i + 1);
             $sheet->setCellValue($col.$row, $h);
         }
-        $range = 'A'.$row.':N'.$row;
+        $range = 'A'.$row.':M'.$row;
         $sheet->getStyle($range)->getFont()->setBold(true);
         $sheet->getStyle($range)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
         $sheet->getStyle($range)->getFill()
@@ -315,16 +315,16 @@ class SupplierDebtExcelExportService
             $sheet->setCellValue('B'.$row, $e['code'] ?? '');
             $sheet->setCellValue('C'.$row, $this->documents->contextLabel($e, $e['type_label'] ?? ''));
             if ($debitVal !== null) {
-                $sheet->setCellValue('K'.$row, $debitVal);
+                $sheet->setCellValue('J'.$row, $debitVal);
             }
             if ($creditVal !== null) {
-                $sheet->setCellValue('L'.$row, $creditVal);
+                $sheet->setCellValue('K'.$row, $creditVal);
             }
-            $sheet->setCellValue('M'.$row, $this->entryRunningBalance($e));
-            $sheet->setCellValue('N'.$row, $this->documents->contextNote($e));
+            $sheet->setCellValue('L'.$row, $this->entryRunningBalance($e));
+            $sheet->setCellValue('M'.$row, $this->documents->contextNote($e));
             $sheet->getStyle('B'.$row.':C'.$row)->getFont()->setBold(true);
             $sheet->getStyle('A'.$row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-            $sheet->getStyle('K'.$row.':M'.$row)
+            $sheet->getStyle('J'.$row.':L'.$row)
                 ->getNumberFormat()->setFormatCode('#,##0');
             $row++;
 
@@ -347,17 +347,14 @@ class SupplierDebtExcelExportService
                     if ($this->columns['vat']) {
                         $sheet->setCellValue('H'.$row, $line['vat'] ?? '');
                     }
-                    if ($this->columns['cost']) {
-                        $sheet->setCellValue('I'.$row, $line['cost'] ?? '');
-                    }
                     if ($this->columns['line_total']) {
-                        $sheet->setCellValue('J'.$row, $line['line_total'] ?? '');
+                        $sheet->setCellValue('I'.$row, $line['line_total'] ?? '');
                     }
                     if ($this->columns['note']) {
-                        $sheet->setCellValue('N'.$row, $line['note'] ?? '');
+                        $sheet->setCellValue('M'.$row, $line['note'] ?? '');
                     }
                     $sheet->getStyle('C'.$row)->getFont()->setItalic(true);
-                    $sheet->getStyle('E'.$row.':M'.$row)
+                    $sheet->getStyle('E'.$row.':L'.$row)
                         ->getNumberFormat()->setFormatCode('#,##0');
                     $row++;
                 }
@@ -381,7 +378,7 @@ class SupplierDebtExcelExportService
         if ($lastBodyRow < $headerRow) {
             $lastBodyRow = $headerRow;
         }
-        $whole = 'A'.$headerRow.':N'.$lastBodyRow;
+        $whole = 'A'.$headerRow.':M'.$lastBodyRow;
         // Wipe whatever per-row borders were drawn earlier in the build
         // by re-applying NONE first.
         $sheet->getStyle($whole)->getBorders()->getAllBorders()
@@ -389,7 +386,7 @@ class SupplierDebtExcelExportService
 
         // Hair horizontal separators between rows below the header.
         if ($lastBodyRow > $headerRow) {
-            $bodyRange = 'A'.($headerRow + 1).':N'.$lastBodyRow;
+            $bodyRange = 'A'.($headerRow + 1).':M'.$lastBodyRow;
             $sheet->getStyle($bodyRange)->getBorders()->getBottom()
                 ->setBorderStyle(Border::BORDER_HAIR);
         }
@@ -397,7 +394,7 @@ class SupplierDebtExcelExportService
         // Outer medium frame + thicker line under the header row.
         $sheet->getStyle($whole)->getBorders()->getOutline()
             ->setBorderStyle(Border::BORDER_MEDIUM);
-        $sheet->getStyle('A'.$headerRow.':N'.$headerRow)
+        $sheet->getStyle('A'.$headerRow.':M'.$headerRow)
             ->getBorders()->getBottom()
             ->setBorderStyle(Border::BORDER_MEDIUM);
     }
@@ -411,18 +408,18 @@ class SupplierDebtExcelExportService
     {
         $now = Carbon::now();
         $dateText = sprintf('Ngày %d tháng %d năm %d', $now->day, $now->month, $now->year);
-        $sheet->setCellValue('J'.$row, $dateText);
-        $sheet->mergeCells('J'.$row.':N'.$row);
-        $sheet->getStyle('J'.$row)
+        $sheet->setCellValue('I'.$row, $dateText);
+        $sheet->mergeCells('I'.$row.':M'.$row);
+        $sheet->getStyle('I'.$row)
             ->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-        $sheet->getStyle('J'.$row)->getFont()->setItalic(true);
+        $sheet->getStyle('I'.$row)->getFont()->setItalic(true);
         $row += 2;
 
         $signatureRow = $row;
         $blocks = [
             ['range' => 'A:B', 'merge' => 'A%d:B%d', 'label' => 'Nhà cung cấp'],
             ['range' => 'F:G', 'merge' => 'F%d:G%d', 'label' => 'Người lập biểu'],
-            ['range' => 'J:N', 'merge' => 'J%d:N%d', 'label' => 'TM Công ty'],
+            ['range' => 'I:M', 'merge' => 'I%d:M%d', 'label' => 'TM Công ty'],
         ];
         foreach ($blocks as $b) {
             $merge = sprintf($b['merge'], $signatureRow, $signatureRow);

@@ -44,10 +44,10 @@ class PartnerDebtExcelRealPipelineContractTest extends TestCase
         $supplierParent = $this->rowByCode($supplierRows, $purchase->code);
         $customerParent = $this->rowByCode($customerRows, $purchase->code);
 
-        self::assertSame(900.0, (float) ($supplierParent['K'] ?? 0));
-        self::assertSame(900.0, (float) ($supplierParent['M'] ?? 0));
-        self::assertSame(900.0, (float) ($customerParent['L'] ?? 0));
-        self::assertSame(-900.0, (float) ($customerParent['M'] ?? 0));
+        self::assertSame(900.0, (float) ($supplierParent['J'] ?? 0));
+        self::assertSame(900.0, (float) ($supplierParent['L'] ?? 0));
+        self::assertSame(900.0, (float) ($customerParent['K'] ?? 0));
+        self::assertSame(-900.0, (float) ($customerParent['L'] ?? 0));
         self::assertSame(900.0, $this->closing($supplierRows));
         self::assertSame(-900.0, $this->closing($customerRows));
         self::assertSame(1, $this->countCode($supplierRows, $product->sku));
@@ -86,12 +86,12 @@ class PartnerDebtExcelRealPipelineContractTest extends TestCase
         $customerPurchase = $this->rowByCode($customerRows, $purchase->code);
         $customerCancel = $this->rowByCode($customerRows, 'HUY-'.$purchase->code);
 
-        self::assertSame(900.0, (float) ($supplierPurchase['M'] ?? 0));
-        self::assertSame(900.0, (float) ($supplierCancel['L'] ?? 0));
-        self::assertSame(0.0, (float) ($supplierCancel['M'] ?? 0));
-        self::assertSame(-900.0, (float) ($customerPurchase['M'] ?? 0));
-        self::assertSame(900.0, (float) ($customerCancel['K'] ?? 0));
-        self::assertSame(0.0, (float) ($customerCancel['M'] ?? 0));
+        self::assertSame(900.0, (float) ($supplierPurchase['L'] ?? 0));
+        self::assertSame(900.0, (float) ($supplierCancel['K'] ?? 0));
+        self::assertSame(0.0, (float) ($supplierCancel['L'] ?? 0));
+        self::assertSame(-900.0, (float) ($customerPurchase['L'] ?? 0));
+        self::assertSame(900.0, (float) ($customerCancel['J'] ?? 0));
+        self::assertSame(0.0, (float) ($customerCancel['L'] ?? 0));
         self::assertSame(0.0, $this->closing($supplierRows));
         self::assertSame(0.0, $this->closing($customerRows));
         self::assertSame(2, $this->countCode($supplierRows, $product->sku));
@@ -146,7 +146,7 @@ class PartnerDebtExcelRealPipelineContractTest extends TestCase
         self::assertStringContainsString('PN-TEST', $label);
         self::assertSame(1, substr_count($label, 'PN-TEST'));
         self::assertStringNotContainsString('PC-TEST', $label);
-        self::assertSame(200.0, (float) ($paymentRows[0]['L'] ?? 0));
+        self::assertSame(200.0, (float) ($paymentRows[0]['K'] ?? 0));
         self::assertSame(0, $this->countCode($rows, 'SKU-REAL-PIPELINE'));
     }
 
@@ -248,8 +248,8 @@ class PartnerDebtExcelRealPipelineContractTest extends TestCase
     private function closing(array $rows): float
     {
         foreach ($rows as $row) {
-            if (str_contains((string) ($row['I'] ?? ''), 'cu')) {
-                return (float) ($row['K'] ?? 0) - (float) ($row['L'] ?? 0);
+            if (str_contains((string) ($row['H'] ?? ''), 'cu')) {
+                return (float) ($row['J'] ?? 0) - (float) ($row['K'] ?? 0);
             }
         }
 

@@ -137,11 +137,11 @@ class PartnerDebtExcelParityTest extends TestCase
     private function closing(array $rows): float
     {
         foreach ($rows as $row) {
-            if (($row['I'] ?? '') !== 'Nợ cuối kỳ:') {
+            if (($row['H'] ?? '') !== 'Nợ cuối kỳ:') {
                 continue;
             }
 
-            return (float) ($row['K'] ?? 0) - (float) ($row['L'] ?? 0);
+            return (float) ($row['J'] ?? 0) - (float) ($row['K'] ?? 0);
         }
 
         self::fail('Nợ cuối kỳ: summary row not found');

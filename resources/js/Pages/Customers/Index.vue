@@ -207,7 +207,6 @@ const customerDebtExportForm = reactive({
         unit_price: true,
         discount: true,
         vat: true,
-        cost: true,
         line_total: true,
     },
 });
@@ -250,7 +249,6 @@ const customerDebtExportColumnOptions = [
     { key: 'unit_price', label: 'Đơn giá' },
     { key: 'discount', label: 'Giảm giá' },
     { key: 'vat', label: 'VAT' },
-    { key: 'cost', label: 'Giá bán/trả' },
     { key: 'line_total', label: 'Thành tiền' },
 ];
 

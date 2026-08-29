@@ -32,36 +32,36 @@ class HOTFIX2417SupplierDebtExportOptionsTest extends TestCase
     private function admin(): User
     {
         return User::create([
-            'name'     => 'Admin 2417',
-            'email'    => 'admin-2417-' . uniqid() . '@test.local',
+            'name' => 'Admin 2417',
+            'email' => 'admin-2417-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
-            'role_id'  => null,
+            'role_id' => null,
         ]);
     }
 
     private function supplier(string $name = 'NCC 2417'): Customer
     {
         return Customer::create([
-            'code'                 => 'NCC-2417-' . uniqid(),
-            'name'                 => $name,
-            'phone'                => '09' . random_int(10000000, 99999999),
-            'debt_amount'          => 0,
+            'code' => 'NCC-2417-'.uniqid(),
+            'name' => $name,
+            'phone' => '09'.random_int(10000000, 99999999),
+            'debt_amount' => 0,
             'supplier_debt_amount' => 0,
-            'is_customer'          => false,
-            'is_supplier'          => true,
+            'is_customer' => false,
+            'is_supplier' => true,
         ]);
     }
 
     private function purchase(Customer $supplier, int $total, Carbon $when, string $codePrefix = 'PN'): Purchase
     {
         $p = Purchase::create([
-            'code'          => $codePrefix . '-' . uniqid(),
-            'supplier_id'   => $supplier->id,
-            'user_id'       => null,
-            'total_amount'  => $total,
-            'paid_amount'   => 0,
-            'debt_amount'   => $total,
-            'status'        => 'completed',
+            'code' => $codePrefix.'-'.uniqid(),
+            'supplier_id' => $supplier->id,
+            'user_id' => null,
+            'total_amount' => $total,
+            'paid_amount' => 0,
+            'debt_amount' => $total,
+            'status' => 'completed',
             'purchase_date' => $when,
         ]);
         // Force created_at so the date filter has something predictable to
@@ -69,6 +69,7 @@ class HOTFIX2417SupplierDebtExportOptionsTest extends TestCase
         $p->created_at = $when;
         $p->updated_at = $when;
         $p->save();
+
         return $p;
     }
 
@@ -76,8 +77,8 @@ class HOTFIX2417SupplierDebtExportOptionsTest extends TestCase
     public function test_export_with_explicit_legacy_mode_keeps_legacy_format(): void
     {
         $admin = $this->admin();
-        $sup   = $this->supplier();
-        $p     = $this->purchase($sup, 500000, Carbon::now());
+        $sup = $this->supplier();
+        $p = $this->purchase($sup, 500000, Carbon::now());
 
         $res = $this->actingAs($admin)->get("/api/suppliers/{$sup->id}/export-debt?mode=legacy");
 
@@ -92,11 +93,11 @@ class HOTFIX2417SupplierDebtExportOptionsTest extends TestCase
     public function test_export_custom_range_filters_by_created_at(): void
     {
         $admin = $this->admin();
-        $sup   = $this->supplier();
+        $sup = $this->supplier();
 
-        $pIn1  = $this->purchase($sup, 100000, Carbon::create(2026, 5, 1, 9, 0));
-        $pIn2  = $this->purchase($sup, 200000, Carbon::create(2026, 5, 10, 9, 0));
-        $pOut  = $this->purchase($sup, 300000, Carbon::create(2026, 5, 20, 9, 0));
+        $pIn1 = $this->purchase($sup, 100000, Carbon::create(2026, 5, 1, 9, 0));
+        $pIn2 = $this->purchase($sup, 200000, Carbon::create(2026, 5, 10, 9, 0));
+        $pOut = $this->purchase($sup, 300000, Carbon::create(2026, 5, 20, 9, 0));
 
         $res = $this->actingAs($admin)->get(
             "/api/suppliers/{$sup->id}/export-debt?date_preset=custom&date_from=2026-05-01&date_to=2026-05-14"
@@ -118,7 +119,7 @@ class HOTFIX2417SupplierDebtExportOptionsTest extends TestCase
     public function test_export_preset_today_is_ok(): void
     {
         $admin = $this->admin();
-        $sup   = $this->supplier();
+        $sup = $this->supplier();
         $this->purchase($sup, 50000, Carbon::now());
 
         $res = $this->actingAs($admin)->get("/api/suppliers/{$sup->id}/export-debt?date_preset=today");
@@ -131,9 +132,9 @@ class HOTFIX2417SupplierDebtExportOptionsTest extends TestCase
     public function test_export_preset_all_returns_all_entries(): void
     {
         $admin = $this->admin();
-        $sup   = $this->supplier();
-        $pOld  = $this->purchase($sup, 100000, Carbon::create(2020, 1, 1, 9, 0));
-        $pNew  = $this->purchase($sup, 200000, Carbon::now());
+        $sup = $this->supplier();
+        $pOld = $this->purchase($sup, 100000, Carbon::create(2020, 1, 1, 9, 0));
+        $pNew = $this->purchase($sup, 200000, Carbon::now());
 
         $res = $this->actingAs($admin)->get("/api/suppliers/{$sup->id}/export-debt?date_preset=all");
 
@@ -147,7 +148,7 @@ class HOTFIX2417SupplierDebtExportOptionsTest extends TestCase
     public function test_export_invalid_range_returns_422(): void
     {
         $admin = $this->admin();
-        $sup   = $this->supplier();
+        $sup = $this->supplier();
 
         $res = $this->actingAs($admin)->get(
             "/api/suppliers/{$sup->id}/export-debt?date_preset=custom&date_from=2026-06-30&date_to=2026-06-01"
@@ -160,21 +161,21 @@ class HOTFIX2417SupplierDebtExportOptionsTest extends TestCase
     public function test_export_include_detail_appends_detail_columns(): void
     {
         $admin = $this->admin();
-        $sup   = $this->supplier();
-        $p     = $this->purchase($sup, 500000, Carbon::now());
+        $sup = $this->supplier();
+        $p = $this->purchase($sup, 500000, Carbon::now());
         PurchaseItem::create([
-            'purchase_id'   => $p->id,
-            'product_name'  => 'Linh kiện X',
-            'product_code'  => 'LK-X',
-            'quantity'      => 2,
-            'price'         => 250000,
-            'discount'      => 0,
-            'subtotal'      => 500000,
+            'purchase_id' => $p->id,
+            'product_name' => 'Linh kiện X',
+            'product_code' => 'LK-X',
+            'quantity' => 2,
+            'price' => 250000,
+            'discount' => 0,
+            'subtotal' => 500000,
         ]);
 
         $res = $this->actingAs($admin)->get(
             "/api/suppliers/{$sup->id}/export-debt?date_preset=all&include_detail=1"
-            . "&columns[]=quantity&columns[]=unit_price&columns[]=line_total"
+            .'&columns[]=quantity&columns[]=unit_price&columns[]=line_total'
         );
 
         $res->assertOk();
@@ -190,16 +191,16 @@ class HOTFIX2417SupplierDebtExportOptionsTest extends TestCase
     public function test_export_columns_whitelist_only(): void
     {
         $admin = $this->admin();
-        $sup   = $this->supplier();
-        $p     = $this->purchase($sup, 300000, Carbon::now());
+        $sup = $this->supplier();
+        $p = $this->purchase($sup, 300000, Carbon::now());
         PurchaseItem::create([
-            'purchase_id'   => $p->id,
-            'product_name'  => 'Linh kiện Y',
-            'product_code'  => 'LK-Y',
-            'quantity'      => 3,
-            'price'         => 100000,
-            'discount'      => 10000,
-            'subtotal'      => 290000,
+            'purchase_id' => $p->id,
+            'product_name' => 'Linh kiện Y',
+            'product_code' => 'LK-Y',
+            'quantity' => 3,
+            'price' => 100000,
+            'discount' => 10000,
+            'subtotal' => 290000,
         ]);
 
         $res = $this->actingAs($admin)->get(
@@ -214,11 +215,37 @@ class HOTFIX2417SupplierDebtExportOptionsTest extends TestCase
         $this->assertStringNotContainsString('Thành tiền', $body, 'line_total not selected → must not appear');
     }
 
-    // ── TC-08 — regression: debt-transactions JSON shape preserved ──
+    // ── TC-08 — a saved legacy URL may still carry cost, but must never leak it ──
+    public function test_export_ignores_deprecated_cost_column(): void
+    {
+        $admin = $this->admin();
+        $sup = $this->supplier();
+        $p = $this->purchase($sup, 500000, Carbon::now());
+        PurchaseItem::create([
+            'purchase_id' => $p->id,
+            'product_name' => 'Linh kiện không lộ giá vốn',
+            'product_code' => 'LK-NO-COST',
+            'quantity' => 1,
+            'price' => 500000,
+            'discount' => 0,
+            'subtotal' => 500000,
+        ]);
+
+        $res = $this->actingAs($admin)->get(
+            "/api/suppliers/{$sup->id}/export-debt?date_preset=all&include_detail=1&columns[]=cost"
+        );
+
+        $res->assertOk();
+        $body = $res->streamedContent() ?: $res->getContent();
+        $this->assertStringNotContainsString('Giá nhập/trả', $body);
+        $this->assertStringNotContainsString('Giá vốn', $body);
+    }
+
+    // ── TC-09 — regression: debt-transactions JSON shape preserved ──
     public function test_debt_transactions_json_endpoint_unchanged(): void
     {
         $admin = $this->admin();
-        $sup   = $this->supplier();
+        $sup = $this->supplier();
         $this->purchase($sup, 700000, Carbon::now());
 
         $res = $this->actingAs($admin)->getJson("/api/suppliers/{$sup->id}/debt-transactions");

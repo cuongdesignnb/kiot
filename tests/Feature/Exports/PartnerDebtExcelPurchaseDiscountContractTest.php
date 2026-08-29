@@ -61,8 +61,8 @@ class PartnerDebtExcelPurchaseDiscountContractTest extends TestCase
 
         $customerParent = $this->rowByCode($customerRows, $purchase->code);
         $supplierParent = $this->rowByCode($supplierRows, $purchase->code);
-        self::assertSame(900.0, (float) ($customerParent['K'] ?? 0));
-        self::assertSame(900.0, (float) ($supplierParent['L'] ?? 0));
+        self::assertSame(900.0, (float) ($customerParent['J'] ?? 0));
+        self::assertSame(900.0, (float) ($supplierParent['K'] ?? 0));
         self::assertSame(900.0, $this->summary($customerRows));
         self::assertSame(-900.0, $this->summary($supplierRows));
         self::assertSame(1000.0, $this->detailTotal($customerRows, $product->sku));
@@ -85,8 +85,8 @@ class PartnerDebtExcelPurchaseDiscountContractTest extends TestCase
     private function summary(array $rows): float
     {
         foreach ($rows as $row) {
-            if (($row['I'] ?? '') === 'Nợ cuối kỳ:') {
-                return (float) ($row['K'] ?? 0) - (float) ($row['L'] ?? 0);
+            if (($row['H'] ?? '') === 'Nợ cuối kỳ:') {
+                return (float) ($row['J'] ?? 0) - (float) ($row['K'] ?? 0);
             }
         }
         self::fail('summary not found');
@@ -97,7 +97,7 @@ class PartnerDebtExcelPurchaseDiscountContractTest extends TestCase
     {
         foreach ($rows as $row) {
             if (($row['B'] ?? '') === $code) {
-                return (float) ($row['J'] ?? 0);
+                return (float) ($row['I'] ?? 0);
             }
         }
         self::fail('detail not found: '.$code);
@@ -108,7 +108,7 @@ class PartnerDebtExcelPurchaseDiscountContractTest extends TestCase
     {
         foreach ($rows as $row) {
             if (($row['C'] ?? '') === $label) {
-                return (float) ($row['J'] ?? 0);
+                return (float) ($row['I'] ?? 0);
             }
         }
         self::fail('detail label not found: '.$label);

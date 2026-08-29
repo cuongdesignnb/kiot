@@ -132,11 +132,13 @@ class PartnerDebtExcelCancellationMatrixTest extends TestCase
         self::assertSame(4, $this->countSku($supplierRows, $product->sku));
         self::assertSame('Cái', $this->firstDetailValue($customerRows, 'D'));
         self::assertSame('Cái', $this->firstDetailValue($supplierRows, 'D'));
+        self::assertSame('', $this->firstDetailValue($customerRows, 'J'));
         self::assertSame('', $this->firstDetailValue($customerRows, 'K'));
         self::assertSame('', $this->firstDetailValue($customerRows, 'L'));
-        self::assertSame('', $this->firstDetailValue($customerRows, 'M'));
-        self::assertSame('Số dư sau GD', $customerRows[10]['M'] ?? null);
-        self::assertSame('Số dư sau GD', $supplierRows[10]['M'] ?? null);
+        self::assertSame('Số dư sau GD', $customerRows[10]['L'] ?? null);
+        self::assertSame('Số dư sau GD', $supplierRows[10]['L'] ?? null);
+        self::assertSame('Ghi chú', $customerRows[10]['M'] ?? null);
+        self::assertSame('Ghi chú', $supplierRows[10]['M'] ?? null);
         self::assertTrue($this->columnIsEmpty($customerRows, 'N'));
         self::assertTrue($this->columnIsEmpty($supplierRows, 'N'));
         self::assertSame('purchase document note', $purchase->fresh()->note);

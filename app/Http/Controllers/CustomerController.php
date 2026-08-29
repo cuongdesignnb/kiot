@@ -1065,7 +1065,10 @@ class CustomerController extends Controller
             }
 
             $includeDetail = in_array((string) ($validated['include_detail'] ?? '0'), ['1', 'true'], true);
-            $selectedColumns = array_values($validated['columns'] ?? []);
+            // Keep accepting the deprecated `cost` value so saved/stale export
+            // URLs do not fail validation. It is deliberately ignored: debt
+            // statements are shareable documents and must never disclose cost.
+            $selectedColumns = array_values(array_diff($validated['columns'] ?? [], ['cost']));
 
             if (($validated['format'] ?? '') === 'xlsx') {
                 return (new \App\Services\Exports\CustomerDebtExcelExportService(
