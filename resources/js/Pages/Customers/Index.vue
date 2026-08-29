@@ -78,6 +78,25 @@ const setActiveTab = (id, tab) => {
     if (tab === "debt" && !offsetHistoryData[id]) loadOffsetHistory(id);
 };
 
+const openCustomerFromQuery = () => {
+    if (typeof window === "undefined") return;
+
+    const customerId = Number(
+        new URLSearchParams(window.location.search).get("open_customer"),
+    );
+
+    if (!Number.isInteger(customerId) || customerId <= 0) return;
+    if (!customerRows.value.some((customer) => Number(customer.id) === customerId)) return;
+
+    if (!expandedRows.value.includes(customerId)) {
+        expandedRows.value = [...expandedRows.value, customerId];
+    }
+
+    customerTabs[customerId] = "info";
+};
+
+watch(customerRows, openCustomerFromQuery, { immediate: true });
+
 // KiotViet: 'Nợ hiện tại' = NET position (dương = KH nợ DN, âm = DN nợ KH)
 const customerNetDebt = (customer) => {
     if (!customer) return 0;
