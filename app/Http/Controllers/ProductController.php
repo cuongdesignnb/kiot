@@ -1048,13 +1048,29 @@ class ProductController extends Controller
                     return response()->json(['error' => 'Not found'], 404);
                 }
 
+                $linkedCustomer = $doc->customer;
+                $canOpenLinkedCustomer = $linkedCustomer
+                    && (bool) $linkedCustomer->is_customer
+                    && $linkedCustomer->merged_into_id === null
+                    && auth()->check()
+                    && auth()->user()->hasPermission('customers.view');
+
                 return response()->json([
                     'source_document' => $source,
                     'type' => 'invoice',
                     'title' => 'Hóa đơn',
                     'code' => $doc->code,
                     'status' => $doc->status ?? 'Hoàn thành',
-                    'partner_name' => $doc->customer->name ?? 'Khách lẻ',
+                    'partner_name' => $linkedCustomer->name ?? 'Khách lẻ',
+                    'customer' => $canOpenLinkedCustomer ? [
+                        'id' => (int) $linkedCustomer->id,
+                        'code' => $linkedCustomer->code,
+                        'name' => $linkedCustomer->name,
+                        'open_url' => route('customers.index', [
+                            'search' => $linkedCustomer->code,
+                            'open_customer' => $linkedCustomer->id,
+                        ]),
+                    ] : null,
                     'created_by' => $doc->created_by_name ?? '',
                     'seller' => $doc->seller_name ?? '',
                     'sales_channel' => $doc->sales_channel ?? 'Bán trực tiếp',
