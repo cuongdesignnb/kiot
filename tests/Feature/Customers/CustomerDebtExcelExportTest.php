@@ -23,7 +23,7 @@ class CustomerDebtExcelExportTest extends TestCase
     {
         return User::create([
             'name' => 'Admin 246I',
-            'email' => 'admin-246i-' . uniqid() . '@test.local',
+            'email' => 'admin-246i-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
             'role_id' => null,
         ]);
@@ -32,9 +32,9 @@ class CustomerDebtExcelExportTest extends TestCase
     private function customer(): Customer
     {
         return Customer::create([
-            'code' => 'KH-246I-' . uniqid(),
+            'code' => 'KH-246I-'.uniqid(),
             'name' => 'Khach 246I',
-            'phone' => '09' . random_int(10000000, 99999999),
+            'phone' => '09'.random_int(10000000, 99999999),
             'debt_amount' => 0,
             'total_spent' => 0,
             'total_returns' => 0,
@@ -46,7 +46,7 @@ class CustomerDebtExcelExportTest extends TestCase
     private function product(string $name = 'San pham 246I'): Product
     {
         return Product::create([
-            'sku' => 'SP-246I-' . uniqid(),
+            'sku' => 'SP-246I-'.uniqid(),
             'name' => $name,
             'type' => 'standard',
             'cost_price' => 100000,
@@ -61,7 +61,7 @@ class CustomerDebtExcelExportTest extends TestCase
     {
         $when ??= Carbon::now();
         $invoice = Invoice::create([
-            'code' => 'HD' . uniqid(),
+            'code' => 'HD'.uniqid(),
             'customer_id' => $customer->id,
             'subtotal' => $total,
             'discount' => 0,
@@ -100,7 +100,7 @@ class CustomerDebtExcelExportTest extends TestCase
     {
         $response = $this->actingAs($actor)->get("/customers/{$customerId}/export-debt?{$query}");
         $response->assertOk();
-        $tmp = tempnam(sys_get_temp_dir(), 'cust-debt-') . '.xlsx';
+        $tmp = tempnam(sys_get_temp_dir(), 'cust-debt-').'.xlsx';
         file_put_contents($tmp, $response->streamedContent() ?: $response->getContent());
 
         try {
@@ -115,7 +115,7 @@ class CustomerDebtExcelExportTest extends TestCase
         $flat = '';
         foreach ($workbook->getSheetByName('CNCT')->toArray(null, true, true, false) as $row) {
             foreach ($row as $value) {
-                $flat .= ' ' . (string) $value;
+                $flat .= ' '.(string) $value;
             }
         }
 
@@ -163,11 +163,19 @@ class CustomerDebtExcelExportTest extends TestCase
         $customer = $this->customer();
         $this->invoice($customer, $this->product());
 
-        $flat = $this->flatWorkbookText($this->workbook($customer->id, 'format=xlsx&date_preset=all&include_detail=1', $admin));
+        $workbook = $this->workbook(
+            $customer->id,
+            'format=xlsx&date_preset=all&include_detail=1&columns[]=cost',
+            $admin,
+        );
+        $sheet = $workbook->getSheetByName('CNCT');
+        $flat = $this->flatWorkbookText($workbook);
 
-        foreach (['Thời gian', 'Mã', 'Diễn giải', 'ĐVT', 'SL', 'Đơn giá', 'Giảm giá', 'VAT', 'Giá bán/trả', 'Thành tiền', 'Ghi nợ', 'Ghi có'] as $header) {
+        foreach (['Thời gian', 'Mã', 'Diễn giải', 'ĐVT', 'SL', 'Đơn giá', 'Giảm giá', 'VAT', 'Thành tiền', 'Ghi nợ', 'Ghi có'] as $header) {
             $this->assertStringContainsString($header, $flat);
         }
+        $this->assertStringNotContainsString('Giá bán/trả', $flat);
+        $this->assertSame('M', $sheet->getHighestColumn());
     }
 
     public function test_invoice_entry_has_line_items_when_include_detail(): void
@@ -226,8 +234,8 @@ class CustomerDebtExcelExportTest extends TestCase
         }
 
         $this->assertNotNull($paymentRow);
-        $this->assertEmpty($paymentRow['K'] ?? '');
-        $this->assertEquals(200000, (int) ($paymentRow['L'] ?? 0));
+        $this->assertEmpty($paymentRow['J'] ?? '');
+        $this->assertEquals(200000, (int) ($paymentRow['K'] ?? 0));
     }
 
     public function test_return_entry_has_credit_amount_and_no_auto_settlement_adjustment(): void
@@ -290,7 +298,7 @@ class CustomerDebtExcelExportTest extends TestCase
 
         $this->assertCount(1, $returnRows);
         $this->assertSame('Trả hàng bán', $returnRows[0]['C']);
-        $this->assertEquals(3000000, (int) ($returnRows[0]['L'] ?? 0));
+        $this->assertEquals(3000000, (int) ($returnRows[0]['K'] ?? 0));
         $this->assertStringNotContainsString('Điều chỉnh', $this->flatWorkbookText($this->workbook($customer->id, 'format=xlsx&date_preset=all', $admin)));
     }
 

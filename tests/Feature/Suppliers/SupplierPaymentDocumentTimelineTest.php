@@ -321,7 +321,7 @@ class SupplierPaymentDocumentTimelineTest extends TestCase
             true,
         ));
         $this->assertCount(1, $matchingRows);
-        $this->assertSame('Ghi chú phiếu thanh toán NCC xuất file', $matchingRows->first()['N']);
+        $this->assertSame('Ghi chú phiếu thanh toán NCC xuất file', $matchingRows->first()['M']);
     }
 
     /** @return array{Customer, CashFlow} */

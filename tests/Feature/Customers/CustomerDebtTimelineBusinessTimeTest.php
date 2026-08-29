@@ -255,7 +255,7 @@ class CustomerDebtTimelineBusinessTimeTest extends TestCase
         $this->assertStringContainsString('24/05/2026 16:17', $text);
         $this->assertStringNotContainsString('02/06/2026 16:22', $text);
         $this->assertStringContainsString('CUSTOMER XLSX SOURCE NOTE', $text);
-        $this->assertSame('N', $highestColumn);
+        $this->assertSame('M', $highestColumn);
         $this->assertSame('CUSTOMER XLSX SOURCE NOTE', $invoice->fresh()->note);
     }
 

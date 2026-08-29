@@ -138,7 +138,7 @@ class HOTFIX2417BSupplierDebtExcelFormatTest extends TestCase
         $sup = $this->supplier();
         $this->purchase($sup, 500_000, Carbon::now());
 
-        $wb = $this->downloadWorkbook($sup->id, 'format=xlsx&date_preset=all&include_detail=1', $admin);
+        $wb = $this->downloadWorkbook($sup->id, 'format=xlsx&date_preset=all&include_detail=1&columns[]=cost', $admin);
         $sheet = $wb->getSheetByName('CNCT');
         $cells = $sheet->toArray(null, true, true, false);
         $flat = '';
@@ -149,10 +149,12 @@ class HOTFIX2417BSupplierDebtExcelFormatTest extends TestCase
         }
 
         foreach (['Thời gian', 'Mã', 'Diễn giải', 'ĐVT', 'SL', 'Đơn giá',
-            'Giảm giá', 'VAT', 'Giá nhập/trả', 'Thành tiền',
+            'Giảm giá', 'VAT', 'Thành tiền',
             'Ghi nợ', 'Ghi có'] as $h) {
             $this->assertStringContainsString($h, $flat, "header `{$h}` must appear");
         }
+        $this->assertStringNotContainsString('Giá nhập/trả', $flat);
+        $this->assertSame('M', $sheet->getHighestColumn());
     }
 
     // ── TC-05 — purchase entry carries its line items below ──
@@ -230,8 +232,8 @@ class HOTFIX2417BSupplierDebtExcelFormatTest extends TestCase
             }
         }
         $this->assertNotNull($paymentRow, 'payment ledger row must appear');
-        $this->assertEmpty($paymentRow['K'] ?? '', 'Ghi nợ must be empty for a pure payment');
-        $this->assertEquals(200_000, (int) ($paymentRow['L'] ?? 0), 'Ghi có must be the payment amount');
+        $this->assertEmpty($paymentRow['J'] ?? '', 'Ghi nợ must be empty for a pure payment');
+        $this->assertEquals(200_000, (int) ($paymentRow['K'] ?? 0), 'Ghi có must be the payment amount');
     }
 
     // ── TC-07 — custom date filter excludes out-of-range entries ──

@@ -532,7 +532,10 @@ class SupplierController extends Controller
         }
 
         $includeDetail = in_array((string) ($validated['include_detail'] ?? '0'), ['1', 'true'], true);
-        $selectedCols = array_values($validated['columns'] ?? []);
+        // Keep accepting the deprecated `cost` value so saved/stale export
+        // URLs do not fail validation. It is deliberately ignored: debt
+        // statements are shareable documents and must never disclose cost.
+        $selectedCols = array_values(array_diff($validated['columns'] ?? [], ['cost']));
 
         // HOTFIX 24.17B — Excel branch: render KiotViet-style workbook
         // from the same full ledger. The Excel service computes
@@ -581,7 +584,6 @@ class SupplierController extends Controller
             'unit_price' => 'Đơn giá',
             'discount' => 'Giảm giá',
             'vat' => 'VAT',
-            'cost' => 'Giá nhập/trả',
             'line_total' => 'Thành tiền',
         ];
         $appendDetailCols = $includeDetail

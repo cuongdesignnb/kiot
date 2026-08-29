@@ -35,23 +35,23 @@ class HOTFIX2417FSupplierDebtExcelReconcileAndFooterTest extends TestCase
     private function admin(): User
     {
         return User::create([
-            'name'     => 'Admin 2417F',
-            'email'    => 'admin-2417f-' . uniqid() . '@test.local',
+            'name' => 'Admin 2417F',
+            'email' => 'admin-2417f-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
-            'role_id'  => null,
+            'role_id' => null,
         ]);
     }
 
     private function supplier(string $name = 'NCC 2417F'): Customer
     {
         return Customer::create([
-            'code'                 => 'NCC-2417F-' . uniqid(),
-            'name'                 => $name,
-            'phone'                => '09' . random_int(10000000, 99999999),
-            'debt_amount'          => 0,
+            'code' => 'NCC-2417F-'.uniqid(),
+            'name' => $name,
+            'phone' => '09'.random_int(10000000, 99999999),
+            'debt_amount' => 0,
             'supplier_debt_amount' => 0,
-            'is_customer'          => false,
-            'is_supplier'          => true,
+            'is_customer' => false,
+            'is_supplier' => true,
         ]);
     }
 
@@ -59,17 +59,19 @@ class HOTFIX2417FSupplierDebtExcelReconcileAndFooterTest extends TestCase
     {
         $when = $when ?? Carbon::now();
         $gross = 0;
-        foreach ($items as $i) $gross += (int) $i['subtotal'];
+        foreach ($items as $i) {
+            $gross += (int) $i['subtotal'];
+        }
 
         $p = Purchase::create([
-            'code'          => 'PN-2417F-' . uniqid(),
-            'supplier_id'   => $sup->id,
-            'user_id'       => null,
-            'total_amount'  => $gross,
-            'discount'      => $docDiscount,
-            'paid_amount'   => 0,
-            'debt_amount'   => $gross - $docDiscount,
-            'status'        => 'completed',
+            'code' => 'PN-2417F-'.uniqid(),
+            'supplier_id' => $sup->id,
+            'user_id' => null,
+            'total_amount' => $gross,
+            'discount' => $docDiscount,
+            'paid_amount' => 0,
+            'debt_amount' => $gross - $docDiscount,
+            'status' => 'completed',
             'purchase_date' => $when,
         ]);
         $p->created_at = $when;
@@ -78,15 +80,16 @@ class HOTFIX2417FSupplierDebtExcelReconcileAndFooterTest extends TestCase
 
         foreach ($items as $i) {
             PurchaseItem::create([
-                'purchase_id'  => $p->id,
+                'purchase_id' => $p->id,
                 'product_name' => $i['name'],
-                'product_code' => $i['code'] ?? 'CODE-' . uniqid(),
-                'quantity'     => $i['qty'],
-                'price'        => $i['price'],
-                'discount'     => $i['discount'] ?? 0,
-                'subtotal'     => $i['subtotal'],
+                'product_code' => $i['code'] ?? 'CODE-'.uniqid(),
+                'quantity' => $i['qty'],
+                'price' => $i['price'],
+                'discount' => $i['discount'] ?? 0,
+                'subtotal' => $i['subtotal'],
             ]);
         }
+
         return $p;
     }
 
@@ -94,12 +97,12 @@ class HOTFIX2417FSupplierDebtExcelReconcileAndFooterTest extends TestCase
     {
         return SupplierDebtTransaction::create([
             'supplier_id' => $sup->id,
-            'code'        => 'PCPN-2417F-' . uniqid(),
-            'type'        => 'payment',
-            'amount'      => -$amount,
+            'code' => 'PCPN-2417F-'.uniqid(),
+            'type' => 'payment',
+            'amount' => -$amount,
             'debt_remain' => 0,
-            'note'        => 'Test payment 2417F',
-            'user_id'     => null,
+            'note' => 'Test payment 2417F',
+            'user_id' => null,
         ]);
     }
 
@@ -108,7 +111,7 @@ class HOTFIX2417FSupplierDebtExcelReconcileAndFooterTest extends TestCase
         $res = $this->actingAs($actor)->get("/api/suppliers/{$supplierId}/export-debt?{$query}");
         $res->assertOk();
         $body = $res->streamedContent() ?: $res->getContent();
-        $tmp  = tempnam(sys_get_temp_dir(), 'cnct-f-') . '.xlsx';
+        $tmp = tempnam(sys_get_temp_dir(), 'cnct-f-').'.xlsx';
         file_put_contents($tmp, $body);
         try {
             return IOFactory::load($tmp);
@@ -126,8 +129,11 @@ class HOTFIX2417FSupplierDebtExcelReconcileAndFooterTest extends TestCase
     private function findSummaryRow(array $cells, string $label): ?array
     {
         foreach ($cells as $row) {
-            if (($row['I'] ?? '') === $label) return $row;
+            if (($row['H'] ?? '') === $label) {
+                return $row;
+            }
         }
+
         return null;
     }
 
@@ -135,7 +141,7 @@ class HOTFIX2417FSupplierDebtExcelReconcileAndFooterTest extends TestCase
     public function test_purchase_doc_row_matches_detail_sum_when_document_discount_exists(): void
     {
         $admin = $this->admin();
-        $sup   = $this->supplier();
+        $sup = $this->supplier();
 
         // Three items + a doc-level discount of 11 (mirrors the 11đ
         // off-by reported in the bug screenshot).
@@ -147,7 +153,7 @@ class HOTFIX2417FSupplierDebtExcelReconcileAndFooterTest extends TestCase
         $docDiscount = 11;
         $p = $this->purchaseWith($sup, $items, $docDiscount);
 
-        $wb    = $this->downloadWorkbook(
+        $wb = $this->downloadWorkbook(
             $sup->id,
             'format=xlsx&date_preset=all&include_detail=1&columns[]=quantity&columns[]=unit_price&columns[]=discount&columns[]=line_total',
             $admin
@@ -157,35 +163,40 @@ class HOTFIX2417FSupplierDebtExcelReconcileAndFooterTest extends TestCase
 
         // Find the doc row + collect detail rows below it until the
         // next document boundary (here: until EOF).
-        $docRow = null; $docIdx = null;
+        $docRow = null;
+        $docIdx = null;
         foreach ($cells as $idx => $row) {
             if (($row['B'] ?? '') === $p->code && ($row['C'] ?? '') === 'Nhập hàng') {
-                $docRow = $row; $docIdx = $idx; break;
+                $docRow = $row;
+                $docIdx = $idx;
+                break;
             }
         }
         $this->assertNotNull($docRow, 'purchase doc row must appear');
 
         $detailSum = 0;
-        $names     = ['SP A', 'SP B', 'SP C', 'Giảm giá hóa đơn'];
+        $names = ['SP A', 'SP B', 'SP C', 'Giảm giá hóa đơn'];
         foreach ($cells as $idx => $row) {
-            if ($idx <= $docIdx) continue;
+            if ($idx <= $docIdx) {
+                continue;
+            }
             if (in_array($row['C'] ?? '', $names, true)) {
-                $detailSum += (int) ($row['J'] ?? 0);
+                $detailSum += (int) ($row['I'] ?? 0);
             }
         }
 
         $expectedNet = 29_300_000 - $docDiscount; // 29,299,989
-        $this->assertEquals($expectedNet, (int) ($docRow['K'] ?? 0),
-            'doc row K must equal Σ items.subtotal − purchases.discount');
+        $this->assertEquals($expectedNet, (int) ($docRow['J'] ?? 0),
+            'doc row J must equal Σ items.subtotal − purchases.discount');
         $this->assertEquals($expectedNet, $detailSum,
-            'sum of detail Thành tiền (incl. negative Giảm giá hóa đơn) must equal doc row K');
+            'sum of detail Thành tiền (incl. negative Giảm giá hóa đơn) must equal doc row J');
     }
 
     // ── TC-02 — summary periodDebit equals Σ of visible doc K cells ──
     public function test_summary_period_debit_matches_visible_document_debits(): void
     {
         $admin = $this->admin();
-        $sup   = $this->supplier();
+        $sup = $this->supplier();
         $p1 = $this->purchaseWith($sup, [
             ['name' => 'X', 'qty' => 1, 'price' => 4_000_000, 'subtotal' => 4_000_000],
         ], docDiscount: 0);
@@ -194,7 +205,7 @@ class HOTFIX2417FSupplierDebtExcelReconcileAndFooterTest extends TestCase
         ], docDiscount: 500_000);
         $this->payment($sup, 1_000_000);
 
-        $wb    = $this->downloadWorkbook($sup->id, 'format=xlsx&date_preset=all&include_detail=1', $admin);
+        $wb = $this->downloadWorkbook($sup->id, 'format=xlsx&date_preset=all&include_detail=1', $admin);
         $sheet = $wb->getSheetByName('CNCT');
         $cells = $sheet->toArray(null, true, false, true);
 
@@ -203,29 +214,33 @@ class HOTFIX2417FSupplierDebtExcelReconcileAndFooterTest extends TestCase
             $code = (string) ($row['B'] ?? '');
             $type = (string) ($row['C'] ?? '');
             // Only doc rows — synthetic discount + per-item lines have empty B or non-doc C.
-            if ($code === '' || in_array($type, ['', 'Giảm giá hóa đơn'], true)) continue;
+            if ($code === '' || in_array($type, ['', 'Giảm giá hóa đơn'], true)) {
+                continue;
+            }
             // Identify "real" doc rows by non-empty C and recognised type labels.
-            if (!in_array($type, ['Nhập hàng', 'Thanh toán', 'Trả hàng', 'Điều chỉnh', 'Chiết khấu TT'], true)) continue;
-            $sumDebit += (int) ($row['K'] ?? 0);
+            if (! in_array($type, ['Nhập hàng', 'Thanh toán', 'Trả hàng', 'Điều chỉnh', 'Chiết khấu TT'], true)) {
+                continue;
+            }
+            $sumDebit += (int) ($row['J'] ?? 0);
         }
         $summary = $this->findSummaryRow($cells, 'Phát sinh trong kỳ:');
         $this->assertNotNull($summary);
-        $this->assertEquals($sumDebit, (int) ($summary['K'] ?? 0),
-            'summary periodDebit must equal Σ visible doc K cells');
+        $this->assertEquals($sumDebit, (int) ($summary['J'] ?? 0),
+            'summary periodDebit must equal Σ visible doc J cells');
         // Sanity: expected = 4M (p1) + (6M - 500k) (p2 net) = 9,500,000.
-        $this->assertEquals(9_500_000, (int) ($summary['K'] ?? 0));
+        $this->assertEquals(9_500_000, (int) ($summary['J'] ?? 0));
     }
 
     // ── TC-03 — discount row never touches K/L (regression for 24.17D/F) ──
     public function test_discount_row_does_not_touch_debit_credit_columns(): void
     {
         $admin = $this->admin();
-        $sup   = $this->supplier();
+        $sup = $this->supplier();
         $this->purchaseWith($sup, [
             ['name' => 'Z', 'qty' => 1, 'price' => 10_000_000, 'subtotal' => 10_000_000],
         ], docDiscount: 1_000_000);
 
-        $wb    = $this->downloadWorkbook(
+        $wb = $this->downloadWorkbook(
             $sup->id,
             'format=xlsx&date_preset=all&include_detail=1&columns[]=discount&columns[]=line_total',
             $admin
@@ -235,36 +250,42 @@ class HOTFIX2417FSupplierDebtExcelReconcileAndFooterTest extends TestCase
 
         $discRow = null;
         foreach ($cells as $row) {
-            if (($row['C'] ?? '') === 'Giảm giá hóa đơn') { $discRow = $row; break; }
+            if (($row['C'] ?? '') === 'Giảm giá hóa đơn') {
+                $discRow = $row;
+                break;
+            }
         }
         $this->assertNotNull($discRow);
         $this->assertEquals(1_000_000, (int) ($discRow['G'] ?? 0), 'Giảm giá column on discount row');
-        $this->assertEquals(-1_000_000, (int) ($discRow['J'] ?? 0), 'Thành tiền on discount row is negative');
+        $this->assertEquals(-1_000_000, (int) ($discRow['I'] ?? 0), 'Thành tiền on discount row is negative');
+        $this->assertEmpty($discRow['J'] ?? '', 'J must stay empty on discount row');
         $this->assertEmpty($discRow['K'] ?? '', 'K must stay empty on discount row');
-        $this->assertEmpty($discRow['L'] ?? '', 'L must stay empty on discount row');
     }
 
     // ── TC-04 — outer border medium present + inner heavy borders removed ──
     public function test_table_has_outer_border_and_lighter_inner_borders(): void
     {
         $admin = $this->admin();
-        $sup   = $this->supplier();
+        $sup = $this->supplier();
         $this->purchaseWith($sup, [
             ['name' => 'W', 'qty' => 1, 'price' => 1_000_000, 'subtotal' => 1_000_000],
         ]);
 
-        $wb    = $this->downloadWorkbook($sup->id, 'format=xlsx&date_preset=all&include_detail=1', $admin);
+        $wb = $this->downloadWorkbook($sup->id, 'format=xlsx&date_preset=all&include_detail=1', $admin);
         $sheet = $wb->getSheetByName('CNCT');
         $cells = $sheet->toArray(null, true, false, true);
 
         // Find header row by locating the cell with text "Thời gian".
         $headerRowIdx = null;
         foreach ($cells as $idx => $row) {
-            if (($row['A'] ?? '') === 'Thời gian') { $headerRowIdx = $idx; break; }
+            if (($row['A'] ?? '') === 'Thời gian') {
+                $headerRowIdx = $idx;
+                break;
+            }
         }
         $this->assertNotNull($headerRowIdx, 'must find header row by "Thời gian" label');
 
-        $topLeft = $sheet->getStyle('A' . $headerRowIdx);
+        $topLeft = $sheet->getStyle('A'.$headerRowIdx);
         $this->assertSame(Border::BORDER_MEDIUM, $topLeft->getBorders()->getTop()->getBorderStyle(),
             'outer top border must be medium');
         $this->assertSame(Border::BORDER_MEDIUM, $topLeft->getBorders()->getLeft()->getBorderStyle(),
@@ -274,7 +295,7 @@ class HOTFIX2417FSupplierDebtExcelReconcileAndFooterTest extends TestCase
         // of the doc row) — its left border must NOT be medium any
         // more (used to be BORDER_THIN every cell).
         $bodyRowIdx = $headerRowIdx + 1;
-        $innerStyle = $sheet->getStyle('C' . $bodyRowIdx)->getBorders();
+        $innerStyle = $sheet->getStyle('C'.$bodyRowIdx)->getBorders();
         $this->assertNotSame(Border::BORDER_MEDIUM, $innerStyle->getLeft()->getBorderStyle(),
             'inner vertical borders must NOT be medium');
     }
@@ -283,17 +304,19 @@ class HOTFIX2417FSupplierDebtExcelReconcileAndFooterTest extends TestCase
     public function test_footer_contains_export_date_and_signature_blocks(): void
     {
         $admin = $this->admin();
-        $sup   = $this->supplier();
+        $sup = $this->supplier();
         $this->purchaseWith($sup, [
             ['name' => 'V', 'qty' => 1, 'price' => 2_000_000, 'subtotal' => 2_000_000],
         ]);
 
-        $wb    = $this->downloadWorkbook($sup->id, 'format=xlsx&date_preset=all&include_detail=1', $admin);
+        $wb = $this->downloadWorkbook($sup->id, 'format=xlsx&date_preset=all&include_detail=1', $admin);
         $sheet = $wb->getSheetByName('CNCT');
         $cells = $sheet->toArray(null, true, false, false);
         $flat = '';
         foreach ($cells as $row) {
-            foreach ($row as $val) $flat .= "\t" . (string) $val;
+            foreach ($row as $val) {
+                $flat .= "\t".(string) $val;
+            }
         }
 
         $now = Carbon::now();
@@ -309,17 +332,19 @@ class HOTFIX2417FSupplierDebtExcelReconcileAndFooterTest extends TestCase
     public function test_purchase_without_discount_has_no_synthetic_row(): void
     {
         $admin = $this->admin();
-        $sup   = $this->supplier();
+        $sup = $this->supplier();
         $this->purchaseWith($sup, [
             ['name' => 'U', 'qty' => 1, 'price' => 3_000_000, 'subtotal' => 3_000_000],
         ]);
 
-        $wb    = $this->downloadWorkbook($sup->id, 'format=xlsx&date_preset=all&include_detail=1', $admin);
+        $wb = $this->downloadWorkbook($sup->id, 'format=xlsx&date_preset=all&include_detail=1', $admin);
         $sheet = $wb->getSheetByName('CNCT');
         $cells = $sheet->toArray(null, true, false, false);
         $flat = '';
         foreach ($cells as $row) {
-            foreach ($row as $val) $flat .= "\t" . (string) $val;
+            foreach ($row as $val) {
+                $flat .= "\t".(string) $val;
+            }
         }
         $this->assertStringNotContainsString('Giảm giá hóa đơn', $flat);
     }

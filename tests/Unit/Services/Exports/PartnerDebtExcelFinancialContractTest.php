@@ -39,9 +39,9 @@ class PartnerDebtExcelFinancialContractTest extends TestCase
         $body = $this->rowWithCode($rows, 'RET-MERGED-1');
         $summary = $this->summary($rows, 'Nợ cuối kỳ:');
 
-        self::assertSame(250.0, (float) ($body['K'] ?? 0));
-        self::assertSame(0.0, (float) ($body['L'] ?? 0));
-        self::assertSame(250.0, (float) ($body['M'] ?? 0));
+        self::assertSame(250.0, (float) ($body['J'] ?? 0));
+        self::assertSame(0.0, (float) ($body['K'] ?? 0));
+        self::assertSame(250.0, (float) ($body['L'] ?? 0));
         self::assertSame(250.0, $summary);
         self::assertSame(250.0, 0.0 + 250.0 - 0.0);
     }
@@ -102,14 +102,14 @@ class PartnerDebtExcelFinancialContractTest extends TestCase
         $supplierA = $this->rowWithCode($supplierRows, 'PC-A');
         $supplierB = $this->rowWithCode($supplierRows, 'PC-B');
 
-        self::assertSame(20000.0, (float) ($customerA['L'] ?? 0));
-        self::assertSame(2060000.0, (float) ($customerB['L'] ?? 0));
-        self::assertSame(20000.0, (float) ($supplierA['K'] ?? 0));
-        self::assertSame(2060000.0, (float) ($supplierB['K'] ?? 0));
-        self::assertNotSame(18400000.0, (float) ($customerA['L'] ?? 0));
-        self::assertNotSame(18600000.0, (float) ($customerB['L'] ?? 0));
-        self::assertSame(0.0, (float) ($customerA['M'] ?? 0) + (float) ($supplierA['M'] ?? 0));
-        self::assertSame(0.0, (float) ($customerB['M'] ?? 0) + (float) ($supplierB['M'] ?? 0));
+        self::assertSame(20000.0, (float) ($customerA['K'] ?? 0));
+        self::assertSame(2060000.0, (float) ($customerB['K'] ?? 0));
+        self::assertSame(20000.0, (float) ($supplierA['J'] ?? 0));
+        self::assertSame(2060000.0, (float) ($supplierB['J'] ?? 0));
+        self::assertNotSame(18400000.0, (float) ($customerA['K'] ?? 0));
+        self::assertNotSame(18600000.0, (float) ($customerB['K'] ?? 0));
+        self::assertSame(0.0, (float) ($customerA['L'] ?? 0) + (float) ($supplierA['L'] ?? 0));
+        self::assertSame(0.0, (float) ($customerB['L'] ?? 0) + (float) ($supplierB['L'] ?? 0));
     }
 
     public function test_canonical_running_balance_missing_fails_closed(): void
@@ -156,8 +156,8 @@ class PartnerDebtExcelFinancialContractTest extends TestCase
     private function summary(array $rows, string $label): float
     {
         foreach ($rows as $row) {
-            if (($row['I'] ?? '') === $label) {
-                return (float) ($row['K'] ?? 0) - (float) ($row['L'] ?? 0);
+            if (($row['H'] ?? '') === $label) {
+                return (float) ($row['J'] ?? 0) - (float) ($row['K'] ?? 0);
             }
         }
         self::fail('Summary row not found: '.$label);

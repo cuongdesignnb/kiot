@@ -64,14 +64,14 @@ class SupplierReconciliationCheckpointVisibilityTest extends TestCase
             $rows,
         ));
 
-        $this->assertSame('N', $sheet->getHighestColumn());
+        $this->assertSame('M', $sheet->getHighestColumn());
         $this->assertStringNotContainsString('CHECKPOINT-', $text);
         $this->assertStringContainsString('Ghi chú', $text);
         $this->assertStringContainsString('HUY-PN-SECOND-ORDER', $text);
 
         $cancelRow = collect($rows)->first(fn (array $row): bool => ($row['B'] ?? null) === 'HUY-PN-SECOND-ORDER');
         $this->assertNotNull($cancelRow);
-        $this->assertSame(120.0, (float) ($cancelRow['M'] ?? 0));
+        $this->assertSame(120.0, (float) ($cancelRow['L'] ?? 0));
     }
 
     public function test_existing_virtual_opening_is_preserved_without_double_counting_checkpoint(): void
