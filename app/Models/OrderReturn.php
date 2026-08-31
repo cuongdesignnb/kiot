@@ -11,6 +11,7 @@ class OrderReturn extends Model
     protected $guarded = ['id'];
 
     protected $casts = [
+        'recorded_at' => 'datetime',
         'sales_attribution_updated_at' => 'datetime',
     ];
 

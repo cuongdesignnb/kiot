@@ -263,6 +263,18 @@ class InvoiceSaleService
                 throw new \Exception("Sản phẩm '{$product->name}' cần chọn đúng số Serial/IMEI để xuất bán.");
             }
 
+            if ($soldSerials->contains(fn (SerialImei $serial) => $serial->status !== 'in_stock')) {
+                throw new \Exception("Sản phẩm '{$product->name}' có Serial/IMEI vừa được thay đổi trạng thái, vui lòng chọn lại.");
+            }
+
+            // A serial may only be sold again after its most recent return in
+            // both the live state and the business-time timeline.  Without
+            // this guard a backdated invoice creates an impossible COGS trail.
+            app(SerialBusinessTimeGuard::class)->assertNewSaleCanUseBusinessTime(
+                $soldSerials,
+                $invoice->transaction_date ?? $invoice->created_at ?? now(),
+            );
+
             $serialCostSnapshot = SerialCostingService::snapshotForSale($soldSerials);
             $snapshotCostPrice = $serialCostSnapshot['unit_cost'];
             $serialStr = $soldSerials->pluck('serial_number')->implode(', ');

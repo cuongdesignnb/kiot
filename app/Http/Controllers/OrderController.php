@@ -803,6 +803,18 @@ class OrderController extends Controller
                             throw new \Exception("Sản phẩm '{$product->name}' cần chọn đúng số Serial/IMEI để xuất bán.");
                         }
 
+                        if ($soldSerials->contains(fn (SerialImei $serial) => $serial->status !== 'in_stock')) {
+                            throw new \Exception("Sản phẩm '{$product->name}' có Serial/IMEI vừa được thay đổi trạng thái, vui lòng chọn lại.");
+                        }
+
+                        // Chuyển đơn hàng cũng là một đường bán Serial/IMEI.
+                        // Giữ cùng chốt thời gian nghiệp vụ như POS/hoá đơn để
+                        // một serial đã trả không thể bị bán lại lùi ngày.
+                        app(\App\Services\SerialBusinessTimeGuard::class)->assertNewSaleCanUseBusinessTime(
+                            $soldSerials,
+                            $invoice->transaction_date ?? $invoice->created_at ?? now(),
+                        );
+
                         $serialCostSnapshot = \App\Services\SerialCostingService::snapshotForSale($soldSerials);
                         $costSnapshot = $serialCostSnapshot['unit_cost'];
                     }

@@ -38,6 +38,7 @@ class OrderReturnCreationService
         $createReturn = function () use ($payload, $context) {
             $this->assertReturnTimeLimit($payload);
             $returnDate = $this->resolveReturnDate($payload, $context);
+            $recordedAt = now();
             $receiver = $this->resolveReceiver($payload);
 
             $returnPayload = [
@@ -57,6 +58,10 @@ class OrderReturnCreationService
                 'received_by_name' => $receiver['name'],
                 'created_at' => $returnDate,
             ];
+
+            if (Schema::hasColumn('returns', 'recorded_at')) {
+                $returnPayload['recorded_at'] = $recordedAt;
+            }
 
             if (Schema::hasColumn('returns', 'fee_type')) {
                 $returnPayload['fee_type'] = $payload['fee_type'] ?? 'amount';
@@ -81,6 +86,7 @@ class OrderReturnCreationService
                 [
                     'total' => (float) $return->total,
                     'business_time' => optional($return->created_at)->toDateTimeString(),
+                    'recorded_at' => $recordedAt->toDateTimeString(),
                 ],
             );
 

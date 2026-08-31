@@ -8,6 +8,7 @@ use App\Models\Product;
 use App\Models\SerialImei;
 use App\Models\Task;
 use App\Models\TaskPart;
+use App\Services\SerialLifecycleInspectionService;
 use App\Support\Status\BusinessStatus;
 use Illuminate\Console\Command;
 use Illuminate\Support\Collection;
@@ -54,6 +55,16 @@ class RebuildMovingAvgCosting extends Command
         $dry = ! $apply;
         $this->info(($dry ? '[DRY-RUN] ' : '[APPLY] ').'Rebuild '.$products->count().' product(s)');
 
+        // An all-product repair must be all-or-nothing.  The previous command
+        // applied each product in its own transaction, which meant a later
+        // invalid serial could leave earlier products permanently rewritten.
+        // Preflight every selected product before opening the write transaction.
+        $applyBlockedByPreflight = false;
+        if ($apply && $this->preflightHardErrorCount($products) > 0) {
+            $applyBlockedByPreflight = true;
+            $this->error('APPLY BLOCKED: at least one selected product has hard errors. No database writes will be made.');
+        }
+
         $totals = [
             'products' => 0,
             'products_applied' => 0,
@@ -64,15 +75,31 @@ class RebuildMovingAvgCosting extends Command
             'serials_updated' => 0,
         ];
 
-        foreach ($products as $product) {
-            $stats = $this->rebuildOne($product, $apply);
-            $totals['products']++;
-            $totals['products_applied'] += $stats['product_applied'];
-            $totals['hard_errors'] += $stats['hard_errors'];
-            $totals['warnings'] += $stats['warnings'];
-            $totals['invoice_items_updated'] += $stats['invoice_items_updated'];
-            $totals['invoice_item_serials_updated'] += $stats['invoice_item_serials_updated'];
-            $totals['serials_updated'] += $stats['serials_updated'];
+        $run = function (bool $shouldApply) use ($products, &$totals): void {
+            foreach ($products as $product) {
+                $stats = $this->rebuildOne($product, $shouldApply);
+                $totals['products']++;
+                $totals['products_applied'] += $stats['product_applied'];
+                $totals['hard_errors'] += $stats['hard_errors'];
+                $totals['warnings'] += $stats['warnings'];
+                $totals['invoice_items_updated'] += $stats['invoice_items_updated'];
+                $totals['invoice_item_serials_updated'] += $stats['invoice_item_serials_updated'];
+                $totals['serials_updated'] += $stats['serials_updated'];
+            }
+        };
+
+        if ($apply && ! $applyBlockedByPreflight) {
+            try {
+                DB::transaction(fn () => $run(true));
+            } catch (\Throwable $exception) {
+                $this->error('APPLY ROLLED BACK: '.$exception->getMessage());
+
+                return self::FAILURE;
+            }
+        } else {
+            // A blocked apply intentionally renders the same evidence as a
+            // dry run, while guaranteeing that it never writes a partial set.
+            $run(false);
         }
 
         $this->newLine();
@@ -85,11 +112,13 @@ class RebuildMovingAvgCosting extends Command
         $this->line('Invoice item serials changed: '.$totals['invoice_item_serials_updated']);
         $this->line('Serial sold costs changed: '.$totals['serials_updated']);
 
-        if ($dry) {
+        if ($dry || $applyBlockedByPreflight) {
             $this->warn('DRY-RUN: no database writes were made. Re-run with --apply to write.');
         }
 
-        return $totals['hard_errors'] > 0 ? self::FAILURE : self::SUCCESS;
+        return $applyBlockedByPreflight || $totals['hard_errors'] > 0
+            ? self::FAILURE
+            : self::SUCCESS;
     }
 
     private function productsForRun(?string $productOpt, bool $all, bool $mismatchedSerials): Collection
@@ -121,6 +150,25 @@ class RebuildMovingAvgCosting extends Command
         return (int) $product->stock_quantity !== $aggregate['qty']
             || round((float) $product->inventory_total_cost, 0) !== round($aggregate['total'], 0)
             || round((float) $product->cost_price, 0) !== round($aggregate['avg'], 0);
+    }
+
+    /**
+     * Read-only first pass used only for --apply.  It deliberately reuses the
+     * same timeline builder as the real run so an operator never gets a false
+     * assurance from a different validation path.
+     */
+    private function preflightHardErrorCount(Collection $products): int
+    {
+        $hardErrorCount = 0;
+
+        foreach ($products as $product) {
+            $warnings = [];
+            $hardErrors = [];
+            $this->buildTimeline($product, $warnings, $hardErrors);
+            $hardErrorCount += count(array_unique($hardErrors));
+        }
+
+        return $hardErrorCount;
     }
 
     /**
@@ -201,7 +249,10 @@ class RebuildMovingAvgCosting extends Command
 
         if ($hardErrors) {
             if ($apply) {
-                $this->error('    Apply skipped for this product because hard errors were found.');
+                // This is a defence against a concurrent change between the
+                // all-product preflight and the write pass.  Throwing rolls
+                // back every selected product in the outer transaction.
+                throw new \RuntimeException('Hard errors appeared during apply for product #'.$product->id.'.');
             }
 
             return $stats;
@@ -697,9 +748,11 @@ class RebuildMovingAvgCosting extends Command
             }
         }
 
-        foreach ($completedBySerial as $serialId => $invoiceCodes) {
-            if (count($invoiceCodes) > 1) {
-                $hardErrors[] = 'Serial #'.$serialId.' is linked to multiple completed invoices: '.implode(', ', $invoiceCodes);
+        $hasMultipleCompletedSales = collect($completedBySerial)
+            ->contains(fn (array $invoiceCodes) => count($invoiceCodes) > 1);
+        if ($hasMultipleCompletedSales) {
+            foreach (app(SerialLifecycleInspectionService::class)->inspectProduct($product->id) as $inspection) {
+                $hardErrors[] = $inspection['message'];
             }
         }
 
