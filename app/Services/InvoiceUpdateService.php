@@ -33,7 +33,10 @@ use Illuminate\Validation\ValidationException;
  */
 class InvoiceUpdateService
 {
-    public function __construct(private readonly PartnerDebtMutationCoordinator $coordinator) {}
+    public function __construct(
+        private readonly PartnerDebtMutationCoordinator $coordinator,
+        private readonly SerialBusinessTimeGuard $serialBusinessTimeGuard,
+    ) {}
 
     /**
      * Build change plan: detect what changed between current invoice and payload.
@@ -271,12 +274,15 @@ class InvoiceUpdateService
     private function applyDateOnlyUpdate(Invoice $invoice, array $payload, array $changePlan, array $context): Invoice
     {
         return DB::transaction(function () use ($invoice, $payload, $changePlan, $context) {
+            $invoice = Invoice::query()->lockForUpdate()->findOrFail($invoice->id);
             $newTxDate = Carbon::parse($payload['transaction_date']);
             $oldTxDate = $invoice->transaction_date ?? $invoice->created_at;
 
             if (! Schema::hasColumn('invoices', 'transaction_date')) {
                 throw new \RuntimeException('Không thể đổi ngày bán vì thiếu cột transaction_date.');
             }
+
+            $this->serialBusinessTimeGuard->assertInvoiceDateMayChange($invoice);
 
             $invoice->transaction_date = $newTxDate;
             $invoice->save();
@@ -435,8 +441,15 @@ class InvoiceUpdateService
                 ->get();
             $invoice->setRelation('items', $lockedItems);
 
+            $newTxDate = isset($payload['transaction_date'])
+                ? Carbon::parse($payload['transaction_date'])
+                : ($invoice->transaction_date ?? $invoice->created_at);
+
             // --- Pre-flight validations ---
             $this->preflightContentValidation($invoice, $payload, $context);
+            if (($changePlan['date_changed'] ?? false) || ($changePlan['serial_changed'] ?? false)) {
+                $this->serialBusinessTimeGuard->assertInvoiceDateMayChange($invoice);
+            }
 
             // Capture old values
             $oldTotal = (float) $invoice->total;
@@ -497,9 +510,6 @@ class InvoiceUpdateService
             }
 
             // --- 4. Update invoice header ---
-            $newTxDate = isset($payload['transaction_date'])
-                ? Carbon::parse($payload['transaction_date'])
-                : ($invoice->transaction_date ?? $invoice->created_at);
 
             $updateData = [
                 'customer_id' => $payload['customer_id'] ?? $invoice->customer_id,
@@ -548,6 +558,12 @@ class InvoiceUpdateService
                     if ($soldSerials->count() !== (int) $item['quantity']) {
                         throw new \Exception("Sản phẩm '{$product->name}' cần chọn đúng số Serial/IMEI để xuất bán.");
                     }
+
+                    if ($soldSerials->contains(fn (SerialImei $serial) => $serial->status !== 'in_stock')) {
+                        throw new \Exception("Sản phẩm '{$product->name}' có Serial/IMEI vừa được thay đổi trạng thái, vui lòng chọn lại.");
+                    }
+
+                    $this->serialBusinessTimeGuard->assertNewSaleCanUseBusinessTime($soldSerials, $newTxDate);
 
                     $serialCostSnapshot = SerialCostingService::snapshotForSale($soldSerials);
                     $snapshotCostPrice = $serialCostSnapshot['unit_cost'];

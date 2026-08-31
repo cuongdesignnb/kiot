@@ -97,6 +97,32 @@ class ReturnReceiverSellerCreatorContractTest extends TestCase
         $this->assertTrue(Schema::hasColumn('returns', 'received_by_name'));
     }
 
+    public function test_new_return_keeps_business_time_separate_from_actual_recorded_time(): void
+    {
+        $businessTime = now()->subDays(3)->startOfMinute();
+        $return = app(OrderReturnCreationService::class)->create([
+            'subtotal' => 20,
+            'discount' => 0,
+            'fee' => 0,
+            'total' => 20,
+            'paid_to_customer' => 0,
+            'items' => [[
+                'product_id' => $this->product()->id,
+                'qty' => 1,
+                'price' => 20,
+            ]],
+        ], [
+            'created_by_name' => 'Return creator snapshot',
+            'order_date' => $businessTime,
+        ]);
+
+        $return->refresh();
+        $this->assertTrue(Schema::hasColumn('returns', 'recorded_at'));
+        $this->assertSame($businessTime->format('Y-m-d H:i'), $return->created_at->format('Y-m-d H:i'));
+        $this->assertNotNull($return->recorded_at);
+        $this->assertTrue($return->recorded_at->greaterThan($return->created_at));
+    }
+
     public function test_new_return_persists_active_receiver_snapshot_without_seller_mutation(): void
     {
         $receiver = $this->employee('Receiver C');

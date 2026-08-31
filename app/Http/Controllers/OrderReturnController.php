@@ -137,6 +137,7 @@ class OrderReturnController extends Controller
             'salesAttributionUpdatedBy',
         ]);
         $businessTime = BusinessDateTime::nullable($return->return_date) ?? $return->created_at;
+        $recordedAt = $return->recorded_at ?? $return->created_at;
         $resolver = app(\App\Support\Reports\SellerResolver::class);
         $canEditSalesAttribution = (bool) auth()->user()?->hasPermission('returns.sales_attribution.edit');
 
@@ -163,9 +164,9 @@ class OrderReturnController extends Controller
                 'status' => $return->status,
                 'created_at' => $return->created_at?->format('d/m/Y H:i'),
                 'business_time' => $businessTime?->format('d/m/Y H:i') ?? '',
-                'recorded_at' => $return->created_at?->format('d/m/Y H:i') ?? '',
+                'recorded_at' => $recordedAt?->format('d/m/Y H:i') ?? '',
                 'business_time_source' => $return->return_date ? 'return_date' : 'created_at',
-                'recorded_time_source' => 'created_at',
+                'recorded_time_source' => $return->recorded_at ? 'recorded_at' : 'created_at',
                 'created_by_name' => $return->created_by_name,
                 'original_seller_name' => $resolver->originalSellerNameForReturn($return),
                 'effective_sales_attribution_name' => $resolver->displayNameForReturn($return),

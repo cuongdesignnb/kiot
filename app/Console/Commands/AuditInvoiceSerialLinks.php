@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Product;
+use App\Services\SerialLifecycleInspectionService;
 use App\Support\Status\BusinessStatus;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -12,26 +13,27 @@ class AuditInvoiceSerialLinks extends Command
     protected $signature = 'serials:audit-invoice-links
         {--product= : Product ID or SKU}';
 
-    protected $description = 'Audit invoice_item_serials for duplicate and canceled invoice links.';
+    protected $description = 'Read-only audit of serial sale/return/resale lifecycles and canceled invoice links.';
 
     public function handle(): int
     {
         $product = $this->resolveProduct($this->option('product'));
-        if ($this->option('product') && !$product) {
+        if ($this->option('product') && ! $product) {
             $this->error('Product not found.');
+
             return self::FAILURE;
         }
 
         $rows = $this->linkRows($product?->id);
         $bySerial = $rows->groupBy('serial_imei_id');
 
-        $duplicates = [];
+        $multipleLinks = [];
         $canceledCandidates = [];
         $multiCompleted = [];
 
         foreach ($bySerial as $serialId => $links) {
             if ($links->count() > 1) {
-                $duplicates[] = $this->summaryRow($serialId, $links);
+                $multipleLinks[] = $this->summaryRow($serialId, $links);
             }
 
             $completedInvoiceIds = $links
@@ -58,17 +60,42 @@ class AuditInvoiceSerialLinks extends Command
             }
         }
 
-        $this->line('Total serial links: ' . $rows->count());
-        $this->line('Duplicate serials: ' . count($duplicates));
-        $this->line('Serials linked to multiple completed invoices: ' . count($multiCompleted));
-        $this->line('Canceled invoice link candidates: ' . count($canceledCandidates));
+        $inspector = app(SerialLifecycleInspectionService::class);
+        $inspections = $product
+            ? $inspector->inspectProduct($product->id)
+            : $inspector->inspectAll();
 
-        if ($duplicates) {
-            $this->table(['serial_id', 'serial_number', 'product_id', 'link_ids', 'invoice_ids', 'invoice_statuses'], array_slice($duplicates, 0, 50));
+        $byClassification = $inspections->groupBy('classification');
+
+        $this->line('Total serial links: '.$rows->count());
+        $this->line('Serials with more than one historical link: '.count($multipleLinks));
+        $this->line('Serials with more than one completed sale: '.count($multiCompleted));
+        $this->line('  - Backdated resale: '.$byClassification->get(SerialLifecycleInspectionService::BACKDATED_RESALE, collect())->count());
+        $this->line('  - Ordered resale history: '.$byClassification->get(SerialLifecycleInspectionService::ORDERED_RESALE_HISTORY, collect())->count());
+        $this->line('  - Recorded time unknown: '.$byClassification->get(SerialLifecycleInspectionService::RECORDED_TIME_UNKNOWN, collect())->count());
+        $this->line('  - Unresolved multiple completed sales: '.$byClassification->get(SerialLifecycleInspectionService::UNRESOLVED_MULTIPLE_COMPLETED_SALES, collect())->count());
+        $this->line('Canceled invoice link candidates: '.count($canceledCandidates));
+
+        if ($multipleLinks) {
+            $this->table(['serial_id', 'serial_number', 'product_id', 'link_ids', 'invoice_ids', 'invoice_statuses'], array_slice($multipleLinks, 0, 50));
         }
 
         if ($canceledCandidates) {
             $this->table(['link_id', 'serial_id', 'serial_number', 'invoice_id', 'invoice_code', 'invoice_status'], array_slice($canceledCandidates, 0, 50));
+        }
+
+        if ($inspections->isNotEmpty()) {
+            $this->table(
+                ['serial_id', 'serial_number', 'product_id', 'classification', 'invoice_codes', 'assessment'],
+                $inspections->take(100)->map(fn (array $row) => [
+                    $row['serial_id'],
+                    $row['serial_number'],
+                    $row['product_id'],
+                    $row['classification'],
+                    $row['invoice_codes'],
+                    $row['message'],
+                ])->all(),
+            );
         }
 
         return count($multiCompleted) > 0 ? self::FAILURE : self::SUCCESS;
@@ -76,7 +103,7 @@ class AuditInvoiceSerialLinks extends Command
 
     private function resolveProduct(?string $productOpt): ?Product
     {
-        if (!$productOpt) {
+        if (! $productOpt) {
             return null;
         }
 
