@@ -2,21 +2,21 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
-use Inertia\Inertia;
+use App\Enums\StockTransferStatus;
 use App\Models\ActivityLog;
-use App\Models\StockTransfer;
-use App\Models\StockTransferItem;
 use App\Models\Branch;
 use App\Models\Product;
 use App\Models\SerialImei;
-use App\Enums\StockTransferStatus;
-use App\Support\BusinessDateTime;
-use App\Support\Filters\FilterableIndex;
+use App\Models\StockTransfer;
+use App\Models\StockTransferItem;
 use App\Services\LockPeriodService;
 use App\Services\MovingAvgCostingService;
 use App\Services\StockMovementService;
+use App\Support\BusinessDateTime;
+use App\Support\Filters\FilterableIndex;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Inertia\Inertia;
 
 class StockTransferController extends Controller
 {
@@ -55,7 +55,7 @@ class StockTransferController extends Controller
             'branches' => $branches,
             'filters' => $this->currentFilters($request),
             'filterOptions' => [
-                'branches' => $branches->map(fn($b) => ['value' => $b->id, 'label' => $b->name]),
+                'branches' => $branches->map(fn ($b) => ['value' => $b->id, 'label' => $b->name]),
                 'statuses' => StockTransferStatus::options(),
             ],
         ]);
@@ -69,7 +69,7 @@ class StockTransferController extends Controller
         return Inertia::render('StockTransfers/Create', [
             'products' => $products,
             'branches' => $branches,
-            'transferCode' => 'CH' . date('YmdHis')
+            'transferCode' => 'CH'.date('YmdHis'),
         ]);
     }
 
@@ -85,7 +85,7 @@ class StockTransferController extends Controller
             'items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
             'status' => 'required|in:draft,transferring,received',
             'action_date' => 'nullable|date',
-            'note' => 'nullable|string'
+            'note' => 'nullable|string',
         ], [
             'to_branch_id.different' => 'Chi nhánh nhận phải khác chi nhánh chuyển.',
         ]);
@@ -110,7 +110,7 @@ class StockTransferController extends Controller
             $seenProductIds[$pid] = true;
 
             $product = Product::find($pid);
-            if (!$product) {
+            if (! $product) {
                 return back()->withErrors([
                     "items.{$idx}.product_id" => 'Sản phẩm không tồn tại.',
                 ])->withInput();
@@ -123,6 +123,7 @@ class StockTransferController extends Controller
 
             $qty = (int) $line['quantity'];
             $costAtTransfer = (float) $product->cost_price;
+            $serials = collect();
             $serialIds = isset($line['serial_ids']) && is_array($line['serial_ids'])
                 ? array_values(array_unique(array_map('intval', $line['serial_ids'])))
                 : [];
@@ -131,7 +132,7 @@ class StockTransferController extends Controller
             if ($request->status !== 'draft' && $product->has_serial) {
                 if (empty($serialIds)) {
                     return back()->withErrors([
-                        "items.{$idx}.product_id" => 'Sản phẩm "' . $product->name . '" có Serial/IMEI — cần chọn đủ ' . $qty . ' serial.',
+                        "items.{$idx}.product_id" => 'Sản phẩm "'.$product->name.'" có Serial/IMEI — cần chọn đủ '.$qty.' serial.',
                     ])->withInput();
                 }
                 if (count($line['serial_ids'] ?? []) !== count($serialIds)) {
@@ -141,7 +142,7 @@ class StockTransferController extends Controller
                 }
                 if (count($serialIds) !== $qty) {
                     return back()->withErrors([
-                        "items.{$idx}.serial_ids" => 'Số serial (' . count($serialIds) . ") không khớp số lượng ({$qty}).",
+                        "items.{$idx}.serial_ids" => 'Số serial ('.count($serialIds).") không khớp số lượng ({$qty}).",
                     ])->withInput();
                 }
                 $serials = SerialImei::whereIn('id', $serialIds)->get();
@@ -162,19 +163,21 @@ class StockTransferController extends Controller
                         ])->withInput();
                     }
                 }
-            } elseif (!$product->has_serial && !empty($serialIds)) {
+
+                $costAtTransfer = \App\Services\SerialCostingService::snapshotForSale($serials)['unit_cost'];
+            } elseif (! $product->has_serial && ! empty($serialIds)) {
                 return back()->withErrors([
-                    "items.{$idx}.serial_ids" => 'Sản phẩm "' . $product->name . '" không phải hàng Serial/IMEI — không nhận serial_ids.',
+                    "items.{$idx}.serial_ids" => 'Sản phẩm "'.$product->name.'" không phải hàng Serial/IMEI — không nhận serial_ids.',
                 ])->withInput();
             }
 
             $serverItems[] = [
-                'product_id'       => $pid,
-                'quantity'         => $qty,
+                'product_id' => $pid,
+                'quantity' => $qty,
                 'cost_at_transfer' => $costAtTransfer,
-                'price'            => $qty * $costAtTransfer,
-                'product'          => $product,
-                'serial_ids'       => $product->has_serial ? $serialIds : null,
+                'price' => $qty * $costAtTransfer,
+                'product' => $product,
+                'serial_ids' => $product->has_serial ? $serialIds : null,
             ];
             $serverTotalQty += $qty;
             $serverTotalPrice += $qty * $costAtTransfer;
@@ -188,7 +191,7 @@ class StockTransferController extends Controller
             app(LockPeriodService::class)->assertNotLocked($transferDate, 'transfer_create');
 
             $transfer = StockTransfer::create([
-                'code' => $request->code ?? 'CH' . time(),
+                'code' => $request->code ?? 'CH'.time(),
                 'from_branch_id' => $request->from_branch_id,
                 'to_branch_id' => $request->to_branch_id,
                 'status' => $request->status,
@@ -215,31 +218,31 @@ class StockTransferController extends Controller
 
                 $transferItem = StockTransferItem::create([
                     'stock_transfer_id' => $transfer->id,
-                    'product_id'        => $product->id,
-                    'quantity'          => $qty,
-                    'price'             => $row['price'],
-                    'cost_at_transfer'  => $costAtTransfer,
-                    'serial_ids'        => $row['serial_ids'],
+                    'product_id' => $product->id,
+                    'quantity' => $qty,
+                    'price' => $row['price'],
+                    'cost_at_transfer' => $costAtTransfer,
+                    'serial_ids' => $row['serial_ids'],
                 ]);
 
                 $serialIds = $row['serial_ids'] ?? [];
 
                 // Transfer out: deduct stock + update costing + record movement
                 if ($request->status !== 'draft') {
-                    $cogs = MovingAvgCostingService::applySale($product, $qty);
+                    MovingAvgCostingService::applySale($product, $qty);
                     $product->refresh();
                     StockMovementService::record(
                         $product,
                         StockMovementService::TYPE_TRANSFER_OUT,
                         $qty,
-                        $cogs['cogs_per_unit'],
+                        $costAtTransfer,
                         $transfer,
                         ['branch_id' => $request->from_branch_id, 'moved_at' => $transferDate]
                     );
 
                     // Step 23.9: Mark serials in_transit (transferring) hoặc giữ in_stock cho 'received'
                     // (vì received nghĩa là transfer + receive ngay → serial vẫn ở kho đích).
-                    if ($product->has_serial && !empty($serialIds)) {
+                    if ($product->has_serial && ! empty($serialIds)) {
                         if ($request->status === 'transferring') {
                             SerialImei::whereIn('id', $serialIds)->update(['status' => 'in_transit']);
                         }
@@ -281,7 +284,8 @@ class StockTransferController extends Controller
             return redirect()->route('stock-transfers.index')->with('success', 'Tạo phiếu chuyển hàng thành công.');
         } catch (\Exception $e) {
             DB::rollBack();
-            return back()->withErrors(['error' => 'Lỗi: ' . $e->getMessage()]);
+
+            return back()->withErrors(['error' => 'Lỗi: '.$e->getMessage()]);
         }
     }
 
@@ -294,7 +298,7 @@ class StockTransferController extends Controller
 
         return \App\Services\CsvService::export(
             ['Mã chuyển hàng', 'Chi nhánh chuyển', 'Chi nhánh nhận', 'Ngày chuyển', 'Ngày nhận', 'Tổng SL', 'Tổng giá trị', 'Trạng thái', 'Ghi chú'],
-            $transfers->map(fn($t) => [$t->code, $t->fromBranch?->name, $t->toBranch?->name, $t->sent_date, $t->receive_date, $t->total_quantity, $t->total_price, $t->status, $t->note]),
+            $transfers->map(fn ($t) => [$t->code, $t->fromBranch?->name, $t->toBranch?->name, $t->sent_date, $t->receive_date, $t->total_quantity, $t->total_price, $t->status, $t->note]),
             'chuyen_hang.csv'
         );
     }
@@ -302,6 +306,7 @@ class StockTransferController extends Controller
     public function print(\App\Models\StockTransfer $stockTransfer)
     {
         $stockTransfer->load(['items.product', 'fromBranch', 'toBranch']);
+
         return view('prints.stock_transfer', compact('stockTransfer'));
     }
 
@@ -367,11 +372,11 @@ class StockTransferController extends Controller
 
             // Step 23.9: hàng has_serial không hỗ trợ partial receive ở step này.
             $product = $item->product ?? Product::find($item->product_id);
-            $hasSerial = $product?->has_serial && !empty($item->serial_ids);
+            $hasSerial = $product?->has_serial && ! empty($item->serial_ids);
             if ($hasSerial && $recvQty !== (int) $item->quantity) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Hàng Serial/IMEI hiện chưa hỗ trợ nhận một phần — phải nhận đủ ' . $item->quantity . ' cái.',
+                    'message' => 'Hàng Serial/IMEI hiện chưa hỗ trợ nhận một phần — phải nhận đủ '.$item->quantity.' cái.',
                 ], 422);
             }
 
@@ -412,7 +417,7 @@ class StockTransferController extends Controller
                         );
 
                         // Step 23.9: Hàng has_serial — chuyển in_transit → in_stock
-                        if ($product->has_serial && !empty($item->serial_ids)) {
+                        if ($product->has_serial && ! empty($item->serial_ids)) {
                             $serials = SerialImei::whereIn('id', $item->serial_ids)
                                 ->where('product_id', $product->id)
                                 ->get();
@@ -434,15 +439,17 @@ class StockTransferController extends Controller
                 'status' => 'received',
                 'receive_date' => $receiveDate,
                 'note' => $isPartial
-                    ? ($transfer->note ? $transfer->note . ' | ' : '') . 'Nhan hang: ' . ($request->receive_note ?? '')
+                    ? ($transfer->note ? $transfer->note.' | ' : '').'Nhan hang: '.($request->receive_note ?? '')
                     : $transfer->note,
             ]);
 
             DB::commit();
             ActivityLog::log('transfer_receive', "Nhận hàng chuyển kho {$transfer->code}", $transfer);
+
             return response()->json(['success' => true, 'message' => 'Da nhan hang thanh cong.']);
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
@@ -460,6 +467,7 @@ class StockTransferController extends Controller
 
         if ($transfer->status === 'draft') {
             $transfer->update(['status' => 'cancelled']);
+
             return response()->json(['success' => true, 'message' => 'Da huy phieu nhap.']);
         }
 
@@ -467,9 +475,13 @@ class StockTransferController extends Controller
         $originalStatus = $transfer->status;
         if ($originalStatus === 'received') {
             foreach ($transfer->items as $item) {
-                if (empty($item->serial_ids)) continue;
+                if (empty($item->serial_ids)) {
+                    continue;
+                }
                 $product = Product::find($item->product_id);
-                if (!$product || !$product->has_serial) continue;
+                if (! $product || ! $product->has_serial) {
+                    continue;
+                }
                 $serials = SerialImei::whereIn('id', $item->serial_ids)->get();
                 foreach ($serials as $s) {
                     if ($s->status !== 'in_stock') {
@@ -487,7 +499,9 @@ class StockTransferController extends Controller
 
             foreach ($transfer->items as $item) {
                 $product = Product::find($item->product_id);
-                if (!$product) continue;
+                if (! $product) {
+                    continue;
+                }
 
                 // RR-12: dùng cost_at_transfer (snapshot lúc transfer_out) thay vì current
                 // cost_price để cancel khôi phục cost đúng khi BQ đã thay đổi giữa các pha.
@@ -529,7 +543,7 @@ class StockTransferController extends Controller
                 // Step 23.9: Rollback serial cho hàng has_serial.
                 // - transferring → serial in_transit → in_stock (chưa từng tới đích).
                 // - received    → serial vẫn in_stock (đã pre-check), không đổi status.
-                if ($product->has_serial && !empty($item->serial_ids)) {
+                if ($product->has_serial && ! empty($item->serial_ids)) {
                     if ($originalStatus === 'transferring') {
                         SerialImei::whereIn('id', $item->serial_ids)
                             ->where('product_id', $product->id)
@@ -544,9 +558,11 @@ class StockTransferController extends Controller
 
             DB::commit();
             ActivityLog::log('transfer_cancel', "Hủy phiếu chuyển kho {$transfer->code}", $transfer);
+
             return response()->json(['success' => true, 'message' => 'Da huy phieu chuyen hang.']);
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }

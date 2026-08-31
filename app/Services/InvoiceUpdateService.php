@@ -456,6 +456,7 @@ class InvoiceUpdateService
                 $serial->status = 'in_stock';
                 $serial->sold_at = null;
                 $serial->invoice_id = null;
+                $serial->sold_cost_price = null;
                 $serial->save();
             }
 
@@ -530,6 +531,7 @@ class InvoiceUpdateService
                 $serialIds = $item['serial_ids'] ?? [];
                 $isService = $product?->isService() ?? false;
                 $snapshotCostPrice = $isService ? 0.0 : (float) ($product->cost_price ?? 0);
+                $serialCostSnapshot = null;
                 $serialStr = null;
                 $soldSerials = collect();
 
@@ -541,12 +543,20 @@ class InvoiceUpdateService
                     $serialIds = is_array($serialIds) ? $serialIds : [$serialIds];
                     $soldSerials = SerialImei::whereIn('id', $serialIds)
                         ->where('product_id', $product->id)
+                        ->lockForUpdate()
                         ->get();
+                    if ($soldSerials->count() !== (int) $item['quantity']) {
+                        throw new \Exception("Sản phẩm '{$product->name}' cần chọn đúng số Serial/IMEI để xuất bán.");
+                    }
+
+                    $serialCostSnapshot = SerialCostingService::snapshotForSale($soldSerials);
+                    $snapshotCostPrice = $serialCostSnapshot['unit_cost'];
                     foreach ($soldSerials as $serial) {
                         $serial->status = 'sold';
                         $serial->sold_at = $newTxDate;
                         $serial->invoice_id = $invoice->id;
-                        $serial->sold_cost_price = $snapshotCostPrice;
+                        $serial->sold_cost_price = $serialCostSnapshot['serial_costs'][(int) $serial->id]
+                            ?? round((float) $serial->cost_price, 0);
                         $serial->save();
                     }
                     $serialStr = $soldSerials->pluck('serial_number')->implode(', ');
@@ -564,11 +574,14 @@ class InvoiceUpdateService
                 ]);
 
                 foreach ($soldSerials as $serial) {
+                    $serialCost = $serialCostSnapshot['serial_costs'][(int) $serial->id]
+                        ?? round((float) $serial->cost_price, 0);
+
                     InvoiceItemSerial::create([
                         'invoice_item_id' => $newInvoiceItem->id,
                         'serial_imei_id' => $serial->id,
                         'serial_number' => $serial->serial_number,
-                        'cost_price' => $snapshotCostPrice,
+                        'cost_price' => $serialCost,
                     ]);
                 }
 

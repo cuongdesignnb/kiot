@@ -2,12 +2,11 @@
 
 namespace Tests\Feature\Report;
 
-use App\Models\Branch;
 use App\Models\CashFlow;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
-use App\Models\Product;
 use App\Models\Paysheet;
+use App\Models\Product;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -20,7 +19,9 @@ class FinancialProfitDataAuditCommandTest extends TestCase
     use DatabaseTransactions;
 
     private User $admin;
+
     private Carbon $startDate;
+
     private Carbon $endDate;
 
     protected function setUp(): void
@@ -28,10 +29,10 @@ class FinancialProfitDataAuditCommandTest extends TestCase
         parent::setUp();
 
         $this->admin = User::create([
-            'name'     => 'Admin Audit Test',
-            'email'    => 'admin-audit-' . uniqid() . '@test.local',
+            'name' => 'Admin Audit Test',
+            'email' => 'admin-audit-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
-            'role_id'  => null,
+            'role_id' => null,
         ]);
 
         $this->startDate = Carbon::parse('2026-04-01')->startOfDay();
@@ -46,7 +47,7 @@ class FinancialProfitDataAuditCommandTest extends TestCase
         $this->artisan('audit:financial-profit-data', [
             '--from' => '2026-04-01',
             '--to' => '2026-05-31',
-            '--limit' => '5'
+            '--limit' => '5',
         ])->assertExitCode(0);
     }
 
@@ -166,6 +167,92 @@ class FinancialProfitDataAuditCommandTest extends TestCase
         $this->assertStringContainsString('HD-GHOST-TEST', $output);
     }
 
+    public function test_command_does_not_report_invoice_with_items_as_ghost(): void
+    {
+        $product = Product::create([
+            'sku' => 'SKU-NOT-GHOST',
+            'name' => 'Product with invoice item',
+            'cost_price' => 1000,
+            'retail_price' => 2000,
+            'stock_quantity' => 1,
+        ]);
+
+        $invoice = Invoice::create([
+            'code' => 'HD-NOT-GHOST-TEST',
+            'subtotal' => 2000,
+            'discount' => 0,
+            'total' => 2000,
+            'status' => 'Hoàn thành',
+            'created_at' => '2026-04-21 12:00:00',
+            'transaction_date' => '2026-04-21 12:00:00',
+        ]);
+
+        InvoiceItem::create([
+            'invoice_id' => $invoice->id,
+            'product_id' => $product->id,
+            'quantity' => 1,
+            'price' => 2000,
+            'discount' => 0,
+            'subtotal' => 2000,
+            'cost_price' => 1000,
+        ]);
+
+        Artisan::call('audit:financial-profit-data', [
+            '--from' => '2026-04-01',
+            '--to' => '2026-05-31',
+        ]);
+
+        $ghostSection = str(Artisan::output())->between(
+            '--- HÓA ĐƠN RÁC (GHOST INVOICES - CÓ TIỀN NHƯNG KHÔNG CÓ CHI TIẾT HÀNG) ---',
+            '--- HÓA ĐƠN LỆCH SUBTOTAL VỚI TỔNG CHI TIẾT'
+        )->toString();
+
+        $this->assertStringNotContainsString('HD-NOT-GHOST-TEST', $ghostSection);
+    }
+
+    public function test_command_uses_stored_line_subtotal_when_auditing_invoice_total(): void
+    {
+        $product = Product::create([
+            'sku' => 'SKU-LINE-DISCOUNT',
+            'name' => 'Product with line discount',
+            'cost_price' => 1000,
+            'retail_price' => 2000,
+            'stock_quantity' => 1,
+        ]);
+
+        $invoice = Invoice::create([
+            'code' => 'HD-LINE-DISCOUNT-TEST',
+            'subtotal' => 1900,
+            'discount' => 0,
+            'total' => 1900,
+            'status' => 'Hoàn thành',
+            'created_at' => '2026-04-22 12:00:00',
+            'transaction_date' => '2026-04-22 12:00:00',
+        ]);
+
+        InvoiceItem::create([
+            'invoice_id' => $invoice->id,
+            'product_id' => $product->id,
+            'quantity' => 1,
+            'price' => 2000,
+            'discount' => 100,
+            'subtotal' => 1900,
+            'cost_price' => 1000,
+        ]);
+
+        Artisan::call('audit:financial-profit-data', [
+            '--from' => '2026-04-01',
+            '--to' => '2026-05-31',
+        ]);
+
+        $subtotalSection = str(Artisan::output())->between(
+            '--- HÓA ĐƠN LỆCH SUBTOTAL VỚI TỔNG CHI TIẾT',
+            '--- HÀNG QUÀ TẶNG'
+        )->toString();
+
+        $this->assertStringNotContainsString('HD-LINE-DISCOUNT-TEST', $subtotalSection);
+    }
+
     /**
      * Test 6: Command detects zero price item with COGS
      */
@@ -269,10 +356,10 @@ class FinancialProfitDataAuditCommandTest extends TestCase
         ])->assertExitCode(0);
 
         $this->assertTrue(File::exists($auditPath));
-        
+
         $directories = File::directories($auditPath);
         $this->assertNotEmpty($directories);
-        
+
         $latestDir = $directories[0];
         $this->assertTrue(File::exists("{$latestDir}/summary.csv"));
         $this->assertTrue(File::exists("{$latestDir}/top_products_low_margin.csv"));

@@ -126,6 +126,41 @@ class HOTFIX2436SerialMovingAvgCostingSafetyTest extends TestCase
         $this->assertSame(4_400_000.0, (float) InvoiceItemSerial::where('serial_imei_id', $serialA->id)->first()->cost_price);
     }
 
+    public function test_mismatched_serials_audit_includes_historical_cogs_when_current_projection_matches(): void
+    {
+        // The product is sold out, so its current serial projection is already
+        // exactly zero. The audit must still include it because the completed
+        // invoice preserved an incorrect old moving-average snapshot.
+        $product = $this->serialProduct([
+            'stock_quantity' => 0,
+            'inventory_total_cost' => 0,
+            'cost_price' => 0,
+        ]);
+        $serial = $this->serial($product, [
+            'status' => 'sold',
+            'cost_price' => 5_185_218,
+            'sold_cost_price' => 25_414_058,
+        ]);
+        [$invoice, $item] = $this->invoiceWithItem($product, 'completed', 1, 25_414_058);
+        $serial->update(['invoice_id' => $invoice->id, 'sold_at' => now()]);
+        InvoiceItemSerial::create([
+            'invoice_item_id' => $item->id,
+            'serial_imei_id' => $serial->id,
+            'serial_number' => $serial->serial_number,
+            'cost_price' => 25_414_058,
+        ]);
+
+        $this->artisan('costing:rebuild-moving-avg', ['--mismatched-serials' => true, '--dry-run' => true])
+            ->expectsOutputToContain('[DRY-RUN] Rebuild 1 product(s)')
+            ->expectsOutputToContain('COGS diff preview')
+            ->assertExitCode(0);
+
+        $product->refresh();
+        $this->assertSame(0.0, (float) $product->cost_price);
+        $this->assertSame(25_414_058.0, (float) $item->fresh()->cost_price);
+        $this->assertSame(25_414_058.0, (float) $serial->fresh()->sold_cost_price);
+    }
+
     public function test_missing_serial_link_falls_back_to_serial_invoice_id(): void
     {
         $product = $this->serialProduct();
@@ -153,7 +188,7 @@ class HOTFIX2436SerialMovingAvgCostingSafetyTest extends TestCase
     public function test_non_serial_product_keeps_moving_average_behavior(): void
     {
         $product = Product::create([
-            'sku' => 'NON-SERIAL-' . uniqid(),
+            'sku' => 'NON-SERIAL-'.uniqid(),
             'name' => 'Non serial',
             'stock_quantity' => 0,
             'cost_price' => 0,
@@ -163,7 +198,7 @@ class HOTFIX2436SerialMovingAvgCostingSafetyTest extends TestCase
         ]);
 
         $purchaseId = DB::table('purchases')->insertGetId([
-            'code' => 'PN-' . uniqid(),
+            'code' => 'PN-'.uniqid(),
             'status' => 'completed',
             'created_at' => now()->subDays(2),
             'updated_at' => now()->subDays(2),
@@ -222,7 +257,7 @@ class HOTFIX2436SerialMovingAvgCostingSafetyTest extends TestCase
     private function serialProduct(array $overrides = []): Product
     {
         return Product::create(array_merge([
-            'sku' => 'SERIAL-' . uniqid(),
+            'sku' => 'SERIAL-'.uniqid(),
             'name' => 'Serial product',
             'stock_quantity' => 0,
             'cost_price' => 0,
@@ -236,7 +271,7 @@ class HOTFIX2436SerialMovingAvgCostingSafetyTest extends TestCase
     {
         return SerialImei::create(array_merge([
             'product_id' => $product->id,
-            'serial_number' => 'SN-' . uniqid(),
+            'serial_number' => 'SN-'.uniqid(),
             'status' => 'in_stock',
             'cost_price' => 4_400_000,
             'original_cost' => 4_400_000,
@@ -246,7 +281,7 @@ class HOTFIX2436SerialMovingAvgCostingSafetyTest extends TestCase
     private function invoiceWithItem(Product $product, string $status, int $quantity, float $costPrice): array
     {
         $invoice = Invoice::create([
-            'code' => 'HD-' . uniqid(),
+            'code' => 'HD-'.uniqid(),
             'status' => $status,
             'subtotal' => $quantity * 5_000_000,
             'total' => $quantity * 5_000_000,

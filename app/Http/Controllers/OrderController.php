@@ -789,8 +789,23 @@ class OrderController extends Controller
                         );
                     }
 
-                    // RR-13: Snapshot cost TRƯỚC khi applySale (cost_price stable nhưng vẫn snapshot rõ ràng)
+                    // Hàng thường snapshot BQ. Hàng serial snapshot theo từng
+                    // serial được chọn để COGS không bị lẫn với BQ của cả mã.
                     $costSnapshot = (float) ($product->cost_price ?? 0);
+                    $soldSerials = collect();
+                    $serialCostSnapshot = null;
+                    if ($product->has_serial && ! empty($serialIds)) {
+                        $soldSerials = SerialImei::whereIn('id', $serialIds)
+                            ->where('product_id', $product->id)
+                            ->lockForUpdate()
+                            ->get();
+                        if ($soldSerials->count() !== $qty) {
+                            throw new \Exception("Sản phẩm '{$product->name}' cần chọn đúng số Serial/IMEI để xuất bán.");
+                        }
+
+                        $serialCostSnapshot = \App\Services\SerialCostingService::snapshotForSale($soldSerials);
+                        $costSnapshot = $serialCostSnapshot['unit_cost'];
+                    }
 
                     // RR-13: Tạo InvoiceItem TRƯỚC (pattern đúng — giống RR-02 InvoiceSaleService)
                     $invoiceItem = $invoice->items()->create([
@@ -801,21 +816,21 @@ class OrderController extends Controller
                     ]);
 
                     // RR-13: Với hàng serial, tạo InvoiceItemSerial + đánh dấu serial sold
-                    if ($product->has_serial && ! empty($serialIds)) {
-                        $soldSerials = SerialImei::whereIn('id', $serialIds)
-                            ->where('product_id', $product->id)
-                            ->get();
+                    if ($product->has_serial && $soldSerials->isNotEmpty()) {
                         foreach ($soldSerials as $serial) {
+                            $serialCost = $serialCostSnapshot['serial_costs'][(int) $serial->id]
+                                ?? round((float) $serial->cost_price, 0);
+
                             InvoiceItemSerial::create([
                                 'invoice_item_id' => $invoiceItem->id,
                                 'serial_imei_id' => $serial->id,
                                 'serial_number' => $serial->serial_number,
-                                'cost_price' => $costSnapshot,
+                                'cost_price' => $serialCost,
                             ]);
                             $serial->status = 'sold';
                             $serial->sold_at = now();
                             $serial->invoice_id = $invoice->id;
-                            $serial->sold_cost_price = $costSnapshot;
+                            $serial->sold_cost_price = $serialCost;
                             $serial->save();
                         }
                     }

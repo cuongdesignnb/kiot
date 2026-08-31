@@ -13,8 +13,12 @@ use Illuminate\Support\Facades\DB;
  *  - products.stock_quantity: tổng số đơn vị tồn.
  *  - products.cost_price = inventory_total_cost / stock_quantity (BQ).
  *
- * Per-IMEI cost_price chỉ phục vụ HIỂN THỊ (giá vốn cuối + chênh lệch sửa chữa),
- * KHÔNG ảnh hưởng COGS hay BQ sản phẩm.
+ * Với hàng thường: dùng BQ di động như các công thức dưới đây.
+ * Với hàng Serial/IMEI: cost_price của từng serial là nguồn giá vốn đích danh;
+ * callers phải snapshot serial được chọn khi xuất và gọi
+ * Product::recomputeFromSerials() sau mỗi thay đổi trạng thái/cost serial để
+ * đồng bộ projection products. Không được dùng giá BQ của product làm COGS
+ * cho một serial cụ thể.
  *
  * Quy ước:
  *  - Nhập hàng (Sn @ Gn): BQ_mới = (St·Gt + Sn·Gn) / (St + Sn)
@@ -23,16 +27,18 @@ use Illuminate\Support\Facades\DB;
  *  - Trả NCC / hủy nhập: rút khỏi tồn theo cost lúc nhập.
  *  - Sửa chữa (parts cost ΔC vào 1 IMEI): total_cost += ΔC; BQ tăng theo ΔC/qty.
  *
- * Tất cả hàm đều CHỐT giao dịch trên product và TRẢ VỀ cost_price (BQ) sau khi áp dụng.
+ * Các hàm này là engine BQ cho hàng không serial. Riêng điều chỉnh do sửa chữa
+ * phải tự bảo vệ hàng serial: sau khi caller cập nhật giá vốn của serial, nó
+ * luôn dựng lại projection từ serial còn trong kho, thay vì cộng vào một BQ
+ * cũ có thể đã sai.
  */
 class MovingAvgCostingService
 {
     /**
      * Áp dụng nhập hàng. Trả về BQ mới.
      *
-     * @param Product  $product
-     * @param int      $qty       Số lượng nhập (>0)
-     * @param float    $unitCost  Giá vốn 1 đơn vị (đã phân bổ phí nhập nếu có)
+     * @param  int  $qty  Số lượng nhập (>0)
+     * @param  float  $unitCost  Giá vốn 1 đơn vị (đã phân bổ phí nhập nếu có)
      */
     public static function applyPurchase(Product $product, int $qty, float $unitCost): float
     {
@@ -148,7 +154,7 @@ class MovingAvgCostingService
      * Áp dụng điều chỉnh giá vốn từ sửa chữa (parts cost ± ΔC trên 1 IMEI/lô).
      * Chỉ thay đổi total + BQ; KHÔNG đổi qty.
      *
-     * @param float $deltaTotal  Tổng tiền cộng vào (linh kiện lắp thêm) hoặc trừ ra (bóc tách).
+     * @param  float  $deltaTotal  Tổng tiền cộng vào (linh kiện lắp thêm) hoặc trừ ra (bóc tách).
      */
     public static function applyRepairAdjustment(Product $product, float $deltaTotal): float
     {
@@ -158,6 +164,16 @@ class MovingAvgCostingService
 
         return DB::transaction(function () use ($product, $deltaTotal) {
             $product = Product::lockForUpdate()->find($product->id);
+
+            // Hàng serial không có một BQ độc lập để điều chỉnh. Giá vốn của
+            // từng serial in_stock mới là nguồn sự thật; recompute ở đây để
+            // mọi luồng sửa chữa cũ cũng không thể lưu lại projection lệch.
+            if ($product->has_serial && ! $product->isService()) {
+                $product->recomputeFromSerials();
+
+                return (float) $product->cost_price;
+            }
+
             $qty = max(0, (int) $product->stock_quantity);
             $oldTotal = (float) ($product->inventory_total_cost ?? 0);
 
