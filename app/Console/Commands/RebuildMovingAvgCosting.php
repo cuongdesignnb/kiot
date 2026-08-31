@@ -18,7 +18,7 @@ class RebuildMovingAvgCosting extends Command
     protected $signature = 'costing:rebuild-moving-avg
         {--product= : Product ID or SKU}
         {--all : Rebuild all products}
-        {--mismatched-serials : Rebuild only serial products whose aggregate differs from in-stock serials}
+        {--mismatched-serials : Rebuild only serial products whose projection or completed-sale snapshots differ from serial source data}
         {--dry-run : Explicit dry-run; cannot be combined with --apply}
         {--apply : Actually write changes}';
 
@@ -34,22 +34,25 @@ class RebuildMovingAvgCosting extends Command
 
         if ($apply && $dryRunOption) {
             $this->error('Use either --apply or --dry-run, not both.');
+
             return self::FAILURE;
         }
 
-        if (!$all && !$mismatchedSerials && !$productOpt) {
+        if (! $all && ! $mismatchedSerials && ! $productOpt) {
             $this->error('Provide --product=ID|SKU, --mismatched-serials, or --all.');
+
             return self::FAILURE;
         }
 
         $products = $this->productsForRun($productOpt, $all, $mismatchedSerials);
         if ($products->isEmpty()) {
             $this->error('No matching products found.');
+
             return self::FAILURE;
         }
 
-        $dry = !$apply;
-        $this->info(($dry ? '[DRY-RUN] ' : '[APPLY] ') . 'Rebuild ' . $products->count() . ' product(s)');
+        $dry = ! $apply;
+        $this->info(($dry ? '[DRY-RUN] ' : '[APPLY] ').'Rebuild '.$products->count().' product(s)');
 
         $totals = [
             'products' => 0,
@@ -74,13 +77,13 @@ class RebuildMovingAvgCosting extends Command
 
         $this->newLine();
         $this->info('Summary');
-        $this->line('Products scanned: ' . $totals['products']);
-        $this->line('Products applied: ' . $totals['products_applied']);
-        $this->line('Hard errors: ' . $totals['hard_errors']);
-        $this->line('Warnings: ' . $totals['warnings']);
-        $this->line('Invoice items changed: ' . $totals['invoice_items_updated']);
-        $this->line('Invoice item serials changed: ' . $totals['invoice_item_serials_updated']);
-        $this->line('Serial sold costs changed: ' . $totals['serials_updated']);
+        $this->line('Products scanned: '.$totals['products']);
+        $this->line('Products applied: '.$totals['products_applied']);
+        $this->line('Hard errors: '.$totals['hard_errors']);
+        $this->line('Warnings: '.$totals['warnings']);
+        $this->line('Invoice items changed: '.$totals['invoice_items_updated']);
+        $this->line('Invoice item serials changed: '.$totals['invoice_item_serials_updated']);
+        $this->line('Serial sold costs changed: '.$totals['serials_updated']);
 
         if ($dry) {
             $this->warn('DRY-RUN: no database writes were made. Re-run with --apply to write.');
@@ -104,11 +107,11 @@ class RebuildMovingAvgCosting extends Command
         }
 
         $products = $query->get();
-        if (!$mismatchedSerials) {
+        if (! $mismatchedSerials) {
             return $products;
         }
 
-        return $products->filter(fn (Product $product) => $this->serialAggregateDiffers($product))->values();
+        return $products->filter(fn (Product $product) => $this->serialProductNeedsRebuild($product))->values();
     }
 
     private function serialAggregateDiffers(Product $product): bool
@@ -118,6 +121,29 @@ class RebuildMovingAvgCosting extends Command
         return (int) $product->stock_quantity !== $aggregate['qty']
             || round((float) $product->inventory_total_cost, 0) !== round($aggregate['total'], 0)
             || round((float) $product->cost_price, 0) !== round($aggregate['avg'], 0);
+    }
+
+    /**
+     * A serial product can have a correct current projection while historical
+     * COGS snapshots on completed invoices remain wrong. Include both kinds of
+     * drift in the safe --mismatched-serials audit, so operators do not miss
+     * documents that need review merely because the product is now sold out.
+     */
+    private function serialProductNeedsRebuild(Product $product): bool
+    {
+        if ($this->serialAggregateDiffers($product)) {
+            return true;
+        }
+
+        $warnings = [];
+        $hardErrors = [];
+        $events = $this->buildTimeline($product, $warnings, $hardErrors);
+        $result = $this->simulate($product, $events, $warnings);
+
+        return ! empty($hardErrors)
+            || ! empty($result['invoice_item_diffs'])
+            || ! empty($result['invoice_item_serial_diffs'])
+            || ! empty($result['serial_diffs']);
     }
 
     private function rebuildOne(Product $product, bool $apply): array
@@ -135,8 +161,9 @@ class RebuildMovingAvgCosting extends Command
         $hardErrors = [];
         $events = $this->buildTimeline($product, $warnings, $hardErrors);
 
-        if (empty($events) && !$product->has_serial) {
+        if (empty($events) && ! $product->has_serial) {
             $this->line(sprintf('  - #%d %s: no source history, skipped.', $product->id, $product->sku));
+
             return $stats;
         }
 
@@ -163,11 +190,11 @@ class RebuildMovingAvgCosting extends Command
         ));
 
         foreach ($warnings as $warning) {
-            $this->warn('    WARNING: ' . $warning);
+            $this->warn('    WARNING: '.$warning);
         }
 
         foreach ($hardErrors as $error) {
-            $this->error('    HARD ERROR: ' . $error);
+            $this->error('    HARD ERROR: '.$error);
         }
 
         $this->printDiffPreview($result);
@@ -176,6 +203,7 @@ class RebuildMovingAvgCosting extends Command
             if ($apply) {
                 $this->error('    Apply skipped for this product because hard errors were found.');
             }
+
             return $stats;
         }
 
@@ -183,7 +211,7 @@ class RebuildMovingAvgCosting extends Command
         $stats['invoice_item_serials_updated'] = count($result['invoice_item_serial_diffs']);
         $stats['serials_updated'] = count($result['serial_diffs']);
 
-        if (!$apply) {
+        if (! $apply) {
             return $stats;
         }
 
@@ -298,16 +326,16 @@ class RebuildMovingAvgCosting extends Command
                     break;
 
                 case 'repair_on_machine_in':
-                    if (!empty($event['serial_imei_id']) && isset($soldSerials[$event['serial_imei_id']])) {
-                        $warnings[] = 'Skipped repair input cost on sold serial #' . $event['serial_imei_id'];
+                    if (! empty($event['serial_imei_id']) && isset($soldSerials[$event['serial_imei_id']])) {
+                        $warnings[] = 'Skipped repair input cost on sold serial #'.$event['serial_imei_id'];
                         break;
                     }
                     $total += $event['cost'];
                     break;
 
                 case 'repair_on_machine_out':
-                    if (!empty($event['serial_imei_id']) && isset($soldSerials[$event['serial_imei_id']])) {
-                        $warnings[] = 'Skipped repair output cost on sold serial #' . $event['serial_imei_id'];
+                    if (! empty($event['serial_imei_id']) && isset($soldSerials[$event['serial_imei_id']])) {
+                        $warnings[] = 'Skipped repair output cost on sold serial #'.$event['serial_imei_id'];
                         break;
                     }
                     $total = max(0, $total - $event['cost']);
@@ -366,7 +394,7 @@ class RebuildMovingAvgCosting extends Command
             ->get(['purchase_items.*', 'purchases.created_at as ts', 'purchases.status as source_status']);
 
         foreach ($purchaseItems as $row) {
-            if (!BusinessStatus::isCompleted($row->source_status) || $row->quantity <= 0) {
+            if (! BusinessStatus::isCompleted($row->source_status) || $row->quantity <= 0) {
                 continue;
             }
 
@@ -400,10 +428,11 @@ class RebuildMovingAvgCosting extends Command
                 if ((float) $row->cost_price !== 0.0) {
                     $warnings[] = "Canceled invoice item #{$row->id} has non-zero cost_price and is ignored.";
                 }
+
                 continue;
             }
 
-            if (!BusinessStatus::isCompleted($row->invoice_status)) {
+            if (! BusinessStatus::isCompleted($row->invoice_status)) {
                 continue;
             }
 
@@ -435,7 +464,7 @@ class RebuildMovingAvgCosting extends Command
             ->get(['return_items.*', 'returns.created_at as ts', 'returns.invoice_id', 'returns.status as source_status']);
 
         foreach ($returnItems as $row) {
-            if ($row->quantity <= 0 || !BusinessStatus::isReturnCompleted($row->source_status)) {
+            if ($row->quantity <= 0 || ! BusinessStatus::isReturnCompleted($row->source_status)) {
                 continue;
             }
 
@@ -457,7 +486,7 @@ class RebuildMovingAvgCosting extends Command
             ->get(['purchase_return_items.*', 'purchase_returns.created_at as ts', 'purchase_returns.status as source_status']);
 
         foreach ($purchaseReturnItems as $row) {
-            if ($row->quantity <= 0 || !BusinessStatus::isCompleted($row->source_status)) {
+            if ($row->quantity <= 0 || ! BusinessStatus::isCompleted($row->source_status)) {
                 continue;
             }
 
@@ -479,7 +508,7 @@ class RebuildMovingAvgCosting extends Command
                 ->get(['stock_take_items.*', 'stock_takes.balanced_date as ts', 'stock_takes.status as source_status']);
 
             foreach ($stockTakeItems as $row) {
-                if (!BusinessStatus::isBalanced($row->source_status)) {
+                if (! BusinessStatus::isBalanced($row->source_status)) {
                     continue;
                 }
 
@@ -506,7 +535,7 @@ class RebuildMovingAvgCosting extends Command
                 ->get(['damage_items.*', 'damages.created_at as ts', 'damages.status as source_status']);
 
             foreach ($damageItems as $row) {
-                if ($row->qty <= 0 || !BusinessStatus::isCompleted($row->source_status)) {
+                if ($row->qty <= 0 || ! BusinessStatus::isCompleted($row->source_status)) {
                     continue;
                 }
 
@@ -585,16 +614,19 @@ class RebuildMovingAvgCosting extends Command
         foreach ($linkRows as $row) {
             if (BusinessStatus::isCancelled($row->invoice_status)) {
                 $warnings[] = "Serial link #{$row->link_id} belongs to a canceled invoice and is ignored.";
+
                 continue;
             }
 
-            if (!$row->serial_imei_id) {
+            if (! $row->serial_imei_id) {
                 $hardErrors[] = "Invoice item #{$invoiceItem->id} has serial link #{$row->link_id} without serial_imei_id.";
+
                 continue;
             }
 
             if ((int) $row->serial_product_id !== (int) $product->id) {
                 $hardErrors[] = "Invoice item #{$invoiceItem->id} links serial #{$row->serial_imei_id} from another product.";
+
                 continue;
             }
 
@@ -607,7 +639,7 @@ class RebuildMovingAvgCosting extends Command
             ];
         }
 
-        if (!$serials) {
+        if (! $serials) {
             $fallbackSerials = SerialImei::where('product_id', $product->id)
                 ->where('invoice_id', $invoiceItem->invoice_id)
                 ->orderBy('id')
@@ -656,6 +688,7 @@ class RebuildMovingAvgCosting extends Command
         foreach ($links as $link) {
             if (BusinessStatus::isCancelled($link->invoice_status)) {
                 $warnings[] = "Cleanup candidate: serial #{$link->serial_imei_id} ({$link->serial_number}) has canceled invoice link #{$link->link_id}.";
+
                 continue;
             }
 
@@ -666,7 +699,7 @@ class RebuildMovingAvgCosting extends Command
 
         foreach ($completedBySerial as $serialId => $invoiceCodes) {
             if (count($invoiceCodes) > 1) {
-                $hardErrors[] = 'Serial #' . $serialId . ' is linked to multiple completed invoices: ' . implode(', ', $invoiceCodes);
+                $hardErrors[] = 'Serial #'.$serialId.' is linked to multiple completed invoices: '.implode(', ', $invoiceCodes);
             }
         }
 
@@ -675,14 +708,16 @@ class RebuildMovingAvgCosting extends Command
             ->get(['id', 'serial_number', 'invoice_id']);
 
         foreach ($soldSerials as $serial) {
-            if (!$serial->invoice_id) {
+            if (! $serial->invoice_id) {
                 $hardErrors[] = "Sold serial #{$serial->id} ({$serial->serial_number}) has no invoice_id.";
+
                 continue;
             }
 
             $invoice = DB::table('invoices')->where('id', $serial->invoice_id)->first(['id', 'status', 'code']);
-            if (!$invoice || !BusinessStatus::isCompleted($invoice->status)) {
+            if (! $invoice || ! BusinessStatus::isCompleted($invoice->status)) {
                 $hardErrors[] = "Sold serial #{$serial->id} ({$serial->serial_number}) points to a non-completed invoice.";
+
                 continue;
             }
 
@@ -690,7 +725,7 @@ class RebuildMovingAvgCosting extends Command
                 ->where('invoice_id', $serial->invoice_id)
                 ->where('product_id', $product->id)
                 ->exists();
-            if (!$hasItem) {
+            if (! $hasItem) {
                 $hardErrors[] = "Sold serial #{$serial->id} ({$serial->serial_number}) has no completed invoice item for this product.";
             }
         }
@@ -746,7 +781,7 @@ class RebuildMovingAvgCosting extends Command
     private function printDiffPreview(array $result): void
     {
         $this->line('    COGS diff preview');
-        $this->line('    invoice_items: ' . count($result['invoice_item_diffs']) . ' row(s), total diff=' . number_format(array_sum(array_column($result['invoice_item_diffs'], 'diff')), 0));
+        $this->line('    invoice_items: '.count($result['invoice_item_diffs']).' row(s), total diff='.number_format(array_sum(array_column($result['invoice_item_diffs'], 'diff')), 0));
         if ($result['invoice_item_diffs']) {
             $this->table(['invoice_item_id', 'old_cost', 'new_cost', 'diff'], array_slice(array_map(
                 fn ($row) => [$row['id'], $row['old'], $row['new'], $row['diff']],
@@ -754,7 +789,7 @@ class RebuildMovingAvgCosting extends Command
             ), 0, 20));
         }
 
-        $this->line('    serial_imeis.sold_cost_price: ' . count($result['serial_diffs']) . ' row(s), total diff=' . number_format(array_sum(array_column($result['serial_diffs'], 'diff')), 0));
+        $this->line('    serial_imeis.sold_cost_price: '.count($result['serial_diffs']).' row(s), total diff='.number_format(array_sum(array_column($result['serial_diffs'], 'diff')), 0));
         if ($result['serial_diffs']) {
             $this->table(['serial_id', 'old_sold_cost_price', 'new_sold_cost_price', 'diff'], array_slice(array_map(
                 fn ($row) => [$row['id'], $row['old'], $row['new'], $row['diff']],
@@ -762,7 +797,7 @@ class RebuildMovingAvgCosting extends Command
             ), 0, 20));
         }
 
-        $this->line('    invoice_item_serials.cost_price: ' . count($result['invoice_item_serial_diffs']) . ' row(s), total diff=' . number_format(array_sum(array_column($result['invoice_item_serial_diffs'], 'diff')), 0));
+        $this->line('    invoice_item_serials.cost_price: '.count($result['invoice_item_serial_diffs']).' row(s), total diff='.number_format(array_sum(array_column($result['invoice_item_serial_diffs'], 'diff')), 0));
     }
 
     private function sortKey(mixed $timestamp, int $phase): int

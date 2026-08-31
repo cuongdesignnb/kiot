@@ -2,25 +2,25 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
-use Inertia\Inertia;
+use App\Enums\DamageStatus;
+use App\Models\Branch;
 use App\Models\Damage;
 use App\Models\DamageItem;
-use App\Models\Product;
-use App\Models\Branch;
 use App\Models\Employee;
+use App\Models\Product;
 use App\Models\SerialImei;
 use App\Models\User;
-use App\Enums\DamageStatus;
-use App\Services\MovingAvgCostingService;
 use App\Services\LockPeriodService;
+use App\Services\MovingAvgCostingService;
 use App\Services\SerialAvailabilityService;
 use App\Services\StockMovementService;
 use App\Support\BusinessDateTime;
 use App\Support\Filters\DateRangePresets;
 use App\Support\Filters\FilterableIndex;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use Inertia\Inertia;
 
 class DamageController extends Controller
 {
@@ -76,12 +76,14 @@ class DamageController extends Controller
         foreach ($damages->items() as $d) {
             foreach ($d->items as $it) {
                 if (is_array($it->serial_ids)) {
-                    foreach ($it->serial_ids as $sid) $allSerialIds[] = $sid;
+                    foreach ($it->serial_ids as $sid) {
+                        $allSerialIds[] = $sid;
+                    }
                 }
             }
         }
         $serialMap = [];
-        if (!empty($allSerialIds)) {
+        if (! empty($allSerialIds)) {
             $serialMap = SerialImei::whereIn('id', array_unique($allSerialIds))
                 ->get(['id', 'serial_number'])
                 ->keyBy('id');
@@ -93,7 +95,7 @@ class DamageController extends Controller
                     foreach ($it->serial_ids as $sid) {
                         $s = $serialMap[$sid] ?? null;
                         $list[] = [
-                            'id'            => (int) $sid,
+                            'id' => (int) $sid,
                             'serial_number' => $s?->serial_number,
                         ];
                     }
@@ -107,7 +109,7 @@ class DamageController extends Controller
             'branches' => $branches,
             'filters' => $this->currentFilters($request),
             'filterOptions' => [
-                'branches' => $branches->map(fn($b) => ['value' => $b->id, 'label' => $b->name]),
+                'branches' => $branches->map(fn ($b) => ['value' => $b->id, 'label' => $b->name]),
                 'statuses' => DamageStatus::options(),
                 'datePresets' => DateRangePresets::options(),
                 'creators' => $actorOptions($creatorNames),
@@ -131,9 +133,9 @@ class DamageController extends Controller
         $currentDamageActorKey = null;
 
         if ($currentEmployee) {
-            $currentDamageActorKey = 'employee:' . $currentEmployee->id;
+            $currentDamageActorKey = 'employee:'.$currentEmployee->id;
         } elseif ($currentUser && $currentUser->isActive() && $currentUser->isAdmin()) {
-            $currentDamageActorKey = 'admin_user:' . $currentUser->id;
+            $currentDamageActorKey = 'admin_user:'.$currentUser->id;
         }
 
         return Inertia::render('Damages/Create', [
@@ -150,7 +152,7 @@ class DamageController extends Controller
                 'code' => $currentEmployee?->code,
             ] : null,
             'defaultBranchId' => $defaultBranch ? $defaultBranch->id : null,
-            'damageCode' => 'XH' . date('YmdHis')
+            'damageCode' => 'XH'.date('YmdHis'),
         ]);
     }
 
@@ -167,7 +169,7 @@ class DamageController extends Controller
             'employee_id' => 'nullable|exists:employees,id',
             'damage_actor_key' => 'nullable|string',
             'action_date' => 'nullable|date',
-            'note' => 'nullable|string'
+            'note' => 'nullable|string',
         ]);
 
         // ===== Step 23.6 pre-flight =====
@@ -177,9 +179,9 @@ class DamageController extends Controller
         //    không duplicate, thuộc product, status in_stock. Validate STRICT.
         // 4) Chuẩn bị serverItems[] cho vòng lặp chính.
         $seenProductIds = [];
-        $seenSerialIds  = [];
-        $serverItems    = [];
-        $serverTotalQty   = 0;
+        $seenSerialIds = [];
+        $serverItems = [];
+        $serverTotalQty = 0;
         $serverTotalValue = 0.0;
 
         foreach ($request->items as $idx => $line) {
@@ -192,7 +194,7 @@ class DamageController extends Controller
             $seenProductIds[$pid] = true;
 
             $product = Product::find($pid);
-            if (!$product) {
+            if (! $product) {
                 return back()->withErrors([
                     "items.{$idx}.product_id" => 'Sản phẩm không tồn tại.',
                 ])->withInput();
@@ -228,30 +230,40 @@ class DamageController extends Controller
             if ($request->status === 'completed' && $product->has_serial) {
                 if (count($serialIds) !== $qty) {
                     return back()->withErrors([
-                        "items.{$idx}.serial_ids" => 'Số lượng serial phải bằng số lượng xuất hủy (sản phẩm “' . $product->name . '”).',
+                        "items.{$idx}.serial_ids" => 'Số lượng serial phải bằng số lượng xuất hủy (sản phẩm “'.$product->name.'”).',
                     ])->withInput();
                 }
                 $validCount = app(SerialAvailabilityService::class)->countSellable($serialIds, $product->id);
                 if ($validCount !== count($serialIds)) {
                     return back()->withErrors([
-                        "items.{$idx}.serial_ids" => 'Serial không hợp lệ: phải thuộc sản phẩm “' . $product->name . '” và đang ở trạng thái in_stock.',
+                        "items.{$idx}.serial_ids" => 'Serial không hợp lệ: phải thuộc sản phẩm “'.$product->name.'” và đang ở trạng thái in_stock.',
                     ])->withInput();
                 }
             }
 
-            $costPrice  = (float) $product->cost_price;
+            $costPrice = (float) $product->cost_price;
             $totalValue = $qty * $costPrice;
+            if ($request->status === 'completed' && $product->has_serial && ! empty($serialIds)) {
+                $serialSnapshot = \App\Services\SerialCostingService::snapshotForSale(
+                    SerialImei::whereIn('id', $serialIds)
+                        ->where('product_id', $product->id)
+                        ->where('status', 'in_stock')
+                        ->get()
+                );
+                $costPrice = $serialSnapshot['unit_cost'];
+                $totalValue = $serialSnapshot['total_cost'];
+            }
 
             $serverItems[] = [
-                'product_id'  => $pid,
-                'qty'         => $qty,
-                'cost_price'  => $costPrice,
+                'product_id' => $pid,
+                'qty' => $qty,
+                'cost_price' => $costPrice,
                 'total_value' => $totalValue,
-                'note'        => $line['note'] ?? null,
-                'serial_ids'  => !empty($serialIds) ? $serialIds : null,
-                'product'     => $product,
+                'note' => $line['note'] ?? null,
+                'serial_ids' => ! empty($serialIds) ? $serialIds : null,
+                'product' => $product,
             ];
-            $serverTotalQty   += $qty;
+            $serverTotalQty += $qty;
             $serverTotalValue += $totalValue;
         }
 
@@ -266,7 +278,7 @@ class DamageController extends Controller
             );
 
             $damage = Damage::create([
-                'code' => $request->code ?? 'XH' . time(),
+                'code' => $request->code ?? 'XH'.time(),
                 'branch_id' => $request->branch_id,
                 'status' => $request->status,
                 'created_by_name' => $employeeName,
@@ -282,19 +294,19 @@ class DamageController extends Controller
 
             foreach ($serverItems as $row) {
                 /** @var \App\Models\Product $product */
-                $product   = $row['product'];
-                $qty       = $row['qty'];
+                $product = $row['product'];
+                $qty = $row['qty'];
                 $costPrice = $row['cost_price'];
                 $serialIds = $row['serial_ids'] ?? [];
 
                 DamageItem::create([
-                    'damage_id'   => $damage->id,
-                    'product_id'  => $product->id,
-                    'qty'         => $qty,
-                    'cost_price'  => $costPrice,
+                    'damage_id' => $damage->id,
+                    'product_id' => $product->id,
+                    'qty' => $qty,
+                    'cost_price' => $costPrice,
                     'total_value' => $row['total_value'],
-                    'note'        => $row['note'],
-                    'serial_ids'  => !empty($serialIds) ? $serialIds : null,
+                    'note' => $row['note'],
+                    'serial_ids' => ! empty($serialIds) ? $serialIds : null,
                 ]);
 
                 if ($request->status === 'completed') {
@@ -307,7 +319,7 @@ class DamageController extends Controller
                     MovingAvgCostingService::applyAdjustment($product, -$qty);
 
                     // RR-09: với hàng serial, đổi đúng các serial đã chọn sang 'defective'
-                    if ($product->has_serial && !empty($serialIds)) {
+                    if ($product->has_serial && ! empty($serialIds)) {
                         SerialImei::whereIn('id', $serialIds)
                             ->where('product_id', $product->id)
                             ->update(['status' => 'defective']);
@@ -323,9 +335,9 @@ class DamageController extends Controller
                         $damage,
                         [
                             'branch_id' => $damage->branch_id,
-                            'ref_code'  => $damage->code,
-                            'moved_at'  => $damage->destroyed_date ?? now(),
-                            'note'      => 'Xuất hủy phiếu ' . $damage->code,
+                            'ref_code' => $damage->code,
+                            'moved_at' => $damage->destroyed_date ?? now(),
+                            'note' => 'Xuất hủy phiếu '.$damage->code,
                         ]
                     );
                 }
@@ -347,7 +359,8 @@ class DamageController extends Controller
             throw $e;
         } catch (\Exception $e) {
             DB::rollBack();
-            return back()->withErrors(['error' => 'Lỗi: ' . $e->getMessage()]);
+
+            return back()->withErrors(['error' => 'Lỗi: '.$e->getMessage()]);
         }
     }
 
@@ -385,7 +398,7 @@ class DamageController extends Controller
         $linkedUserSet = array_flip($linkedUserIds);
 
         $options = $employees->map(fn (Employee $employee) => [
-            'value' => 'employee:' . $employee->id,
+            'value' => 'employee:'.$employee->id,
             'label' => $employee->name,
             'code' => $employee->code,
             'type' => 'employee',
@@ -396,12 +409,12 @@ class DamageController extends Controller
         $admins = User::with('role')
             ->where('status', 'active')
             ->get(['id', 'name', 'role_id', 'status'])
-            ->filter(fn (User $user) => $user->isAdmin() && !isset($linkedUserSet[(int) $user->id]));
+            ->filter(fn (User $user) => $user->isAdmin() && ! isset($linkedUserSet[(int) $user->id]));
 
         foreach ($admins as $admin) {
             $options[] = [
-                'value' => 'admin_user:' . $admin->id,
-                'label' => $admin->name . ' (Admin)',
+                'value' => 'admin_user:'.$admin->id,
+                'label' => $admin->name.' (Admin)',
                 'code' => 'ADMIN',
                 'type' => 'admin_user',
                 'raw_id' => $admin->id,
@@ -480,6 +493,7 @@ class DamageController extends Controller
             if (request()->wantsJson()) {
                 return response()->json(['success' => false, 'message' => 'Phiếu xuất hủy đã bị hủy trước đó.'], 422);
             }
+
             return back()->with('error', 'Phiếu xuất hủy đã bị hủy trước đó.');
         }
 
@@ -489,11 +503,12 @@ class DamageController extends Controller
             $damage->load('items.product');
             foreach ($damage->items as $item) {
                 if ($item->product && $item->product->has_serial) {
-                    if (!is_array($item->serial_ids) || empty($item->serial_ids)) {
+                    if (! is_array($item->serial_ids) || empty($item->serial_ids)) {
                         $msg = 'Phiếu có sản phẩm có serial nhưng không lưu serial_ids snapshot. Không thể tự động hủy; vui lòng xử lý thủ công.';
                         if (request()->wantsJson()) {
                             return response()->json(['success' => false, 'message' => $msg], 422);
                         }
+
                         return back()->with('error', $msg);
                     }
                 }
@@ -513,13 +528,14 @@ class DamageController extends Controller
                     'cancelled_by' => auth()->id(),
                     'cancelled_at' => now(),
                 ]);
+
                 return;
             }
 
             // Phiếu completed: đảo từng item
             foreach ($damage->items as $item) {
                 $product = Product::find($item->product_id);
-                if (!$product) {
+                if (! $product) {
                     continue;
                 }
 
@@ -529,7 +545,7 @@ class DamageController extends Controller
                 MovingAvgCostingService::applyAdjustment($product, $qty);
 
                 // Khôi phục serial đã hủy về in_stock
-                if ($product->has_serial && is_array($item->serial_ids) && !empty($item->serial_ids)) {
+                if ($product->has_serial && is_array($item->serial_ids) && ! empty($item->serial_ids)) {
                     SerialImei::whereIn('id', $item->serial_ids)
                         ->where('product_id', $product->id)
                         ->update(['status' => 'in_stock']);
@@ -545,9 +561,9 @@ class DamageController extends Controller
                     $damage,
                     [
                         'branch_id' => $damage->branch_id,
-                        'ref_code'  => $damage->code,
-                        'moved_at'  => now(),
-                        'note'      => 'Hủy phiếu xuất hủy ' . $damage->code,
+                        'ref_code' => $damage->code,
+                        'moved_at' => now(),
+                        'note' => 'Hủy phiếu xuất hủy '.$damage->code,
                     ]
                 );
             }
@@ -572,7 +588,7 @@ class DamageController extends Controller
             return response()->json(['success' => true, 'message' => 'Đã hủy phiếu xuất hủy.']);
         }
 
-        return back()->with('success', 'Đã hủy phiếu xuất hủy ' . $damage->code);
+        return back()->with('success', 'Đã hủy phiếu xuất hủy '.$damage->code);
     }
 
     public function export(Request $request)
@@ -584,7 +600,7 @@ class DamageController extends Controller
 
         return \App\Services\CsvService::export(
             ['Mã xuất hủy', 'Chi nhánh', 'Người tạo', 'Người hủy', 'Ngày hủy', 'Tổng SL', 'Tổng giá trị', 'Trạng thái', 'Ghi chú'],
-            $damages->map(fn($d) => [$d->code, $d->branch?->name, $d->created_by_name, $d->destroyed_by_name, $d->destroyed_date, $d->total_qty, $d->total_value, $d->status, $d->note]),
+            $damages->map(fn ($d) => [$d->code, $d->branch?->name, $d->created_by_name, $d->destroyed_by_name, $d->destroyed_date, $d->total_qty, $d->total_value, $d->status, $d->note]),
             'xuat_huy.csv'
         );
     }
@@ -592,6 +608,7 @@ class DamageController extends Controller
     public function print(\App\Models\Damage $damage)
     {
         $damage->load(['items.product', 'branch']);
+
         return view('prints.damage', compact('damage'));
     }
 

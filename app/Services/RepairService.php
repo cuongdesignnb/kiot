@@ -19,22 +19,22 @@ class RepairService
             $serial = SerialImei::findOrFail($data['serial_imei_id']);
 
             $repair = DeviceRepair::create([
-                'code'                 => DeviceRepair::generateCode(),
-                'product_id'           => $serial->product_id,
-                'serial_imei_id'       => $serial->id,
-                'original_cost'        => $serial->cost_price ?: ($serial->product->cost_price ?? 0),
-                'parts_cost'           => 0,
-                'total_cost'           => $serial->cost_price ?: ($serial->product->cost_price ?? 0),
-                'issue_description'    => $data['issue_description'] ?? null,
-                'status'               => DeviceRepair::STATUS_PENDING,
-                'branch_id'            => $data['branch_id'] ?? null,
-                'notes'                => $data['notes'] ?? null,
-                'deadline'             => $data['deadline'] ?? null,
-                'created_by'           => $data['created_by'] ?? null,
+                'code' => DeviceRepair::generateCode(),
+                'product_id' => $serial->product_id,
+                'serial_imei_id' => $serial->id,
+                'original_cost' => $serial->cost_price ?: ($serial->product->cost_price ?? 0),
+                'parts_cost' => 0,
+                'total_cost' => $serial->cost_price ?: ($serial->product->cost_price ?? 0),
+                'issue_description' => $data['issue_description'] ?? null,
+                'status' => DeviceRepair::STATUS_PENDING,
+                'branch_id' => $data['branch_id'] ?? null,
+                'notes' => $data['notes'] ?? null,
+                'deadline' => $data['deadline'] ?? null,
+                'created_by' => $data['created_by'] ?? null,
             ]);
 
             // Nếu serial chưa có cost_price → snapshot từ product
-            if (!$serial->cost_price) {
+            if (! $serial->cost_price) {
                 $serial->cost_price = $serial->product->cost_price ?? 0;
             }
             $serial->repair_status = 'not_started';
@@ -52,8 +52,8 @@ class RepairService
         return DB::transaction(function () use ($repair, $employeeId) {
             $repair->update([
                 'assigned_employee_id' => $employeeId,
-                'assigned_at'          => now(),
-                'status'               => DeviceRepair::STATUS_IN_PROGRESS,
+                'assigned_at' => now(),
+                'status' => DeviceRepair::STATUS_IN_PROGRESS,
             ]);
 
             $repair->serialImei->update(['repair_status' => 'repairing']);
@@ -88,12 +88,12 @@ class RepairService
             // Tạo record linh kiện
             $part = DeviceRepairPart::create([
                 'device_repair_id' => $repair->id,
-                'product_id'       => $productId,
-                'quantity'         => $quantity,
-                'unit_cost'        => $unitCost,
-                'total_cost'       => $totalCost,
-                'exported_by'      => $exportedBy,
-                'notes'            => $notes,
+                'product_id' => $productId,
+                'quantity' => $quantity,
+                'unit_cost' => $unitCost,
+                'total_cost' => $totalCost,
+                'exported_by' => $exportedBy,
+                'notes' => $notes,
             ]);
 
             // Trừ tồn kho linh kiện
@@ -107,7 +107,8 @@ class RepairService
             $serial->cost_price = (float) $serial->cost_price + $totalCost;
             $serial->save();
 
-            // BQ DI ĐỘNG: nếu serial còn in_stock, tăng inventory_total_cost theo ΔC
+            // Hàng serial sẽ được dựng lại projection từ từng serial in_stock;
+            // hàng không serial vẫn dùng BQ di động trong service chung.
             if ($serial->status === 'in_stock' && $serial->product) {
                 \App\Services\MovingAvgCostingService::applyRepairAdjustment($serial->product, (float) $totalCost);
             }
@@ -133,7 +134,8 @@ class RepairService
             $serial->cost_price = max(0, (float) $serial->cost_price + $deltaCost);
             $serial->save();
 
-            // BQ DI ĐỘNG: nếu serial còn in_stock, giảm inventory_total_cost
+            // Hàng serial sẽ được dựng lại projection từ từng serial in_stock;
+            // hàng không serial vẫn dùng BQ di động trong service chung.
             if ($serial->status === 'in_stock' && $serial->product) {
                 \App\Services\MovingAvgCostingService::applyRepairAdjustment($serial->product, $deltaCost);
             }
@@ -152,7 +154,7 @@ class RepairService
     {
         return DB::transaction(function () use ($repair) {
             $repair->update([
-                'status'       => DeviceRepair::STATUS_COMPLETED,
+                'status' => DeviceRepair::STATUS_COMPLETED,
                 'completed_at' => now(),
             ]);
 
@@ -181,10 +183,10 @@ class RepairService
         $tier = \App\Models\RepairPerformanceTier::getTierForPercent($rate);
 
         return [
-            'assigned'       => $assigned,
-            'completed'      => $completed,
+            'assigned' => $assigned,
+            'completed' => $completed,
             'completion_rate' => $rate,
-            'tier'           => $tier,
+            'tier' => $tier,
             'salary_percent' => $tier?->salary_percent ?? 100,
         ];
     }

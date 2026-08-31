@@ -154,17 +154,13 @@ class Product extends Model
     }
 
     /**
-     * Đối với sản phẩm có serial/IMEI: giá vốn bình quân và tồn kho
-     * chỉ tính trên các serial còn TỒN (status = 'in_stock'), KHÔNG tính
-     * những serial đã bán/đã trả NCC. Gọi sau mỗi thao tác làm thay đổi
-     * trạng thái serial (nhập, bán, trả hàng bán, trả NCC, điều chuyển...).
-     */
-    /**
-     * Đồng bộ stock_quantity với số serial in_stock thực tế.
+     * Đồng bộ projection của sản phẩm quản lý Serial/IMEI.
      *
-     * LƯU Ý: Sau khi chuyển sang BQ di động (MovingAvgCostingService), method này
-     * KHÔNG còn tính lại cost_price từ serial. cost_price = BQ moving avg, được duy trì
-     * bởi service. Method chỉ giữ vai trò sync stock_quantity (audit count) cho hàng có serial.
+     * Với hàng serial, từng serial là nguồn giá vốn đích danh. Vì vậy mọi
+     * projection ở products phải được tính lại từ những serial còn in_stock:
+     * stock_quantity, inventory_total_cost và cost_price. Không được giữ một
+     * BQ cũ sau khi serial đã đổi trạng thái, vì nó có thể bị dùng nhầm làm
+     * COGS cho một serial khác ở lần bán kế tiếp.
      */
     public function recomputeFromSerials(): void
     {
@@ -172,13 +168,24 @@ class Product extends Model
             return;
         }
 
-        $count = (int) SerialImei::where('product_id', $this->id)
+        $aggregate = SerialImei::query()
+            ->where('product_id', $this->id)
             ->where('status', 'in_stock')
-            ->count();
+            ->selectRaw('COUNT(*) as quantity, COALESCE(SUM(cost_price), 0) as total_cost')
+            ->first();
 
-        // Nếu lệch — sync số lượng. Không đụng cost_price (đã do MovingAvgCostingService quản).
-        if ((int) $this->stock_quantity !== $count) {
+        $count = (int) ($aggregate->quantity ?? 0);
+        $totalCost = round((float) ($aggregate->total_cost ?? 0), 2);
+        $averageCost = $count > 0 ? round($totalCost / $count, 2) : 0.0;
+
+        if (
+            (int) $this->stock_quantity !== $count
+            || round((float) $this->inventory_total_cost, 2) !== $totalCost
+            || round((float) $this->cost_price, 2) !== $averageCost
+        ) {
             $this->stock_quantity = $count;
+            $this->inventory_total_cost = $totalCost;
+            $this->cost_price = $averageCost;
             $this->save();
         }
     }

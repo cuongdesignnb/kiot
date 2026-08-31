@@ -401,6 +401,14 @@ class PurchaseReturnController extends Controller
                         $unitCostAtPurchase = $purchaseItem
                             ? (float) ($purchaseItem->unit_cost_allocated ?: $purchaseItem->price)
                             : (float) $item['price'];
+                        if ($product->has_serial && ! empty($item['serial_ids'])) {
+                            $selectedSerials = SerialImei::whereIn('id', $item['serial_ids'])
+                                ->where('product_id', $product->id)
+                                ->where('purchase_id', $purchase->id)
+                                ->where('status', 'in_stock')
+                                ->get();
+                            $unitCostAtPurchase = \App\Services\SerialCostingService::snapshotForSale($selectedSerials)['unit_cost'];
+                        }
 
                         $return->items()->create([
                             'product_id' => $product->id,

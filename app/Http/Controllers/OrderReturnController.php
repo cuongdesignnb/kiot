@@ -489,6 +489,9 @@ class OrderReturnController extends Controller
                     // Không có thông tin gốc — fallback dùng cost hiện tại
                     $restoredCostPerUnit = $product->tracksInventory() ? (float) $product->cost_price : 0.0;
                 }
+                if ($product->tracksInventory() && $product->has_serial && $restoredSerials->isNotEmpty()) {
+                    $restoredCostPerUnit = \App\Services\SerialCostingService::snapshotForReturn($restoredSerials)['unit_cost'];
+                }
 
                 // RR-08: lưu serial_ids đã trả để cancel rollback đúng
                 $serialIdsForItem = $product->tracksInventory() && $product->has_serial

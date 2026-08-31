@@ -2,20 +2,18 @@
 
 namespace App\Services;
 
+use App\Models\ActivityLog;
+use App\Models\Product;
+use App\Models\SerialImei;
 use App\Models\Task;
 use App\Models\TaskAssignment;
 use App\Models\TaskComment;
 use App\Models\TaskPart;
-use App\Models\Product;
-use App\Models\SerialImei;
 use App\Models\User;
 use App\Models\Warranty;
-use App\Models\ActivityLog;
 use App\Notifications\TaskAssignedNotification;
-use App\Notifications\TaskStatusChangedNotification;
 use App\Notifications\TaskCommentNotification;
-use App\Services\MovingAvgCostingService;
-use App\Services\StockMovementService;
+use App\Notifications\TaskStatusChangedNotification;
 use Illuminate\Support\Facades\DB;
 
 class TaskService
@@ -29,9 +27,10 @@ class TaskService
             $type = $data['type'] ?? Task::TYPE_GENERAL;
 
             // External repair — no serial/stock required
-            if ($type === Task::TYPE_REPAIR && !empty($data['external'])) {
+            if ($type === Task::TYPE_REPAIR && ! empty($data['external'])) {
                 $task = $this->createExternalRepair($data);
                 $this->ensureCreatorAssignment($task, $data['creator_employee_id'] ?? null, $data['created_by'] ?? null);
+
                 return $task;
             }
 
@@ -39,22 +38,23 @@ class TaskService
             if ($type === Task::TYPE_REPAIR) {
                 $task = $this->createRepairTask($data);
                 $this->ensureCreatorAssignment($task, $data['creator_employee_id'] ?? null, $data['created_by'] ?? null);
+
                 return $task;
             }
 
             // General flow
             $task = Task::create([
-                'code'              => Task::generateCode(Task::TYPE_GENERAL),
-                'type'              => Task::TYPE_GENERAL,
-                'title'             => $data['title'],
-                'category_id'       => $data['category_id'] ?? null,
+                'code' => Task::generateCode(Task::TYPE_GENERAL),
+                'type' => Task::TYPE_GENERAL,
+                'title' => $data['title'],
+                'category_id' => $data['category_id'] ?? null,
                 'issue_description' => $data['description'] ?? null,
-                'priority'          => $data['priority'] ?? Task::PRIORITY_NORMAL,
-                'status'            => Task::STATUS_PENDING,
-                'branch_id'         => $data['branch_id'] ?? null,
-                'notes'             => $data['notes'] ?? null,
-                'deadline'          => $data['deadline'] ?? null,
-                'created_by'        => $data['created_by'] ?? null,
+                'priority' => $data['priority'] ?? Task::PRIORITY_NORMAL,
+                'status' => Task::STATUS_PENDING,
+                'branch_id' => $data['branch_id'] ?? null,
+                'notes' => $data['notes'] ?? null,
+                'deadline' => $data['deadline'] ?? null,
+                'created_by' => $data['created_by'] ?? null,
             ]);
 
             $this->ensureCreatorAssignment($task, $data['creator_employee_id'] ?? null, $data['created_by'] ?? null);
@@ -70,7 +70,7 @@ class TaskService
      */
     public function ensureCreatorAssignment(Task $task, ?int $creatorEmployeeId, ?int $createdBy): ?TaskAssignment
     {
-        if (!$creatorEmployeeId) {
+        if (! $creatorEmployeeId) {
             return null;
         }
 
@@ -86,7 +86,7 @@ class TaskService
             ]
         );
 
-        if (!$task->assigned_employee_id) {
+        if (! $task->assigned_employee_id) {
             $task->update([
                 'assigned_employee_id' => $creatorEmployeeId,
                 'assigned_at' => $assignment->assigned_at ?? now(),
@@ -102,44 +102,44 @@ class TaskService
     protected function createExternalRepair(array $data): Task
     {
         $task = Task::create([
-            'code'              => Task::generateCode(Task::TYPE_REPAIR),
-            'type'              => Task::TYPE_REPAIR,
-            'external'          => true,
-            'title'             => $data['title'] ?? null,
-            'category_id'       => $data['category_id'] ?? null,
-            'product_id'        => $data['product_id'] ?? null,
+            'code' => Task::generateCode(Task::TYPE_REPAIR),
+            'type' => Task::TYPE_REPAIR,
+            'external' => true,
+            'title' => $data['title'] ?? null,
+            'category_id' => $data['category_id'] ?? null,
+            'product_id' => $data['product_id'] ?? null,
             'issue_description' => $data['issue_description'] ?? $data['description'] ?? null,
-            'priority'          => $data['priority'] ?? Task::PRIORITY_NORMAL,
-            'status'            => Task::STATUS_PENDING,
-            'sub_status'        => 'received',
-            'customer_id'       => $data['customer_id'] ?? null,
-            'customer_name'     => $data['customer_name'] ?? null,
-            'customer_phone'    => $data['customer_phone'] ?? null,
-            'received_at'       => $data['received_at'] ?? now(),
-            'branch_id'         => $data['branch_id'] ?? null,
-            'notes'             => $data['notes'] ?? null,
-            'deadline'          => $data['deadline'] ?? null,
-            'created_by'        => $data['created_by'] ?? null,
-            'original_cost'     => 0,
-            'parts_cost'        => 0,
-            'total_cost'        => 0,
-            'labor_fee'         => 0,
-            'parts_total'       => 0,
-            'total_amount'      => 0,
-            'paid_amount'       => 0,
-            'debt_amount'       => 0,
+            'priority' => $data['priority'] ?? Task::PRIORITY_NORMAL,
+            'status' => Task::STATUS_PENDING,
+            'sub_status' => 'received',
+            'customer_id' => $data['customer_id'] ?? null,
+            'customer_name' => $data['customer_name'] ?? null,
+            'customer_phone' => $data['customer_phone'] ?? null,
+            'received_at' => $data['received_at'] ?? now(),
+            'branch_id' => $data['branch_id'] ?? null,
+            'notes' => $data['notes'] ?? null,
+            'deadline' => $data['deadline'] ?? null,
+            'created_by' => $data['created_by'] ?? null,
+            'original_cost' => 0,
+            'parts_cost' => 0,
+            'total_cost' => 0,
+            'labor_fee' => 0,
+            'parts_total' => 0,
+            'total_amount' => 0,
+            'paid_amount' => 0,
+            'debt_amount' => 0,
         ]);
 
-        if (!$task->title) {
+        if (! $task->title) {
             $task->update(['title' => $task->code]);
         }
 
         // Snapshot customer name/phone if customer_id provided
-        if (!empty($data['customer_id']) && empty($data['customer_name'])) {
+        if (! empty($data['customer_id']) && empty($data['customer_name'])) {
             $customer = \App\Models\Customer::find($data['customer_id']);
             if ($customer) {
                 $task->update([
-                    'customer_name'  => $customer->name,
+                    'customer_name' => $customer->name,
                     'customer_phone' => $customer->phone,
                 ]);
             }
@@ -178,31 +178,31 @@ class TaskService
         }
 
         $task = Task::create([
-            'code'              => Task::generateCode(Task::TYPE_REPAIR),
-            'type'              => Task::TYPE_REPAIR,
-            'title'             => $data['title'] ?? null,
-            'category_id'       => $data['category_id'] ?? null,
-            'product_id'        => $serial->product_id,
-            'serial_imei_id'    => $serial->id,
-            'original_cost'     => $serial->cost_price ?: ($serial->product->cost_price ?? 0),
-            'parts_cost'        => 0,
-            'total_cost'        => $serial->cost_price ?: ($serial->product->cost_price ?? 0),
+            'code' => Task::generateCode(Task::TYPE_REPAIR),
+            'type' => Task::TYPE_REPAIR,
+            'title' => $data['title'] ?? null,
+            'category_id' => $data['category_id'] ?? null,
+            'product_id' => $serial->product_id,
+            'serial_imei_id' => $serial->id,
+            'original_cost' => $serial->cost_price ?: ($serial->product->cost_price ?? 0),
+            'parts_cost' => 0,
+            'total_cost' => $serial->cost_price ?: ($serial->product->cost_price ?? 0),
             'issue_description' => $data['issue_description'] ?? $data['description'] ?? null,
-            'priority'          => $data['priority'] ?? Task::PRIORITY_NORMAL,
-            'status'            => Task::STATUS_PENDING,
-            'branch_id'         => $data['branch_id'] ?? null,
-            'notes'             => $data['notes'] ?? null,
-            'deadline'          => $data['deadline'] ?? null,
-            'created_by'        => $data['created_by'] ?? null,
+            'priority' => $data['priority'] ?? Task::PRIORITY_NORMAL,
+            'status' => Task::STATUS_PENDING,
+            'branch_id' => $data['branch_id'] ?? null,
+            'notes' => $data['notes'] ?? null,
+            'deadline' => $data['deadline'] ?? null,
+            'created_by' => $data['created_by'] ?? null,
         ]);
 
         // Update title to code if not set
-        if (!$task->title) {
+        if (! $task->title) {
             $task->update(['title' => $task->code]);
         }
 
         // Snapshot cost_price if serial doesn't have one
-        if (!$serial->cost_price) {
+        if (! $serial->cost_price) {
             $serial->cost_price = $serial->product->cost_price ?? 0;
         }
         $serial->repair_status = 'not_started';
@@ -227,10 +227,10 @@ class TaskService
                 }
 
                 TaskAssignment::create([
-                    'task_id'     => $task->id,
+                    'task_id' => $task->id,
                     'employee_id' => $employeeId,
                     'assigned_by' => $assignedBy,
-                    'status'      => TaskAssignment::STATUS_PENDING,
+                    'status' => TaskAssignment::STATUS_PENDING,
                     'assigned_at' => now(),
                 ]);
 
@@ -243,10 +243,10 @@ class TaskService
             }
 
             // Update legacy single-assign field (first employee)
-            if (!$task->assigned_employee_id && count($employeeIds) > 0) {
+            if (! $task->assigned_employee_id && count($employeeIds) > 0) {
                 $task->update([
                     'assigned_employee_id' => $employeeIds[0],
-                    'assigned_at'          => now(),
+                    'assigned_at' => now(),
                 ]);
             }
 
@@ -262,9 +262,9 @@ class TaskService
     public function respondToAssignment(TaskAssignment $assignment, string $status, ?string $notes = null): TaskAssignment
     {
         $assignment->update([
-            'status'       => $status,
+            'status' => $status,
             'responded_at' => now(),
-            'notes'        => $notes,
+            'notes' => $notes,
         ]);
 
         $task = $assignment->task;
@@ -284,7 +284,7 @@ class TaskService
                 ->where('status', TaskAssignment::STATUS_ACCEPTED)
                 ->exists();
 
-            if ($allResponded === $totalAssigned && !$anyAccepted) {
+            if ($allResponded === $totalAssigned && ! $anyAccepted) {
                 // Tất cả đã từ chối — task vẫn pending, cần giao lại
                 // Gửi notification cho người tạo
                 if ($task->created_by) {
@@ -362,12 +362,12 @@ class TaskService
      */
     private function updateInternalRepairSerialStatus(Task $task, string $newStatus): void
     {
-        if (!$task->is_repair || !$task->serial_imei_id) {
+        if (! $task->is_repair || ! $task->serial_imei_id) {
             return;
         }
 
         $serial = SerialImei::lockForUpdate()->find($task->serial_imei_id);
-        if (!$serial) {
+        if (! $serial) {
             return;
         }
 
@@ -377,6 +377,7 @@ class TaskService
                 $serial->repair_status = 'repairing';
                 $serial->save();
             }
+
             return;
         }
 
@@ -387,12 +388,13 @@ class TaskService
         $serial->repair_status = 'ready';
 
         // Đã rời kho thật → tuyệt đối không hồi về in_stock.
-        $hasLeftStock = !empty($serial->invoice_id)
-            || !empty($serial->sold_at)
-            || !empty($serial->purchase_return_id);
+        $hasLeftStock = ! empty($serial->invoice_id)
+            || ! empty($serial->sold_at)
+            || ! empty($serial->purchase_return_id);
 
         if ($hasLeftStock) {
             $serial->save();
+
             return;
         }
 
@@ -453,7 +455,7 @@ class TaskService
         return DB::transaction(function () use ($serialId, $userId) {
             /** @var SerialImei|null $serial */
             $serial = SerialImei::lockForUpdate()->find($serialId);
-            if (!$serial) {
+            if (! $serial) {
                 throw new \RuntimeException('Không tìm thấy serial cần hoàn nguyên.');
             }
 
@@ -465,20 +467,20 @@ class TaskService
 
             if ($serial->status !== 'dismantled') {
                 throw new \RuntimeException(
-                    'Serial "' . $serial->serial_number . '" hiện ở trạng thái "' .
-                    $serial->status . '" — chỉ phục hồi được serial đang dismantled.'
+                    'Serial "'.$serial->serial_number.'" hiện ở trạng thái "'.
+                    $serial->status.'" — chỉ phục hồi được serial đang dismantled.'
                 );
             }
             if ($serial->repair_status !== 'ready') {
                 throw new \RuntimeException(
-                    'Phiếu sửa serial "' . $serial->serial_number . '" chưa hoàn tất (repair_status=' .
-                    ($serial->repair_status ?? 'null') . ') — không thể hoàn nguyên.'
+                    'Phiếu sửa serial "'.$serial->serial_number.'" chưa hoàn tất (repair_status='.
+                    ($serial->repair_status ?? 'null').') — không thể hoàn nguyên.'
                 );
             }
-            if (!empty($serial->invoice_id) || !empty($serial->sold_at)) {
+            if (! empty($serial->invoice_id) || ! empty($serial->sold_at)) {
                 throw new \RuntimeException('Serial đã bán, không thể hoàn nguyên về kho.');
             }
-            if (!empty($serial->purchase_return_id)) {
+            if (! empty($serial->purchase_return_id)) {
                 throw new \RuntimeException('Serial đã trả NCC, không thể hoàn nguyên về kho.');
             }
 
@@ -493,7 +495,7 @@ class TaskService
                 ->where('direction', 'import')
                 ->whereHas('task', function ($q) use ($serialId) {
                     $q->where('serial_imei_id', $serialId)
-                      ->whereNotIn('status', [Task::STATUS_COMPLETED, Task::STATUS_CANCELLED]);
+                        ->whereNotIn('status', [Task::STATUS_COMPLETED, Task::STATUS_CANCELLED]);
                 })
                 ->exists();
             if ($activeImport) {
@@ -510,11 +512,11 @@ class TaskService
             }
 
             ActivityLog::create([
-                'user_id'      => $userId,
-                'action'       => 'serial_imei.restore_reassembled',
+                'user_id' => $userId,
+                'action' => 'serial_imei.restore_reassembled',
                 'subject_type' => SerialImei::class,
-                'subject_id'   => $serial->id,
-                'description'  => 'Hoàn nguyên serial sau khi lắp lại: ' . $serial->serial_number,
+                'subject_id' => $serial->id,
+                'description' => 'Hoàn nguyên serial sau khi lắp lại: '.$serial->serial_number,
             ]);
 
             return ['restored' => true, 'serial' => $serial->refresh()];
@@ -535,13 +537,14 @@ class TaskService
     public function updateProgress(Task $task, int $progress): Task
     {
         $task->update(['progress' => min(100, max(0, $progress))]);
+
         return $task;
     }
 
     /**
      * Xuất linh kiện (chỉ cho repair task).
      *
-     * @param array|null $serialIds  Bắt buộc nếu product has_serial=true.
+     * @param  array|null  $serialIds  Bắt buộc nếu product has_serial=true.
      */
     public function addPart(Task $task, int $productId, int $quantity = 1, ?string $notes = null, ?int $exportedBy = null, ?array $serialIds = null): TaskPart
     {
@@ -563,7 +566,7 @@ class TaskService
             $unitCost = $product->cost_price ?? 0;
 
             // Nếu has_serial, tính cost từ từng serial thực tế
-            if ($product->has_serial && !empty($serialIds)) {
+            if ($product->has_serial && ! empty($serialIds)) {
                 $serials = SerialImei::whereIn('id', $serialIds)->get();
                 $totalCost = $serials->sum('cost_price');
                 $unitCost = $quantity > 0 ? round($totalCost / $quantity) : 0;
@@ -572,15 +575,15 @@ class TaskService
             }
 
             $part = TaskPart::create([
-                'task_id'     => $task->id,
-                'product_id'  => $productId,
-                'quantity'    => $quantity,
-                'unit_cost'   => $unitCost,
-                'total_cost'  => $totalCost,
+                'task_id' => $task->id,
+                'product_id' => $productId,
+                'quantity' => $quantity,
+                'unit_cost' => $unitCost,
+                'total_cost' => $totalCost,
                 'exported_by' => $exportedBy,
-                'notes'       => $notes,
-                'direction'   => 'export',
-                'serial_ids'  => $product->has_serial ? $serialIds : null,
+                'notes' => $notes,
+                'direction' => 'export',
+                'serial_ids' => $product->has_serial ? $serialIds : null,
             ]);
 
             // Trừ tồn kho linh kiện qua CostingService (cập nhật inventory_total_cost)
@@ -588,7 +591,7 @@ class TaskService
             $product->refresh();
 
             // Đánh dấu serial linh kiện đã dùng
-            if ($product->has_serial && !empty($serialIds)) {
+            if ($product->has_serial && ! empty($serialIds)) {
                 SerialImei::whereIn('id', $serialIds)->update(['status' => 'used_for_repair']);
                 $product->recomputeFromSerials();
             }
@@ -611,7 +614,8 @@ class TaskService
                 $serial->cost_price = (float) $serial->cost_price + $totalCost;
                 $serial->save();
 
-                // BQ DI ĐỘNG: nếu serial in_stock, tăng inventory_total_cost
+                // Hàng serial sẽ dựng lại projection từ từng serial in_stock;
+                // hàng không serial vẫn dùng BQ di động trong service chung.
                 if ($serial->status === 'in_stock' && $serial->product) {
                     MovingAvgCostingService::applyRepairAdjustment($serial->product, (float) $totalCost);
                 }
@@ -630,11 +634,11 @@ class TaskService
                 $task,
                 [
                     'task_part_id' => $part->id,
-                    'product_id'   => $product->id,
-                    'quantity'     => $quantity,
-                    'unit_cost'    => (float) $unitCost,
-                    'total_cost'   => (float) $totalCost,
-                    'serial_ids'   => $product->has_serial ? $serialIds : null,
+                    'product_id' => $product->id,
+                    'quantity' => $quantity,
+                    'unit_cost' => (float) $unitCost,
+                    'total_cost' => (float) $totalCost,
+                    'serial_ids' => $product->has_serial ? $serialIds : null,
                 ]
             );
 
@@ -652,18 +656,18 @@ class TaskService
         }
 
         if (count($serialIds) !== $quantity) {
-            throw new \RuntimeException("Số Serial/IMEI đã chọn (" . count($serialIds) . ") không khớp số lượng ({$quantity}).");
+            throw new \RuntimeException('Số Serial/IMEI đã chọn ('.count($serialIds).") không khớp số lượng ({$quantity}).");
         }
 
         // Duplicate check
         if (count($serialIds) !== count(array_unique($serialIds))) {
-            throw new \RuntimeException("Serial/IMEI bị trùng trong danh sách.");
+            throw new \RuntimeException('Serial/IMEI bị trùng trong danh sách.');
         }
 
         $serials = SerialImei::whereIn('id', $serialIds)->get();
 
         if ($serials->count() !== count($serialIds)) {
-            throw new \RuntimeException("Một hoặc nhiều Serial/IMEI không tồn tại.");
+            throw new \RuntimeException('Một hoặc nhiều Serial/IMEI không tồn tại.');
         }
 
         foreach ($serials as $s) {
@@ -686,7 +690,7 @@ class TaskService
         if ($part->direction === 'import') {
             throw new \RuntimeException(
                 'Không thể gỡ linh kiện đã bóc tách (direction=import). '
-                . 'Cần thao tác rollback riêng để xóa serial output đã tạo.'
+                .'Cần thao tác rollback riêng để xóa serial output đã tạo.'
             );
         }
 
@@ -711,7 +715,7 @@ class TaskService
                 );
 
                 // Hoàn serial linh kiện về in_stock
-                if (!empty($part->serial_ids) && $product->has_serial) {
+                if (! empty($part->serial_ids) && $product->has_serial) {
                     SerialImei::whereIn('id', $part->serial_ids)
                         ->where('status', 'used_for_repair')
                         ->update(['status' => 'in_stock']);
@@ -739,11 +743,11 @@ class TaskService
 
             $partSnapshot = [
                 'task_part_id' => $part->id,
-                'product_id'   => $part->product_id,
-                'quantity'     => (int) $part->quantity,
-                'unit_cost'    => (float) $part->unit_cost,
-                'total_cost'   => (float) $part->total_cost,
-                'serial_ids'   => $part->serial_ids,
+                'product_id' => $part->product_id,
+                'quantity' => (int) $part->quantity,
+                'unit_cost' => (float) $part->unit_cost,
+                'total_cost' => (float) $part->total_cost,
+                'serial_ids' => $part->serial_ids,
             ];
             $part->delete();
             $task->recalculateCosts();
@@ -769,7 +773,7 @@ class TaskService
      *   - Output không serial: không nhận serial_numbers.
      *   - Sau bóc tách thành công, set serial máy gốc status='dismantled' (idempotent).
      *
-     * @param array<string>|null $serialNumbers Bắt buộc nếu output product has_serial=true.
+     * @param  array<string>|null  $serialNumbers  Bắt buộc nếu output product has_serial=true.
      */
     public function disassemblePart(
         Task $task,
@@ -788,7 +792,7 @@ class TaskService
             if ($task->type !== Task::TYPE_REPAIR) {
                 throw new \RuntimeException('Task không phải phiếu sửa chữa.');
             }
-            if (!$task->serial_imei_id || !$task->serialImei) {
+            if (! $task->serial_imei_id || ! $task->serialImei) {
                 throw new \RuntimeException('Phiếu sửa chữa nội bộ phải có serial máy gốc.');
             }
             if (in_array($task->status, [Task::STATUS_COMPLETED, Task::STATUS_CANCELLED], true)) {
@@ -810,9 +814,9 @@ class TaskService
 
             // ── Cost cap ──
             $originalCost = (float) $task->original_cost;
-            $exportTotal  = (float) $task->parts()->where('direction', 'export')->sum('total_cost');
-            $importTotal  = (float) $task->parts()->where('direction', 'import')->sum('total_cost');
-            $available    = $originalCost + $exportTotal - $importTotal;
+            $exportTotal = (float) $task->parts()->where('direction', 'export')->sum('total_cost');
+            $importTotal = (float) $task->parts()->where('direction', 'import')->sum('total_cost');
+            $available = $originalCost + $exportTotal - $importTotal;
 
             if ($totalCost > $available + 0.01) {
                 throw new \RuntimeException(sprintf(
@@ -829,17 +833,17 @@ class TaskService
                 }
                 if (count($serialNumbers) !== $quantity) {
                     throw new \RuntimeException(
-                        'Số serial bóc tách (' . count($serialNumbers) . ") không khớp số lượng ({$quantity})."
+                        'Số serial bóc tách ('.count($serialNumbers).") không khớp số lượng ({$quantity})."
                     );
                 }
                 if (count($serialNumbers) !== count(array_unique($serialNumbers))) {
                     throw new \RuntimeException('Serial output bị trùng trong danh sách.');
                 }
                 $existing = SerialImei::whereIn('serial_number', $serialNumbers)->pluck('serial_number')->all();
-                if (!empty($existing)) {
-                    throw new \RuntimeException('Serial output đã tồn tại: ' . implode(', ', $existing));
+                if (! empty($existing)) {
+                    throw new \RuntimeException('Serial output đã tồn tại: '.implode(', ', $existing));
                 }
-            } elseif (!empty($serialNumbers)) {
+            } elseif (! empty($serialNumbers)) {
                 throw new \RuntimeException("Linh kiện \"{$product->name}\" không phải hàng Serial/IMEI — không được gửi serial_numbers.");
             }
 
@@ -848,25 +852,25 @@ class TaskService
             if ($product->has_serial) {
                 foreach ($serialNumbers as $sn) {
                     $newSerial = SerialImei::create([
-                        'product_id'    => $product->id,
+                        'product_id' => $product->id,
                         'serial_number' => $sn,
-                        'status'        => 'in_stock',
-                        'cost_price'    => $cost,
+                        'status' => 'in_stock',
+                        'cost_price' => $cost,
                     ]);
                     $createdSerialIds[] = $newSerial->id;
                 }
             }
 
             $part = TaskPart::create([
-                'task_id'     => $task->id,
-                'product_id'  => $productId,
-                'quantity'    => $quantity,
-                'unit_cost'   => $cost,
-                'total_cost'  => $totalCost,
+                'task_id' => $task->id,
+                'product_id' => $productId,
+                'quantity' => $quantity,
+                'unit_cost' => $cost,
+                'total_cost' => $totalCost,
                 'exported_by' => $exportedBy,
-                'notes'       => $notes,
-                'direction'   => 'import',
-                'serial_ids'  => $product->has_serial ? $createdSerialIds : null,
+                'notes' => $notes,
+                'direction' => 'import',
+                'serial_ids' => $product->has_serial ? $createdSerialIds : null,
             ]);
 
             // ── Tăng tồn linh kiện output ──
@@ -914,13 +918,13 @@ class TaskService
                 "Bóc linh kiện {$product->name} (x{$quantity}) từ phiếu {$task->code}",
                 $task,
                 [
-                    'task_part_id'      => $part->id,
+                    'task_part_id' => $part->id,
                     'output_product_id' => $product->id,
-                    'quantity'          => $quantity,
-                    'unit_cost'         => (float) $cost,
-                    'total_cost'        => (float) $totalCost,
+                    'quantity' => $quantity,
+                    'unit_cost' => (float) $cost,
+                    'total_cost' => (float) $totalCost,
                     'output_serial_ids' => $createdSerialIds,
-                    'input_serial_id'   => $task->serial_imei_id,
+                    'input_serial_id' => $task->serial_imei_id,
                 ]
             );
 
@@ -954,7 +958,7 @@ class TaskService
         }
 
         $task = $part->task;
-        if (!$task) {
+        if (! $task) {
             throw new \RuntimeException('Không tìm thấy phiếu sửa chữa của linh kiện này.');
         }
         if (in_array($task->status, [Task::STATUS_COMPLETED, Task::STATUS_CANCELLED], true)) {
@@ -965,7 +969,7 @@ class TaskService
         }
 
         $product = Product::find($part->product_id);
-        if (!$product) {
+        if (! $product) {
             throw new \RuntimeException('Không tìm thấy sản phẩm linh kiện output.');
         }
         if ($product->isService()) {
@@ -995,7 +999,7 @@ class TaskService
             foreach ($serials as $s) {
                 if ($s->status !== 'in_stock') {
                     throw new \RuntimeException(
-                        'Serial output "' . $s->serial_number . '" hiện ở trạng thái "' . $s->status .
+                        'Serial output "'.$s->serial_number.'" hiện ở trạng thái "'.$s->status.
                         '" — không thể hoàn tác (đã phát sinh giao dịch khác).'
                     );
                 }
@@ -1004,14 +1008,14 @@ class TaskService
 
         // ── Pre-flight: non-serial stock sanity ────────────────────────
         $product->refresh();
-        if (!$product->has_serial && (float) $product->stock_quantity < $quantity) {
+        if (! $product->has_serial && (float) $product->stock_quantity < $quantity) {
             throw new \RuntimeException(
-                'Tồn kho linh kiện hiện không đủ để hoàn tác (cần ' . $quantity . ', còn ' .
-                (int) $product->stock_quantity . ').'
+                'Tồn kho linh kiện hiện không đủ để hoàn tác (cần '.$quantity.', còn '.
+                (int) $product->stock_quantity.').'
             );
         }
 
-        DB::transaction(function () use ($part, $task, $product, $quantity, $unitCost, $totalCost, $serialIds, $userId) {
+        DB::transaction(function () use ($part, $task, $product, $quantity, $unitCost, $totalCost, $serialIds) {
             // ── 1. Reverse output stock ──────────────────────────────
             // Use applySaleReturn-style adjustment in reverse: decrement
             // qty at the snapshot cost so inventory_total_cost balances.
@@ -1019,7 +1023,7 @@ class TaskService
             $product->refresh();
 
             // ── 2. Delete output serials (only after the in_stock guard) ─
-            if ($product->has_serial && !empty($serialIds)) {
+            if ($product->has_serial && ! empty($serialIds)) {
                 SerialImei::whereIn('id', $serialIds)
                     ->where('product_id', $product->id)
                     ->where('status', 'in_stock')
@@ -1070,13 +1074,13 @@ class TaskService
 
             // ── 6. Snapshot + delete TaskPart + recalc ──────────────
             $snapshot = [
-                'task_part_id'      => $part->id,
+                'task_part_id' => $part->id,
                 'output_product_id' => $part->product_id,
-                'quantity'          => $quantity,
-                'unit_cost'         => $unitCost,
-                'total_cost'        => $totalCost,
+                'quantity' => $quantity,
+                'unit_cost' => $unitCost,
+                'total_cost' => $totalCost,
                 'output_serial_ids' => $serialIds,
-                'input_serial_id'   => $task->serial_imei_id,
+                'input_serial_id' => $task->serial_imei_id,
             ];
             $part->delete();
             $task->recalculateCosts();
@@ -1099,7 +1103,7 @@ class TaskService
         $comment = TaskComment::create([
             'task_id' => $task->id,
             'user_id' => $userId,
-            'body'    => $body,
+            'body' => $body,
         ]);
 
         $user = User::find($userId);
@@ -1127,7 +1131,7 @@ class TaskService
     {
         // Lấy tất cả task được giao cho NV trong khoảng thời gian (qua task_assignments)
         $taskIds = \App\Models\TaskAssignment::where('employee_id', $employeeId)
-            ->whereHas('task', fn($q) => $q->whereBetween('created_at', [$from, $to . ' 23:59:59']))
+            ->whereHas('task', fn ($q) => $q->whereBetween('created_at', [$from, $to.' 23:59:59']))
             ->pluck('task_id');
 
         $tasks = Task::whereIn('id', $taskIds)->get();
@@ -1143,15 +1147,15 @@ class TaskService
         $tier = \App\Models\RepairPerformanceTier::getTierForPercent($rate);
 
         return [
-            'total'           => $total,
-            'assigned'        => $total, // backward compat
-            'completed'       => $completed,
-            'in_progress'     => $inProgress,
-            'pending'         => $pending,
-            'cancelled'       => $cancelled,
+            'total' => $total,
+            'assigned' => $total, // backward compat
+            'completed' => $completed,
+            'in_progress' => $inProgress,
+            'pending' => $pending,
+            'cancelled' => $cancelled,
             'completion_rate' => $rate,
-            'tier'            => $tier,
-            'salary_percent'  => $tier?->salary_percent ?? 100,
+            'tier' => $tier,
+            'salary_percent' => $tier?->salary_percent ?? 100,
         ];
     }
 
@@ -1169,7 +1173,7 @@ class TaskService
     {
         return DB::transaction(function () use ($task, $data) {
             // ── Guards ──
-            if (!$task->external) {
+            if (! $task->external) {
                 throw new \RuntimeException('Chỉ phiếu sửa chữa khách ngoài mới dùng chức năng này.');
             }
             if ($task->type !== Task::TYPE_REPAIR) {
@@ -1182,11 +1186,11 @@ class TaskService
                 throw new \RuntimeException('Phiếu sửa chữa đã hoàn thành và có hóa đơn.');
             }
 
-            $laborFee    = (float) ($data['labor_fee'] ?? 0);
-            $partPrices  = $data['part_prices'] ?? [];
-            $policy      = $data['warranty_policy'] ?? Task::WARRANTY_POLICY_NONE;
+            $laborFee = (float) ($data['labor_fee'] ?? 0);
+            $partPrices = $data['part_prices'] ?? [];
+            $policy = $data['warranty_policy'] ?? Task::WARRANTY_POLICY_NONE;
 
-            if (!in_array($policy, Task::WARRANTY_POLICIES, true)) {
+            if (! in_array($policy, Task::WARRANTY_POLICIES, true)) {
                 throw new \RuntimeException("Chính sách bảo hành không hợp lệ: {$policy}.");
             }
 
@@ -1194,7 +1198,7 @@ class TaskService
             $warranty = $task->warranty_id ? Warranty::find($task->warranty_id) : null;
             $warrantyValid = $warranty && $this->isWarrantyValid($warranty);
 
-            if ($policy !== Task::WARRANTY_POLICY_NONE && !$warrantyValid) {
+            if ($policy !== Task::WARRANTY_POLICY_NONE && ! $warrantyValid) {
                 throw new \RuntimeException(
                     'Không thể áp chính sách bảo hành: phiếu chưa gắn bảo hành hoặc bảo hành đã hết hạn.'
                 );
@@ -1231,30 +1235,30 @@ class TaskService
 
             $payableLabor = $grossLabor - $coveredLabor;
             $payableParts = $grossParts - $coveredParts;
-            $totalAmount  = $payableLabor + $payableParts;
+            $totalAmount = $payableLabor + $payableParts;
 
-            $paidAmount  = min((float) ($data['paid_amount'] ?? 0), $totalAmount);
-            $debtAmount  = $totalAmount - $paidAmount;
+            $paidAmount = min((float) ($data['paid_amount'] ?? 0), $totalAmount);
+            $debtAmount = $totalAmount - $paidAmount;
 
             // ── Validate debt requires customer ──
-            if ($debtAmount > 0.01 && !$task->customer_id) {
+            if ($debtAmount > 0.01 && ! $task->customer_id) {
                 throw new \RuntimeException('Phiếu sửa chữa còn nợ phải có khách hàng (customer_id).');
             }
 
             // ── Create stock-neutral invoice ──
             $invoice = \App\Models\Invoice::create([
-                'code'            => 'SC-HD' . date('YmdHis') . rand(10, 99),
-                'customer_id'     => $task->customer_id,
-                'branch_id'       => $task->branch_id,
-                'status'          => 'Hoàn thành',
-                'source_type'     => 'repair',
-                'subtotal'        => $totalAmount,
-                'discount'        => 0,
-                'total'           => $totalAmount,
-                'customer_paid'   => $paidAmount,
-                'note'            => "Hóa đơn sửa chữa {$task->code}" . ($data['note'] ?? ''),
+                'code' => 'SC-HD'.date('YmdHis').rand(10, 99),
+                'customer_id' => $task->customer_id,
+                'branch_id' => $task->branch_id,
+                'status' => 'Hoàn thành',
+                'source_type' => 'repair',
+                'subtotal' => $totalAmount,
+                'discount' => 0,
+                'total' => $totalAmount,
+                'customer_paid' => $paidAmount,
+                'note' => "Hóa đơn sửa chữa {$task->code}".($data['note'] ?? ''),
                 'created_by_name' => auth()->user()?->name ?? 'Hệ thống',
-                'payment_method'  => $data['payment_method'] ?? 'cash',
+                'payment_method' => $data['payment_method'] ?? 'cash',
             ]);
 
             // ── Invoice items: labor fee (sau policy) ──
@@ -1264,14 +1268,14 @@ class TaskService
                     $laborNote .= ' — Miễn công theo bảo hành';
                 }
                 $invoice->items()->create([
-                    'product_id'  => null,
-                    'quantity'    => 1,
-                    'price'       => $payableLabor,
-                    'cost_price'  => 0,
-                    'discount'    => 0,
-                    'subtotal'    => $payableLabor,
+                    'product_id' => null,
+                    'quantity' => 1,
+                    'price' => $payableLabor,
+                    'cost_price' => 0,
+                    'discount' => 0,
+                    'subtotal' => $payableLabor,
                     'description' => 'Tiền công sửa chữa',
-                    'note'        => $laborNote,
+                    'note' => $laborNote,
                 ]);
             }
 
@@ -1279,20 +1283,20 @@ class TaskService
             $partsCovered = ($policy === Task::WARRANTY_POLICY_FREE_PARTS || $policy === Task::WARRANTY_POLICY_FULL_FREE);
             foreach ($exportParts as $part) {
                 $salePrice = $partsCovered ? 0.0 : (float) $part->sale_price;
-                $qty       = (int) $part->quantity;
-                $partNote  = "Task {$task->code}";
+                $qty = (int) $part->quantity;
+                $partNote = "Task {$task->code}";
                 if ($partsCovered) {
                     $partNote .= ' — Miễn linh kiện theo bảo hành';
                 }
                 $invoice->items()->create([
-                    'product_id'  => $part->product_id,
-                    'quantity'    => $qty,
-                    'price'       => $salePrice,
-                    'cost_price'  => (float) $part->unit_cost,
-                    'discount'    => 0,
-                    'subtotal'    => $salePrice * $qty,
+                    'product_id' => $part->product_id,
+                    'quantity' => $qty,
+                    'price' => $salePrice,
+                    'cost_price' => (float) $part->unit_cost,
+                    'discount' => 0,
+                    'subtotal' => $salePrice * $qty,
                     'description' => 'Linh kiện sửa chữa',
-                    'note'        => $partNote,
+                    'note' => $partNote,
                 ]);
             }
 
@@ -1303,18 +1307,18 @@ class TaskService
                     ?? 'Khách sửa chữa';
 
                 \App\Models\CashFlow::create([
-                    'code'           => 'PT' . date('YmdHis') . rand(10, 99),
-                    'type'           => 'receipt',
-                    'amount'         => $paidAmount,
-                    'time'           => now(),
-                    'category'       => 'Thu tiền sửa chữa',
-                    'target_type'    => 'Khách hàng',
-                    'target_id'      => $task->customer_id,
-                    'target_name'    => $customerName,
+                    'code' => 'PT'.date('YmdHis').rand(10, 99),
+                    'type' => 'receipt',
+                    'amount' => $paidAmount,
+                    'time' => now(),
+                    'category' => 'Thu tiền sửa chữa',
+                    'target_type' => 'Khách hàng',
+                    'target_id' => $task->customer_id,
+                    'target_name' => $customerName,
                     'reference_type' => 'Invoice',
                     'reference_code' => $invoice->code,
                     'payment_method' => $data['payment_method'] ?? 'cash',
-                    'description'    => "Thu tiền sửa chữa {$task->code} - {$customerName}",
+                    'description' => "Thu tiền sửa chữa {$task->code} - {$customerName}",
                 ]);
             }
 
@@ -1330,19 +1334,19 @@ class TaskService
 
             // ── Update task ──
             $task->update([
-                'status'                  => Task::STATUS_COMPLETED,
-                'sub_status'              => 'completed',
-                'completed_at'            => now(),
-                'invoice_id'              => $invoice->id,
-                'labor_fee'               => $grossLabor,
-                'parts_total'             => $grossParts,
-                'total_amount'            => $totalAmount,
-                'paid_amount'             => $paidAmount,
-                'debt_amount'             => $debtAmount,
-                'warranty_policy'         => $policy,
+                'status' => Task::STATUS_COMPLETED,
+                'sub_status' => 'completed',
+                'completed_at' => now(),
+                'invoice_id' => $invoice->id,
+                'labor_fee' => $grossLabor,
+                'parts_total' => $grossParts,
+                'total_amount' => $totalAmount,
+                'paid_amount' => $paidAmount,
+                'debt_amount' => $debtAmount,
+                'warranty_policy' => $policy,
                 'warranty_covered_amount' => $coveredAmount,
                 'customer_payable_amount' => $totalAmount,
-                'progress'                => 100,
+                'progress' => 100,
             ]);
 
             // Step 24.0: audit log repair complete
@@ -1351,12 +1355,12 @@ class TaskService
                 "Hoàn thành sửa chữa {$task->code}",
                 $task,
                 [
-                    'invoice_id'      => $invoice->id,
-                    'total_amount'    => (float) $totalAmount,
-                    'paid_amount'    => (float) $paidAmount,
-                    'debt_amount'    => (float) $debtAmount,
+                    'invoice_id' => $invoice->id,
+                    'total_amount' => (float) $totalAmount,
+                    'paid_amount' => (float) $paidAmount,
+                    'debt_amount' => (float) $debtAmount,
                     'warranty_policy' => $policy,
-                    'covered_amount'  => (float) $coveredAmount,
+                    'covered_amount' => (float) $coveredAmount,
                 ]
             );
 
@@ -1379,7 +1383,7 @@ class TaskService
     public function attachWarranty(Task $task, Warranty $warranty): Task
     {
         return DB::transaction(function () use ($task, $warranty) {
-            if (!$task->external) {
+            if (! $task->external) {
                 throw new \RuntimeException('Chỉ phiếu sửa chữa khách ngoài mới gắn được bảo hành.');
             }
             if ($task->type !== Task::TYPE_REPAIR) {
@@ -1412,9 +1416,9 @@ class TaskService
                 "Gắn bảo hành {$warranty->invoice_code} vào phiếu sửa chữa {$task->code}",
                 $task,
                 [
-                    'warranty_id'    => $warranty->id,
-                    'invoice_code'   => $warranty->invoice_code,
-                    'serial_imei'    => $warranty->serial_imei,
+                    'warranty_id' => $warranty->id,
+                    'invoice_code' => $warranty->invoice_code,
+                    'serial_imei' => $warranty->serial_imei,
                 ]
             );
 
@@ -1428,9 +1432,10 @@ class TaskService
      */
     public function isWarrantyValid(Warranty $warranty): bool
     {
-        if (!$warranty->warranty_end_date) {
+        if (! $warranty->warranty_end_date) {
             return false;
         }
+
         return $warranty->warranty_end_date->endOfDay()->gte(now());
     }
 }

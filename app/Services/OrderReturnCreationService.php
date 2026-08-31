@@ -315,6 +315,9 @@ class OrderReturnCreationService
         $restoredCostPerUnit = $product->tracksInventory()
             ? ($invoiceItem ? (float) $invoiceItem->cost_price : (float) $product->cost_price)
             : 0.0;
+        if ($product->tracksInventory() && $product->has_serial && $restoredSerials->isNotEmpty()) {
+            $restoredCostPerUnit = SerialCostingService::snapshotForReturn($restoredSerials)['unit_cost'];
+        }
 
         $serialIdsForItem = $product->tracksInventory() && $product->has_serial
             ? $restoredSerials->pluck('id')->map(fn ($id) => (int) $id)->all()

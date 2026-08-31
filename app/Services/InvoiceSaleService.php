@@ -245,8 +245,10 @@ class InvoiceSaleService
             );
         }
 
-        // Snapshot BQ trước khi trừ tồn (dùng cho InvoiceItem.cost_price + StockMovement.unit_cost)
+        // Hàng thường snapshot theo BQ. Hàng serial phải snapshot theo chính
+        // những serial được chọn; tuyệt đối không dùng BQ của cả mã hàng.
         $snapshotCostPrice = $isService ? 0.0 : (float) ($product->cost_price ?? 0);
+        $serialCostSnapshot = null;
 
         // ─── Bước A: Tạo InvoiceItem TRƯỚC ───
         $serialStr = null;
@@ -254,7 +256,15 @@ class InvoiceSaleService
         if (! $isService && $product->has_serial && ! empty($serialIds)) {
             $soldSerials = SerialImei::whereIn('id', $serialIds)
                 ->where('product_id', $product->id)
+                ->lockForUpdate()
                 ->get();
+
+            if ($soldSerials->count() !== (int) $item['quantity']) {
+                throw new \Exception("Sản phẩm '{$product->name}' cần chọn đúng số Serial/IMEI để xuất bán.");
+            }
+
+            $serialCostSnapshot = SerialCostingService::snapshotForSale($soldSerials);
+            $snapshotCostPrice = $serialCostSnapshot['unit_cost'];
             $serialStr = $soldSerials->pluck('serial_number')->implode(', ');
         }
 
@@ -272,17 +282,20 @@ class InvoiceSaleService
         // ─── Bước B: Tạo InvoiceItemSerial với invoice_item_id THẬT ───
         // (RR-02: KHÔNG BAO GIỜ tạo invoice_item_id=0 — sửa bug POS FK violation)
         foreach ($soldSerials as $serial) {
+            $serialCost = $serialCostSnapshot['serial_costs'][(int) $serial->id]
+                ?? round((float) $serial->cost_price, 0);
+
             InvoiceItemSerial::create([
                 'invoice_item_id' => $invoiceItem->id,
                 'serial_imei_id' => $serial->id,
                 'serial_number' => $serial->serial_number,
-                'cost_price' => $snapshotCostPrice,
+                'cost_price' => $serialCost,
             ]);
 
             $serial->status = 'sold';
             $serial->sold_at = $invoice->transaction_date ?? $invoice->created_at ?? now();
             $serial->invoice_id = $invoice->id;
-            $serial->sold_cost_price = $snapshotCostPrice;
+            $serial->sold_cost_price = $serialCost;
             $serial->save();
         }
 

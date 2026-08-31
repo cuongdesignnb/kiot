@@ -976,6 +976,16 @@ class InvoiceController extends Controller
 
     private function invoiceItemCostSnapshot(Invoice $invoice, InvoiceItem $item, Product $product): float
     {
+        if ($product->has_serial) {
+            $serialCosts = \App\Models\InvoiceItemSerial::query()
+                ->where('invoice_item_id', $item->id)
+                ->pluck('cost_price');
+
+            if ($serialCosts->count() === (int) $item->quantity) {
+                return round((float) $serialCosts->sum() / max(1, (int) $item->quantity), 2);
+            }
+        }
+
         if ($item->cost_price !== null) {
             return (float) $item->cost_price;
         }
