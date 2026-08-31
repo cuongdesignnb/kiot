@@ -326,9 +326,13 @@ class FinancialProfitDataAuditCommandTest extends TestCase
             'cost_price' => 0,
         ]);
 
+        $auditPath = storage_path('app/audit/financial-profit-data');
+        File::deleteDirectory($auditPath);
+
         Artisan::call('audit:financial-profit-data', [
             '--from' => '2026-04-01',
             '--to' => '2026-05-31',
+            '--export-csv' => true,
         ]);
 
         $missingSnapshotSection = str(Artisan::output())->between(
@@ -339,6 +343,21 @@ class FinancialProfitDataAuditCommandTest extends TestCase
         $this->assertStringContainsString('HD-LEGACY-MISSING-SNAPSHOT-TEST', $missingSnapshotSection);
         $this->assertStringContainsString('1,900', $missingSnapshotSection);
 
+        $directories = File::directories($auditPath);
+        $this->assertCount(1, $directories);
+
+        $csv = array_map('str_getcsv', file($directories[0].'/missing_cost_snapshot.csv'));
+        $headers = array_shift($csv);
+        $headers[0] = preg_replace('/^\xEF\xBB\xBF/', '', $headers[0]);
+        $row = collect($csv)
+            ->map(fn (array $values) => array_combine($headers, $values))
+            ->firstWhere('invoice_code', 'HD-LEGACY-MISSING-SNAPSHOT-TEST');
+
+        $this->assertNotNull($row);
+        $this->assertSame(0.0, (float) $row['stored_subtotal']);
+        $this->assertSame(1900.0, (float) $row['normalized_line_revenue']);
+
+        File::deleteDirectory($auditPath);
     }
 
     public function test_command_does_not_classify_legacy_paid_line_as_zero_price_gift(): void
