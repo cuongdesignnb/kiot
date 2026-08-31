@@ -296,6 +296,113 @@ class FinancialProfitDataAuditCommandTest extends TestCase
         $this->assertStringNotContainsString('HD-LEGACY-LINE-SUBTOTAL-TEST', $subtotalSection);
     }
 
+    public function test_command_uses_normalized_line_revenue_for_missing_cost_snapshot_audit(): void
+    {
+        $product = Product::create([
+            'sku' => 'SKU-LEGACY-MISSING-SNAPSHOT',
+            'name' => 'Legacy missing cost snapshot product',
+            'cost_price' => 1000,
+            'retail_price' => 2000,
+            'stock_quantity' => 1,
+        ]);
+
+        $invoice = Invoice::create([
+            'code' => 'HD-LEGACY-MISSING-SNAPSHOT-TEST',
+            'subtotal' => 1900,
+            'discount' => 0,
+            'total' => 1900,
+            'status' => 'Hoàn thành',
+            'created_at' => '2026-04-24 12:00:00',
+            'transaction_date' => '2026-04-24 12:00:00',
+        ]);
+
+        InvoiceItem::create([
+            'invoice_id' => $invoice->id,
+            'product_id' => $product->id,
+            'quantity' => 1,
+            'price' => 2000,
+            'discount' => 100,
+            'subtotal' => 0,
+            'cost_price' => 0,
+        ]);
+
+        $auditPath = storage_path('app/audit/financial-profit-data');
+        File::deleteDirectory($auditPath);
+
+        Artisan::call('audit:financial-profit-data', [
+            '--from' => '2026-04-01',
+            '--to' => '2026-05-31',
+            '--export-csv' => true,
+        ]);
+
+        $missingSnapshotSection = str(Artisan::output())->between(
+            '--- DÒNG THIẾU SNAPSHOT GIÁ VỐN ---',
+            '--- DÒNG SẢN PHẨM BÁN LỖ'
+        )->toString();
+
+        $this->assertStringContainsString('HD-LEGACY-MISSING-SNAPSHOT-TEST', $missingSnapshotSection);
+        $this->assertStringContainsString('1,900', $missingSnapshotSection);
+
+        $directories = File::directories($auditPath);
+        $this->assertCount(1, $directories);
+
+        $csv = array_map('str_getcsv', file($directories[0].'/missing_cost_snapshot.csv'));
+        $headers = array_shift($csv);
+        $headers[0] = preg_replace('/^\xEF\xBB\xBF/', '', $headers[0]);
+        $row = collect($csv)
+            ->map(fn (array $values) => array_combine($headers, $values))
+            ->firstWhere('invoice_code', 'HD-LEGACY-MISSING-SNAPSHOT-TEST');
+
+        $this->assertNotNull($row);
+        $this->assertSame(0.0, (float) $row['stored_subtotal']);
+        $this->assertSame(1900.0, (float) $row['normalized_line_revenue']);
+
+        File::deleteDirectory($auditPath);
+    }
+
+    public function test_command_does_not_classify_legacy_paid_line_as_zero_price_gift(): void
+    {
+        $product = Product::create([
+            'sku' => 'SKU-LEGACY-PAID-LINE',
+            'name' => 'Legacy paid line without stored subtotal',
+            'cost_price' => 1000,
+            'retail_price' => 2000,
+            'stock_quantity' => 1,
+        ]);
+
+        $invoice = Invoice::create([
+            'code' => 'HD-LEGACY-PAID-LINE-TEST',
+            'subtotal' => 1900,
+            'discount' => 0,
+            'total' => 1900,
+            'status' => 'Hoàn thành',
+            'created_at' => '2026-04-25 12:00:00',
+            'transaction_date' => '2026-04-25 12:00:00',
+        ]);
+
+        InvoiceItem::create([
+            'invoice_id' => $invoice->id,
+            'product_id' => $product->id,
+            'quantity' => 1,
+            'price' => 2000,
+            'discount' => 100,
+            'subtotal' => 0,
+            'cost_price' => 1000,
+        ]);
+
+        Artisan::call('audit:financial-profit-data', [
+            '--from' => '2026-04-01',
+            '--to' => '2026-05-31',
+        ]);
+
+        $zeroPriceSection = str(Artisan::output())->between(
+            '--- HÀNG QUÀ TẶNG (GIÁ BÁN 0đ) GÁNH GIÁ VỐN ---',
+            '--- KIỂM TRA PHÂN LOẠI CÁC PHIẾU THU/CHI'
+        )->toString();
+
+        $this->assertStringNotContainsString('HD-LEGACY-PAID-LINE-TEST', $zeroPriceSection);
+    }
+
     /**
      * Test 6: Command detects zero price item with COGS
      */

@@ -33,6 +33,7 @@ class AuditFinancialProfitDataCommand extends Command
         $branchId = $this->option('branch_id');
         $exportCsv = $this->option('export-csv');
         $limit = (int) $this->option('limit');
+        $normalizedLineRevenueSql = $this->normalizedInvoiceLineRevenueSql();
 
         $startDate = Carbon::parse($fromOpt)->startOfDay();
         $endDate = Carbon::parse($toOpt)->endOfDay();
@@ -167,9 +168,9 @@ class AuditFinancialProfitDataCommand extends Command
                 'products.sku',
                 'products.name',
                 DB::raw('SUM(invoice_items.quantity) as qty'),
-                DB::raw('SUM(invoice_items.quantity * invoice_items.price) as revenue'),
+                DB::raw("SUM({$normalizedLineRevenueSql}) as revenue"),
                 DB::raw('SUM(invoice_items.quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0)) as cogs'),
-                DB::raw('SUM(invoice_items.quantity * invoice_items.price) - SUM(invoice_items.quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0)) as gross_profit'),
+                DB::raw("SUM({$normalizedLineRevenueSql}) - SUM(invoice_items.quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0)) as gross_profit"),
                 DB::raw('SUM(CASE WHEN invoice_items.cost_price IS NULL OR invoice_items.cost_price = 0 THEN 1 ELSE 0 END) as count_missing_snapshot'),
                 DB::raw('SUM(CASE WHEN COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0) > invoice_items.price THEN 1 ELSE 0 END) as count_loss_items'),
                 DB::raw('SUM(CASE WHEN invoice_items.price = 0 THEN invoice_items.quantity ELSE 0 END) as zero_price_qty')
@@ -215,7 +216,7 @@ class AuditFinancialProfitDataCommand extends Command
                 'invoices.subtotal',
                 'invoices.discount',
                 'invoices.total',
-                DB::raw('SUM(invoice_items.quantity * invoice_items.price) as item_revenue'),
+                DB::raw("SUM({$normalizedLineRevenueSql}) as item_revenue"),
                 DB::raw('SUM(invoice_items.quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0)) as item_cogs'),
                 DB::raw('COUNT(invoice_items.id) as item_count'),
                 DB::raw('MAX(CASE WHEN invoice_items.cost_price IS NULL OR invoice_items.cost_price = 0 THEN 1 ELSE 0 END) as has_missing_cost_snapshot'),
@@ -274,7 +275,8 @@ class AuditFinancialProfitDataCommand extends Command
                 'invoice_items.quantity',
                 'invoice_items.price',
                 'invoice_items.discount',
-                'invoice_items.subtotal',
+                'invoice_items.subtotal as stored_subtotal',
+                DB::raw("{$normalizedLineRevenueSql} as normalized_line_revenue"),
                 'invoice_items.cost_price as item_cost_price',
                 'products.cost_price as current_product_cost_price',
                 'products.retail_price'
@@ -288,12 +290,12 @@ class AuditFinancialProfitDataCommand extends Command
             });
 
         $totalMissingCostRows = $missingCostItems->count();
-        $affectedRevenue = $missingCostItems->sum('subtotal');
+        $affectedRevenue = $missingCostItems->sum('normalized_line_revenue');
         $fallbackCogsTotal = $missingCostItems->sum('estimated_cogs_by_fallback');
 
         $this->info('--- DÒNG THIẾU SNAPSHOT GIÁ VỐN ---');
         $this->line("Tổng số dòng thiếu: {$totalMissingCostRows}");
-        $this->line('Tổng doanh thu bị ảnh hưởng: '.number_format($affectedRevenue, 0, '.', ',').'đ');
+        $this->line('Tổng doanh thu bị ảnh hưởng (chuẩn hóa): '.number_format($affectedRevenue, 0, '.', ',').'đ');
         $this->line('Tổng giá vốn ước tính (fallback): '.number_format($fallbackCogsTotal, 0, '.', ',').'đ');
         $this->table(
             ['Mã HĐ', 'Ngày HĐ', 'SKU', 'Tên sản phẩm', 'SL', 'Giá bán', 'Doanh thu dòng', 'Current Cost', 'Fallback COGS'],
@@ -304,7 +306,7 @@ class AuditFinancialProfitDataCommand extends Command
                 strlen($row->product_name) > 30 ? substr($row->product_name, 0, 27).'...' : $row->product_name,
                 $row->quantity,
                 number_format($row->price, 0, '.', ','),
-                number_format($row->subtotal, 0, '.', ','),
+                number_format($row->normalized_line_revenue, 0, '.', ','),
                 number_format($row->current_product_cost_price, 0, '.', ','),
                 number_format($row->estimated_cogs_by_fallback, 0, '.', ','),
             ])->toArray()
@@ -362,7 +364,7 @@ class AuditFinancialProfitDataCommand extends Command
         $costPriceGtRetailProducts = Product::where('cost_price', '>', 'retail_price')
             ->orderByRaw('cost_price - retail_price DESC')
             ->get()
-            ->map(function ($product) use ($invoiceIds) {
+            ->map(function ($product) use ($invoiceIds, $normalizedLineRevenueSql) {
                 $salesData = DB::table('invoice_items')
                     ->join('invoices', 'invoice_items.invoice_id', '=', 'invoices.id')
                     ->where('invoices.status', '!=', 'Đã hủy')
@@ -370,7 +372,7 @@ class AuditFinancialProfitDataCommand extends Command
                     ->where('invoice_items.product_id', $product->id)
                     ->select(
                         DB::raw('SUM(invoice_items.quantity) as qty'),
-                        DB::raw('SUM(invoice_items.quantity * invoice_items.price) as revenue'),
+                        DB::raw("SUM({$normalizedLineRevenueSql}) as revenue"),
                         DB::raw('SUM(invoice_items.quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0)) as cogs')
                     )
                     ->join('products', 'invoice_items.product_id', '=', 'products.id') // to allow cost fallback expression
@@ -454,12 +456,7 @@ class AuditFinancialProfitDataCommand extends Command
                 'invoices.subtotal',
                 'invoices.discount',
                 'invoices.total',
-                DB::raw('SUM(CASE
-                    WHEN COALESCE(invoice_items.subtotal, 0) = 0
-                        AND ((invoice_items.quantity * invoice_items.price) - COALESCE(invoice_items.discount, 0)) <> 0
-                    THEN (invoice_items.quantity * invoice_items.price) - COALESCE(invoice_items.discount, 0)
-                    ELSE COALESCE(invoice_items.subtotal, 0)
-                END) as item_revenue')
+                DB::raw("SUM({$normalizedLineRevenueSql}) as item_revenue")
             )
             ->groupBy('invoices.id', 'invoices.code', 'invoices.created_at', 'invoices.subtotal', 'invoices.discount', 'invoices.total')
             ->get()
@@ -496,10 +493,7 @@ class AuditFinancialProfitDataCommand extends Command
             ->join('invoices', 'invoice_items.invoice_id', '=', 'invoices.id')
             ->where('invoices.status', '!=', 'Đã hủy')
             ->whereIn('invoice_items.invoice_id', $invoiceIds)
-            ->where(function ($q) {
-                $q->where('invoice_items.price', 0)
-                    ->orWhere('invoice_items.subtotal', 0);
-            })
+            ->where('invoice_items.price', 0)
             ->select(
                 'invoices.code as invoice_code',
                 'invoice_items.product_id',
@@ -507,7 +501,7 @@ class AuditFinancialProfitDataCommand extends Command
                 'products.name as product_name',
                 'invoice_items.quantity',
                 'invoice_items.price',
-                'invoice_items.subtotal',
+                DB::raw("{$normalizedLineRevenueSql} as normalized_line_revenue"),
                 'invoice_items.cost_price as item_cost_price',
                 'products.cost_price as current_product_cost_price',
                 'invoice_items.note'
@@ -536,7 +530,7 @@ class AuditFinancialProfitDataCommand extends Command
                 strlen($row->product_name) > 30 ? substr($row->product_name, 0, 27).'...' : $row->product_name,
                 $row->quantity,
                 number_format($row->price, 0, '.', ','),
-                number_format($row->subtotal, 0, '.', ','),
+                number_format($row->normalized_line_revenue, 0, '.', ','),
                 number_format($row->effective_cost, 0, '.', ','),
                 number_format($row->cogs, 0, '.', ','),
                 $row->note ?: '',
@@ -717,7 +711,7 @@ class AuditFinancialProfitDataCommand extends Command
             $this->writeCsv(
                 $dir,
                 'missing_cost_snapshot.csv',
-                ['invoice_code', 'invoice_date', 'product_id', 'sku', 'product_name', 'quantity', 'price', 'discount', 'subtotal', 'item_cost_price', 'current_product_cost_price', 'retail_price', 'effective_cost_used_by_report', 'estimated_cogs_by_fallback'],
+                ['invoice_code', 'invoice_date', 'product_id', 'sku', 'product_name', 'quantity', 'price', 'discount', 'stored_subtotal', 'normalized_line_revenue', 'item_cost_price', 'current_product_cost_price', 'retail_price', 'effective_cost_used_by_report', 'estimated_cogs_by_fallback'],
                 $missingCostItems->map(fn ($row) => [
                     $row->invoice_code,
                     $row->invoice_date,
@@ -727,7 +721,8 @@ class AuditFinancialProfitDataCommand extends Command
                     $row->quantity,
                     $row->price,
                     $row->discount,
-                    $row->subtotal,
+                    $row->stored_subtotal,
+                    $row->normalized_line_revenue,
                     $row->item_cost_price,
                     $row->current_product_cost_price,
                     $row->retail_price,
@@ -825,7 +820,7 @@ class AuditFinancialProfitDataCommand extends Command
                     $row->product_name,
                     $row->quantity,
                     $row->price,
-                    $row->subtotal,
+                    $row->normalized_line_revenue,
                     $row->effective_cost,
                     $row->cogs,
                     $row->note,
@@ -902,6 +897,22 @@ class AuditFinancialProfitDataCommand extends Command
             fputcsv($fp, $row);
         }
         fclose($fp);
+    }
+
+    /**
+     * Historical invoice rows may have a zero stored subtotal even when their
+     * price and line discount show a non-zero economic amount. Use the stored
+     * subtotal whenever it exists and a deterministic legacy fallback only for
+     * those old rows, so every audit section reports the same line revenue.
+     */
+    private function normalizedInvoiceLineRevenueSql(): string
+    {
+        return 'CASE
+            WHEN COALESCE(invoice_items.subtotal, 0) = 0
+                AND ((invoice_items.quantity * invoice_items.price) - COALESCE(invoice_items.discount, 0)) <> 0
+            THEN (invoice_items.quantity * invoice_items.price) - COALESCE(invoice_items.discount, 0)
+            ELSE COALESCE(invoice_items.subtotal, 0)
+        END';
     }
 
     private function pnlCashFlowBaseQuery(string $type, Carbon $startDate, Carbon $endDate, $branchId = null)
