@@ -454,7 +454,12 @@ class AuditFinancialProfitDataCommand extends Command
                 'invoices.subtotal',
                 'invoices.discount',
                 'invoices.total',
-                DB::raw('SUM(invoice_items.subtotal) as item_revenue')
+                DB::raw('SUM(CASE
+                    WHEN COALESCE(invoice_items.subtotal, 0) = 0
+                        AND ((invoice_items.quantity * invoice_items.price) - COALESCE(invoice_items.discount, 0)) <> 0
+                    THEN (invoice_items.quantity * invoice_items.price) - COALESCE(invoice_items.discount, 0)
+                    ELSE COALESCE(invoice_items.subtotal, 0)
+                END) as item_revenue')
             )
             ->groupBy('invoices.id', 'invoices.code', 'invoices.created_at', 'invoices.subtotal', 'invoices.discount', 'invoices.total')
             ->get()
@@ -466,7 +471,7 @@ class AuditFinancialProfitDataCommand extends Command
             ->filter(fn ($row) => $row->diff > 1000)
             ->values();
 
-        $this->info('--- HÓA ĐƠN LỆCH SUBTOTAL VỚI TỔNG CHI TIẾT (ABS(subtotal - SUM(subtotal dòng hàng)) > 1000) ---');
+        $this->info('--- HÓA ĐƠN LỆCH SUBTOTAL VỚI TỔNG CHI TIẾT (ABS(subtotal - SUM(dòng hàng chuẩn hóa)) > 1000) ---');
         if ($subtotalMismatches->isEmpty()) {
             $this->line('Không có hóa đơn lệch subtotal nào.');
         } else {

@@ -253,6 +253,49 @@ class FinancialProfitDataAuditCommandTest extends TestCase
         $this->assertStringNotContainsString('HD-LINE-DISCOUNT-TEST', $subtotalSection);
     }
 
+    public function test_command_uses_legacy_line_formula_when_stored_subtotal_is_zero(): void
+    {
+        $product = Product::create([
+            'sku' => 'SKU-LEGACY-LINE-SUBTOTAL',
+            'name' => 'Legacy invoice item without stored subtotal',
+            'cost_price' => 1000,
+            'retail_price' => 2000,
+            'stock_quantity' => 1,
+        ]);
+
+        $invoice = Invoice::create([
+            'code' => 'HD-LEGACY-LINE-SUBTOTAL-TEST',
+            'subtotal' => 1900,
+            'discount' => 0,
+            'total' => 1900,
+            'status' => 'Hoàn thành',
+            'created_at' => '2026-04-23 12:00:00',
+            'transaction_date' => '2026-04-23 12:00:00',
+        ]);
+
+        InvoiceItem::create([
+            'invoice_id' => $invoice->id,
+            'product_id' => $product->id,
+            'quantity' => 1,
+            'price' => 2000,
+            'discount' => 100,
+            'subtotal' => 0,
+            'cost_price' => 1000,
+        ]);
+
+        Artisan::call('audit:financial-profit-data', [
+            '--from' => '2026-04-01',
+            '--to' => '2026-05-31',
+        ]);
+
+        $subtotalSection = str(Artisan::output())->between(
+            '--- HÓA ĐƠN LỆCH SUBTOTAL VỚI TỔNG CHI TIẾT',
+            '--- HÀNG QUÀ TẶNG'
+        )->toString();
+
+        $this->assertStringNotContainsString('HD-LEGACY-LINE-SUBTOTAL-TEST', $subtotalSection);
+    }
+
     /**
      * Test 6: Command detects zero price item with COGS
      */
