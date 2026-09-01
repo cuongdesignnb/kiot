@@ -259,6 +259,9 @@ class ActivityLog extends Model
 
     const ACTION_PRICE_TABLE_FORMULA = 'price_table_formula';
 
+    // Kiểm soát hiệu chỉnh giá vốn lịch sử
+    const ACTION_SERIAL_COST_REMEDIATION_APPLY = 'serial_cost_remediation_apply';
+
     // ── Label map (Vietnamese) ──
     const ACTION_LABELS = [
         'purchase_create' => 'Tạo phiếu nhập hàng',
@@ -366,6 +369,7 @@ class ActivityLog extends Model
         'price_table_delete' => 'Xóa bảng giá',
         'price_table_items' => 'Cập nhật SP bảng giá',
         'price_table_formula' => 'Áp dụng công thức bảng giá',
+        'serial_cost_remediation_apply' => 'Áp dụng hiệu chỉnh giá vốn serial đã duyệt',
     ];
 
     // ── Icon map (emoji) ──
@@ -458,6 +462,7 @@ class ActivityLog extends Model
         'price_table_delete' => '🗑️',
         'price_table_items' => '📦',
         'price_table_formula' => '🔢',
+        'serial_cost_remediation_apply' => '🧾',
     ];
 
     // ── Relationships ──

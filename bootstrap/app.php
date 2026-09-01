@@ -1,7 +1,10 @@
 <?php
 
+use App\Console\Commands\ApplySerialCostRemediationPlan;
 use App\Console\Commands\AuditProductDeletions;
 use App\Console\Commands\AuditSerialCostSnapshots;
+use App\Console\Commands\BuildSerialCostRemediationPlan;
+use App\Console\Commands\CreateSerialCostRemediationApproval;
 use App\Console\Commands\MediaLibraryBackfillCommand;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -24,6 +27,9 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withCommands([
         AuditProductDeletions::class,
         AuditSerialCostSnapshots::class,
+        BuildSerialCostRemediationPlan::class,
+        CreateSerialCostRemediationApproval::class,
+        ApplySerialCostRemediationPlan::class,
         MediaLibraryBackfillCommand::class,
     ])
     ->withMiddleware(function (Middleware $middleware) {
