@@ -538,7 +538,10 @@ class InvoiceUpdateService
 
             foreach ($payload['items'] as $item) {
                 $product = Product::lockForUpdate()->find($item['product_id']);
-                $serialIds = $item['serial_ids'] ?? [];
+                $serialIds = array_values(array_unique(array_filter(array_map(
+                    'intval',
+                    (array) ($item['serial_ids'] ?? []),
+                ))));
                 $isService = $product?->isService() ?? false;
                 $snapshotCostPrice = $isService ? 0.0 : (float) ($product->cost_price ?? 0);
                 $serialCostSnapshot = null;
@@ -549,8 +552,7 @@ class InvoiceUpdateService
                     throw new \Exception("Sản phẩm '{$product->name}' là dịch vụ, không quản lý Serial/IMEI.");
                 }
 
-                if ($product && $product->tracksInventory() && $product->has_serial && ! empty($serialIds)) {
-                    $serialIds = is_array($serialIds) ? $serialIds : [$serialIds];
+                if ($product && $product->tracksInventory() && $product->has_serial) {
                     $soldSerials = SerialImei::whereIn('id', $serialIds)
                         ->where('product_id', $product->id)
                         ->lockForUpdate()
@@ -1064,11 +1066,19 @@ class InvoiceUpdateService
                 throw new \Exception("Giá phải >= 0 cho sản phẩm {$product->name}.");
             }
 
-            $serialIds = $item['serial_ids'] ?? [];
+            $serialIds = array_values(array_filter(array_map(
+                'intval',
+                (array) ($item['serial_ids'] ?? []),
+            )));
             if ($product->isService() && ! empty($serialIds)) {
                 throw new \Exception("Sản phẩm '{$product->name}' là dịch vụ, không quản lý Serial/IMEI.");
             }
-            if ($product->tracksInventory() && $product->has_serial && ! empty($serialIds)) {
+            // A serial-tracked invoice item must never be replayed with an
+            // empty serial list.  Previously this branch only validated when
+            // the client sent at least one ID, so an edit could remove every
+            // serial, restore the old stock, and save the sale without any
+            // traceable serial evidence.
+            if ($product->tracksInventory() && $product->has_serial) {
                 if (count($serialIds) !== (int) $item['quantity']) {
                     throw new \Exception("Sản phẩm '{$product->name}' cần chọn đủ {$item['quantity']} serial, hiện có ".count($serialIds).'.');
                 }

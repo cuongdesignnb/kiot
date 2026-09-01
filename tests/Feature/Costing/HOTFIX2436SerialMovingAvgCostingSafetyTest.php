@@ -175,6 +175,46 @@ class HOTFIX2436SerialMovingAvgCostingSafetyTest extends TestCase
         $this->assertSame(4_400_000.0, (float) $serial->fresh()->sold_cost_price);
     }
 
+    public function test_audit_distinguishes_legacy_serial_text_from_missing_sale_evidence(): void
+    {
+        $product = $this->serialProduct();
+        $legacySerial = $this->serial($product, [
+            'serial_number' => 'LEGACY-EVIDENCE-'.uniqid(),
+            'status' => 'in_stock',
+        ]);
+        [, $legacyItem] = $this->invoiceWithItem($product, 'completed', 1, 0);
+        $legacyItem->update(['serial' => $legacySerial->serial_number]);
+
+        $this->invoiceWithItem($product, 'completed', 1, 0);
+
+        $this->artisan('serials:audit-invoice-links', ['--product' => $product->sku])
+            ->expectsOutputToContain('Completed serial sale items without normalized links: 2')
+            ->expectsOutputToContain('Legacy serial text evidence: 1')
+            ->expectsOutputToContain('No serial evidence: 1')
+            ->expectsOutputToContain('legacy_serial_text')
+            ->expectsOutputToContain('no_serial_evidence')
+            ->assertExitCode(1);
+    }
+
+    public function test_rebuild_blocks_legacy_serial_text_without_guessing_historical_cogs(): void
+    {
+        $product = $this->serialProduct();
+        $legacySerial = $this->serial($product, [
+            'serial_number' => 'LEGACY-COGS-'.uniqid(),
+            'status' => 'in_stock',
+            'cost_price' => 4_400_000,
+        ]);
+        [, $item] = $this->invoiceWithItem($product, 'completed', 1, 0);
+        $item->update(['serial' => $legacySerial->serial_number]);
+
+        $this->artisan('costing:rebuild-moving-avg', ['--product' => $product->sku, '--apply' => true])
+            ->expectsOutputToContain('Legacy serial text is present')
+            ->assertExitCode(1);
+
+        $this->assertSame(0.0, (float) $item->fresh()->cost_price);
+        $this->assertSame('in_stock', $legacySerial->fresh()->status);
+    }
+
     public function test_missing_serial_really_hard_fails(): void
     {
         $product = $this->serialProduct();

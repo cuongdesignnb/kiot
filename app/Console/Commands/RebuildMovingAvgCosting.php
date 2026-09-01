@@ -8,6 +8,7 @@ use App\Models\Product;
 use App\Models\SerialImei;
 use App\Models\Task;
 use App\Models\TaskPart;
+use App\Services\InvoiceItemSerialEvidenceService;
 use App\Services\SerialLifecycleInspectionService;
 use App\Support\Status\BusinessStatus;
 use Illuminate\Console\Command;
@@ -708,15 +709,41 @@ class RebuildMovingAvgCosting extends Command
         }
 
         if (count($serials) !== (int) $invoiceItem->quantity) {
-            $hardErrors[] = sprintf(
-                'Invoice item #%d quantity mismatch: item qty=%d, resolved serial qty=%d.',
-                $invoiceItem->id,
+            $evidence = app(InvoiceItemSerialEvidenceService::class)->inspect(
+                (int) $product->id,
+                (int) $invoiceItem->id,
+                (int) $invoiceItem->invoice_id,
                 (int) $invoiceItem->quantity,
-                count($serials)
+                $invoiceItem->serial ?? null,
+            );
+
+            $hardErrors[] = $this->missingSaleSerialEvidenceMessage(
+                $invoiceItem,
+                count($serials),
+                $evidence,
             );
         }
 
         return array_values($serials);
+    }
+
+    /** @param array{classification:string, legacy_serial_numbers:array<int, string>, legacy_matched_count:int} $evidence */
+    private function missingSaleSerialEvidenceMessage(object $invoiceItem, int $resolvedSerialCount, array $evidence): string
+    {
+        $prefix = sprintf(
+            'Invoice item #%d quantity mismatch: item qty=%d, resolved serial qty=%d.',
+            $invoiceItem->id,
+            (int) $invoiceItem->quantity,
+            $resolvedSerialCount,
+        );
+
+        return match ($evidence['classification']) {
+            InvoiceItemSerialEvidenceService::LEGACY_SERIAL_TEXT => $prefix.' Legacy serial text is present ('
+                .implode(', ', $evidence['legacy_serial_numbers'])
+                .'); automatic historical COGS rebuild is blocked pending reviewed source evidence.',
+            InvoiceItemSerialEvidenceService::LEGACY_SERIAL_TEXT_INCOMPLETE => $prefix.' Legacy serial text is incomplete or does not match this product; manual historical review is required.',
+            default => $prefix.' No serial sale evidence remains; manual remediation is required before any historical COGS repair.',
+        };
     }
 
     private function validateSerialProductData(Product $product, array &$warnings, array &$hardErrors): void

@@ -2,18 +2,17 @@
 
 namespace Tests\Feature\Invoice;
 
-use App\Models\ActivityLog;
 use App\Models\CashFlow;
 use App\Models\Customer;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
+use App\Models\InvoiceItemSerial;
 use App\Models\Product;
 use App\Models\Role;
 use App\Models\SerialImei;
 use App\Models\Setting;
 use App\Models\StockMovement;
 use App\Models\User;
-use App\Models\Warranty;
 use App\Services\InvoiceUpdateService;
 use App\Services\MovingAvgCostingService;
 use App\Services\StockMovementService;
@@ -28,10 +27,11 @@ class Step243InvoiceUpdateEngineImpactTest extends TestCase
 
     private function admin(array $perms = ['*']): User
     {
-        $name = 'test-admin-' . uniqid();
+        $name = 'test-admin-'.uniqid();
         $role = Role::create(['name' => $name, 'display_name' => $name, 'permissions' => $perms]);
+
         return User::create([
-            'name' => 'Admin243', 'email' => 'a243-' . uniqid() . '@test.local',
+            'name' => 'Admin243', 'email' => 'a243-'.uniqid().'@test.local',
             'password' => bcrypt('pw'), 'role_id' => $role->id,
         ]);
     }
@@ -39,7 +39,7 @@ class Step243InvoiceUpdateEngineImpactTest extends TestCase
     private function product(int $stock = 10, float $cost = 100000): Product
     {
         return Product::create([
-            'sku' => 'SP243-' . uniqid(), 'name' => 'SP Test 243',
+            'sku' => 'SP243-'.uniqid(), 'name' => 'SP Test 243',
             'cost_price' => $cost, 'retail_price' => 150000,
             'stock_quantity' => $stock, 'inventory_total_cost' => $stock * $cost,
             'is_active' => true, 'has_serial' => false,
@@ -49,7 +49,7 @@ class Step243InvoiceUpdateEngineImpactTest extends TestCase
     private function serialProduct(int $count = 3, float $cost = 200000): array
     {
         $p = Product::create([
-            'sku' => 'SER243-' . uniqid(), 'name' => 'Serial SP 243',
+            'sku' => 'SER243-'.uniqid(), 'name' => 'Serial SP 243',
             'cost_price' => $cost, 'retail_price' => 300000,
             'stock_quantity' => $count, 'inventory_total_cost' => $count * $cost,
             'is_active' => true, 'has_serial' => true,
@@ -57,18 +57,19 @@ class Step243InvoiceUpdateEngineImpactTest extends TestCase
         $serials = [];
         for ($i = 0; $i < $count; $i++) {
             $serials[] = SerialImei::create([
-                'product_id' => $p->id, 'serial_number' => 'IMEI243-' . uniqid(),
+                'product_id' => $p->id, 'serial_number' => 'IMEI243-'.uniqid(),
                 'status' => 'in_stock', 'cost_price' => $cost,
             ]);
         }
+
         return [$p, $serials];
     }
 
     private function customer(float $debt = 0): Customer
     {
         return Customer::create([
-            'code' => 'KH243-' . uniqid(), 'name' => 'KH Test 243',
-            'phone' => '09' . rand(10000000, 99999999),
+            'code' => 'KH243-'.uniqid(), 'name' => 'KH Test 243',
+            'phone' => '09'.rand(10000000, 99999999),
             'debt_amount' => $debt, 'total_spent' => 0, 'is_customer' => true,
         ]);
     }
@@ -80,7 +81,7 @@ class Step243InvoiceUpdateEngineImpactTest extends TestCase
         $costAtSale = $costResult['cogs_per_unit'];
         $product->refresh();
 
-        $code = 'HD243-' . uniqid();
+        $code = 'HD243-'.uniqid();
         $now = now();
         $invoice = Invoice::create([
             'code' => $code, 'subtotal' => $total, 'discount' => 0,
@@ -98,12 +99,14 @@ class Step243InvoiceUpdateEngineImpactTest extends TestCase
         ]);
 
         $debt = $total - $paid;
-        if ($debt > 0) $customer->increment('debt_amount', $debt);
+        if ($debt > 0) {
+            $customer->increment('debt_amount', $debt);
+        }
         $customer->increment('total_spent', $total);
 
         if ($paid > 0) {
             CashFlow::create([
-                'code' => 'PT243-' . uniqid(), 'type' => 'receipt', 'amount' => $paid,
+                'code' => 'PT243-'.uniqid(), 'type' => 'receipt', 'amount' => $paid,
                 'time' => $txDate ?? $now, 'category' => 'Thu tiền khách trả',
                 'target_type' => 'Khách hàng', 'target_id' => $customer->id,
                 'target_name' => $customer->name,
@@ -222,7 +225,8 @@ class Step243InvoiceUpdateEngineImpactTest extends TestCase
         $customer = $this->customer();
         $invoice = $this->createInvoice($product, $customer, 2, 150000, 200000);
 
-        $product->refresh(); $customer->refresh();
+        $product->refresh();
+        $customer->refresh();
         $snapStock = (int) $product->stock_quantity;
         $snapCost = (float) $product->inventory_total_cost;
         $snapDebt = (float) $customer->debt_amount;
@@ -244,7 +248,8 @@ class Step243InvoiceUpdateEngineImpactTest extends TestCase
 
         app(InvoiceUpdateService::class)->updateInvoice($invoice, $payload, $context);
 
-        $product->refresh(); $customer->refresh();
+        $product->refresh();
+        $customer->refresh();
         $this->assertEquals($snapStock, (int) $product->stock_quantity);
         $this->assertEquals($snapCost, (float) $product->inventory_total_cost);
         $this->assertEquals($snapDebt, (float) $customer->debt_amount);
@@ -319,6 +324,65 @@ class Step243InvoiceUpdateEngineImpactTest extends TestCase
         $this->assertEquals(150000, (float) $customer->total_spent);
     }
 
+    public function test_inventory_update_cannot_remove_all_serials_from_a_serial_product(): void
+    {
+        [$product, $serials] = $this->serialProduct(2, 200000);
+        $customer = $this->customer();
+        $invoice = app(\App\Services\InvoiceSaleService::class)->createSale([
+            'customer_id' => $customer->id,
+            'subtotal' => 300000,
+            'discount' => 0,
+            'total' => 300000,
+            'customer_paid' => 300000,
+            'sales_channel' => 'Test',
+            'price_book_name' => 'Giá bán lẻ',
+            'items' => [[
+                'product_id' => $product->id,
+                'quantity' => 1,
+                'price' => 300000,
+                'discount' => 0,
+                'serial_ids' => [$serials[0]->id],
+            ]],
+        ], [
+            'transaction_date' => now()->toDateTimeString(),
+            'allow_oversell' => false,
+        ]);
+        $invoiceItem = $invoice->items()->sole();
+
+        $stockBefore = (int) $product->fresh()->stock_quantity;
+        $debtBefore = (float) $customer->fresh()->debt_amount;
+
+        try {
+            app(InvoiceUpdateService::class)->updateInvoice($invoice, [
+                'customer_id' => $customer->id,
+                'subtotal' => 300000,
+                'discount' => 0,
+                'total' => 300000,
+                'customer_paid' => 300000,
+                'items' => [[
+                    'invoice_item_id' => $invoiceItem->id,
+                    'product_id' => $product->id,
+                    'quantity' => 1,
+                    'price' => 300000,
+                    'discount' => 0,
+                    'note' => '',
+                    'serial_ids' => [],
+                ]],
+            ], ['user' => $this->admin(['*'])]);
+            $this->fail('Updating a serial item without serial IDs must fail.');
+        } catch (\Exception $exception) {
+            $this->assertStringContainsString('cần chọn đủ 1 serial, hiện có 0', $exception->getMessage());
+        }
+
+        $this->assertSame($stockBefore, (int) $product->fresh()->stock_quantity);
+        $this->assertSame($debtBefore, (float) $customer->fresh()->debt_amount);
+        $this->assertSame(1, InvoiceItemSerial::where('invoice_item_id', $invoiceItem->id)->count());
+
+        $serials[0]->refresh();
+        $this->assertSame('sold', $serials[0]->status);
+        $this->assertSame($invoice->id, (int) $serials[0]->invoice_id);
+    }
+
     // === TC 11: Price change does not change net stock ===
     public function test_price_change_does_not_change_net_stock_but_updates_revenue_and_debt(): void
     {
@@ -362,7 +426,8 @@ class Step243InvoiceUpdateEngineImpactTest extends TestCase
             'items' => [['product_id' => $product->id, 'quantity' => 2, 'price' => 150000, 'discount' => 0, 'note' => '', 'serial_ids' => []]],
         ], ['user' => $user]);
 
-        $oldCust->refresh(); $newCust->refresh();
+        $oldCust->refresh();
+        $newCust->refresh();
         $this->assertEquals(0, (float) $oldCust->debt_amount);
         $this->assertEquals(0, (float) $oldCust->total_spent);
         $this->assertEquals(100000, (float) $newCust->debt_amount);
@@ -395,7 +460,8 @@ class Step243InvoiceUpdateEngineImpactTest extends TestCase
         }
 
         // Verify rollback
-        $product->refresh(); $customer->refresh();
+        $product->refresh();
+        $customer->refresh();
         $this->assertEquals($stockBefore, (int) $product->stock_quantity);
         $this->assertEquals($debtBefore, (float) $customer->debt_amount);
     }
@@ -443,7 +509,7 @@ class Step243InvoiceUpdateEngineImpactTest extends TestCase
     // === TC 18: E-invoice block prevents update even with override ===
     public function test_einvoice_block_prevents_date_and_content_update_even_with_override(): void
     {
-        if (!Schema::hasColumn('invoices', 'einvoice_code')) {
+        if (! Schema::hasColumn('invoices', 'einvoice_code')) {
             $this->markTestSkipped('einvoice_code column not in test DB yet.');
         }
         Setting::set('block_edit_cancel_einvoice', true);
@@ -482,7 +548,9 @@ class Step243InvoiceUpdateEngineImpactTest extends TestCase
             'time_lock_override_reason' => 'Manager approved cancel for old invoice',
         ]);
 
-        $invoice->refresh(); $product->refresh(); $customer->refresh();
+        $invoice->refresh();
+        $product->refresh();
+        $customer->refresh();
 
         $this->assertEquals('Đã hủy', $invoice->status);
         $this->assertDatabaseHas('invoices', ['id' => $invoice->id]);
