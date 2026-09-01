@@ -29,16 +29,63 @@ final class SerialCostRemediationApprovalService
         string $approvedBy,
         string $approvalReference,
     ): array {
-        $approvedBy = trim($approvedBy);
-        $approvalReference = trim($approvalReference);
-        if ($approvedBy === '' || $approvalReference === '') {
-            throw new RuntimeException('Approval requires both approved-by and approval-reference.');
-        }
         if ($invoiceCodes === [] && $limit === null) {
             throw new RuntimeException('Approval must select invoice codes or an explicit positive limit.');
         }
 
         $selected = $this->selectRepairLines($this->plans->validatedRepairLines($plan), $invoiceCodes, $limit);
+
+        return $this->createFromSelection($plan, $selected, $approvedBy, $approvalReference);
+    }
+
+    /**
+     * @param  array<string, mixed>  $plan
+     * @param  array<int, string>  $lineKeys
+     * @return array<string, mixed>
+     */
+    public function createForLineKeys(
+        array $plan,
+        array $lineKeys,
+        string $approvedBy,
+        string $approvalReference,
+    ): array {
+        $lineKeys = array_values(array_unique(array_filter(array_map('strval', $lineKeys))));
+        if ($lineKeys === []) {
+            throw new RuntimeException('Approval must select at least one exact remediation line.');
+        }
+
+        $eligible = collect($this->plans->validatedRepairLines($plan))->keyBy('line_key');
+        $selected = collect($lineKeys)
+            ->map(function (string $lineKey) use ($eligible): array {
+                $line = $eligible->get($lineKey);
+                if (! is_array($line)) {
+                    throw new RuntimeException('Approval selected a line outside the eligible remediation plan: '.$lineKey);
+                }
+
+                return $line;
+            })
+            ->sortBy('line_key')
+            ->values();
+
+        return $this->createFromSelection($plan, $selected, $approvedBy, $approvalReference);
+    }
+
+    /**
+     * @param  array<string, mixed>  $plan
+     * @param  Collection<int, array<string, mixed>>  $selected
+     * @return array<string, mixed>
+     */
+    private function createFromSelection(
+        array $plan,
+        Collection $selected,
+        string $approvedBy,
+        string $approvalReference,
+    ): array {
+        $approvedBy = trim($approvedBy);
+        $approvalReference = trim($approvalReference);
+        if ($approvedBy === '' || $approvalReference === '') {
+            throw new RuntimeException('Approval requires both approved-by and approval-reference.');
+        }
         if ($selected->isEmpty()) {
             throw new RuntimeException('No eligible repair lines matched the approval selection.');
         }

@@ -6,8 +6,10 @@ Khôi phục các snapshot giá vốn lịch sử chỉ khi hệ thống có đ�
 lập từ phiếu sửa chữa đã hoàn thành. Công cụ này không suy diễn giá vốn từ giá
 vốn bình quân hiện tại, từ lần bán lại, hoặc từ một chứng từ phát sinh sau đó.
 
-Mỗi đợt hiệu chỉnh luôn giới hạn tối đa 25 dòng hóa đơn và thực hiện trong một
-transaction: hoặc toàn bộ đợt cùng thành công, hoặc không có dòng nào thay đổi.
+Mỗi transaction hiệu chỉnh luôn giới hạn tối đa 25 dòng hóa đơn: hoặc toàn bộ
+batch cùng thành công, hoặc không có dòng nào trong batch thay đổi. Chế độ wave
+có thể điều phối tối đa 50 dòng, nhưng vẫn chia thành hai transaction độc lập
+25 dòng và dừng ngay khi batch tiếp theo không còn đạt precondition.
 
 ## Dữ liệu được phép thay đổi
 
@@ -111,6 +113,53 @@ serial, stock movement, phiếu sửa chữa và return item liên quan; sau đ�
 lại toàn bộ. Nếu một điều kiện thay đổi, toàn bộ batch rollback. Chạy lại một
 approval đã hoàn thành chỉ trả `REPLAY` khi cả bốn snapshot vẫn khớp; nếu bất kỳ
 snapshot nào lại lệch, lệnh từ chối thay vì âm thầm coi là đã xong.
+
+## Chế độ wave — tối đa 50 dòng, hai transaction độc lập
+
+Wave chọn các invoice có mức điều chỉnh tuyệt đối thấp nhất, giữ toàn bộ các
+dòng của cùng một invoice trong một batch và nhúng hai approval độc lập vào một
+artifact. Không có transaction nào vượt quá 25 dòng.
+
+### 1. Chuẩn bị wave chỉ đọc
+
+```bash
+php artisan costing:prepare-serial-remediation-wave \
+  --plan-json=storage/app/audit/serial-cost-plan.json \
+  --limit=50 \
+  --approved-by='Người duyệt được ủy quyền' \
+  --approval-reference='COGS-WAVE-01' \
+  > storage/app/audit/serial-cost-wave.json
+```
+
+### 2. Preview và lấy mã xác nhận
+
+```bash
+php artisan costing:apply-serial-remediation-wave \
+  --plan-json=storage/app/audit/serial-cost-plan.json \
+  --wave-json=storage/app/audit/serial-cost-wave.json
+```
+
+Preview luôn trả `database_mutation: NO`, số dòng/serial/movement của từng
+batch và `confirmation_code` của toàn wave.
+
+### 3. Áp dụng sau một backup đã kiểm tra
+
+```bash
+php artisan costing:apply-serial-remediation-wave \
+  --plan-json=storage/app/audit/serial-cost-plan.json \
+  --wave-json=storage/app/audit/serial-cost-wave.json \
+  --apply \
+  --operator='Người vận hành' \
+  --backup-confirmed \
+  --backup-reference='AAPANEL:backup.sql.zip|sha256=...' \
+  --confirm-wave-hash='APPLY-SERIAL-COGS-WAVE-...'
+```
+
+Mỗi batch commit riêng. Nếu batch sau thất bại, wave trả
+`PARTIAL_FAILURE`, không chạy các batch còn lại và báo chính xác số batch đã
+commit. Chạy lại cùng artifact là an toàn: batch đã hoàn tất trả `REPLAY`, batch
+chưa chạy được tiếp tục. Một backup dùng chung cho toàn wave và được ghi vào
+mọi activity log.
 
 ## Rollback
 
