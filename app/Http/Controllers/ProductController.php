@@ -1043,7 +1043,7 @@ class ProductController extends Controller
 
         switch ($type) {
             case 'invoice':
-                $doc = \App\Models\Invoice::with(['items.product', 'items.serials', 'customer'])->find($id);
+                $doc = \App\Models\Invoice::with(['items.product', 'items.serials.serial', 'customer'])->find($id);
                 if (! $doc) {
                     return response()->json(['error' => 'Not found'], 404);
                 }
@@ -1077,42 +1077,7 @@ class ProductController extends Controller
                     'price_book' => $doc->price_book_name ?? 'Bảng giá chung',
                     'date' => $doc->created_at?->format('d/m/Y H:i'),
                     'note' => $doc->note,
-                    'items' => $doc->items->map(function ($i) {
-                        $serials = $i->serials
-                            ->map(fn ($s) => [
-                                'id' => $s->id,
-                                'serial_imei_id' => $s->serial_imei_id,
-                                'serial_number' => $s->serial_number,
-                                'cost_price' => (float) ($s->cost_price ?? 0),
-                                'legacy' => false,
-                            ])
-                            ->values();
-
-                        if ($serials->isEmpty() && ! empty($i->serial)) {
-                            $serials = collect(array_filter(array_map('trim', explode(',', $i->serial))))
-                                ->map(fn ($serialNumber) => [
-                                    'id' => null,
-                                    'serial_imei_id' => null,
-                                    'serial_number' => $serialNumber,
-                                    'cost_price' => 0,
-                                    'legacy' => true,
-                                ])
-                                ->values();
-                        }
-
-                        return [
-                            'product_code' => $i->product->sku ?? '',
-                            'product_name' => $i->product->name ?? '',
-                            'has_serial' => $i->product->has_serial ?? false,
-                            'quantity' => $i->quantity,
-                            'price' => (float) $i->price,
-                            'discount' => (float) ($i->discount ?? 0),
-                            'sell_price' => (float) ($i->price - ($i->discount ?? 0)),
-                            'subtotal' => (float) $i->subtotal,
-                            'serials' => $serials,
-                            'serial_count' => $serials->count(),
-                        ];
-                    }),
+                    'items' => $this->invoiceDocumentDetailItems($doc),
                     'subtotal' => (float) $doc->subtotal,
                     'discount' => (float) ($doc->discount ?? 0),
                     'total' => (float) $doc->total,
@@ -1342,6 +1307,90 @@ class ProductController extends Controller
             default:
                 return response()->json(['error' => 'Unknown document type'], 400);
         }
+    }
+
+    /**
+     * Build the serial rows displayed by the stock-card invoice popup.
+     *
+     * New invoices have an InvoiceItemSerial row per serial. Older invoices
+     * can have only SerialImei.invoice_id; that source is safe only when the
+     * invoice contains exactly one line for the product. Never distribute a
+     * direct serial list across duplicate product lines by guesswork.
+     */
+    private function invoiceDocumentDetailItems(\App\Models\Invoice $invoice)
+    {
+        $items = $invoice->items;
+        $itemsByProduct = $items->groupBy('product_id');
+        $directSerialsByProduct = SerialImei::query()
+            ->where('invoice_id', $invoice->id)
+            ->orderBy('id')
+            ->get(['id', 'product_id', 'serial_number', 'sold_cost_price', 'cost_price'])
+            ->groupBy('product_id');
+
+        return $items->map(function ($item) use ($itemsByProduct, $directSerialsByProduct) {
+            $serialSource = 'invoice_item_serial';
+            $serials = $item->serials
+                ->map(fn ($serial) => [
+                    'id' => $serial->id,
+                    'serial_imei_id' => $serial->serial_imei_id,
+                    'serial_number' => $serial->serial_number
+                        ?: $serial->serial?->serial_number
+                        ?: '#'.$serial->serial_imei_id,
+                    'cost_price' => (float) ($serial->cost_price
+                        ?? $serial->serial?->sold_cost_price
+                        ?? $serial->serial?->cost_price
+                        ?? 0),
+                    'legacy' => false,
+                    'source' => 'invoice_item_serial',
+                ])
+                ->values();
+
+            $sameProductItems = $itemsByProduct->get($item->product_id, collect());
+            $directSerials = $directSerialsByProduct->get($item->product_id, collect());
+            $quantity = (float) $item->quantity;
+
+            if ($serials->isEmpty()
+                && $sameProductItems->count() === 1
+                && $quantity === (float) $directSerials->count()) {
+                $serialSource = 'direct_invoice_assignment';
+                $serials = $directSerials->map(fn ($serial) => [
+                    'id' => null,
+                    'serial_imei_id' => $serial->id,
+                    'serial_number' => $serial->serial_number ?: '#'.$serial->id,
+                    'cost_price' => (float) ($serial->sold_cost_price ?? $serial->cost_price ?? 0),
+                    'legacy' => false,
+                    'source' => $serialSource,
+                ])->values();
+            }
+
+            if ($serials->isEmpty() && ! empty($item->serial)) {
+                $serialSource = 'legacy_invoice_item_text';
+                $serials = collect(array_filter(array_map('trim', preg_split('/[\r\n,;|]+/', $item->serial) ?: [])))
+                    ->map(fn ($serialNumber) => [
+                        'id' => null,
+                        'serial_imei_id' => null,
+                        'serial_number' => $serialNumber,
+                        'cost_price' => 0,
+                        'legacy' => true,
+                        'source' => $serialSource,
+                    ])
+                    ->values();
+            }
+
+            return [
+                'product_code' => $item->product->sku ?? '',
+                'product_name' => $item->product->name ?? '',
+                'has_serial' => $item->product->has_serial ?? false,
+                'quantity' => $item->quantity,
+                'price' => (float) $item->price,
+                'discount' => (float) ($item->discount ?? 0),
+                'sell_price' => (float) ($item->price - ($item->discount ?? 0)),
+                'subtotal' => (float) $item->subtotal,
+                'serials' => $serials,
+                'serial_count' => $serials->count(),
+                'serial_source' => $serials->isEmpty() ? null : $serialSource,
+            ];
+        });
     }
 
     public function destroy(Product $product, ProductDeletionGuard $deletionGuard)
