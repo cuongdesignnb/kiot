@@ -61,11 +61,15 @@ final class SerialCostRemediationApplyService
      * @param  array<string, mixed>  $approval
      * @return array<string, mixed>
      */
-    public function apply(array $plan, array $approval, string $operator): array
+    public function apply(array $plan, array $approval, string $operator, string $backupReference): array
     {
         $operator = trim($operator);
         if ($operator === '') {
             throw new RuntimeException('Apply requires an operator identity.');
+        }
+        $backupReference = trim($backupReference);
+        if ($backupReference === '') {
+            throw new RuntimeException('Apply requires a backup reference.');
         }
         if (! Schema::hasTable('activity_logs')) {
             throw new RuntimeException('The activity log schema is required before applying historical COGS remediation.');
@@ -73,7 +77,7 @@ final class SerialCostRemediationApplyService
 
         $selection = $this->approvals->validatedSelection($plan, $approval);
 
-        return DB::transaction(function () use ($selection, $approval, $operator): array {
+        return DB::transaction(function () use ($selection, $approval, $operator, $backupReference): array {
             $this->lockDependencies($selection['lines']);
 
             $needsApply = collect();
@@ -108,6 +112,8 @@ final class SerialCostRemediationApplyService
                     'result' => 'REPLAY',
                     'plan_hash' => $selection['plan_hash'],
                     'approval_hash' => $selection['approval_hash'],
+                    'operator' => $operator,
+                    'backup_reference' => $backupReference,
                     'lines_changed' => 0,
                     'replayed_lines' => $replayed->pluck('line_key')->values()->all(),
                 ];
@@ -132,6 +138,8 @@ final class SerialCostRemediationApplyService
                         'approved_by' => $approval['approved_by'],
                         'approval_reference' => $approval['approval_reference'],
                         'operator' => $operator,
+                        'backup_confirmed' => true,
+                        'backup_reference' => $backupReference,
                         'line_key' => $change['line_key'],
                         'before' => $change['before'],
                         'after' => $change['after'],
@@ -144,6 +152,8 @@ final class SerialCostRemediationApplyService
                 'result' => 'APPLIED',
                 'plan_hash' => $selection['plan_hash'],
                 'approval_hash' => $selection['approval_hash'],
+                'operator' => $operator,
+                'backup_reference' => $backupReference,
                 'lines_changed' => $changes->count(),
                 'invoice_items_updated' => $changes->count(),
                 'invoice_item_serials_updated' => $changes->sum('serial_count'),

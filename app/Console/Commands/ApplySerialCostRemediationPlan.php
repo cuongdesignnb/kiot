@@ -34,7 +34,12 @@ class ApplySerialCostRemediationPlan extends Command
             }
 
             $this->assertApplyGuard($approval);
-            $result = $remediation->apply($plan, $approval, (string) ($this->option('operator') ?? ''));
+            $result = $remediation->apply(
+                $plan,
+                $approval,
+                (string) ($this->option('operator') ?? ''),
+                (string) ($this->option('backup-reference') ?? ''),
+            );
             $this->line(json_encode($result, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
 
             return self::SUCCESS;
