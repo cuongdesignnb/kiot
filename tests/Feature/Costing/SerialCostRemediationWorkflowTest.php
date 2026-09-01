@@ -104,9 +104,11 @@ class SerialCostRemediationWorkflowTest extends TestCase
         $this->assertSame('NO', $preview['database_mutation']);
         $this->assertSame(1, $preview['lines_selected']);
 
-        $result = $applyService->apply($plan, $approval, 'Vận hành B');
+        $result = $applyService->apply($plan, $approval, 'Vận hành B', 'backup:test-001');
 
         $this->assertSame('APPLIED', $result['result']);
+        $this->assertSame('Vận hành B', $result['operator']);
+        $this->assertSame('backup:test-001', $result['backup_reference']);
         $this->assertSame(1, $result['lines_changed']);
         $this->assertSame(8_029_022.0, (float) $item->fresh()->cost_price);
         $this->assertSame(8_029_022.0, (float) InvoiceItemSerial::where('invoice_item_id', $item->id)->value('cost_price'));
@@ -117,8 +119,11 @@ class SerialCostRemediationWorkflowTest extends TestCase
             'action' => ActivityLog::ACTION_SERIAL_COST_REMEDIATION_APPLY,
             'subject_id' => $invoice->id,
         ]);
+        $activity = ActivityLog::where('action', ActivityLog::ACTION_SERIAL_COST_REMEDIATION_APPLY)->sole();
+        $this->assertTrue($activity->properties['backup_confirmed']);
+        $this->assertSame('backup:test-001', $activity->properties['backup_reference']);
 
-        $replay = $applyService->apply($plan, $approval, 'Vận hành B');
+        $replay = $applyService->apply($plan, $approval, 'Vận hành B', 'backup:test-001');
         $this->assertSame('REPLAY', $replay['result']);
         $this->assertSame(0, $replay['lines_changed']);
         $this->assertSame(1, ActivityLog::where('action', ActivityLog::ACTION_SERIAL_COST_REMEDIATION_APPLY)->count());
@@ -139,7 +144,7 @@ class SerialCostRemediationWorkflowTest extends TestCase
         $item->update(['cost_price' => 12_000_000]);
 
         try {
-            app(SerialCostRemediationApplyService::class)->apply($plan, $approval, 'Vận hành B');
+            app(SerialCostRemediationApplyService::class)->apply($plan, $approval, 'Vận hành B', 'backup:test-stale');
             $this->fail('Expected stale approved plan to be rejected.');
         } catch (RuntimeException $exception) {
             $this->assertStringContainsString('Precondition changed', $exception->getMessage());
@@ -164,11 +169,11 @@ class SerialCostRemediationWorkflowTest extends TestCase
         );
 
         $apply = app(SerialCostRemediationApplyService::class);
-        $apply->apply($plan, $approval, 'Vận hành B');
+        $apply->apply($plan, $approval, 'Vận hành B', 'backup:test-replay');
         $serial->update(['sold_cost_price' => 1]);
 
         try {
-            $apply->apply($plan, $approval, 'Vận hành B');
+            $apply->apply($plan, $approval, 'Vận hành B', 'backup:test-replay');
             $this->fail('A changed serial snapshot must never be treated as a safe replay.');
         } catch (RuntimeException $exception) {
             $this->assertStringContainsString('Precondition changed', $exception->getMessage());
@@ -210,7 +215,7 @@ class SerialCostRemediationWorkflowTest extends TestCase
         ]);
 
         try {
-            app(SerialCostRemediationApplyService::class)->apply($plan, $approval, 'Vận hành B');
+            app(SerialCostRemediationApplyService::class)->apply($plan, $approval, 'Vận hành B', 'backup:test-return');
             $this->fail('A completed return must make the approved line stale.');
         } catch (RuntimeException $exception) {
             $this->assertStringContainsString('Precondition changed', $exception->getMessage());
