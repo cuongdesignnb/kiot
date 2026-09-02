@@ -1,10 +1,13 @@
 <?php
 
+use App\Console\Commands\ApplySerialCostLifecycleRemediationPlan;
 use App\Console\Commands\ApplySerialCostRemediationPlan;
 use App\Console\Commands\ApplySerialCostRemediationWave;
 use App\Console\Commands\AuditProductDeletions;
 use App\Console\Commands\AuditSerialCostSnapshots;
+use App\Console\Commands\BuildSerialCostLifecycleRemediationPlan;
 use App\Console\Commands\BuildSerialCostRemediationPlan;
+use App\Console\Commands\CreateSerialCostLifecycleRemediationApproval;
 use App\Console\Commands\CreateSerialCostRemediationApproval;
 use App\Console\Commands\MediaLibraryBackfillCommand;
 use App\Console\Commands\PrepareSerialCostRemediationWave;
@@ -34,6 +37,9 @@ return Application::configure(basePath: dirname(__DIR__))
         ApplySerialCostRemediationPlan::class,
         PrepareSerialCostRemediationWave::class,
         ApplySerialCostRemediationWave::class,
+        BuildSerialCostLifecycleRemediationPlan::class,
+        CreateSerialCostLifecycleRemediationApproval::class,
+        ApplySerialCostLifecycleRemediationPlan::class,
         MediaLibraryBackfillCommand::class,
     ])
     ->withMiddleware(function (Middleware $middleware) {
