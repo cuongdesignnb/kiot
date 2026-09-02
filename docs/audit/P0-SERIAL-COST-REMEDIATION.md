@@ -168,6 +168,93 @@ hoạch/approval mới từ audit hiện tại và dùng giá trị `before` đ�
 `activity_logs` làm bằng chứng để thực hiện một đợt hiệu chỉnh ngược có phê
 duyệt. Việc này giữ lịch sử kiểm toán đầy đủ thay vì xóa dấu vết.
 
+## Nhóm vòng đời bán → trả → bán lại
+
+Sau khi nhóm tự động thông thường về 0, các dòng bị khóa bởi lịch sử trả hàng
+hoặc bán lại phải đi qua bộ lệnh vòng đời riêng. Công cụ này chỉ dùng giá vốn
+từ phiếu sửa chữa đã hoàn thành trước từng lần bán và dựng đầy đủ chuỗi sự
+kiện của từng serial. Nó không lấy giá vốn của lần bán sau để ghi ngược cho
+lần bán trước.
+
+Một kế hoạch vòng đời có thể đồng bộ đồng thời:
+
+1. snapshot giá vốn của lần bán gốc;
+2. giá vốn trên từng liên kết serial của lần bán;
+3. giá vốn phiếu trả hàng và movement nhập trả tương ứng;
+4. snapshot hiện tại của serial theo lần bán cuối cùng còn hiệu lực.
+
+Với return nhiều serial, `return_items.cost_price` là đơn giá bình quân đã làm
+tròn, còn `stock_movements.total_cost` giữ đúng tổng giá vốn từng serial. Hai
+giá trị có thể lệch đúng 1 đồng do làm tròn và đây không phải sai dữ liệu.
+
+Dữ liệu một phần chỉ được sửa theo serial có bằng chứng độc lập. Công cụ không
+suy diễn giá vốn dòng hóa đơn hoặc phiếu trả có chứa serial chưa đủ bằng chứng.
+
+### 1. Tạo kế hoạch vòng đời chỉ đọc
+
+```bash
+php artisan costing:plan-serial-lifecycle-remediation \
+  --json > storage/app/audit/serial-cost-lifecycle-plan.json
+```
+
+Có thể thu hẹp bằng `--product=SKU`. Kế hoạch chỉ được duyệt khi
+`blocked_lines=0` và tối đa 100 dòng.
+
+### 2. Tạo approval bất biến cho toàn bộ kế hoạch
+
+```bash
+php artisan costing:approve-serial-lifecycle-remediation \
+  --plan-json=storage/app/audit/serial-cost-lifecycle-plan.json \
+  --approved-by='Người duyệt được ủy quyền' \
+  --approval-reference='COGS-LIFECYCLE-01' \
+  > storage/app/audit/serial-cost-lifecycle-approval.json
+```
+
+Approval bắt buộc chứa đúng toàn bộ `repair_lines`; không thể bỏ chọn một dòng
+phụ thuộc trong cùng kế hoạch.
+
+### 3. Preview và lấy mã xác nhận
+
+```bash
+php artisan costing:apply-serial-lifecycle-remediation \
+  --plan-json=storage/app/audit/serial-cost-lifecycle-plan.json \
+  --approval-json=storage/app/audit/serial-cost-lifecycle-approval.json
+```
+
+Preview luôn trả `database_mutation: NO` và in riêng delta COGS bán, COGS trả
+và delta COGS ròng của báo cáo.
+
+### 4. Áp dụng sau backup mới nhất
+
+```bash
+php artisan costing:apply-serial-lifecycle-remediation \
+  --plan-json=storage/app/audit/serial-cost-lifecycle-plan.json \
+  --approval-json=storage/app/audit/serial-cost-lifecycle-approval.json \
+  --apply \
+  --operator='Người vận hành' \
+  --backup-confirmed \
+  --backup-reference='AAPANEL:backup.sql.zip|sha256=...' \
+  --confirm-approval-hash='APPLY-SERIAL-LIFECYCLE-COGS-...'
+```
+
+Toàn bộ kế hoạch vòng đời commit trong một transaction. Nếu precondition,
+quan hệ return, movement, serial hiện tại hoặc post-condition không khớp thì
+toàn bộ rollback. Chạy lại artifact đã áp dụng phải trả `REPLAY` và 0 thay đổi.
+
+### Bằng chứng QA trên dữ liệu production sao lưu ngày 02/09/2026
+
+- Nguồn: `kiot_db_2026-09-02_08-39-16_mysql_data_Yajki.sql.zip`.
+- SHA-256: `bc84228acee61eb2428b770a84eb92042839e06f4c2a8a6f023a485f2ebe5c0c`.
+- Kế hoạch trước apply: 62 dòng sửa, 0 dòng bị chặn, 164 liên kết serial,
+  31 return item, 129 snapshot serial hiện tại và 84 stock movement.
+- Delta dự kiến: COGS bán `+10.347.035`, COGS trả `+1.900.877`, COGS ròng
+  báo cáo `+8.446.158`.
+- Apply trong một transaction: PASS; chạy lại trả `REPLAY` cho đủ 62 dòng và
+  không ghi thêm.
+- Audit sau apply: 0 dòng sửa, 0 dòng bị chặn, 403 dòng đã xác minh và mọi
+  delta còn 0.
+- Bộ hồi quy MariaDB: 30 test, 287 assertion, PASS.
+
 ## Ràng buộc rollout
 
 - Không migration, không backfill tự chạy và không có lệnh `--apply` trong deploy.
