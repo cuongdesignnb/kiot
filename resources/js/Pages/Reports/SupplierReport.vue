@@ -38,7 +38,7 @@ const periodOptions = [
 const applyFilter = () => {
     const params = { concern: concern.value, period: period.value, view: viewMode.value, branch_id: branchId.value || undefined };
     if (period.value === "custom") { params.date_from = dateFrom.value; params.date_to = dateTo.value; }
-    router.get("/reports/suppliers-report", params, { preserveState: true });
+    router.get("/reports/suppliers", params, { preserveState: true });
 };
 watch([concern, period, branchId], () => applyFilter());
 const switchView = (mode) => { viewMode.value = mode; applyFilter(); };
@@ -249,4 +249,3 @@ const printReport = () => window.print();
     main { padding: 0 !important; }
 }
 </style>
-
