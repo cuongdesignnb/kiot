@@ -51,7 +51,7 @@ const applyFilter = () => {
         customer_group: customerGroup.value || undefined,
     };
     if (period.value === "custom") { params.date_from = dateFrom.value; params.date_to = dateTo.value; }
-    router.get("/reports/customers-report", params, { preserveState: true });
+    router.get("/reports/customers", params, { preserveState: true });
 };
 watch([concern, period, branchId, customerGroup], () => applyFilter());
 const switchView = (mode) => { viewMode.value = mode; applyFilter(); };

@@ -435,6 +435,9 @@ Route::middleware('auth')->group(function () {
     Route::get('/reports/products', [App\Http\Controllers\ProductReportController::class, 'index'])->name('reports.products')->middleware('permission:reports.view');
     Route::get('/reports/customers', [App\Http\Controllers\CustomerReportController::class, 'index'])->name('reports.customers')->middleware('permission:reports.view');
     Route::get('/reports/suppliers', [App\Http\Controllers\SupplierReportController::class, 'index'])->name('reports.suppliers')->middleware('permission:reports.view');
+    // Compatibility for browser tabs that still have the pre-hotfix Vite bundle loaded.
+    Route::get('/reports/customers-report', [App\Http\Controllers\CustomerReportController::class, 'index'])->middleware('permission:reports.view');
+    Route::get('/reports/suppliers-report', [App\Http\Controllers\SupplierReportController::class, 'index'])->middleware('permission:reports.view');
 
     Route::get('/reports/debt-reconciliation', [ReportController::class, 'debtReconciliation'])->name('reports.debt-reconciliation')->middleware('permission:reports.view');
     Route::get('/reports/debt-reconciliation/export', [ReportController::class, 'exportDebtReconciliation'])->name('reports.debt-reconciliation.export')->middleware('permission:reports.view');
