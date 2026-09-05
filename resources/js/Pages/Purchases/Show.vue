@@ -32,7 +32,8 @@ const totalProducts = props.purchase.items?.length || 0;
 const calcTotal = props.purchase.items?.reduce((s, i) => s + (Number(i.subtotal) || 0), 0) || 0;
 const totalAmount = calcTotal || Number(props.purchase.total_amount) || 0;
 const otherCostsTotal = Number(props.purchase.other_costs_total) || 0;
-const needToPay = totalAmount - (Number(props.purchase.discount) || 0) + otherCostsTotal;
+const externalCostAmount = Number(props.purchase.external_cost_amount) || 0;
+const needToPay = totalAmount - (Number(props.purchase.discount) || 0) + otherCostsTotal - externalCostAmount;
 
 const printPurchase = () => {
     window.open(`/purchases/${props.purchase.id}/print`, '_blank', 'width=400,height=600');
@@ -77,7 +78,7 @@ const editForm = ref({
     employee_id: props.purchase.employee_id ? `employee:${props.purchase.employee_id}` : (props.purchase.user_id ? `admin_user:${props.purchase.user_id}` : ''),
 });
 
-const editPayAmount = computed(() => totalAmount - (Number(editForm.value.discount) || 0) + otherCostsTotal);
+const editPayAmount = computed(() => totalAmount - (Number(editForm.value.discount) || 0) + otherCostsTotal - externalCostAmount);
 // HOTFIX 24.21 — split into raw balance + clamped debt/overpaid so the modal
 // can show "Tiền thừa" when the operator increases paid_amount past the
 // invoice total.
@@ -363,6 +364,9 @@ const paymentMethodLabel = (method) => {
                                 <div class="flex justify-between items-center">
                                     <span class="text-gray-500">Chi phí nhập khác:</span>
                                     <span class="font-medium text-orange-600">{{ formatCurrency(otherCostsTotal) }}</span>
+                                </div>
+                                <div v-if="externalCostAmount > 0" class="text-xs text-gray-500">
+                                    Trong đó {{ formatCurrency(externalCostAmount) }} có phiếu chi bên ngoài, không tính vào công nợ NCC.
                                 </div>
                                 <div class="ml-4 mt-1 space-y-0.5">
                                     <div v-for="(cost, ci) in (typeof purchase.other_costs === 'string' ? JSON.parse(purchase.other_costs) : purchase.other_costs)" :key="ci" class="flex justify-between text-[12px] text-gray-400">

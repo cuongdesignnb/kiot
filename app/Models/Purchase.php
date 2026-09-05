@@ -40,6 +40,16 @@ class Purchase extends Model
         return $this->hasMany(PurchaseItem::class);
     }
 
+    public function externalCostPayments()
+    {
+        return $this->hasMany(CashFlow::class, 'reference_code', 'code')
+            ->withTrashed()
+            ->where('reference_type', 'Purchase')
+            ->where('type', 'payment')
+            ->where('amount', '>', 0)
+            ->whereIn('target_type', \App\Services\Debt\PurchasePayableService::EXTERNAL_COST_TARGET_TYPES);
+    }
+
     public function supplier()
     {
         return $this->belongsTo(Customer::class, 'supplier_id');

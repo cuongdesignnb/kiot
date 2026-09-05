@@ -29,23 +29,25 @@ class PartnerDebtLedgerService
         // 1) Purchases: "Nhập hàng" -> increases company's payable debt to supplier
         $purchases = Purchase::where('supplier_id', $supplier->id)
             ->where('status', 'completed')
-            ->get(['id', 'code', 'total_amount', 'paid_amount', 'purchase_date', 'created_at']);
+            ->with('externalCostPayments')
+            ->get();
 
         foreach ($purchases as $p) {
             $businessTime = $this->normalizeDisplayTime($p->purchase_date, $p->created_at);
+            $payable = app(\App\Services\Debt\PurchasePayableService::class)->amount($p);
             $entries->push([
                 'id' => 'pur-'.$p->id,
                 'code' => $p->code,
                 'type' => 'purchase',
                 'type_label' => 'Nhập hàng',
                 'badge_label' => 'Phiếu nhập',
-                'amount' => (float) $p->total_amount,
-                'supplier_effect' => (float) $p->total_amount,
-                'display_effect' => (float) $p->total_amount,
-                'financial_effect' => (float) $p->total_amount,
-                'balance_effect' => (float) $p->total_amount,
-                'supplier_display_effect' => (float) $p->total_amount,
-                'supplier_balance_effect' => (float) $p->total_amount,
+                'amount' => $payable,
+                'supplier_effect' => $payable,
+                'display_effect' => $payable,
+                'financial_effect' => $payable,
+                'balance_effect' => $payable,
+                'supplier_display_effect' => $payable,
+                'supplier_balance_effect' => $payable,
                 'affects_debt_balance' => true,
                 'display_time' => $businessTime,
                 'time' => $businessTime,
@@ -108,6 +110,7 @@ class PartnerDebtLedgerService
                     })
                     ->orWhere(function ($q2) use ($supplier) {
                         $q2->where('reference_type', 'Purchase')
+                            ->whereIn('target_type', PartnerDebtRoleResolver::SUPPLIER_TARGET_TYPES)
                             ->whereIn('reference_code', function ($sub) use ($supplier) {
                                 $sub->select('code')->from('purchases')->where('supplier_id', $supplier->id);
                             });
@@ -225,6 +228,7 @@ class PartnerDebtLedgerService
                 $hasLinkedCashFlow = $this->scopeNotCancelledCashFlow(
                     CashFlow::where('reference_type', 'Purchase')
                         ->where('reference_code', $p->code)
+                        ->whereIn('target_type', PartnerDebtRoleResolver::SUPPLIER_TARGET_TYPES)
                         ->where('type', 'payment')
                 )->exists();
 

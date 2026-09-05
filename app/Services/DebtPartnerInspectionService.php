@@ -173,6 +173,7 @@ class DebtPartnerInspectionService
                 ->all(),
             'purchases' => Purchase::query()
                 ->where('supplier_id', $partner->id)
+                ->with('externalCostPayments')
                 ->orderBy('created_at')
                 ->get()
                 ->map(fn (Purchase $row) => $this->purchaseRow($row))
@@ -326,7 +327,7 @@ class DebtPartnerInspectionService
             return $this->diagnosis(
                 'documents_exist_but_no_ledger',
                 [
-                    'document_count=' . $counts['document_count'],
+                    'document_count='.$counts['document_count'],
                     'ledger_count=0',
                 ],
                 'high',
@@ -337,13 +338,13 @@ class DebtPartnerInspectionService
         if ((bool) $partner['is_customer'] && (bool) $partner['is_supplier']) {
             $viewsOpposite = abs((float) $stored['customer_view'] + (float) $stored['supplier_view']) < 0.01;
             $supplierMatches = abs((float) $computed['supplier_final_balance'] - (float) $stored['supplier_view']) < 0.01;
-            if (!$viewsOpposite || !$supplierMatches) {
+            if (! $viewsOpposite || ! $supplierMatches) {
                 return $this->diagnosis(
                     'dual_role_orientation_risk',
                     [
-                        'stored_customer_view=' . $stored['customer_view'],
-                        'stored_supplier_view=' . $stored['supplier_view'],
-                        'supplier_final_balance=' . $computed['supplier_final_balance'],
+                        'stored_customer_view='.$stored['customer_view'],
+                        'stored_supplier_view='.$stored['supplier_view'],
+                        'supplier_final_balance='.$computed['supplier_final_balance'],
                     ],
                     'medium',
                     'Manual review dual-role, khong tu offset.'
@@ -355,8 +356,8 @@ class DebtPartnerInspectionService
             return $this->diagnosis(
                 'ledger_and_documents_mismatch',
                 [
-                    'document_count=' . $counts['document_count'],
-                    'ledger_count=' . $counts['ledger_count'],
+                    'document_count='.$counts['document_count'],
+                    'ledger_count='.$counts['ledger_count'],
                     'ledger_mismatch=true',
                 ],
                 'high',
@@ -380,7 +381,7 @@ class DebtPartnerInspectionService
             'needs_manual_review',
             [
                 'fallback diagnosis',
-                'ledger_mismatch=' . ($ledgerMismatch ? 'true' : 'false'),
+                'ledger_mismatch='.($ledgerMismatch ? 'true' : 'false'),
             ],
             'low',
             'Manual review truoc khi fix du lieu that.'
@@ -482,8 +483,11 @@ class DebtPartnerInspectionService
     {
         $cashflows = CashFlow::query()
             ->where('reference_type', 'Purchase')
+            ->where('type', 'payment')
+            ->whereIn('target_type', \App\Services\Debt\PartnerDebtRoleResolver::SUPPLIER_TARGET_TYPES)
             ->where('reference_code', $row->code);
-        $outstanding = $this->number($row->total_amount) - $this->number($row->discount) - $this->number($row->paid_amount);
+        $payable = app(\App\Services\Debt\PurchasePayableService::class);
+        $outstanding = $payable->amount($row) - $this->number($row->paid_amount);
 
         return [
             'id' => $row->id,
@@ -495,6 +499,10 @@ class DebtPartnerInspectionService
             'total_amount' => $this->number($row->total_amount),
             'discount' => $this->number($row->discount),
             'paid_amount' => $this->number($row->paid_amount),
+            'debt_amount' => $this->number($row->debt_amount),
+            'other_costs_total' => $this->number($row->other_costs_total),
+            'external_cost_amount' => $payable->externalCostAmount($row),
+            'supplier_payable_amount' => $payable->amount($row),
             'outstanding' => $outstanding,
             'cashflow_count' => (clone $cashflows)->count(),
             'cashflow_total' => $this->number((clone $cashflows)->sum('amount')),
@@ -591,7 +599,7 @@ class DebtPartnerInspectionService
 
     private function safeAttr(Model $model, string $key): mixed
     {
-        if (!$this->hasColumn($model->getTable(), $key)) {
+        if (! $this->hasColumn($model->getTable(), $key)) {
             return null;
         }
 
@@ -633,7 +641,7 @@ class DebtPartnerInspectionService
         }
 
         $text = (string) $value;
-        if (!$this->looksMojibake($text)) {
+        if (! $this->looksMojibake($text)) {
             return $text;
         }
 
@@ -667,10 +675,12 @@ class DebtPartnerInspectionService
             $codepoint = mb_ord(mb_substr($text, $i, 1, 'UTF-8'), 'UTF-8');
             if ($codepoint <= 0xFF) {
                 $bytes .= chr($codepoint);
+
                 continue;
             }
             if (isset($map[$codepoint])) {
                 $bytes .= chr($map[$codepoint]);
+
                 continue;
             }
 
