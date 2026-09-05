@@ -55,6 +55,7 @@ class SupplierDebtDomainEventSource
 
         // 1. Purchases
         $purchases = Purchase::where('supplier_id', $supplier->id)
+            ->with('externalCostPayments')
             ->get()
             ->values();
 
@@ -1825,16 +1826,12 @@ class SupplierDebtDomainEventSource
     /**
      * Match PurchaseController's persisted supplier-debt mutation exactly.
      * total_amount already includes line-level discounts; the document-level
-     * discount reduces payable while other purchase costs increase it.
+     * discount reduces payable. Separately evidenced external costs do not
+     * belong to this supplier, even though they remain acquisition costs.
      */
     private function purchasePayableAmount(Purchase $purchase): float
     {
-        return round(
-            (float) $purchase->total_amount
-                - (float) ($purchase->discount ?? 0)
-                + (float) ($purchase->other_costs_total ?? 0),
-            2,
-        );
+        return app(\App\Services\Debt\PurchasePayableService::class)->amount($purchase);
     }
 
     /**
