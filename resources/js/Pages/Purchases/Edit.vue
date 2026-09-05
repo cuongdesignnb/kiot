@@ -383,7 +383,7 @@ const totalAmount = computed(() => {
     return isNaN(sum) ? 0 : sum;
 });
 const totalPayment = computed(() => {
-    const payment = Math.max(0, totalAmount.value - Number(discount.value || 0) + totalOtherCosts.value);
+    const payment = Math.max(0, totalAmount.value - Number(discount.value || 0) + totalOtherCosts.value - Number(props.purchase.external_cost_amount || 0));
     return isNaN(payment) ? 0 : payment;
 });
 // HOTFIX 24.21 — full balance/overpayment/projected supplier breakdown,
@@ -773,6 +773,9 @@ const goToCreateProduct = () => {
                                 </div>
                             </div>
 
+                            <div v-if="Number(purchase.external_cost_amount) > 0" class="text-xs text-gray-500">
+                                Đã tách {{ formatCurrency(purchase.external_cost_amount) }} chi phí có phiếu chi bên ngoài khỏi công nợ NCC.
+                            </div>
                             <div class="flex justify-between items-center text-[13px] pt-2">
                                 <label class="text-gray-800 font-bold">Cần trả nhà cung cấp</label>
                                 <div class="w-[150px] text-right font-bold text-green-600 tracking-wide text-lg">{{ formatCurrency(totalPayment) }}</div>

@@ -382,7 +382,8 @@ class PurchaseController extends Controller
 
                     $otherCostsTotal = collect($otherCosts)->sum('amount');
 
-                    $pay_amount = $total_amount - $discount + $otherCostsTotal; // Total to pay
+                    $pay_amount = app(\App\Services\Debt\PurchasePayableService::class)
+                        ->forAmounts(new Purchase, $total_amount, $discount, $otherCostsTotal);
                     $paid_amount = $request->paid_amount ?? 0;
                     $debt_amount = $pay_amount - $paid_amount; // Current debt for this order
 
@@ -568,7 +569,7 @@ class PurchaseController extends Controller
         }
         if ($recalcTotal) {
             $purchase->total_amount = $purchase->items->sum('subtotal');
-            $purchase->debt_amount = ($purchase->total_amount - $purchase->discount) - $purchase->paid_amount;
+            $purchase->debt_amount = app(\App\Services\Debt\PurchasePayableService::class)->amount($purchase) - $purchase->paid_amount;
             $purchase->save();
             $purchase->refresh();
             $purchase->load(['supplier', 'items.product', 'user', 'employee']);
@@ -610,7 +611,10 @@ class PurchaseController extends Controller
         $sellerResolver = new \App\Support\Reports\SellerResolver;
 
         return Inertia::render('Purchases/Show', [
-            'purchase' => $purchase,
+            'purchase' => array_merge($purchase->toArray(), [
+                'other_costs' => app(\App\Services\Debt\PurchasePayableService::class)->costItems($purchase),
+                'external_cost_amount' => app(\App\Services\Debt\PurchasePayableService::class)->externalCostAmount($purchase),
+            ]),
             'purchaseReturns' => $purchaseReturns,
             'bankAccounts' => \App\Models\BankAccount::where('status', 'active')->get(),
             'employees' => $sellerResolver->buildInvoiceSellerOptions(),
@@ -648,7 +652,10 @@ class PurchaseController extends Controller
         $sellerResolver = new \App\Support\Reports\SellerResolver;
 
         return Inertia::render('Purchases/Edit', [
-            'purchase' => $purchase,
+            'purchase' => array_merge($purchase->toArray(), [
+                'other_costs' => app(\App\Services\Debt\PurchasePayableService::class)->costItems($purchase),
+                'external_cost_amount' => app(\App\Services\Debt\PurchasePayableService::class)->externalCostAmount($purchase),
+            ]),
             'suppliers' => $suppliers->values(),
             'employees' => $sellerResolver->buildInvoiceSellerOptions(),
             'showRetailPrice' => $priceBooks->contains('enable_retail_price', true),
@@ -775,7 +782,7 @@ class PurchaseController extends Controller
                         ];
                     })->values()->all();
                     $normalizedItems = $this->normalizePurchaseUpdateItems($itemPayload);
-                    $otherCosts = collect($validated['other_costs'] ?? [])
+                    $otherCosts = collect($validated['other_costs'] ?? app(\App\Services\Debt\PurchasePayableService::class)->costItems($purchase))
                         ->map(fn ($c) => [
                             'name' => trim((string) ($c['name'] ?? '')),
                             'amount' => round((float) ($c['amount'] ?? 0), 2),
@@ -783,7 +790,9 @@ class PurchaseController extends Controller
                         ->filter(fn ($c) => $c['name'] !== '' && $c['amount'] > 0)
                         ->values()
                         ->all();
-                    $otherCostsTotal = collect($otherCosts)->sum('amount');
+                    $otherCostsTotal = array_key_exists('other_costs', $validated)
+                        ? collect($otherCosts)->sum('amount')
+                        : (float) $purchase->other_costs_total;
                     $discount = (float) ($validated['discount'] ?? 0);
                     $paidAmount = (float) ($validated['paid_amount'] ?? 0);
                     $totalAmount = 0.0;
@@ -1047,7 +1056,8 @@ class PurchaseController extends Controller
                         ];
                     }
 
-                    $payAmount = $totalAmount - $discount + $otherCostsTotal;
+                    $payAmount = app(\App\Services\Debt\PurchasePayableService::class)
+                        ->forAmounts($purchase, $totalAmount, $discount, $otherCostsTotal);
                     $computedDebtAmount = $payAmount - $paidAmount;
                     if ($payAmount < 0) {
                         throw new \RuntimeException('Tổng tiền phiếu nhập không hợp lệ.');
@@ -1104,6 +1114,8 @@ class PurchaseController extends Controller
                     if ($paymentChanged) {
                         $cashFlows = CashFlow::where('reference_type', 'Purchase')
                             ->where('reference_code', $purchase->code)
+                            ->where('type', 'payment')
+                            ->whereIn('target_type', \App\Services\Debt\PartnerDebtRoleResolver::SUPPLIER_TARGET_TYPES)
                             ->where(function ($q) {
                                 $q->whereNull('status')->orWhere('status', '!=', 'cancelled');
                             })
