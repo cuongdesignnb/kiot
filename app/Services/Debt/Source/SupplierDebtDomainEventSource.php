@@ -314,6 +314,7 @@ class SupplierDebtDomainEventSource
                     'original_cash_flow_amount' => (float) $cf->amount,
                     'non_debt_cash_amount' => max(0.0, (float) $cf->amount - $canonicalAmount),
                     'payment_obligation_evidence' => 'purchases.total_amount_minus_debt_amount',
+                    'payment_origin' => 'source_document',
                     'source' => 'document_first',
                     'document_group_key' => $refCode,
                     'document_group_type' => 'purchase',
@@ -370,6 +371,7 @@ class SupplierDebtDomainEventSource
                         'generic_payment_inferred_covered_amount' => $genericInferredCoveredAmount,
                         'payment_allocation_confidence' => $genericInferredCoveredAmount > 0.01 ? 'inferred' : 'actual_or_direct',
                         'fallback_uncovered_paid_amount' => $paidAmount,
+                        'payment_origin' => 'source_snapshot',
                         'document_group_key' => $p->code,
                         'document_group_type' => 'purchase',
                         'document_group_parent_code' => $p->code,
@@ -438,6 +440,7 @@ class SupplierDebtDomainEventSource
                         'payment_allocation_mismatch' => $allocationMismatch,
                         'needs_manual_review' => $allocationMismatch,
                         'payment_allocation_note' => 'Persisted supplier payment allocation evidence.',
+                        'payment_origin' => 'standalone',
                         'source' => 'document_first',
                     ]));
                 }
@@ -487,6 +490,7 @@ class SupplierDebtDomainEventSource
                 'payment_allocation_note' => $hasActualAllocations
                     ? 'Persisted supplier payment allocation evidence.'
                     : 'No persisted purchase allocation; FIFO is diagnostic only.',
+                'payment_origin' => 'standalone',
                 'source' => 'document_first',
             ]));
         }
@@ -499,6 +503,7 @@ class SupplierDebtDomainEventSource
             $paymentEntries = $entries->filter(fn (array $entry): bool => str_contains((string) ($entry['event_kind'] ?? ''), 'supplier_payment')
                 && (string) ($entry['parent_document_code'] ?? $entry['reference_code'] ?? '') === (string) $purchase->code
                 && (float) ($entry['supplier_display_effect'] ?? 0) < -0.01
+                && (string) ($entry['payment_origin'] ?? '') !== 'standalone'
             );
 
             foreach ($paymentEntries->values() as $index => $paymentEntry) {

@@ -61,6 +61,15 @@ class CustomerDebtDomainEventSource
             ->values();
 
         $invoiceCodes = $invoices->pluck('code')->filter()->toArray();
+        $invoiceSourcePayments = empty($invoiceCodes)
+            ? collect()
+            : CashFlow::withTrashed()
+                ->where('target_id', $customer->id)
+                ->where('type', 'receipt')
+                ->where('reference_type', 'Invoice')
+                ->whereIn('reference_code', $invoiceCodes)
+                ->get()
+                ->groupBy(fn (CashFlow $cashFlow): string => (string) $cashFlow->reference_code);
 
         foreach ($invoices as $invoice) {
             $businessTime = $invoice->transaction_date ?: $invoice->created_at;
@@ -139,36 +148,84 @@ class CustomerDebtDomainEventSource
                     'sort_group_sequence' => 90,
                 ]));
 
-                if ((float) $invoice->customer_paid > 0.01) {
+                foreach (collect($invoiceSourcePayments->get($invoice->code, []))->values() as $paymentIndex => $cashFlow) {
+                    $paymentTime = $cashFlow->time ?: $cashFlow->created_at ?: $businessTime;
+                    $paymentAmount = max(0.0, (float) $cashFlow->amount);
+                    if ($paymentAmount <= 0.01) {
+                        continue;
+                    }
+
+                    $paymentSourceId = $cashFlow->id.':'.$invoice->code;
+                    $paymentIdentity = 'customer|cash_flows|'.$paymentSourceId.'|invoice_payment|receivable';
                     $entries->push($this->createEntry([
-                        'id' => 'invoice-payment-cancel-'.$invoice->id,
-                        'code' => 'HUY-TT-'.$invoice->code,
+                        'id' => 'cancelled-invoice-cash-flow-original-'.$cashFlow->id,
+                        'code' => $cashFlow->code,
+                        'display_type' => 'Thanh toán hóa đơn',
+                        'event_kind' => 'invoice_payment',
+                        'domain' => 'customer',
+                        'document_amount' => $paymentAmount,
+                        'amount' => $paymentAmount,
+                        'display_effect' => -$paymentAmount,
+                        'customer_display_effect' => -$paymentAmount,
+                        'time' => $paymentTime,
+                        'display_time' => $paymentTime,
+                        'created_at' => $cashFlow->created_at,
+                        'reference_type' => 'Invoice',
+                        'reference_id' => $invoice->id,
+                        'reference_code' => $invoice->code,
+                        'detail_available' => true,
+                        'detail_modal_type' => 'cash_flow',
+                        'detail_reference_id' => $cashFlow->id,
+                        'detail_reference_code' => $cashFlow->code,
+                        'source_table' => 'cash_flows',
+                        'source_id' => $paymentSourceId,
+                        'source_status' => 'cancelled',
+                        'is_real_voucher' => true,
+                        'is_virtual_fallback' => false,
+                        'source' => 'document_first',
+                        'payment_origin' => 'source_document',
+                        'document_group_key' => $invoice->code,
+                        'document_group_type' => 'invoice',
+                        'document_group_parent_code' => $invoice->code,
+                        'document_group_time' => $businessTime,
+                        'document_group_sequence' => 20 + $paymentIndex,
+                        'sort_group_key' => $invoice->code,
+                        'sort_group_time' => $businessTime,
+                        'sort_group_sequence' => 20 + $paymentIndex,
+                    ]));
+
+                    $entries->push($this->createEntry([
+                        'id' => 'invoice-payment-cancel-'.$invoice->id.'-'.$cashFlow->id,
+                        'code' => 'HUY-'.$cashFlow->code,
                         'display_type' => 'Hủy thanh toán hóa đơn',
                         'type_raw' => 'invoice_payment_cancel_reversal',
                         'event_kind' => 'invoice_payment_cancel_reversal',
                         'domain' => 'customer',
-                        'document_amount' => (float) $invoice->customer_paid,
-                        'amount' => (float) $invoice->customer_paid,
-                        'display_effect' => +(float) $invoice->customer_paid,
-                        'customer_display_effect' => +(float) $invoice->customer_paid,
+                        'document_amount' => $paymentAmount,
+                        'amount' => $paymentAmount,
+                        'display_effect' => $paymentAmount,
+                        'customer_display_effect' => $paymentAmount,
                         'time' => $cancelledAt,
                         'display_time' => $cancelledAt,
                         'created_at' => $cancelledAt,
                         'reference_type' => 'Invoice',
                         'reference_id' => $invoice->id,
                         'reference_code' => $invoice->code,
-                        'reversal_of' => 'customer|invoices|'.$invoice->id.'|invoice_payment|receivable',
+                        'source_table' => 'cash_flows',
+                        'source_id' => $paymentSourceId.':cancel',
+                        'reversal_of' => $paymentIdentity,
                         'is_real_voucher' => true,
                         'is_virtual_fallback' => false,
                         'source' => 'document_first',
+                        'payment_origin' => 'source_document',
                         'document_group_key' => $invoice->code,
                         'document_group_type' => 'invoice',
                         'document_group_parent_code' => $invoice->code,
                         'document_group_time' => $businessTime,
-                        'document_group_sequence' => 91,
+                        'document_group_sequence' => 91 + $paymentIndex,
                         'sort_group_key' => $invoice->code,
                         'sort_group_time' => $businessTime,
-                        'sort_group_sequence' => 91,
+                        'sort_group_sequence' => 91 + $paymentIndex,
                     ]));
                 }
             }
@@ -218,6 +275,7 @@ class CustomerDebtDomainEventSource
                     'cash_flow' => $cf,
                     'amount' => (float) $cf->amount,
                     'strategy' => 'direct_invoice_reference',
+                    'payment_origin' => 'source_document',
                 ];
 
                 continue;
@@ -233,6 +291,7 @@ class CustomerDebtDomainEventSource
                     'cash_flow' => $cf,
                     'amount' => $amount,
                     'strategy' => 'legacy_reference_allocation',
+                    'payment_origin' => 'standalone',
                 ];
                 $allocated += $amount;
             }
@@ -291,6 +350,7 @@ class CustomerDebtDomainEventSource
                     'source_table' => 'cash_flows',
                     'source_id' => $cf->id.':'.$refCode,
                     'allocation_strategy' => $allocation['strategy'],
+                    'payment_origin' => $allocation['payment_origin'],
                     'receipt_allocation_mismatch' => $mismatch,
                     'needs_manual_review' => $mismatch,
                     'source' => 'document_first',
@@ -312,7 +372,11 @@ class CustomerDebtDomainEventSource
         // exception is an order deposit applied before the invoice existed:
         // it is a separate payment event and gets its own evidence below.
         foreach ($invoices as $invoice) {
-            $realAllocated = (float) collect($receiptsByInvoice[$invoice->code] ?? [])->sum('amount');
+            $activeAllocated = (float) collect($receiptsByInvoice[$invoice->code] ?? [])->sum('amount');
+            $cancelledSourcePaymentCoverage = BusinessStatus::isCancelled($invoice->status)
+                ? (float) collect($invoiceSourcePayments->get($invoice->code, []))->sum('amount')
+                : 0.0;
+            $realAllocated = $activeAllocated + $cancelledSourcePaymentCoverage;
             $invoicePaid = max(0.0, (float) $invoice->customer_paid);
             $order = $invoice->order;
             $orderDepositApplied = min(
@@ -358,6 +422,7 @@ class CustomerDebtDomainEventSource
                     'source_id' => ($order?->id ?? $invoice->id).':deposit:'.$invoice->id,
                     'source' => 'legacy_order_deposit',
                     'legacy_order_deposit' => true,
+                    'payment_origin' => 'order_deposit',
                     'order_deposit_applied_amount' => $orderDepositApplied,
                     'real_order_deposit_covered_amount' => $orderDepositCovered,
                     'document_group_key' => $invoice->code,
@@ -411,8 +476,44 @@ class CustomerDebtDomainEventSource
                     'sort_group_time' => $businessTime,
                     'sort_group_sequence' => 20,
                     'fallback_for_unallocated_amount' => true,
+                    'payment_origin' => 'source_snapshot',
                     'real_allocated_amount' => $realAllocated,
                 ]));
+
+                if (BusinessStatus::isCancelled($invoice->status)) {
+                    $cancelledAt = $invoice->cancelled_at ?: $invoice->updated_at ?: $businessTime;
+                    $entries->push($this->createEntry([
+                        'id' => 'invoice-payment-fallback-cancel-'.$invoice->id,
+                        'code' => 'HUY-TTHD'.preg_replace('/^HD/', '', $invoice->code),
+                        'display_type' => 'Hủy thanh toán hóa đơn',
+                        'type_raw' => 'invoice_payment_cancel_reversal',
+                        'event_kind' => 'invoice_payment_cancel_reversal',
+                        'domain' => 'customer',
+                        'document_amount' => $fallbackAmount,
+                        'amount' => $fallbackAmount,
+                        'display_effect' => $fallbackAmount,
+                        'customer_display_effect' => $fallbackAmount,
+                        'time' => $cancelledAt,
+                        'display_time' => $cancelledAt,
+                        'created_at' => $cancelledAt,
+                        'reference_type' => 'Invoice',
+                        'reference_id' => $invoice->id,
+                        'reference_code' => $invoice->code,
+                        'reversal_of' => 'customer|invoices|'.$invoice->id.'|invoice_payment|receivable',
+                        'is_real_voucher' => false,
+                        'is_virtual_fallback' => true,
+                        'source' => 'document_first',
+                        'payment_origin' => 'source_snapshot',
+                        'document_group_key' => $invoice->code,
+                        'document_group_type' => 'invoice',
+                        'document_group_parent_code' => $invoice->code,
+                        'document_group_time' => $businessTime,
+                        'document_group_sequence' => 91,
+                        'sort_group_key' => $invoice->code,
+                        'sort_group_time' => $businessTime,
+                        'sort_group_sequence' => 91,
+                    ]));
+                }
             }
         }
 
@@ -451,6 +552,7 @@ class CustomerDebtDomainEventSource
                 'is_virtual_display_adjustment' => $isAdjustment,
                 'is_debt_adjustment_cashflow' => $isAdjustment,
                 'allocated_amount' => (float) $receipt['allocated_amount'],
+                'payment_origin' => 'standalone',
                 'source' => 'document_first',
             ]));
         }
@@ -535,6 +637,7 @@ class CustomerDebtDomainEventSource
                 'is_real_voucher' => true,
                 'is_virtual_fallback' => false,
                 'source' => 'document_first',
+                'payment_origin' => 'standalone',
             ];
             $entries->push($this->createEntry(array_merge($common, [
                 'id' => 'cancelled-cash-flow-original-'.$cashFlow->id,

@@ -292,7 +292,7 @@ class CustomerDebtTimelineBusinessTimeTest extends TestCase
         $this->app->instance(CustomerDebtDocumentTimelineService::class, $mock);
 
         $timelineResponse = $this->actingAs($admin)
-            ->getJson("/customers/{$customer->id}/debt-history?page=1&per_page=10");
+            ->getJson("/customers/{$customer->id}/debt-history?page=1&per_page=10&cancellation_scope=all");
 
         $timelineResponse->assertOk()
             ->assertJsonPath('pagination.total', 11)
@@ -304,7 +304,7 @@ class CustomerDebtTimelineBusinessTimeTest extends TestCase
         ));
 
         $exportResponse = $this->actingAs($admin)->get(
-            "/customers/{$customer->id}/export-debt?format=csv&date_preset=all&include_detail=0",
+            "/customers/{$customer->id}/export-debt?format=csv&date_preset=all&include_detail=0&cancellation_scope=all",
         );
         $exportResponse->assertOk();
         $csv = $exportResponse->streamedContent() ?: $exportResponse->getContent();

@@ -265,9 +265,8 @@ class SupplierPaymentDocumentTimelineTest extends TestCase
         $after = app(CanonicalPartnerDebtEventService::class)->build($supplier->fresh());
         $this->assertSame(3, $before->filter(fn (array $event): bool => ($event['event_kind'] ?? '') === 'supplier_payment')->count());
         $this->assertSame(3, $after->filter(fn (array $event): bool => ($event['event_kind'] ?? '') === 'supplier_payment')->count());
-        $this->assertTrue($after->contains(fn (array $event): bool => ($event['event_kind'] ?? '') === 'supplier_payment_cancel_reversal'
-            && (int) (($event['metadata']['reference_id'] ?? 0)) === (int) $purchaseB->id
-            && abs((float) $event['supplier_delta'] - 3_000_000.0) < 0.01));
+        $this->assertFalse($after->contains(fn (array $event): bool => ($event['event_kind'] ?? '') === 'supplier_payment_cancel_reversal'
+            && (int) (($event['metadata']['reference_id'] ?? 0)) === (int) $purchaseB->id));
         $this->assertTrue($after->contains(fn (array $event): bool => ($event['event_kind'] ?? '') === 'supplier_payment'
             && (int) (($event['metadata']['reference_id'] ?? 0)) === (int) $purchases[0]->id
             && abs((float) $event['supplier_delta'] + 2_000_000.0) < 0.01));
@@ -285,6 +284,8 @@ class SupplierPaymentDocumentTimelineTest extends TestCase
             ->where('allocation_id', $cancelledAllocationId)
             ->count());
         $this->assertSame('active', (string) $payment->fresh()->status);
+        $this->assertSame(-3_000_000.0, (float) $supplier->fresh()->supplier_debt_amount);
+        $this->assertSame(-3_000_000.0, (float) $after->sum('supplier_delta'));
     }
 
     public function test_document_csv_and_xlsx_exports_render_one_payment_row(): void

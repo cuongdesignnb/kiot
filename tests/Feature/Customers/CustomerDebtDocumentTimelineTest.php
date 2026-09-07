@@ -211,7 +211,13 @@ class CustomerDebtDocumentTimelineTest extends TestCase
 
         $canonical = $this->service->build($customer);
         $audit = $this->service->build($customer, ['include_technical' => true]);
-        $reference = collect($audit['entries'])->firstWhere('code', $code);
+        $auditEntries = collect($audit['entries'])->where('code', $code);
+        $reference = $auditEntries->first(fn (array $entry): bool => ($entry['excluded_reason'] ?? null)
+            === 'cancelled_cash_flow_ledger_mirror_reference_only');
+        $cancelledOriginal = $auditEntries->first(fn (array $entry): bool => ($entry['event_kind'] ?? null) === 'customer_payment'
+            && ($entry['source_table'] ?? null) === 'cash_flows');
+        $cancelledReversal = $auditEntries->first(fn (array $entry): bool => ($entry['event_kind'] ?? null) === 'customer_payment_cancel_reversal'
+            && ($entry['source_table'] ?? null) === 'cash_flows');
 
         $this->assertSame(0.0, (float) $canonical['summary']['raw_document_final_balance']);
         $this->assertNotNull($reference);
@@ -221,6 +227,11 @@ class CustomerDebtDocumentTimelineTest extends TestCase
             'cancelled_cash_flow_ledger_mirror_reference_only',
             $reference['excluded_reason'],
         );
+        $this->assertNotNull($cancelledOriginal);
+        $this->assertNotNull($cancelledReversal);
+        $this->assertSame(-505000.0, (float) $cancelledOriginal['customer_display_effect']);
+        $this->assertSame(505000.0, (float) $cancelledReversal['customer_display_effect']);
+        $this->assertSame($cancelledOriginal['event_identity'], $cancelledReversal['reversal_of']);
     }
 
     public function test_cancelled_supplier_cash_flow_code_collision_does_not_hide_customer_ledger(): void
