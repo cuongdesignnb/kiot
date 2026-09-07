@@ -4130,7 +4130,12 @@ const createdDateRange = computed({
                             <tbody class="divide-y">
                                 <tr v-for="(item, idx) in invoiceDetail.data.items" :key="idx" class="hover:bg-gray-50">
                                     <td class="px-3 py-2 text-blue-600 font-medium">{{ item.product_code }}</td>
-                                    <td class="px-3 py-2">{{ item.product_name }}</td>
+                                    <td class="px-3 py-2">
+                                        <div>{{ item.product_name }}</div>
+                                        <div v-if="item.serial || item.serials?.length" class="text-gray-500 text-xs mt-1 bg-gray-100 inline-block px-1 rounded font-mono">
+                                            Serial/IMEI: {{ item.serial || item.serials.map((serial) => serial.serial_number).join(', ') }}
+                                        </div>
+                                    </td>
                                     <td class="px-3 py-2 text-right">{{ item.quantity }}</td>
                                     <td class="px-3 py-2 text-right">{{ formatCurrency(item.price) }}</td>
                                     <td class="px-3 py-2 text-right">{{ formatCurrency(item.discount) }}</td>
@@ -4291,7 +4296,12 @@ const createdDateRange = computed({
                                         <tbody class="divide-y text-gray-700 font-normal">
                                             <tr v-for="(item, idx) in debtVoucherDetailModal.data.items" :key="idx" class="hover:bg-gray-50">
                                                 <td class="px-3 py-2 text-blue-600 font-semibold">{{ item.product_code }}</td>
-                                                <td class="px-3 py-2">{{ item.product_name }}</td>
+                                                <td class="px-3 py-2">
+                                                    <div>{{ item.product_name }}</div>
+                                                    <div v-if="item.serial || item.serials?.length" class="text-gray-500 text-xs mt-1 bg-gray-100 inline-block px-1 rounded font-mono">
+                                                        Serial/IMEI: {{ item.serial || item.serials.map((serial) => serial.serial_number).join(', ') }}
+                                                    </div>
+                                                </td>
                                                 <td class="px-3 py-2 text-right font-medium">{{ item.quantity }}</td>
                                                 <td class="px-3 py-2 text-right">{{ formatCurrency(item.price) }}</td>
                                                 <td class="px-3 py-2 text-right text-red-500">{{ formatCurrency(item.discount) }}</td>
