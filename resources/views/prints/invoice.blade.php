@@ -64,17 +64,20 @@
                 </tr>
             </thead>
             <tbody>
-                @foreach($invoice->items as $i => $item)
+                @foreach($invoiceItems as $item)
                 <tr>
                     <td>
-                        <div class="product-name">{{ $item->product->name ?? 'Sản phẩm' }}</div>
-                        @if($item->product && $item->product->sku)
-                        <div class="product-sku">{{ $item->product->sku }}</div>
+                        <div class="product-name">{{ $item['product_name'] ?: 'Sản phẩm' }}</div>
+                        @if($item['product_code'])
+                        <div class="product-sku">{{ $item['product_code'] }}</div>
+                        @endif
+                        @if($item['serial'])
+                        <div class="product-sku">Serial/IMEI: {{ $item['serial'] }}</div>
                         @endif
                     </td>
-                    <td class="r">{{ $item->quantity }}</td>
-                    <td class="r">{{ format_vnd($item->price) }}</td>
-                    <td class="r">{{ format_vnd($item->subtotal ?? $item->price * $item->quantity) }}</td>
+                    <td class="r">{{ $item['quantity'] }}</td>
+                    <td class="r">{{ format_vnd($item['price']) }}</td>
+                    <td class="r">{{ format_vnd($item['subtotal'] ?? $item['price'] * $item['quantity']) }}</td>
                 </tr>
                 @endforeach
             </tbody>

@@ -95,7 +95,12 @@ const statusColors = {
                     <tbody class="divide-y">
                         <tr v-for="(item, idx) in invoice.items" :key="idx" class="hover:bg-gray-50">
                             <td class="px-4 py-3 text-blue-600 font-semibold">{{ item.product_code || item.sku || item.product?.sku || item.product?.code || '---' }}</td>
-                            <td class="px-4 py-3">{{ item.product_name }}</td>
+                            <td class="px-4 py-3">
+                                <div>{{ item.product_name }}</div>
+                                <div v-if="item.serial || item.serials?.length" class="text-gray-500 text-xs mt-1 bg-gray-100 inline-block px-1 rounded font-mono">
+                                    Serial/IMEI: {{ item.serial || item.serials.map((serial) => serial.serial_number).join(', ') }}
+                                </div>
+                            </td>
                             <td class="px-4 py-3 text-right">{{ item.quantity }}</td>
                             <td class="px-4 py-3 text-right">{{ fmt(item.price) }}</td>
                             <td class="px-4 py-3 text-right text-red-500">{{ item.discount ? fmt(item.discount) : '---' }}</td>

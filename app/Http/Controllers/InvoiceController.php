@@ -17,6 +17,7 @@ use App\Models\StockMovement;
 use App\Models\User;
 use App\Services\CustomerDebtService;
 use App\Services\Debt\PartnerDebtMutationCoordinator;
+use App\Services\InvoiceItemSerialResolver;
 use App\Services\InvoiceSaleService;
 use App\Services\InvoiceUpdateService;
 use App\Services\StockMovementService;
@@ -91,6 +92,10 @@ class InvoiceController extends Controller
         }
 
         $invoices = $query->paginate(15)->withQueryString();
+        $this->hydrateInvoiceSerialDisplay(
+            $invoices->getCollection(),
+            app(InvoiceItemSerialResolver::class)
+        );
 
         // Step 24.3C: enrich each invoice with cancel-policy hints so the UI
         // can render the right cancel modal state without guessing or duplicating
@@ -200,6 +205,8 @@ class InvoiceController extends Controller
             ->latest()
             ->limit(20)
             ->get();
+
+        $this->hydrateInvoiceSerialDisplay($invoices, app(InvoiceItemSerialResolver::class));
 
         return response()->json($invoices);
     }
@@ -609,6 +616,7 @@ class InvoiceController extends Controller
     public function print(Invoice $invoice)
     {
         $invoice->load(['items.product', 'customer']);
+        $invoiceItems = app(InvoiceItemSerialResolver::class)->resolve($invoice);
 
         // Công nợ cũ: nợ hiện tại của khách trừ đi nợ phát sinh từ hóa đơn này
         $previousDebt = 0;
@@ -618,7 +626,7 @@ class InvoiceController extends Controller
             $previousDebt = $currentDebt - $invoiceDebt;
         }
 
-        return view('prints.invoice', compact('invoice', 'previousDebt'));
+        return view('prints.invoice', compact('invoice', 'invoiceItems', 'previousDebt'));
     }
 
     public function paymentHistory(Invoice $invoice)
@@ -720,14 +728,7 @@ class InvoiceController extends Controller
                 'is_delivery' => $invoice->is_delivery,
                 'delivery_partner' => $invoice->delivery_partner,
                 'payment_method' => $invoice->payment_method,
-                'items' => $invoice->items->map(fn ($item) => [
-                    'product_code' => $item->product?->sku ?: $item->product?->code ?: $item->product?->barcode ?: '',
-                    'product_name' => $item->product->name ?? '',
-                    'quantity' => $item->quantity,
-                    'price' => $item->price,
-                    'discount' => $item->discount ?? 0,
-                    'subtotal' => $item->subtotal,
-                ]),
+                'items' => $this->invoiceDisplayItems($invoice),
             ],
         ]);
     }
@@ -762,15 +763,56 @@ class InvoiceController extends Controller
             'is_delivery' => $invoice->is_delivery,
             'delivery_partner' => $invoice->delivery_partner,
             'payment_method' => $invoice->payment_method,
-            'items' => $invoice->items->map(fn ($item) => [
-                'product_code' => $item->product?->sku ?: $item->product?->code ?: $item->product?->barcode ?: '',
-                'product_name' => $item->product->name ?? '',
-                'quantity' => $item->quantity,
-                'price' => $item->price,
-                'discount' => $item->discount ?? 0,
-                'subtotal' => $item->subtotal,
-            ]),
+            'items' => $this->invoiceDisplayItems($invoice),
         ]);
+    }
+
+    /**
+     * Add the canonical, read-only serial representation to list/search rows.
+     * The raw invoice_item_serials relation is removed afterwards so list and
+     * search responses never leak cost snapshots or expose link IDs as IMEIs.
+     */
+    private function hydrateInvoiceSerialDisplay(iterable $invoices, InvoiceItemSerialResolver $resolver): void
+    {
+        foreach ($invoices as $invoice) {
+            $resolvedByItem = $resolver->resolve($invoice)->keyBy('invoice_item_id');
+
+            foreach ($invoice->items as $item) {
+                $display = $resolvedByItem->get((int) $item->id);
+                if (! $display) {
+                    continue;
+                }
+
+                $item->setAttribute('serial', $display['serial']);
+                $item->setAttribute('serial_count', $display['serial_count']);
+                $item->setAttribute('display_serials', $display['serials']);
+                $item->unsetRelation('serials');
+            }
+        }
+    }
+
+    /**
+     * One payload for invoice detail screens, including serials but excluding
+     * costing fields. Cost snapshots remain limited to the internal stock-card
+     * document resolver.
+     */
+    private function invoiceDisplayItems(Invoice $invoice)
+    {
+        return app(InvoiceItemSerialResolver::class)
+            ->resolve($invoice)
+            ->map(fn (array $item) => [
+                'invoice_item_id' => $item['invoice_item_id'],
+                'product_code' => $item['product_code'],
+                'product_name' => $item['product_name'],
+                'quantity' => $item['quantity'],
+                'price' => $item['price'],
+                'discount' => $item['discount'],
+                'subtotal' => $item['subtotal'],
+                'serial' => $item['serial'],
+                'serials' => $item['serials'],
+                'serial_count' => $item['serial_count'],
+            ])
+            ->values();
     }
 
     /**

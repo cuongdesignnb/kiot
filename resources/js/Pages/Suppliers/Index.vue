@@ -1855,7 +1855,12 @@ const submitActivate = (supplier) => {
                                 </thead>
                                 <tbody class="divide-y divide-gray-100">
                                     <tr v-for="(it, i) in supplierVoucher.payload.data.items" :key="i">
-                                        <td class="p-2">{{ it.product_name }}</td>
+                                        <td class="p-2">
+                                            <div>{{ it.product_name }}</div>
+                                            <div v-if="it.serial || it.serials?.length" class="text-gray-500 text-[11px] mt-1 bg-gray-100 inline-block px-1 rounded font-mono">
+                                                Serial/IMEI: {{ it.serial || it.serials.map((serial) => serial.serial_number).join(', ') }}
+                                            </div>
+                                        </td>
                                         <td class="p-2 text-right">{{ it.quantity }}</td>
                                         <td class="p-2 text-right">{{ formatCurrency(it.price) }}</td>
                                         <td class="p-2 text-right">{{ formatCurrency(it.subtotal) }}</td>

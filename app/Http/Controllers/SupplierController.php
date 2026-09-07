@@ -12,6 +12,7 @@ use App\Models\PurchaseReturn;
 use App\Models\SupplierDebtTransaction;
 use App\Services\Debt\PartnerDebtMutationCoordinator;
 use App\Services\Debt\PartnerDebtPublicTimelineService;
+use App\Services\InvoiceItemSerialResolver;
 use App\Services\PartnerAlreadyExistsException;
 use App\Services\PartnerRoleService;
 use App\Support\Debt\PartnerDebtDisplayBalance;
@@ -1158,6 +1159,7 @@ class SupplierController extends Controller
                 return $notFound();
             }
             $invoice->load(['items.product']);
+            $invoiceItems = app(InvoiceItemSerialResolver::class)->resolve($invoice);
             $businessTime = $invoice->transaction_date
                 ?? ($invoice->sale_time ? \Carbon\Carbon::parse($invoice->sale_time) : $invoice->created_at);
             $recordedAt = $invoice->lock_started_at ?? $invoice->created_at;
@@ -1173,9 +1175,16 @@ class SupplierController extends Controller
                     'recorded_time_source' => $invoice->lock_started_at ? 'lock_started_at' : 'created_at',
                     'note' => $invoice->note,
                     'total' => $invoice->total, 'discount' => $invoice->discount, 'customer_paid' => $invoice->customer_paid,
-                    'items' => $invoice->items->map(fn ($it) => [
-                        'product_code' => $it->product->code ?? '', 'product_name' => $it->product->name ?? '',
-                        'quantity' => $it->quantity, 'price' => $it->price, 'subtotal' => $it->subtotal,
+                    'items' => $invoiceItems->map(fn (array $item) => [
+                        'invoice_item_id' => $item['invoice_item_id'],
+                        'product_code' => $item['product_code'],
+                        'product_name' => $item['product_name'],
+                        'quantity' => $item['quantity'],
+                        'price' => $item['price'],
+                        'subtotal' => $item['subtotal'],
+                        'serial' => $item['serial'],
+                        'serials' => $item['serials'],
+                        'serial_count' => $item['serial_count'],
                     ]),
                 ],
             ]);

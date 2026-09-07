@@ -17,6 +17,7 @@ use App\Services\CustomerPaymentService;
 use App\Services\Debt\PartnerDebtMutationCoordinator;
 use App\Services\Debt\PartnerDebtPublicTimelineService;
 use App\Services\DebtOffsetService;
+use App\Services\InvoiceItemSerialResolver;
 use App\Services\PartnerAlreadyExistsException;
 use App\Services\PartnerMergeService;
 use App\Services\PartnerRoleService;
@@ -1475,6 +1476,7 @@ class CustomerController extends Controller
             }
 
             $invoice->load(['customer', 'items.product', 'branch', 'employee']);
+            $invoiceItems = app(InvoiceItemSerialResolver::class)->resolve($invoice);
             $businessTime = $invoice->transaction_date
                 ?? ($invoice->sale_time ? \Carbon\Carbon::parse($invoice->sale_time) : $invoice->created_at);
             $recordedAt = $invoice->lock_started_at ?? $invoice->created_at;
@@ -1500,13 +1502,17 @@ class CustomerController extends Controller
                 'effective_paid' => $invoice->customer_paid,
                 'debt_amount' => max(0, $invoice->total - $invoice->customer_paid),
                 'payment_method' => $invoice->payment_method,
-                'items' => $invoice->items->map(fn ($item) => [
-                    'product_code' => $item->product?->sku ?: $item->product?->barcode ?: '',
-                    'product_name' => $item->product?->name ?: '',
-                    'quantity' => $item->quantity,
-                    'price' => $item->price,
-                    'discount' => $item->discount ?? 0,
-                    'subtotal' => $item->subtotal,
+                'items' => $invoiceItems->map(fn (array $item) => [
+                    'invoice_item_id' => $item['invoice_item_id'],
+                    'product_code' => $item['product_code'],
+                    'product_name' => $item['product_name'],
+                    'quantity' => $item['quantity'],
+                    'price' => $item['price'],
+                    'discount' => $item['discount'],
+                    'subtotal' => $item['subtotal'],
+                    'serial' => $item['serial'],
+                    'serials' => $item['serials'],
+                    'serial_count' => $item['serial_count'],
                 ]),
             ];
 
