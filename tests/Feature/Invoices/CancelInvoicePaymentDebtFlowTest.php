@@ -7,6 +7,7 @@ use App\Models\Customer;
 use App\Models\Invoice;
 use App\Models\Product;
 use App\Models\User;
+use App\Services\CustomerPaymentService;
 use App\Services\InvoiceSaleService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
@@ -160,6 +161,70 @@ class CancelInvoicePaymentDebtFlowTest extends TestCase
         $this->assertEquals('cancelled', $payment['status']);
     }
 
+    public function test_cancel_invoice_only_cancels_invoice_owned_receipt_and_keeps_later_debt_payment_as_credit(): void
+    {
+        $admin = $this->admin();
+        $customer = $this->customer();
+        $product = $this->product();
+
+        $invoice = app(InvoiceSaleService::class)->createSale([
+            'customer_id' => $customer->id,
+            'subtotal' => 250000,
+            'total' => 250000,
+            'customer_paid' => 100000,
+            'payment_method' => 'Tiền mặt',
+            'items' => [[
+                'product_id' => $product->id,
+                'quantity' => 1,
+                'price' => 250000,
+            ]],
+        ], [
+            'created_by_name' => $admin->name,
+            'validate_before_purchase_date' => false,
+            'validate_stock_setting' => false,
+            'allow_oversell' => true,
+        ]);
+
+        $sourceReceipt = CashFlow::query()
+            ->where('reference_type', 'Invoice')
+            ->where('reference_code', $invoice->code)
+            ->firstOrFail();
+        $separatePayment = app(CustomerPaymentService::class)->collect(
+            $customer->fresh(),
+            50000,
+            'auto',
+            [],
+            'Khách thanh toán riêng sau khi mua',
+        );
+        $separateReceipt = CashFlow::findOrFail($separatePayment['cash_flow_id']);
+
+        $this->assertSame('DebtPayment', $separateReceipt->reference_type);
+        $this->assertSame(100000.0, (float) $customer->fresh()->debt_amount);
+
+        $this->actingAs($admin)->delete("/invoices/{$invoice->id}");
+
+        $this->assertSame('cancelled', $sourceReceipt->fresh()->status);
+        $this->assertSame('active', $separateReceipt->fresh()->status);
+        $this->assertNull($separateReceipt->fresh()->deleted_at);
+        $this->assertSame(-50000.0, (float) $customer->fresh()->debt_amount);
+
+        $activeEntries = collect($this->actingAs($admin)
+            ->getJson("/customers/{$customer->id}/debt-history")
+            ->assertOk()
+            ->json('entries'));
+        $this->assertTrue($activeEntries->contains('code', $separateReceipt->code));
+        $this->assertFalse($activeEntries->contains('code', $invoice->code));
+        $this->assertFalse($activeEntries->contains('code', 'HUY-'.$invoice->code));
+
+        $auditEntries = collect($this->actingAs($admin)
+            ->getJson("/customers/{$customer->id}/debt-history?cancellation_scope=all")
+            ->assertOk()
+            ->json('entries'));
+        $this->assertTrue($auditEntries->contains('code', $sourceReceipt->code));
+        $this->assertTrue($auditEntries->contains('code', 'HUY-'.$sourceReceipt->code));
+        $this->assertTrue($auditEntries->contains('code', 'HUY-'.$invoice->code));
+    }
+
     public function test_debt_history_maps_cancel_label_and_excludes_cancelled_legacy_invoices(): void
     {
         $admin = $this->admin();
@@ -198,12 +263,19 @@ class CancelInvoicePaymentDebtFlowTest extends TestCase
         // Sau khi hủy, nợ phải về 0
         $this->assertEquals(0, $customer->fresh()->debt_amount);
 
-        // Lấy lịch sử công nợ
+        // Mặc định kế toán chỉ thấy chứng từ đang hiệu lực.
         $response = $this->actingAs($admin)->get("/customers/{$customer->id}/debt-history");
         $response->assertOk();
 
-        $data = $response->json();
-        $entries = $data['entries'];
+        $activeEntries = collect($response->json('entries'));
+        $this->assertFalse($activeEntries->contains('code', $invoice->code));
+        $this->assertFalse($activeEntries->contains('code', 'HUY-'.$invoice->code));
+
+        // Chế độ truy vết vẫn giữ nguyên chứng từ và các dòng đảo.
+        $auditResponse = $this->actingAs($admin)
+            ->get("/customers/{$customer->id}/debt-history?cancellation_scope=all");
+        $auditResponse->assertOk();
+        $entries = $auditResponse->json('entries');
 
         // Kiểm tra xem dòng ledger đảo công nợ có type="Hủy hóa đơn"
         $reversalLedger = collect($entries)->first(fn ($e) => $e['type_raw'] === 'invoice_cancel_reversal');

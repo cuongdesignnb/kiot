@@ -19,8 +19,8 @@ class SupplierReconciliationCheckpointVisibilityTest extends TestCase
     {
         $timeline = $this->timelineFixture();
 
-        $supplier = app(PartnerDebtPublicTimelineService::class)->project($timeline, 'supplier');
-        $customer = app(PartnerDebtPublicTimelineService::class)->project($timeline, 'customer');
+        $supplier = app(PartnerDebtPublicTimelineService::class)->project($timeline, 'supplier', 'all');
+        $customer = app(PartnerDebtPublicTimelineService::class)->project($timeline, 'customer', 'all');
 
         $this->assertSame(
             ['HUY-PN-SECOND-ORDER', 'PCPN-SECOND-ORDER', 'PN-SECOND-ORDER'],
@@ -44,7 +44,7 @@ class SupplierReconciliationCheckpointVisibilityTest extends TestCase
     public function test_checkpoint_is_absorbed_into_excel_opening_with_note_column(): void
     {
         $projected = app(PartnerDebtPublicTimelineService::class)
-            ->project($this->timelineFixture(), 'supplier');
+            ->project($this->timelineFixture(), 'supplier', 'all');
         $supplier = new Customer([
             'code' => 'NCC-PUBLIC-TIMELINE',
             'name' => 'Nhà cung cấp kiểm thử',
@@ -216,7 +216,7 @@ class SupplierReconciliationCheckpointVisibilityTest extends TestCase
         $this->app->instance(SupplierDebtDocumentTimelineService::class, $mock);
 
         $response = $this->actingAs($admin)->get(
-            "/api/suppliers/{$supplier->id}/export-debt?format=csv&date_preset=all&include_detail=0",
+            "/api/suppliers/{$supplier->id}/export-debt?format=csv&date_preset=all&include_detail=0&cancellation_scope=all",
         );
 
         $response->assertOk();

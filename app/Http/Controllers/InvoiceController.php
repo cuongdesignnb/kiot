@@ -494,12 +494,36 @@ class InvoiceController extends Controller
                 // recording its reversal, while keeping every write inside the
                 // existing transaction for rollback safety.
                 $relatedCashFlows = CashFlow::withTrashed()
+                    ->where('type', 'receipt')
                     ->where('reference_type', 'Invoice')
                     ->where('reference_code', $invoice->code)
                     ->where(function ($q) {
                         $q->whereNull('status')->orWhere('status', '!=', 'cancelled');
                     })
                     ->get();
+                $sourceDocumentPaid = (float) $relatedCashFlows->sum('amount');
+                if ($sourceDocumentPaid <= 0.01 && (float) $invoice->customer_paid > 0.01) {
+                    $standaloneAllocated = \Illuminate\Support\Facades\Schema::hasTable('customer_payment_allocations')
+                        ? (float) DB::table('customer_payment_allocations as allocations')
+                            ->join('cash_flows as payments', 'payments.id', '=', 'allocations.cash_flow_id')
+                            ->where('allocations.invoice_id', $invoice->id)
+                            ->where(function ($query): void {
+                                $query->whereNull('payments.reference_type')
+                                    ->orWhere('payments.reference_type', '!=', 'Invoice');
+                            })
+                            ->whereNull('payments.deleted_at')
+                            ->where(function ($query): void {
+                                $query->whereNull('payments.status')
+                                    ->orWhere('payments.status', '!=', 'cancelled');
+                            })
+                            ->sum('allocations.amount')
+                        : 0.0;
+                    $orderDeposit = max(0.0, (float) ($invoice->order_deposit_applied_amount ?? 0));
+                    $sourceDocumentPaid = max(
+                        0.0,
+                        (float) $invoice->customer_paid - $standaloneAllocated - $orderDeposit,
+                    );
+                }
                 foreach ($relatedCashFlows as $cashFlow) {
                     $cashFlow->forceFill([
                         'status' => 'cancelled',
@@ -528,16 +552,22 @@ class InvoiceController extends Controller
                 if ($invoice->customer_id) {
                     $customer = \App\Models\Customer::find($invoice->customer_id);
                     if ($customer) {
-                        // Hủy hóa đơn: hoàn lại debt (bao gồm cả overpayment negative)
-                        // RR-06: ghi ledger qua service thay vì decrement trực tiếp.
-                        $debtAmount = $invoice->total - ($invoice->customer_paid ?? 0);
-                        if ($debtAmount != 0) {
+                        // Reverse exactly the balance effect owned by the sale.
+                        // A receipt created later through customer debt payment
+                        // remains an independent voucher/credit after the invoice
+                        // is cancelled; only Invoice-owned receipts are cancelled.
+                        $invoiceBalanceEffect = (float) $invoice->total - $sourceDocumentPaid;
+                        if (abs($invoiceBalanceEffect) > 0.0001) {
                             app(CustomerDebtService::class)->recordInvoiceBalanceReversal(
                                 $customer->id,
-                                (float) $debtAmount,
+                                $invoiceBalanceEffect,
                                 $invoice,
                                 "Đảo công nợ do hủy hóa đơn {$invoice->code}",
-                                ['ref_code' => $invoice->code, 'type' => 'adjustment']
+                                [
+                                    'ref_code' => $invoice->code,
+                                    'type' => 'adjustment',
+                                    'source_document_paid' => $sourceDocumentPaid,
+                                ]
                             );
                         }
                         $customer->decrement('total_spent', $invoice->total);
@@ -561,6 +591,7 @@ class InvoiceController extends Controller
                         'total' => (float) $invoice->total,
                         'cancel_reason' => $cancelReason,
                         'cancelled_cash_flows' => $cancelledCashFlowCount,
+                        'source_document_paid' => $sourceDocumentPaid,
                     ]
                 );
 

@@ -619,6 +619,9 @@ class CustomerController extends Controller
         }
 
         $mode = (string) $request->query('mode', 'document');
+        $cancellationScope = $request->validate([
+            'cancellation_scope' => 'nullable|string|in:active,cancelled,all',
+        ])['cancellation_scope'] ?? 'active';
 
         if ($mode === 'legacy') {
             $ledger = app(\App\Services\PartnerDebtLedgerService::class)->buildCustomerNetLedger($customer);
@@ -627,10 +630,14 @@ class CustomerController extends Controller
             // implementation. It is accepted for backwards-compatible URLs
             // but must never alter canonical event evidence.
             $ledger = app(\App\Services\CustomerDebtDocumentTimelineService::class)
-                ->build($customer, $request->except('view'));
+                ->build($customer, $request->except(['view', 'cancellation_scope']));
         }
 
-        $ledger = app(PartnerDebtPublicTimelineService::class)->project($ledger, 'customer');
+        $ledger = app(PartnerDebtPublicTimelineService::class)->project(
+            $ledger,
+            'customer',
+            $cancellationScope,
+        );
 
         // HOTFIX FOLLOW-UP — opt-in server-side pagination to match KiotViet
         // (10/page). Caller activates by sending ?page=N; without that
@@ -1010,17 +1017,24 @@ class CustomerController extends Controller
         // HOTFIX FOLLOW-UP — export must include ALL entries; bypass the
         // pagination layer added to debtHistory() for the UI tab.
         $mode = $request->query('mode', 'document');
+        $cancellationScope = $request->validate([
+            'cancellation_scope' => 'nullable|string|in:active,cancelled,all',
+        ])['cancellation_scope'] ?? 'active';
 
         if ($mode === 'legacy') {
             $data = app(\App\Services\PartnerDebtLedgerService::class)->buildCustomerNetLedger($customer);
         } else {
             $data = app(\App\Services\CustomerDebtDocumentTimelineService::class)
-                ->build($customer, $request->except('view'));
+                ->build($customer, $request->except(['view', 'cancellation_scope']));
         }
         $sourceEntries = collect($data['entries'] ?? [])
             ->map(fn ($entry) => is_array($entry) ? $entry : (array) $entry)
             ->all();
-        $data = app(PartnerDebtPublicTimelineService::class)->project($data, 'customer');
+        $data = app(PartnerDebtPublicTimelineService::class)->project(
+            $data,
+            'customer',
+            $cancellationScope,
+        );
         $openingAdjustment = (float) ($data['summary']['hidden_reconciliation_adjustment'] ?? 0);
         // Normalise to a plain array of associative arrays — historically
         // the export pulled this via getData(true) which produced this shape.
@@ -1030,7 +1044,7 @@ class CustomerController extends Controller
         $exportDocuments = app(\App\Services\Exports\PartnerDebtExportDocumentResolver::class);
         $entries = $exportDocuments->attachSourceNotes($entries, $sourceEntries);
 
-        $hasQuery = $request->hasAny(['date_preset', 'date_from', 'date_to', 'include_detail', 'columns', 'format']);
+        $hasQuery = $request->hasAny(['date_preset', 'date_from', 'date_to', 'include_detail', 'columns', 'format', 'cancellation_scope']);
 
         if ($hasQuery) {
             $validated = $request->validate([
@@ -1041,6 +1055,7 @@ class CustomerController extends Controller
                 'columns' => 'nullable|array',
                 'columns.*' => 'string|in:unit,quantity,unit_price,discount,vat,cost,line_total,note',
                 'format' => 'nullable|string|in:csv,xlsx',
+                'cancellation_scope' => 'nullable|string|in:active,cancelled,all',
             ], [
                 'date_from.regex' => 'Ngay bat dau phai co dinh dang dd/mm/yyyy hoac YYYY-MM-DD.',
                 'date_to.regex' => 'Ngay ket thuc phai co dinh dang dd/mm/yyyy hoac YYYY-MM-DD.',

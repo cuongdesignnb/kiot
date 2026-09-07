@@ -159,6 +159,7 @@ const supplierHistory = reactive({}); // { supplierId: [] }
 const supplierDebt = reactive({}); // { supplierId: [] }
 const supplierDataLoading = reactive({}); // { supplierId: bool }
 const debtFilter = ref('all');
+const debtCancellationScope = reactive({}); // active | cancelled | all
 
 const getSupplierTab = (id) => supplierTabs[id] || 'info';
 
@@ -272,6 +273,7 @@ const confirmDebtExport = () => {
     // HOTFIX 24.17B — always request KiotViet-style xlsx from the modal.
     params.set('format', 'xlsx');
     params.set('date_preset', debtExportForm.date_preset);
+    params.set('cancellation_scope', 'active');
     if (debtExportForm.date_preset === 'custom') {
         if (debtExportForm.date_from) params.set('date_from', debtExportForm.date_from);
         if (debtExportForm.date_to) params.set('date_to', debtExportForm.date_to);
@@ -398,7 +400,11 @@ const loadSupplierDebt = async (id, page = null) => {
         // Customer and supplier tabs project the same canonical partner event
         // stream with opposite signs. Never request the retired legacy
         // cross-role mirror source for dual-role partners.
-        const params = { page: targetPage, per_page: supplierDebtPerPage };
+        const params = {
+            page: targetPage,
+            per_page: supplierDebtPerPage,
+            cancellation_scope: debtCancellationScope[id] || 'active',
+        };
         const res = await axios.get(`/api/suppliers/${id}/debt-transactions`, {
             params,
         });
@@ -407,6 +413,11 @@ const loadSupplierDebt = async (id, page = null) => {
         supplierDebt[id] = { entries: [], summary: null, pagination: { total: 0, last_page: 1, current_page: 1, from: 0, to: 0 } };
     }
     supplierDataLoading[id] = false;
+};
+
+const changeSupplierDebtCancellationScope = (id, scope) => {
+    debtCancellationScope[id] = scope;
+    loadSupplierDebt(id, 1);
 };
 
 const changeSupplierDebtPage = (id, newPage) => {
@@ -1418,9 +1429,18 @@ const submitActivate = (supplier) => {
                                                 >
                                                     {{ supplierDebt[supplier.id].reconcile.message }}
                                                 </div>
-                                                <div class="flex justify-end mb-3">
-                                                    <select v-model="debtFilter" class="border border-gray-300 rounded px-3 py-1.5 text-sm outline-none">
+                                                <div class="flex flex-wrap justify-end gap-2 mb-3">
+                                                    <select
+                                                        :value="debtCancellationScope[supplier.id] || 'active'"
+                                                        @change="changeSupplierDebtCancellationScope(supplier.id, $event.target.value)"
+                                                        class="border border-gray-300 rounded px-3 py-1.5 text-sm outline-none"
+                                                    >
+                                                        <option value="active">Đang hiệu lực</option>
+                                                        <option value="cancelled">Đã hủy (truy vết)</option>
                                                         <option value="all">Tất cả giao dịch</option>
+                                                    </select>
+                                                    <select v-model="debtFilter" class="border border-gray-300 rounded px-3 py-1.5 text-sm outline-none">
+                                                        <option value="all">Tất cả loại</option>
                                                         <option value="purchase">Nhập hàng</option>
                                                         <option value="payment">Thanh toán</option>
                                                         <option value="adjustment">Điều chỉnh</option>

@@ -72,12 +72,25 @@ class PartnerDebtExcelRealPipelineContractTest extends TestCase
         $purchase->updated_at = Carbon::parse('2026-08-12 10:02:00');
         $purchase->save();
 
-        $supplierRows = $this->rows(
+        $defaultSupplierRows = $this->rows(
             "/api/suppliers/{$partner->id}/export-debt?format=xlsx&date_preset=all&include_detail=1&columns[]=quantity&columns[]=line_total",
             $actor,
         );
-        $customerRows = $this->rows(
+        $defaultCustomerRows = $this->rows(
             "/customers/{$partner->id}/export-debt?format=xlsx&date_preset=all&include_detail=1&columns[]=quantity&columns[]=line_total",
+            $actor,
+        );
+        self::assertSame(0, $this->countCode($defaultSupplierRows, $purchase->code));
+        self::assertSame(0, $this->countCode($defaultSupplierRows, 'HUY-'.$purchase->code));
+        self::assertSame(0, $this->countCode($defaultCustomerRows, $purchase->code));
+        self::assertSame(0, $this->countCode($defaultCustomerRows, 'HUY-'.$purchase->code));
+
+        $supplierRows = $this->rows(
+            "/api/suppliers/{$partner->id}/export-debt?format=xlsx&date_preset=all&include_detail=1&columns[]=quantity&columns[]=line_total&cancellation_scope=all",
+            $actor,
+        );
+        $customerRows = $this->rows(
+            "/customers/{$partner->id}/export-debt?format=xlsx&date_preset=all&include_detail=1&columns[]=quantity&columns[]=line_total&cancellation_scope=all",
             $actor,
         );
 

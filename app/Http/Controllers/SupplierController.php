@@ -445,6 +445,9 @@ class SupplierController extends Controller
         // retained only behind explicit ?mode=legacy.
         $supplier = $this->supplierOrFail($id);
         $mode = (string) $request->query('mode', 'document');
+        $cancellationScope = $request->validate([
+            'cancellation_scope' => 'nullable|string|in:active,cancelled,all',
+        ])['cancellation_scope'] ?? 'active';
         $usePartnerTimeline = (bool) $supplier->is_customer;
 
         if ($mode === 'legacy') {
@@ -456,7 +459,7 @@ class SupplierController extends Controller
             // `view=partner` is a retired presentation parameter. Never pass
             // it into a canonical source because it previously activated a
             // duplicate cross-role mirror for dual-role partners.
-            $options = $request->except(['page', 'per_page', 'view']);
+            $options = $request->except(['page', 'per_page', 'view', 'cancellation_scope']);
             $options['mode'] = 'document';
             $ledger = app(\App\Services\SupplierDebtDocumentTimelineService::class)
                 ->build($supplier, $options);
@@ -465,7 +468,11 @@ class SupplierController extends Controller
         $sourceEntries = collect($ledger['entries'] ?? [])
             ->map(fn ($entry) => is_array($entry) ? $entry : (array) $entry)
             ->all();
-        $ledger = app(PartnerDebtPublicTimelineService::class)->project($ledger, 'supplier');
+        $ledger = app(PartnerDebtPublicTimelineService::class)->project(
+            $ledger,
+            'supplier',
+            $cancellationScope,
+        );
         $openingAdjustment = (float) ($ledger['summary']['hidden_reconciliation_adjustment'] ?? 0);
 
         $exportDocuments = app(\App\Services\Exports\PartnerDebtExportDocumentResolver::class);
@@ -507,6 +514,7 @@ class SupplierController extends Controller
             'columns' => 'nullable|array',
             'columns.*' => 'string|in:unit,quantity,unit_price,discount,vat,cost,line_total,note',
             'format' => 'nullable|string|in:csv,xlsx',
+            'cancellation_scope' => 'nullable|string|in:active,cancelled,all',
             'mode' => 'nullable|string|in:document,legacy',
             'view' => 'nullable|string|in:partner',
         ], [
@@ -890,6 +898,9 @@ class SupplierController extends Controller
         $usePartnerTimeline = $isDualRole;
 
         $mode = $request->query('mode', 'document');
+        $cancellationScope = $request->validate([
+            'cancellation_scope' => 'nullable|string|in:active,cancelled,all',
+        ])['cancellation_scope'] ?? 'active';
 
         if ($mode === 'legacy') {
             $ledgerService = app(\App\Services\PartnerDebtLedgerService::class);
@@ -901,13 +912,17 @@ class SupplierController extends Controller
             // bookmarked URLs valid. The supplier orientation is decided by
             // the canonical projection, never by request input.
             $ledger = app(\App\Services\SupplierDebtDocumentTimelineService::class)
-                ->build($supplier, $request->except('view'));
+                ->build($supplier, $request->except(['view', 'cancellation_scope']));
         }
 
         // Public rows deliberately omit synthetic reconciliation checkpoints
         // and presentation metadata before pagination. Canonical audit events
         // remain available inside the timeline services.
-        $ledger = app(PartnerDebtPublicTimelineService::class)->project($ledger, 'supplier');
+        $ledger = app(PartnerDebtPublicTimelineService::class)->project(
+            $ledger,
+            'supplier',
+            $cancellationScope,
+        );
 
         // HOTFIX FOLLOW-UP — opt-in server-side pagination matching
         // KiotViet (10 rows per page). Caller activates by sending

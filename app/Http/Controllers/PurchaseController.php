@@ -1313,13 +1313,9 @@ class PurchaseController extends Controller
                             ]
                         );
                     }
-                    if ($purchase->supplier) {
-                        $purchase->supplier->supplier_debt_amount -= $purchase->debt_amount;
-                        $purchase->supplier->total_bought -= $purchase->total_amount;
-                        $purchase->supplier->save();
-                    }
-
-                    // Cancel related cash flows (payments to supplier)
+                    // A source Purchase payment is cancelled together with the
+                    // purchase. A standalone SupplierPayment voucher remains
+                    // valid and becomes supplier credit after cancellation.
                     $relatedCashFlows = CashFlow::withTrashed()
                         ->where('reference_type', 'Purchase')
                         ->where('reference_code', $purchase->code)
@@ -1327,6 +1323,44 @@ class PurchaseController extends Controller
                             $q->whereNull('status')->orWhere('status', '!=', 'cancelled');
                         })
                         ->get();
+                    $sourceDocumentPaid = (float) $relatedCashFlows
+                        ->reject(fn (CashFlow $cashFlow): bool => in_array(
+                            trim((string) $cashFlow->target_type),
+                            \App\Services\Debt\PurchasePayableService::EXTERNAL_COST_TARGET_TYPES,
+                            true,
+                        ))
+                        ->sum('amount');
+                    if ($sourceDocumentPaid <= 0.01 && (float) $purchase->paid_amount > 0.01) {
+                        $standaloneAllocated = \Illuminate\Support\Facades\Schema::hasTable('supplier_payment_allocations')
+                            ? (float) DB::table('supplier_payment_allocations as allocations')
+                                ->join('cash_flows as payments', 'payments.id', '=', 'allocations.payment_id')
+                                ->where('allocations.purchase_id', $purchase->id)
+                                ->where(function ($query): void {
+                                    $query->whereNull('payments.reference_type')
+                                        ->orWhere('payments.reference_type', '!=', 'Purchase');
+                                })
+                                ->whereNull('payments.deleted_at')
+                                ->where(function ($query): void {
+                                    $query->whereNull('payments.status')
+                                        ->orWhere('payments.status', '!=', 'cancelled');
+                                })
+                                ->sum('allocations.amount')
+                            : 0.0;
+                        $sourceDocumentPaid = max(
+                            0.0,
+                            (float) $purchase->paid_amount - $standaloneAllocated,
+                        );
+                    }
+                    $purchaseBalanceEffect = app(\App\Services\Debt\PurchasePayableService::class)
+                        ->amount($purchase) - $sourceDocumentPaid;
+
+                    if ($purchase->supplier) {
+                        $purchase->supplier->supplier_debt_amount -= $purchaseBalanceEffect;
+                        $purchase->supplier->total_bought -= $purchase->total_amount;
+                        $purchase->supplier->save();
+                    }
+
+                    // Cancel related cash flows (payments to supplier)
                     foreach ($relatedCashFlows as $cashFlow) {
                         $cashFlow->forceFill([
                             'status' => 'cancelled',
@@ -1356,7 +1390,11 @@ class PurchaseController extends Controller
                         \App\Models\ActivityLog::ACTION_PURCHASE_DELETE,
                         "Hủy phiếu nhập hàng {$purchase->code}",
                         $purchase,
-                        ['total' => (float) ($purchase->total ?? 0)]
+                        [
+                            'total' => (float) ($purchase->total ?? 0),
+                            'source_document_paid' => $sourceDocumentPaid,
+                            'purchase_balance_effect' => $purchaseBalanceEffect,
+                        ]
                     );
 
                     return $purchase;

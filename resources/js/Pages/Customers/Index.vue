@@ -179,6 +179,7 @@ const getCustomerSalesReturnEntries = (customerId) => {
 
 // HOTFIX FOLLOW-UP — paginated debt-history (KiotViet 10/page).
 const debtHistoryPage = reactive({});       // { [customerId]: 1, ... }
+const debtCancellationScope = reactive({}); // active | cancelled | all
 const debtHistoryPerPage = 10;
 const shouldShowDebtReconcileWarning = (reconcile) =>
     reconcile?.severity === "warning" || reconcile?.user_warning === true;
@@ -196,13 +197,25 @@ const loadDebtHistory = async (customerId, page = null) => {
     try {
         const { data } = await axios.get(
             `/customers/${customerId}/debt-history`,
-            { params: { page: targetPage, per_page: debtHistoryPerPage, mode: 'document' } },
+            {
+                params: {
+                    page: targetPage,
+                    per_page: debtHistoryPerPage,
+                    mode: 'document',
+                    cancellation_scope: debtCancellationScope[customerId] || 'active',
+                },
+            },
         );
         debtHistoryData[customerId] = data;
     } catch (e) {
         debtHistoryData[customerId] = { entries: [], pagination: { total: 0, last_page: 1, current_page: 1, from: 0, to: 0 } };
     }
     tabLoading[customerId] = false;
+};
+
+const changeDebtCancellationScope = (customerId, scope) => {
+    debtCancellationScope[customerId] = scope;
+    loadDebtHistory(customerId, 1);
 };
 
 const changeDebtHistoryPage = (customerId, newPage) => {
@@ -296,6 +309,7 @@ const confirmCustomerDebtExport = () => {
     const params = new URLSearchParams();
     params.set('format', 'xlsx');
     params.set('date_preset', customerDebtExportForm.date_preset);
+    params.set('cancellation_scope', 'active');
 
     if (customerDebtExportForm.date_preset === 'custom') {
         const isoFrom = parseVietnameseDateToIso(customerDebtExportForm.date_from);
@@ -2438,31 +2452,18 @@ const createdDateRange = computed({
                                                     {{ debtHistoryData[customer.id].reconcile.message }}
                                                 </div>
 
-                                                <!-- Filter dropdown -->
+                                                <!-- Cancelled documents stay auditable but are hidden from the accounting view by default. -->
                                                 <div
                                                     class="flex items-center justify-end mb-3"
                                                 >
                                                     <select
+                                                        :value="debtCancellationScope[customer.id] || 'active'"
+                                                        @change="changeDebtCancellationScope(customer.id, $event.target.value)"
                                                         class="border border-gray-300 rounded px-3 py-1.5 text-[13px] text-gray-600 focus:outline-none focus:border-blue-400"
                                                     >
-                                                        <option>
-                                                            Tất cả giao dịch
-                                                        </option>
-                                                        <option>
-                                                            Bán hàng
-                                                        </option>
-                                                        <option>
-                                                            Khách thanh toán
-                                                        </option>
-                                                        <option>
-                                                            Nhập hàng
-                                                        </option>
-                                                        <option>
-                                                            Thanh toán NCC
-                                                        </option>
-                                                        <option>
-                                                            Trả hàng
-                                                        </option>
+                                                        <option value="active">Đang hiệu lực</option>
+                                                        <option value="cancelled">Đã hủy (truy vết)</option>
+                                                        <option value="all">Tất cả giao dịch</option>
                                                     </select>
                                                 </div>
 
