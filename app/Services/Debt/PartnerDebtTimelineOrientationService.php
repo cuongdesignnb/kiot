@@ -193,10 +193,11 @@ class PartnerDebtTimelineOrientationService
     private function displayEntries(Collection $events, string $orientation): array
     {
         // The canonical reducer deliberately keeps every persisted allocation
-        // event.  The partner screen, however, is a document view: one real
-        // supplier-payment voucher must render once even when it allocates to
-        // many purchases.  Consolidation is therefore display-only and runs
-        // after canonical selection but before running balances are projected.
+        // event. The partner screen, however, is a document view: one real
+        // receipt/payment voucher must render once even when it allocates to
+        // many source documents. Consolidation is therefore display-only and
+        // runs after canonical selection but before balances are projected.
+        $events = $this->consolidateCustomerReceiptDocuments($events);
         $events = $this->consolidateSupplierPaymentDocuments($events);
         $customerRunning = 0.0;
         $supplierRunning = 0.0;
@@ -265,6 +266,232 @@ class PartnerDebtTimelineOrientationService
         $rawFinal = $orientation === 'customer' ? $customerRunning : $supplierRunning;
 
         return [$chronological->reverse()->values(), $rawFinal];
+    }
+
+    /**
+     * A standalone customer receipt is one persisted CashFlow document. Its
+     * invoice allocations remain separate canonical evidence, but the public
+     * timeline and exports must show the voucher once with its full amount.
+     * Invoice-owned receipts are intentionally excluded because cancelling
+     * their source invoice also cancels that payment document.
+     *
+     * @param  Collection<int, array<string, mixed>>  $events
+     * @return Collection<int, array<string, mixed>>
+     */
+    private function consolidateCustomerReceiptDocuments(Collection $events): Collection
+    {
+        $groups = [];
+        $keys = [];
+
+        foreach ($events->values() as $index => $event) {
+            $key = $this->customerReceiptDisplayGroupKey($event);
+            $keys[$index] = $key;
+            if ($key !== null) {
+                $groups[$key][] = $event;
+            }
+        }
+
+        $rows = [];
+        $emitted = [];
+        foreach ($events->values() as $index => $event) {
+            $key = $keys[$index] ?? null;
+            $group = $key === null ? [] : ($groups[$key] ?? []);
+
+            // A single allocation already renders as one exact voucher row;
+            // leave it untouched to preserve its existing invoice context.
+            if ($key === null || count($group) < 2) {
+                $rows[] = $event;
+
+                continue;
+            }
+            if (isset($emitted[$key])) {
+                continue;
+            }
+
+            $emitted[$key] = true;
+            $rows[] = $this->buildCustomerReceiptDisplayRow($group, $key);
+        }
+
+        return collect($rows)->values();
+    }
+
+    private function customerReceiptDisplayGroupKey(array $event): ?string
+    {
+        $metadata = (array) ($event['metadata'] ?? []);
+        if ((string) ($event['domain'] ?? '') !== 'customer'
+            || ! in_array((string) ($event['event_kind'] ?? ''), ['invoice_payment', 'customer_payment'], true)
+            || (string) ($event['source_type'] ?? $event['source_table'] ?? '') !== 'cash_flows'
+            || (string) ($event['payment_origin'] ?? $metadata['payment_origin'] ?? '') !== 'standalone'
+            || ! (bool) ($event['is_real_voucher'] ?? false)
+            || (bool) ($event['is_fallback'] ?? false)
+        ) {
+            return null;
+        }
+
+        $cashFlowId = $event['detail_id']
+            ?? ($metadata['detail_reference_id'] ?? null)
+            ?? ($metadata['reference_id'] ?? null);
+        if ($cashFlowId === null || (string) $cashFlowId === '') {
+            return null;
+        }
+
+        return implode('|', ['cash_flows', (string) $cashFlowId, 'customer_receipt']);
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $events
+     * @return array<string, mixed>
+     */
+    private function buildCustomerReceiptDisplayRow(array $events, string $groupKey): array
+    {
+        $group = collect($events)->values();
+        $representative = (array) $group->first();
+        $representativeMetadata = (array) ($representative['metadata'] ?? []);
+        $cashFlowId = $representative['detail_id']
+            ?? ($representativeMetadata['detail_reference_id'] ?? null);
+        $cashFlowCode = $representative['detail_code']
+            ?? ($representativeMetadata['detail_reference_code'] ?? null)
+            ?? ($representative['source_code'] ?? null);
+
+        $customerDelta = (float) $group->sum('customer_delta');
+        $supplierDelta = (float) $group->sum('supplier_delta');
+        $allocationEvents = $group->filter(
+            fn (array $event): bool => (string) ($event['event_kind'] ?? '') === 'invoice_payment',
+        );
+        $allocationTotal = (float) $allocationEvents->sum(
+            fn (array $event): float => abs((float) ($event['customer_delta'] ?? 0.0)),
+        );
+        $invoiceIds = $allocationEvents
+            ->map(fn (array $event) => $event['metadata']['reference_id'] ?? null)
+            ->filter(fn ($id): bool => $id !== null && (string) $id !== '')
+            ->map(fn ($id): int => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+        $invoiceCodes = $allocationEvents
+            ->map(fn (array $event) => $event['metadata']['reference_code'] ?? null)
+            ->filter(fn ($code): bool => $code !== null && (string) $code !== '')
+            ->map(fn ($code): string => (string) $code)
+            ->unique()
+            ->values()
+            ->all();
+        $canonicalIdentities = $group
+            ->flatMap(fn (array $event): array => (array) (
+                $event['canonical_event_identities'] ?? [$event['event_identity'] ?? '']
+            ))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        $canonicalAmount = abs($customerDelta);
+        $persistedAmounts = $group
+            ->map(fn (array $event) => $event['metadata']['receipt_voucher_amount'] ?? null)
+            ->filter(fn ($amount): bool => is_numeric($amount))
+            ->map(fn ($amount): float => (float) $amount)
+            ->unique(fn (float $amount): string => number_format($amount, 2, '.', ''))
+            ->values();
+        $persistedAmount = $persistedAmounts->count() === 1
+            ? (float) $persistedAmounts->first()
+            : $canonicalAmount;
+        $amountMismatch = $persistedAmounts->count() > 1
+            || abs($persistedAmount - $canonicalAmount) > 0.01;
+        $paymentAmount = $amountMismatch ? $canonicalAmount : $persistedAmount;
+        $unallocatedAmount = max(0.0, $paymentAmount - $allocationTotal);
+        $allocationMismatch = $amountMismatch || $group->contains(
+            fn (array $event): bool => (bool) (
+                $event['receipt_allocation_mismatch']
+                ?? $event['metadata']['receipt_allocation_mismatch']
+                ?? false
+            ),
+        );
+        $needsManualReview = $allocationMismatch || $group->contains(
+            fn (array $event): bool => (bool) (
+                $event['needs_manual_review']
+                ?? $event['metadata']['needs_manual_review']
+                ?? false
+            ),
+        );
+        $documentGroupKey = $cashFlowCode ?: (string) $cashFlowId;
+        $metadata = array_merge($representativeMetadata, [
+            'allocation_count' => $allocationEvents->count(),
+            'allocation_total' => $allocationTotal,
+            'invoice_ids' => $invoiceIds,
+            'invoice_codes' => $invoiceCodes,
+            'allocation_invoice_ids' => $invoiceIds,
+            'allocation_invoice_codes' => $invoiceCodes,
+            'payment_amount' => $paymentAmount,
+            'receipt_voucher_amount' => $persistedAmount,
+            'receipt_amount_mismatch' => $amountMismatch,
+            'receipt_allocation_mismatch' => $allocationMismatch,
+            'needs_manual_review' => $needsManualReview,
+            'unallocated_amount' => $unallocatedAmount,
+            'payment_cash_flow_id' => $cashFlowId,
+            'payment_cash_flow_code' => $cashFlowCode,
+            'canonical_event_identities' => $canonicalIdentities,
+            'canonical_event_count' => count($canonicalIdentities),
+            'display_group_key' => $groupKey,
+            'display_projection' => 'customer_receipt_document',
+            'reference_type' => 'DebtPayment',
+            'reference_id' => $cashFlowId,
+            'reference_code' => $cashFlowCode,
+            'parent_document_code' => $cashFlowCode,
+            'payment_for_code' => null,
+            'linked_document_code' => null,
+            'linked_document_label' => null,
+            'payment_origin' => 'standalone',
+            'document_group_key' => $documentGroupKey,
+            'document_group_type' => 'customer_receipt',
+            'document_group_parent_code' => $cashFlowCode,
+            'document_group_time' => $representative['business_time'] ?? null,
+            'document_group_sequence' => $representative['event_order'] ?? null,
+            'sort_group_key' => $documentGroupKey,
+            'sort_group_time' => $representative['business_time'] ?? null,
+            'sort_group_sequence' => $representative['event_order'] ?? null,
+        ]);
+
+        return array_merge($representative, [
+            'event_kind' => 'customer_payment',
+            'display_type' => 'Khách thanh toán',
+            'document_amount' => $paymentAmount,
+            'customer_delta' => $customerDelta,
+            'supplier_delta' => $supplierDelta,
+            'allocation_count' => $metadata['allocation_count'],
+            'allocation_total' => $allocationTotal,
+            'invoice_ids' => $invoiceIds,
+            'invoice_codes' => $invoiceCodes,
+            'allocation_invoice_ids' => $invoiceIds,
+            'allocation_invoice_codes' => $invoiceCodes,
+            'payment_amount' => $paymentAmount,
+            'receipt_voucher_amount' => $persistedAmount,
+            'receipt_amount_mismatch' => $amountMismatch,
+            'receipt_allocation_mismatch' => $allocationMismatch,
+            'needs_manual_review' => $needsManualReview,
+            'unallocated_amount' => $unallocatedAmount,
+            'payment_cash_flow_id' => $cashFlowId,
+            'payment_cash_flow_code' => $cashFlowCode,
+            'canonical_event_identities' => $canonicalIdentities,
+            'canonical_event_count' => count($canonicalIdentities),
+            'display_group_key' => $groupKey,
+            'display_projection' => 'customer_receipt_document',
+            'reference_type' => 'DebtPayment',
+            'reference_id' => $cashFlowId,
+            'reference_code' => $cashFlowCode,
+            'parent_document_code' => $cashFlowCode,
+            'payment_for_code' => null,
+            'linked_document_code' => null,
+            'linked_document_label' => null,
+            'payment_origin' => 'standalone',
+            'document_group_key' => $documentGroupKey,
+            'document_group_type' => 'customer_receipt',
+            'document_group_parent_code' => $cashFlowCode,
+            'document_group_time' => $representative['business_time'] ?? null,
+            'document_group_sequence' => $representative['event_order'] ?? null,
+            'sort_group_key' => $documentGroupKey,
+            'sort_group_time' => $representative['business_time'] ?? null,
+            'sort_group_sequence' => $representative['event_order'] ?? null,
+            'metadata' => $metadata,
+        ]);
     }
 
     /**
