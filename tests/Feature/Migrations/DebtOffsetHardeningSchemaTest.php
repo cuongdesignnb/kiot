@@ -46,7 +46,7 @@ class DebtOffsetHardeningSchemaTest extends TestCase
         }
     }
 
-    public function test_new_columns_match_the_nullable_contract_and_legacy_contract_is_unchanged(): void
+    public function test_new_columns_match_the_nullable_contract_and_partner_history_is_restricted(): void
     {
         $this->assertTableColumns(self::TABLE, [
             'workflow_status' => ['varchar(32)', true, null],
@@ -74,10 +74,10 @@ class DebtOffsetHardeningSchemaTest extends TestCase
         $this->assertSame('active', $this->normalizeDefault($status->COLUMN_DEFAULT));
 
         $this->assertForeignKey(
-            'debt_offsets_customer_id_foreign',
+            'debt_offsets_partner_history_fk',
             'customer_id',
             'customers',
-            'CASCADE'
+            'RESTRICT'
         );
     }
 

@@ -19,6 +19,7 @@ use App\Services\Debt\PartnerDebtPublicTimelineService;
 use App\Services\DebtOffsetService;
 use App\Services\InvoiceItemSerialResolver;
 use App\Services\PartnerAlreadyExistsException;
+use App\Services\PartnerDeletionGuard;
 use App\Services\PartnerMergeService;
 use App\Services\PartnerRoleService;
 use App\Support\Debt\PartnerDebtDisplayBalance;
@@ -558,26 +559,13 @@ class CustomerController extends Controller
         return back()->with('success', 'Cập nhật khách hàng thành công.');
     }
 
-    public function destroy(Customer $customer)
+    public function destroy(Customer $customer, PartnerDeletionGuard $deletionGuard)
     {
-        if ($customer->merged_into_id !== null || $customer->mergedSources()->exists()) {
-            return back()->with(
-                'error',
-                'Không thể xóa hồ sơ đối tác đã tham gia gộp. Hãy giữ hồ sơ để bảo toàn dấu vết kiểm toán.'
-            );
+        $result = $deletionGuard->delete($customer, 'customer_controller.destroy');
+
+        if (! $result['deleted']) {
+            return back()->with('error', PartnerDeletionGuard::BLOCKED_MESSAGE);
         }
-
-        // Guard: không cho xóa nếu đã có giao dịch — buộc dùng "Ngừng hoạt động"
-        $hasInvoices = Invoice::where('customer_id', $customer->id)->exists();
-        $hasPurchases = \App\Models\Purchase::where('supplier_id', $customer->id)->exists();
-        $hasReturns = OrderReturn::where('customer_id', $customer->id)->exists();
-        $hasDebt = ((float) $customer->debt_amount != 0) || ((float) $customer->supplier_debt_amount != 0);
-
-        if ($hasInvoices || $hasPurchases || $hasReturns || $hasDebt) {
-            return back()->with('error', 'Không thể xóa — đối tác này đã có giao dịch hoặc công nợ. Hãy chuyển sang "Ngừng hoạt động" thay vì xóa.');
-        }
-
-        $customer->delete();
 
         return redirect()->route('customers.index')->with('success', 'Xóa khách hàng thành công.');
     }

@@ -155,6 +155,10 @@ class ActivityLog extends Model
 
     const ACTION_SUPPLIER_UPDATE = 'supplier_update';
 
+    const ACTION_PARTNER_DELETE = 'partner_delete';
+
+    const ACTION_PARTNER_DELETE_BLOCKED = 'partner_delete_blocked';
+
     // Khóa sổ
     const ACTION_LOCK_PERIOD_CHANGE = 'lock_period_change';
 
@@ -323,6 +327,8 @@ class ActivityLog extends Model
         'product_delete_blocked' => 'Chặn xóa hàng hóa',
         'customer_update' => 'Cập nhật khách hàng',
         'supplier_update' => 'Cập nhật nhà cung cấp',
+        'partner_delete' => 'Xóa đối tác',
+        'partner_delete_blocked' => 'Chặn xóa đối tác',
         'lock_period_change' => 'Thay đổi khóa sổ',
         'order_create' => 'Tạo đơn hàng',
         'order_update' => 'Cập nhật đơn hàng',
