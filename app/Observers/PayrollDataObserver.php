@@ -30,7 +30,7 @@ class PayrollDataObserver
         // Chỉ mark nếu giá trị quan trọng thay đổi
         $importantFields = ['work_units', 'worked_minutes', 'ot_minutes', 'late_minutes',
                            'early_minutes', 'check_in_at', 'check_out_at', 'attendance_type',
-                           'is_holiday', 'holiday_multiplier'];
+                           'is_holiday', 'holiday_multiplier', 'regular_minutes', 'needs_review', 'employee_id', 'work_date'];
 
         if ($record->wasChanged($importantFields)) {
             $this->markPaysheetsByEmployee($record->employee_id, $record->work_date);

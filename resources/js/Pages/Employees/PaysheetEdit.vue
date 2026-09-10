@@ -101,6 +101,7 @@
                             <td class="px-3 py-2">
                                 <div class="font-medium text-gray-800">{{ slip.employee?.name }}</div>
                                 <div class="text-xs text-gray-400">{{ slip.employee?.code }}</div>
+                                <PayrollCalculationStatus :slip="slip" :sheet-id="localPaysheet.id" :needs-recalc="localPaysheet.needs_recalc" :locked="['locked', 'cancelled'].includes(localPaysheet.status)" @updated="Object.assign(slip, $event)" />
                             </td>
                             <td class="px-3 py-2 text-right text-gray-700">
                                 <span v-if="slip.details?.normal_work_units && slip.details.normal_work_units !== slip.work_units">
@@ -634,6 +635,7 @@
 </template>
 
 <script setup>
+import PayrollCalculationStatus from '@/Components/PayrollCalculationStatus.vue';
 import { Head, router } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import { ref, computed, reactive, onMounted } from "vue";
@@ -1053,7 +1055,7 @@ async function lockPaysheet() {
         }
     } catch (e) {
         console.error('Lock error:', e);
-        alert('Lỗi khi chốt lương.');
+        alert(Object.values(e.response?.data?.errors || {}).flat().join('\n') || e.response?.data?.message || 'Lỗi khi chốt lương.');
     }
 }
 

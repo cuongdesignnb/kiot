@@ -885,6 +885,7 @@
                                                                     {{ slip.employee?.name }}
                                                                 </div>
                                                                 <div class="text-xs text-gray-400">{{ slip.employee?.code || slip.code }}</div>
+                                                                <PayrollCalculationStatus :slip="slip" :sheet-id="ps.id" :needs-recalc="ps.needs_recalc" :locked="['locked', 'cancelled'].includes(ps.status)" @updated="Object.assign(slip, $event)" />
                                                             </td>
                                                             <td class="px-2 py-1">
                                                                 <input
@@ -1679,6 +1680,7 @@
 </template>
 
 <script setup>
+import PayrollCalculationStatus from '@/Components/PayrollCalculationStatus.vue';
 import { Head, router } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
@@ -2137,7 +2139,7 @@ const lockPaysheet = async (ps) => {
         await fetchPaysheets();
         if (expandedId.value === ps.id) await fetchDetail(ps.id);
     } catch (e) {
-        alert("Có lỗi!");
+        alert(Object.values(e.response?.data?.errors || {}).flat().join('\n') || e.response?.data?.message || 'Không thể chốt bảng lương.');
         console.error(e);
     }
 };

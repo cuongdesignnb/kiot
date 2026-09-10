@@ -26,7 +26,8 @@ class SalaryCalculationService
     {
         $setting = $employee->salarySetting;
         if (! $setting) {
-            return $this->emptyResult();
+            return $this->emptyResult() + ['calculation_version' => 'confirmed-work-units-v1',
+                'validation' => ['status' => 'blocked', 'issues' => ['Chưa cấu hình lương nhân viên.']]];
         }
 
         $template = $setting->salary_template_id
@@ -74,41 +75,10 @@ class SalaryCalculationService
         $workUnits = 0;
         $normalWorkUnits = 0; // Ngày công thật (không nhân hệ số, dùng cho hiển thị)
         $workRecords = $records->where('attendance_type', 'work');
-        $timekeepingSetting = TimekeepingSetting::where('branch_id', $employee->branch_id)->first()
-            ?? TimekeepingSetting::whereNull('branch_id')->first();
-        $standardDailyMinutes = $timekeepingSetting?->standard_hours_per_day
-            ? max(1, (int) round((float) $timekeepingSetting->standard_hours_per_day * 60))
-            : max(1, (int) Setting::get('attendance_standard_work_minutes', 480));
-        $halfWorkEnabled = (bool) Setting::get('attendance_half_work_enabled', true);
-        $halfWorkMaxMinutes = (int) Setting::get('attendance_half_work_max_minutes', 480);
-        $halfWorkMinMinutes = (int) Setting::get('attendance_half_work_min_minutes', 0);
-        $payrollSetting = \App\Models\PayrollSetting::first();
-        $lateHalfDayEnabled = (bool) ($payrollSetting->late_half_day_enabled ?? false);
-        $lateHalfDayThreshold = (int) ($payrollSetting->late_half_day_threshold ?? 120);
-
-        foreach ($workRecords->groupBy(fn ($record) => Carbon::parse($record->work_date)->toDateString()) as $dateRecords) {
-            $minutes = (int) $dateRecords->sum('worked_minutes');
-            $lateMinutesForDay = (int) $dateRecords->sum('late_minutes');
-            $units = $this->calculateDailyWorkUnits(
-                $minutes,
-                $standardDailyMinutes,
-                $halfWorkEnabled,
-                $halfWorkMinMinutes,
-                $halfWorkMaxMinutes,
-                $lateHalfDayEnabled,
-                $lateMinutesForDay,
-                $lateHalfDayThreshold
-            );
-            $sample = $dateRecords->first();
-            $multiplier = 1;
-            if ($sample?->is_holiday && $units > 0) {
-                $dateStr = Carbon::parse($sample->work_date)->toDateString();
-                $multiplier = in_array($dateStr, $officialHolidayDates) ? $holidayMultiplier : $restDayMultiplier;
-            }
-            $workUnits += $units * $multiplier;
-            $normalWorkUnits += $units;
-        }
-        $paidLeaveUnits = $records->where('attendance_type', 'leave_paid')->sum('work_units');
+        $attendance = app(PayrollConfirmedAttendance::class)->summarize($records, $officialHolidayDates, $restDayMultiplier, $holidayMultiplier);
+        $workUnits = $attendance['weighted'];
+        $normalWorkUnits = $attendance['normal'];
+        $paidLeaveUnits = $attendance['leave'];
         $totalUnits = $workUnits + $paidLeaveUnits;
         $otMinutes = $records->sum('ot_minutes');
         $lateCount = $records->where('late_minutes', '>', 0)->count();
@@ -399,7 +369,7 @@ class SalaryCalculationService
             }
         }
 
-        return [
+        $result = [
             'base' => round($baseSalary),
             'base_salary_full' => round($setting->base_salary),
             'bonus' => round($bonusAmount),
@@ -436,6 +406,33 @@ class SalaryCalculationService
                 'ot_breakdown' => $otBreakdown,
             ],
         ];
+        $issues = $attendance['issues'];
+        if (! in_array($setting->salary_type, ['fixed', 'hourly', 'by_workday'], true) || $setting->base_salary < 0) {
+            $issues[] = 'Loại lương hoặc mức lương không hợp lệ.';
+        }
+        if ($setting->salary_type !== 'fixed' && $records->isEmpty()) {
+            $issues[] = 'Chưa có chấm công trong kỳ; cần xác minh nhân viên có thuộc kỳ lương.';
+        }
+        if ($setting->salary_type === 'by_workday' && $standardWorkUnits <= 0) {
+            $issues[] = 'Chưa có ngày công chuẩn hợp lệ.';
+        }
+        $result['calculation_version'] = 'confirmed-work-units-v1';
+        $result['attendance_days'] = $attendance['days'];
+        $result['validation'] = [
+            'status' => $issues ? 'blocked' : ($result['base'] == 0 ? 'zero_requires_reason' : 'ready'),
+            'issues' => $issues ?: ($result['base'] == 0 ? ['Lương chính bằng 0: cần ghi lý do xác nhận.'] : []),
+        ];
+        // Detect changed inputs, including bulk writes bypassing observers.
+        $result['input_fingerprint'] = hash('sha256', json_encode([
+            $result, $records->sortBy('id')->values()->toArray(),
+            $setting->toArray(), $template?->toArray(), $employee->branch_id,
+            $from->toDateString(), $to->toDateString(),
+            \App\Models\PayrollSetting::orderBy('id')->get()->toArray(),
+            WorkdaySetting::orderBy('id')->get()->toArray(),
+            Holiday::whereBetween('holiday_date', [$from, $to])->orderBy('id')->get()->toArray(),
+            Setting::where(fn ($q) => $q->where('key', 'like', 'attendance_%')->orWhere('key', 'like', 'repair_performance_%'))->orderBy('id')->get()->toArray(),
+        ], JSON_THROW_ON_ERROR));
+        return $result;
     }
 
     /**
@@ -1045,37 +1042,6 @@ class SalaryCalculationService
         $grossProfit = $netRevenue - $totalCogs;
 
         return (float) $grossProfit;
-    }
-
-    private function calculateDailyWorkUnits(
-        int $workedMinutes,
-        int $standardMinutes,
-        bool $halfWorkEnabled,
-        int $halfWorkMinMinutes,
-        int $halfWorkMaxMinutes,
-        bool $lateHalfDayEnabled,
-        int $lateMinutes,
-        int $lateHalfDayThreshold
-    ): float {
-        if ($workedMinutes <= 0) {
-            return 0.0;
-        }
-
-        if ($workedMinutes >= $standardMinutes) {
-            return 1.0;
-        }
-
-        if ($halfWorkEnabled) {
-            $units = $workedMinutes >= $halfWorkMinMinutes && $workedMinutes <= $halfWorkMaxMinutes ? 0.5 : 0.0;
-        } else {
-            $units = $workedMinutes >= ($standardMinutes / 2) ? 1.0 : 0.5;
-        }
-
-        if ($lateHalfDayEnabled && $lateMinutes >= $lateHalfDayThreshold && $units > 0.5) {
-            return 0.5;
-        }
-
-        return $units;
     }
 
     private function emptyResult(): array
