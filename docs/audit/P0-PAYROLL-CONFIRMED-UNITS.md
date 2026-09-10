@@ -91,3 +91,22 @@ On the private Docker backup, compare all sheets and exercise recalculation in
 a transaction that is always rolled back. Hash payroll, attendance, employee,
 cash-flow and payment/ledger tables before/after to verify preservation. Keep
 production-derived reports outside Git; repository fixtures are synthetic.
+
+## Reviewed partial recalculation command
+
+`payroll:recalculate-reviewed` is deployed with application code; no uploaded
+PHP scripts are required. Supply `--report`, `--report-sha256`, `--paysheet`,
+repeated `--payslip`, `--expected-delta`, and `--operator`. It defaults to dry-run
+and prints concise JSON plus a selection-bound confirmation code. Applying
+requires maintenance mode, `--apply`, `--confirm`, and `--backup-reference`.
+Keep report contents, production identifiers and backup references private.
+
+Only the explicit unpaid, unposted, ready rows from the reviewed audit may be
+changed. The command validates source fingerprints, saved values and expected
+components again under locks, preserves manual adjustments and all unselected
+rows, updates sheet totals, and writes before/after evidence to ActivityLog in
+the same transaction. It never posts payroll or changes payments. Replay of an
+unchanged applied selection returns REPLAY without further writes. Changed
+inputs, partial replay, missing evidence or failed post-checks stop the command.
+The audit file checksum is an integrity pin, not proof of accounting approval.
+Resolve remaining blocked rows separately before finalizing the sheet.
