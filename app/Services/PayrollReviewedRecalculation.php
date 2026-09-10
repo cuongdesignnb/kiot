@@ -39,6 +39,10 @@ class PayrollReviewedRecalculation
             $slips = $sheet->payslips()->orderBy('id')->lockForUpdate()->get();
             $selected = $slips->whereIn('id', $ids);
             $this->check($selected->count() === count($ids), 'Payslips do not belong to selected sheet');
+            $this->check(! DB::table('employee_salary_ledger_entries')->where(function ($query) use ($sheetId, $ids) {
+                $query->where('paysheet_id', $sheetId)->orWhereIn('payslip_id', $ids)
+                    ->orWhere(fn ($q) => $q->where('reference_type', 'payslip')->whereIn('reference_id', $ids));
+            })->exists(), 'Existing salary ledger history requires separate review');
             $beforeSheet = $sheet->getRawOriginal();
             $protectedBefore = $this->protectedHashes($sheetId, $ids);
             $marked = $selected->filter(fn ($s) => ($s->details['reviewed_recalculation']['operation'] ?? '') === $operation)->count();

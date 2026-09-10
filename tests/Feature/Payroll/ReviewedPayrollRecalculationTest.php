@@ -4,6 +4,7 @@ namespace Tests\Feature\Payroll;
 
 use App\Models\ActivityLog;
 use App\Models\Employee;
+use App\Models\EmployeeSalaryLedgerEntry;
 use App\Models\EmployeeSalarySetting;
 use App\Models\Paysheet;
 use App\Models\Payslip;
@@ -137,6 +138,16 @@ class ReviewedPayrollRecalculationTest extends TestCase
         $fixture = $this->fixture();
         $this->expectExceptionMessage('backup reference required');
         $this->execute($fixture, true, '');
+    }
+
+    public function test_existing_ledger_is_rejected_even_if_sheet_status_was_reset(): void
+    {
+        $fixture = $this->fixture();
+        $slip = Payslip::findOrFail($fixture[1][0]);
+        EmployeeSalaryLedgerEntry::create(['employee_id' => $slip->employee_id, 'paysheet_id' => $fixture[0]->id, 'payslip_id' => $slip->id,
+            'code' => 'SYNTHETIC-LEDGER', 'type' => 'payroll_accrual', 'amount' => 1, 'event_at' => now()]);
+        $this->expectExceptionMessage('Existing salary ledger history');
+        $this->execute($fixture);
     }
 
     public function test_wrong_selection_blocked_row_and_changed_preview_are_rejected(): void
