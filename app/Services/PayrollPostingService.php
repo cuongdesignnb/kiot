@@ -26,6 +26,8 @@ class PayrollPostingService
                 throw ValidationException::withMessages(['status' => 'Chi bang luong tam tinh moi duoc chot.']);
             }
 
+            app(PayrollCalculationGuard::class)->assertReady($sheet);
+
             foreach ($sheet->payslips as $slip) {
                 $employee = Employee::query()->lockForUpdate()->findOrFail($slip->employee_id);
                 $this->ledger->append($employee, [

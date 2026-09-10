@@ -2,17 +2,17 @@
 
 namespace App\Observers;
 
-use App\Models\Paysheet;
-use App\Models\TimekeepingRecord;
 use App\Models\EmployeeSalarySetting;
 use App\Models\Holiday;
-use App\Models\WorkdaySetting;
 use App\Models\PayrollSetting;
+use App\Models\Paysheet;
+use App\Models\TimekeepingRecord;
+use App\Models\WorkdaySetting;
 use Illuminate\Support\Facades\Log;
 
 /**
  * Observer đánh dấu paysheet cần tính lại khi dữ liệu liên quan thay đổi.
- * 
+ *
  * Cơ chế "Lazy Recalc": chỉ đánh dấu needs_recalc = true (1 query nhẹ),
  * KHÔNG tính lại ngay → tính lại khi user mở bảng lương.
  */
@@ -29,8 +29,8 @@ class PayrollDataObserver
     {
         // Chỉ mark nếu giá trị quan trọng thay đổi
         $importantFields = ['work_units', 'worked_minutes', 'ot_minutes', 'late_minutes',
-                           'early_minutes', 'check_in_at', 'check_out_at', 'attendance_type',
-                           'is_holiday', 'holiday_multiplier'];
+            'early_minutes', 'check_in_at', 'check_out_at', 'attendance_type',
+            'is_holiday', 'holiday_multiplier', 'regular_minutes', 'needs_review', 'employee_id', 'work_date'];
 
         if ($record->wasChanged($importantFields)) {
             $this->markPaysheetsByEmployee($record->employee_id, $record->work_date);
@@ -101,11 +101,11 @@ class PayrollDataObserver
     {
         $query = Paysheet::whereNotIn('status', ['locked', 'cancelled'])
             ->where('needs_recalc', false)
-            ->whereHas('payslips', fn($q) => $q->where('employee_id', $employeeId));
+            ->whereHas('payslips', fn ($q) => $q->where('employee_id', $employeeId));
 
         if ($workDate) {
             $query->where('period_start', '<=', $workDate)
-                  ->where('period_end', '>=', $workDate);
+                ->where('period_end', '>=', $workDate);
         }
 
         $count = $query->update(['needs_recalc' => true]);
