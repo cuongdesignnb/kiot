@@ -21,6 +21,8 @@ const props = defineProps({
 const { can } = usePermission();
 
 const search = ref(props.filters?.search || "");
+const employmentStatus = ref(props.filters?.is_active ?? "1");
+const retirementPending = ref(false);
 const sortBy = ref(props.filters?.sort_by || "");
 const sortDirection = ref(props.filters?.sort_direction || "");
 const expandedRows = ref([]);
@@ -31,7 +33,7 @@ watch(search, (value) => {
     searchTimeout = setTimeout(() => {
         router.get(
             "/employees",
-            { search: value, sort_by: sortBy.value || undefined, sort_direction: sortDirection.value || undefined },
+            { search: value, is_active: employmentStatus.value, sort_by: sortBy.value || undefined, sort_direction: sortDirection.value || undefined },
             {
                 preserveState: true,
                 replace: true,
@@ -45,10 +47,14 @@ const handleSort = (field, direction) => {
     sortDirection.value = direction;
     router.get(
         "/employees",
-        { search: search.value || undefined, sort_by: field || undefined, sort_direction: direction || undefined },
+        { search: search.value || undefined, is_active: employmentStatus.value, sort_by: field || undefined, sort_direction: direction || undefined },
         { preserveState: true, replace: true },
     );
 };
+
+watch(employmentStatus, (value) => {
+    router.get('/employees', { search: search.value || undefined, is_active: value, sort_by: sortBy.value || undefined, sort_direction: sortDirection.value || undefined }, { preserveState: true, replace: true });
+});
 
 const toggleExpand = (employeeId) => {
     const index = expandedRows.value.indexOf(employeeId);
@@ -141,13 +147,15 @@ const submit = () => {
 };
 
 const deleteEmployee = () => {
-    if (!form.id) return;
-    if (!confirm('Bạn có chắc muốn xóa nhân viên này? Thao tác này không thể hoàn tác.')) return;
+    if (!form.id || !form.is_active || retirementPending.value) return;
+    if (!confirm('Cho nhân viên này nghỉ việc? Nhân viên sẽ không được thêm vào bảng lương mới và được ẩn khỏi danh sách chấm công mặc định. Các bảng lương đã có, lịch sử và khoản còn phải thanh toán được giữ nguyên.')) return;
+    retirementPending.value = true;
     router.delete(`/employees/${form.id}`, {
         onSuccess: () => {
             showCreateModal.value = false;
             form.reset();
         },
+        onFinish: () => { retirementPending.value = false; },
     });
 };
 
@@ -737,7 +745,8 @@ const bonusCalcLabel = (calc) => {
                         <input
                             type="radio"
                             name="is_active"
-                            checked
+                            v-model="employmentStatus"
+                            value="1"
                             class="text-blue-600 focus:ring-blue-500 w-4 h-4"
                         />
                         Đang làm việc
@@ -748,9 +757,15 @@ const bonusCalcLabel = (calc) => {
                         <input
                             type="radio"
                             name="is_active"
+                            v-model="employmentStatus"
+                            value="0"
                             class="text-blue-600 focus:ring-blue-500 w-4 h-4"
                         />
                         Đã nghỉ
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="is_active" v-model="employmentStatus" value="all" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
+                        Tất cả
                     </label>
                 </div>
             </div>
@@ -908,7 +923,7 @@ const bonusCalcLabel = (calc) => {
                         >Nhân viên
                     </button>
                     <ExcelButtons
-                        export-url="/employees/export"
+                        :export-url="`/employees/export?is_active=${employmentStatus}&search=${encodeURIComponent(search)}`"
                         import-url="/employees/import"
                     />
                     <button
@@ -1854,12 +1869,14 @@ const bonusCalcLabel = (calc) => {
                     class="px-6 py-4 border-t border-gray-200 bg-white flex items-center rounded-b shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-10"
                 >
                     <button
-                        v-if="form.id"
+                        v-if="form.id && form.is_active && can('employees.delete')"
                         @click="deleteEmployee"
+                        :disabled="retirementPending"
                         class="px-4 py-2 border border-red-300 rounded text-red-600 bg-white font-bold hover:bg-red-50 transition shadow-sm text-sm"
                     >
-                        Xóa nhân viên
+                        {{ retirementPending ? 'Đang xử lý...' : 'Cho nghỉ việc' }}
                     </button>
+                    <span v-if="form.id && !form.is_active" class="text-sm font-medium text-gray-500">Đã nghỉ việc — lịch sử được giữ nguyên</span>
                     <div class="flex-1"></div>
                     <div class="flex gap-3">
                     <button

@@ -15,6 +15,9 @@
           </div>
 
           <!-- View mode (shift/employee) -->
+          <label class="flex items-center gap-2 text-sm text-gray-700">
+            <input type="checkbox" v-model="includeInactive" /> Hiện lịch sử nhân viên đã nghỉ
+          </label>
           <select v-model="viewMode" class="text-sm border border-gray-300 rounded-md px-3 py-1.5 outline-none focus:ring-1 focus:ring-blue-500">
             <option value="shift">Xem theo ca</option>
             <option value="employee">Xem theo nhân viên</option>
@@ -464,6 +467,7 @@ const schedules = ref([])
 const loading = ref(false)
 const currentDate = ref(new Date())
 const searchQuery = ref('')
+const includeInactive = ref(false)
 const viewMode = ref('shift')
 const periodMode = ref('week')
 
@@ -567,7 +571,7 @@ const periodTo = computed(() => periodMode.value === 'month' ? monthEnd.value : 
 const fetchSchedules = async () => {
     loading.value = true
     try {
-        const res = await axios.get('/api/employee-schedules', { params: { from: periodFrom.value, to: periodTo.value } })
+        const res = await axios.get('/api/employee-schedules', { params: { from: periodFrom.value, to: periodTo.value, include_inactive: includeInactive.value ? 1 : 0 } })
         if (res.data?.success) schedules.value = res.data.data
     } catch (e) { console.error('Lỗi khi tải dữ liệu:', e) }
     finally { loading.value = false }
@@ -586,6 +590,7 @@ const changePeriod = (offset) => {
 
 // Re-fetch when switching period mode
 watch(periodMode, () => { fetchSchedules() })
+watch(includeInactive, () => { fetchSchedules() })
 
 // === Grouping by Shift (KiotViet style) ===
 const shiftDisplayOrder = ['Giờ hành chính', 'Ca sáng', 'Ca chiều']
