@@ -7,7 +7,6 @@ use App\Models\Employee;
 use App\Models\EmployeeSalarySetting;
 use App\Models\Paysheet;
 use App\Models\Payslip;
-use App\Models\Setting;
 use App\Models\TimekeepingRecord;
 use App\Services\PayrollCalculationGuard;
 use App\Services\PayrollConfirmedAttendance;
@@ -27,6 +26,7 @@ class ConfirmedWorkUnitsPayrollTest extends TestCase
     {
         $employee = Employee::create(['code' => 'QA-'.uniqid(), 'name' => 'Synthetic payroll employee', 'is_active' => true]);
         EmployeeSalarySetting::create(['employee_id' => $employee->id, 'salary_type' => $type, 'base_salary' => $rate]);
+
         return $employee;
     }
 
@@ -49,6 +49,7 @@ class ConfirmedWorkUnitsPayrollTest extends TestCase
         $sheet = Paysheet::create(['code' => 'QA-S-'.uniqid(), 'name' => 'Synthetic payroll', 'period_start' => '2030-06-01', 'period_end' => '2030-06-30', 'standard_working_days' => 26, 'status' => 'calculated']);
         $slip = Payslip::create(['code' => 'QA-P-'.uniqid(), 'paysheet_id' => $sheet->id, 'employee_id' => $employee->id]);
         $slip->update(app(PayrollPayslipCalculator::class)->preview($sheet, $slip));
+
         return [$sheet->fresh(), $slip->fresh()];
     }
 

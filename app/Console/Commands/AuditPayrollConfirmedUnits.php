@@ -17,6 +17,7 @@ class AuditPayrollConfirmedUnits extends Command
     {
         if ($this->option('paysheet') !== null && ! ctype_digit((string) $this->option('paysheet'))) {
             $this->error('paysheet must be a numeric ID.');
+
             return 2;
         }
         if (DB::connection()->getDriverName() === 'mysql') {
@@ -89,6 +90,7 @@ class AuditPayrollConfirmedUnits extends Command
             $output['rows'] = $rows;
         }
         $this->line(json_encode($output, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+
         return $errors ? 2 : 0;
     }
 }

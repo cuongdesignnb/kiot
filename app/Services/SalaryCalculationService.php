@@ -11,7 +11,6 @@ use App\Models\Order;
 use App\Models\OrderReturn;
 use App\Models\SalaryTemplate;
 use App\Models\Setting;
-use App\Models\TimekeepingSetting;
 use App\Models\WorkdaySetting;
 use App\Support\Reports\SellerResolver;
 use Carbon\Carbon;
@@ -432,6 +431,7 @@ class SalaryCalculationService
             Holiday::whereBetween('holiday_date', [$from, $to])->orderBy('id')->get()->toArray(),
             Setting::where(fn ($q) => $q->where('key', 'like', 'attendance_%')->orWhere('key', 'like', 'repair_performance_%'))->orderBy('id')->get()->toArray(),
         ], JSON_THROW_ON_ERROR));
+
         return $result;
     }
 
