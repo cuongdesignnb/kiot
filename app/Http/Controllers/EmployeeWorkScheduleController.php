@@ -17,6 +17,10 @@ class EmployeeWorkScheduleController extends Controller
             'timekeepingRecord.intervals:id,timekeeping_record_id,employee_work_schedule_id,work_date,slot,scheduled_start_at,scheduled_end_at,check_in_at,check_out_at,worked_minutes,source,status,raw',
         ]);
 
+        if (! $request->boolean('include_inactive')) {
+            $query->whereHas('employee', fn ($q) => $q->where('is_active', true));
+        }
+
         if ($request->filled('employee_id')) {
             $query->where('employee_id', $request->integer('employee_id'));
         }

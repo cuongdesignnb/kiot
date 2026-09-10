@@ -317,11 +317,7 @@ class EmployeeController extends Controller
 
         $query = Employee::with(['branch', 'department', 'jobTitle', 'avatarMedia']);
 
-        // is_active pseudo filter (supports true/false/1/0)
-        if ($request->filled('is_active')) {
-            $val = $request->is_active;
-            $query->where('is_active', $val === 'true' || $val === '1' || $val === 1 || $val === true);
-        }
+        $employmentStatus = $this->applyEmploymentStatus($query, $request);
 
         $this->applyFilters($query, $request);
 
@@ -364,7 +360,7 @@ class EmployeeController extends Controller
             'departments' => $departments,
             'jobTitles' => $jobTitles,
             'salaryTemplates' => SalaryTemplate::select('id', 'name')->get(),
-            'filters' => $this->currentFilters($request),
+            'filters' => array_merge($this->currentFilters($request), ['is_active' => $employmentStatus]),
             'filterOptions' => $filterOptions,
         ]);
     }
@@ -437,15 +433,41 @@ class EmployeeController extends Controller
 
     public function destroy(Employee $employee)
     {
-        if ($employee->salaryLedgerEntries()->exists()
-            || $employee->salaryAdvances()->exists()
-            || \App\Models\Payslip::where('employee_id', $employee->id)->exists()
-            || \App\Models\PaysheetPayment::where('employee_id', $employee->id)->exists()) {
-            return redirect()->back()->with('error', 'Không thể xóa nhân viên đã có dữ liệu lương. Hãy chuyển sang trạng thái nghỉ việc.');
-        }
-        $employee->delete();
+        $result = DB::transaction(function () use ($employee) {
+            $locked = Employee::whereKey($employee->id)->lockForUpdate()->firstOrFail();
+            if (! $locked->is_active) {
+                return ['already_inactive' => true, 'has_balance' => (int) $locked->salary_balance_cache !== 0];
+            }
+            $locked->update(['is_active' => false]);
+            \App\Models\ActivityLog::log('employee_retire', "Cho nghỉ việc nhân viên {$locked->code}", $locked, [
+                'before' => ['is_active' => true], 'after' => ['is_active' => false],
+                'effective_at' => now()->toIso8601String(), 'history_preserved' => true,
+                'salary_balance_unchanged' => (int) $locked->salary_balance_cache,
+            ]);
 
-        return redirect()->back()->with('success', 'Xóa nhân viên thành công.');
+            return ['already_inactive' => false, 'has_balance' => (int) $locked->salary_balance_cache !== 0];
+        });
+
+        $message = $result['already_inactive'] ? 'Nhân viên đã ở trạng thái nghỉ việc.' : 'Đã cho nhân viên nghỉ việc. Không thêm vào bảng lương mới; lịch sử và các bảng lương đã có được giữ nguyên.';
+        if ($result['has_balance']) {
+            $message .= ' Nhân viên còn số dư lương/tạm ứng cần xử lý riêng.';
+        }
+
+        return redirect()->back()->with('success', $message);
+    }
+
+    private function applyEmploymentStatus($query, Request $request): string
+    {
+        $request->validate(['is_active' => 'nullable|in:0,1,true,false,all']);
+        $status = (string) ($request->input('is_active') ?? '1');
+        $status = match ($status) {
+            'true' => '1', 'false' => '0', default => $status
+        };
+        if ($status !== 'all') {
+            $query->where('is_active', $status === '1');
+        }
+
+        return $status;
     }
 
     public function bulkStore(Request $request)
@@ -496,10 +518,7 @@ class EmployeeController extends Controller
     {
         $this->configureEmployeeFilters();
         $query = \App\Models\Employee::with(['branch', 'department', 'jobTitle']);
-        if ($request->filled('is_active')) {
-            $val = $request->is_active;
-            $query->where('is_active', $val === 'true' || $val === '1' || $val === 1 || $val === true);
-        }
+        $this->applyEmploymentStatus($query, $request);
         $this->applyFilters($query, $request);
         $employees = $query->get();
 
