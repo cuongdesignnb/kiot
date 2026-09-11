@@ -23,6 +23,10 @@ async function confirmZero() {
 
 <template>
     <div class="text-xs mt-1 max-w-xs whitespace-normal">
+        <p v-if="slip.details?.salary_type === 'hourly'" class="text-gray-600">
+            Giờ thường: {{ (Number(slip.details.total_regular_minutes || 0) / 60).toFixed(2) }} giờ
+            · Tăng ca: {{ (Number(slip.details.total_overtime_minutes || 0) / 60).toFixed(2) }} giờ
+        </p>
         <p v-if="needsRecalc && !locked" class="text-amber-700">Dữ liệu đã thay đổi. Cần tính lại trước khi chốt.</p>
         <template v-if="slip.details?.validation">
             <p v-for="issue in slip.details.validation.issues" :key="issue" class="text-amber-700">{{ issue }}</p>

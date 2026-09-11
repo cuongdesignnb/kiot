@@ -500,7 +500,7 @@ class TimekeepingService
             } elseif ($inLog) {
                 $needsReview = true;
                 $intervals[] = $this->makeInterval($schedule, $shifts, $setting, $inLog->punched_at, null, 'device', [$inLog->id]);
-            } elseif ($remaining->isNotEmpty() && $remaining->first()->punched_at <= $nextStart) {
+            } elseif ($remaining->isNotEmpty() && $remaining->first()->punched_at < $nextStart) {
                 $orphan = $remaining->shift();
                 $needsReview = true;
                 $intervals[] = $this->makeInterval($schedule, $shifts, $setting, null, $orphan->punched_at, 'device', [$orphan->id]);
@@ -759,9 +759,11 @@ class TimekeepingService
             // supplied value and the interval-derived value so the same
             // overtime is never counted twice.
             $otMinutes = max($otMinutes, (int) $resolvedManualIntervals->sum('ot_minutes'));
-            $needsReview = $resolvedManualIntervals->contains(fn ($interval) => $interval['status'] === 'needs_review');
+            $needsReview = $resolvedManualIntervals->isEmpty()
+                || $resolvedManualIntervals->contains(fn ($interval) => $interval['status'] === 'needs_review');
         } else {
             $regularMinutes = 0;
+            $otMinutes = 0;
             $needsReview = false;
         }
 

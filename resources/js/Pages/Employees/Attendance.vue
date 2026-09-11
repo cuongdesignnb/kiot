@@ -388,7 +388,7 @@
               <input type="time" v-model="form.check_out_time" :disabled="!hasCheckOut" class="px-3 py-1.5 border border-gray-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400 w-28">
             </div>
 
-            <div v-for="(interval, index) in form.intervals.slice(1)" :key="`interval-${index + 1}`" class="mt-3 flex items-center gap-3 flex-wrap">
+            <div v-for="(interval, index) in form.intervals.slice(1)" v-show="form.attendance_type === 'work'" :key="`interval-${index + 1}`" class="mt-3 flex items-center gap-3 flex-wrap">
               <span class="text-xs text-gray-500 min-w-[130px]">Khoảng {{ index + 2 }}</span>
               <input v-model="interval.check_in_time" type="time" class="px-3 py-1.5 border border-gray-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-500 w-28">
               <span class="text-xs text-gray-400">đến</span>
@@ -400,6 +400,12 @@
             </button>
 
             <!-- Estimated Work Info -->
+            <p v-if="form.attendance_type !== 'work'" class="mt-3 text-sm text-blue-700">
+              Xác nhận nghỉ cho ca đang chọn, không thay đổi ca khác. Ca nghỉ không cần giờ vào/ra và không tính giờ làm hay tăng ca.
+            </p>
+            <p v-else class="mt-3 text-xs text-gray-600">
+              Nếu nghỉ ca này, hãy chọn loại nghỉ phía trên; không để “Đi làm” với giờ vào/ra trống.
+            </p>
             <div class="mt-4 p-3 bg-blue-50/50 rounded border border-blue-100 text-xs text-blue-800">
               <template v-if="activeSchedule?.timekeeping_record">
                 <div class="flex items-center justify-between mb-1">
@@ -473,7 +479,7 @@ const periodMode = ref('week')
 
 const attendanceTypes = [
     { value: 'work', label: 'Đi làm', icon: '🟢', activeClass: 'border-blue-500 bg-blue-50 text-blue-700 ring-1 ring-blue-500' },
-    { value: 'leave_paid', label: 'Nghỉ phép', icon: '🟡', activeClass: 'border-green-500 bg-green-50 text-green-700 ring-1 ring-green-500' },
+    { value: 'leave_paid', label: 'Nghỉ hưởng lương', icon: '🟡', activeClass: 'border-green-500 bg-green-50 text-green-700 ring-1 ring-green-500' },
     { value: 'leave_unpaid', label: 'Nghỉ không lương', icon: '🔴', activeClass: 'border-red-500 bg-red-50 text-red-700 ring-1 ring-red-500' },
 ]
 
@@ -916,8 +922,8 @@ const statusBadge = computed(() => {
     const record = activeSchedule.value.timekeeping_record
     if (record?.needs_review) return { text: 'Cần xử lý', cls: 'bg-orange-100 text-orange-700' }
     if (!record || (!record.check_in_at && !record.check_out_at)) return { text: 'Chưa chấm công', cls: 'bg-yellow-100 text-yellow-700' }
-    if (record.attendance_type === 'leave_paid') return { text: 'Nghỉ có phép', cls: 'bg-gray-100 text-gray-600' }
-    if (record.attendance_type === 'leave_unpaid') return { text: 'Nghỉ không phép', cls: 'bg-gray-100 text-gray-600' }
+    if (record.attendance_type === 'leave_paid') return { text: 'Nghỉ hưởng lương', cls: 'bg-gray-100 text-gray-600' }
+    if (record.attendance_type === 'leave_unpaid') return { text: 'Nghỉ không lương', cls: 'bg-gray-100 text-gray-600' }
     if (!record.check_in_at || !record.check_out_at) return { text: 'Chấm công thiếu', cls: 'bg-red-100 text-red-600' }
     if (record.late_minutes > 0 || record.early_minutes > 0) return { text: 'Đi muộn / Về sớm', cls: 'bg-orange-100 text-orange-600' }
     return { text: 'Đúng giờ', cls: 'bg-blue-100 text-blue-600' }

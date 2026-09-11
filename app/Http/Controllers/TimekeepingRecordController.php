@@ -41,6 +41,14 @@ class TimekeepingRecordController extends Controller
     {
         // Normalize empty strings to null
         $input = $request->all();
+        // Hidden work fields may still be submitted when the operator chooses leave.
+        // Explicit leave has no worked hours or overtime, never infer it from missing punches.
+        if (in_array($input['attendance_type'] ?? null, ['leave_paid', 'leave_unpaid'], true)) {
+            $input['check_in_time'] = null;
+            $input['check_out_time'] = null;
+            $input['intervals'] = [];
+            $input['ot_minutes'] = 0;
+        }
         foreach (['check_in_time', 'check_out_time', 'notes'] as $field) {
             if (isset($input[$field]) && $input[$field] === '') {
                 $input[$field] = null;

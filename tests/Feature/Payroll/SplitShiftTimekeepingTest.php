@@ -436,4 +436,110 @@ class SplitShiftTimekeepingTest extends TestCase
         $this->assertSame(270, $attributes['regular_minutes']);
         $this->assertSame(60, $attributes['ot_minutes']);
     }
+
+    public function test_confirmed_morning_leave_and_afternoon_work_can_be_calculated_and_approved(): void
+    {
+        config(['app.key' => str_repeat('k', 32)]);
+        $env = $this->environment(false, 'hourly');
+        foreach (['13:30:00', '18:00:00'] as $time) {
+            $this->punch($env['employee'], $env['date'], $time, $env['device']->id);
+        }
+        $this->recalculate($env);
+        $calculate = fn () => app(SalaryCalculationService::class)->calculateForEmployee(
+            $env['employee']->fresh(), Carbon::parse($env['date']), Carbon::parse($env['date']), 26
+        );
+        $this->assertSame('blocked', $calculate()['validation']['status']);
+
+        // Stale hidden work fields must not prevent explicitly confirming leave.
+        $this->actingAs($this->admin())->postJson('/api/timekeeping-records', [
+            'employee_work_schedule_id' => $env['morningSchedule']->id,
+            'attendance_type' => 'leave_unpaid',
+            'intervals' => [['check_in_time' => '11:00', 'check_out_time' => '08:30']],
+            'ot_minutes' => 45,
+            'confirm_clear_time' => true,
+            'confirm_downgrade' => true,
+        ])->assertOk();
+        $morning = TimekeepingRecord::where('employee_work_schedule_id', $env['morningSchedule']->id)->firstOrFail();
+        $this->assertFalse($morning->needs_review);
+        $this->assertSame(0, (int) $morning->ot_minutes);
+        $this->assertSame(0, $morning->intervals()->count());
+        $this->recalculate($env);
+        $this->assertSame('leave_unpaid', $morning->fresh()->attendance_type);
+        $result = $calculate();
+        $this->assertSame('ready', $result['validation']['status']);
+        $this->assertSame(270, $result['total_regular_minutes']);
+        $this->assertEquals(225000, $result['base']);
+        $this->assertEquals(0, $result['ot_pay']);
+
+        $sheet = \App\Models\Paysheet::create(['code' => 'QA-S-'.uniqid(), 'name' => 'Synthetic hourly',
+            'period_start' => $env['date'], 'period_end' => $env['date'], 'standard_working_days' => 26, 'status' => 'calculated']);
+        $slip = \App\Models\Payslip::create(['code' => 'QA-P-'.uniqid(), 'paysheet_id' => $sheet->id, 'employee_id' => $env['employee']->id]);
+        $preview = app(\App\Services\PayrollPayslipCalculator::class)->preview($sheet, $slip);
+        $slip->update($preview);
+        app(\App\Services\PayrollCalculationGuard::class)->assertReady($sheet->fresh());
+        $this->assertEquals($preview['total_salary'], $slip->fresh()->total_salary);
+        app(\App\Services\PayrollPostingService::class)->lock($sheet->fresh());
+        $this->assertSame('locked', $sheet->fresh()->status);
+        $this->assertSame(1, \Illuminate\Support\Facades\DB::table('employee_salary_ledger_entries')->where('paysheet_id', $sheet->id)->count());
+    }
+
+    public function test_empty_manual_work_does_not_silently_confirm_an_absence(): void
+    {
+        $env = $this->environment(false, 'hourly');
+        $attributes = app(TimekeepingService::class)->buildManualRecordAttributes(
+            $env['morningSchedule']->load('shift'), 'work', null, null
+        );
+        $this->assertTrue($attributes['needs_review']);
+    }
+
+    public function test_hourly_ignores_daily_unit_cap_but_still_checks_real_hours(): void
+    {
+        $env = $this->environment(false, 'hourly');
+        foreach ([$env['morningSchedule'], $env['afternoonSchedule']] as $schedule) {
+            $attributes = app(TimekeepingService::class)->buildManualRecordAttributes(
+                $schedule->load('shift'), 'work', substr($schedule->start_time, 0, 5), substr($schedule->end_time, 0, 5)
+            );
+            unset($attributes['_intervals']);
+            TimekeepingRecord::create(array_merge($attributes, ['work_units' => 1]));
+        }
+        $calculate = fn () => app(SalaryCalculationService::class)->calculateForEmployee(
+            $env['employee']->fresh(), Carbon::parse($env['date']), Carbon::parse($env['date']), 26
+        );
+        $this->assertSame('ready', $calculate()['validation']['status']);
+        $this->assertEquals(400000, $calculate()['base']);
+        $record = TimekeepingRecord::where('employee_work_schedule_id', $env['afternoonSchedule']->id)->firstOrFail();
+        $record->update(['check_in_at' => $env['date'].' 11:30:00']);
+        $this->assertSame('blocked', $calculate()['validation']['status']);
+        $record->update(['check_in_at' => $env['date'].' 13:30:00', 'ot_minutes' => 60]);
+        $this->assertSame('blocked', $calculate()['validation']['status']);
+        $record->update(['ot_minutes' => 0]);
+        $env['employee']->salarySetting()->update(['salary_type' => 'by_workday']);
+        $this->assertSame('blocked', $calculate()['validation']['status']);
+    }
+
+    public function test_paid_leave_discards_hidden_overtime_without_fabricating_worked_hours(): void
+    {
+        $env = $this->environment(false, 'hourly');
+        $attributes = app(TimekeepingService::class)->buildManualRecordAttributes(
+            $env['morningSchedule']->load('shift'), 'leave_paid', '08:30', '12:00', 60
+        );
+        $this->assertSame(0, $attributes['worked_minutes']);
+        $this->assertSame(0, $attributes['regular_minutes']);
+        $this->assertSame(0, $attributes['ot_minutes']);
+        $this->assertNull($attributes['check_in_at']);
+        $this->assertNull($attributes['check_out_at']);
+        $this->assertFalse($attributes['needs_review']);
+    }
+
+    public function test_hourly_partial_punch_is_blocked_even_if_old_review_flag_is_false(): void
+    {
+        $env = $this->environment(false, 'hourly');
+        TimekeepingRecord::create(['employee_id' => $env['employee']->id, 'work_date' => $env['date'],
+            'slot' => 1, 'attendance_type' => 'work', 'check_in_at' => $env['date'].' 08:30:00',
+            'worked_minutes' => 210, 'regular_minutes' => 210, 'work_units' => .5, 'needs_review' => false]);
+        $result = app(SalaryCalculationService::class)->calculateForEmployee(
+            $env['employee']->fresh(), Carbon::parse($env['date']), Carbon::parse($env['date']), 26
+        );
+        $this->assertSame('blocked', $result['validation']['status']);
+    }
 }
