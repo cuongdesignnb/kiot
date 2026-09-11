@@ -74,7 +74,8 @@ class SalaryCalculationService
         $workUnits = 0;
         $normalWorkUnits = 0; // Ngày công thật (không nhân hệ số, dùng cho hiển thị)
         $workRecords = $records->where('attendance_type', 'work');
-        $attendance = app(PayrollConfirmedAttendance::class)->summarize($records, $officialHolidayDates, $restDayMultiplier, $holidayMultiplier);
+        $hasDayBasedExtras = $hasAllowance && $allowanceList->contains(fn ($item) => data_get($item, 'allowance_type') === 'fixed_per_day');
+        $attendance = app(PayrollConfirmedAttendance::class)->summarize($records, $officialHolidayDates, $restDayMultiplier, $holidayMultiplier, $setting->salary_type, $hasDayBasedExtras);
         $workUnits = $attendance['weighted'];
         $normalWorkUnits = $attendance['normal'];
         $paidLeaveUnits = $attendance['leave'];
