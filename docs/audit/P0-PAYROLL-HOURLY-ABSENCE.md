@@ -53,6 +53,7 @@ Do not publish real audit reports, names, identifiers or amounts in Git.
 
 - PASS: 113 tests / 1061 assertions across the ten regression suites listed above.
 - PASS: frontend production build.
+- PASS: five frontend attendance badge tests (`node --test resources/js/tests/attendanceStatus.test.mjs`).
 - PASS: read-only private local-backup audit completed without exceptions.
   That backup is historical, not proof of current production attendance.
 - Pending on production: deploy, explicit attendance confirmation by the operator,

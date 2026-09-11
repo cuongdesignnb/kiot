@@ -921,9 +921,10 @@ const statusBadge = computed(() => {
     if (!activeSchedule.value) return null
     const record = activeSchedule.value.timekeeping_record
     if (record?.needs_review) return { text: 'Cần xử lý', cls: 'bg-orange-100 text-orange-700' }
-    if (!record || (!record.check_in_at && !record.check_out_at)) return { text: 'Chưa chấm công', cls: 'bg-yellow-100 text-yellow-700' }
+    if (!record) return { text: 'Chưa chấm công', cls: 'bg-yellow-100 text-yellow-700' }
     if (record.attendance_type === 'leave_paid') return { text: 'Nghỉ hưởng lương', cls: 'bg-gray-100 text-gray-600' }
     if (record.attendance_type === 'leave_unpaid') return { text: 'Nghỉ không lương', cls: 'bg-gray-100 text-gray-600' }
+    if (!record.check_in_at && !record.check_out_at) return { text: 'Chưa chấm công', cls: 'bg-yellow-100 text-yellow-700' }
     if (!record.check_in_at || !record.check_out_at) return { text: 'Chấm công thiếu', cls: 'bg-red-100 text-red-600' }
     if (record.late_minutes > 0 || record.early_minutes > 0) return { text: 'Đi muộn / Về sớm', cls: 'bg-orange-100 text-orange-600' }
     return { text: 'Đúng giờ', cls: 'bg-blue-100 text-blue-600' }
