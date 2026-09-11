@@ -230,6 +230,8 @@ class SalaryPaymentService
     public function cancel(PaysheetPayment $payment, string $reason, $eventAt): PaysheetPayment
     {
         return DB::transaction(function () use ($payment, $reason, $eventAt) {
+            // Match payment creation and whole-sheet cancellation: sheet before slip/payment.
+            Paysheet::query()->lockForUpdate()->findOrFail($payment->paysheet_id);
             $locked = PaysheetPayment::query()->lockForUpdate()->findOrFail($payment->id);
             if ($locked->status === 'cancelled') {
                 return $locked;

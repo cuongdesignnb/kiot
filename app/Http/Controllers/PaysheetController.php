@@ -115,7 +115,7 @@ class PaysheetController extends Controller
                 : $paysheet->payments()->where('status', 'active')->count());
 
         $paysheet->setAttribute('can_pay', $paysheet->status === 'locked');
-        $paysheet->setAttribute('can_cancel', $paysheet->status === 'locked' && $activePayments === 0);
+        $paysheet->setAttribute('can_cancel', in_array($paysheet->status, ['draft', 'calculated', 'locked'], true));
         $paysheet->setAttribute('can_recalculate', ! in_array($paysheet->status, ['locked', 'cancelled'], true));
         $paysheet->setAttribute('status_label', $this->paysheetStatusLabel($paysheet->status));
 
@@ -354,16 +354,22 @@ class PaysheetController extends Controller
     /**
      * PUT /api/paysheets/{id}/cancel — Hủy bỏ
      */
-    public function cancel(Request $request, $id, PayrollPostingService $service, PayrollDateGuard $dateGuard)
+    public function cancellationPreview($id, \App\Services\PayrollCancellationService $service)
+    {
+        return response()->json($service->preview(Paysheet::findOrFail($id)));
+    }
+
+    public function cancel(Request $request, $id, \App\Services\PayrollCancellationService $service, PayrollDateGuard $dateGuard)
     {
         $data = $request->validate([
             'reason' => 'required|string|min:10|max:1000',
             'cancel_date' => 'nullable|date',
+            'confirmation_hash' => 'nullable|string|size:64',
             'override_reason' => 'nullable|string|min:10|max:1000',
         ]);
         $paysheet = Paysheet::findOrFail($id);
         $eventAt = $dateGuard->assertAllowed($data['cancel_date'] ?? now(), $data['override_reason'] ?? null, 'paysheet_cancel');
-        $result = $service->cancel($paysheet, $data['reason'], $eventAt);
+        $result = $service->cancel($paysheet, $data['reason'], $eventAt, $data['confirmation_hash'] ?? null);
 
         return response()->json([
             'success' => true,

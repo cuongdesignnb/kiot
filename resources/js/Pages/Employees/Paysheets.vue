@@ -1671,7 +1671,7 @@
         :title="cancelModal.kind === 'paysheet' ? 'Hủy bảng lương' : 'Hủy thanh toán lương'"
         :document-code="cancelModal.target?.code || ''"
         :warning="cancelModal.kind === 'paysheet'
-            ? 'Chỉ hủy khi không còn thanh toán hợp lệ. Hệ thống tạo dòng đảo và giữ nguyên lịch sử.'
+            ? `Hủy bảng lương và ${cancelModal.preview?.payments?.length || 0} phiếu thanh toán liên quan, tổng ${formatMoney(cancelModal.preview?.payment_total || 0)}. ${cancelModal.preview?.payments?.map(p => p.code + ': ' + formatMoney(p.amount)).join('; ') || ''}. Giữ lịch sử; không tự chuyển tiền đã trả hay điều chỉnh thủ công sang bảng mới. Hủy chứng từ không hoàn lại tiền thực tế đã chuyển.`
             : `Hệ thống hủy CashFlow liên quan và tạo dòng đảo cho ${formatMoney(cancelModal.target?.amount || 0)}.`"
         :submitting="cancelModal.submitting"
         @close="closeCancelModal"
@@ -1754,7 +1754,7 @@ const selectedSlipIds = ref([]);
 const selectAllSlips = ref(false);
 const isPaying = ref(false);
 const expandedSlipId = ref(null);
-const cancelModal = reactive({ show: false, kind: '', target: null, submitting: false });
+const cancelModal = reactive({ show: false, kind: '', target: null, submitting: false, preview: null });
 
 // ===== Deduction modal =====
 const showDeductionModal = ref(false);
@@ -2145,9 +2145,15 @@ const lockPaysheet = async (ps) => {
 };
 
 const cancelPaysheet = async (ps) => {
-    cancelModal.kind = 'paysheet';
-    cancelModal.target = ps;
-    cancelModal.show = true;
+    try {
+        const { data } = await axios.get(`/api/paysheets/${ps.id}/cancel-preview`);
+        cancelModal.preview = data;
+        cancelModal.kind = 'paysheet';
+        cancelModal.target = ps;
+        cancelModal.show = true;
+    } catch (e) {
+        alert(e.response?.data?.message || 'Không tải được bản xem trước hủy bảng lương.');
+    }
 };
 
 const saveNotes = async (ps) => {
@@ -2216,11 +2222,13 @@ const closeCancelModal = () => {
 };
 
 const confirmCancellation = async (reason) => {
+    if (cancelModal.submitting) return;
     cancelModal.submitting = true;
     try {
         if (cancelModal.kind === 'paysheet') {
             await axios.put(`/api/paysheets/${cancelModal.target.id}/cancel`, {
                 reason,
+                confirmation_hash: cancelModal.preview?.confirmation_hash,
                 cancel_date: localDateTimeValue(),
             });
             expandedId.value = null;
