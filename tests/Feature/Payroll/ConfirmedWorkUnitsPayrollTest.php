@@ -66,6 +66,39 @@ class ConfirmedWorkUnitsPayrollTest extends TestCase
         $this->assertEquals(520000, $this->calculate($employee, 25)['base']);
     }
 
+    public function test_empty_unflagged_hourly_slots_do_not_block_or_change_pay(): void
+    {
+        $employee = $this->employee('hourly', 30000);
+        $this->record($employee, '2030-06-03', 240, .5);
+        $before = $this->calculate($employee);
+        foreach (['2030-06-09', '2030-06-10'] as $date) {
+            foreach ([1, 2] as $slot) {
+                $this->record($employee, $date, 0, 0, ['slot' => $slot, 'source' => 'none', 'needs_review' => false]);
+            }
+        }
+        $snapshot = $employee->timekeepingRecords()->orderBy('id')->get()->toArray();
+        $after = $this->calculate($employee);
+        $this->assertSame('ready', $after['validation']['status']);
+        $this->assertSame($before['base'], $after['base']);
+        $this->assertSame($before['total_regular_minutes'], $after['total_regular_minutes']);
+        [$sheet] = $this->sheet($employee);
+        app(\App\Services\PayrollPostingService::class)->lock($sheet);
+        $this->assertSame('locked', $sheet->fresh()->status);
+        $this->assertSame($snapshot, $employee->timekeepingRecords()->orderBy('id')->get()->toArray());
+    }
+
+    public function test_empty_hourly_slot_does_not_bypass_review_or_inconsistent_units(): void
+    {
+        $employee = $this->employee('hourly', 30000);
+        $this->record($employee, '2030-06-03', 240, .5);
+        $empty = $this->record($employee, '2030-06-04', 0, 0, ['source' => 'none', 'needs_review' => true]);
+        $this->assertSame('blocked', $this->calculate($employee)['validation']['status']);
+        $empty->update(['needs_review' => false, 'work_units' => .5]);
+        $this->assertSame('blocked', $this->calculate($employee)['validation']['status']);
+        $empty->update(['work_units' => 0, 'check_out_at' => '2030-06-04 12:00:00']);
+        $this->assertSame('blocked', $this->calculate($employee)['validation']['status']);
+    }
+
     public function test_half_units_multiple_shifts_leave_and_holiday_are_counted_once(): void
     {
         $rows = collect([
