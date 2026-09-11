@@ -59,7 +59,7 @@ class PaysheetController extends Controller
      */
     public function show($id)
     {
-        $paysheet = Paysheet::with([
+        $paysheet = Paysheet::visibleInPayroll()->with([
             'branch:id,name',
             'payslips.employee:id,code,name',
             'payslips.adjustments',
@@ -83,6 +83,7 @@ class PaysheetController extends Controller
 
     private function applyPaysheetIndexFilters($query, Request $request): void
     {
+        $query->visibleInPayroll();
         if ($request->filled('branch_id')) {
             $query->where('branch_id', $request->integer('branch_id'));
         }
@@ -512,9 +513,9 @@ class PaysheetController extends Controller
 
     public function export(Request $request)
     {
-        $paysheets = Paysheet::query()
-            ->when($request->search, fn ($q, $s) => $q->where('code', 'LIKE', "%{$s}%")->orWhere('name', 'LIKE', "%{$s}%"))
-            ->orderBy('id', 'desc')->get();
+        $query = Paysheet::query();
+        $this->applyPaysheetIndexFilters($query, $request);
+        $paysheets = $query->orderByDesc('id')->get();
 
         return \App\Services\CsvService::export(
             ['Mã bảng lương', 'Tên', 'Kỳ lương', 'Từ ngày', 'Đến ngày', 'Số NV', 'Tổng lương', 'Đã trả', 'Còn lại', 'Trạng thái', 'Ghi chú'],
@@ -525,6 +526,7 @@ class PaysheetController extends Controller
 
     public function print(Paysheet $paysheet)
     {
+        abort_unless(Paysheet::visibleInPayroll()->whereKey($paysheet->id)->exists(), 404);
         $paysheet->load(['branch', 'payslips.employee']);
 
         return view('prints.paysheet', compact('paysheet'));
@@ -535,7 +537,7 @@ class PaysheetController extends Controller
      */
     public function edit($id)
     {
-        $paysheet = Paysheet::with([
+        $paysheet = Paysheet::visibleInPayroll()->with([
             'branch:id,name',
             'payslips.employee:id,code,name',
             'payslips.adjustments',

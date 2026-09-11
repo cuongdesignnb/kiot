@@ -48,6 +48,21 @@ class Paysheet extends Model
         return $this->belongsTo(Branch::class);
     }
 
+    /** Discarded unposted sheets are technical history, not cancelled payroll. */
+    public function scopeVisibleInPayroll($query)
+    {
+        return $query->where(function ($visible) {
+            $visible->where('paysheets.status', '!=', 'cancelled')
+                ->orWhereNotExists(function ($audit) {
+                    $audit->selectRaw('1')->from('activity_logs')
+                        ->whereColumn('activity_logs.subject_id', 'paysheets.id')
+                        ->where('activity_logs.subject_type', self::class)
+                        ->where('activity_logs.action', 'paysheet_cancel_reviewed')
+                        ->where('activity_logs.properties->mode', 'unposted');
+                });
+        });
+    }
+
     public function payslips()
     {
         return $this->hasMany(Payslip::class);
