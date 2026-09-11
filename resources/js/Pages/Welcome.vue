@@ -1628,7 +1628,7 @@ const formatDate = (val) => {
                                                         <span class="text-gray-400 font-normal ml-1">({{ product.serialsData?.length || 0 }})</span>
                                                     </span>
                                                     <div class="flex items-center gap-3 text-[12px]">
-                                                        <span class="text-gray-500">Giá vốn BQ sản phẩm: <span class="font-bold text-gray-700">{{ (() => { const inStock = (product.serialsData || []).filter(s => s.status === 'in_stock'); if (inStock.length === 0) return formatCurrency(product.cost_price); const sum = inStock.reduce((acc, s) => acc + (Number(s.cost_price) || Number(s.original_cost) || 0), 0); return formatCurrency(Math.round(sum / inStock.length)); })() }}</span> <span class="text-gray-400">(BQ {{ (product.serialsData || []).filter(s => s.status === 'in_stock').length }} còn tồn)</span></span>
+                                                        <span class="text-gray-500">Giá vốn BQ sản phẩm: <span class="font-bold text-gray-700">{{ (() => { const inStock = (product.serialsData || []).filter(s => s.status === 'in_stock'); if (inStock.length === 0) return formatCurrency(0); const sum = inStock.reduce((acc, s) => acc + (Number(s.cost_price) || Number(s.original_cost) || 0), 0); return formatCurrency(Math.round(sum / inStock.length)); })() }}</span> <span class="text-gray-400">(BQ {{ (product.serialsData || []).filter(s => s.status === 'in_stock').length }} còn tồn)</span></span>
                                                     </div>
                                                 </div>
 
