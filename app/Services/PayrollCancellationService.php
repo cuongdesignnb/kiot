@@ -42,9 +42,9 @@ class PayrollCancellationService
                 throw ValidationException::withMessages(['status' => 'Trạng thái bảng lương không hỗ trợ hủy.']);
             }
             if ($sheet->status !== 'locked') {
-                if ($payments->isNotEmpty() || $slips->contains(fn ($s) => $s->paid_amount != 0 || $s->applied_advance != 0)
+                if ($sheet->payments()->exists() || $slips->contains(fn ($s) => $s->paid_amount != 0 || $s->applied_advance != 0)
                     || EmployeeSalaryLedgerEntry::where('paysheet_id', $sheet->id)->exists()
-                    || SalaryAdvanceApplication::where('paysheet_id', $sheet->id)->where('status', 'active')->exists()) {
+                    || SalaryAdvanceApplication::where('paysheet_id', $sheet->id)->exists()) {
                     throw ValidationException::withMessages(['ledger' => 'Bảng tạm tính có dữ liệu thanh toán hoặc ghi sổ bất thường; cần audit trước khi hủy.']);
                 }
                 $sheet->payslips()->update(['remaining' => 0, 'payment_status' => 'unpaid']);

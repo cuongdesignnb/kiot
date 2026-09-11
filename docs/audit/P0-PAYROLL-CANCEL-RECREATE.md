@@ -23,8 +23,26 @@ posting service. Cancellation does not return money already transferred in real
 life. Do not pay a replacement sheet again without reconciling actual money paid.
 There is no automatic transfer of settlements or manual adjustments to the new sheet.
 
-Cancelled documents remain searchable with the cancelled filter. Retire employees
+Cancelled posted documents remain searchable with the cancelled filter. A clean
+unposted cancellation identified by its reviewed audit mode is technical history
+only: hidden from all payroll lists/totals/exports and normal detail/edit/print
+routes. This also recognizes prior reviewed unposted cancellations without a
+backfill. Unknown legacy cancellations are not guessed or hidden. Retire employees
 before creating a replacement so only active employees enter the new sheet.
+
+Payroll list and CSV share branch, status, period and search filters. The UI sends
+the same filters for both. Draft discard refuses even historical payment or advance
+application rows, not only active ones. No financial-history rows are deleted.
+
+## Financial report QA
+
+Synthetic HTTP integration exercises the actual financial report, cashbook metrics,
+payroll CSV and cashbook CSV before/after draft discard and locked cancellation
+(unpaid, partial, full, next-month cancellation, advance plus payment). It checks
+net profit, expense, fund balance, original advance retention, independent payment
+retention, repeat safety and cancelled visibility. The current report recomputes
+the original payroll period using current status; next-month cancellation does not
+create a separately dated P&L adjustment. This policy is not changed by this patch.
 
 ## Verification
 

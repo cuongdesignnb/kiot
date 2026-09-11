@@ -49,7 +49,7 @@
                             </svg>
                             Bảng tính lương
                         </button>
-                        <ExcelButtons export-url="/paysheets/export" />
+                        <ExcelButtons :export-url="paysheetExportUrl" />
                     </div>
                 </div>
             </header>
@@ -656,7 +656,7 @@
                                                                     d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
                                                                 />
                                                             </svg>
-                                                            Hủy bỏ
+                                                            {{ ['draft', 'calculated'].includes(ps.status) ? 'Bỏ bảng tạm tính' : 'Hủy bỏ' }}
                                                         </button>
                                                         <span
                                                             class="text-xs text-gray-400"
@@ -1668,10 +1668,12 @@
     </Teleport>
     <CancelReasonModal
         :show="cancelModal.show"
-        :title="cancelModal.kind === 'paysheet' ? 'Hủy bảng lương' : 'Hủy thanh toán lương'"
+        :title="cancelModal.kind === 'paysheet' ? (['draft', 'calculated'].includes(cancelModal.preview?.status) ? 'Bỏ bảng tạm tính' : 'Hủy bảng lương') : 'Hủy thanh toán lương'"
         :document-code="cancelModal.target?.code || ''"
         :warning="cancelModal.kind === 'paysheet'
-            ? `Hủy bảng lương và ${cancelModal.preview?.payments?.length || 0} phiếu thanh toán liên quan, tổng ${formatMoney(cancelModal.preview?.payment_total || 0)}. ${cancelModal.preview?.payments?.map(p => p.code + ': ' + formatMoney(p.amount)).join('; ') || ''}. Giữ lịch sử; không tự chuyển tiền đã trả hay điều chỉnh thủ công sang bảng mới. Hủy chứng từ không hoàn lại tiền thực tế đã chuyển.`
+            ? (['draft', 'calculated'].includes(cancelModal.preview?.status)
+                ? 'Bỏ bảng tạm tính khỏi danh sách, bộ lọc Đã hủy và file xuất. Chỉ thực hiện khi chưa phát sinh nghiệp vụ tài chính. Có thể tạo bảng mới; điều chỉnh thủ công không được chuyển sang. Hệ thống giữ dữ liệu kỹ thuật để truy vết.'
+                : `Hủy bảng lương và ${cancelModal.preview?.payments?.length || 0} phiếu thanh toán liên quan, tổng ${formatMoney(cancelModal.preview?.payment_total || 0)}. ${cancelModal.preview?.payments?.map(p => p.code + ': ' + formatMoney(p.amount)).join('; ') || ''}. Giữ lịch sử; không tự chuyển tiền đã trả hay điều chỉnh thủ công sang bảng mới. Hủy chứng từ không hoàn lại tiền thực tế đã chuyển.`)
             : `Hệ thống hủy CashFlow liên quan và tạo dòng đảo cho ${formatMoney(cancelModal.target?.amount || 0)}.`"
         :submitting="cancelModal.submitting"
         @close="closeCancelModal"
@@ -2008,9 +2010,7 @@ const debouncedFetch = () => {
     fetchTimer = setTimeout(fetchPaysheets, 300);
 };
 
-const fetchPaysheets = async () => {
-    loading.value = true;
-    try {
+const paysheetFilterParams = () => {
         const params = {};
         if (searchQuery.value) params.search = searchQuery.value;
         if (selectedBranch.value) params.branch_id = selectedBranch.value.id;
@@ -2020,12 +2020,17 @@ const fetchPaysheets = async () => {
         const checkedStatuses = statusOptions.value
             .filter((s) => s.checked)
             .map((s) => s.value);
-        if (
-            checkedStatuses.length > 0 &&
-            checkedStatuses.length < statusOptions.value.length
-        ) {
+        if (checkedStatuses.length > 0) {
             params.status = checkedStatuses.join(",");
         }
+        return params;
+};
+const paysheetExportUrl = computed(() => '/paysheets/export?' + new URLSearchParams(paysheetFilterParams()).toString());
+
+const fetchPaysheets = async () => {
+    loading.value = true;
+    try {
+        const params = paysheetFilterParams();
 
         const res = await axios.get("/api/paysheets", { params });
         if (res.data?.success) {
