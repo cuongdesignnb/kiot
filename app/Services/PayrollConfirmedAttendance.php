@@ -29,8 +29,11 @@ class PayrollConfirmedAttendance
             }
             if ($salaryType === 'hourly') {
                 foreach ($work as $row) {
+                    // A zero-hour, zero-unit slot without punches adds no pay.
+                    // Do not infer absence or require punches merely for a scheduled slot.
+                    // needs_review is still enforced above, including manual empty work.
                     if ((bool) $row->check_in_at !== (bool) $row->check_out_at
-                        || (! $row->check_in_at && ! $row->check_out_at && (int) $row->worked_minutes === 0)) {
+                        || (! $row->check_in_at && ! $row->check_out_at && (int) $row->worked_minutes === 0 && (float) $row->work_units != 0)) {
                         $issues[] = "Ca đi làm ngày {$date}, ca ".($row->slot ?? 1).' chưa có đủ giờ xác nhận. Nếu nghỉ, chọn loại nghỉ; không tự coi thiếu chấm công là nghỉ.';
                     }
                 }
