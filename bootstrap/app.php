@@ -5,6 +5,7 @@ use App\Console\Commands\ApplySerialCostRemediationPlan;
 use App\Console\Commands\ApplySerialCostRemediationWave;
 use App\Console\Commands\AuditProductDeletions;
 use App\Console\Commands\AuditSerialCostSnapshots;
+use App\Console\Commands\AuditSerialProductProjection;
 use App\Console\Commands\BuildSerialCostLifecycleRemediationPlan;
 use App\Console\Commands\BuildSerialCostRemediationPlan;
 use App\Console\Commands\CreateSerialCostLifecycleRemediationApproval;
@@ -32,6 +33,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withCommands([
         AuditProductDeletions::class,
         AuditSerialCostSnapshots::class,
+        AuditSerialProductProjection::class,
         BuildSerialCostRemediationPlan::class,
         CreateSerialCostRemediationApproval::class,
         ApplySerialCostRemediationPlan::class,

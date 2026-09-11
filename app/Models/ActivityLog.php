@@ -268,6 +268,8 @@ class ActivityLog extends Model
 
     const ACTION_SERIAL_COST_LIFECYCLE_REMEDIATION_APPLY = 'serial_cost_lifecycle_remediation_apply';
 
+    const ACTION_SERIAL_PRODUCT_PROJECTION_REPAIR = 'serial_product_projection_repair';
+
     // ── Label map (Vietnamese) ──
     const ACTION_LABELS = [
         'purchase_create' => 'Tạo phiếu nhập hàng',
@@ -296,6 +298,7 @@ class ActivityLog extends Model
         'return_cancel' => 'Hủy phiếu trả hàng',
         'return_sales_attribution_update' => 'Điều chỉnh người chịu doanh số trả hàng',
         'serial_cost_lifecycle_remediation_apply' => 'Hiệu chỉnh giá vốn vòng đời serial',
+        'serial_product_projection_repair' => 'Hiệu chỉnh projection sản phẩm serial',
         'purchase_return_create' => 'Tạo phiếu trả nhà cung cấp',
         'purchase_return_cancel' => 'Hủy phiếu trả nhà cung cấp',
         'damage_create' => 'Tạo phiếu xuất hủy',
