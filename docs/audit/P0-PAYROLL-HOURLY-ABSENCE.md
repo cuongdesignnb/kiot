@@ -13,7 +13,8 @@ the next slot's exact start punch is consumed as the previous slot's orphan exit
   Existing clear-time/downgrade confirmation remains required. No absence is
   inferred from missing punches, and device recalculation preserves manual leave.
 - A punch exactly at the next slot's start belongs to that next slot.
-- Hourly validation does not apply the daily unit cap. Real overlap, reversed
+- Hourly validation does not apply the daily unit cap unless a configured
+  per-day allowance uses those units (to prevent duplicate allowance). Real overlap, reversed
   times, incomplete work and regular-plus-OT exceeding worked minutes still block.
 - Errors identify the date and slot and explain how to confirm leave or work.
   Payslip status displays stored regular hours and overtime hours separately.
@@ -51,7 +52,7 @@ Do not publish real audit reports, names, identifiers or amounts in Git.
 
 ## QA result
 
-- PASS: 113 tests / 1061 assertions across the ten regression suites listed above.
+- PASS: 113 tests / 1062 assertions across the ten regression suites listed above.
 - PASS: frontend production build.
 - PASS: five frontend attendance badge tests (`node --test resources/js/tests/attendanceStatus.test.mjs`).
 - PASS: read-only private local-backup audit completed without exceptions.

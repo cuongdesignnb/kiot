@@ -507,6 +507,10 @@ class SplitShiftTimekeepingTest extends TestCase
         );
         $this->assertSame('ready', $calculate()['validation']['status']);
         $this->assertEquals(400000, $calculate()['base']);
+        $env['employee']->salarySetting()->update(['has_allowance' => true,
+            'custom_allowances' => [['allowance_type' => 'fixed_per_day', 'amount' => 10000]]]);
+        $this->assertSame('blocked', $calculate()['validation']['status']);
+        $env['employee']->salarySetting()->update(['has_allowance' => false]);
         $record = TimekeepingRecord::where('employee_work_schedule_id', $env['afternoonSchedule']->id)->firstOrFail();
         $record->update(['check_in_at' => $env['date'].' 11:30:00']);
         $this->assertSame('blocked', $calculate()['validation']['status']);

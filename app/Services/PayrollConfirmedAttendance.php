@@ -8,7 +8,7 @@ use Illuminate\Support\Collection;
 /** Payroll consumes recorded units; attendance owns minute-to-unit conversion. */
 class PayrollConfirmedAttendance
 {
-    public function summarize(Collection $records, array $holidays, float $restRate, float $holidayRate, string $salaryType = 'by_workday'): array
+    public function summarize(Collection $records, array $holidays, float $restRate, float $holidayRate, string $salaryType = 'by_workday', bool $hasDayBasedExtras = false): array
     {
         $normal = $weighted = $leave = 0.0;
         $issues = [];
@@ -35,7 +35,7 @@ class PayrollConfirmedAttendance
                     }
                 }
             }
-            if ($salaryType !== 'hourly' && ($rows->contains(fn ($r) => $r->work_units === null || (float) $r->work_units < 0)
+            if (($salaryType !== 'hourly' || $hasDayBasedExtras) && ($rows->contains(fn ($r) => $r->work_units === null || (float) $r->work_units < 0)
                 || $units + $paidLeave > 1.00001)) {
                 $issues[] = "Số công ngày {$date} thiếu hoặc vượt một công; kiểm tra các ca trùng.";
             }
