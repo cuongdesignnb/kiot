@@ -32,7 +32,7 @@ class SerialProductProjectionAuditTest extends TestCase
         );
     }
 
-    public function test_apply_requires_exact_confirmation_and_backup_then_changes_only_product_projection(): void
+    public function test_apply_requires_exact_confirmation_then_changes_only_product_projection(): void
     {
         [$product, $soldSerial] = $this->staleSoldOutProduct();
         $before = [
@@ -66,6 +66,61 @@ class SerialProductProjectionAuditTest extends TestCase
         $this->assertSame(0.0, (float) $product->cost_price);
         $this->assertSame('sold', $soldSerial->fresh()->status);
         $this->assertSame(3500000.0, (float) $soldSerial->fresh()->sold_cost_price);
+    }
+
+    public function test_bulk_scope_repairs_only_mismatched_sold_out_serial_products(): void
+    {
+        [$staleProduct] = $this->staleSoldOutProduct();
+        $category = Category::firstOrCreate(['name' => 'Synthetic serial projection QA']);
+        $consistentProduct = Product::create([
+            'sku' => 'SP-SYNTH-CONSISTENT-'.uniqid(),
+            'name' => 'Synthetic consistent sold-out product',
+            'cost_price' => 0,
+            'retail_price' => 1,
+            'stock_quantity' => 0,
+            'inventory_total_cost' => 0,
+            'is_active' => true,
+            'has_serial' => true,
+            'category_id' => $category->id,
+        ]);
+        $inStockProduct = Product::create([
+            'sku' => 'SP-SYNTH-IN-STOCK-'.uniqid(),
+            'name' => 'Synthetic in-stock product outside sold-out scope',
+            'cost_price' => 999,
+            'retail_price' => 1,
+            'stock_quantity' => 9,
+            'inventory_total_cost' => 999,
+            'is_active' => true,
+            'has_serial' => true,
+            'category_id' => $category->id,
+        ]);
+        SerialImei::create([
+            'product_id' => $inStockProduct->id,
+            'serial_number' => 'SN-IN-STOCK-'.uniqid(),
+            'status' => 'in_stock',
+            'cost_price' => 123,
+            'original_cost' => 123,
+        ]);
+
+        $this->assertSame(0, Artisan::call('costing:audit-serial-product-projection', ['--all-sold-out' => true]));
+        $plan = json_decode(Artisan::output(), true, 512, JSON_THROW_ON_ERROR);
+        $plannedIds = array_column($plan['rows'], 'product_id');
+        $this->assertContains($staleProduct->id, $plannedIds);
+        $this->assertNotContains($consistentProduct->id, $plannedIds);
+        $this->assertNotContains($inStockProduct->id, $plannedIds);
+
+        $this->assertSame(0, Artisan::call('costing:audit-serial-product-projection', [
+            '--all-sold-out' => true,
+            '--apply' => true,
+            '--confirm' => $plan['confirmation_code'],
+        ]));
+        $applied = json_decode(Artisan::output(), true, 512, JSON_THROW_ON_ERROR);
+
+        $this->assertSame('APPLIED', $applied['result']);
+        $this->assertSame(0.0, (float) $staleProduct->fresh()->cost_price);
+        $this->assertSame(0.0, (float) $consistentProduct->fresh()->cost_price);
+        $this->assertSame(999.0, (float) $inStockProduct->fresh()->cost_price);
+        $this->assertSame('ACTIVITY_LOG_BEFORE_STATE', $applied['recovery_reference']);
     }
 
     private function staleSoldOutProduct(): array

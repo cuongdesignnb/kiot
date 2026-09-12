@@ -20,7 +20,9 @@ Frontend dùng giá trị lưu cũ khi danh sách serial còn tồn rỗng. Dữ
 
 - Giao diện hiển thị giá vốn BQ bằng 0 khi không có serial `in_stock`.
 - Lệnh `costing:audit-serial-product-projection --product=...` mặc định chỉ dry-run và in JSON.
-- Apply yêu cầu mã xác nhận đúng theo trạng thái vừa audit và tham chiếu backup.
+- `--all-sold-out` audit đồng thời mọi sản phẩm serial không còn serial `in_stock`; chỉ những projection lệch mới nằm trong plan.
+- Apply yêu cầu mã xác nhận đúng theo trạng thái vừa audit.
+- Tham chiếu recovery là tùy chọn; trạng thái trước sửa luôn được lưu trong ActivityLog nên không bắt buộc backup toàn database cho phép sửa projection này.
 - Apply chỉ cập nhật `products.stock_quantity`, `products.inventory_total_cost`, `products.cost_price` theo serial `in_stock`.
 - Không sửa serial đã bán, snapshot hóa đơn hay stock movement lịch sử.
 
