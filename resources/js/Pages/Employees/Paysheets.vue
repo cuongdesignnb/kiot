@@ -1108,25 +1108,25 @@
                                                                         </div>
 
                                                                         <!-- Chi tiết phụ cấp -->
-                                                                        <template v-if="slip.details?.details?.allowances?.length">
+                                                                        <template v-if="getPayslipBreakdown(slip, 'allowance').length">
                                                                             <h5 class="font-medium text-gray-600 mt-4 mb-2 text-xs uppercase tracking-wide">Chi tiết phụ cấp</h5>
                                                                             <div class="space-y-1">
-                                                                                <div v-for="(alw, i) in slip.details.details.allowances" :key="'alw-'+i"
+                                                                                <div v-for="(alw, i) in getPayslipBreakdown(slip, 'allowance')" :key="'alw-'+i"
                                                                                     class="flex justify-between bg-white rounded-lg border border-gray-200 px-4 py-2">
                                                                                     <span class="text-gray-700">{{ alw.name }}</span>
-                                                                                    <span class="font-medium text-green-600">+{{ formatMoney(alw.calculated || alw.amount) }}</span>
+                                                                                    <span class="font-medium text-green-600">+{{ formatMoney(alw.amount) }}</span>
                                                                                 </div>
                                                                             </div>
                                                                         </template>
 
                                                                         <!-- Chi tiết thưởng -->
-                                                                        <template v-if="slip.details?.details?.bonus?.length">
+                                                                        <template v-if="getPayslipBreakdown(slip, 'bonus').length">
                                                                             <h5 class="font-medium text-gray-600 mt-4 mb-2 text-xs uppercase tracking-wide">Chi tiết thưởng</h5>
                                                                             <div class="space-y-1">
-                                                                                <div v-for="(bon, i) in slip.details.details.bonus" :key="'bon-'+i"
+                                                                                <div v-for="(bon, i) in getPayslipBreakdown(slip, 'bonus')" :key="'bon-'+i"
                                                                                     class="flex justify-between bg-white rounded-lg border border-gray-200 px-4 py-2">
-                                                                                    <span class="text-gray-700">{{ bon.role_type || 'Thưởng' }}: {{ formatMoney(bon.revenue_from) }}+</span>
-                                                                                    <span class="font-medium text-green-600">+{{ formatMoney(bon.calculated) }}</span>
+                                                                                    <span class="text-gray-700">{{ bon.name }}</span>
+                                                                                    <span class="font-medium text-green-600">+{{ formatMoney(bon.amount) }}</span>
                                                                                 </div>
                                                                             </div>
                                                                         </template>
@@ -1689,6 +1689,7 @@ import ExcelButtons from "@/Components/ExcelButtons.vue";
 import { ref, computed, reactive, onMounted, watch } from "vue";
 import axios from "axios";
 import { formatVND as formatMoney } from '@/utils/money';
+import { getPayslipBreakdown } from '@/utils/payslipBreakdown';
 import CancelReasonModal from '@/Components/CancelReasonModal.vue';
 
 const props = defineProps({
@@ -1879,9 +1880,10 @@ const updateSlipField = async (slip, field, event) => {
     // Lưu vào DB
     try {
         const psId = expandedPaysheet.value?.id;
-        await axios.put(`/api/paysheets/${psId}/payslips/${slip.id}`, {
+        const { data } = await axios.put(`/api/paysheets/${psId}/payslips/${slip.id}`, {
             [field]: newVal,
         });
+        if (data?.success && data.data) Object.assign(slip, data.data);
         slip._dirty = false;
     } catch (e) {
         console.error('Update payslip failed:', e);

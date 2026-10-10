@@ -643,6 +643,7 @@ import axios from "axios";
 import { formatVND as fmt } from '@/utils/money';
 import MoneyInput from '@/Components/MoneyInput.vue';
 import CancelReasonModal from '@/Components/CancelReasonModal.vue';
+import { getPayslipBreakdown } from '@/utils/payslipBreakdown';
 
 const props = defineProps({
     paysheet: { type: Object, required: true },
@@ -822,45 +823,20 @@ const popupTotal = computed(() => {
     }
 });
 
-// ===== Pre-populate from employee salary settings =====
+// ===== Effective saved allowance/bonus rows; settings fallback for deductions =====
 function getSettingsItems(type, slip) {
+    if (type === 'allowance' || type === 'bonus') {
+        return getPayslipBreakdown(slip, type).map(row => ({
+            ...row,
+            id: tempIdCounter--,
+            type,
+            meta: row.meta || {},
+            _existing: false,
+        }));
+    }
     const s = props.salarySettings[slip.employee_id];
     if (!s) return [];
     const calcDetails = slip.details?.details || {};
-
-    if (type === 'allowance') {
-        const calcItems = calcDetails.allowances || [];
-        return (s.custom_allowances || []).map(a => {
-            const calc = calcItems.find(c => c.name === a.name);
-            return {
-                id: tempIdCounter--,
-                type: 'allowance',
-                name: a.name || 'Phụ cấp',
-                amount: calc ? (calc.calculated || 0) : (a.amount || 0),
-                notes: '',
-                meta: {},
-                _existing: false,
-                _fromSettings: true,
-            };
-        });
-    }
-
-    if (type === 'bonus') {
-        const calcItems = calcDetails.bonus || [];
-        return (s.custom_bonuses || []).map(b => {
-            const calc = calcItems.find(c => c.role_type === b.role_type);
-            return {
-                id: tempIdCounter--,
-                type: 'bonus',
-                name: b.name || 'Thưởng',
-                amount: calc ? (calc.calculated || 0) : (b.bonus_value || 0),
-                notes: '',
-                meta: {},
-                _existing: false,
-                _fromSettings: true,
-            };
-        });
-    }
 
     if (type === 'deduction') {
         const calcItems = calcDetails.deductions || [];
@@ -892,14 +868,18 @@ function openPopup(type, slip) {
     // Load existing adjustments for this type
     const existingAdj = (slip.adjustments || []).filter(a => a.type === type);
 
-    if (existingAdj.length > 0) {
+    if (type === 'allowance' || type === 'bonus') {
+        // Use the same effective saved rows as the expanded payslip. An empty
+        // override must stay empty, not repopulate deleted configured items.
+        popupAdjustments.value = getSettingsItems(type, slip);
+    } else if (existingAdj.length > 0) {
         // Already saved adjustments — use them, ensuring meta is an object
         popupAdjustments.value = existingAdj.map(a => ({
             ...a,
             meta: a.meta || {},
             _existing: true,
         }));
-    } else if (type === 'allowance' || type === 'bonus' || type === 'deduction') {
+    } else if (type === 'deduction') {
         // Pre-populate from employee salary settings with calculated amounts
         popupAdjustments.value = getSettingsItems(type, slip);
     } else {
@@ -999,7 +979,9 @@ async function saveAdjustments() {
 function isOverridden(type) {
     const slip = popup.slip;
     if (!slip) return false;
-    return !!(slip.details?.manual_overrides?.[type]);
+    const field = type === 'allowance' ? 'allowances' : type;
+    return !!slip.details?.manual_overrides?.[type]
+        || Object.hasOwn(slip.details?.direct_overrides || {}, field);
 }
 
 async function resetAdjustments() {
