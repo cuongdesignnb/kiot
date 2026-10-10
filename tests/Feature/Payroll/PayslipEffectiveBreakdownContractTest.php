@@ -87,6 +87,37 @@ class PayslipEffectiveBreakdownContractTest extends TestCase
             ->assertJsonCount(0, 'data.payslips.0.adjustments');
     }
 
+    public function test_personal_and_company_bonus_descriptions_survive_save_recalculation_and_lock(): void
+    {
+        [$sheet, $slip] = $this->payroll();
+        $rows = [
+            ['name' => 'Thưởng doanh số cá nhân', 'amount' => 80000],
+            ['name' => 'Doanh số Cty', 'amount' => 240000],
+        ];
+        $this->bulk($sheet, $slip, 'bonus', $rows)->assertOk()
+            ->assertJsonPath('slip.bonus', 320000)
+            ->assertJsonPath('slip.total_salary', 1470000)
+            ->assertJsonCount(2, 'slip.adjustments')
+            ->assertJsonPath('slip.adjustments.1.name', 'Doanh số Cty')
+            ->assertJsonPath('slip.adjustments.1.amount', 240000);
+        $this->postJson("/api/paysheets/{$sheet->id}/recalculate")->assertOk();
+        $shown = $this->getJson("/api/paysheets/{$sheet->id}")->assertOk()->json('data.payslips.0');
+        $this->assertSame($rows, array_map(fn ($row) => ['name' => $row['name'], 'amount' => $row['amount']], $shown['adjustments']));
+        $this->assertSame(320000, $shown['bonus']);
+        $this->assertSame(320000, array_sum(array_column($shown['adjustments'], 'amount')));
+        $this->assertCount(1, $shown['details']['details']['bonus']);
+        $this->assertSame(1470000, $sheet->fresh()->total_salary);
+
+        app(\App\Services\PayrollPostingService::class)->lock($sheet->fresh());
+        $this->getJson("/api/paysheets/{$sheet->id}")->assertOk()
+            ->assertJsonPath('data.status', 'locked')
+            ->assertJsonPath('data.payslips.0.bonus', 320000)
+            ->assertJsonCount(2, 'data.payslips.0.adjustments')
+            ->assertJsonPath('data.payslips.0.adjustments.0.name', 'Thưởng doanh số cá nhân')
+            ->assertJsonPath('data.payslips.0.adjustments.1.name', 'Doanh số Cty');
+        $this->bulk($sheet, $slip, 'bonus', [])->assertStatus(422);
+    }
+
     public function test_direct_total_override_preserves_payment_and_advance_and_survives_recalculation(): void
     {
         [$sheet, $slip] = $this->payroll();

@@ -25,12 +25,19 @@ Bonus details have the same source-selection problem. A separate `calculated
 calculated amount is zero. Inline saving also ignored the server's response,
 leaving override metadata and settlement totals stale until reloading.
 
+When a company-performance bonus is entered alongside a personal-performance
+bonus, both are saved as named adjustments. The old expanded view renders only
+the original automatic personal bonus, omitting the company description even
+though the full sum is included in the total.
+
 ## Resolution
 
 - Both screens use one pure resolver over the saved payslip, not current
   employee configuration. Direct overrides take precedence, then approved
   adjustment rows, then the stored automatic calculation snapshot.
 - Empty overrides and zero totals stay empty. A calculated zero is respected.
+- Preserve every saved bonus name, including separate personal/company
+  descriptions. Do not infer or invent a company bonus from the total alone.
 - Displayed item sums must equal the saved component total. When legacy
   evidence cannot explain that total, show an explicitly labelled saved-total
   row, without attributing money to a removed/configured item.
@@ -45,13 +52,15 @@ leaving override metadata and settlement totals stale until reloading.
 
 - Before the fix: 7 of 9 initial JavaScript checks failed, reproducing stale
   breakdowns, zero fallback, and empty-popup repopulation.
-- After the fix: all 12 new JavaScript checks pass, exercising the actual Vue
+- After the fix: all 13 new JavaScript checks pass, exercising the actual Vue
   row expressions, popup functions, and inline-save function.
-- All 54 repository JavaScript checks pass.
-- Six new Docker feature tests pass with 47 assertions: remove one/all,
+- All 55 repository JavaScript checks pass.
+- Seven new Docker feature tests pass with 67 assertions: remove one/all,
   recalculate, explicit reset, direct override, paid/advance preservation,
-  read-only locked snapshots, CSV and print amounts.
-- Focused payroll/timekeeping regression: 128 tests, 1,179 assertions pass.
+  read-only locked snapshots, CSV and print amounts, and separate personal/
+  company bonus names preserved through saving, recalculation and posting.
+- Focused payroll/timekeeping regression: 129 tests, 1,199 assertions pass.
+- Attendance punch-direction unit regression: 13 tests, 85 assertions pass.
 - Production Vite build, PHP syntax, Pint on the new test, and diff whitespace
   checks pass. This is not a claim that the entire legacy payroll suite passes.
 - Fixtures and documentation are synthetic; no production financial records

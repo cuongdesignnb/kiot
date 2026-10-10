@@ -100,6 +100,24 @@ test('removing a bonus uses the same effective item selection as allowances', ()
     assert.deepEqual(openPopup(value, 'bonus'), displayed(value, 'bonus'));
 });
 
+test('personal and company bonuses retain both saved descriptions and reconcile to the total', () => {
+    const value = slip({ bonus: 320000, adjustments: [
+        { type: 'bonus', name: 'Thưởng doanh số cá nhân', amount: 80000 },
+        { type: 'bonus', name: 'Doanh số Cty', amount: 240000 },
+    ] });
+    // The old calculation snapshot contains only the personal component.
+    value.details.details.bonus = [{ role_type: 'employee', revenue_from: 0, calculated: 80000 }];
+    value.details.manual_overrides = { bonus: true };
+    const expected = [
+        { name: 'Thưởng doanh số cá nhân', amount: 80000 },
+        { name: 'Doanh số Cty', amount: 240000 },
+    ];
+    assert.deepEqual(displayed(value, 'bonus'), expected);
+    assert.deepEqual(openPopup(value, 'bonus'), expected);
+    assert.equal(displayed(value, 'bonus').reduce((sum, row) => sum + row.amount, 0), value.bonus);
+    assert.deepEqual(getPayslipBreakdown({ ...value, status: 'locked' }, 'bonus').map(row => ({ name: row.name, amount: row.amount })), expected);
+});
+
 test('automatic breakdown remains unchanged when it agrees with the saved total', () => {
     assert.deepEqual(displayed(slip()), [
         { name: 'Synthetic office allowance', amount: 120000 },
