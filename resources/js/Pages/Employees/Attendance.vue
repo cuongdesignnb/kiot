@@ -940,7 +940,10 @@ const estimatedWorkInfo = computed(() => {
         return { workedMinutes: 0, workUnits: 0.0, reason: 'Nghỉ không lương' }
     }
 
-    const intervalValues = Array.isArray(form.intervals) ? form.intervals : []
+    const intervalValues = [
+        { check_in_time: hasCheckIn.value ? form.check_in_time : '', check_out_time: hasCheckOut.value ? form.check_out_time : '' },
+        ...(Array.isArray(form.intervals) ? form.intervals.slice(1) : []),
+    ]
     const completeIntervals = intervalValues
         .filter(interval => interval?.check_in_time && interval?.check_out_time)
         .map(interval => {
@@ -1005,7 +1008,9 @@ const estimatedWorkInfo = computed(() => {
         }
     } else {
         workUnits = 0.0
-        reason = 'Chưa chấm công'
+        reason = outTime && !inTime ? 'Thiếu giờ vào — cần xác nhận giờ vào thực tế'
+            : inTime && !outTime ? 'Thiếu giờ ra — cần xác nhận giờ ra thực tế'
+            : 'Chưa chấm công'
     }
 
     return {
@@ -1029,6 +1034,10 @@ const openModal = (schedule) => {
             check_out_time: interval.check_out_at ? formatCheckTime(interval.check_out_at) : '',
         }))
         : [{ check_in_time: form.check_in_time, check_out_time: form.check_out_time }]
+    // The editable first row is the first interval, not the day's aggregate
+    // earliest entry/latest exit (which could hide an orphan or span a break).
+    form.check_in_time = form.intervals[0].check_in_time
+    form.check_out_time = form.intervals[0].check_out_time
     form.ot_minutes = rec?.ot_minutes || 0
     form.notes = rec?.notes || ''
     // Modal state
@@ -1046,7 +1055,7 @@ const openModal = (schedule) => {
 
 // Auto-fill shift start time when Vào checkbox is checked
 watch(hasCheckIn, (checked) => {
-    if (checked && !form.check_in_time && activeSchedule.value?.shift) {
+    if (checked && !form.check_in_time && activeSchedule.value?.shift && !activeSchedule.value?.timekeeping_record?.needs_review) {
         const st = activeSchedule.value.shift.start_time
         form.check_in_time = st ? st.substring(0, 5) : '08:30'
     } else if (!checked && !isPrefilling.value && activeSchedule.value?.timekeeping_record?.check_in_at) {
@@ -1056,7 +1065,7 @@ watch(hasCheckIn, (checked) => {
 
 // Auto-fill shift end time when Ra checkbox is checked
 watch(hasCheckOut, (checked) => {
-    if (checked && !form.check_out_time && activeSchedule.value?.shift) {
+    if (checked && !form.check_out_time && activeSchedule.value?.shift && !activeSchedule.value?.timekeeping_record?.needs_review) {
         const et = activeSchedule.value.shift.end_time
         form.check_out_time = et ? et.substring(0, 5) : '17:30'
     } else if (!checked && !isPrefilling.value && activeSchedule.value?.timekeeping_record?.check_out_at) {
