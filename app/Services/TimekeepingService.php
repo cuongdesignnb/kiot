@@ -259,16 +259,24 @@ class TimekeepingService
                 $scheduleEnd->addDay();
             }
 
-            // Tính check_in / check_out từ logs
-            $checkIn = $logs->first()->punched_at;
-            $checkOut = $logs->count() > 1 ? $logs->last()->punched_at : null;
-
-            $workedMinutes = 0;
-            if ($checkIn && $checkOut) {
-                $workedMinutes = abs(Carbon::parse($checkOut)->diffInMinutes(Carbon::parse($checkIn)));
-            }
+            // Use the same direction resolver for rest days. This virtual
+            // schedule is not saved and never invents a missing punch.
+            $restSchedule = new EmployeeWorkSchedule([
+                'employee_id' => $empId, 'branch_id' => $employee->branch_id,
+                'shift_id' => $empShift?->id, 'work_date' => $dateStr, 'slot' => 1,
+                'start_time' => $scheduleStart->format('H:i:s'), 'end_time' => $scheduleEnd->format('H:i:s'),
+            ]);
+            $restShifts = $empShift ? collect([$empShift])->keyBy('id') : collect();
+            $resolved = $this->assignPunchesToSchedules(collect([$restSchedule]), $logs, $restShifts, $setting)[''];
+            $intervals = collect($resolved['intervals']);
+            $checkIn = $intervals->filter(fn ($interval) => $interval['check_in_at'])->sortBy('check_in_at')->first()['check_in_at'] ?? null;
+            $checkOut = $intervals->filter(fn ($interval) => $interval['check_out_at'])->sortByDesc('check_out_at')->first()['check_out_at'] ?? null;
+            $workedMinutes = (int) $intervals->sum('worked_minutes');
 
             // Tính late/early/OT theo ca mặc định (giống ngày thường)
+            $completeIntervals = $intervals->where('status', 'complete');
+            $metricsCheckIn = $completeIntervals->sortBy('check_in_at')->first()['check_in_at'] ?? null;
+            $metricsCheckOut = $completeIntervals->sortByDesc('check_out_at')->first()['check_out_at'] ?? null;
             $useShiftAllowances = (bool) ($setting?->use_shift_allowances ?? true);
             $allowLate = $useShiftAllowances ? ($empShift?->allow_late_minutes ?? 0) : ($setting?->late_grace_minutes ?? 0);
             $allowEarly = $useShiftAllowances ? ($empShift?->allow_early_minutes ?? 0) : ($setting?->early_grace_minutes ?? 0);
@@ -277,8 +285,10 @@ class TimekeepingService
 
             $lateMinutes = $earlyMinutes = $otMinutes = 0;
 
-            if ($scheduleStart && $checkIn) {
-                $checkInCarbon = Carbon::parse($checkIn);
+            // Keep the existing rest-day allowance/OT formula, based only on
+            // complete pairs. Missing punches generate neither OT nor penalties.
+            if ($scheduleStart && $metricsCheckIn) {
+                $checkInCarbon = Carbon::parse($metricsCheckIn);
                 if ($checkInCarbon->greaterThan($scheduleStart)) {
                     $lateMinutes = max(0, abs($checkInCarbon->diffInMinutes($scheduleStart)) - $allowLate);
                 }
@@ -297,8 +307,8 @@ class TimekeepingService
                 }
             }
 
-            if ($scheduleEnd && $checkOut) {
-                $checkOutCarbon = Carbon::parse($checkOut);
+            if ($scheduleEnd && $metricsCheckOut) {
+                $checkOutCarbon = Carbon::parse($metricsCheckOut);
                 if ($checkOutCarbon->lessThan($scheduleEnd)) {
                     $diffEarly = abs($scheduleEnd->diffInMinutes($checkOutCarbon));
                     $earlyMinutes = max(0, $diffEarly - $allowEarly);
@@ -345,25 +355,48 @@ class TimekeepingService
                 'early_minutes' => $earlyMinutes,
                 'ot_minutes' => $otMinutes,
                 'worked_minutes' => $workedMinutes,
+                'regular_minutes' => max(0, $workedMinutes - $otMinutes),
+                'needs_review' => $resolved['needs_review'],
                 'work_units' => $workUnitsRest,
                 'is_holiday' => true,
                 'holiday_multiplier' => $holiday ? (float) $holiday->multiplier : 2.0,
                 'raw' => [
                     'log_ids' => $logs->pluck('id')->values()->all(),
                     'device_ids' => $logs->pluck('attendance_device_id')->unique()->values()->all(),
+                    'unmatched_log_ids' => $resolved['unmatched_log_ids'],
+                    'intervals' => $intervals->values()->all(),
                 ],
             ];
 
+            $persistIntervals = ! $existingRecord || $existingRecord->intervals()->exists();
             if ($existingRecord) {
                 $existingRecord->fill($attributes)->save();
                 $updated++;
             } else {
-                TimekeepingRecord::create($attributes);
+                $existingRecord = TimekeepingRecord::create($attributes);
                 $created++;
+            }
+            if ($persistIntervals) {
+                $this->persistIntervals($existingRecord, $intervals, $restSchedule);
             }
         }
 
         return compact('created', 'updated');
+    }
+
+    /**
+     * Read-only projection used by the production audit. It shares the exact
+     * resolver with recalculation but does not save attendance or payroll.
+     */
+    public function previewScheduledDevicePunches(Collection $schedules): array
+    {
+        if ($schedules->isEmpty()) {
+            return [];
+        }
+        $shifts = Shift::whereIn('id', $schedules->pluck('shift_id')->filter())->get()->keyBy('id');
+        $settings = TimekeepingSetting::where('status', 'active')->get()->keyBy(fn ($setting) => $setting->branch_id ?? 'global');
+
+        return $this->resolveIntervalsForSchedules($schedules, $shifts, $settings, $settings->get('global'));
     }
 
     /**
@@ -427,7 +460,14 @@ class TimekeepingService
 
         // Two actual punches across multiple configured slots can be expanded
         // only when the operator explicitly enabled the setting.
-        if ($schedules->count() > 1 && (bool) ($setting?->allow_multiple_shifts_one_inout ?? false) && $orderedLogs->count() === 2) {
+        $firstBounds = $this->scheduleBounds($schedules->first(), $shifts);
+        $lastBounds = $this->scheduleBounds($schedules->last(), $shifts);
+        if ($schedules->count() > 1 && (bool) ($setting?->allow_multiple_shifts_one_inout ?? false) && $orderedLogs->count() === 2
+            && $orderedLogs->first()->event_type !== 'out' && $orderedLogs->last()->event_type !== 'in'
+            && $orderedLogs->last()->punched_at->gt($orderedLogs->first()->punched_at)
+            && $firstBounds['end'] && $lastBounds['start']
+            && $orderedLogs->first()->punched_at->lt($firstBounds['end'])
+            && $orderedLogs->last()->punched_at->gt($lastBounds['start'])) {
             foreach ($schedules as $index => $schedule) {
                 $bounds = $this->scheduleBounds($schedule, $shifts);
                 $checkIn = $index === 0 ? $orderedLogs->first()->punched_at : $bounds['start'];
@@ -446,29 +486,12 @@ class TimekeepingService
         // A single schedule may contain multiple complete in/out pairs.
         if ($schedules->count() === 1) {
             $schedule = $schedules->first();
-            $intervals = [];
-            $needsReview = false;
-            for ($index = 0; $index < $orderedLogs->count(); $index += 2) {
-                $in = $orderedLogs->get($index);
-                $out = $orderedLogs->get($index + 1);
-                if (! $out) {
-                    $needsReview = true;
-                    $intervals[] = $this->makeInterval($schedule, $shifts, $setting, $in->punched_at, null, 'device', [$in->id]);
-
-                    continue;
-                }
-                $intervals[] = $this->makeInterval($schedule, $shifts, $setting, $in->punched_at, $out->punched_at, 'device', [$in->id, $out->id]);
-            }
-            $result[$schedule->id] = [
-                'intervals' => $intervals,
-                'needs_review' => $needsReview,
-                'unmatched_log_ids' => $needsReview ? [$orderedLogs->last()->id] : [],
-            ];
+            $result[$schedule->id] = $this->resolvePunchesForSchedule($schedule, $orderedLogs, $shifts, $setting);
 
             return $this->flagDuplicatePunches($result, $schedules, $duplicateLogIds);
         }
 
-        // Multiple slots: assign one pair to each slot using the next slot as
+        // Multiple slots: assign punches to each slot using the next slot as
         // the hard boundary. Extra or missing punches are retained as review
         // evidence and never silently reused.
         $remaining = $orderedLogs->values();
@@ -479,42 +502,14 @@ class TimekeepingService
                 : null;
             $nextStart = $nextBounds['start'] ?? $bounds['end']->copy()->addHours(8);
 
-            $inLog = $remaining->first(fn ($log) => $log->punched_at >= $bounds['start']->copy()->subHours(8)
-                && $log->punched_at < $nextStart
-                && (! $bounds['end'] || $log->punched_at < $bounds['end']));
-            if ($inLog) {
-                $remaining = $remaining->reject(fn ($log) => $log->id === $inLog->id)->values();
-            }
-
-            $outLog = $inLog
-                ? $remaining->first(fn ($log) => $log->punched_at > $inLog->punched_at && $log->punched_at < $nextStart)
-                : null;
-            if ($outLog) {
-                $remaining = $remaining->reject(fn ($log) => $log->id === $outLog->id)->values();
-            }
-
-            $intervals = [];
-            $needsReview = false;
-            if ($inLog && $outLog) {
-                $intervals[] = $this->makeInterval($schedule, $shifts, $setting, $inLog->punched_at, $outLog->punched_at, 'device', [$inLog->id, $outLog->id]);
-            } elseif ($inLog) {
-                $needsReview = true;
-                $intervals[] = $this->makeInterval($schedule, $shifts, $setting, $inLog->punched_at, null, 'device', [$inLog->id]);
-            } elseif ($remaining->isNotEmpty() && $remaining->first()->punched_at < $nextStart) {
-                $orphan = $remaining->shift();
-                $needsReview = true;
-                $intervals[] = $this->makeInterval($schedule, $shifts, $setting, null, $orphan->punched_at, 'device', [$orphan->id]);
-            } elseif ($orderedLogs->isNotEmpty()) {
+            $slotLogs = $remaining->filter(fn ($log) => $log->punched_at < $nextStart)->values();
+            $remaining = $remaining->reject(fn ($log) => $log->punched_at < $nextStart)->values();
+            $result[$schedule->id] = $this->resolvePunchesForSchedule($schedule, $slotLogs, $shifts, $setting);
+            if ($slotLogs->isEmpty()) {
                 // A configured slot with no pair is still a review case when
                 // the employee has punched elsewhere on that work date.
-                $needsReview = true;
+                $result[$schedule->id]['needs_review'] = true;
             }
-
-            $result[$schedule->id] = [
-                'intervals' => $intervals,
-                'needs_review' => $needsReview,
-                'unmatched_log_ids' => [],
-            ];
         }
 
         if ($remaining->isNotEmpty()) {
@@ -524,6 +519,66 @@ class TimekeepingService
         }
 
         return $this->flagDuplicatePunches($result, $schedules, $duplicateLogIds);
+    }
+
+    private function resolvePunchesForSchedule(EmployeeWorkSchedule $schedule, Collection $logs, Collection $shifts, $setting): array
+    {
+        $bounds = $this->scheduleBounds($schedule, $shifts);
+        $intervals = [];
+        $pendingIn = null;
+        $logs = $logs->values();
+
+        foreach ($logs as $index => $log) {
+            $direction = in_array($log->event_type, ['in', 'out'], true) ? $log->event_type : null;
+            if ($direction === null) {
+                $next = $logs->get($index + 1);
+                // Untyped pairs retain the existing sequence convention. An
+                // isolated punch is only a boundary-based hint, never proof of
+                // a missing entry/exit. Two punches after shift end are not work.
+                $canStartPair = $next && $next->event_type !== 'in'
+                    && $next->punched_at->gt($log->punched_at)
+                    && (! $bounds['end'] || $log->punched_at->lt($bounds['end']))
+                    && (! $bounds['start'] || $next->punched_at->gt($bounds['start']));
+                $direction = $pendingIn || $canStartPair ? ($pendingIn ? 'out' : 'in')
+                    : $this->orphanPunchDirection($log, $bounds);
+            }
+
+            if ($direction === 'in') {
+                if ($pendingIn) {
+                    $intervals[] = $this->makeInterval($schedule, $shifts, $setting, $pendingIn->punched_at, null, 'device', [$pendingIn->id]);
+                }
+                $pendingIn = $log;
+            } else {
+                $intervals[] = $this->makeInterval($schedule, $shifts, $setting, $pendingIn?->punched_at, $log->punched_at, 'device',
+                    $pendingIn ? [$pendingIn->id, $log->id] : [$log->id]);
+                $pendingIn = null;
+            }
+        }
+
+        if ($pendingIn) {
+            $intervals[] = $this->makeInterval($schedule, $shifts, $setting, $pendingIn->punched_at, null, 'device', [$pendingIn->id]);
+        }
+
+        $incomplete = collect($intervals)->where('status', 'needs_review');
+
+        return [
+            'intervals' => $intervals,
+            'needs_review' => $incomplete->isNotEmpty(),
+            'unmatched_log_ids' => $incomplete->flatMap(fn ($interval) => $interval['raw']['log_ids'])->unique()->values()->all(),
+        ];
+    }
+
+    private function orphanPunchDirection(AttendanceLog $log, array $bounds): string
+    {
+        if ($bounds['start'] && $bounds['end']) {
+            $distanceToStart = abs($log->punched_at->diffInSeconds($bounds['start']));
+            $distanceToEnd = abs($log->punched_at->diffInSeconds($bounds['end']));
+
+            return $distanceToEnd <= $distanceToStart ? 'out' : 'in';
+        }
+
+        // Without a shift boundary there is no basis for claiming an entry.
+        return 'out';
     }
 
     private function flagDuplicatePunches(array $result, Collection $schedules, array $duplicateLogIds): array
@@ -564,7 +619,8 @@ class TimekeepingService
             }
         }
 
-        $metrics = $this->intervalMetrics($schedule, $shifts, $setting, $checkIn, $checkOut);
+        $metrics = $complete ? $this->intervalMetrics($schedule, $shifts, $setting, $checkIn, $checkOut)
+            : ['late_minutes' => 0, 'early_minutes' => 0, 'ot_minutes' => 0];
 
         return [
             'check_in_at' => $checkIn,
@@ -576,7 +632,8 @@ class TimekeepingService
             'ot_minutes' => $metrics['ot_minutes'],
             'source' => $source,
             'status' => $complete ? 'complete' : 'needs_review',
-            'raw' => ['log_ids' => $logIds, 'source' => $source],
+            'raw' => ['log_ids' => $logIds, 'source' => $source, 'review_reason' => $complete ? null
+                : (! $checkIn ? 'missing_check_in' : (! $checkOut ? 'missing_check_out' : 'invalid_punch_order'))],
         ];
     }
 

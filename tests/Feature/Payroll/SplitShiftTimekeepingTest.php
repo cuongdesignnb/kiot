@@ -384,7 +384,12 @@ class SplitShiftTimekeepingTest extends TestCase
         $record = TimekeepingRecord::where('employee_work_schedule_id', $environment['afternoonSchedule']->id)->firstOrFail();
         $this->assertTrue((bool) $record->needs_review);
         $this->assertCount(4, $record->raw['log_ids']);
-        $this->assertCount(2, array_unique($record->raw['unmatched_log_ids']));
+        $duplicateIds = AttendanceLog::where('employee_id', $environment['employee']->id)
+            ->where('punched_at', $environment['date'].' 12:00:00')->pluck('id')->all();
+        $this->assertCount(2, array_intersect($duplicateIds, $record->raw['unmatched_log_ids']));
+        // The afternoon orphan checkout is also unmatched evidence; recording
+        // it must not replace or discard either duplicate log ID.
+        $this->assertCount(3, array_unique($record->raw['unmatched_log_ids']));
     }
 
     public function test_overnight_manual_interval_uses_next_day_without_boundary_fallback(): void
