@@ -282,6 +282,20 @@ class InventoryApiTest extends TestCase
             ->assertJsonPath('error.code', 'TOO_MANY_FAILED_ATTEMPTS');
     }
 
+    public function test_api_is_off_by_default_and_fails_closed(): void
+    {
+        $defaults = require base_path('config/integrations.php');
+        $this->assertFalse($defaults['inventory_api']['enabled']);
+
+        [, $plain] = $this->makeToken();
+        config()->set('integrations.inventory_api.enabled', false);
+
+        $this->getJson(self::PRODUCTS, $this->bearer($plain))->assertStatus(503)->assertJsonPath('error.code', 'API_DISABLED');
+        $this->getJson(self::SERIALS, $this->bearer($plain))->assertStatus(503)->assertJsonPath('error.code', 'API_DISABLED');
+        $this->actingAs($this->admin)->get('/settings/integrations/inventory-api')
+            ->assertOk()->assertInertia(fn (Assert $inertia) => $inertia->where('api_enabled', false));
+    }
+
     private function collectPages(string $path, string $since, string $plain, string $field): array
     {
         $values = [];

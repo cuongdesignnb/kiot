@@ -7,6 +7,7 @@ import { computed, reactive, ref } from 'vue';
 const props = defineProps({
     tokens: Array,
     access_logs: Array,
+    api_enabled: Boolean,
     base_url: String,
     rate_limit_per_minute: Number,
 });
@@ -120,6 +121,10 @@ function formatDate(value) {
                     <p class="mt-1 text-sm text-slate-600">Cấp token cho đối tác tự động lấy tồn kho, serial và trạng thái sửa chữa. Token chỉ đọc được 2 endpoint tồn kho, không tạo/sửa/xóa dữ liệu, không xem giá vốn.</p>
                 </div>
                 <button :disabled="!canManage || busy" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" @click="showCreate = true">Tạo token mới</button>
+            </div>
+
+            <div v-if="!api_enabled" class="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+                API đang tắt: mọi request tới API tồn kho sẽ bị từ chối với lỗi 503 <code>API_DISABLED</code>. Bạn vẫn tạo được token trước. Để bật, đặt <code>INVENTORY_API_ENABLED=true</code> trong file <code>.env</code> của server rồi chạy <code>php artisan optimize:clear</code>.
             </div>
 
             <div class="grid gap-4 md:grid-cols-3">

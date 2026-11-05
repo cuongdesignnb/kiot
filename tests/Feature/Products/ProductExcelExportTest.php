@@ -17,7 +17,7 @@ class ProductExcelExportTest extends TestCase
     private function userWith(array $permissions): User
     {
         $role = Role::create([
-            'name' => 'role-export-' . uniqid(),
+            'name' => 'role-export-'.uniqid(),
             'display_name' => 'Export role',
             'permissions' => $permissions,
         ]);
@@ -33,7 +33,7 @@ class ProductExcelExportTest extends TestCase
     private function product(array $attrs = []): Product
     {
         return Product::create(array_merge([
-            'sku' => 'SP-EX-' . uniqid(),
+            'sku' => 'SP-EX-'.uniqid(),
             'name' => 'Product Export',
             'type' => 'standard',
             'cost_price' => 100000,
@@ -46,10 +46,10 @@ class ProductExcelExportTest extends TestCase
 
     private function workbook(string $query, ?User $actor = null): \PhpOffice\PhpSpreadsheet\Spreadsheet
     {
-        $response = $this->actingAs($actor ?: $this->admin())->get('/products/export' . $query);
+        $response = $this->actingAs($actor ?: $this->admin())->get('/products/export'.$query);
         $response->assertOk();
 
-        $tmp = tempnam(sys_get_temp_dir(), 'product-export-') . '.xlsx';
+        $tmp = tempnam(sys_get_temp_dir(), 'product-export-').'.xlsx';
         file_put_contents($tmp, $response->streamedContent() ?: $response->getContent());
 
         try {
@@ -119,12 +119,12 @@ class ProductExcelExportTest extends TestCase
 
     public function test_export_respects_product_filters(): void
     {
-        $categoryA = Category::create(['name' => 'Cat A ' . uniqid()]);
-        $categoryB = Category::create(['name' => 'Cat B ' . uniqid()]);
+        $categoryA = Category::create(['name' => 'Cat A '.uniqid()]);
+        $categoryB = Category::create(['name' => 'Cat B '.uniqid()]);
         $in = $this->product(['name' => 'Filtered in', 'category_id' => $categoryA->id]);
         $out = $this->product(['name' => 'Filtered out', 'category_id' => $categoryB->id]);
 
-        $flat = implode(' ', array_merge(...$this->workbook('?fields[]=sku&fields[]=name&category_id=' . $categoryA->id)->getSheetByName('hang_hoa')->toArray()));
+        $flat = implode(' ', array_merge(...$this->workbook('?fields[]=sku&fields[]=name&category_id='.$categoryA->id)->getSheetByName('hang_hoa')->toArray()));
 
         $this->assertStringContainsString($in->name, $flat);
         $this->assertStringNotContainsString($out->name, $flat);
@@ -138,5 +138,24 @@ class ProductExcelExportTest extends TestCase
         $this->assertSame('DANH SÁCH HÀNG HÓA', $sheet->getCell('A3')->getValue());
         $this->assertSame('Mã hàng', $sheet->getCell('A5')->getValue());
         $this->assertSame('Tên hàng', $sheet->getCell('B5')->getValue());
+    }
+
+    public function test_export_with_search_streams_all_matching_rows_across_chunks(): void
+    {
+        $marker = 'CHUNKSRCH'.strtoupper(uniqid());
+        $skus = [];
+        for ($i = 0; $i < 505; $i++) {
+            $skus[] = $this->product(['sku' => $marker.'-'.$i, 'name' => 'Laptop '.$marker.' '.$i])->sku;
+        }
+        $this->product(['sku' => 'OTHER-'.uniqid(), 'name' => 'Không khớp']);
+
+        $sheet = $this->workbook('?fields[]=sku&fields[]=retail_price&search='.$marker)->getSheetByName('hang_hoa');
+        $exported = array_filter(array_map(fn ($row) => $row[0], array_slice($sheet->toArray(), 5)));
+
+        $this->assertCount(505, $exported);
+        $this->assertCount(505, array_unique($exported));
+        $this->assertEqualsCanonicalizing($skus, $exported);
+        $this->assertSame('#,##0', $sheet->getStyle('B6')->getNumberFormat()->getFormatCode());
+        $this->assertSame('#,##0', $sheet->getStyle('B'.(5 + 505))->getNumberFormat()->getFormatCode());
     }
 }

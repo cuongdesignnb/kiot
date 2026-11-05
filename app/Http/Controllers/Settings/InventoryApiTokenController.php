@@ -42,6 +42,7 @@ class InventoryApiTokenController extends Controller
                     'ip_address' => $log->ip_address,
                     'created_at' => $log->created_at?->toIso8601String(),
                 ]),
+            'api_enabled' => (bool) config('integrations.inventory_api.enabled', false),
             'base_url' => rtrim(url('/api/public/v1/inventory'), '/'),
             'rate_limit_per_minute' => (int) config('integrations.inventory_api.rate_limit_per_minute', 60),
         ]);
