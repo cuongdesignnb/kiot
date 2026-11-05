@@ -58,6 +58,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'attendance.agent' => \App\Http\Middleware\VerifyAttendanceAgentSignature::class,
             'pc.integration' => \App\Http\Middleware\VerifyPcIntegrationSignature::class,
             'pc.integration.management' => \App\Http\Middleware\EnsurePcIntegrationManagementEnabled::class,
+            'inventory.api' => \App\Http\Middleware\AuthenticateInventoryApiToken::class,
             'permission' => \App\Http\Middleware\CheckPermission::class,
             'role' => \App\Http\Middleware\CheckRole::class,
         ]);

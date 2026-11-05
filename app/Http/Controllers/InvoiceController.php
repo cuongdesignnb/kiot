@@ -716,10 +716,28 @@ class InvoiceController extends Controller
     public function export(Request $request)
     {
         $this->configureInvoiceFilters();
-        $query = \App\Models\Invoice::with(['customer']);
+        \App\Support\Exports\ExportRuntime::prepare();
+        $query = \App\Models\Invoice::query();
         $this->applyFilters($query, $request);
         $this->applyCustomerGroupFilter($query, $request);
-        $invoices = $query->get();
+
+        // Export used to ->get() every invoice with its customer model, which
+        // exhausted PHP memory/time on large shops and the button failed with
+        // a 5xx. Now: one customers lookup + a single cursor over only the
+        // columns the CSV needs, streamed row by row.
+        $columns = ['invoices.id', 'invoices.code', 'invoices.transaction_date', 'invoices.created_at', 'invoices.customer_id',
+            'invoices.subtotal', 'invoices.discount', 'invoices.total', 'invoices.customer_paid', 'invoices.note'];
+        if (\Illuminate\Support\Facades\Schema::hasColumn('invoices', 'customer_group_name')) {
+            $columns[] = 'invoices.customer_group_name';
+        }
+        $customers = \App\Models\Customer::query()
+            ->whereIn('id', (clone $query)->reorder()->select('invoices.customer_id')->whereNotNull('invoices.customer_id')->distinct())
+            ->get(['id', 'name', 'customer_group'])
+            ->keyBy('id');
+        $invoices = $query->select($columns)->orderBy('invoices.id', 'desc')->cursor()
+            ->map(function (Invoice $invoice) use ($customers) {
+                return $invoice->setRelation('customer', $customers->get($invoice->customer_id));
+            });
 
         return \App\Services\CsvService::export(
             ['Mã hóa đơn', 'Thời gian', 'Khách hàng', 'Nhóm khách', 'Tổng tiền hàng', 'Giảm giá', 'Tổng cộng', 'Khách đã trả', 'Ghi chú'],

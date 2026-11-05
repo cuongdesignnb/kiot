@@ -24,4 +24,11 @@ return [
             'webp_quality' => (int) env('PC_PRODUCT_IMAGE_WEBP_QUALITY', 82),
         ],
     ],
+
+    // Read-only inventory API for partners (bearer tokens managed in Settings).
+    'inventory_api' => [
+        'enabled' => env('INVENTORY_API_ENABLED', true),
+        'rate_limit_per_minute' => (int) env('INVENTORY_API_RATE_LIMIT', 60),
+        'failed_auth_per_minute' => (int) env('INVENTORY_API_FAILED_AUTH_LIMIT', 20),
+    ],
 ];

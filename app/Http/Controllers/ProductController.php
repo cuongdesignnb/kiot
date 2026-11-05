@@ -1406,7 +1406,9 @@ class ProductController extends Controller
         }
 
         $fields = $catalog->selectedExportFields((array) $request->input('fields', []), auth()->user());
-        $products = $query->with('units')->orderBy('id', 'desc')->get();
+        \App\Support\Exports\ExportRuntime::prepare();
+        // Chunked iteration keeps only ~500 Eloquent models in memory at a time.
+        $products = $query->with('units')->orderBy('products.id', 'desc')->lazy(500);
 
         return $exporter->download($products, $fields, 'hang_hoa_'.now()->format('Ymd_His').'.xlsx');
     }

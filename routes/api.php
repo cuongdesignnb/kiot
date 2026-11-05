@@ -365,6 +365,13 @@ Route::prefix('integrations/v1/pc')->middleware('pc.integration')->group(functio
     Route::post('/orders/{externalOrderId}/cancel', [\App\Http\Controllers\Api\Integrations\PcWebsite\ExternalOrderController::class, 'cancel']);
 });
 
+// Public read-only inventory API for partners — Bearer token from Settings > API tồn kho.
+// GET only: tokens cannot reach any other route (not Sanctum, not Website PC HMAC).
+Route::prefix('public/v1/inventory')->middleware('inventory.api')->group(function () {
+    Route::get('/products', [\App\Http\Controllers\Api\PublicApi\InventoryController::class, 'products']);
+    Route::get('/serials', [\App\Http\Controllers\Api\PublicApi\InventoryController::class, 'serials']);
+});
+
 // 🏷️ PRODUCT ATTRIBUTES
 Route::prefix('product-attributes')->group(function () {
     Route::get('/', [\App\Http\Controllers\Api\ProductAttributeController::class, 'index']);

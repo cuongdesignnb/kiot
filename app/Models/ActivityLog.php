@@ -210,6 +210,10 @@ class ActivityLog extends Model
 
     const ACTION_INTEGRATION_CONNECTION_TESTED = 'integration.connection_tested';
 
+    const ACTION_INVENTORY_API_TOKEN_CREATED = 'inventory_api.token_created';
+
+    const ACTION_INVENTORY_API_TOKEN_REVOKED = 'inventory_api.token_revoked';
+
     // Đặt hàng nhập
     const ACTION_PO_CREATE = 'po_create';
 
@@ -356,6 +360,8 @@ class ActivityLog extends Model
         'integration.paired' => 'Ghép nối tích hợp thành công',
         'integration.revoked' => 'Thu hồi kết nối tích hợp',
         'integration.connection_tested' => 'Kiểm tra kết nối tích hợp',
+        'inventory_api.token_created' => 'Tạo token API tồn kho',
+        'inventory_api.token_revoked' => 'Thu hồi token API tồn kho',
         'po_create' => 'Tạo đặt hàng nhập',
         'po_update' => 'Cập nhật đặt hàng nhập',
         'po_cancel' => 'Hủy đặt hàng nhập',

@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Settings\InventoryApiTokenController;
 use App\Http\Controllers\Settings\PcIntegrationManagementController;
 use Illuminate\Support\Facades\Route;
 
@@ -23,4 +24,15 @@ Route::middleware('auth')->group(function () {
 
     Route::post('/settings/integrations/website-pc/clients/{integrationClient}/rotate-secret', [PcIntegrationManagementController::class, 'rotateSecret'])
         ->middleware(['permission:integrations.rotate-secret', 'pc.integration.management']);
+
+    // Read-only partner inventory API tokens (Bearer). Secret is shown once.
+    Route::get('/settings/integrations/inventory-api', [InventoryApiTokenController::class, 'index'])
+        ->middleware('permission:integrations.view')
+        ->name('settings.integrations.inventory-api');
+    Route::middleware('permission:integrations.manage')
+        ->prefix('/settings/integrations/inventory-api')
+        ->group(function () {
+            Route::post('/tokens', [InventoryApiTokenController::class, 'store']);
+            Route::post('/tokens/{inventoryApiToken}/revoke', [InventoryApiTokenController::class, 'revoke']);
+        });
 });
