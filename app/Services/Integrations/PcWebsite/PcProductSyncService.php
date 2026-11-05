@@ -7,8 +7,8 @@ use App\Models\ExternalInventoryReservation;
 use App\Models\PriceBook;
 use App\Models\Product;
 use App\Models\ProductImage;
-use App\Models\SerialImei;
 use App\Support\Integrations\PcWebsite\PcSyncCursor;
+use App\Support\Inventory\SerialReadiness;
 use Carbon\Carbon;
 use Illuminate\Contracts\Pagination\CursorPaginator;
 use Illuminate\Database\Eloquent\Builder;
@@ -159,7 +159,7 @@ class PcProductSyncService
         }
         $query->with($with);
 
-        return $query->select([
+        $query->select([
             'products.id', 'products.sku', 'products.barcode', 'products.name', 'products.description',
             'products.type', 'products.category_id', 'products.retail_price', 'products.stock_quantity',
             'products.has_serial', 'products.is_active', 'products.sell_directly', 'products.weight',
@@ -170,23 +170,9 @@ class PcProductSyncService
                 ->whereColumn('product_id', 'products.id')
                 ->where('status', ExternalInventoryReservation::STATUS_ACTIVE),
             'reserved_quantity'
-        )->selectSub(
-            SerialImei::query()
-                ->selectRaw('COUNT(*)')
-                ->whereColumn('product_id', 'products.id')
-                ->where('status', 'in_stock')
-                ->where(function ($serials) {
-                    $serials->whereNull('repair_status')->orWhereNotIn('repair_status', ['not_started', 'repairing']);
-                }),
-            'ready_serial_quantity'
-        )->selectSub(
-            SerialImei::query()
-                ->selectRaw('COUNT(*)')
-                ->whereColumn('product_id', 'products.id')
-                ->where('status', 'in_stock')
-                ->whereIn('repair_status', ['not_started', 'repairing']),
-            'repairing_serial_quantity'
         );
+
+        return SerialReadiness::addProductCountSelects($query);
     }
 
     private function publishingBlockedReason(Product $product, bool $categoryPublished, bool $deleted): string

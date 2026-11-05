@@ -24,4 +24,12 @@ return [
             'webp_quality' => (int) env('PC_PRODUCT_IMAGE_WEBP_QUALITY', 82),
         ],
     ],
+
+    // Read-only inventory API for partners (bearer tokens managed in Settings).
+    // Off by default: deploy dark, verify, then set INVENTORY_API_ENABLED=true.
+    'inventory_api' => [
+        'enabled' => (bool) env('INVENTORY_API_ENABLED', false),
+        'rate_limit_per_minute' => (int) env('INVENTORY_API_RATE_LIMIT', 60),
+        'failed_auth_per_minute' => (int) env('INVENTORY_API_FAILED_AUTH_LIMIT', 20),
+    ],
 ];
