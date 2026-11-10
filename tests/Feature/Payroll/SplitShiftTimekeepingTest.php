@@ -219,6 +219,36 @@ class SplitShiftTimekeepingTest extends TestCase
         $this->assertNull($records->first()->intervals->first()->check_in_at);
     }
 
+    public function test_slot_without_any_punch_is_an_absence_and_does_not_block_payroll(): void
+    {
+        // Part-timer scheduled morning + afternoon who only came in the afternoon.
+        $environment = $this->environment(false, 'hourly');
+        foreach (['13:30:00', '18:00:00'] as $time) {
+            $this->punch($environment['employee'], $environment['date'], $time, $environment['device']->id);
+        }
+
+        $this->recalculate($environment);
+
+        $records = TimekeepingRecord::with('intervals')
+            ->where('employee_id', $environment['employee']->id)
+            ->orderBy('slot')
+            ->get();
+
+        $this->assertSame([0, 270], $records->pluck('worked_minutes')->map(fn ($value) => (int) $value)->all());
+        $this->assertSame([0.0, 0.5], $records->pluck('work_units')->map(fn ($value) => (float) $value)->all());
+        $this->assertSame([0, 0], $records->pluck('needs_review')->map(fn ($value) => (int) $value)->all());
+        $this->assertCount(0, $records->first()->intervals);
+
+        $payroll = app(SalaryCalculationService::class)->calculateForEmployee(
+            $environment['employee']->fresh(),
+            Carbon::parse($environment['date']),
+            Carbon::parse($environment['date']),
+            26
+        );
+        $this->assertSame(270, $payroll['total_regular_minutes']);
+        $this->assertSame([], $payroll['validation']['issues']);
+    }
+
     public function test_manual_split_shift_intervals_use_half_day_units_per_slot(): void
     {
         $environment = $this->environment();
@@ -453,9 +483,10 @@ class SplitShiftTimekeepingTest extends TestCase
         $calculate = fn () => app(SalaryCalculationService::class)->calculateForEmployee(
             $env['employee']->fresh(), Carbon::parse($env['date']), Carbon::parse($env['date']), 26
         );
-        $this->assertSame('blocked', $calculate()['validation']['status']);
+        // A morning slot without any punch is already an absence (0 units).
+        $this->assertSame('ready', $calculate()['validation']['status']);
 
-        // Stale hidden work fields must not prevent explicitly confirming leave.
+        // Confirming it explicitly as leave still works. Stale hidden work fields must not prevent explicitly confirming leave.
         $this->actingAs($this->admin())->postJson('/api/timekeeping-records', [
             'employee_work_schedule_id' => $env['morningSchedule']->id,
             'attendance_type' => 'leave_unpaid',

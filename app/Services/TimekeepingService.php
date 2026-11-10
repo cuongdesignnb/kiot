@@ -507,12 +507,11 @@ class TimekeepingService
 
             $slotLogs = $remaining->filter(fn ($log) => $log->punched_at < $nextStart)->values();
             $remaining = $remaining->reject(fn ($log) => $log->punched_at < $nextStart)->values();
+            // A slot with no punch at all is an absence: zero minutes and zero
+            // units, nothing to review. Part-timers often skip one of several
+            // scheduled slots; flagging it blocked payroll until edited by hand.
+            // A slot with a lone punch is still reviewed (missing in or out).
             $result[$schedule->id] = $this->resolvePunchesForSchedule($schedule, $slotLogs, $shifts, $setting);
-            if ($slotLogs->isEmpty()) {
-                // A configured slot with no pair is still a review case when
-                // the employee has punched elsewhere on that work date.
-                $result[$schedule->id]['needs_review'] = true;
-            }
         }
 
         if ($remaining->isNotEmpty()) {
