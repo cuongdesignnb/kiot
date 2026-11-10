@@ -27,8 +27,10 @@ on unscheduled rest/holiday days. No production records are included here.
   for complete pairs. Only complete intervals contribute worked minutes.
 - Exact duplicates remain raw evidence and still require review. Unmatched
   IDs include incomplete intervals as well as duplicate evidence.
-- The modal explains which actual time is missing and does not prefill a shift
-  boundary when the operator edits a record needing review. Its first editable
+- The modal explains which actual time is missing. When the operator ticks the
+  missing Vào/Ra on a record needing review, the shift boundary is prefilled
+  (as before PR #98) but an orange hint marks it as a shift suggestion, not a
+  device punch, until the operator changes it (follow-up of 2026-11-10). Its first editable
   row is the first actual interval, not an aggregate spanning later intervals.
 
 ## Files
