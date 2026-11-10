@@ -12,16 +12,27 @@ use Illuminate\Support\Facades\DB;
 
 class AuditAttendancePunchDirections extends Command
 {
-    protected $signature = 'attendance:audit-punch-directions {--date= : Required YYYY-MM-DD work date} {--employee= : Optional employee code} {--details : Print every finding instead of ten}';
+    protected $signature = 'attendance:audit-punch-directions {--date= : YYYY-MM-DD work date} {--from= : Range start YYYY-MM-DD (instead of --date)} {--to= : Range end YYYY-MM-DD, at most 62 days after --from} {--employee= : Optional employee code} {--details : Print every finding instead of ten}';
 
     protected $description = 'Read-only comparison of stored scheduled attendance with device punch directions; no payroll or attendance mutation.';
 
     public function handle(TimekeepingService $service): int
     {
-        $date = (string) $this->option('date');
-        if (! preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) || ! Carbon::canBeCreatedFromFormat($date, 'Y-m-d')
-            || Carbon::createFromFormat('!Y-m-d', $date)->format('Y-m-d') !== $date) {
-            $this->error('Provide a valid --date=YYYY-MM-DD.');
+        $valid = fn ($value) => is_string($value) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)
+            && Carbon::canBeCreatedFromFormat($value, 'Y-m-d')
+            && Carbon::createFromFormat('!Y-m-d', $value)->format('Y-m-d') === $value;
+        $date = $this->option('date');
+        $from = $this->option('from') ?? $date;
+        $to = $this->option('to') ?? $from;
+        if (! $valid($from) || ! $valid($to) || ($date && ($this->option('from') || $this->option('to')))) {
+            $this->error('Provide a valid --date=YYYY-MM-DD, or --from=YYYY-MM-DD --to=YYYY-MM-DD.');
+
+            return self::INVALID;
+        }
+        $fromDate = Carbon::createFromFormat('!Y-m-d', $from);
+        $toDate = Carbon::createFromFormat('!Y-m-d', $to);
+        if ($toDate->lt($fromDate) || $fromDate->diffInDays($toDate) > 62) {
+            $this->error('--to must be on or after --from and at most 62 days later.');
 
             return self::INVALID;
         }
@@ -31,16 +42,16 @@ class AuditAttendancePunchDirections extends Command
         DB::beginTransaction();
         try {
             $employee = $this->option('employee') ? Employee::where('code', $this->option('employee'))->firstOrFail() : null;
-            $schedules = EmployeeWorkSchedule::whereDate('work_date', $date)
+            $schedules = EmployeeWorkSchedule::whereDate('work_date', '>=', $from)->whereDate('work_date', '<=', $to)
                 ->when($employee, fn ($query) => $query->where('employee_id', $employee->id))
-                ->orderBy('employee_id')->orderBy('slot')->get();
+                ->orderBy('work_date')->orderBy('employee_id')->orderBy('slot')->get();
             if ($schedules->isEmpty()) {
                 throw new \RuntimeException('No schedules found for the requested scope.');
             }
             $preview = $service->previewScheduledDevicePunches($schedules);
             $stored = TimekeepingRecord::with('intervals')->whereIn('employee_work_schedule_id', $schedules->pluck('id'))->get()->keyBy('employee_work_schedule_id');
             $findings = [];
-            $manualProtected = $legacyProtected = $mismatches = $incomplete = 0;
+            $manualProtected = $legacyProtected = $mismatches = $incomplete = $wouldComplete = 0;
             foreach ($schedules as $schedule) {
                 $record = $stored->get($schedule->id);
                 if ($record?->manual_override) {
@@ -67,10 +78,12 @@ class AuditAttendancePunchDirections extends Command
                     'worked_minutes' => (int) ($record?->worked_minutes ?? 0), 'needs_review' => (bool) ($record?->needs_review ?? false),
                 ];
                 $changed = $before !== $after;
+                $wouldComplete += (int) ($changed && $before['needs_review'] && ! $after['needs_review']);
                 $mismatches += (int) $changed;
                 $incomplete += (int) $resolved['needs_review'];
                 if ($changed || $resolved['needs_review']) {
                     $findings[] = [
+                        'work_date' => Carbon::parse($schedule->work_date)->toDateString(),
                         'employee_id' => $schedule->employee_id, 'schedule_id' => $schedule->id, 'record_id' => $record?->id,
                         'slot' => $schedule->slot, 'stored' => $before, 'preview' => $after,
                         'projection_mismatch' => $changed, 'log_ids' => $resolved['logs']->pluck('id')->all(),
@@ -84,9 +97,10 @@ class AuditAttendancePunchDirections extends Command
             }
             $this->line(json_encode([
                 'summary' => [
-                    'work_date' => $date, 'schedules_scanned' => $schedules->count(),
+                    'work_date' => $from === $to ? $from : $from.'..'.$to, 'schedules_scanned' => $schedules->count(),
                     'manual_records_protected' => $manualProtected, 'legacy_records_protected' => $legacyProtected,
                     'projection_mismatches' => $mismatches, 'needs_actual_time_confirmation' => $incomplete,
+                    'review_cleared_by_recalculation' => $wouldComplete,
                     'findings_total' => count($findings), 'audit_read_only' => true,
                     'production_business_data_mutation' => 'NO',
                 ],

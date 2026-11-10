@@ -15,6 +15,9 @@ use Illuminate\Support\Collection;
 
 class TimekeepingService
 {
+    /** Punches this close to the previous one are a repeated tap. */
+    private const REPEATED_PUNCH_SECONDS = 300;
+
     public function recalculateForRange(Carbon $from, Carbon $to, ?int $employeeId = null): array
     {
         // 1. Dữ liệu tham chiếu
@@ -463,7 +466,7 @@ class TimekeepingService
         $firstBounds = $this->scheduleBounds($schedules->first(), $shifts);
         $lastBounds = $this->scheduleBounds($schedules->last(), $shifts);
         if ($schedules->count() > 1 && (bool) ($setting?->allow_multiple_shifts_one_inout ?? false) && $orderedLogs->count() === 2
-            && $orderedLogs->first()->event_type !== 'out' && $orderedLogs->last()->event_type !== 'in'
+            && $this->punchDirection($orderedLogs->first()) !== 'out' && $this->punchDirection($orderedLogs->last()) !== 'in'
             && $orderedLogs->last()->punched_at->gt($orderedLogs->first()->punched_at)
             && $firstBounds['end'] && $lastBounds['start']
             && $orderedLogs->first()->punched_at->lt($firstBounds['end'])
@@ -528,14 +531,45 @@ class TimekeepingService
         $pendingIn = null;
         $logs = $logs->values();
 
+        if (! $this->trustsDeviceDirection()) {
+            // A repeated tap within a few minutes is one punch, not the end of
+            // an interval. The repeated log stays attached as raw evidence.
+            [$logs, $repeats] = $this->foldRepeatedPunches($logs);
+
+            // An odd number of undirected punches has no clear pairing. For a
+            // single working interval the first punch is the entry and the last
+            // is the exit; the punches in between (e.g. a lunch exit without a
+            // return) are kept as review evidence and do not split the day.
+            if ($logs->count() >= 3 && $logs->count() % 2 === 1) {
+                $first = $logs->first();
+                $last = $logs->last();
+                if ($last->punched_at->gt($first->punched_at)
+                    && (! $bounds['end'] || $first->punched_at->lt($bounds['end']))
+                    && (! $bounds['start'] || $last->punched_at->gt($bounds['start']))) {
+                    $middleIds = $logs->slice(1, -1)->pluck('id')
+                        ->flatMap(fn ($id) => array_merge([$id], $repeats[$id] ?? []))->values()->all();
+                    $interval = $this->makeInterval($schedule, $shifts, $setting, $first->punched_at, $last->punched_at, 'device',
+                        $this->withRepeatedPunches([$first->id, $last->id], $repeats));
+                    $interval['raw']['extra_log_ids'] = $middleIds;
+                    $interval['raw']['review_reason'] = 'extra_punches';
+
+                    return [
+                        'intervals' => [$interval],
+                        'needs_review' => true,
+                        'unmatched_log_ids' => $middleIds,
+                    ];
+                }
+            }
+        }
+
         foreach ($logs as $index => $log) {
-            $direction = in_array($log->event_type, ['in', 'out'], true) ? $log->event_type : null;
+            $direction = $this->punchDirection($log);
             if ($direction === null) {
                 $next = $logs->get($index + 1);
                 // Untyped pairs retain the existing sequence convention. An
                 // isolated punch is only a boundary-based hint, never proof of
                 // a missing entry/exit. Two punches after shift end are not work.
-                $canStartPair = $next && $next->event_type !== 'in'
+                $canStartPair = $next && $this->punchDirection($next) !== 'in'
                     && $next->punched_at->gt($log->punched_at)
                     && (! $bounds['end'] || $log->punched_at->lt($bounds['end']))
                     && (! $bounds['start'] || $next->punched_at->gt($bounds['start']));
@@ -559,6 +593,13 @@ class TimekeepingService
             $intervals[] = $this->makeInterval($schedule, $shifts, $setting, $pendingIn->punched_at, null, 'device', [$pendingIn->id]);
         }
 
+        if (isset($repeats) && $repeats) {
+            foreach ($intervals as &$interval) {
+                $interval['raw']['log_ids'] = $this->withRepeatedPunches($interval['raw']['log_ids'], $repeats);
+            }
+            unset($interval);
+        }
+
         $incomplete = collect($intervals)->where('status', 'needs_review');
 
         return [
@@ -566,6 +607,60 @@ class TimekeepingService
             'needs_review' => $incomplete->isNotEmpty(),
             'unmatched_log_ids' => $incomplete->flatMap(fn ($interval) => $interval['raw']['log_ids'])->unique()->values()->all(),
         ];
+    }
+
+    private function trustsDeviceDirection(): bool
+    {
+        return (bool) config('services.attendance_agent.trust_device_direction', false);
+    }
+
+    /**
+     * Device-reported direction, only when the deployment trusts it. The
+     * production device labels morning arrivals "out" and evening exits "in",
+     * so by default every punch is treated as undirected and paired by time.
+     */
+    private function punchDirection(AttendanceLog $log): ?string
+    {
+        if (! $this->trustsDeviceDirection()) {
+            return null;
+        }
+
+        return in_array($log->event_type, ['in', 'out'], true) ? $log->event_type : null;
+    }
+
+    /**
+     * Drop punches made within REPEATED_PUNCH_SECONDS of the previous kept
+     * punch. Returns the kept logs and a map of kept log id => repeated ids.
+     */
+    private function foldRepeatedPunches(Collection $logs): array
+    {
+        $kept = collect();
+        $repeats = [];
+        foreach ($logs as $log) {
+            $previous = $kept->last();
+            if ($previous && $log->punched_at->gte($previous->punched_at)
+                && $previous->punched_at->diffInSeconds($log->punched_at) <= self::REPEATED_PUNCH_SECONDS) {
+                $repeats[$previous->id][] = $log->id;
+
+                continue;
+            }
+            $kept->push($log);
+        }
+
+        return [$kept->values(), $repeats];
+    }
+
+    private function withRepeatedPunches(array $logIds, array $repeats): array
+    {
+        $expanded = [];
+        foreach ($logIds as $id) {
+            $expanded[] = $id;
+            foreach ($repeats[$id] ?? [] as $repeatId) {
+                $expanded[] = $repeatId;
+            }
+        }
+
+        return $expanded;
     }
 
     private function orphanPunchDirection(AttendanceLog $log, array $bounds): string
