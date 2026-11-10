@@ -55,18 +55,36 @@ test('entry without checkout clearly explains the missing actual checkout and ad
 test('valid complete pair still has a work estimate', () => {
     assert.equal(estimate('08:30', '18:00').workedMinutes, 570);
 });
-test('reviewing an incomplete device record does not prefill a fictitious shift boundary', () => {
-    for (const [flag, field] of [['hasCheckIn', 'check_in_time'], ['hasCheckOut', 'check_out_time']]) {
-        const watchBody = source.match(new RegExp(`watch\\(${flag}, \\(checked\\) => \\{([\\s\\S]*?)\\n\\}\\)`))?.[1];
-        assert.ok(watchBody, `${flag} watch body must exist`);
-        const form = { [field]: '' };
-        runInNewContext(`(() => {${watchBody}})()`, {
-            checked: true, form,
-            activeSchedule: { value: { shift: { start_time: '08:30', end_time: '18:00' }, timekeeping_record: { needs_review: true } } },
-            isPrefilling: { value: false },
-        });
-        assert.equal(form[field], '');
-    }
+const runPrefillWatch = (flag, field, needsReview) => {
+    const watchBody = source.match(new RegExp(`watch\\(${flag}, \\(checked\\) => \\{([\\s\\S]*?)\\n\\}\\)`))?.[1];
+    assert.ok(watchBody, `${flag} watch body must exist`);
+    const form = { [field]: '' };
+    const suggestedCheckIn = { value: 'stale' };
+    const suggestedCheckOut = { value: 'stale' };
+    runInNewContext(`(() => {${watchBody}})()`, {
+        checked: true, form, suggestedCheckIn, suggestedCheckOut,
+        activeSchedule: { value: { shift: { start_time: '08:30:00', end_time: '18:00:00' }, timekeeping_record: { needs_review: needsReview } } },
+        isPrefilling: { value: false },
+    });
+    return { value: form[field], suggestion: (field === 'check_in_time' ? suggestedCheckIn : suggestedCheckOut).value };
+};
+test('reviewing an incomplete device record prefills the shift time but marks it as a suggestion', () => {
+    assert.deepEqual(runPrefillWatch('hasCheckIn', 'check_in_time', true), { value: '08:30', suggestion: '08:30' });
+    assert.deepEqual(runPrefillWatch('hasCheckOut', 'check_out_time', true), { value: '18:00', suggestion: '18:00' });
+});
+test('a normal record prefills the shift time without the suggestion hint', () => {
+    assert.deepEqual(runPrefillWatch('hasCheckIn', 'check_in_time', false), { value: '08:30', suggestion: '' });
+    assert.deepEqual(runPrefillWatch('hasCheckOut', 'check_out_time', false), { value: '18:00', suggestion: '' });
+});
+test('the suggestion hint is shown only while the suggested time is unchanged', () => {
+    const hintBody = source.match(/const showCheckInSuggestionHint = computed\(\(\) => ([^\n]*)\)\n/)?.[1];
+    assert.ok(hintBody);
+    const hint = (time) => runInNewContext(hintBody, {
+        hasCheckIn: { value: true }, suggestedCheckIn: { value: '08:30' }, form: { check_in_time: time },
+    });
+    assert.equal(hint('08:30'), true);
+    assert.equal(hint('08:46'), false);
+    assert.match(source, /v-if="showCheckInSuggestionHint"[^>]*>Giờ vào gợi ý theo ca, không phải giờ quẹt máy/);
 });
 test('modal keeps an orphan first checkout instead of overwriting it with later day totals', () => {
     const openBody = source.match(/const openModal = \(schedule\) => \{([\s\S]*?)\n\}/)?.[1];
@@ -80,6 +98,7 @@ test('modal keeps an orphan first checkout instead of overwriting it with later 
             intervals: [{ check_in_at: null, check_out_at: '12:00' }, { check_in_at: '13:30', check_out_at: '18:00' }],
         } },
         form, hasCheckIn, hasCheckOut, activeSchedule: { value: null }, isPrefilling: { value: false },
+        suggestedCheckIn: { value: 'stale' }, suggestedCheckOut: { value: 'stale' },
         modalTab: { value: '' }, hasOT: { value: false }, otHours: { value: 0 }, otMinutes: { value: 0 },
         isModalOpen: { value: false }, saveError: { value: '' }, formatCheckTime: time => time, setTimeout: callback => callback(),
     });

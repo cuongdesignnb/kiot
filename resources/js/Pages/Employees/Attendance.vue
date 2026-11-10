@@ -366,6 +366,7 @@
                 <span class="text-sm text-gray-700">Vào</span>
               </label>
               <input type="time" v-model="form.check_in_time" :disabled="!hasCheckIn" class="px-3 py-1.5 border border-gray-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400 w-28">
+              <span v-if="showCheckInSuggestionHint" class="basis-full text-xs text-orange-600">Giờ vào gợi ý theo ca, không phải giờ quẹt máy — sửa lại nếu nhân viên đến khác giờ này.</span>
 
               <div class="border-l border-gray-200 h-6 mx-1"></div>
 
@@ -386,6 +387,7 @@
                 <span class="text-sm text-gray-700">Ra</span>
               </label>
               <input type="time" v-model="form.check_out_time" :disabled="!hasCheckOut" class="px-3 py-1.5 border border-gray-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400 w-28">
+              <span v-if="showCheckOutSuggestionHint" class="basis-full text-xs text-orange-600">Giờ ra gợi ý theo ca, không phải giờ quẹt máy — sửa lại nếu nhân viên về khác giờ này.</span>
             </div>
 
             <div v-for="(interval, index) in form.intervals.slice(1)" v-show="form.attendance_type === 'work'" :key="`interval-${index + 1}`" class="mt-3 flex items-center gap-3 flex-wrap">
@@ -769,6 +771,12 @@ const formatDateFull = (dateStr) => {
 const modalTab = ref('attendance')
 const hasCheckIn = ref(false)
 const hasCheckOut = ref(false)
+// Shift times filled in for a record whose punch is missing ("Cần xử lý").
+// They are only a suggestion, so a hint stays visible until the user edits them.
+const suggestedCheckIn = ref('')
+const suggestedCheckOut = ref('')
+const showCheckInSuggestionHint = computed(() => hasCheckIn.value && !!suggestedCheckIn.value && form.check_in_time === suggestedCheckIn.value)
+const showCheckOutSuggestionHint = computed(() => hasCheckOut.value && !!suggestedCheckOut.value && form.check_out_time === suggestedCheckOut.value)
 const hasOT = ref(false)
 const otHours = ref(0)
 const otMinutes = ref(0)
@@ -1042,6 +1050,8 @@ const openModal = (schedule) => {
     form.notes = rec?.notes || ''
     // Modal state
     modalTab.value = 'attendance'
+    suggestedCheckIn.value = ''
+    suggestedCheckOut.value = ''
     hasCheckIn.value = !!form.check_in_time
     hasCheckOut.value = !!form.check_out_time
     hasOT.value = form.ot_minutes > 0
@@ -1055,9 +1065,10 @@ const openModal = (schedule) => {
 
 // Auto-fill shift start time when Vào checkbox is checked
 watch(hasCheckIn, (checked) => {
-    if (checked && !form.check_in_time && activeSchedule.value?.shift && !activeSchedule.value?.timekeeping_record?.needs_review) {
+    if (checked && !form.check_in_time && activeSchedule.value?.shift) {
         const st = activeSchedule.value.shift.start_time
         form.check_in_time = st ? st.substring(0, 5) : '08:30'
+        suggestedCheckIn.value = activeSchedule.value?.timekeeping_record?.needs_review ? form.check_in_time : ''
     } else if (!checked && !isPrefilling.value && activeSchedule.value?.timekeeping_record?.check_in_at) {
         alert("Bạn đang bỏ giờ vào/ra đã có sẵn. Việc này có thể làm giảm công.")
     }
@@ -1065,9 +1076,10 @@ watch(hasCheckIn, (checked) => {
 
 // Auto-fill shift end time when Ra checkbox is checked
 watch(hasCheckOut, (checked) => {
-    if (checked && !form.check_out_time && activeSchedule.value?.shift && !activeSchedule.value?.timekeeping_record?.needs_review) {
+    if (checked && !form.check_out_time && activeSchedule.value?.shift) {
         const et = activeSchedule.value.shift.end_time
         form.check_out_time = et ? et.substring(0, 5) : '17:30'
+        suggestedCheckOut.value = activeSchedule.value?.timekeeping_record?.needs_review ? form.check_out_time : ''
     } else if (!checked && !isPrefilling.value && activeSchedule.value?.timekeeping_record?.check_out_at) {
         alert("Bạn đang bỏ giờ vào/ra đã có sẵn. Việc này có thể làm giảm công.")
     }
