@@ -118,6 +118,33 @@ test('personal and company bonuses retain both saved descriptions and reconcile 
     assert.deepEqual(getPayslipBreakdown({ ...value, status: 'locked' }, 'bonus').map(row => ({ name: row.name, amount: row.amount })), expected);
 });
 
+test('calculated bonus is labelled with its basis and formula instead of the raw role code', () => {
+    const value = slip({ bonus: 74500 });
+    value.details.details.bonus = [{ role_type: 'employee', revenue_from: 0, bonus_value: '5.00', is_percentage: 1,
+        calculated: 74500, revenue: 1490000, basis: 'personal_gross_profit' }];
+    assert.deepEqual(displayed(value, 'bonus'), [{ name: 'Thưởng theo lợi nhuận gộp cá nhân: 5% × 1.490.000đ', amount: 74500 }]);
+    assert.deepEqual(openPopup(value, 'bonus'), displayed(value, 'bonus'));
+});
+
+test('fixed bonus tier and old snapshots without basis get a readable label', () => {
+    const fixed = slip({ bonus: 80000 });
+    fixed.details.details.bonus = [{ role_type: 'employee', revenue_from: 1000000, bonus_value: 80000, is_percentage: false,
+        calculated: 80000, revenue: 1500000, basis: 'branch_revenue' }];
+    assert.equal(displayed(fixed, 'bonus')[0].name, 'Thưởng theo doanh thu chi nhánh (mức từ 1.000.000đ)');
+    const old = slip({ bonus: 80000 });
+    old.details.details.bonus = [{ role_type: 'employee', revenue_from: 0, calculated: 80000 }];
+    assert.equal(displayed(old, 'bonus')[0].name, 'Thưởng (mức từ 0đ)');
+});
+
+test('adjustments saved with the old raw label are shown in Vietnamese', () => {
+    const value = slip({ bonus: 2074500, adjustments: [
+        { type: 'bonus', name: 'employee: 0đ+', amount: 74500 },
+        { type: 'bonus', name: 'Doanh số cửa hàng', amount: 2000000 },
+    ] });
+    value.details.manual_overrides = { bonus: true };
+    assert.deepEqual(displayed(value, 'bonus').map(row => row.name), ['Thưởng (mức từ 0đ)', 'Doanh số cửa hàng']);
+});
+
 test('automatic breakdown remains unchanged when it agrees with the saved total', () => {
     assert.deepEqual(displayed(slip()), [
         { name: 'Synthetic office allowance', amount: 120000 },

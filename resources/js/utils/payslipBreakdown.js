@@ -8,6 +8,32 @@ const money = value => {
     return Number.isFinite(number) ? Math.max(0, Math.round(number)) : 0;
 };
 
+const vnd = value => `${money(value).toLocaleString('vi-VN')}đ`;
+const bonusBases = {
+    personal_revenue: 'doanh thu cá nhân',
+    branch_revenue: 'doanh thu chi nhánh',
+    personal_gross_profit: 'lợi nhuận gộp cá nhân',
+};
+// Older payslips saved the raw tier as "<role code>: <threshold>đ+".
+const legacyBonusLabel = /^[a-z_]+: ([\d.]+)đ\+$/;
+
+export function bonusLabel(row) {
+    const basis = bonusBases[row.basis] ? ` theo ${bonusBases[row.basis]}` : '';
+    if (Number(row.is_percentage)) {
+        const percent = Number(row.bonus_value || 0).toLocaleString('vi-VN');
+        return `Thưởng${basis}: ${percent}% × ${vnd(row.tier_revenue ?? row.revenue)}`;
+    }
+    return `Thưởng${basis} (mức từ ${vnd(row.revenue_from)})`;
+}
+
+function rowName(row, type, config) {
+    if (type !== 'bonus') return row.name || config.label;
+    const legacy = row.name?.match(legacyBonusLabel);
+    if (legacy) return `Thưởng (mức từ ${legacy[1]}đ)`;
+    if (row.name) return row.name;
+    return row.role_type !== undefined || row.basis ? bonusLabel(row) : config.label;
+}
+
 /** Read only the saved payslip; never re-apply current employee settings. */
 export function getPayslipBreakdown(slip, type) {
     const config = types[type];
@@ -25,9 +51,7 @@ export function getPayslipBreakdown(slip, type) {
     const isManual = !!details.manual_overrides?.[type] || adjustments.length > 0;
     const source = isManual ? adjustments : (details.details?.[config.field] || []);
     const rows = source.map(row => ({
-        name: row.name || (type === 'bonus' && row.role_type
-            ? `${row.role_type}: ${money(row.revenue_from).toLocaleString('vi-VN')}đ+`
-            : config.label),
+        name: rowName(row, type, config),
         // Zero is an actual calculation result, not a request to use the rate.
         amount: money(isManual ? row.amount : (row.calculated ?? row.amount)),
         notes: row.notes || '',

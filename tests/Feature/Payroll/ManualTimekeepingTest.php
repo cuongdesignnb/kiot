@@ -737,6 +737,8 @@ class ManualTimekeepingTest extends TestCase
         // Assert bonus 20% = 345.679
         $this->assertEquals(345679.0, (float)$result['bonus']);
         $this->assertEquals(345679.0, (float)($result['details']['bonus'][0]['calculated'] ?? 0));
+        // The payslip records what the bonus was computed on.
+        $this->assertSame('personal_gross_profit', $result['details']['bonus'][0]['basis'] ?? null);
     }
 
     public function test_payroll_personal_gross_profit_bonus_with_returns(): void
