@@ -158,6 +158,8 @@ class MissingClockInTimekeepingTest extends TestCase
 
     public function test_agent_sync_retains_device_checkout_direction_and_is_idempotent(): void
     {
+        // Only meaningful when the deployment trusts device In/Out keys.
+        config(['services.attendance_agent.trust_device_direction' => true]);
         $env = $this->environment();
         $this->travelTo(Carbon::parse($env['date'].' 20:00:00'));
         $request = Request::create('/api/attendance-agent/push-logs', 'POST', [

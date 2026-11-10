@@ -10,8 +10,20 @@ use Illuminate\Support\Collection;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
+/**
+ * Device direction rules for deployments that opt in to trusting the
+ * device's In/Out keys (services.attendance_agent.trust_device_direction).
+ * The default, untrusted behaviour is covered by
+ * TimekeepingUntrustedDirectionTest.
+ */
 class TimekeepingPunchDirectionTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        config(['services.attendance_agent.trust_device_direction' => true]);
+    }
+
     private function schedule(int $id = 1, string $start = '08:30', string $end = '18:00'): EmployeeWorkSchedule
     {
         return new EmployeeWorkSchedule([
