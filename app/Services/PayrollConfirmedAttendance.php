@@ -13,6 +13,8 @@ class PayrollConfirmedAttendance
         $normal = $weighted = $leave = 0.0;
         $issues = [];
         $days = [];
+        // Slots awaiting review are listed once per payslip, not one line each.
+        $reviewSlots = $incompleteSlots = [];
         foreach ($records->groupBy(fn ($r) => Carbon::parse($r->work_date)->toDateString()) as $date => $rows) {
             $work = $rows->where('attendance_type', 'work');
             $units = (float) $work->sum('work_units');
@@ -24,17 +26,16 @@ class PayrollConfirmedAttendance
                 $issues[] = "Dữ liệu giờ làm hoặc loại ngày {$date} mâu thuẫn giữa các ca.";
             }
             foreach ($rows->filter(fn ($r) => $r->needs_review) as $row) {
-                $slot = $row->slot ?? 1;
-                $issues[] = "Chấm công ngày {$date}, ca {$slot} đang cần kiểm tra. Nếu nghỉ ca này, chọn loại nghỉ và lưu xác nhận; nếu đi làm, kiểm tra giờ vào/ra.";
+                $reviewSlots[] = $this->slotLabel($date, $row);
             }
             if ($salaryType === 'hourly') {
                 foreach ($work as $row) {
                     // A zero-hour, zero-unit slot without punches adds no pay.
                     // Do not infer absence or require punches merely for a scheduled slot.
                     // needs_review is still enforced above, including manual empty work.
-                    if ((bool) $row->check_in_at !== (bool) $row->check_out_at
-                        || (! $row->check_in_at && ! $row->check_out_at && (int) $row->worked_minutes === 0 && (float) $row->work_units != 0)) {
-                        $issues[] = "Ca đi làm ngày {$date}, ca ".($row->slot ?? 1).' chưa có đủ giờ xác nhận. Nếu nghỉ, chọn loại nghỉ; không tự coi thiếu chấm công là nghỉ.';
+                    if (! $row->needs_review && ((bool) $row->check_in_at !== (bool) $row->check_out_at
+                        || (! $row->check_in_at && ! $row->check_out_at && (int) $row->worked_minutes === 0 && (float) $row->work_units != 0))) {
+                        $incompleteSlots[] = $this->slotLabel($date, $row);
                     }
                 }
             }
@@ -60,6 +61,21 @@ class PayrollConfirmedAttendance
             $days[] = ['date' => $date, 'work_units' => $units, 'paid_leave_units' => $paidLeave, 'multiplier' => $rate];
         }
 
-        return ['normal' => $normal, 'weighted' => $weighted, 'leave' => $leave, 'days' => $days, 'issues' => array_values(array_unique($issues))];
+        $summary = [];
+        if ($reviewSlots) {
+            $summary[] = count($reviewSlots).' ca chấm công cần kiểm tra: '.implode(', ', $reviewSlots).'. Vào Chấm công từng ngày: nghỉ thì chọn loại nghỉ, đi làm thì nhập giờ vào/ra.';
+        }
+        if ($incompleteSlots) {
+            $summary[] = count($incompleteSlots).' ca đi làm chưa đủ giờ vào/ra: '.implode(', ', $incompleteSlots).'. Nếu nghỉ, chọn loại nghỉ; không tự coi thiếu chấm công là nghỉ.';
+        }
+
+        return ['normal' => $normal, 'weighted' => $weighted, 'leave' => $leave, 'days' => $days, 'issues' => array_values(array_unique(array_merge($summary, $issues)))];
+    }
+
+    private function slotLabel(string $date, $row): string
+    {
+        $slot = (int) ($row->slot ?? 1);
+
+        return Carbon::parse($date)->format('d/m').($slot > 1 ? " (ca {$slot})" : '');
     }
 }

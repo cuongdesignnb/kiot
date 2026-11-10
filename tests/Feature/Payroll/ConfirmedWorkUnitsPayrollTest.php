@@ -122,6 +122,24 @@ class ConfirmedWorkUnitsPayrollTest extends TestCase
         $this->assertSame('blocked', $this->calculate($employee)['validation']['status']);
     }
 
+    public function test_review_issues_are_summarised_in_one_line_per_payslip(): void
+    {
+        $employee = $this->employee('hourly', 30000);
+        foreach (['2030-06-16', '2030-06-17', '2030-06-20'] as $date) {
+            $this->record($employee, $date, 0, 0, ['needs_review' => true, 'check_out_at' => $date.' 18:01:00']);
+        }
+        $this->record($employee, '2030-06-21', 0, 0, ['slot' => 2, 'needs_review' => true]);
+        $this->record($employee, '2030-06-22', 0, 0, ['check_in_at' => '2030-06-22 08:30:00']);
+
+        $validation = $this->calculate($employee)['validation'];
+
+        $this->assertSame('blocked', $validation['status']);
+        $this->assertSame([
+            '4 ca chấm công cần kiểm tra: 16/06, 17/06, 20/06, 21/06 (ca 2). Vào Chấm công từng ngày: nghỉ thì chọn loại nghỉ, đi làm thì nhập giờ vào/ra.',
+            '1 ca đi làm chưa đủ giờ vào/ra: 22/06. Nếu nghỉ, chọn loại nghỉ; không tự coi thiếu chấm công là nghỉ.',
+        ], $validation['issues']);
+    }
+
     public function test_fixed_and_hourly_keep_their_own_formulas(): void
     {
         $fixed = $this->employee('fixed', 1700000);
