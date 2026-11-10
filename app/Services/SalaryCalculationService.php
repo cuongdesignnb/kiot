@@ -134,7 +134,8 @@ class SalaryCalculationService
             }
             $result = $this->calculateBonusFromList($bonusList, $bonusCalculation, $revenue);
             $bonusAmount = $result['amount'];
-            $bonusDetails = $result['details'];
+            // Keep the basis so the payslip can say what the bonus was computed on.
+            $bonusDetails = array_map(fn (array $row) => $row + ['basis' => $bonusType], $result['details']);
         }
 
         // ===== HOA HỒNG =====
