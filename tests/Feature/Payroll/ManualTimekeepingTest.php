@@ -2,24 +2,24 @@
 
 namespace Tests\Feature\Payroll;
 
-use Tests\TestCase;
-use Illuminate\Foundation\Testing\DatabaseTransactions;
-use App\Models\User;
-use App\Models\Employee;
 use App\Models\Branch;
-use App\Models\Shift;
-use App\Models\EmployeeWorkSchedule;
-use App\Models\TimekeepingRecord;
+use App\Models\Employee;
 use App\Models\EmployeeSalarySetting;
-use App\Models\TimekeepingSetting;
+use App\Models\EmployeeWorkSchedule;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\OrderReturn;
-use App\Models\ReturnItem;
 use App\Models\Product;
-use App\Services\TimekeepingService;
+use App\Models\ReturnItem;
+use App\Models\Shift;
+use App\Models\TimekeepingRecord;
+use App\Models\TimekeepingSetting;
+use App\Models\User;
 use App\Services\SalaryCalculationService;
+use App\Services\TimekeepingService;
 use Carbon\Carbon;
+use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Tests\TestCase;
 
 class ManualTimekeepingTest extends TestCase
 {
@@ -28,8 +28,8 @@ class ManualTimekeepingTest extends TestCase
     private function admin(): User
     {
         return User::create([
-            'name'     => 'Admin Test',
-            'email'    => 'admin-test-' . uniqid() . '@test.local',
+            'name' => 'Admin Test',
+            'email' => 'admin-test-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
         ]);
     }
@@ -37,11 +37,11 @@ class ManualTimekeepingTest extends TestCase
     private function setupTimekeepingEnvironment(): array
     {
         $branch = Branch::create([
-            'name' => 'Branch Test ' . uniqid(),
+            'name' => 'Branch Test '.uniqid(),
         ]);
 
         $employee = Employee::create([
-            'code' => 'NV-' . uniqid(),
+            'code' => 'NV-'.uniqid(),
             'name' => 'Test Employee',
             'branch_id' => $branch->id,
             'is_active' => true,
@@ -75,7 +75,7 @@ class ManualTimekeepingTest extends TestCase
         $device = \App\Models\AttendanceDevice::create([
             'branch_id' => $branch->id,
             'name' => 'Device Test',
-            'device_id' => 'DEV-' . uniqid(),
+            'device_id' => 'DEV-'.uniqid(),
             'status' => 'online',
             'ip_address' => '127.0.0.1',
             'tcp_port' => 4370,
@@ -114,9 +114,9 @@ class ManualTimekeepingTest extends TestCase
         $record = TimekeepingRecord::where('employee_work_schedule_id', $env['schedule']->id)->first();
         $this->assertNotNull($record);
         $this->assertSame('manual', $record->source);
-        $this->assertTrue((bool)$record->manual_override);
+        $this->assertTrue((bool) $record->manual_override);
         $this->assertGreaterThan(0, $record->worked_minutes);
-        $this->assertEquals(1.0, (float)$record->work_units);
+        $this->assertEquals(1.0, (float) $record->work_units);
         $this->assertEquals(0, $record->late_minutes);
         $this->assertEquals(0, $record->early_minutes);
     }
@@ -167,7 +167,7 @@ class ManualTimekeepingTest extends TestCase
 
         $record = TimekeepingRecord::where('employee_work_schedule_id', $env['schedule']->id)->first();
         $this->assertNotNull($record);
-        $this->assertEquals(0.5, (float)$record->work_units);
+        $this->assertEquals(0.5, (float) $record->work_units);
     }
 
     public function test_manual_timekeeping_paid_leave_generates_work_unit_and_integrates_payroll(): void
@@ -187,7 +187,7 @@ class ManualTimekeepingTest extends TestCase
         $record = TimekeepingRecord::where('employee_work_schedule_id', $env['schedule']->id)->first();
         $this->assertNotNull($record);
         $this->assertSame('leave_paid', $record->attendance_type);
-        $this->assertEquals(1.0, (float)$record->work_units);
+        $this->assertEquals(1.0, (float) $record->work_units);
 
         // Calculate payroll
         $service = app(SalaryCalculationService::class);
@@ -195,8 +195,8 @@ class ManualTimekeepingTest extends TestCase
         $to = Carbon::create(2026, 5, 31);
         $payroll = $service->calculateForEmployee($env['employee'], $from, $to, 26);
 
-        $this->assertEquals(1.0, (float)$payroll['paid_leave_units']);
-        $this->assertEquals(1.0, (float)$payroll['work_units']);
+        $this->assertEquals(1.0, (float) $payroll['paid_leave_units']);
+        $this->assertEquals(1.0, (float) $payroll['work_units']);
     }
 
     public function test_manual_timekeeping_unpaid_leave_does_not_generate_work_unit(): void
@@ -216,7 +216,7 @@ class ManualTimekeepingTest extends TestCase
         $record = TimekeepingRecord::where('employee_work_schedule_id', $env['schedule']->id)->first();
         $this->assertNotNull($record);
         $this->assertSame('leave_unpaid', $record->attendance_type);
-        $this->assertEquals(0.0, (float)$record->work_units);
+        $this->assertEquals(0.0, (float) $record->work_units);
     }
 
     public function test_payroll_calculates_main_salary_from_manual_timekeeping(): void
@@ -238,7 +238,7 @@ class ManualTimekeepingTest extends TestCase
         $to = Carbon::create(2026, 5, 31);
         $payroll = $service->calculateForEmployee($env['employee'], $from, $to, 26);
 
-        $this->assertEquals(1.0, (float)$payroll['work_units']);
+        $this->assertEquals(1.0, (float) $payroll['work_units']);
         $expectedBase = round(10000000 * 1.0 / 26);
         $this->assertEquals($expectedBase, $payroll['base']);
         $this->assertGreaterThan(0, $payroll['total']);
@@ -260,7 +260,7 @@ class ManualTimekeepingTest extends TestCase
             ])->assertOk();
 
         $record = TimekeepingRecord::where('employee_work_schedule_id', $env['schedule']->id)->first();
-        $this->assertTrue((bool)$record->manual_override);
+        $this->assertTrue((bool) $record->manual_override);
         $this->assertSame('manual', $record->source);
 
         // Call recalculate
@@ -271,9 +271,9 @@ class ManualTimekeepingTest extends TestCase
 
         // Assert record is untouched
         $freshRecord = $record->fresh();
-        $this->assertTrue((bool)$freshRecord->manual_override);
+        $this->assertTrue((bool) $freshRecord->manual_override);
         $this->assertSame('manual', $freshRecord->source);
-        $this->assertEquals(1.0, (float)$freshRecord->work_units);
+        $this->assertEquals(1.0, (float) $freshRecord->work_units);
     }
 
     public function test_manual_attendance_durations_and_units(): void
@@ -284,7 +284,7 @@ class ManualTimekeepingTest extends TestCase
         // 1. Manual attendance 08:30-18:30 = 600 mins -> work_units = 1
         $attrs1 = $service->buildManualRecordAttributes($env['schedule'], 'work', '08:30', '18:30');
         $this->assertEquals(600, $attrs1['worked_minutes']);
-        $this->assertEquals(1.0, (float)$attrs1['work_units']);
+        $this->assertEquals(1.0, (float) $attrs1['work_units']);
 
         // Create a schedule with exactly 8 hours shift (e.g. 08:30 to 16:30) to test 480 minutes limit
         $schedule8 = EmployeeWorkSchedule::create([
@@ -300,17 +300,17 @@ class ManualTimekeepingTest extends TestCase
         // 2. Manual attendance exactly 8 hours = 480 mins -> work_units = 1
         $attrs2 = $service->buildManualRecordAttributes($schedule8, 'work', '08:30', '16:30');
         $this->assertEquals(480, $attrs2['worked_minutes']);
-        $this->assertEquals(1.0, (float)$attrs2['work_units']);
+        $this->assertEquals(1.0, (float) $attrs2['work_units']);
 
         // 3. Manual attendance 479 mins -> work_units = 0.5 (under 480 limit)
         $attrs3 = $service->buildManualRecordAttributes($schedule8, 'work', '08:30', '16:29');
         $this->assertEquals(479, $attrs3['worked_minutes']);
-        $this->assertEquals(0.5, (float)$attrs3['work_units']);
+        $this->assertEquals(0.5, (float) $attrs3['work_units']);
 
         // 4. Manual attendance valid half day (e.g. 240 mins) -> work_units = 0.5
         $attrs4 = $service->buildManualRecordAttributes($schedule8, 'work', '08:30', '12:30');
         $this->assertEquals(240, $attrs4['worked_minutes']);
-        $this->assertEquals(0.5, (float)$attrs4['work_units']);
+        $this->assertEquals(0.5, (float) $attrs4['work_units']);
 
         // 5. Missing check-in or check-out does not generate negative minutes
         $attrs5 = $service->buildManualRecordAttributes($env['schedule'], 'work', null, '18:30');
@@ -336,9 +336,9 @@ class ManualTimekeepingTest extends TestCase
 
         // Verify it has override = true, source = manual
         $record = TimekeepingRecord::where('employee_work_schedule_id', $env['schedule']->id)->first();
-        $this->assertTrue((bool)$record->manual_override);
+        $this->assertTrue((bool) $record->manual_override);
         $this->assertSame('manual', $record->source);
-        $this->assertEquals(1.0, (float)$record->work_units);
+        $this->assertEquals(1.0, (float) $record->work_units);
 
         // 2. Update existing record from 1.0 to 1.0 successfully (no downgrade)
         $resUpdate = $this->actingAs($admin)->postJson('/api/timekeeping-records', [
@@ -369,7 +369,7 @@ class ManualTimekeepingTest extends TestCase
             'confirm_downgrade' => true,
         ]);
         $resDowngradeConfirm->assertOk();
-        $this->assertEquals(0.5, (float)$resDowngradeConfirm->json('data.work_units'));
+        $this->assertEquals(0.5, (float) $resDowngradeConfirm->json('data.work_units'));
 
         // Let's bring it back to 1.0 first with both times populated
         $resRestore = $this->actingAs($admin)->postJson('/api/timekeeping-records', [
@@ -444,8 +444,8 @@ class ManualTimekeepingTest extends TestCase
                     'branch_id' => $branch->id,
                     'shift_id' => $shift8->id,
                     'work_date' => $dayStr,
-                    'check_in_at' => $dayStr . ' 08:00:00',
-                    'check_out_at' => $dayStr . ' 16:00:00',
+                    'check_in_at' => $dayStr.' 08:00:00',
+                    'check_out_at' => $dayStr.' 16:00:00',
                     'worked_minutes' => 480,
                     'work_units' => 1.0,
                     'manual_override' => true,
@@ -457,7 +457,7 @@ class ManualTimekeepingTest extends TestCase
 
         // Before adding the 15th day, verify total is 14.0
         $initialUnits = TimekeepingRecord::where('employee_id', $employee->id)->sum('work_units');
-        $this->assertEquals(14.0, (float)$initialUnits);
+        $this->assertEquals(14.0, (float) $initialUnits);
 
         // Now, the user goes to screen and manually adds/saves check-in/out for the 15th day
         // (which was missing attendance before). The user checks in 08:00 and check out 16:00 (480 minutes).
@@ -471,7 +471,7 @@ class ManualTimekeepingTest extends TestCase
 
         // Let's recalculate/check the new total work units. It should be 15.0 and NOT downgrade any of the existing 480-minute days to 0.5.
         $totalUnits = TimekeepingRecord::where('employee_id', $employee->id)->sum('work_units');
-        $this->assertEquals(15.0, (float)$totalUnits);
+        $this->assertEquals(15.0, (float) $totalUnits);
     }
 
     public function test_case_1_vu_hong_nhung_regression(): void
@@ -486,7 +486,7 @@ class ManualTimekeepingTest extends TestCase
         $attrs = $service->buildManualRecordAttributes($env['schedule'], 'work', '08:30', '16:30');
 
         $this->assertEquals(480, $attrs['worked_minutes']);
-        $this->assertEquals(1.0, (float)$attrs['work_units']);
+        $this->assertEquals(1.0, (float) $attrs['work_units']);
     }
 
     public function test_case_2_khuat_trung_hieu_regression(): void
@@ -498,7 +498,7 @@ class ManualTimekeepingTest extends TestCase
         $attrs = $service->buildManualRecordAttributes($env['schedule'], 'work', '08:30', '18:30');
 
         $this->assertEquals(600, $attrs['worked_minutes']);
-        $this->assertEquals(1.0, (float)$attrs['work_units']);
+        $this->assertEquals(1.0, (float) $attrs['work_units']);
     }
 
     public function test_case_3_nua_ngay_that(): void
@@ -513,7 +513,7 @@ class ManualTimekeepingTest extends TestCase
         $attrs = $service->buildManualRecordAttributes($env['schedule'], 'work', '08:30', '12:30');
 
         $this->assertEquals(240, $attrs['worked_minutes']);
-        $this->assertEquals(0.5, (float)$attrs['work_units']);
+        $this->assertEquals(0.5, (float) $attrs['work_units']);
     }
 
     public function test_case_4_479_phut(): void
@@ -528,7 +528,7 @@ class ManualTimekeepingTest extends TestCase
         $attrs = $service->buildManualRecordAttributes($env['schedule'], 'work', '08:30', '16:29'); // 479 minutes
 
         $this->assertEquals(479, $attrs['worked_minutes']);
-        $this->assertEquals(0.5, (float)$attrs['work_units']);
+        $this->assertEquals(0.5, (float) $attrs['work_units']);
     }
 
     public function test_case_5_device_recalculate(): void
@@ -562,7 +562,7 @@ class ManualTimekeepingTest extends TestCase
         $this->assertNotNull($record);
         $this->assertEquals('device', $record->source);
         $this->assertEquals(480, $record->worked_minutes);
-        $this->assertEquals(1.0, (float)$record->work_units);
+        $this->assertEquals(1.0, (float) $record->work_units);
     }
 
     public function test_case_6_manual_override_not_overwritten(): void
@@ -607,9 +607,9 @@ class ManualTimekeepingTest extends TestCase
 
         $fresh = $record->fresh();
         $this->assertEquals('manual', $fresh->source);
-        $this->assertTrue((bool)$fresh->manual_override);
+        $this->assertTrue((bool) $fresh->manual_override);
         $this->assertEquals(240, $fresh->worked_minutes);
-        $this->assertEquals(0.5, (float)$fresh->work_units);
+        $this->assertEquals(0.5, (float) $fresh->work_units);
     }
 
     public function test_case_7_audit_command(): void
@@ -641,11 +641,11 @@ class ManualTimekeepingTest extends TestCase
             '--to' => '2026-05-25',
             '--employee' => $env['employee']->name,
         ])
-        ->expectsOutput('Chế độ DRY-RUN: Chạy lại với --apply để lưu thay đổi thực tế.')
-        ->assertExitCode(0);
+            ->expectsOutput('Chế độ DRY-RUN: Chạy lại với --apply để lưu thay đổi thực tế.')
+            ->assertExitCode(0);
 
         // Verify that the record in the DB remains 0.5 (untouched)
-        $this->assertEquals(0.5, (float)$record->fresh()->work_units);
+        $this->assertEquals(0.5, (float) $record->fresh()->work_units);
 
         // Run audit command with --apply
         $this->artisan('timekeeping:audit-manual-work-units', [
@@ -654,11 +654,11 @@ class ManualTimekeepingTest extends TestCase
             '--employee' => $env['employee']->name,
             '--apply' => true,
         ])
-        ->expectsOutput('Đã cập nhật thành công 1 bản ghi chấm công thủ công.')
-        ->assertExitCode(0);
+            ->expectsOutput('Đã cập nhật thành công 1 bản ghi chấm công thủ công.')
+            ->assertExitCode(0);
 
         // Verify that the record in the DB is updated to 1.0
-        $this->assertEquals(1.0, (float)$record->fresh()->work_units);
+        $this->assertEquals(1.0, (float) $record->fresh()->work_units);
     }
 
     public function test_payroll_personal_gross_profit_bonus_invoice_source(): void
@@ -669,7 +669,7 @@ class ManualTimekeepingTest extends TestCase
 
         // Create a product
         $product = Product::create([
-            'sku' => 'SKU-' . uniqid(),
+            'sku' => 'SKU-'.uniqid(),
             'name' => 'Test Product',
             'cost_price' => 3471606,
             'retail_price' => 6000000,
@@ -690,14 +690,14 @@ class ManualTimekeepingTest extends TestCase
                     'bonus_value' => 20,
                     'bonus_is_percentage' => true,
                     'role_type' => 'personal_gross_profit',
-                ]
+                ],
             ],
             'has_commission' => false,
         ]);
 
         // Create invoice of 5,200,000 with cost 3,471,606
         $invoice = Invoice::create([
-            'code' => 'HD-' . uniqid(),
+            'code' => 'HD-'.uniqid(),
             'branch_id' => $branch->id,
             'created_by' => $employee->id,
             'seller_name' => $employee->name,
@@ -727,16 +727,16 @@ class ManualTimekeepingTest extends TestCase
         $result = $service->calculateForEmployee($employee, $from, $to, 26);
 
         // Assert personal_revenue = 5.200.000
-        $this->assertEquals(5200000.0, (float)$result['personal_revenue']);
+        $this->assertEquals(5200000.0, (float) $result['personal_revenue']);
 
         // Assert personal_gross_profit = 1.728.394
         // Calculate: 5,200,000 (net revenue) - 3,471,606 (total cogs) = 1,728,394
         $personalGrossProfit = $service->calculateForEmployee($employee, $from, $to, 26)['details']['bonus'][0]['revenue'] ?? 0;
-        $this->assertEquals(1728394.0, (float)$personalGrossProfit);
+        $this->assertEquals(1728394.0, (float) $personalGrossProfit);
 
         // Assert bonus 20% = 345.679
-        $this->assertEquals(345679.0, (float)$result['bonus']);
-        $this->assertEquals(345679.0, (float)($result['details']['bonus'][0]['calculated'] ?? 0));
+        $this->assertEquals(345679.0, (float) $result['bonus']);
+        $this->assertEquals(345679.0, (float) ($result['details']['bonus'][0]['calculated'] ?? 0));
         // The payslip records what the bonus was computed on.
         $this->assertSame('personal_gross_profit', $result['details']['bonus'][0]['basis'] ?? null);
     }
@@ -748,7 +748,7 @@ class ManualTimekeepingTest extends TestCase
         $branch = $env['branch'];
 
         $product = Product::create([
-            'sku' => 'SKU-' . uniqid(),
+            'sku' => 'SKU-'.uniqid(),
             'name' => 'Test Product',
             'cost_price' => 1000000,
             'retail_price' => 2000000,
@@ -768,13 +768,13 @@ class ManualTimekeepingTest extends TestCase
                     'bonus_value' => 20,
                     'bonus_is_percentage' => true,
                     'role_type' => 'personal_gross_profit',
-                ]
+                ],
             ],
         ]);
 
         // Invoice: 5,000,000, cost: 3,000,000
         $invoice = Invoice::create([
-            'code' => 'HD-' . uniqid(),
+            'code' => 'HD-'.uniqid(),
             'branch_id' => $branch->id,
             'created_by' => $employee->id,
             'seller_name' => $employee->name,
@@ -800,7 +800,7 @@ class ManualTimekeepingTest extends TestCase
 
         // Return: 2,500,000, cost: 1,500,000
         $return = OrderReturn::create([
-            'code' => 'TR-' . uniqid(),
+            'code' => 'TR-'.uniqid(),
             'invoice_id' => $invoice->id,
             'branch_id' => $branch->id,
             'subtotal' => 2500000,
@@ -828,14 +828,14 @@ class ManualTimekeepingTest extends TestCase
         $result = $service->calculateForEmployee($employee, $from, $to, 26);
 
         // Assert personal_revenue = 5,000,000 - 2,500,000 = 2,500,000
-        $this->assertEquals(2500000.0, (float)$result['personal_revenue']);
+        $this->assertEquals(2500000.0, (float) $result['personal_revenue']);
 
         // Assert personal_gross_profit = Net Revenue (2,500,000) - Total COGS (3,000,000 - 1,500,000 = 1,500,000) = 1,000,000
         $personalGrossProfit = $result['details']['bonus'][0]['revenue'] ?? 0;
-        $this->assertEquals(1000000.0, (float)$personalGrossProfit);
+        $this->assertEquals(1000000.0, (float) $personalGrossProfit);
 
         // Assert bonus 20% of 1,000,000 = 200,000
-        $this->assertEquals(200000.0, (float)$result['bonus']);
+        $this->assertEquals(200000.0, (float) $result['bonus']);
     }
 
     public function test_payroll_personal_gross_profit_bonus_no_orders_source(): void
@@ -845,7 +845,7 @@ class ManualTimekeepingTest extends TestCase
         $branch = $env['branch'];
 
         $product = Product::create([
-            'sku' => 'SKU-' . uniqid(),
+            'sku' => 'SKU-'.uniqid(),
             'name' => 'Test Product',
             'cost_price' => 1000000,
             'retail_price' => 2000000,
@@ -865,13 +865,13 @@ class ManualTimekeepingTest extends TestCase
                     'bonus_value' => 20,
                     'bonus_is_percentage' => true,
                     'role_type' => 'personal_gross_profit',
-                ]
+                ],
             ],
         ]);
 
         // Create invoice of 5,200,000 with cost 3,471,606. Orders total is 0.
         $invoice = Invoice::create([
-            'code' => 'HD-' . uniqid(),
+            'code' => 'HD-'.uniqid(),
             'branch_id' => $branch->id,
             'created_by' => $employee->id,
             'seller_name' => $employee->name,
@@ -901,7 +901,7 @@ class ManualTimekeepingTest extends TestCase
         $result = $service->calculateForEmployee($employee, $from, $to, 26);
 
         // Orders total = 0, but bonus is still calculated from Invoice
-        $this->assertEquals(345679.0, (float)$result['bonus']);
+        $this->assertEquals(345679.0, (float) $result['bonus']);
     }
 
     public function test_payroll_personal_gross_profit_bonus_has_commission_false(): void
@@ -911,7 +911,7 @@ class ManualTimekeepingTest extends TestCase
         $branch = $env['branch'];
 
         $product = Product::create([
-            'sku' => 'SKU-' . uniqid(),
+            'sku' => 'SKU-'.uniqid(),
             'name' => 'Test Product',
             'cost_price' => 3471606,
             'retail_price' => 6000000,
@@ -931,13 +931,13 @@ class ManualTimekeepingTest extends TestCase
                     'bonus_value' => 20,
                     'bonus_is_percentage' => true,
                     'role_type' => 'personal_gross_profit',
-                ]
+                ],
             ],
             'has_commission' => false, // explicitly false
         ]);
 
         $invoice = Invoice::create([
-            'code' => 'HD-' . uniqid(),
+            'code' => 'HD-'.uniqid(),
             'branch_id' => $branch->id,
             'created_by' => $employee->id,
             'seller_name' => $employee->name,
@@ -966,8 +966,8 @@ class ManualTimekeepingTest extends TestCase
         $to = Carbon::parse('2026-05-31');
         $result = $service->calculateForEmployee($employee, $from, $to, 26);
 
-        $this->assertEquals(0.0, (float)$result['commission']);
-        $this->assertEquals(345679.0, (float)$result['bonus']);
+        $this->assertEquals(0.0, (float) $result['commission']);
+        $this->assertEquals(345679.0, (float) $result['bonus']);
     }
 
     public function test_payroll_report_and_employee_profit_report_match(): void
@@ -977,7 +977,7 @@ class ManualTimekeepingTest extends TestCase
         $branch = $env['branch'];
 
         $product = Product::create([
-            'sku' => 'SKU-' . uniqid(),
+            'sku' => 'SKU-'.uniqid(),
             'name' => 'Test Product',
             'cost_price' => 1000000,
             'retail_price' => 2000000,
@@ -988,7 +988,7 @@ class ManualTimekeepingTest extends TestCase
 
         // Invoice: 5,000,000, cost: 3,000,000
         $invoice = Invoice::create([
-            'code' => 'HD-' . uniqid(),
+            'code' => 'HD-'.uniqid(),
             'branch_id' => $branch->id,
             'created_by' => $employee->id,
             'seller_name' => $employee->name,
@@ -1012,7 +1012,7 @@ class ManualTimekeepingTest extends TestCase
 
         // Return: 2,000,000, cost: 1,200,000
         $return = OrderReturn::create([
-            'code' => 'TR-' . uniqid(),
+            'code' => 'TR-'.uniqid(),
             'invoice_id' => $invoice->id,
             'branch_id' => $branch->id,
             'subtotal' => 2000000,
@@ -1043,7 +1043,7 @@ class ManualTimekeepingTest extends TestCase
         $return->save();
 
         // 1. Get gross profit from SellerResolver directly (simulating EmployeeReportController)
-        $resolver = new \App\Support\Reports\SellerResolver();
+        $resolver = new \App\Support\Reports\SellerResolver;
         $sellerKey = "employee:{$employee->id}";
 
         $invoiceQ = Invoice::whereBetween('created_at', [$from, $to])->where('status', '!=', 'Đã hủy');
@@ -1052,22 +1052,22 @@ class ManualTimekeepingTest extends TestCase
         $returnQ = OrderReturn::whereBetween('created_at', [$from, $to])->where('status', '!=', 'Đã hủy');
         $returnQ = $resolver->filterReturnsBySeller($returnQ, $sellerKey);
 
-        $empGrossRevenue     = $resolver->aggregateBySeller(clone $invoiceQ, 'SUM(subtotal)');
-        $empInvoiceDiscount  = $resolver->aggregateBySeller(clone $invoiceQ, 'SUM(discount)');
-        $empReturnSubtotal   = $resolver->aggregateReturnsBySeller(clone $returnQ, 'SUM(subtotal)');
-        $empCogsSold         = $resolver->cogsSoldBySeller(clone $invoiceQ);
-        $empCogsReturned     = $resolver->cogsReturnedBySeller(clone $returnQ);
+        $empGrossRevenue = $resolver->aggregateBySeller(clone $invoiceQ, 'SUM(subtotal)');
+        $empInvoiceDiscount = $resolver->aggregateBySeller(clone $invoiceQ, 'SUM(discount)');
+        $empReturnSubtotal = $resolver->aggregateReturnsBySeller(clone $returnQ, 'SUM(subtotal)');
+        $empCogsSold = $resolver->cogsSoldBySeller(clone $invoiceQ);
+        $empCogsReturned = $resolver->cogsReturnedBySeller(clone $returnQ);
 
-        $grossRevenue          = $empGrossRevenue[$sellerKey] ?? 0;
-        $invoiceDiscount       = $empInvoiceDiscount[$sellerKey] ?? 0;
-        $revenueAfterDiscount  = $grossRevenue - $invoiceDiscount;
-        $returnValue           = $empReturnSubtotal[$sellerKey] ?? 0;
-        $netRevenue            = $revenueAfterDiscount - $returnValue;
+        $grossRevenue = $empGrossRevenue[$sellerKey] ?? 0;
+        $invoiceDiscount = $empInvoiceDiscount[$sellerKey] ?? 0;
+        $revenueAfterDiscount = $grossRevenue - $invoiceDiscount;
+        $returnValue = $empReturnSubtotal[$sellerKey] ?? 0;
+        $netRevenue = $revenueAfterDiscount - $returnValue;
 
-        $cogsSold              = $empCogsSold[$sellerKey] ?? 0;
-        $cogsReturned          = $empCogsReturned[$sellerKey] ?? 0;
-        $totalCogs             = $cogsSold - $cogsReturned;
-        $reportGrossProfit     = $netRevenue - $totalCogs;
+        $cogsSold = $empCogsSold[$sellerKey] ?? 0;
+        $cogsReturned = $empCogsReturned[$sellerKey] ?? 0;
+        $totalCogs = $cogsSold - $cogsReturned;
+        $reportGrossProfit = $netRevenue - $totalCogs;
 
         // 2. Get gross profit from SalaryCalculationService
         $service = app(SalaryCalculationService::class);
@@ -1077,6 +1077,6 @@ class ManualTimekeepingTest extends TestCase
         $payrollGrossProfit = $method->invoke($service, $employee, $from, $to);
 
         // Assert they match exactly
-        $this->assertEquals((float)$reportGrossProfit, (float)$payrollGrossProfit);
+        $this->assertEquals((float) $reportGrossProfit, (float) $payrollGrossProfit);
     }
 }
