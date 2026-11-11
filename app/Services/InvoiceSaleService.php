@@ -289,6 +289,7 @@ class InvoiceSaleService
             'subtotal' => ($item['price'] * $item['quantity']) - ($item['discount'] ?? 0),
             'note' => $item['note'] ?? null,
             'serial' => $serialStr,
+            'warranty_policy' => app(WarrantyPolicyChoice::class)->nameFor($product, $item['warranty_policy'] ?? null),
         ]);
 
         // ─── Bước B: Tạo InvoiceItemSerial với invoice_item_id THẬT ───

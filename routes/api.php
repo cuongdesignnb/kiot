@@ -363,6 +363,7 @@ Route::prefix('integrations/v1/pc')->middleware('pc.integration')->group(functio
     Route::post('/orders', [\App\Http\Controllers\Api\Integrations\PcWebsite\ExternalOrderController::class, 'store']);
     Route::get('/orders/{externalOrderId}', [\App\Http\Controllers\Api\Integrations\PcWebsite\ExternalOrderController::class, 'status']);
     Route::post('/orders/{externalOrderId}/cancel', [\App\Http\Controllers\Api\Integrations\PcWebsite\ExternalOrderController::class, 'cancel']);
+    Route::get('/warranties', \App\Http\Controllers\Api\Integrations\PcWebsite\WarrantyLookupController::class);
 });
 
 // Public read-only inventory API for partners — Bearer token from Settings > API tồn kho.

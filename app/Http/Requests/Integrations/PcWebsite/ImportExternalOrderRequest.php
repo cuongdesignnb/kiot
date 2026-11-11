@@ -47,6 +47,7 @@ class ImportExternalOrderRequest extends PcIntegrationRequest
             'items.*.discount' => ['required', 'numeric', 'min:0'],
             'items.*.line_total' => ['required', 'numeric', 'min:0'],
             'items.*.bundle_ref' => ['nullable', 'string', 'max:255'],
+            'items.*.warranty_months' => ['nullable', 'integer', 'min:0', 'max:120'],
             'note' => ['nullable', 'string', 'max:5000'],
         ];
     }
