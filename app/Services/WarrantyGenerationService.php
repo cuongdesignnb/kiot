@@ -31,7 +31,7 @@ class WarrantyGenerationService
 
         $purchaseDate = Carbon::parse($invoice->sale_time ?? $invoice->created_at ?? now());
         $customerName = $invoice->customer?->name;
-        $invoiceCode  = $invoice->code;
+        $invoiceCode = $invoice->code;
 
         $normalizer = app(\App\Services\ProductWarrantyPolicyNormalizer::class);
 
@@ -51,14 +51,14 @@ class WarrantyGenerationService
                 ? $normalizer->normalizeMaintenancePolicies($product->getAttribute('maintenance_policies'))
                 : [];
 
-            $months  = 0;
+            $months = 0;
             $endDate = null;
 
-            if (!empty($warrantyPolicies)) {
+            if (! empty($warrantyPolicies)) {
                 // The package chosen for this line (POS / website), else the default.
                 $primary = app(WarrantyPolicyChoice::class)->find($product, $item->getAttribute('warranty_policy'))
                     ?? $this->pickPrimary($warrantyPolicies);
-                $months  = $normalizer->durationInMonths(
+                $months = $normalizer->durationInMonths(
                     (int) $primary['duration_value'],
                     (string) $primary['duration_unit'],
                 );
@@ -81,7 +81,7 @@ class WarrantyGenerationService
 
             // Compute next_maintenance_date from the first maintenance policy.
             $nextMaintenance = null;
-            if (!empty($maintenancePolicies) && Schema::hasColumn('warranties', 'next_maintenance_date')) {
+            if (! empty($maintenancePolicies) && Schema::hasColumn('warranties', 'next_maintenance_date')) {
                 $first = $maintenancePolicies[0];
                 $nextMaintenance = $normalizer->addDurationToDate(
                     $purchaseDate,
@@ -91,15 +91,15 @@ class WarrantyGenerationService
             }
 
             $base = [
-                'customer_name'     => $customerName,
-                'warranty_period'   => $months,
-                'purchase_date'     => $purchaseDate,
+                'customer_name' => $customerName,
+                'warranty_period' => $months,
+                'purchase_date' => $purchaseDate,
                 'warranty_end_date' => $endDate,
             ];
-            if (Schema::hasColumn('warranties', 'warranty_policy_snapshot') && !empty($warrantyPolicies)) {
+            if (Schema::hasColumn('warranties', 'warranty_policy_snapshot') && ! empty($warrantyPolicies)) {
                 $base['warranty_policy_snapshot'] = $warrantyPolicies;
             }
-            if (Schema::hasColumn('warranties', 'maintenance_policy_snapshot') && !empty($maintenancePolicies)) {
+            if (Schema::hasColumn('warranties', 'maintenance_policy_snapshot') && ! empty($maintenancePolicies)) {
                 $base['maintenance_policy_snapshot'] = $maintenancePolicies;
             }
             if (Schema::hasColumn('warranties', 'next_maintenance_date') && $nextMaintenance) {
@@ -129,13 +129,16 @@ class WarrantyGenerationService
     /**
      * Pick the primary policy (default or first row).
      *
-     * @param array<int, array{name:string, duration_value:int, duration_unit:string, is_default:bool}> $policies
+     * @param  array<int, array{name:string, duration_value:int, duration_unit:string, is_default:bool}>  $policies
      */
     private function pickPrimary(array $policies): array
     {
         foreach ($policies as $row) {
-            if (!empty($row['is_default'])) return $row;
+            if (! empty($row['is_default'])) {
+                return $row;
+            }
         }
+
         return $policies[0];
     }
 
@@ -165,6 +168,7 @@ class WarrantyGenerationService
                 return max(0, (int) $v);
             }
         }
+
         return 0;
     }
 
@@ -182,8 +186,8 @@ class WarrantyGenerationService
         }
         Warranty::create(array_merge($data, [
             'invoice_code' => $invoiceCode,
-            'product_id'   => $productId,
-            'serial_imei'  => $serial,
+            'product_id' => $productId,
+            'serial_imei' => $serial,
         ]));
     }
 }
