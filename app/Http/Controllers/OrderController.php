@@ -607,6 +607,7 @@ class OrderController extends Controller
             'items.*.product_id' => 'required_with:items|exists:products,id',
             'items.*.quantity' => 'required_with:items|integer|min:1',
             'items.*.serial_ids' => 'nullable|array',
+            'items.*.warranty_policy' => 'nullable|string|max:120',
             'delivery' => 'nullable|array',
             'delivery.is_delivery' => 'nullable|boolean',
             'delivery.delivery_mode' => 'nullable|string',
@@ -820,11 +821,21 @@ class OrderController extends Controller
                     }
 
                     // RR-13: Tạo InvoiceItem TRƯỚC (pattern đúng — giống RR-02 InvoiceSaleService)
+                    // The package picked at the POS wins over the one saved on the order.
+                    $posLine = $request->input('from_pos') && is_array($request->input('items'))
+                        ? collect($request->input('items'))->firstWhere('product_id', $product->id)
+                        : null;
+                    $warrantyPolicy = app(\App\Services\WarrantyPolicyChoice::class)->nameFor(
+                        $product,
+                        is_array($posLine) && ! empty($posLine['warranty_policy']) ? $posLine['warranty_policy'] : $orderItem->warranty_policy,
+                    );
+
                     $invoiceItem = $invoice->items()->create([
                         'product_id' => $orderItem->product_id,
                         'quantity' => $qty,
                         'price' => $orderItem->price,
                         'cost_price' => $costSnapshot,
+                        'warranty_policy' => $warrantyPolicy,
                     ]);
 
                     // RR-13: Với hàng serial, tạo InvoiceItemSerial + đánh dấu serial sold
@@ -1221,6 +1232,8 @@ class OrderController extends Controller
                 'stock_quantity' => (float) ($item->product?->stock_quantity ?? 0),
                 'serial_ids' => $item->serial_ids ?? [],
                 'selected_serials' => $selectedSerials,
+                'warranty_policy' => $item->warranty_policy,
+                'warranty_policies' => $item->product?->warranty_policies ?? [],
             ];
         });
         $paymentSummary = app(OrderPaymentSummaryService::class)->summary($order);

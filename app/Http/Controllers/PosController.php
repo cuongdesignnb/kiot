@@ -198,6 +198,7 @@ class PosController extends Controller
             'items.*.price' => 'required|numeric|min:0',
             'items.*.discount' => 'nullable|numeric|min:0',
             'items.*.serial_ids' => 'nullable|array',
+            'items.*.warranty_policy' => 'nullable|string|max:120',
         ]);
 
         try {
@@ -238,6 +239,7 @@ class PosController extends Controller
                         'price' => $it['price'],
                         'discount' => $it['discount'] ?? 0,
                         'serial_ids' => $it['serial_ids'] ?? [],
+                        'warranty_policy' => $it['warranty_policy'] ?? null,
                     ];
                 }, $validated['items']),
             ];
@@ -420,6 +422,7 @@ class PosController extends Controller
             'items.*.quantity' => 'required|numeric|min:1',
             'items.*.price' => 'required|numeric',
             'items.*.discount' => 'nullable|numeric|min:0',
+            'items.*.warranty_policy' => 'nullable|string|max:120',
         ]);
 
         foreach ($validated['items'] as $index => $item) {
@@ -492,6 +495,10 @@ class PosController extends Controller
                     'price' => $item['price'],
                     'discount' => $lineDiscount,
                     'subtotal' => $subtotal,
+                    'warranty_policy' => app(\App\Services\WarrantyPolicyChoice::class)->nameFor(
+                        \App\Models\Product::find($item['product_id']),
+                        $item['warranty_policy'] ?? null,
+                    ),
                 ]);
             }
 

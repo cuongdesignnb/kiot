@@ -407,7 +407,9 @@ const checkAndHydrateOrderFromUrl = async () => {
                             retail_price: item.price,
                             has_serial: item.has_serial,
                             stock_quantity: item.stock_quantity,
+                            warranty_policies: item.warranty_policies || [],
                         },
+                        warranty_policy: item.warranty_policy || null,
                         quantity: item.qty,
                         quantityInput: String(item.qty ?? ''),
                         targetQuantity: item.qty,
@@ -763,6 +765,20 @@ const handleSearchInput = () => {
     }, 400);
 };
 
+// Warranty packages of a product (Hàng hoá → Bảo hành). Staff pick one per
+// line when there is more than one; the default package is preselected.
+const warrantyOptions = (product) => (Array.isArray(product?.warranty_policies) ? product.warranty_policies : [])
+    .filter((row) => row && String(row.name || '').trim() !== '');
+const defaultWarrantyPolicy = (product) => {
+    const options = warrantyOptions(product);
+    return (options.find((row) => row.is_default) || options[0])?.name || null;
+};
+const warrantyOptionLabel = (row) => {
+    const units = { day: 'ngày', month: 'tháng', year: 'năm' };
+    const value = Number(row.duration_value) || 0;
+    return value > 0 ? `${row.name} (${value} ${units[row.duration_unit] || 'tháng'})` : row.name;
+};
+
 // Add product to cart
 const addToCart = (product) => {
     // Block products with 0 sellable stock (all units in repair)
@@ -781,6 +797,7 @@ const addToCart = (product) => {
                 price: product.retail_price,
                 discount: 0,
                 is_serial_product: true,
+                warranty_policy: defaultWarrantyPolicy(product),
                 serials: [], 
                 serialInput: '',
                 showSerialDropdown: false,
@@ -809,6 +826,7 @@ const addToCart = (product) => {
             price: product.retail_price,
             discount: 0,
             is_serial_product: false,
+            warranty_policy: defaultWarrantyPolicy(product),
         }));
     }
 };
@@ -1127,6 +1145,7 @@ const processCheckout = async () => {
                     product_id: item.product.id,
                     quantity: item.quantity,
                     serial_ids: item.is_serial_product ? item.serials.map(s => s.id) : [],
+                    warranty_policy: item.warranty_policy || null,
                 }))
             };
 
@@ -1163,6 +1182,7 @@ const processCheckout = async () => {
                     quantity: item.quantity,
                     price: Number(item.price) || 0,
                     discount: Number(item.discount) || 0,
+                    warranty_policy: item.warranty_policy || null,
                 }))
             };
 
@@ -1198,6 +1218,7 @@ const processCheckout = async () => {
                 price: Number(item.price) || 0,
                 discount: Number(item.discount) || 0,
                 serial_ids: item.is_serial_product ? item.serials.map(s => s.id) : [],
+                warranty_policy: item.warranty_policy || null,
             }))
         };
 
@@ -2118,6 +2139,16 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                         <div class="col-span-4 flex flex-col items-start leading-snug">
                             <span class="font-bold text-gray-800 text-sm overflow-hidden text-ellipsis line-clamp-2 w-full" :title="item.product.name">{{ item.product.name }}</span>
                             <span class="text-xs text-blue-600 font-medium tracking-wide mt-0.5">{{ item.product.sku }}</span>
+                            <label v-if="warrantyOptions(item.product).length > 1" class="mt-1 flex items-center gap-1 text-[11px] text-gray-600">
+                                <span class="whitespace-nowrap">Gói BH:</span>
+                                <select
+                                    v-model="item.warranty_policy"
+                                    class="max-w-[220px] rounded border border-gray-300 bg-white py-0.5 pl-1 pr-6 text-[11px] focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                >
+                                    <option v-for="row in warrantyOptions(item.product)" :key="row.name" :value="row.name">{{ warrantyOptionLabel(row) }}</option>
+                                </select>
+                            </label>
+                            <span v-else-if="warrantyOptions(item.product).length === 1" class="mt-0.5 text-[11px] text-gray-500">BH: {{ warrantyOptionLabel(warrantyOptions(item.product)[0]) }}</span>
                             
                             <!-- Inline Serial Selection -->
                             <div v-if="item.is_serial_product" class="mt-2 w-full">

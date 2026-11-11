@@ -277,6 +277,8 @@ class PcOrderImportService
                 'discount' => $item['discount'],
                 'subtotal' => $item['line_total'],
                 'serial_ids' => null,
+                'warranty_policy' => app(\App\Services\WarrantyPolicyChoice::class)
+                    ->nameForMonths($product, isset($item['warranty_months']) ? (int) $item['warranty_months'] : null),
             ]));
             if ($this->toCents($item['unit_price']) !== $this->toCents($product->retail_price)) {
                 $priceMismatches[] = $product->sku;

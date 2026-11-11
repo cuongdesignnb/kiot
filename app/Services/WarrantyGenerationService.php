@@ -55,8 +55,9 @@ class WarrantyGenerationService
             $endDate = null;
 
             if (!empty($warrantyPolicies)) {
-                // Use the default policy to set warranty_period/end_date.
-                $primary = $this->pickPrimary($warrantyPolicies);
+                // The package chosen for this line (POS / website), else the default.
+                $primary = app(WarrantyPolicyChoice::class)->find($product, $item->getAttribute('warranty_policy'))
+                    ?? $this->pickPrimary($warrantyPolicies);
                 $months  = $normalizer->durationInMonths(
                     (int) $primary['duration_value'],
                     (string) $primary['duration_unit'],
