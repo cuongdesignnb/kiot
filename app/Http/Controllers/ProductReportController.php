@@ -9,7 +9,6 @@ use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\OrderReturn;
 use App\Models\Product;
-use App\Models\PurchaseItem;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -20,14 +19,14 @@ class ProductReportController extends Controller
     public function index(Request $request)
     {
         // ── Filters ──
-        $concern    = $request->input('concern', 'sales');     // sales|profit|stock_value|stock_io|stock_io_detail
-        $period     = $request->input('period', 'this_month');
-        $dateFrom   = $request->input('date_from');
-        $dateTo     = $request->input('date_to');
-        $branchId   = $request->input('branch_id');
+        $concern = $request->input('concern', 'sales');     // sales|profit|stock_value|stock_io|stock_io_detail
+        $period = $request->input('period', 'this_month');
+        $dateFrom = $request->input('date_from');
+        $dateTo = $request->input('date_to');
+        $branchId = $request->input('branch_id');
         $categoryId = $request->input('category_id');
-        $brandId    = $request->input('brand_id');
-        $viewMode   = $request->input('view', 'chart');
+        $brandId = $request->input('brand_id');
+        $viewMode = $request->input('view', 'chart');
 
         // ── Resolve date range ──
         [$startDate, $endDate, $periodLabel, $groupBy] = $this->resolvePeriod($period, $dateFrom, $dateTo);
@@ -35,20 +34,28 @@ class ProductReportController extends Controller
         // ── Base invoice query ──
         $invoiceQuery = Invoice::whereBetween('created_at', [$startDate, $endDate])
             ->where('status', '!=', 'Đã hủy');
-        if ($branchId) $invoiceQuery->where('branch_id', $branchId);
+        if ($branchId) {
+            $invoiceQuery->where('branch_id', $branchId);
+        }
 
         $invoiceIds = (clone $invoiceQuery)->pluck('id');
 
         // Returns
         $returnsQuery = OrderReturn::whereBetween('created_at', [$startDate, $endDate])
             ->where('status', '!=', 'Đã hủy');
-        if ($branchId) $returnsQuery->where('branch_id', $branchId);
+        if ($branchId) {
+            $returnsQuery->where('branch_id', $branchId);
+        }
         $returnIds = (clone $returnsQuery)->pluck('id');
 
         // ── Product filter scope ──
         $productFilter = function ($q) use ($categoryId, $brandId) {
-            if ($categoryId) $q->where('products.category_id', $categoryId);
-            if ($brandId)    $q->where('products.brand_id', $brandId);
+            if ($categoryId) {
+                $q->where('products.category_id', $categoryId);
+            }
+            if ($brandId) {
+                $q->where('products.brand_id', $brandId);
+            }
         };
 
         // ── Build data ──
@@ -73,28 +80,28 @@ class ProductReportController extends Controller
         }
 
         // ── Filter options ──
-        $branches   = Branch::orderBy('name')->get(['id', 'name']);
+        $branches = Branch::orderBy('name')->get(['id', 'name']);
         $categories = Category::orderBy('name')->get(['id', 'name']);
-        $brands     = Brand::orderBy('name')->get(['id', 'name']);
+        $brands = Brand::orderBy('name')->get(['id', 'name']);
         $branchName = $branchId ? Branch::find($branchId)?->name : 'Tất cả chi nhánh';
 
         return Inertia::render('Reports/ProductReport', [
             'filters' => [
-                'concern'     => $concern,
-                'period'      => $period,
-                'date_from'   => $startDate->format('Y-m-d'),
-                'date_to'     => $endDate->format('Y-m-d'),
-                'branch_id'   => $branchId,
+                'concern' => $concern,
+                'period' => $period,
+                'date_from' => $startDate->format('Y-m-d'),
+                'date_to' => $endDate->format('Y-m-d'),
+                'branch_id' => $branchId,
                 'category_id' => $categoryId,
-                'brand_id'    => $brandId,
-                'view'        => $viewMode,
+                'brand_id' => $brandId,
+                'view' => $viewMode,
             ],
             'periodLabel' => $periodLabel,
-            'chartData'   => $chartData,
-            'branchName'  => $branchName,
-            'branches'    => $branches,
-            'categories'  => $categories,
-            'brands'      => $brands,
+            'chartData' => $chartData,
+            'branchName' => $branchName,
+            'branches' => $branches,
+            'categories' => $categories,
+            'brands' => $brands,
         ]);
     }
 
@@ -107,7 +114,8 @@ class ProductReportController extends Controller
             case 'last_year':  return [Carbon::now()->subYear()->startOfYear(), Carbon::now()->subYear()->endOfYear(), 'Năm trước', 'month'];
             case 'custom':
                 $s = $from ? Carbon::parse($from)->startOfDay() : Carbon::now()->startOfMonth();
-                $e = $to   ? Carbon::parse($to)->endOfDay()     : Carbon::now()->endOfDay();
+                $e = $to ? Carbon::parse($to)->endOfDay() : Carbon::now()->endOfDay();
+
                 return [$s, $e, 'Tùy chỉnh', $s->diffInDays($e) > 90 ? 'month' : 'day'];
             default: return [Carbon::now()->startOfMonth(), Carbon::now()->endOfDay(), 'Tháng này', 'day'];
         }
@@ -238,11 +246,11 @@ class ProductReportController extends Controller
         $products = [];
         foreach ($soldQuery as $pid => $item) {
             $product = Product::find($pid);
-            $retRev  = (float) ($returnedByProduct[$pid]->return_revenue ?? 0);
+            $retRev = (float) ($returnedByProduct[$pid]->return_revenue ?? 0);
             $retCost = (float) ($returnedByProduct[$pid]->return_cost ?? 0);
-            $netRev  = (float) $item->total_revenue - $retRev;
+            $netRev = (float) $item->total_revenue - $retRev;
             $netCost = (float) $item->total_cost - $retCost;
-            $profit  = $netRev - $netCost;
+            $profit = $netRev - $netCost;
             if ($product) {
                 $flagged = $costPending->has($pid);
                 $products[] = [
@@ -275,8 +283,12 @@ class ProductReportController extends Controller
     private function buildStockValueChart($categoryId, $brandId)
     {
         $query = Product::query();
-        if ($categoryId) $query->where('category_id', $categoryId);
-        if ($brandId)    $query->where('brand_id', $brandId);
+        if ($categoryId) {
+            $query->where('category_id', $categoryId);
+        }
+        if ($brandId) {
+            $query->where('brand_id', $brandId);
+        }
 
         $products = $query->where('stock_quantity', '>', 0)
             ->select('name', 'stock_quantity', 'cost_price')
@@ -310,8 +322,12 @@ class ProductReportController extends Controller
     private function buildStockIOChart($invoiceIds, $returnIds, $startDate, $endDate, $branchId, $categoryId, $brandId)
     {
         $productQuery = Product::query();
-        if ($categoryId) $productQuery->where('category_id', $categoryId);
-        if ($brandId)    $productQuery->where('brand_id', $brandId);
+        if ($categoryId) {
+            $productQuery->where('category_id', $categoryId);
+        }
+        if ($brandId) {
+            $productQuery->where('brand_id', $brandId);
+        }
         $productIds = $productQuery->pluck('id');
 
         // Purchased qty in period
@@ -319,7 +335,7 @@ class ProductReportController extends Controller
             ->join('purchases', 'purchase_items.purchase_id', '=', 'purchases.id')
             ->whereIn('purchase_items.product_id', $productIds)
             ->whereBetween('purchases.created_at', [$startDate, $endDate])
-            ->when($branchId, fn($q) => $q->where('purchases.branch_id', $branchId))
+            ->when($branchId, fn ($q) => $q->where('purchases.branch_id', $branchId))
             ->select('purchase_items.product_id', DB::raw('SUM(purchase_items.quantity) as qty'))
             ->groupBy('purchase_items.product_id')
             ->pluck('qty', 'purchase_items.product_id');
@@ -353,11 +369,11 @@ class ProductReportController extends Controller
 
             if ($imported > 0 || $netExported > 0) {
                 $rows[] = [
-                    'name'       => $p->name,
-                    'sku'        => $p->sku,
-                    'imported'   => $imported,
-                    'exported'   => $netExported,
-                    'stock'      => (int) $p->stock_quantity,
+                    'name' => $p->name,
+                    'sku' => $p->sku,
+                    'imported' => $imported,
+                    'exported' => $netExported,
+                    'stock' => (int) $p->stock_quantity,
                     'stockValue' => (float) $p->stock_quantity * (float) $p->cost_price,
                 ];
             }
@@ -378,6 +394,7 @@ class ProductReportController extends Controller
     {
         $data = $this->buildStockIOChart($invoiceIds, $returnIds, $startDate, $endDate, $branchId, $categoryId, $brandId);
         $data['title'] = 'Xuất nhập tồn chi tiết';
+
         return $data;
     }
 }
