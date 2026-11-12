@@ -22,6 +22,7 @@ class PcOrderImportService
         private readonly PcCustomerResolver $customerResolver,
         private readonly PcInventoryReservationService $reservationService,
         private readonly PcIntegrationRuntimeConfiguration $runtimeConfiguration,
+        private readonly PcWebProductCreator $webProductCreator,
     ) {}
 
     public function import(array $payload, string $idempotencyKey, string $rawBody): array
@@ -218,7 +219,16 @@ class PcOrderImportService
         }
 
         $skus = collect($payload['items'])->pluck('sku')->map(fn ($sku) => trim((string) $sku))->all();
-        $productsBySku = $this->productResolver->resolveForImport($skus);
+        [$productsBySku, $missingSkus] = $this->productResolver->partitionForImport($skus);
+        // Web-only SKUs (e.g. WEB-NEW-*) are created as goods "Chưa có giá vốn"
+        // instead of rejecting the order. Soft-deleted, inactive, duplicate and
+        // service SKUs never reach here: the resolver keeps their errors.
+        $productsBySku += $this->webProductCreator->createMissing(
+            $missingSkus,
+            $payload['items'],
+            trim((string) $payload['external_order_code']),
+            trim((string) $payload['external_order_id']),
+        );
         $products = collect($productsBySku)->keyBy('id');
         $requested = [];
         foreach ($payload['items'] as $item) {

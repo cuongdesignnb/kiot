@@ -444,6 +444,8 @@ class PurchaseController extends Controller
                                 (float) $unitCostAllocated
                             );
                             $product->refresh();
+                            // Phiếu nhập hoàn thành → hàng web tạo đã có giá vốn.
+                            $product->clearCostPending();
 
                             // Update retail_price if provided
                             if (isset($item['retail_price']) && $item['retail_price'] > 0) {
@@ -880,6 +882,7 @@ class PurchaseController extends Controller
                                 $deltaQty = $newQty - $oldQty;
                                 if ($deltaQty > 0) {
                                     \App\Services\MovingAvgCostingService::applyPurchase($product, $deltaQty, $unitCostAllocated);
+                                    Product::query()->find($product->id)?->clearCostPending();
                                 } elseif ($deltaQty < 0) {
                                     if ((int) $product->stock_quantity < abs($deltaQty)) {
                                         throw new \RuntimeException('Không thể giảm số lượng vì hàng đã được bán/xuất hoặc tồn kho hiện tại không đủ để điều chỉnh.');
@@ -940,6 +943,7 @@ class PurchaseController extends Controller
                                 $deltaQty = $newQty - $oldQty;
                                 if ($deltaQty > 0) {
                                     \App\Services\MovingAvgCostingService::applyPurchase($product, $deltaQty, $unitCostAllocated);
+                                    Product::query()->find($product->id)?->clearCostPending();
                                     StockMovementService::record($product, StockMovementService::TYPE_ADJUST_IN, $deltaQty, $unitCostAllocated, $purchase, [
                                         'ref_code' => $purchase->code,
                                         'moved_at' => $validated['purchase_date'],

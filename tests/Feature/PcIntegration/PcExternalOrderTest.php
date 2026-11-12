@@ -169,9 +169,14 @@ class PcExternalOrderTest extends PcIntegrationTestCase
             ->assertStatus(422)->assertJsonPath('error.code', 'INSUFFICIENT_AVAILABLE_STOCK');
         $this->assertSame($ordersBefore, Order::count());
 
-        $unknown = $this->orderPayload($product, ['items' => [0 => ['sku' => 'UNKNOWN-PC-SKU']]]);
+        // Unknown SKUs are now auto-created (see PcWebCreatedProductTest); a
+        // soft-deleted SKU is never re-created and keeps PRODUCT_INACTIVE.
+        $deleted = $this->makeProduct(['sku' => 'PC-DELETED-SKU']);
+        $deleted->delete();
+        $unknown = $this->orderPayload($product, ['items' => [0 => ['sku' => 'PC-DELETED-SKU']]]);
         $this->postSignedJson('/api/integrations/v1/pc/orders', $unknown, 'idem-'.Str::uuid())
-            ->assertStatus(422)->assertJsonPath('error.code', 'UNKNOWN_SKU');
+            ->assertStatus(422)->assertJsonPath('error.code', 'PRODUCT_INACTIVE');
+        $this->assertSame(1, \App\Models\Product::withTrashed()->where('sku', 'PC-DELETED-SKU')->count());
 
         $product->update(['stock_quantity' => 5]);
         $wrongTotal = $this->orderPayload($product, ['totals' => ['total' => 123]]);

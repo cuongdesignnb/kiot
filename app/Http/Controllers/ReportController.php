@@ -230,6 +230,11 @@ class ReportController extends Controller
             'prevExpenses' => $prevExpenses,
             'prevCostRatio' => $prevCostRatio,
             'expenseCategories' => $expenseCategories,
+            // Lines sold while the web-created goods had no cost: gross profit
+            // above is computed against cost 0 for them.
+            'costPendingSales' => \App\Support\Reports\CostPendingSales::forInvoiceIds(
+                \App\Support\Reports\MetricService::invoiceScope($dateFrom, $dateTo, $branchId)->pluck('id')
+            )->all(),
             'branches' => Branch::orderBy('name')->get(['id', 'name']),
         ]);
     }

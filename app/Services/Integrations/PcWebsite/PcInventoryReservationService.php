@@ -43,6 +43,14 @@ class PcInventoryReservationService
             if (! $product) {
                 throw new PcIntegrationException('INTERNAL_INTEGRATION_ERROR', 'Không thể khóa đầy đủ sản phẩm của đơn hàng.', 500);
             }
+            // Goods auto-created from a website order ("Chưa có giá vốn") are
+            // ordered-to-source: they have no stock until the shop records a
+            // purchase receipt, so on-hand availability is not enforced for
+            // them. Reservations are still created and tracked as usual; once
+            // the purchase receipt clears cost_pending the normal check applies.
+            if ((bool) $product->cost_pending) {
+                continue;
+            }
             $activeReserved = (int) ($reserved[$productId] ?? 0);
             $available = max(0, (int) $product->stock_quantity - $activeReserved);
             if ($quantity > $available) {

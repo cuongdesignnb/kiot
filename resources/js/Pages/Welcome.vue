@@ -714,6 +714,19 @@ const formatDate = (val) => {
                                         >
                                             {{ product.is_active === false ? 'Ngừng kinh doanh' : 'Đang kinh doanh' }}
                                         </span>
+                                        <span
+                                            v-if="product.created_from_web_at"
+                                            class="inline-flex rounded px-2 py-0.5 text-[11px] font-semibold bg-blue-100 text-blue-700"
+                                        >
+                                            Web tạo
+                                        </span>
+                                        <span
+                                            v-if="product.cost_pending"
+                                            class="inline-flex rounded px-2 py-0.5 text-[11px] font-semibold bg-amber-100 text-amber-800"
+                                            title="Hàng do website tạo, chưa có phiếu nhập/giá vốn. Hãy nhập hàng trước khi xuất hoá đơn."
+                                        >
+                                            Chưa có giá vốn
+                                        </span>
                                     </div>
                                     <!-- Khi user search theo serial/IMEI → hiển thị nhãn trạng thái serial khớp -->
                                     <div v-if="product.matched_serials && product.matched_serials.length > 0" class="flex flex-wrap gap-1 mt-1">
