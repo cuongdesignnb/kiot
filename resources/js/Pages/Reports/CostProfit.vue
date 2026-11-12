@@ -26,6 +26,7 @@ const props = defineProps({
     prevExpenses: Number,
     prevCostRatio: Number,
     expenseCategories: Array,
+    costPendingSales: { type: Array, default: () => [] },
     branches: Array,
 });
 
@@ -186,6 +187,23 @@ const summaryCards = computed(() => [
                         </option>
                     </select>
                 </div>
+            </div>
+
+            <!-- Hàng web tạo bán khi chưa có giá vốn -->
+            <div
+                v-if="costPendingSales && costPendingSales.length > 0"
+                class="mb-6 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+            >
+                <div class="font-semibold mb-1">
+                    Chưa có giá vốn: lợi nhuận gộp đang tính giá vốn 0 cho các hàng web tạo sau
+                </div>
+                <ul class="list-disc pl-5 space-y-0.5">
+                    <li v-for="row in costPendingSales" :key="row.product_id">
+                        <span class="font-medium">{{ row.sku }}</span> - {{ row.name }}
+                        (SL {{ row.quantity }}, doanh thu {{ Number(row.revenue || 0).toLocaleString('vi-VN') }})
+                        <span class="ml-1 inline-flex rounded px-1.5 py-0.5 text-[11px] font-semibold bg-amber-200 text-amber-900">{{ row.label }}</span>
+                    </li>
+                </ul>
             </div>
 
             <!-- Top summary cards -->

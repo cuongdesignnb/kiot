@@ -56,7 +56,53 @@ class Product extends Model
         'warranty_months' => 'integer',
         'warranty_policies' => 'array',
         'maintenance_policies' => 'array',
+        // Website PC auto-created goods ("Web tạo" / "Chưa có giá vốn")
+        'created_from_web_at' => 'datetime',
+        'cost_pending' => 'boolean',
     ];
+
+    /**
+     * Name of the category Website PC auto-created goods are filed under.
+     */
+    public const WEB_PENDING_CATEGORY_NAME = 'Hàng web chờ nhập';
+
+    protected static function booted(): void
+    {
+        // A cost price > 0 (purchase receipt via MovingAvgCostingService,
+        // manual edit, serial recompute...) resolves "Chưa có giá vốn".
+        static::saving(function (Product $product) {
+            if ($product->cost_pending && (float) $product->cost_price > 0) {
+                $product->cost_pending = false;
+            }
+        });
+    }
+
+    /**
+     * True while a Website PC auto-created product still has no purchase
+     * receipt and no cost price, i.e. selling it would book COGS = 0.
+     */
+    public function isCostPending(): bool
+    {
+        if (! $this->cost_pending || (float) $this->cost_price > 0) {
+            return false;
+        }
+
+        return ! PurchaseItem::query()
+            ->where('product_id', $this->id)
+            ->whereHas('purchase', fn ($query) => $query->where('status', 'completed'))
+            ->exists();
+    }
+
+    /**
+     * Clear the cost-pending flag once a completed purchase receipt exists
+     * (even when its unit cost is 0).
+     */
+    public function clearCostPending(): void
+    {
+        if ($this->cost_pending) {
+            $this->forceFill(['cost_pending' => false])->save();
+        }
+    }
 
     public function category(): BelongsTo
     {

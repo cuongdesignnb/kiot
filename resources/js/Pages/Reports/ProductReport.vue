@@ -174,6 +174,18 @@ const pdfReportDate = `${String(now.getDate()).padStart(2,'0')}/${String(now.get
                 <!-- Chart View -->
                 <template v-if="viewMode === 'chart' && !isTableMode">
                     <div class="p-6">
+                        <div
+                            v-if="chartData?.costPendingProducts?.length"
+                            class="mb-6 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+                        >
+                            <div class="font-semibold mb-1">Chưa có giá vốn: lợi nhuận các hàng web tạo sau đang tính trên giá vốn 0</div>
+                            <ul class="list-disc pl-5 space-y-0.5">
+                                <li v-for="row in chartData.costPendingProducts" :key="row.product_id">
+                                    <span class="font-medium">{{ row.sku }}</span> - {{ row.name }} (SL {{ row.quantity }})
+                                    <span class="ml-1 inline-flex rounded px-1.5 py-0.5 text-[11px] font-semibold bg-amber-200 text-amber-900">{{ row.label }}</span>
+                                </li>
+                            </ul>
+                        </div>
                         <div v-for="(chart, ci) in multiCharts" :key="ci" class="mb-8">
                             <div class="text-center mb-3"><h2 class="text-base font-semibold text-gray-700">{{ chart.title }}</h2></div>
                             <div class="bg-white rounded-lg border border-gray-200 p-5">

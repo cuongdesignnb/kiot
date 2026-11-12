@@ -184,6 +184,8 @@ class ActivityLog extends Model
 
     const ACTION_EXTERNAL_ORDER_CANCELLED = 'external_order_cancelled';
 
+    const ACTION_EXTERNAL_PRODUCT_CREATED = 'external_product_created';
+
     const ACTION_EXTERNAL_RESERVATION_CREATED = 'external_reservation_created';
 
     const ACTION_EXTERNAL_RESERVATION_RELEASED = 'external_reservation_released';
@@ -347,6 +349,7 @@ class ActivityLog extends Model
         'external_order_duplicate' => 'Nhận lại đơn Website PC',
         'external_order_conflict' => 'Xung đột đơn Website PC',
         'external_order_cancelled' => 'Hủy đơn từ Website PC',
+        'external_product_created' => 'Web tạo hàng từ đơn Website PC',
         'external_reservation_created' => 'Giữ tồn cho đơn Website PC',
         'external_reservation_released' => 'Giải phóng giữ tồn Website PC',
         'external_reservation_consumed' => 'Sử dụng giữ tồn Website PC',

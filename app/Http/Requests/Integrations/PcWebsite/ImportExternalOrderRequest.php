@@ -48,6 +48,10 @@ class ImportExternalOrderRequest extends PcIntegrationRequest
             'items.*.line_total' => ['required', 'numeric', 'min:0'],
             'items.*.bundle_ref' => ['nullable', 'string', 'max:255'],
             'items.*.warranty_months' => ['nullable', 'integer', 'min:0', 'max:120'],
+            // Optional: plain catalog name/price (without the paid warranty) used
+            // when KIOT has to auto-create a web-only product for this line.
+            'items.*.catalog_name' => ['nullable', 'string', 'max:255'],
+            'items.*.catalog_price' => ['nullable', 'numeric', 'min:0'],
             'note' => ['nullable', 'string', 'max:5000'],
         ];
     }

@@ -681,6 +681,12 @@ class OrderController extends Controller
                 $order->load('items.product', 'customer');
                 $customer = $order->customer;
 
+                // Goods auto-created by a website order with no purchase
+                // receipt / cost yet must not be invoiced at COGS = 0.
+                app(\App\Services\CostPendingSaleGuard::class)->assertCanInvoiceProductIds(
+                    $order->items->pluck('product_id')
+                );
+
                 if ($order->external_source === PcOrderImportService::SOURCE) {
                     app(LockPeriodService::class)->assertNotLocked(now(), 'pc_order_convert_to_invoice');
                     app(PcInventoryReservationService::class)->assertProcessable($order);

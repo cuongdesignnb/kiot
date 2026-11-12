@@ -232,6 +232,9 @@ class ProductReportController extends Controller
                 ->keyBy('product_id');
         }
 
+        // Hàng web tạo bán khi chưa có giá vốn: lợi nhuận đang tính trên giá vốn 0.
+        $costPending = \App\Support\Reports\CostPendingSales::forInvoiceIds($invoiceIds)->keyBy('product_id');
+
         $products = [];
         foreach ($soldQuery as $pid => $item) {
             $product = Product::find($pid);
@@ -241,7 +244,12 @@ class ProductReportController extends Controller
             $netCost = (float) $item->total_cost - $retCost;
             $profit  = $netRev - $netCost;
             if ($product) {
-                $products[] = ['name' => $product->name, 'profit' => $profit, 'revenue' => $netRev];
+                $flagged = $costPending->has($pid);
+                $products[] = [
+                    'name' => $flagged ? $product->name.' ('.\App\Support\Reports\CostPendingSales::LABEL.')' : $product->name,
+                    'profit' => $profit,
+                    'revenue' => $netRev,
+                ];
             }
         }
 
@@ -257,6 +265,7 @@ class ProductReportController extends Controller
                 ],
             ],
             'multiChart' => true,
+            'costPendingProducts' => $costPending->values()->all(),
         ];
     }
 

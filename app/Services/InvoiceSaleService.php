@@ -59,6 +59,12 @@ class InvoiceSaleService
             // chạy TRƯỚC khi tạo bất kỳ record nào để tránh orphan Invoice/InvoiceItem.
             $this->assertSerialSelectionComplete($payload['items']);
 
+            // Goods auto-created by a website order with no purchase receipt /
+            // cost yet must not be sold at COGS = 0.
+            app(CostPendingSaleGuard::class)->assertCanInvoiceProductIds(
+                collect($payload['items'])->pluck('product_id')
+            );
+
             if (! empty($context['validate_before_purchase_date'])) {
                 $this->assertNotBeforePurchaseDate(
                     $payload['items'],
