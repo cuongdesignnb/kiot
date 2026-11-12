@@ -227,6 +227,8 @@ class PcWebCreatedProductTest extends PcIntegrationTestCase
 
     public function test_profit_reports_mark_web_created_lines_sold_without_cost(): void
     {
+        $this->withoutVite();
+
         $sku = 'WEB-NEW-'.strtoupper(Str::random(8));
         $payload = $this->webOrderPayload($sku, 'Thẻ nhớ quà tặng', 200000);
         $this->postSignedJson(self::PATH, $payload, 'idem-'.Str::uuid())->assertCreated();
