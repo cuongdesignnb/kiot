@@ -2,15 +2,25 @@
 
 namespace App\Services\Integrations\PcWebsite;
 
+use App\Exceptions\LockPeriodException;
 use App\Exceptions\PcIntegrationException;
 use App\Models\ActivityLog;
 use App\Models\Branch;
+use App\Models\CashFlow;
 use App\Models\IntegrationEvent;
+use App\Models\Invoice;
 use App\Models\Order;
+use App\Services\CostPendingSaleGuard;
+use App\Services\CustomerDebtService;
+use App\Services\CustomerPaymentService;
+use App\Services\CustomerReceivableInvoiceService;
+use App\Services\Debt\PartnerDebtMutationCoordinator;
+use App\Services\Orders\OrderInvoiceConversionService;
 use App\Support\Customers\CustomerGroupSnapshot;
 use Carbon\Carbon;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use Throwable;
 
 class PcOrderImportService
@@ -125,6 +135,291 @@ class PcOrderImportService
         } catch (PcIntegrationException $exception) {
             $this->recordFailure($payload, $idempotencyKey, $payloadHash, 'order.cancel', $exception, $externalOrderId);
             throw $exception;
+        }
+    }
+
+    /**
+     * Website reports the order as delivered: convert the Kiot order into an
+     * invoice exactly like "Xử lý đơn" does (prior deposit applied, no new
+     * payment). Serial goods must already have their Serial/IMEI chosen.
+     *
+     * @return array{duplicate: bool, order: Order, invoice: ?Invoice}
+     */
+    public function deliver(string $externalOrderId, array $payload, string $idempotencyKey, string $rawBody): array
+    {
+        $payload = $this->publicPayload($payload);
+        $payloadHash = hash('sha256', $rawBody);
+
+        try {
+            $result = DB::transaction(function () use ($externalOrderId, $payload, $idempotencyKey, $payloadHash) {
+                $claim = $this->claimEvent($externalOrderId, $payload, $idempotencyKey, $payloadHash, 'order.deliver');
+                if (isset($claim['result'])) {
+                    return $claim['result'];
+                }
+                $event = $claim['event'];
+
+                $order = $this->lockExternalOrder($externalOrderId);
+                if (! $order) {
+                    return $this->eventError($event, 'ORDER_NOT_FOUND', 'Không tìm thấy đơn hàng website.', 404);
+                }
+                $invoice = Invoice::query()->where('order_id', $order->id)->latest('id')->first();
+                if ($order->status === Order::STATUS_COMPLETED || $invoice) {
+                    $event->update(['status' => IntegrationEvent::STATUS_IGNORED, 'processed_at' => now()]);
+
+                    return ['duplicate' => true, 'order' => $order, 'invoice' => $invoice];
+                }
+                if (in_array($order->status, [Order::STATUS_CANCELLED, Order::STATUS_ENDED, 'return', 'returned'], true)) {
+                    return $this->eventError($event, 'ORDER_NOT_PROCESSABLE', 'Đơn hàng đã hủy/kết thúc, không thể chuyển hóa đơn.', 422);
+                }
+
+                $order->load('items.product');
+                $missingSerials = $order->items
+                    ->filter(fn ($item) => (bool) $item->product?->has_serial
+                        && ! (is_array($item->serial_ids) && count(array_filter($item->serial_ids)) === (int) $item->qty))
+                    ->map(fn ($item) => trim(($item->product->sku ?? '').' '.($item->product->name ?? '')))
+                    ->unique()
+                    ->values()
+                    ->all();
+                if ($missingSerials !== []) {
+                    $message = 'Cần chọn Serial/IMEI trong KIOT cho: '.implode(', ', $missingSerials);
+                    $marker = 'Web báo đã giao nhưng chưa xuất hóa đơn';
+                    if (! str_contains((string) $order->note, $marker)) {
+                        $order->update(['note' => $this->appendNote($order->note, $marker.' – '.$message)]);
+                        ActivityLog::log(
+                            ActivityLog::ACTION_EXTERNAL_ORDER_DELIVER_BLOCKED,
+                            "Website PC báo đã giao đơn {$order->code} nhưng chưa xuất được hóa đơn. ".$message,
+                            $order,
+                            ['external_order_id' => $externalOrderId, 'missing_serial_products' => $missingSerials],
+                        );
+                    }
+
+                    return $this->eventError($event, 'SERIAL_NOT_ALLOCATED', $message.'.', 422);
+                }
+
+                try {
+                    app(CostPendingSaleGuard::class)->assertCanInvoiceProductIds($order->items->pluck('product_id'));
+                } catch (\Exception $exception) {
+                    return $this->eventError($event, 'COST_PENDING', $exception->getMessage(), 422);
+                }
+
+                $deliveredAt = Carbon::parse((string) $payload['delivered_at'])->setTimezone((string) config('app.timezone', 'UTC'));
+                $tracking = trim((string) ($payload['tracking_code'] ?? ''));
+                $carrier = trim((string) ($payload['carrier'] ?? ''));
+                $attributes = [
+                    'note' => 'Từ đơn hàng '.$order->code.' | Web báo đã giao '.$deliveredAt->format('d/m/Y H:i')
+                        .($carrier !== '' ? ' – ĐVVC: '.$carrier : '')
+                        .($tracking !== '' ? ' – Mã vận đơn: '.$tracking : ''),
+                ];
+                if ($tracking !== '') {
+                    $attributes['tracking_code'] = $tracking;
+                }
+                if ($carrier !== '') {
+                    $attributes['delivery_partner'] = $carrier;
+                }
+
+                $invoice = app(OrderInvoiceConversionService::class)->convert(
+                    $order,
+                    ['amount_paid' => 0, 'payment_method' => 'cash', 'source' => 'pc_website_deliver', 'event_id' => (string) $payload['event_id']],
+                    ['invoice_attributes' => $attributes],
+                );
+
+                $event->update([
+                    'status' => IntegrationEvent::STATUS_PROCESSED,
+                    'processed_at' => now(),
+                    'last_error_code' => null,
+                    'last_error_message' => null,
+                ]);
+                ActivityLog::log(
+                    ActivityLog::ACTION_EXTERNAL_ORDER_DELIVERED,
+                    "Website PC báo đã giao đơn {$order->code} → hóa đơn {$invoice->code}",
+                    $order,
+                    ['external_order_id' => $externalOrderId, 'invoice_code' => $invoice->code, 'tracking_code' => $tracking ?: null, 'carrier' => $carrier ?: null],
+                );
+
+                return ['duplicate' => false, 'order' => $order->fresh(), 'invoice' => $invoice];
+            });
+
+            if (isset($result['error']) && $result['error'] instanceof PcIntegrationException) {
+                throw $result['error'];
+            }
+            if (! array_key_exists('invoice', $result) && ($result['order'] ?? null) instanceof Order) {
+                $result['invoice'] = Invoice::query()->where('order_id', $result['order']->id)->latest('id')->first();
+            }
+
+            return $result;
+        } catch (PcIntegrationException $exception) {
+            $this->recordFailure($payload, $idempotencyKey, $payloadHash, 'order.deliver', $exception, $externalOrderId);
+            throw $exception;
+        } catch (Throwable $exception) {
+            $mapped = $this->businessRejection($exception, 'ORDER_NOT_PROCESSABLE');
+            if (! $mapped) {
+                $this->recordInternalFailure($payload, $idempotencyKey, $payloadHash, 'order.deliver');
+                throw $exception;
+            }
+            $this->recordFailure($payload, $idempotencyKey, $payloadHash, 'order.deliver', $mapped, $externalOrderId);
+            throw $mapped;
+        }
+    }
+
+    /**
+     * Website reports a payment for an order. Before conversion it becomes an
+     * order deposit (orders.amount_paid + a receipt referencing the order);
+     * after conversion it is collected against the order's invoice.
+     *
+     * @return array{duplicate: bool, order: Order, invoice: ?Invoice, cash_flow: ?CashFlow, amount_paid_total: float}
+     */
+    public function payment(string $externalOrderId, array $payload, string $idempotencyKey, string $rawBody): array
+    {
+        $payload = $this->publicPayload($payload);
+        $payloadHash = hash('sha256', $rawBody);
+        $cashFlowKey = 'pc-order-payment:'.$payload['event_id'];
+
+        try {
+            $result = DB::transaction(function () use ($externalOrderId, $payload, $idempotencyKey, $payloadHash, $cashFlowKey) {
+                $claim = $this->claimEvent($externalOrderId, $payload, $idempotencyKey, $payloadHash, 'order.payment');
+                if (isset($claim['result'])) {
+                    return $claim['result'] + ['cash_flow' => CashFlow::query()->where('idempotency_key', $cashFlowKey)->first()];
+                }
+                $event = $claim['event'];
+
+                $order = $this->lockExternalOrder($externalOrderId);
+                if (! $order) {
+                    return $this->eventError($event, 'ORDER_NOT_FOUND', 'Không tìm thấy đơn hàng website.', 404);
+                }
+                if (in_array($order->status, [Order::STATUS_CANCELLED, Order::STATUS_ENDED, 'return', 'returned'], true)) {
+                    return $this->eventError($event, 'ORDER_NOT_PROCESSABLE', 'Đơn hàng đã hủy/kết thúc, không ghi nhận thanh toán.', 422);
+                }
+
+                $amount = (float) $payload['amount'];
+                $paidAt = Carbon::parse((string) $payload['paid_at'])->setTimezone((string) config('app.timezone', 'UTC'));
+                $reference = trim((string) ($payload['reference'] ?? ''));
+                $method = (string) $payload['method'];
+                $description = 'Web báo đã thanh toán '.number_format($amount, 0, ',', '.').'đ cho đơn '.$order->code
+                    .' ('.$method.')'.($reference !== '' ? ' – Mã GD: '.$reference : '');
+                $invoice = Invoice::query()->where('order_id', $order->id)->lockForUpdate()->latest('id')->first();
+
+                if ($invoice) {
+                    if (in_array(mb_strtolower((string) $invoice->status), ['đã hủy', 'cancelled', 'canceled', 'void'], true)) {
+                        return $this->eventError($event, 'ORDER_NOT_PROCESSABLE', 'Hóa đơn của đơn hàng đã bị hủy.', 422);
+                    }
+                    $customer = $invoice->customer;
+                    if (! $customer) {
+                        return $this->eventError($event, 'CUSTOMER_REQUIRED', 'Hóa đơn khách lẻ, không ghi nhận thu nợ được.', 422);
+                    }
+                    $remaining = app(CustomerReceivableInvoiceService::class)->remaining($invoice);
+                    if ($amount > $remaining + 0.01) {
+                        return $this->eventError($event, 'OVERPAYMENT', 'Số tiền ('.number_format($amount, 0, ',', '.').') lớn hơn số còn nợ của hóa đơn '.$invoice->code.' ('.number_format($remaining, 0, ',', '.').').', 422);
+                    }
+
+                    $collected = app(CustomerPaymentService::class)->collect(
+                        $customer,
+                        $amount,
+                        'manual',
+                        [['invoice_id' => $invoice->id, 'amount' => $amount]],
+                        $description,
+                        $paidAt,
+                        $cashFlowKey,
+                    );
+                    $cashFlow = CashFlow::query()->find($collected['cash_flow_id'] ?? null);
+                    if ($cashFlow && ! $cashFlow->idempotency_key) {
+                        $cashFlow->forceFill(['idempotency_key' => $cashFlowKey, 'payment_method' => $this->cashFlowMethod($method)])->save();
+                    }
+                    $total = (float) $invoice->fresh()->customer_paid;
+                } else {
+                    if ($order->status === Order::STATUS_COMPLETED) {
+                        return $this->eventError($event, 'ORDER_NOT_PROCESSABLE', 'Đơn hàng đã hoàn thành nhưng không có hóa đơn.', 422);
+                    }
+                    $newPaid = (float) $order->amount_paid + $amount;
+                    if ($newPaid > (float) $order->total_payment + 0.01) {
+                        return $this->eventError($event, 'OVERPAYMENT', 'Tổng tiền đã trả ('.number_format($newPaid, 0, ',', '.').') vượt tổng đơn hàng ('.number_format((float) $order->total_payment, 0, ',', '.').').', 422);
+                    }
+
+                    $record = function () use ($order, $amount, $paidAt, $method, $description, $cashFlowKey, $newPaid): CashFlow {
+                        $customer = $order->customer;
+                        $cashFlow = CashFlow::create([
+                            'code' => $this->newCashFlowCode(),
+                            'type' => 'receipt',
+                            'amount' => $amount,
+                            'time' => $paidAt,
+                            'category' => 'Thu tiền khách trả',
+                            'target_type' => 'Khách hàng',
+                            'target_id' => $customer?->id,
+                            'target_name' => $customer?->name ?? 'Khách lẻ',
+                            'reference_type' => 'Order',
+                            'reference_code' => $order->code,
+                            'payment_method' => $this->cashFlowMethod($method),
+                            'description' => $description,
+                            'status' => 'active',
+                            'idempotency_key' => $cashFlowKey,
+                        ]);
+                        $order->update(['amount_paid' => $newPaid]);
+                        if ($customer) {
+                            app(CustomerDebtService::class)->recordPayment(
+                                $customer->id,
+                                $amount,
+                                null,
+                                $description,
+                                ['ref_code' => $cashFlow->code, 'order_id' => $order->id],
+                            );
+                        }
+
+                        return $cashFlow;
+                    };
+
+                    $cashFlow = $order->customer_id
+                        ? app(PartnerDebtMutationCoordinator::class)->execute(
+                            (int) $order->customer_id,
+                            'pc_order_payment',
+                            hash('sha256', json_encode(['order_id' => $order->id, 'payload' => $payload], JSON_UNESCAPED_UNICODE)),
+                            fn () => $record(),
+                        )
+                        : $record();
+                    $total = $newPaid;
+                }
+
+                $event->update([
+                    'status' => IntegrationEvent::STATUS_PROCESSED,
+                    'processed_at' => now(),
+                    'last_error_code' => null,
+                    'last_error_message' => null,
+                ]);
+                ActivityLog::log(
+                    ActivityLog::ACTION_EXTERNAL_ORDER_PAYMENT,
+                    $description,
+                    $order,
+                    ['external_order_id' => $externalOrderId, 'amount' => $amount, 'cash_flow_code' => $cashFlow?->code, 'invoice_code' => $invoice?->code],
+                );
+
+                return [
+                    'duplicate' => false,
+                    'order' => $order->fresh(),
+                    'invoice' => $invoice,
+                    'cash_flow' => $cashFlow,
+                    'amount_paid_total' => $total,
+                ];
+            });
+
+            if (isset($result['error']) && $result['error'] instanceof PcIntegrationException) {
+                throw $result['error'];
+            }
+            if (! array_key_exists('amount_paid_total', $result)) {
+                $invoice = Invoice::query()->where('order_id', $result['order']->id)->latest('id')->first();
+                $result['invoice'] = $invoice;
+                $result['amount_paid_total'] = $invoice ? (float) $invoice->customer_paid : (float) $result['order']->amount_paid;
+            }
+
+            return $result;
+        } catch (PcIntegrationException $exception) {
+            $this->recordFailure($payload, $idempotencyKey, $payloadHash, 'order.payment', $exception, $externalOrderId);
+            throw $exception;
+        } catch (Throwable $exception) {
+            $mapped = $this->businessRejection($exception, 'PAYMENT_REJECTED');
+            if (! $mapped) {
+                $this->recordInternalFailure($payload, $idempotencyKey, $payloadHash, 'order.payment');
+                throw $exception;
+            }
+            $this->recordFailure($payload, $idempotencyKey, $payloadHash, 'order.payment', $mapped, $externalOrderId);
+            throw $mapped;
         }
     }
 
@@ -460,6 +755,79 @@ class PcOrderImportService
         }
 
         throw new PcIntegrationException('IDEMPOTENCY_KEY_CONFLICT', 'Request đồng thời bị xung đột idempotency.', 409);
+    }
+
+    /**
+     * IntegrationEvent idempotency for order-level website events (same
+     * rules as cancel): a replayed processed event returns the order as a
+     * duplicate, a reused key/event id with another body is a conflict.
+     *
+     * @return array{event?: IntegrationEvent, result?: array}
+     */
+    private function claimEvent(string $externalOrderId, array $payload, string $idempotencyKey, string $payloadHash, string $type): array
+    {
+        $event = $this->findExistingEvent((string) $payload['event_id'], $idempotencyKey);
+        if ($event) {
+            if (! $this->sameEvent($event, $payload, $idempotencyKey, $payloadHash, $externalOrderId)) {
+                $this->markConflict($event, 'IDEMPOTENCY_KEY_CONFLICT', 'Event ID hoặc Idempotency-Key đã được dùng cho request khác.');
+
+                return ['result' => ['error' => new PcIntegrationException('IDEMPOTENCY_KEY_CONFLICT', 'Idempotency-Key hoặc event_id bị xung đột.', 409)]];
+            }
+            if (in_array($event->status, [IntegrationEvent::STATUS_PROCESSED, IntegrationEvent::STATUS_IGNORED], true)) {
+                $event->increment('attempt_count');
+
+                return ['result' => ['duplicate' => true, 'order' => $this->findExternalOrder($externalOrderId)]];
+            }
+            $event->update([
+                'status' => IntegrationEvent::STATUS_PROCESSING,
+                'attempt_count' => $event->attempt_count + 1,
+                'last_error_code' => null,
+                'last_error_message' => null,
+            ]);
+
+            return ['event' => $event];
+        }
+
+        return ['event' => $this->createEvent($payload, $idempotencyKey, $payloadHash, $type, $externalOrderId)];
+    }
+
+    private function lockExternalOrder(string $externalOrderId): ?Order
+    {
+        return Order::query()
+            ->where('external_source', self::SOURCE)
+            ->where('external_order_id', $externalOrderId)
+            ->lockForUpdate()
+            ->first();
+    }
+
+    /**
+     * Maps a business rejection thrown while converting/collecting (lock
+     * period, partner guard, stock/serial checks reported as plain
+     * \Exception) to a 422 integration error. Returns null for internal errors.
+     */
+    private function businessRejection(Throwable $exception, string $code): ?PcIntegrationException
+    {
+        return match (true) {
+            $exception instanceof LockPeriodException => new PcIntegrationException('PERIOD_LOCKED', $exception->getMessage(), 422),
+            $exception instanceof ValidationException => new PcIntegrationException($code, (string) (collect($exception->errors())->flatten()->first() ?: $exception->getMessage()), 422),
+            $exception instanceof \InvalidArgumentException,
+            $exception::class === \Exception::class => new PcIntegrationException($code, $exception->getMessage(), 422),
+            default => null,
+        };
+    }
+
+    private function cashFlowMethod(string $method): string
+    {
+        return in_array($method, ['bank_transfer', 'sepay'], true) ? 'transfer' : 'cash';
+    }
+
+    private function newCashFlowCode(): string
+    {
+        do {
+            $code = 'PT'.now()->format('ymdHis').random_int(100, 999);
+        } while (CashFlow::query()->withTrashed()->where('code', $code)->exists());
+
+        return $code;
     }
 
     private function findExternalOrder(string $externalOrderId): ?Order

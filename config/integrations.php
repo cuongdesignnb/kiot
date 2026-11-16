@@ -31,5 +31,7 @@ return [
         'enabled' => (bool) env('INVENTORY_API_ENABLED', false),
         'rate_limit_per_minute' => (int) env('INVENTORY_API_RATE_LIMIT', 60),
         'failed_auth_per_minute' => (int) env('INVENTORY_API_FAILED_AUTH_LIMIT', 20),
+        // Write functions (technician price, invoice create) have their own, stricter limit.
+        'write_rate_limit_per_minute' => (int) env('INVENTORY_API_WRITE_RATE_LIMIT', 30),
     ],
 ];

@@ -194,6 +194,12 @@ class ActivityLog extends Model
 
     const ACTION_EXTERNAL_RESERVATION_EXPIRED = 'external_reservation_expired';
 
+    const ACTION_EXTERNAL_ORDER_DELIVERED = 'external_order_delivered';
+
+    const ACTION_EXTERNAL_ORDER_DELIVER_BLOCKED = 'external_order_deliver_blocked';
+
+    const ACTION_EXTERNAL_ORDER_PAYMENT = 'external_order_payment';
+
     const ACTION_INTEGRATION_CREATED = 'integration.created';
 
     const ACTION_INTEGRATION_UPDATED = 'integration.updated';
@@ -354,6 +360,11 @@ class ActivityLog extends Model
         'external_reservation_released' => 'Giải phóng giữ tồn Website PC',
         'external_reservation_consumed' => 'Sử dụng giữ tồn Website PC',
         'external_reservation_expired' => 'Giữ tồn Website PC hết hạn',
+        'external_order_delivered' => 'Website PC báo đã giao (tạo hóa đơn)',
+        'external_order_deliver_blocked' => 'Website PC báo đã giao nhưng chưa xuất được hóa đơn',
+        'external_order_payment' => 'Website PC báo đã thanh toán',
+        'public_api.technician_price_updated' => 'API Kiot sửa giá bán thợ',
+        'public_api.invoice_created' => 'API Kiot tạo hóa đơn',
         'integration.created' => 'Tạo kết nối tích hợp',
         'integration.updated' => 'Cập nhật kết nối tích hợp',
         'integration.enabled' => 'Bật kết nối tích hợp',

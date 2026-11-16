@@ -68,6 +68,8 @@ $signature = hash_hmac('sha256', $canonical, $secret);
 | POST | `/api/integrations/v1/pc/orders` | Nhập đơn website |
 | GET | `/api/integrations/v1/pc/orders/{external_order_id}` | Trạng thái Order |
 | POST | `/api/integrations/v1/pc/orders/{external_order_id}/cancel` | Hủy Order external |
+| POST | `/api/integrations/v1/pc/orders/{external_order_id}/deliver` | Web báo đã giao → KIOT chuyển Order thành Invoice |
+| POST | `/api/integrations/v1/pc/orders/{external_order_id}/payments` | Web báo đã thanh toán → đặt cọc Order / thu nợ Invoice |
 
 ### Product list
 
@@ -169,6 +171,37 @@ Thành công lần đầu trả `201`:
 - `event_id` hoặc `Idempotency-Key` dùng lại cho nội dung khác: `409 IDEMPOTENCY_KEY_CONFLICT`.
 - Mỗi cancel có `event_id` UUID riêng. Retry đúng event/body/key trả `200`, `duplicate=true`; event mới cho Order đã hủy trả `409 ORDER_ALREADY_CANCELLED`.
 
+### Deliver (web báo đã giao)
+
+`POST /orders/{external_order_id}/deliver`, cùng HMAC + header `Idempotency-Key` bắt buộc, body:
+
+```json
+{ "event_id": "uuid", "delivered_at": "2026-11-16T15:00:00+07:00", "tracking_code": "GHN123456", "carrier": "GHN" }
+```
+
+- KIOT chuyển Order thành Invoice **đúng như nút "Xử lý đơn"** (dùng chung `OrderInvoiceConversionService`): tiền cọc `orders.amount_paid` được trừ như hiện tại, không thu thêm tiền, trừ tồn, consume reservation, tạo bảo hành, khóa sổ (`pc_order_convert_to_invoice`). `tracking_code`/`carrier` lưu vào `invoices.tracking_code`/`delivery_partner`; ghi chú hóa đơn có "Web báo đã giao …".
+- Order đã chuyển hóa đơn (status `completed` hoặc đã có Invoice) → `200`, `duplicate=true`, trả mã hóa đơn cũ.
+- Hàng Serial/IMEI chưa được chọn serial trong KIOT → `422 SERIAL_NOT_ALLOCATED`, message "Cần chọn Serial/IMEI trong KIOT cho: …". KIOT ghi **một** dòng vào ghi chú Order và Nhật ký hoạt động (không lặp khi web gửi lại) để nhân viên chọn serial; sau đó web gửi lại event deliver mới.
+- Hàng web tạo chưa có giá vốn → `422 COST_PENDING`. Đơn đã hủy/kết thúc → `422 ORDER_NOT_PROCESSABLE`. Không có Order → `404 ORDER_NOT_FOUND`. Kỳ khóa sổ → `422 PERIOD_LOCKED`. Lỗi bán hàng khác (thiếu tồn…) → `422 ORDER_NOT_PROCESSABLE`.
+- Response: `{"success":true,"duplicate":false,"data":{"kiot_order_id":1,"kiot_order_code":"DH…","external_order_id":"…","status":"completed","kiot_invoice_code":"HD…"}}`.
+
+### Payments (web báo đã thanh toán)
+
+`POST /orders/{external_order_id}/payments`, cùng HMAC + `Idempotency-Key`, body:
+
+```json
+{ "event_id": "uuid", "amount": 300000, "paid_at": "2026-11-16T10:00:00+07:00", "method": "bank_transfer", "reference": "FT2611160001" }
+```
+
+`method`: `bank_transfer` | `cash` | `cod` | `sepay` | `other` (`bank_transfer`, `sepay` ghi sổ quỹ là chuyển khoản; còn lại là tiền mặt).
+
+- **Order chưa chuyển hóa đơn:** cộng vào `orders.amount_paid` (tiền cọc) và tạo phiếu thu `reference_type=Order`, `reference_code=<mã đơn>`, đối tượng = khách của Order, nội dung "Web báo đã thanh toán …". Công nợ khách được ghi giảm ngay; khi chuyển hóa đơn, phần cọc đã có phiếu thu này không bị trừ lần nữa. Vượt tổng đơn → `422 OVERPAYMENT`.
+- **Order đã có hóa đơn:** thu nợ đúng hóa đơn đó (`CustomerPaymentService`, phân bổ thủ công). Vượt số còn nợ → `422 OVERPAYMENT`; hóa đơn khách lẻ → `422 CUSTOMER_REQUIRED`.
+- Đơn đã hủy/kết thúc hoặc hóa đơn đã hủy → `422 ORDER_NOT_PROCESSABLE`.
+- Response `201` (lần đầu) / `200` + `duplicate=true` (gửi lại): `{"data":{"kiot_order_code":"DH…","external_order_id":"…","kiot_invoice_code":null,"cash_flow_code":"PT…","amount_paid_total":300000}}`.
+
+Idempotency của deliver/payments giống cancel: cùng `event_id` + `Idempotency-Key` + body → replay `duplicate=true`; dùng lại key/event cho body khác → `409 IDEMPOTENCY_KEY_CONFLICT`. Website nên coi mọi `422` là từ chối nghiệp vụ (không tự retry), `5xx` thì retry cùng key.
+
 ### Reservation và Serial/IMEI
 
 Mỗi OrderItem có một reservation active, hết hạn theo TTL cấu hình. Reservation không phải tồn vật lý và không tạo StockMovement. Cancel/ended chuyển active sang released. Command dưới đây lock/chunk reservation quá hạn và chuyển sang expired nếu Order chưa completed/invoiced; không tự hủy Order:
@@ -197,9 +230,9 @@ Nhận Order external chỉ tạo phiếu tạm và reservation, không tạo ch
 | HTTP | Codes |
 | --- | --- |
 | 401 | `INVALID_INTEGRATION_CLIENT`, `INVALID_SIGNATURE`, `EXPIRED_TIMESTAMP` |
-| 404 | `UNKNOWN_SKU` (detail), `EXTERNAL_ORDER_NOT_FOUND` |
+| 404 | `UNKNOWN_SKU` (detail), `EXTERNAL_ORDER_NOT_FOUND`, `ORDER_NOT_FOUND` (deliver/payments) |
 | 409 | `REPLAYED_NONCE`, `DUPLICATE_SKU_IN_KIOT`, `EXTERNAL_ORDER_CONFLICT`, `IDEMPOTENCY_KEY_CONFLICT`, `ORDER_ALREADY_CANCELLED`, `ORDER_ALREADY_INVOICED`, `ORDER_NOT_CANCELLABLE` |
-| 422 | `INVALID_PAYLOAD`, `ORDER_TOTAL_MISMATCH`, `UNKNOWN_SKU` (import), `PRODUCT_INACTIVE`, `PRODUCT_NOT_SELLABLE`, `INSUFFICIENT_AVAILABLE_STOCK` |
+| 422 | `INVALID_PAYLOAD`, `ORDER_TOTAL_MISMATCH`, `UNKNOWN_SKU` (import), `PRODUCT_INACTIVE`, `PRODUCT_NOT_SELLABLE`, `INSUFFICIENT_AVAILABLE_STOCK`, `ORDER_NOT_PROCESSABLE`, `SERIAL_NOT_ALLOCATED`, `COST_PENDING`, `PERIOD_LOCKED`, `OVERPAYMENT`, `CUSTOMER_REQUIRED`, `PAYMENT_REJECTED` |
 | 429 | `RATE_LIMITED` |
 | 500 | `INTERNAL_INTEGRATION_ERROR` |
 | 503 | `INTEGRATION_DISABLED`, `INTEGRATION_NOT_CONFIGURED` |
@@ -230,7 +263,7 @@ Trên production, phải backup và review trạng thái migration trước. Rol
 ## Giới hạn Phase 1
 
 - Không sửa sender website PC và không gọi API ngoài trong transaction.
-- Payment metadata chỉ tham khảo; không tạo CashFlow hoặc thanh toán tự động.
+- Payment metadata trong đơn nhập chỉ tham khảo; thanh toán chỉ được ghi khi web gọi `POST .../payments`.
 - Không tích hợp vận chuyển, refund, ảnh/SEO/category/brand hay PC Builder.
-- Không tự tạo Product, tự chọn Serial/IMEI, tự tạo Invoice hoặc tự hủy Order hết reservation.
+- Không tự chọn Serial/IMEI hoặc tự hủy Order hết reservation. Invoice chỉ được tạo khi web gọi `POST .../deliver`.
 - Chưa bật feature, schedule, merge hoặc deploy production.

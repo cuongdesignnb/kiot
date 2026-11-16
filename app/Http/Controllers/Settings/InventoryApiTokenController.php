@@ -5,9 +5,11 @@ namespace App\Http\Controllers\Settings;
 use App\Http\Controllers\Controller;
 use App\Models\InventoryApiAccessLog;
 use App\Models\InventoryApiToken;
+use App\Models\PublicApiWriteLog;
 use App\Services\Integrations\InventoryApi\InventoryApiTokenService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -42,9 +44,31 @@ class InventoryApiTokenController extends Controller
                     'ip_address' => $log->ip_address,
                     'created_at' => $log->created_at?->toIso8601String(),
                 ]),
+            'write_logs' => PublicApiWriteLog::query()
+                ->with('token:id,name,token_prefix')
+                ->latest('id')
+                ->limit(100)
+                ->get()
+                ->map(fn (PublicApiWriteLog $log) => [
+                    'id' => $log->id,
+                    'token' => $log->token ? ['id' => $log->token->id, 'name' => $log->token->name, 'token_prefix' => $log->token->token_prefix] : null,
+                    'action' => $log->action,
+                    'target_ref' => $log->target_ref,
+                    'before' => $log->before,
+                    'after' => $log->after,
+                    'idempotency_key' => $log->idempotency_key,
+                    'status_code' => $log->status_code,
+                    'error_code' => $log->error_code,
+                    'ip_address' => $log->ip_address,
+                    'created_at' => $log->created_at?->toIso8601String(),
+                ]),
+            'ability_labels' => InventoryApiToken::ABILITY_LABELS,
+            'write_abilities' => InventoryApiToken::WRITE_ABILITIES,
             'api_enabled' => (bool) config('integrations.inventory_api.enabled', false),
             'base_url' => rtrim(url('/api/public/v1/inventory'), '/'),
+            'api_root_url' => rtrim(url('/api/public/v1'), '/'),
             'rate_limit_per_minute' => (int) config('integrations.inventory_api.rate_limit_per_minute', 60),
+            'write_rate_limit_per_minute' => (int) config('integrations.inventory_api.write_rate_limit_per_minute', 30),
         ]);
     }
 
@@ -53,9 +77,16 @@ class InventoryApiTokenController extends Controller
         $data = $request->validate([
             'name' => ['required', 'string', 'max:120'],
             'account_label' => ['nullable', 'string', 'max:120'],
+            'abilities' => ['nullable', 'array', 'min:1'],
+            'abilities.*' => ['string', Rule::in(InventoryApiToken::allAbilities())],
         ]);
 
-        [$token, $plain] = $this->tokens->create($data['name'], $data['account_label'] ?? null, $request->user()?->id);
+        [$token, $plain] = $this->tokens->create(
+            $data['name'],
+            $data['account_label'] ?? null,
+            $request->user()?->id,
+            $data['abilities'] ?? null,
+        );
 
         return response()->json([
             'token' => $this->serialize($token->load('creator:id,name')),
