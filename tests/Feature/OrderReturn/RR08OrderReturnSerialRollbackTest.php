@@ -207,6 +207,7 @@ class RR08OrderReturnSerialRollbackTest extends TestCase
 
         // Action: cancel — gọi controller trực tiếp (route chưa đăng ký)
         $this->actingAs($this->admin);
+        request()->merge(['cancel_reason' => 'Hủy phiếu trả kiểm thử']);
         app(OrderReturnController::class)->cancel($return);
 
         $serialA->refresh();
@@ -231,6 +232,7 @@ class RR08OrderReturnSerialRollbackTest extends TestCase
         [$serialA, $serialB, $return] = $this->setupReturnedScenario();
 
         $this->actingAs($this->admin);
+        request()->merge(['cancel_reason' => 'Hủy phiếu trả kiểm thử']);
         app(OrderReturnController::class)->cancel($return);
 
         // Số serial có invoice_id = invoice.id sau cancel = 1 (chỉ Serial A)
@@ -258,12 +260,14 @@ class RR08OrderReturnSerialRollbackTest extends TestCase
         [$serialA, $serialB, $return] = $this->setupReturnedScenario();
 
         $this->actingAs($this->admin);
+        request()->merge(['cancel_reason' => 'Hủy phiếu trả kiểm thử']);
         app(OrderReturnController::class)->cancel($return);
 
         $aSnapshot = SerialImei::find($serialA->id)->only(['status', 'invoice_id', 'sold_cost_price']);
         $bSnapshot = SerialImei::find($serialB->id)->only(['status', 'invoice_id', 'sold_cost_price']);
 
         // Cancel lần 2
+        request()->merge(['cancel_reason' => 'Hủy phiếu trả kiểm thử']);
         app(OrderReturnController::class)->cancel($return->fresh());
 
         $aAfter = SerialImei::find($serialA->id)->only(['status', 'invoice_id', 'sold_cost_price']);

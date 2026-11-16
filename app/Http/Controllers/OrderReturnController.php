@@ -16,6 +16,7 @@ use App\Services\OrderReturnCreationService;
 use App\Services\ReturnSalesAttributionService;
 use App\Services\ReturnTotalCalculator;
 use App\Services\StockMovementService;
+use App\Support\Audit\DocumentSnapshot;
 use App\Support\BusinessDateTime;
 use App\Support\Filters\FilterableIndex;
 use Illuminate\Http\Request;
@@ -760,6 +761,18 @@ class OrderReturnController extends Controller
      */
     public function cancel(OrderReturn $return)
     {
+        // Batch 10 đợt 4 — item 31: lý do hủy phiếu trả hàng là bắt buộc.
+        // `reason` is accepted as an alias (older API clients send it).
+        $validated = validator([
+            'cancel_reason' => request()->input('cancel_reason') ?? request()->input('reason'),
+        ], [
+            'cancel_reason' => 'required|string|min:5|max:500',
+        ], [
+            'cancel_reason.required' => 'Vui lòng nhập lý do hủy phiếu trả hàng.',
+            'cancel_reason.min' => 'Lý do hủy phải có ít nhất 5 ký tự.',
+        ])->validate();
+        $cancelReason = trim($validated['cancel_reason']);
+
         if (in_array(trim((string) $return->status), [ReturnStatus::CANCELLED, 'cancelled', 'canceled', 'void', 'deleted'], true)) {
             return back()->with('error', 'Phieu tra hang da huy truoc do.');
         }
@@ -768,7 +781,8 @@ class OrderReturnController extends Controller
             return back()->with('error', 'Phiếu trả hàng đã bị hủy trước đó.');
         }
 
-        $cancelReturn = function () use ($return) {
+        $auditBefore = null;
+        $cancelReturn = function () use ($return, &$auditBefore) {
             $return = OrderReturn::query()->lockForUpdate()->findOrFail($return->id);
             if ($this->isCancelledReturn($return)) {
                 return null;
@@ -781,6 +795,7 @@ class OrderReturnController extends Controller
                 ->get());
             $this->assertReturnSerialsSafeToCancel($return);
             $return->load('items.product');
+            $auditBefore = DocumentSnapshot::orderReturn($return);
 
             // 1. Rollback stock: trừ lại tồn kho đã cộng (đảo ngược applySaleReturn)
             foreach ($return->items as $item) {
@@ -893,12 +908,17 @@ class OrderReturnController extends Controller
             return back()->with('error', 'Phiếu trả hàng đã bị hủy trước đó.');
         }
 
-        // Step 24.0: audit log return cancel
-        \App\Models\ActivityLog::log(
+        // Step 24.0 + Batch 10 đợt 4: journal row with who/when/reason/snapshot.
+        \App\Models\ActivityLog::audit(
             \App\Models\ActivityLog::ACTION_RETURN_CANCEL,
-            "Hủy phiếu trả hàng {$cancelledReturn->code}",
+            \App\Models\ActivityLog::DOC_RETURN,
+            $cancelledReturn->code,
+            $cancelReason,
             $cancelledReturn,
-            ['total' => (float) $cancelledReturn->total]
+            $auditBefore,
+            ['status' => 'Đã hủy'],
+            ['total' => (float) $cancelledReturn->total],
+            "Hủy phiếu trả hàng {$cancelledReturn->code}",
         );
 
         if (request()->wantsJson()) {

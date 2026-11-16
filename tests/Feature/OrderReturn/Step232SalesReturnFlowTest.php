@@ -44,6 +44,9 @@ class Step232SalesReturnFlowTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Batch 10 đợt 4: these tests are not about the seller rule (covered by
+        // Security\Batch10SalesControlsTest), so POS checkouts here may omit it.
+        \App\Models\Setting::set('sales_require_seller', false, 'sales_controls', 'boolean');
         $this->admin = User::create([
             'name' => 'Admin 23.2',
             'email' => 'admin-232-'.uniqid().'@test.local',
@@ -314,7 +317,7 @@ class Step232SalesReturnFlowTest extends TestCase
         $this->assertSame(400000.0, (float) $this->customer->debt_amount);
         $this->assertSame(8, (int) $product->fresh()->stock_quantity);
 
-        $this->actingAs($this->admin)->post(route('returns.cancel', $return));
+        $this->actingAs($this->admin)->post(route('returns.cancel', $return), ['cancel_reason' => 'Hủy phiếu trả kiểm thử']);
 
         $return->refresh();
         $this->assertSame('Đã hủy', $return->status);
@@ -349,7 +352,7 @@ class Step232SalesReturnFlowTest extends TestCase
         $this->assertSame('in_stock', $sA->status);
         $return = OrderReturn::where('invoice_id', $invoice->id)->latest('id')->first();
 
-        $this->actingAs($this->admin)->post(route('returns.cancel', $return));
+        $this->actingAs($this->admin)->post(route('returns.cancel', $return), ['cancel_reason' => 'Hủy phiếu trả kiểm thử']);
 
         $sA->refresh();
         $this->assertSame('sold', $sA->status, 'Serial phải về sold sau cancel.');
@@ -377,11 +380,11 @@ class Step232SalesReturnFlowTest extends TestCase
         ]);
         $return = OrderReturn::where('invoice_id', $invoice->id)->latest('id')->first();
 
-        $this->actingAs($this->admin)->post(route('returns.cancel', $return));
+        $this->actingAs($this->admin)->post(route('returns.cancel', $return), ['cancel_reason' => 'Hủy phiếu trả kiểm thử']);
         $stockAfter1 = (int) $product->fresh()->stock_quantity;
         $debtAfter1 = (float) $this->customer->fresh()->debt_amount;
 
-        $resp = $this->actingAs($this->admin)->post(route('returns.cancel', $return));
+        $resp = $this->actingAs($this->admin)->post(route('returns.cancel', $return), ['cancel_reason' => 'Hủy phiếu trả kiểm thử']);
 
         // Stock + debt KHÔNG bị double-reverse
         $this->assertSame($stockAfter1, (int) $product->fresh()->stock_quantity,

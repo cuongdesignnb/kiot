@@ -29,25 +29,29 @@ class RR02InvoicePosCharacterizationTest extends TestCase
 {
     use DatabaseTransactions;
 
-    private User     $admin;
+    private User $admin;
+
     private Customer $customer;
 
     protected function setUp(): void
     {
         parent::setUp();
+        // Batch 10 đợt 4: these tests are not about the seller rule (covered by
+        // Security\Batch10SalesControlsTest), so POS checkouts here may omit it.
+        \App\Models\Setting::set('sales_require_seller', false, 'sales_controls', 'boolean');
 
         $this->admin = User::create([
-            'name'     => 'Admin RR02',
-            'email'    => 'admin-rr02-' . uniqid() . '@test.local',
+            'name' => 'Admin RR02',
+            'email' => 'admin-rr02-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
-            'role_id'  => null,
+            'role_id' => null,
         ]);
 
         $this->customer = Customer::create([
-            'code'        => 'KH-RR02-' . uniqid(),
-            'name'        => 'KH RR02 ' . uniqid(),
-            'phone'       => '090' . rand(1000000, 9999999),
-            'email'       => 'kh-rr02-' . uniqid() . '@test.local',
+            'code' => 'KH-RR02-'.uniqid(),
+            'name' => 'KH RR02 '.uniqid(),
+            'phone' => '090'.rand(1000000, 9999999),
+            'email' => 'kh-rr02-'.uniqid().'@test.local',
             'debt_amount' => 0,
             'total_spent' => 0,
         ]);
@@ -58,25 +62,25 @@ class RR02InvoicePosCharacterizationTest extends TestCase
         $category = Category::firstOrCreate(['name' => 'Cat RR02']);
 
         return Product::create([
-            'sku'                  => 'PROD-RR02-' . uniqid(),
-            'name'                 => 'Product RR02',
-            'cost_price'           => $cost,
-            'retail_price'         => $cost * 2,
-            'stock_quantity'       => $stock,
+            'sku' => 'PROD-RR02-'.uniqid(),
+            'name' => 'Product RR02',
+            'cost_price' => $cost,
+            'retail_price' => $cost * 2,
+            'stock_quantity' => $stock,
             'inventory_total_cost' => $stock * $cost,
-            'is_active'            => true,
-            'has_serial'           => $hasSerial,
-            'category_id'          => $category->id,
+            'is_active' => true,
+            'has_serial' => $hasSerial,
+            'category_id' => $category->id,
         ]);
     }
 
     private function makeSerial(Product $product, string $status = 'in_stock'): SerialImei
     {
         return SerialImei::create([
-            'product_id'    => $product->id,
-            'serial_number' => 'SN-' . uniqid(),
-            'status'        => $status,
-            'cost_price'    => $product->cost_price,
+            'product_id' => $product->id,
+            'serial_number' => 'SN-'.uniqid(),
+            'status' => $status,
+            'cost_price' => $product->cost_price,
             'original_cost' => $product->cost_price,
         ]);
     }
@@ -90,17 +94,17 @@ class RR02InvoicePosCharacterizationTest extends TestCase
         $movementsBefore = StockMovement::where('product_id', $product->id)->count();
 
         $this->actingAs($this->admin)->post(route('invoices.store'), [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => 3 * 200000,
-            'discount'       => 0,
-            'total'          => 3 * 200000,
-            'customer_paid'  => 3 * 200000,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 3 * 200000,
+            'discount' => 0,
+            'total' => 3 * 200000,
+            'customer_paid' => 3 * 200000,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 3,
-                'price'      => 200000,
-                'discount'   => 0,
+                'quantity' => 3,
+                'price' => 200000,
+                'discount' => 0,
             ]],
         ]);
 
@@ -144,15 +148,15 @@ class RR02InvoicePosCharacterizationTest extends TestCase
         $product->update(['stock_quantity' => 1, 'inventory_total_cost' => 5000000]);
 
         $this->actingAs($this->admin)->post(route('invoices.store'), [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => 8000000,
-            'total'          => 8000000,
-            'customer_paid'  => 8000000,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 8000000,
+            'total' => 8000000,
+            'customer_paid' => 8000000,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 1,
-                'price'      => 8000000,
+                'quantity' => 1,
+                'price' => 8000000,
                 'serial_ids' => [$serialA->id],
             ]],
         ]);
@@ -183,17 +187,17 @@ class RR02InvoicePosCharacterizationTest extends TestCase
         $invoiceCountBefore = Invoice::count();
 
         $response = $this->actingAs($this->admin)->postJson('/api/pos/checkout', [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => 3 * 200000,
-            'discount'       => 0,
-            'total'          => 3 * 200000,
-            'customer_paid'  => 3 * 200000,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 3 * 200000,
+            'discount' => 0,
+            'total' => 3 * 200000,
+            'customer_paid' => 3 * 200000,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 3,
-                'price'      => 200000,
-                'discount'   => 0,
+                'quantity' => 3,
+                'price' => 200000,
+                'discount' => 0,
             ]],
         ]);
 
@@ -236,17 +240,17 @@ class RR02InvoicePosCharacterizationTest extends TestCase
         $product->update(['stock_quantity' => 1, 'inventory_total_cost' => 5000000]);
 
         $response = $this->actingAs($this->admin)->postJson('/api/pos/checkout', [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => 8000000,
-            'discount'       => 0,
-            'total'          => 8000000,
-            'customer_paid'  => 8000000,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 8000000,
+            'discount' => 0,
+            'total' => 8000000,
+            'customer_paid' => 8000000,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 1,
-                'price'      => 8000000,
-                'discount'   => 0,
+                'quantity' => 1,
+                'price' => 8000000,
+                'discount' => 0,
                 'serial_ids' => [$serialA->id],
             ]],
         ]);
@@ -278,36 +282,36 @@ class RR02InvoicePosCharacterizationTest extends TestCase
     public function test_invoice_and_pos_sale_have_equivalent_inventory_effects_for_same_payload(): void
     {
         $productInvoice = $this->makeProduct(false, 10, 100000);
-        $productPos     = $this->makeProduct(false, 10, 100000);
+        $productPos = $this->makeProduct(false, 10, 100000);
 
         // Invoice
         $this->actingAs($this->admin)->post(route('invoices.store'), [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => 3 * 200000,
-            'discount'       => 0,
-            'total'          => 3 * 200000,
-            'customer_paid'  => 3 * 200000,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 3 * 200000,
+            'discount' => 0,
+            'total' => 3 * 200000,
+            'customer_paid' => 3 * 200000,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $productInvoice->id,
-                'quantity'   => 3,
-                'price'      => 200000,
+                'quantity' => 3,
+                'price' => 200000,
             ]],
         ]);
 
         // POS
         $this->actingAs($this->admin)->postJson('/api/pos/checkout', [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => 3 * 200000,
-            'discount'       => 0,
-            'total'          => 3 * 200000,
-            'customer_paid'  => 3 * 200000,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 3 * 200000,
+            'discount' => 0,
+            'total' => 3 * 200000,
+            'customer_paid' => 3 * 200000,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $productPos->id,
-                'quantity'   => 3,
-                'price'      => 200000,
-                'discount'   => 0,
+                'quantity' => 3,
+                'price' => 200000,
+                'discount' => 0,
             ]],
         ]);
 

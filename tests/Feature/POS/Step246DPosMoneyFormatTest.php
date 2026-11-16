@@ -25,6 +25,14 @@ class Step246DPosMoneyFormatTest extends TestCase
 {
     use DatabaseTransactions;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // Batch 10 đợt 4: these tests are not about the seller rule (covered by
+        // Security\Batch10SalesControlsTest), so POS checkouts here may omit it.
+        \App\Models\Setting::set('sales_require_seller', false, 'sales_controls', 'boolean');
+    }
+
     private function receiverId(): int
     {
         return Employee::firstOrCreate(

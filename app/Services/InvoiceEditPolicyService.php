@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Invoice;
 use App\Models\Setting;
 use App\Models\User;
+use App\Services\SalesControls\SalesControlService;
 use Carbon\Carbon;
 
 /**
@@ -18,6 +19,7 @@ class InvoiceEditPolicyService
 {
     public function hints(Invoice $invoice, ?User $user): array
     {
+        $controls = app(SalesControlService::class);
         $orderChangeTime = (int) Setting::get('order_change_time', 24);
         $lockReference = $invoice->lock_started_at ?? $invoice->created_at;
         $lockAgeHours = $lockReference
@@ -38,6 +40,11 @@ class InvoiceEditPolicyService
             'can_change_transaction_date' => (bool) $user?->hasPermission('invoices.change_transaction_date'),
             'original_transaction_date' => $invoice->transaction_date?->toIso8601String(),
             'is_einvoice_blocked' => $this->isEinvoiceBlocked($invoice),
+            // Batch 10 đợt 4 — item 30 / 31.
+            'is_old_invoice' => $controls->isOldInvoice($invoice),
+            'can_modify_old_invoice' => $controls->canModifyInvoice($invoice, $user),
+            'old_invoice_rule' => $controls->oldInvoiceRuleLabel(),
+            'requires_edit_reason' => true,
         ];
     }
 

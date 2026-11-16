@@ -16,6 +16,7 @@ use App\Services\ProductExcel\ProductExcelExportService;
 use App\Services\ProductExcel\ProductExcelFieldCatalog;
 use App\Services\ProductExcel\ProductExcelImportService;
 use App\Services\ProductSearchService;
+use App\Support\Security\CostVisibility;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rules\File;
@@ -74,9 +75,11 @@ class ProductController extends Controller
             }
         }
 
-        $result = $products->map(function ($product) use ($bookPriceByProductId, $priceBookName, $priceBookId) {
+        // Batch 10 đợt 4: never fall back to the cost price for users who may not see it.
+        $canViewCost = CostVisibility::currentUserCanView();
+        $result = $products->map(function ($product) use ($bookPriceByProductId, $priceBookName, $priceBookId, $canViewCost) {
             $bookPrice = $bookPriceByProductId->get($product->id);
-            $sellingPrice = $bookPrice ?? $product->retail_price ?? $product->cost_price ?? 0;
+            $sellingPrice = $bookPrice ?? $product->retail_price ?? ($canViewCost ? $product->cost_price : null) ?? 0;
             $flags = $product->isService()
                 ? [
                     'is_service' => true,
@@ -246,7 +249,9 @@ class ProductController extends Controller
                 ['status' => 'active'],
                 $request->only('search', 'category_id', 'brand_id', 'type', 'status', 'stock_filter', 'sort_by', 'sort_direction')
             ),
-            'canViewCostPrice' => auth()->check() && auth()->user()->hasPermission('products.view_cost_price'),
+            'canViewCostPrice' => auth()->check()
+                && auth()->user()->hasPermission('products.view_cost_price')
+                && CostVisibility::currentUserCanView(),
             'productExcel' => $excelFieldCatalog->payload(auth()->user()),
         ]);
     }
@@ -610,6 +615,17 @@ class ProductController extends Controller
             'maintenance_policies.*.duration_value' => 'required_with:maintenance_policies|integer|min:0|max:1200',
             'maintenance_policies.*.duration_unit' => 'required_with:maintenance_policies|in:day,month,year',
         ]);
+
+        // Batch 10 đợt 4 — item 30: a user who may not see cost cannot change it
+        // either (the form receives a blanked value and would post it back).
+        if (! CostVisibility::currentUserCanView()) {
+            unset($validated['cost_price']);
+            if (isset($validated['variants']) && is_array($validated['variants'])) {
+                foreach ($validated['variants'] as $i => $variant) {
+                    unset($validated['variants'][$i]['cost_price']);
+                }
+            }
+        }
 
         $validated['type'] = $validated['type'] ?? $product->type ?? 'standard';
         if ($validated['type'] === 'service' && ! $product->isService()) {
@@ -1582,6 +1598,11 @@ class ProductController extends Controller
             'status' => 'nullable|string|in:in_stock,sold,returning,warranty,defective',
             'cost_price' => 'nullable|numeric|min:0',
         ]);
+
+        // Batch 10 đợt 4 — item 30: không có quyền giá vốn thì không sửa giá vốn serial.
+        if (! CostVisibility::currentUserCanView()) {
+            unset($data['cost_price']);
+        }
 
         // Chỉ cho sửa cost_price khi serial CÒN TỒN. Sold/returned/etc giữ snapshot lúc bán.
         $costChanged = false;

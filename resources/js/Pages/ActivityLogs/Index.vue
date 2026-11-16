@@ -10,7 +10,41 @@ const { can, isAdmin } = usePermission();
 
 const props = defineProps({
     employees: Array,
+    users: { type: Array, default: () => [] },
+    documentTypes: { type: Array, default: () => [] },
+    controlActions: { type: Array, default: () => [] },
 });
+
+// Batch 10 đợt 4 — item 31: nhật ký sửa / xóa / hủy chứng từ.
+const filterUser = ref('');
+const filterDocType = ref('');
+const filterDocCode = ref('');
+const filterControlOnly = ref(false);
+const expandedSnapshots = ref({});
+const toggleSnapshot = (id) => {
+    expandedSnapshots.value = { ...expandedSnapshots.value, [id]: !expandedSnapshots.value[id] };
+};
+const snapshotDiff = (log) => {
+    const before = log.properties?.before || {};
+    const after = log.properties?.after || {};
+    const keys = Array.from(new Set([...Object.keys(before), ...Object.keys(after)]));
+    return keys
+        .filter((key) => JSON.stringify(before[key] ?? null) !== JSON.stringify(after[key] ?? null))
+        .map((key) => ({ key, before: before[key], after: after[key] }));
+};
+const formatSnapshotValue = (value) => {
+    if (value === null || value === undefined || value === '') return '—';
+    if (Array.isArray(value)) {
+        return value.map((row) => (typeof row === 'object' && row !== null
+            ? [row.sku || row.name, row.quantity !== undefined ? `SL ${row.quantity}` : null, row.price !== undefined ? `giá ${formatVND(row.price)}` : null]
+                .filter(Boolean).join(' · ')
+            : String(row))).join('\n');
+    }
+    if (typeof value === 'object') return JSON.stringify(value);
+    return typeof value === 'number' ? formatVND(value) : String(value);
+};
+const isScalarProp = (val) => val !== null && val !== '' && typeof val !== 'object';
+const hiddenPropKeys = ['before', 'after', 'reason', 'lines', 'below_cost_lines', 'change_plan', 'affected_tables'];
 
 const logs = ref([]);
 const pagination = ref({});
@@ -74,6 +108,10 @@ const load = async () => {
         if (filterSearch.value) params.search = filterSearch.value;
         if (filterFrom.value) params.from = filterFrom.value;
         if (filterTo.value) params.to = filterTo.value;
+        if (filterUser.value) params.user_id = filterUser.value;
+        if (filterDocType.value) params.document_type = filterDocType.value;
+        if (filterDocCode.value) params.document_code = filterDocCode.value;
+        if (filterControlOnly.value) params.control_only = 1;
 
         const res = await axios.get('/api/activity-logs', { params });
         logs.value = res.data.data || [];
@@ -101,7 +139,7 @@ onMounted(() => {
     loadActionTypes();
 });
 
-watch([filterAction, filterEmployee, filterSearch, filterFrom, filterTo], () => {
+watch([filterAction, filterEmployee, filterSearch, filterFrom, filterTo, filterUser, filterDocType, filterDocCode, filterControlOnly], () => {
     page.value = 1;
     load();
 });
@@ -194,6 +232,30 @@ const getPropLabel = (key) => propLabels[key] || key;</script>
                         </select>
                     </div>
 
+                    <!-- Batch 10 đợt 4: người làm / loại chứng từ / mã chứng từ -->
+                    <div class="min-w-[160px]">
+                        <label class="block text-xs text-gray-500 mb-1">Người thực hiện</label>
+                        <select v-model="filterUser" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
+                            <option value="">Tất cả</option>
+                            <option v-for="u in users" :key="u.id" :value="u.id">{{ u.name }}</option>
+                        </select>
+                    </div>
+                    <div class="min-w-[160px]">
+                        <label class="block text-xs text-gray-500 mb-1">Loại chứng từ</label>
+                        <select v-model="filterDocType" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
+                            <option value="">Tất cả</option>
+                            <option v-for="t in documentTypes" :key="t.value" :value="t.value">{{ t.label }}</option>
+                        </select>
+                    </div>
+                    <div class="min-w-[150px]">
+                        <label class="block text-xs text-gray-500 mb-1">Mã chứng từ</label>
+                        <input v-model="filterDocCode" type="text" placeholder="VD: HD..." class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
+                    </div>
+                    <label class="flex items-center gap-2 text-sm text-gray-700 pb-2">
+                        <input v-model="filterControlOnly" type="checkbox" class="rounded border-gray-300" data-testid="filter-control-only">
+                        Chỉ sửa / xóa / hủy
+                    </label>
+
                     <!-- Date range -->
                     <div class="min-w-[140px]">
                         <label class="block text-xs text-gray-500 mb-1">Từ ngày</label>
@@ -238,11 +300,42 @@ const getPropLabel = (key) => propLabels[key] || key;</script>
                                 </span>
                             </div>
                             <p class="text-sm text-gray-800 mt-1 leading-relaxed">{{ log.description }}</p>
+                            <div v-if="log.document_code || log.reason" class="mt-1 flex flex-wrap gap-2 text-xs">
+                                <span v-if="log.document_code" class="px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-medium">
+                                    {{ log.document_type_label || 'Chứng từ' }}: {{ log.document_code }}
+                                </span>
+                                <span v-if="log.reason" class="px-2 py-0.5 rounded bg-amber-50 text-amber-800">
+                                    <strong>Lý do:</strong> {{ log.reason }}
+                                </span>
+                            </div>
+                            <div v-if="log.properties?.before || log.properties?.after" class="mt-1">
+                                <button type="button" class="text-xs text-blue-600 hover:underline" @click="toggleSnapshot(log.id)">
+                                    {{ expandedSnapshots[log.id] ? 'Ẩn thay đổi' : 'Xem trước / sau' }}
+                                </button>
+                                <table v-if="expandedSnapshots[log.id]" class="mt-1 w-full text-xs border border-gray-200">
+                                    <thead class="bg-gray-50 text-gray-600">
+                                        <tr><th class="p-1 text-left">Trường</th><th class="p-1 text-left">Trước</th><th class="p-1 text-left">Sau</th></tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr v-for="row in snapshotDiff(log)" :key="row.key" class="border-t border-gray-100 align-top">
+                                            <td class="p-1 font-medium text-gray-600">{{ row.key }}</td>
+                                            <td class="p-1 whitespace-pre-line">{{ formatSnapshotValue(row.before) }}</td>
+                                            <td class="p-1 whitespace-pre-line">{{ formatSnapshotValue(row.after) }}</td>
+                                        </tr>
+                                        <tr v-if="snapshotDiff(log).length === 0"><td colspan="3" class="p-1 text-gray-400">Không có khác biệt ở các trường chính.</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <ul v-if="log.properties?.lines?.length || log.properties?.below_cost_lines?.length" class="mt-1 text-xs text-red-700 list-disc pl-5">
+                                <li v-for="line in (log.properties.lines || log.properties.below_cost_lines)" :key="line.index">
+                                    {{ line.product_name }}: giá bán {{ formatVND(line.sale_price) }}<span v-if="line.cost_price !== null && line.cost_price !== undefined"> &lt; giá vốn {{ formatVND(line.cost_price) }}</span><span v-else> (thấp hơn giá vốn)</span>
+                                </li>
+                            </ul>
 
                             <!-- Properties -->
                             <div v-if="log.properties && Object.keys(log.properties).length > 0" class="mt-2 flex flex-wrap gap-2">
                                 <template v-for="(val, key) in log.properties" :key="key">
-                                    <span v-if="val != null && val !== ''"
+                                    <span v-if="isScalarProp(val) && !hiddenPropKeys.includes(key)"
                                         class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-xs text-gray-600">
                                         <span class="font-medium text-gray-500">{{ getPropLabel(key) }}:</span>
                                         <span>{{ typeof val === 'number' ? formatVND(val) : val }}</span>

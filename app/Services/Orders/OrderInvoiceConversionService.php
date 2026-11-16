@@ -357,6 +357,14 @@ class OrderInvoiceConversionService
 
             ActivityLog::log('order_convert', "Chuyển đơn {$order->code} → hóa đơn {$invoice->code}", $order);
 
+            // Batch 10 đợt 4 — item 32: selling below cost is allowed but recorded.
+            try {
+                app(\App\Services\SalesControls\BelowCostSaleService::class)
+                    ->recordForInvoice($invoice->fresh(['items.product']), 'order_convert');
+            } catch (\Throwable $e) {
+                report($e);
+            }
+
             return $invoice;
         };
 

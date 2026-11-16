@@ -141,7 +141,20 @@ const form = useForm({
     accounting_result: true,
     payment_method: "cash",
     bank_account_id: null,
+    edit_reason: "",
 });
+
+// Batch 10 đợt 4 — item 31: sửa phiếu thu/chi phải ghi lý do (lưu vào nhật ký).
+const askCashFlowEditReason = () => {
+    const reason = window.prompt('Nhập lý do sửa phiếu thu/chi (ít nhất 5 ký tự):');
+    if (reason === null) return false;
+    if (reason.trim().length < 5) {
+        alert('Lý do sửa phải có ít nhất 5 ký tự.');
+        return false;
+    }
+    form.edit_reason = reason.trim();
+    return true;
+};
 
 const selectedFlowObj = ref(null);
 const getSelectedFlow = () => selectedFlowObj.value;
@@ -388,6 +401,7 @@ const closeModal = () => {
 
 const submitForm = () => {
     if (form.id) {
+        if (!askCashFlowEditReason()) return;
         form.put(`/cash-flows/${form.id}`, {
             onSuccess: () => {
                 closeModal();
@@ -407,6 +421,7 @@ const submitForm = () => {
 
 const submitFormAndPrint = () => {
     if (form.id) {
+        if (!askCashFlowEditReason()) return;
         const printId = form.id;
         form.put(`/cash-flows/${form.id}`, {
             onSuccess: () => {

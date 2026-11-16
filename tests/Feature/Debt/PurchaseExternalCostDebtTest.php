@@ -96,6 +96,7 @@ class PurchaseExternalCostDebtTest extends TestCase
             'quantity' => 1, 'price' => 163000, 'discount' => 0, 'subtotal' => 163000]);
         $before = $purchase->getRawOriginal();
         $response = $this->actingAs($this->actor())->put('/purchases/'.$purchase->id, [
+            'edit_reason' => 'Sửa phiếu nhập kiểm thử',
             'supplier_id' => $partner->id, 'discount' => 0, 'paid_amount' => 160000,
             'purchase_date' => $purchase->purchase_date->toDateTimeString(), 'payment_method' => 'cash',
             'other_costs' => [], 'note' => 'Must roll back',
@@ -117,6 +118,7 @@ class PurchaseExternalCostDebtTest extends TestCase
             'product_code' => $product->sku,
             'quantity' => 1, 'price' => 163000, 'discount' => 0, 'subtotal' => 163000]);
         $response = $this->actingAs($this->actor())->put('/purchases/'.$purchase->id, [
+            'edit_reason' => 'Sửa phiếu nhập kiểm thử',
             'supplier_id' => $partner->id, 'discount' => 0, 'paid_amount' => 160000,
             'status' => 'completed', 'purchase_date' => $purchase->purchase_date->toDateTimeString(),
             'payment_method' => 'cash', 'other_costs' => [['name' => 'Ship hàng', 'amount' => 4100]],
@@ -146,6 +148,7 @@ class PurchaseExternalCostDebtTest extends TestCase
             'product_code' => $product->sku, 'product_name' => $product->name,
             'quantity' => 1, 'price' => 163000, 'discount' => 0, 'subtotal' => 163000]);
         $response = $this->actingAs($this->actor())->put('/purchases/'.$purchase->id, [
+            'edit_reason' => 'Sửa phiếu nhập kiểm thử',
             'supplier_id' => $partner->id, 'discount' => 0, 'paid_amount' => 163000,
             'purchase_date' => $purchase->purchase_date->toDateTimeString(),
             'payment_method' => 'cash', 'note' => 'Updated note only',

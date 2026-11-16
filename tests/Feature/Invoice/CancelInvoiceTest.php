@@ -2,8 +2,8 @@
 
 namespace Tests\Feature\Invoice;
 
-use App\Models\CashFlow;
 use App\Models\Branch;
+use App\Models\CashFlow;
 use App\Models\Customer;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
@@ -33,33 +33,33 @@ class CancelInvoiceTest extends TestCase
     private function createAdmin(): User
     {
         return User::create([
-            'name'     => 'Admin Test RR01',
-            'email'    => 'admin-rr01-' . uniqid() . '@test.local',
+            'name' => 'Admin Test RR01',
+            'email' => 'admin-rr01-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
-            'role_id'  => null,
+            'role_id' => null,
         ]);
     }
 
     private function createProduct(int $stock = 10, float $costPrice = 100000): Product
     {
         return Product::create([
-            'sku'                  => 'SP-RR01-' . uniqid(),
-            'name'                 => 'Sản phẩm test RR01',
-            'cost_price'           => $costPrice,
-            'retail_price'         => 150000,
-            'stock_quantity'       => $stock,
+            'sku' => 'SP-RR01-'.uniqid(),
+            'name' => 'Sản phẩm test RR01',
+            'cost_price' => $costPrice,
+            'retail_price' => 150000,
+            'stock_quantity' => $stock,
             'inventory_total_cost' => $stock * $costPrice,
-            'is_active'            => true,
-            'has_serial'           => false,
+            'is_active' => true,
+            'has_serial' => false,
         ]);
     }
 
     private function createCustomer(float $debtBefore = 0): Customer
     {
         return Customer::create([
-            'code'        => 'KH-RR01-' . uniqid(),
-            'name'        => 'Khách test RR01',
-            'phone'       => '09' . rand(10000000, 99999999),
+            'code' => 'KH-RR01-'.uniqid(),
+            'name' => 'Khách test RR01',
+            'phone' => '09'.rand(10000000, 99999999),
             'debt_amount' => $debtBefore,
             'total_spent' => 0,
             'is_customer' => true,
@@ -73,35 +73,35 @@ class CancelInvoiceTest extends TestCase
     private function simulateSale(Product $product, Customer $customer, int $qty, float $unitPrice, float $customerPaid, ?int $branchId = null): Invoice
     {
         $subtotal = $qty * $unitPrice;
-        $total    = $subtotal;
-        $debt     = $total - $customerPaid;
+        $total = $subtotal;
+        $debt = $total - $customerPaid;
 
         $costResult = \App\Services\MovingAvgCostingService::applySale($product, $qty);
         $costAtSale = $costResult['cogs_per_unit'];
         $product->refresh();
 
-        $invoiceCode = 'HD-RR01-' . uniqid();
+        $invoiceCode = 'HD-RR01-'.uniqid();
         $invoice = Invoice::create([
-            'code'          => $invoiceCode,
-            'subtotal'      => $subtotal,
-            'discount'      => 0,
-            'total'         => $total,
+            'code' => $invoiceCode,
+            'subtotal' => $subtotal,
+            'discount' => 0,
+            'total' => $total,
             'customer_paid' => $customerPaid,
-            'customer_id'   => $customer->id,
-            'branch_id'     => $branchId,
-            'status'        => 'Hoàn thành',
+            'customer_id' => $customer->id,
+            'branch_id' => $branchId,
+            'status' => 'Hoàn thành',
             'sales_channel' => 'Test',
-            'created_at'    => now(),
+            'created_at' => now(),
         ]);
 
         InvoiceItem::create([
-            'invoice_id'  => $invoice->id,
-            'product_id'  => $product->id,
-            'quantity'    => $qty,
-            'price'       => $unitPrice,
-            'cost_price'  => $costAtSale,
-            'discount'    => 0,
-            'subtotal'    => $subtotal,
+            'invoice_id' => $invoice->id,
+            'product_id' => $product->id,
+            'quantity' => $qty,
+            'price' => $unitPrice,
+            'cost_price' => $costAtSale,
+            'discount' => 0,
+            'subtotal' => $subtotal,
         ]);
 
         \App\Services\StockMovementService::record(
@@ -120,17 +120,17 @@ class CancelInvoiceTest extends TestCase
 
         if ($customerPaid > 0) {
             CashFlow::create([
-                'code'           => 'PT-RR01-' . uniqid(),
-                'type'           => 'receipt',
-                'amount'         => $customerPaid,
-                'time'           => now(),
-                'category'       => 'Thu tiền khách trả',
-                'target_type'    => 'Khách hàng',
-                'target_id'      => $customer->id,
-                'target_name'    => $customer->name,
+                'code' => 'PT-RR01-'.uniqid(),
+                'type' => 'receipt',
+                'amount' => $customerPaid,
+                'time' => now(),
+                'category' => 'Thu tiền khách trả',
+                'target_type' => 'Khách hàng',
+                'target_id' => $customer->id,
+                'target_name' => $customer->name,
                 'reference_type' => 'Invoice',
                 'reference_code' => $invoice->code,
-                'description'    => 'Test payment RR01',
+                'description' => 'Test payment RR01',
             ]);
         }
 
@@ -140,8 +140,8 @@ class CancelInvoiceTest extends TestCase
     private function createBranch(): Branch
     {
         return Branch::create([
-            'code' => 'BR-RR01-' . uniqid(),
-            'name' => 'Chi nhánh RR01 ' . uniqid(),
+            'code' => 'BR-RR01-'.uniqid(),
+            'name' => 'Chi nhánh RR01 '.uniqid(),
         ]);
     }
 
@@ -149,33 +149,33 @@ class CancelInvoiceTest extends TestCase
      *  TC-RR01-01: Hủy HĐ thanh toán đủ — Invoice phải còn tồn tại
      * ═══════════════════════════════════════════════════════════════════════ */
 
-    public function test_TC_RR01_01_cancel_invoice_should_not_delete_record(): void
+    public function test_t_c_r_r01_01_cancel_invoice_should_not_delete_record(): void
     {
-        $admin    = $this->createAdmin();
-        $product  = $this->createProduct(10, 100000);
+        $admin = $this->createAdmin();
+        $product = $this->createProduct(10, 100000);
         $customer = $this->createCustomer(0);
 
-        $invoice   = $this->simulateSale($product, $customer, 2, 150000, 300000);
+        $invoice = $this->simulateSale($product, $customer, 2, 150000, 300000);
         $invoiceId = $invoice->id;
 
         $this->assertDatabaseHas('invoices', ['id' => $invoiceId]);
 
-        $this->actingAs($admin)->delete("/invoices/{$invoiceId}");
+        $this->actingAs($admin)->delete("/invoices/{$invoiceId}", ['cancel_reason' => 'Hủy hóa đơn kiểm thử']);
 
         // ═══ ASSERT: Invoice PHẢI còn tồn tại trong DB ═══
         $this->assertDatabaseHas('invoices', ['id' => $invoiceId]);
     }
 
-    public function test_TC_RR01_01_cancel_invoice_should_set_status_cancelled(): void
+    public function test_t_c_r_r01_01_cancel_invoice_should_set_status_cancelled(): void
     {
-        $admin    = $this->createAdmin();
-        $product  = $this->createProduct(10, 100000);
+        $admin = $this->createAdmin();
+        $product = $this->createProduct(10, 100000);
         $customer = $this->createCustomer(0);
 
-        $invoice   = $this->simulateSale($product, $customer, 2, 150000, 300000);
+        $invoice = $this->simulateSale($product, $customer, 2, 150000, 300000);
         $invoiceId = $invoice->id;
 
-        $this->actingAs($admin)->delete("/invoices/{$invoiceId}");
+        $this->actingAs($admin)->delete("/invoices/{$invoiceId}", ['cancel_reason' => 'Hủy hóa đơn kiểm thử']);
 
         $invoiceAfter = Invoice::find($invoiceId);
 
@@ -190,24 +190,24 @@ class CancelInvoiceTest extends TestCase
         }
     }
 
-    public function test_TC_RR01_01_cancel_invoice_should_keep_items(): void
+    public function test_t_c_r_r01_01_cancel_invoice_should_keep_items(): void
     {
-        $admin    = $this->createAdmin();
-        $product  = $this->createProduct(10, 100000);
+        $admin = $this->createAdmin();
+        $product = $this->createProduct(10, 100000);
         $customer = $this->createCustomer(0);
 
-        $invoice   = $this->simulateSale($product, $customer, 2, 150000, 300000);
+        $invoice = $this->simulateSale($product, $customer, 2, 150000, 300000);
         $invoiceId = $invoice->id;
 
-        $this->actingAs($admin)->delete("/invoices/{$invoiceId}");
+        $this->actingAs($admin)->delete("/invoices/{$invoiceId}", ['cancel_reason' => 'Hủy hóa đơn kiểm thử']);
 
         $this->assertDatabaseHas('invoice_items', ['invoice_id' => $invoiceId]);
     }
 
-    public function test_TC_RR01_01_cancel_invoice_should_restore_stock(): void
+    public function test_t_c_r_r01_01_cancel_invoice_should_restore_stock(): void
     {
-        $admin    = $this->createAdmin();
-        $product  = $this->createProduct(10, 100000);
+        $admin = $this->createAdmin();
+        $product = $this->createProduct(10, 100000);
         $customer = $this->createCustomer(0);
 
         $invoice = $this->simulateSale($product, $customer, 2, 150000, 300000);
@@ -215,34 +215,34 @@ class CancelInvoiceTest extends TestCase
         $product->refresh();
         $this->assertEquals(8, $product->stock_quantity);
 
-        $this->actingAs($admin)->delete("/invoices/{$invoice->id}");
+        $this->actingAs($admin)->delete("/invoices/{$invoice->id}", ['cancel_reason' => 'Hủy hóa đơn kiểm thử']);
 
         $product->refresh();
         $this->assertEquals(10, $product->stock_quantity,
             "Tồn kho phải phục hồi về 10, thực tế: {$product->stock_quantity}");
     }
 
-    public function test_TC_RR01_01_cancel_invoice_should_create_stock_movement(): void
+    public function test_t_c_r_r01_01_cancel_invoice_should_create_stock_movement(): void
     {
-        $admin    = $this->createAdmin();
-        $product  = $this->createProduct(10, 100000);
+        $admin = $this->createAdmin();
+        $product = $this->createProduct(10, 100000);
         $customer = $this->createCustomer(0);
 
         $invoice = $this->simulateSale($product, $customer, 2, 150000, 300000);
 
-        $this->actingAs($admin)->delete("/invoices/{$invoice->id}");
+        $this->actingAs($admin)->delete("/invoices/{$invoice->id}", ['cancel_reason' => 'Hủy hóa đơn kiểm thử']);
 
         $this->assertDatabaseHas('stock_movements', [
             'product_id' => $product->id,
-            'type'       => 'in_invoice_return',
-            'direction'  => 'in',
+            'type' => 'in_invoice_return',
+            'direction' => 'in',
         ]);
     }
 
-    public function test_TC_RR01_01_cancel_invoice_cashflow_should_not_be_hard_deleted(): void
+    public function test_t_c_r_r01_01_cancel_invoice_cashflow_should_not_be_hard_deleted(): void
     {
-        $admin    = $this->createAdmin();
-        $product  = $this->createProduct(10, 100000);
+        $admin = $this->createAdmin();
+        $product = $this->createProduct(10, 100000);
         $customer = $this->createCustomer(0);
 
         $invoice = $this->simulateSale($product, $customer, 2, 150000, 300000);
@@ -253,7 +253,7 @@ class CancelInvoiceTest extends TestCase
             'reference_code' => $invoiceCode,
         ]);
 
-        $this->actingAs($admin)->delete("/invoices/{$invoice->id}");
+        $this->actingAs($admin)->delete("/invoices/{$invoice->id}", ['cancel_reason' => 'Hủy hóa đơn kiểm thử']);
 
         // CashFlow dùng SoftDeletes → delete() set deleted_at, không hard-delete.
         // Record vẫn tồn tại trong DB (kể cả trashed).
@@ -270,10 +270,10 @@ class CancelInvoiceTest extends TestCase
      *  TC-RR01-02: Hủy HĐ ghi nợ — Công nợ phải đảo lại
      * ═══════════════════════════════════════════════════════════════════════ */
 
-    public function test_TC_RR01_02_cancel_invoice_with_debt_should_restore_customer_debt(): void
+    public function test_t_c_r_r01_02_cancel_invoice_with_debt_should_restore_customer_debt(): void
     {
-        $admin    = $this->createAdmin();
-        $product  = $this->createProduct(10, 100000);
+        $admin = $this->createAdmin();
+        $product = $this->createProduct(10, 100000);
         $customer = $this->createCustomer(0);
 
         $invoice = $this->simulateSale($product, $customer, 2, 150000, 200000);
@@ -281,7 +281,7 @@ class CancelInvoiceTest extends TestCase
         $customer->refresh();
         $this->assertEquals(100000, (float) $customer->debt_amount);
 
-        $this->actingAs($admin)->delete("/invoices/{$invoice->id}");
+        $this->actingAs($admin)->delete("/invoices/{$invoice->id}", ['cancel_reason' => 'Hủy hóa đơn kiểm thử']);
 
         $customer->refresh();
         $this->assertEquals(0, (float) $customer->debt_amount,
@@ -290,25 +290,25 @@ class CancelInvoiceTest extends TestCase
             "total_spent phải về 0, thực tế: {$customer->total_spent}");
     }
 
-    public function test_TC_RR01_02_cancel_invoice_with_debt_should_keep_invoice(): void
+    public function test_t_c_r_r01_02_cancel_invoice_with_debt_should_keep_invoice(): void
     {
-        $admin    = $this->createAdmin();
-        $product  = $this->createProduct(10, 100000);
+        $admin = $this->createAdmin();
+        $product = $this->createProduct(10, 100000);
         $customer = $this->createCustomer(0);
 
-        $invoice   = $this->simulateSale($product, $customer, 2, 150000, 200000);
+        $invoice = $this->simulateSale($product, $customer, 2, 150000, 200000);
         $invoiceId = $invoice->id;
 
-        $this->actingAs($admin)->delete("/invoices/{$invoiceId}");
+        $this->actingAs($admin)->delete("/invoices/{$invoiceId}", ['cancel_reason' => 'Hủy hóa đơn kiểm thử']);
 
         $this->assertDatabaseHas('invoices', ['id' => $invoiceId]);
         $this->assertDatabaseHas('invoice_items', ['invoice_id' => $invoiceId]);
     }
 
-    public function test_TC_RR01_02_cancel_invoice_should_restore_inventory_total_cost(): void
+    public function test_t_c_r_r01_02_cancel_invoice_should_restore_inventory_total_cost(): void
     {
-        $admin    = $this->createAdmin();
-        $product  = $this->createProduct(10, 100000);
+        $admin = $this->createAdmin();
+        $product = $this->createProduct(10, 100000);
         $customer = $this->createCustomer(0);
 
         $invoice = $this->simulateSale($product, $customer, 2, 150000, 300000);
@@ -316,23 +316,23 @@ class CancelInvoiceTest extends TestCase
         $product->refresh();
         $this->assertEquals(800000, (float) $product->inventory_total_cost);
 
-        $this->actingAs($admin)->delete("/invoices/{$invoice->id}");
+        $this->actingAs($admin)->delete("/invoices/{$invoice->id}", ['cancel_reason' => 'Hủy hóa đơn kiểm thử']);
 
         $product->refresh();
         $this->assertEquals(1000000, (float) $product->inventory_total_cost,
             "inventory_total_cost phải phục hồi, thực tế: {$product->inventory_total_cost}");
     }
 
-    public function test_TC_RR01_02_cancel_invoice_uses_sale_cost_snapshot_when_current_cost_changed(): void
+    public function test_t_c_r_r01_02_cancel_invoice_uses_sale_cost_snapshot_when_current_cost_changed(): void
     {
-        $admin    = $this->createAdmin();
-        $product  = $this->createProduct(10, 100000);
+        $admin = $this->createAdmin();
+        $product = $this->createProduct(10, 100000);
         $customer = $this->createCustomer(0);
 
         $invoice = $this->simulateSale($product, $customer, 2, 150000, 300000);
         $product->update(['cost_price' => 150000]);
 
-        $this->actingAs($admin)->delete("/invoices/{$invoice->id}");
+        $this->actingAs($admin)->delete("/invoices/{$invoice->id}", ['cancel_reason' => 'Hủy hóa đơn kiểm thử']);
 
         $product->refresh();
         $this->assertEquals(10, (int) $product->stock_quantity);
@@ -350,16 +350,16 @@ class CancelInvoiceTest extends TestCase
         ]);
     }
 
-    public function test_TC_RR01_02_cancel_invoice_reversal_movement_has_audit_fields(): void
+    public function test_t_c_r_r01_02_cancel_invoice_reversal_movement_has_audit_fields(): void
     {
-        $admin    = $this->createAdmin();
-        $branch   = $this->createBranch();
-        $product  = $this->createProduct(10, 100000);
+        $admin = $this->createAdmin();
+        $branch = $this->createBranch();
+        $product = $this->createProduct(10, 100000);
         $customer = $this->createCustomer(0);
 
         $invoice = $this->simulateSale($product, $customer, 2, 150000, 300000, $branch->id);
 
-        $this->actingAs($admin)->delete("/invoices/{$invoice->id}");
+        $this->actingAs($admin)->delete("/invoices/{$invoice->id}", ['cancel_reason' => 'Hủy hóa đơn kiểm thử']);
 
         $movement = StockMovement::where('product_id', $product->id)
             ->where('type', 'in_invoice_return')
@@ -382,24 +382,24 @@ class CancelInvoiceTest extends TestCase
      *  TC-RR01-03: Hủy lặp — Không cộng tồn 2 lần
      * ═══════════════════════════════════════════════════════════════════════ */
 
-    public function test_TC_RR01_03_double_cancel_should_not_double_restore_stock(): void
+    public function test_t_c_r_r01_03_double_cancel_should_not_double_restore_stock(): void
     {
-        $admin    = $this->createAdmin();
-        $product  = $this->createProduct(10, 100000);
+        $admin = $this->createAdmin();
+        $product = $this->createProduct(10, 100000);
         $customer = $this->createCustomer(0);
 
-        $invoice   = $this->simulateSale($product, $customer, 2, 150000, 300000);
+        $invoice = $this->simulateSale($product, $customer, 2, 150000, 300000);
         $invoiceId = $invoice->id;
 
         // Hủy lần 1
-        $this->actingAs($admin)->delete("/invoices/{$invoiceId}");
+        $this->actingAs($admin)->delete("/invoices/{$invoiceId}", ['cancel_reason' => 'Hủy hóa đơn kiểm thử']);
 
         $product->refresh();
         $stockAfterFirst = $product->stock_quantity;
         $this->assertEquals(10, $stockAfterFirst);
 
         // Hủy lần 2
-        $this->actingAs($admin)->delete("/invoices/{$invoiceId}");
+        $this->actingAs($admin)->delete("/invoices/{$invoiceId}", ['cancel_reason' => 'Hủy hóa đơn kiểm thử']);
 
         $product->refresh();
         $this->assertEquals($stockAfterFirst, $product->stock_quantity,

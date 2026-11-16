@@ -52,6 +52,12 @@ return Application::configure(basePath: dirname(__DIR__))
             \App\Http\Middleware\HandleInertiaRequests::class,
             \App\Http\Middleware\AutoLockBranch::class,
             \Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,
+            // Batch 10 đợt 4: blank cost/profit figures for users without cost_profit.view.
+            \App\Http\Middleware\HideCostProfitData::class,
+        ]);
+
+        $middleware->api(append: [
+            \App\Http\Middleware\HideCostProfitData::class,
         ]);
 
         $middleware->alias([

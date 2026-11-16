@@ -13,6 +13,7 @@ use App\Models\Purchase;
 use App\Models\SerialImei;
 use App\Models\Setting;
 use App\Services\Debt\PartnerDebtMutationCoordinator;
+use App\Services\SalesControls\BelowCostSaleService;
 use App\Support\BusinessDateTime;
 use App\Support\Customers\CustomerGroupSnapshot;
 use Carbon\Carbon;
@@ -123,6 +124,9 @@ class InvoiceSaleService
                 ['total' => (float) $invoice->total],
             );
 
+            // Batch 10 đợt 4 — item 32: selling below cost is allowed but recorded.
+            $this->recordBelowCost($invoice, (string) ($context['source'] ?? 'invoice'));
+
             return $invoice->load('items.product');
         };
 
@@ -160,6 +164,16 @@ class InvoiceSaleService
             },
             isset($context['idempotency_key']) ? (string) $context['idempotency_key'] : null,
         );
+    }
+
+    private function recordBelowCost(Invoice $invoice, string $source): void
+    {
+        try {
+            app(BelowCostSaleService::class)->recordForInvoice($invoice->fresh(['items.product']), $source);
+        } catch (\Throwable $e) {
+            // A journal problem must never undo a completed sale.
+            report($e);
+        }
     }
 
     /**

@@ -140,6 +140,7 @@ class CashFlowCancellationService
                 if ($flow->status === 'cancelled' || $flow->trashed()) {
                     return self::ALREADY_CANCELLED;
                 }
+                $auditBefore = \App\Support\Audit\DocumentSnapshot::cashFlow($flow);
 
                 $policy = $this->policy($flow);
                 if (! $policy['allowed']) {
@@ -164,10 +165,14 @@ class CashFlowCancellationService
                     'deleted_at' => null,
                 ])->save();
 
-                \App\Models\ActivityLog::log(
+                \App\Models\ActivityLog::audit(
                     'cashflow_cancel',
-                    "Hủy phiếu {$flow->code}, số tiền: ".number_format($flow->amount),
+                    \App\Models\ActivityLog::DOC_CASH_FLOW,
+                    $flow->code,
+                    $reason,
                     $flow,
+                    $auditBefore,
+                    ['status' => 'cancelled'],
                     [
                         'amount' => (float) $flow->amount,
                         'reference_type' => $flow->reference_type,
@@ -175,6 +180,7 @@ class CashFlowCancellationService
                         'cancel_reason' => $reason,
                         'owner' => $policy['owner'],
                     ],
+                    "Hủy phiếu {$flow->code}, số tiền: ".number_format($flow->amount),
                 );
 
                 return self::CANCELLED;

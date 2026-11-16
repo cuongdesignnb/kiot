@@ -545,6 +545,7 @@ class Step243InvoiceUpdateEngineImpactTest extends TestCase
 
         $admin = $this->admin(['*']);
         $response = $this->actingAs($admin)->delete("/invoices/{$invoice->id}", [
+            'cancel_reason' => 'Hủy hóa đơn kiểm thử',
             'time_lock_override_reason' => 'Manager approved cancel for old invoice',
         ]);
 
@@ -572,7 +573,7 @@ class Step243InvoiceUpdateEngineImpactTest extends TestCase
         $customer = $this->customer();
         $invoice = $this->createInvoice($product, $customer, 2, 150000, 300000);
 
-        $this->actingAs($admin)->delete("/invoices/{$invoice->id}");
+        $this->actingAs($admin)->delete("/invoices/{$invoice->id}", ['cancel_reason' => 'Hủy hóa đơn kiểm thử']);
 
         $this->assertDatabaseHas('invoices', ['id' => $invoice->id]);
         $invoice->refresh();

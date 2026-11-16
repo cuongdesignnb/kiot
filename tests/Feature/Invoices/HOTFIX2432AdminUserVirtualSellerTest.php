@@ -35,11 +35,11 @@ class HOTFIX2432AdminUserVirtualSellerTest extends TestCase
     private function admin(string $name = 'Admin 2432'): User
     {
         return User::create([
-            'name'     => $name,
-            'email'    => 'admin-2432-' . uniqid() . '@test.local',
+            'name' => $name,
+            'email' => 'admin-2432-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
-            'role_id'  => null,
-            'status'   => 'active',
+            'role_id' => null,
+            'status' => 'active',
         ]);
     }
 
@@ -51,51 +51,53 @@ class HOTFIX2432AdminUserVirtualSellerTest extends TestCase
         );
         $role->permissions = ['invoices.view'];
         $role->save();
+
         return User::create([
-            'name'     => $name,
-            'email'    => 'staff-2432-' . uniqid() . '@test.local',
+            'name' => $name,
+            'email' => 'staff-2432-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
-            'role_id'  => $role->id,
-            'status'   => 'active',
+            'role_id' => $role->id,
+            'status' => 'active',
         ]);
     }
 
     private function product(): Product
     {
         return Product::create([
-            'sku'                  => 'SKU-2432-' . uniqid(),
-            'name'                 => 'SP 2432',
-            'cost_price'           => 500_000,
-            'retail_price'         => 1_000_000,
-            'stock_quantity'       => 100,
+            'sku' => 'SKU-2432-'.uniqid(),
+            'name' => 'SP 2432',
+            'cost_price' => 500_000,
+            'retail_price' => 1_000_000,
+            'stock_quantity' => 100,
             'inventory_total_cost' => 50_000_000,
-            'has_serial'           => false,
+            'has_serial' => false,
         ]);
     }
 
     private function invoice(?int $createdBy, ?string $sellerName, string $createdByName, Product $product, int $total = 1_000_000): Invoice
     {
         $inv = Invoice::create([
-            'code'             => 'HD-2432-' . uniqid(),
-            'created_by'       => $createdBy,
-            'seller_name'      => $sellerName,
-            'created_by_name'  => $createdByName,
-            'subtotal'         => $total,
-            'discount'         => 0,
-            'total'            => $total,
-            'customer_paid'    => $total,
-            'status'           => 'Hoàn thành',
-            'sales_channel'    => 'Bán trực tiếp',
+            'code' => 'HD-2432-'.uniqid(),
+            'created_by' => $createdBy,
+            'seller_name' => $sellerName,
+            'created_by_name' => $createdByName,
+            'subtotal' => $total,
+            'discount' => 0,
+            'total' => $total,
+            'customer_paid' => $total,
+            'status' => 'Hoàn thành',
+            'sales_channel' => 'Bán trực tiếp',
         ]);
         InvoiceItem::create([
             'invoice_id' => $inv->id,
             'product_id' => $product->id,
-            'quantity'   => 1,
-            'price'      => $total,
+            'quantity' => 1,
+            'price' => $total,
             'cost_price' => 500_000,
         ]);
         $inv->created_at = Carbon::now()->startOfDay()->addMinute();
         $inv->save();
+
         return $inv;
     }
 
@@ -103,7 +105,7 @@ class HOTFIX2432AdminUserVirtualSellerTest extends TestCase
     public function test_super_admin_without_employee_is_virtual_seller_option(): void
     {
         $admin = $this->admin('Trần Văn Tiến 32');
-        $resolver = new SellerResolver();
+        $resolver = new SellerResolver;
         $options = $resolver->buildInvoiceSellerOptions();
 
         $opt = collect($options)->firstWhere('key', "admin_user:{$admin->id}");
@@ -117,7 +119,7 @@ class HOTFIX2432AdminUserVirtualSellerTest extends TestCase
     public function test_normal_user_is_not_a_virtual_seller_option(): void
     {
         $staff = $this->normalUser('Bình thường 32');
-        $resolver = new SellerResolver();
+        $resolver = new SellerResolver;
         $options = $resolver->buildInvoiceSellerOptions();
 
         $opt = collect($options)->firstWhere('key', "admin_user:{$staff->id}");
@@ -129,13 +131,13 @@ class HOTFIX2432AdminUserVirtualSellerTest extends TestCase
     {
         $admin = $this->admin('Linked Admin 32');
         Employee::create([
-            'code'      => 'NV-LINK-' . uniqid(),
-            'name'      => 'Linked Admin 32',
-            'user_id'   => $admin->id,
+            'code' => 'NV-LINK-'.uniqid(),
+            'name' => 'Linked Admin 32',
+            'user_id' => $admin->id,
             'is_active' => true,
         ]);
 
-        $resolver = new SellerResolver();
+        $resolver = new SellerResolver;
         $options = $resolver->buildInvoiceSellerOptions();
 
         $adminVirtual = collect($options)->firstWhere('key', "admin_user:{$admin->id}");
@@ -148,8 +150,8 @@ class HOTFIX2432AdminUserVirtualSellerTest extends TestCase
     {
         $admin = $this->admin('Admin Updater');
         $emp = Employee::create([
-            'code'      => 'NV-OLD-' . uniqid(),
-            'name'      => 'Old seller',
+            'code' => 'NV-OLD-'.uniqid(),
+            'name' => 'Old seller',
             'is_active' => true,
         ]);
         $product = $this->product();
@@ -157,6 +159,7 @@ class HOTFIX2432AdminUserVirtualSellerTest extends TestCase
 
         $res = $this->actingAs($admin)->patchJson("/invoices/{$inv->id}/seller", [
             'seller_key' => "admin_user:{$admin->id}",
+            'reason' => 'Đổi người bán kiểm thử',
         ]);
         $res->assertOk();
         $body = $res->json();
@@ -177,8 +180,8 @@ class HOTFIX2432AdminUserVirtualSellerTest extends TestCase
         $admin = $this->admin();
         $staff = $this->normalUser('Bình thường 32B');
         $emp = Employee::create([
-            'code'      => 'NV-INIT-' . uniqid(),
-            'name'      => 'Init seller',
+            'code' => 'NV-INIT-'.uniqid(),
+            'name' => 'Init seller',
             'is_active' => true,
         ]);
         $product = $this->product();
@@ -186,6 +189,7 @@ class HOTFIX2432AdminUserVirtualSellerTest extends TestCase
 
         $res = $this->actingAs($admin)->patchJson("/invoices/{$inv->id}/seller", [
             'seller_key' => "admin_user:{$staff->id}",
+            'reason' => 'Đổi người bán kiểm thử',
         ]);
         $res->assertStatus(422);
 
@@ -244,7 +248,7 @@ class HOTFIX2432AdminUserVirtualSellerTest extends TestCase
         // created_by NULL, seller_name NULL, created_by_name = admin name
         $inv = $this->invoice(null, null, $admin->name, $product, 1_000_000);
 
-        $resolver = new SellerResolver();
+        $resolver = new SellerResolver;
         $map = $resolver->invoiceSellerMap(Invoice::whereKey($inv->id));
 
         $this->assertSame('unknown', $map[$inv->id],

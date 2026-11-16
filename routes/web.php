@@ -292,6 +292,11 @@ Route::middleware('auth')->group(function () {
             ->name('api.pos.returnable-items');
     });
 
+    // Batch 10 đợt 4 — item 32: cảnh báo bán dưới giá vốn trước khi lưu (chỉ đọc).
+    Route::post('/api/sales/below-cost-check', [\App\Http\Controllers\SalesControlController::class, 'belowCostCheck'])
+        ->name('api.sales.below-cost-check')
+        ->middleware('permission:pos.use|invoices.create|invoices.edit|orders.create|orders.edit');
+
     // Step 22.1E: serial lookup phải dùng được cả ở Orders/Create (không có pos.use).
     // Endpoint read-only, chỉ cần đã đăng nhập.
     Route::get('/api/products/{product}/serials', [PosController::class, 'getProductSerials'])
@@ -429,8 +434,9 @@ Route::middleware('auth')->group(function () {
     // REPORT routes
     // ═══════════════════════════════════════
     Route::get('/reports/business', [ReportController::class, 'businessOverview'])->name('reports.business-overview')->middleware('permission:reports.view');
-    Route::get('/reports/cost-profit', [ReportController::class, 'costProfit'])->name('reports.cost-profit')->middleware('permission:reports.view');
-    Route::get('/reports/financial-report', [App\Http\Controllers\FinancialReportController::class, 'index'])->name('reports.financial-report')->middleware('permission:reports.view');
+    // Batch 10 đợt 4 — item 30: báo cáo giá vốn / lợi nhuận cần thêm quyền cost_profit.view.
+    Route::get('/reports/cost-profit', [ReportController::class, 'costProfit'])->name('reports.cost-profit')->middleware(['permission:reports.view', 'permission:cost_profit.view']);
+    Route::get('/reports/financial-report', [App\Http\Controllers\FinancialReportController::class, 'index'])->name('reports.financial-report')->middleware(['permission:reports.view', 'permission:cost_profit.view']);
     Route::get('/reports/sales', [App\Http\Controllers\SalesReportController::class, 'index'])->name('reports.sales')->middleware('permission:reports.view');
     Route::get('/reports/products', [App\Http\Controllers\ProductReportController::class, 'index'])->name('reports.products')->middleware('permission:reports.view');
     Route::get('/reports/customers', [App\Http\Controllers\CustomerReportController::class, 'index'])->name('reports.customers')->middleware('permission:reports.view');
@@ -444,9 +450,9 @@ Route::middleware('auth')->group(function () {
 
     // Phase 5 — Phân tích & lịch sử giá vốn
     Route::get('/reports/cost-analysis', [ReportController::class, 'costAnalysis'])
-        ->name('reports.cost-analysis')->middleware('permission:reports.view');
+        ->name('reports.cost-analysis')->middleware(['permission:reports.view', 'permission:cost_profit.view']);
     Route::get('/reports/serial-cost-history', [ReportController::class, 'serialCostHistory'])
-        ->name('reports.serial-cost-history')->middleware('permission:reports.view');
+        ->name('reports.serial-cost-history')->middleware(['permission:reports.view', 'permission:cost_profit.view']);
 
     // Phase 4 — Thẻ kho
     Route::get('/reports/stock-card', [ReportController::class, 'stockCard'])

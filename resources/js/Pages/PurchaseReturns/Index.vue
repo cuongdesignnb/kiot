@@ -117,9 +117,17 @@ const cancelReturn = (ret) => {
         )
     )
         return;
+    // Batch 10 đợt 4 — item 31: lý do hủy là bắt buộc (lưu vào nhật ký).
+    const cancelReasonInput = window.prompt('Nhập lý do hủy phiếu trả hàng nhập (ít nhất 5 ký tự):');
+    if (cancelReasonInput === null) return;
+    if (cancelReasonInput.trim().length < 5) {
+        alert('Lý do hủy phải có ít nhất 5 ký tự.');
+        return;
+    }
     const idempotencyKey = cancelIdempotencyKeys.get(ret.id) || crypto.randomUUID();
     cancelIdempotencyKeys.set(ret.id, idempotencyKey);
     router.delete(`/purchase-returns/${ret.id}`, {
+        data: { cancel_reason: cancelReasonInput.trim() },
         headers: { 'Idempotency-Key': idempotencyKey },
         preserveState: false,
         onSuccess: () => { cancelIdempotencyKeys.delete(ret.id); },

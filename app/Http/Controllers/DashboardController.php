@@ -34,6 +34,10 @@ class DashboardController extends Controller
         if (! in_array($rankingMetric, ['revenue', 'orders', 'profit'], true)) {
             $rankingMetric = 'revenue';
         }
+        // Batch 10 đợt 4 — item 30: ranking by profit would reveal it.
+        if ($rankingMetric === 'profit' && ! \App\Support\Security\CostVisibility::currentUserCanView()) {
+            $rankingMetric = 'revenue';
+        }
 
         $rankingStart = match ($rankingPeriod) {
             'quarter' => Carbon::now()->startOfQuarter(),

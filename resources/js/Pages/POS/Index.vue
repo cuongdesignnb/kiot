@@ -960,6 +960,52 @@ const onCartLineTotalInput = (item, value) => {
     syncPurchaseLineFromTotal(item, value);
 };
 
+// Batch 10 đợt 4 — item 32: người bán + đơn giá bắt buộc; cảnh báo bán dưới giá vốn.
+const salesRequireSeller = computed(() => page.props.app_settings?.sales_require_seller ?? true);
+const salesRequireLinePrice = computed(() => page.props.app_settings?.sales_require_line_price ?? true);
+
+const confirmSalesControlsBeforeCheckout = async (isProcessOrder) => {
+    if (!isProcessOrder && salesRequireSeller.value && !selectedSellerKey.value) {
+        alert('Vui lòng chọn người bán trước khi thanh toán.');
+        return false;
+    }
+    if (!isProcessOrder && salesRequireLinePrice.value) {
+        const zeroPrice = cart.value.filter(item => !(Number(item.price) > 0));
+        if (zeroPrice.length > 0) {
+            alert('Đơn giá bán phải lớn hơn 0: ' + zeroPrice.map(item => item.product?.name || 'Hàng hóa').join(', '));
+            return false;
+        }
+    }
+
+    try {
+        const { data } = await axios.post('/api/sales/below-cost-check', {
+            items: cart.value.map(item => ({
+                product_id: item.product.id,
+                quantity: item.quantity,
+                price: Number(item.price) || 0,
+                discount: Number(item.discount) || 0,
+                serial_ids: item.is_serial_product ? item.serials.map(s => s.id) : [],
+            })),
+        });
+        const lines = Array.isArray(data?.lines) ? data.lines : [];
+        if (lines.length > 0) {
+            const text = lines.map(line => {
+                const cost = line.cost_price !== null && line.cost_price !== undefined
+                    ? `, giá vốn ${formatCurrency(line.cost_price)}`
+                    : '';
+                return `- ${line.product_name}: giá bán ${formatCurrency(line.sale_price)}${cost}`;
+            }).join('\n');
+
+            return window.confirm(`⚠ Giá bán thấp hơn giá vốn:\n${text}\n\nVẫn tiếp tục thanh toán?`);
+        }
+    } catch (e) {
+        // The warning is advisory only; never block a sale because the check failed.
+        console.warn('Below-cost check failed', e);
+    }
+
+    return true;
+};
+
 const validateCartLinePricingForSubmit = () => {
     for (const item of cart.value) {
         item.line_total_error = purchaseLinePricingError(item);
@@ -1110,6 +1156,12 @@ const processCheckout = async () => {
             return;
         }
 
+        if (saleMode.value !== 'quick_order'
+            && !(await confirmSalesControlsBeforeCheckout(activeTab.value.mode === 'process_order'))) {
+            isCheckingOut.value = false;
+            return;
+        }
+
         // Bán từ Đơn đặt hàng (Xử lý đơn hàng qua POS)
         if (activeTab.value.mode === 'process_order') {
             const invalidSerials = cart.value.filter(i => i.is_serial_product && i.serials.length !== i.targetQuantity);
@@ -1122,6 +1174,7 @@ const processCheckout = async () => {
 
             const processPayload = {
                 from_pos: true,
+                seller_key: selectedSellerKey.value || null,
                 amount_paid: Number(customerPaid.value) || 0,
                 payment_method: paymentMethod.value,
                 bank_account_info: paymentMethod.value === 'transfer' ? bankAccountInfo.value : null,

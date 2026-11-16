@@ -111,7 +111,7 @@ class ProductExcelExportTest extends TestCase
     public function test_export_includes_cost_price_with_permission(): void
     {
         $this->product();
-        $actor = $this->userWith(['products.export', 'products.view_cost_price']);
+        $actor = $this->userWith(['products.export', 'products.view_cost_price', 'cost_profit.view']);
         $flat = implode(' ', $this->workbook('?fields[]=sku&fields[]=cost_price', $actor)->getSheetByName('hang_hoa')->rangeToArray('A5:Z5')[0]);
 
         $this->assertStringContainsString('Giá vốn', $flat);

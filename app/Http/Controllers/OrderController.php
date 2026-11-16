@@ -620,12 +620,40 @@ class OrderController extends Controller
             'delivery.cod_amount' => 'nullable|numeric|min:0',
             'delivery.tracking_code' => 'nullable|string',
             'delivery.delivery_note' => 'nullable|string',
+            'seller_key' => 'nullable|string|max:50',
         ]);
 
         app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
             $order->customer_id ? (int) $order->customer_id : null,
             'customer_id'
         );
+
+        // Batch 10 đợt 4 — item 32: hóa đơn tạo từ đơn hàng cũng phải có người
+        // bán và đơn giá > 0 từng dòng. POS có thể chọn người bán khi xử lý đơn.
+        $invoiceAttributes = [];
+        $seller = null;
+        // The order's own seller always wins; seller_key only fills an order without one.
+        if (trim((string) $order->assigned_to_name) === ''
+            && preg_match('/^employee:(\d+)$/', (string) ($validated['seller_key'] ?? ''), $sellerMatch)) {
+            $seller = \App\Models\Employee::query()->where('is_active', true)->find((int) $sellerMatch[1]);
+            if ($seller) {
+                $invoiceAttributes = ['created_by' => $seller->id, 'seller_name' => $seller->name];
+            }
+        }
+        try {
+            $controls = app(\App\Services\SalesControls\SalesControlService::class);
+            $controls->assertSellerPresent($seller?->id, $seller?->name ?? $order->assigned_to_name, 'seller_key');
+            $controls->assertLinePrices(
+                $order->items->map(fn ($item) => ['product_id' => $item->product_id, 'price' => $item->price])->values()->all()
+            );
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            $message = collect($e->errors())->flatten()->first();
+            if ($request->wantsJson()) {
+                return response()->json(['success' => false, 'message' => $message, 'errors' => $e->errors()], 422);
+            }
+
+            return back()->with('error', $message);
+        }
 
         if ($request->input('from_pos') && $request->has('items')) {
             $posItems = $request->input('items', []);
@@ -669,6 +697,7 @@ class OrderController extends Controller
                 'has_delivery' => $request->has('delivery'),
                 'delivery' => $request->input('delivery', []),
                 'idempotency_key' => $request->header('Idempotency-Key'),
+                'invoice_attributes' => $invoiceAttributes,
             ]);
 
             if ($request->wantsJson()) {

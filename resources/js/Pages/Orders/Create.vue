@@ -145,7 +145,19 @@ const invoiceEditReasonErrors = ref({});
 const invoiceEditReasons = ref({
     timeLockOverride: '',
     transactionDateChange: '',
+    editReason: '',
 });
+// Batch 10 đợt 4 — item 32: dòng bán dưới giá vốn (chỉ cảnh báo, không chặn).
+const invoiceBelowCostLines = ref([]);
+
+const fetchBelowCostLines = async (items) => {
+    try {
+        const { data } = await axios.post('/api/sales/below-cost-check', { items });
+        return Array.isArray(data?.lines) ? data.lines : [];
+    } catch (e) {
+        return [];
+    }
+};
 
 const resetInvoiceEditReasonState = () => {
     showInvoiceEditConfirmation.value = false;
@@ -154,7 +166,9 @@ const resetInvoiceEditReasonState = () => {
     invoiceEditReasons.value = {
         timeLockOverride: '',
         transactionDateChange: '',
+        editReason: '',
     };
+    invoiceBelowCostLines.value = [];
 };
 
 const activeInvoiceEditContextKey = computed(() => {
@@ -198,6 +212,12 @@ const editReasonRequirements = () => {
 
     if (policy.is_einvoice_blocked) {
         return { blockedMessage: 'Không thể sửa hóa đơn đã xuất hóa đơn điện tử.', dateChanged };
+    }
+    if (policy.is_old_invoice && policy.can_modify_old_invoice === false) {
+        return {
+            blockedMessage: `Hóa đơn cũ (${policy.old_invoice_rule || 'lập trước hôm nay'}).\nTài khoản hiện tại không có quyền sửa hóa đơn cũ.`,
+            dateChanged,
+        };
     }
     if (policy.is_time_locked && !policy.can_override_time_lock) {
         return {
@@ -253,7 +273,7 @@ const submitInvoiceUpdate = (payload) => {
         onError: (errors) => {
             submitRef.value = false;
             const reasonErrors = {};
-            ['time_lock_override_reason', 'transaction_date_change_reason'].forEach((field) => {
+            ['time_lock_override_reason', 'transaction_date_change_reason', 'edit_reason'].forEach((field) => {
                 if (errors?.[field]) reasonErrors[field] = errors[field];
             });
             if (Object.keys(reasonErrors).length > 0) {
@@ -276,6 +296,11 @@ const confirmInvoiceEditUpdate = () => {
     if (!payload || requirements.blockedMessage) return;
 
     invoiceEditReasonErrors.value = {};
+    payload.edit_reason = validateInvoiceEditReason(
+        invoiceEditReasons.value.editReason,
+        'edit_reason',
+        'Lý do sửa hóa đơn'
+    );
     if (requirements.requiresTimeLockOverride) {
         const reason = validateInvoiceEditReason(
             invoiceEditReasons.value.timeLockOverride,
@@ -788,15 +813,24 @@ const save = async () => {
                 submitRef.value = false;
                 return;
             }
-            if (requirements.requiresTimeLockOverride || requirements.requiresTransactionDateReason) {
-                pendingInvoiceUpdatePayload.value = payload;
-                invoiceEditReasonErrors.value = {};
-                showInvoiceEditConfirmation.value = true;
+            // Batch 10 đợt 4 — item 32: đơn giá từng dòng phải > 0.
+            const zeroPriceLines = payload.items
+                .map((item, index) => ({ item, index }))
+                .filter(({ item }) => !(Number(item.price) > 0));
+            if (zeroPriceLines.length > 0) {
+                editFormErrors.value = {
+                    form: 'Đơn giá bán phải lớn hơn 0 ở dòng: ' + zeroPriceLines.map(({ index }) => index + 1).join(', ') + '.',
+                };
                 submitRef.value = false;
                 return;
             }
 
-            submitInvoiceUpdate(payload);
+            // Batch 10 đợt 4 — item 31: mọi lần sửa hóa đơn đều cần lý do.
+            invoiceBelowCostLines.value = await fetchBelowCostLines(payload.items);
+            pendingInvoiceUpdatePayload.value = payload;
+            invoiceEditReasonErrors.value = {};
+            showInvoiceEditConfirmation.value = true;
+            submitRef.value = false;
             return; // Don't reset tab — Inertia handles the redirect
         } else {
             const endpoint = isReturn ? '/returns' : '/orders';
@@ -1526,12 +1560,37 @@ onUnmounted(() => {
             <div class="flex items-start justify-between border-b border-gray-200 px-5 py-4">
                 <div>
                     <h2 id="invoice-edit-confirmation-title" class="text-lg font-bold text-gray-900">Xác nhận sửa hóa đơn</h2>
-                    <p class="mt-1 text-sm text-gray-600">Hóa đơn {{ props.invoice?.code || activeTab.name }} cần bổ sung thông tin audit trước khi cập nhật.</p>
+                    <p class="mt-1 text-sm text-gray-600">Hóa đơn {{ props.invoice?.code || activeTab.name }} cần ghi lý do trước khi cập nhật (lưu vào nhật ký sửa/hủy).</p>
                 </div>
                 <button type="button" class="text-gray-400 hover:text-gray-700" aria-label="Đóng" @click="cancelInvoiceEditConfirmation">×</button>
             </div>
 
             <div class="space-y-4 px-5 py-4">
+                <div v-if="invoiceBelowCostLines.length" class="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800" data-testid="invoice-below-cost-warning">
+                    <div class="font-semibold">⚠ Giá bán thấp hơn giá vốn</div>
+                    <ul class="mt-1 list-disc pl-5">
+                        <li v-for="line in invoiceBelowCostLines" :key="line.index">
+                            Dòng {{ line.index + 1 }}: {{ line.product_name }} — giá bán {{ formatCurrency(line.sale_price) }}<span v-if="line.cost_price !== null && line.cost_price !== undefined">, giá vốn {{ formatCurrency(line.cost_price) }}</span>
+                        </li>
+                    </ul>
+                    <div class="mt-1 text-xs">Vẫn được phép lưu; hệ thống sẽ ghi nhận vào nhật ký.</div>
+                </div>
+
+                <div>
+                    <label for="invoice-edit-reason" class="mb-1 block text-sm font-semibold text-gray-800">Lý do sửa hóa đơn <span class="text-red-600">*</span></label>
+                    <textarea
+                        id="invoice-edit-reason"
+                        v-model="invoiceEditReasons.editReason"
+                        data-testid="invoice-edit-reason"
+                        rows="3"
+                        maxlength="500"
+                        class="w-full rounded border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                        :class="{ 'border-red-500': invoiceEditReasonErrors.edit_reason }"
+                        @input="delete invoiceEditReasonErrors.edit_reason"
+                    ></textarea>
+                    <p v-if="invoiceEditReasonErrors.edit_reason" role="alert" class="mt-1 text-sm text-red-600">{{ invoiceEditReasonErrors.edit_reason }}</p>
+                </div>
+
                 <div v-if="editReasonRequirements().requiresTimeLockOverride" class="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                     Hóa đơn đã quá thời gian chỉnh sửa cho phép ({{ activeTab.invoiceEditPolicy?.order_change_time_hours }} giờ — đã trôi {{ activeTab.invoiceEditPolicy?.lock_age_hours }} giờ).
                 </div>

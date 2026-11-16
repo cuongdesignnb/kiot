@@ -162,7 +162,14 @@ const printReturn = (ret) => {
 
 const cancelReturn = (ret) => {
     if (!confirm("Bạn chắc chắn muốn hủy phiếu trả hàng này? Hệ thống sẽ rollback tồn kho, công nợ và serial đã trả.")) return;
-    router.post(`/returns/${ret.id}/cancel`, {}, {
+    // Batch 10 đợt 4 — item 31: lý do hủy là bắt buộc (lưu vào nhật ký).
+    const cancelReasonInput = window.prompt('Nhập lý do hủy phiếu trả hàng (ít nhất 5 ký tự):');
+    if (cancelReasonInput === null) return;
+    if (cancelReasonInput.trim().length < 5) {
+        alert('Lý do hủy phải có ít nhất 5 ký tự.');
+        return;
+    }
+    router.post(`/returns/${ret.id}/cancel`, { cancel_reason: cancelReasonInput.trim() }, {
         preserveScroll: true,
     });
 };

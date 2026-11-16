@@ -123,9 +123,19 @@ const openUpdateModal = () => {
 };
 
 const submitUpdate = () => {
+    // Batch 10 đợt 4 — item 31: sửa phiếu nhập đã hoàn thành phải ghi lý do.
+    let editReason = null;
+    if (props.purchase.status === 'completed') {
+        editReason = window.prompt('Nhập lý do sửa phiếu nhập (ít nhất 5 ký tự):');
+        if (editReason === null) return;
+        if (editReason.trim().length < 5) {
+            alert('Lý do sửa phiếu nhập phải có ít nhất 5 ký tự.');
+            return;
+        }
+    }
     isSubmitting.value = true;
     updateIdempotencyKey.value ||= crypto.randomUUID();
-    router.put(`/purchases/${props.purchase.id}`, editForm.value, {
+    router.put(`/purchases/${props.purchase.id}`, { ...editForm.value, edit_reason: editReason ? editReason.trim() : null }, {
         headers: { 'Idempotency-Key': updateIdempotencyKey.value },
         onSuccess: () => {
             updateIdempotencyKey.value = '';

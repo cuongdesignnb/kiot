@@ -15,10 +15,18 @@ class Hotfix246CPosQuickCreateCustomerGroupDropdownTest extends TestCase
 {
     use DatabaseTransactions;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // Batch 10 đợt 4: these tests are not about the seller rule (covered by
+        // Security\Batch10SalesControlsTest), so POS checkouts here may omit it.
+        \App\Models\Setting::set('sales_require_seller', false, 'sales_controls', 'boolean');
+    }
+
     private function userWith(array $permissions): User
     {
         $role = Role::create([
-            'name' => 'role-hotfix-246c-' . uniqid(),
+            'name' => 'role-hotfix-246c-'.uniqid(),
             'display_name' => 'HOTFIX 24.6C',
             'permissions' => $permissions,
             'is_system' => false,
@@ -96,7 +104,7 @@ class Hotfix246CPosQuickCreateCustomerGroupDropdownTest extends TestCase
         $customerId = $customerResponse->json('customer.id');
         $product = Product::create([
             'name' => 'POS Snapshot Product 24.6C',
-            'sku' => 'POS-SNAPSHOT-' . uniqid(),
+            'sku' => 'POS-SNAPSHOT-'.uniqid(),
             'retail_price' => 100000,
             'cost_price' => 60000,
             'stock_quantity' => 10,

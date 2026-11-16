@@ -5,7 +5,6 @@ namespace Tests\Feature\Invoices;
 use App\Models\ActivityLog;
 use App\Models\Customer;
 use App\Models\Invoice;
-use App\Models\InvoiceItem;
 use App\Models\Product;
 use App\Models\Role;
 use App\Models\Setting;
@@ -26,37 +25,46 @@ class Step243CInvoiceCancelOverrideModalTest extends TestCase
 {
     use DatabaseTransactions;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // Batch 10 đợt 4: these tests are not about the seller rule (covered by
+        // Security\Batch10SalesControlsTest), so invoices here may omit it.
+        \App\Models\Setting::set('sales_require_seller', false, 'sales_controls', 'boolean');
+    }
+
     private function userWith(array $perms): User
     {
         $role = Role::create([
-            'name'         => 'role243c-' . uniqid(),
+            'name' => 'role243c-'.uniqid(),
             'display_name' => 'Test 24.3C',
-            'permissions'  => $perms,
-            'is_system'    => false,
+            'permissions' => $perms,
+            'is_system' => false,
         ]);
+
         return User::factory()->create(['role_id' => $role->id]);
     }
 
     private function makeProduct(): Product
     {
         return Product::create([
-            'sku'                  => 'P243C-' . uniqid(),
-            'name'                 => 'Product 24.3C',
-            'cost_price'           => 100000,
-            'retail_price'         => 200000,
-            'stock_quantity'       => 10,
+            'sku' => 'P243C-'.uniqid(),
+            'name' => 'Product 24.3C',
+            'cost_price' => 100000,
+            'retail_price' => 200000,
+            'stock_quantity' => 10,
             'inventory_total_cost' => 1000000,
-            'is_active'            => true,
-            'has_serial'           => false,
+            'is_active' => true,
+            'has_serial' => false,
         ]);
     }
 
     private function makeCustomer(): Customer
     {
         return Customer::create([
-            'code'        => 'KH243C-' . uniqid(),
-            'name'        => 'KH 24.3C ' . uniqid(),
-            'phone'       => '0904' . rand(100000, 999999),
+            'code' => 'KH243C-'.uniqid(),
+            'name' => 'KH 24.3C '.uniqid(),
+            'phone' => '0904'.rand(100000, 999999),
             'debt_amount' => 0,
             'total_spent' => 0,
             'is_customer' => true,
@@ -66,19 +74,20 @@ class Step243CInvoiceCancelOverrideModalTest extends TestCase
     private function sellInvoice(User $admin, Customer $customer, Product $product, int $qty, float $price): Invoice
     {
         $this->actingAs($admin)->post(route('invoices.store'), [
-            'customer_id'    => $customer->id,
-            'subtotal'       => $qty * $price,
-            'discount'       => 0,
-            'total'          => $qty * $price,
-            'customer_paid'  => 0,
+            'customer_id' => $customer->id,
+            'subtotal' => $qty * $price,
+            'discount' => 0,
+            'total' => $qty * $price,
+            'customer_paid' => 0,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => $qty,
-                'price'      => $price,
-                'discount'   => 0,
+                'quantity' => $qty,
+                'price' => $price,
+                'discount' => 0,
             ]],
         ])->assertSessionDoesntHaveErrors();
+
         return Invoice::where('customer_id', $customer->id)->latest('id')->first();
     }
 
@@ -106,7 +115,7 @@ class Step243CInvoiceCancelOverrideModalTest extends TestCase
         $invoice = $this->sellInvoice($admin, $customer, $product, 1, 200000);
 
         $this->actingAs($admin)
-            ->delete(route('invoices.destroy', $invoice->id))
+            ->delete(route('invoices.destroy', $invoice->id), ['cancel_reason' => 'Hủy hóa đơn kiểm thử'])
             ->assertRedirect();
 
         $this->assertEquals('Đã hủy', $invoice->fresh()->status);
@@ -130,6 +139,7 @@ class Step243CInvoiceCancelOverrideModalTest extends TestCase
 
         $this->actingAs($user)
             ->delete(route('invoices.destroy', $invoice->id), [
+                'cancel_reason' => 'Hủy hóa đơn kiểm thử',
                 'time_lock_override_reason' => 'Lý do hợp lệ override',
             ]);
 
@@ -152,10 +162,10 @@ class Step243CInvoiceCancelOverrideModalTest extends TestCase
         $invoice = $this->sellInvoice($admin, $customer, $product, 1, 200000);
         $this->ageInvoice($invoice, 48);
 
-        $user = $this->userWith(['invoices.view', 'invoices.cancel', 'invoices.override_time_lock']);
+        $user = $this->userWith(['invoices.view', 'invoices.cancel', 'invoices.override_time_lock', 'invoices.modify_old']);
 
         $this->actingAs($user)
-            ->delete(route('invoices.destroy', $invoice->id))
+            ->delete(route('invoices.destroy', $invoice->id), ['cancel_reason' => 'Hủy hóa đơn kiểm thử'])
             ->assertRedirect();
 
         $this->assertNotEquals('Đã hủy', $invoice->fresh()->status, 'Invoice must remain un-cancelled when reason is missing.');
@@ -174,10 +184,11 @@ class Step243CInvoiceCancelOverrideModalTest extends TestCase
         $invoice = $this->sellInvoice($admin, $customer, $product, 1, 200000);
         $this->ageInvoice($invoice, 48);
 
-        $user = $this->userWith(['invoices.view', 'invoices.cancel', 'invoices.override_time_lock']);
+        $user = $this->userWith(['invoices.view', 'invoices.cancel', 'invoices.override_time_lock', 'invoices.modify_old']);
 
         $this->actingAs($user)
             ->delete(route('invoices.destroy', $invoice->id), [
+                'cancel_reason' => 'Hủy hóa đơn kiểm thử',
                 'time_lock_override_reason' => 'Khách đến nhận hàng nhưng phát hiện sai sản phẩm — quá hạn nên cần override',
             ])
             ->assertRedirect();
@@ -207,10 +218,11 @@ class Step243CInvoiceCancelOverrideModalTest extends TestCase
         $invoice = $this->sellInvoice($admin, $customer, $product, 1, 200000);
         $this->ageInvoice($invoice, 48);
 
-        $user = $this->userWith(['invoices.view', 'invoices.cancel', 'invoices.override_time_lock']);
+        $user = $this->userWith(['invoices.view', 'invoices.cancel', 'invoices.override_time_lock', 'invoices.modify_old']);
 
         $this->actingAs($user)
             ->delete(route('invoices.destroy', $invoice->id), [
+                'cancel_reason' => 'Hủy hóa đơn kiểm thử',
                 'time_lock_override_reason' => 'abc',
             ]);
 
@@ -238,13 +250,26 @@ class Step243CInvoiceCancelOverrideModalTest extends TestCase
                 $byId = collect($rows)->keyBy('id');
                 $r = $byId[$recent->id] ?? null;
                 $o = $byId[$old->id] ?? null;
-                if (!$r || !$o) return false;
-                if ($r['is_time_locked'] !== false) return false;
-                if ($r['cancel_block_reason'] !== null) return false;
-                if ($o['is_time_locked'] !== true) return false;
+                if (! $r || ! $o) {
+                    return false;
+                }
+                if ($r['is_time_locked'] !== false) {
+                    return false;
+                }
+                if ($r['cancel_block_reason'] !== null) {
+                    return false;
+                }
+                if ($o['is_time_locked'] !== true) {
+                    return false;
+                }
                 // Admin has wildcard so override is allowed → no block reason on old either.
-                if (!array_key_exists('requires_override_reason', $o)) return false;
-                if (!$o['requires_override_reason']) return false;
+                if (! array_key_exists('requires_override_reason', $o)) {
+                    return false;
+                }
+                if (! $o['requires_override_reason']) {
+                    return false;
+                }
+
                 return true;
             })
         );
@@ -256,7 +281,7 @@ class Step243CInvoiceCancelOverrideModalTest extends TestCase
     // ─────────────────────────────────────────────────────────────────
     public function test_einvoice_block_prevents_cancel_even_with_override_reason(): void
     {
-        if (!\Illuminate\Support\Facades\Schema::hasColumn('invoices', 'einvoice_code')) {
+        if (! \Illuminate\Support\Facades\Schema::hasColumn('invoices', 'einvoice_code')) {
             $this->markTestSkipped('einvoice_code column not present in this schema.');
         }
 
@@ -267,11 +292,12 @@ class Step243CInvoiceCancelOverrideModalTest extends TestCase
         $customer = $this->makeCustomer();
         $product = $this->makeProduct();
         $invoice = $this->sellInvoice($admin, $customer, $product, 1, 200000);
-        $invoice->einvoice_code = 'EI-' . uniqid();
+        $invoice->einvoice_code = 'EI-'.uniqid();
         $invoice->save();
 
         $this->actingAs($admin)
             ->delete(route('invoices.destroy', $invoice->id), [
+                'cancel_reason' => 'Hủy hóa đơn kiểm thử',
                 'time_lock_override_reason' => 'Cố tình override để test guard',
             ]);
 

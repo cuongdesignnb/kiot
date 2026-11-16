@@ -190,6 +190,7 @@ class HOTFIX2421PurchaseSupplierBalanceDisplayTest extends TestCase
 
         // Update paid_amount up to 1.5M → row becomes overpaid by 500k.
         $updateRes = $this->actingAs($admin)->putJson("/purchases/{$purchase->id}", [
+            'edit_reason' => 'Sửa phiếu nhập kiểm thử',
             'note' => $purchase->note,
             'purchase_date' => $purchase->purchase_date,
             'discount' => 0,

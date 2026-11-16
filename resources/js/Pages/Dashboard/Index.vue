@@ -3,6 +3,7 @@ import { formatVND as fmt } from '@/utils/money';
 import { Head, Link, router } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { usePermission } from '@/composables/usePermission';
 
 import {
   Chart as ChartJS,
@@ -81,11 +82,14 @@ const rankingPeriodOptions = [
     { value: 'quarter', label: 'Quý này' },
     { value: 'year', label: 'Năm nay' },
 ];
-const rankingMetricOptions = [
+// Batch 10 đợt 4 — item 30: ẩn giá vốn / lợi nhuận khi không có quyền (server cũng đã xóa số liệu).
+const { can } = usePermission();
+const canViewCost = computed(() => can('cost_profit.view'));
+const rankingMetricOptions = computed(() => [
     { value: 'revenue', label: 'Doanh thu' },
     { value: 'orders', label: 'Số đơn' },
-    { value: 'profit', label: 'Lợi nhuận' },
-];
+    ...(canViewCost.value ? [{ value: 'profit', label: 'Lợi nhuận' }] : []),
+]);
 
 const activeCustomerRankings = computed(() => props.topCustomerRankings || props.topCustomersByRevenue || []);
 const activeEmployeeRankings = computed(() => props.topEmployeeRankings || props.topEmployees || []);
@@ -340,7 +344,7 @@ const orderStatusOptions = {
                <div class="border-t border-gray-100 pt-2">
                    <div class="text-xs text-gray-500 mb-0.5">Tồn kho</div>
                    <div class="font-bold text-gray-800">{{ fmt(totalProductsInStock) }} <span class="text-xs text-gray-400 font-normal">SP</span></div>
-                   <div class="text-xs text-gray-500 mt-0.5">Giá trị: <span class="font-semibold text-gray-700">{{ fmt(totalStockValue) }}</span></div>
+                   <div v-if="canViewCost" class="text-xs text-gray-500 mt-0.5">Giá trị: <span class="font-semibold text-gray-700">{{ fmt(totalStockValue) }}</span></div>
                    <div v-if="outOfStockCount > 0" class="text-xs text-red-500 mt-0.5">⚠ {{ outOfStockCount }} hết hàng</div>
                </div>
                <div class="border-t border-gray-100 pt-2" title="Tổng nợ phải thu gộp của khách, chưa bù trừ với công nợ NCC/tiền ứng trước của cùng đối tác. Trang Khách hàng hiển thị số đã bù trừ nên có thể nhỏ hơn.">
@@ -389,7 +393,7 @@ const orderStatusOptions = {
                 </div>
 
                 <!-- Card: Lợi nhuận gộp -->
-                <div class="bg-gradient-to-br from-emerald-500 to-emerald-700 rounded-xl p-4 text-white shadow-lg shadow-emerald-200 relative overflow-hidden">
+                <div v-if="canViewCost" class="bg-gradient-to-br from-emerald-500 to-emerald-700 rounded-xl p-4 text-white shadow-lg shadow-emerald-200 relative overflow-hidden">
                     <div class="absolute -right-3 -top-3 w-16 h-16 bg-white/10 rounded-full"></div>
                     <p class="text-emerald-200 text-[11px] font-semibold uppercase tracking-wide mb-1">Lợi nhuận gộp</p>
                     <p class="text-xl font-bold font-mono tracking-tight">{{ fmtShort(thisMonthProfit) }}</p>
@@ -599,7 +603,7 @@ const orderStatusOptions = {
                     <h2 class="font-bold text-gray-800 text-[15px]">🏆 Top sản phẩm bán chạy <span class="text-xs text-gray-400 font-normal">tháng này</span></h2>
                     <div class="flex gap-1 bg-gray-100 rounded-lg p-0.5">
                         <button @click="productRankTab = 'revenue'" :class="productRankTab === 'revenue' ? 'bg-white shadow text-indigo-700' : 'text-gray-500 hover:text-gray-700'" class="px-3 py-1 text-xs font-semibold rounded-md transition">Doanh thu</button>
-                        <button @click="productRankTab = 'profit'" :class="productRankTab === 'profit' ? 'bg-white shadow text-indigo-700' : 'text-gray-500 hover:text-gray-700'" class="px-3 py-1 text-xs font-semibold rounded-md transition">Lợi nhuận</button>
+                        <button v-if="canViewCost" @click="productRankTab = 'profit'" :class="productRankTab === 'profit' ? 'bg-white shadow text-indigo-700' : 'text-gray-500 hover:text-gray-700'" class="px-3 py-1 text-xs font-semibold rounded-md transition">Lợi nhuận</button>
                         <button @click="productRankTab = 'qty'" :class="productRankTab === 'qty' ? 'bg-white shadow text-indigo-700' : 'text-gray-500 hover:text-gray-700'" class="px-3 py-1 text-xs font-semibold rounded-md transition">Số lượng</button>
                     </div>
                 </div>
@@ -612,7 +616,7 @@ const orderStatusOptions = {
                                 <th class="px-3 py-2.5 text-left">Mã SKU</th>
                                 <th class="px-3 py-2.5 text-right">SL bán</th>
                                 <th class="px-3 py-2.5 text-right">Doanh thu</th>
-                                <th v-if="productRankTab !== 'qty'" class="px-5 py-2.5 text-right">Lợi nhuận</th>
+                                <th v-if="productRankTab !== 'qty' && canViewCost" class="px-5 py-2.5 text-right">Lợi nhuận</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-gray-50">
@@ -624,7 +628,7 @@ const orderStatusOptions = {
                                 <td class="px-3 py-2.5 text-gray-500 text-xs">{{ p.sku }}</td>
                                 <td class="px-3 py-2.5 text-right font-semibold">{{ p.qty }}</td>
                                 <td class="px-3 py-2.5 text-right font-mono text-indigo-600 font-semibold">{{ fmt(p.revenue) }}</td>
-                                <td v-if="productRankTab !== 'qty'" class="px-5 py-2.5 text-right font-mono font-semibold" :class="p.profit >= 0 ? 'text-green-600' : 'text-red-500'">{{ fmt(p.profit) }}</td>
+                                <td v-if="productRankTab !== 'qty' && canViewCost" class="px-5 py-2.5 text-right font-mono font-semibold" :class="p.profit >= 0 ? 'text-green-600' : 'text-red-500'">{{ fmt(p.profit) }}</td>
                             </tr>
                             <tr v-if="!(productRankTab === 'profit' ? topProductsByProfit : topProductsByRevenue)?.length"><td colspan="6" class="px-5 py-6 text-center text-gray-400">Chưa có dữ liệu</td></tr>
                         </tbody>
@@ -717,7 +721,7 @@ const orderStatusOptions = {
                 <div class="px-5 py-4 border-b border-gray-100 flex justify-between items-center">
                     <div>
                         <h2 class="font-bold text-gray-800 text-[15px]">📦 Tồn kho sản phẩm</h2>
-                        <p class="text-xs text-gray-400">Giá trị tồn kho: <span class="font-semibold text-gray-600">{{ fmt(totalStockValue) }}</span></p>
+                        <p v-if="canViewCost" class="text-xs text-gray-400">Giá trị tồn kho: <span class="font-semibold text-gray-600">{{ fmt(totalStockValue) }}</span></p>
                     </div>
                     <div class="flex gap-1 bg-gray-100 rounded-lg p-0.5">
                         <button @click="inventoryFilter = 'all'" :class="inventoryFilter === 'all' ? 'bg-white shadow text-indigo-700' : 'text-gray-500'" class="px-3 py-1 text-xs font-semibold rounded-md transition">
@@ -739,9 +743,9 @@ const orderStatusOptions = {
                                 <th class="px-3 py-2.5 text-left">Sản phẩm</th>
                                 <th class="px-3 py-2.5 text-left">Mã SKU</th>
                                 <th class="px-3 py-2.5 text-right">Tồn kho</th>
-                                <th class="px-3 py-2.5 text-right">Giá vốn</th>
+                                <th v-if="canViewCost" class="px-3 py-2.5 text-right">Giá vốn</th>
                                 <th class="px-3 py-2.5 text-right">Giá bán</th>
-                                <th class="px-5 py-2.5 text-right">Giá trị tồn</th>
+                                <th v-if="canViewCost" class="px-5 py-2.5 text-right">Giá trị tồn</th>
                                 <th class="px-3 py-2.5 text-center">Trạng thái</th>
                             </tr>
                         </thead>
@@ -752,9 +756,9 @@ const orderStatusOptions = {
                                     <td class="px-3 py-2.5 font-medium text-gray-800">{{ p.name }}</td>
                                     <td class="px-3 py-2.5 text-gray-500 text-xs">{{ p.sku }}</td>
                                     <td class="px-3 py-2.5 text-right font-bold" :class="p.alert === 'out' ? 'text-red-600' : p.alert === 'low' ? 'text-yellow-600' : 'text-gray-800'">{{ p.stock }}</td>
-                                    <td class="px-3 py-2.5 text-right text-gray-600 font-mono text-xs">{{ fmt(p.cost_price) }}</td>
+                                    <td v-if="canViewCost" class="px-3 py-2.5 text-right text-gray-600 font-mono text-xs">{{ fmt(p.cost_price) }}</td>
                                     <td class="px-3 py-2.5 text-right text-gray-600 font-mono text-xs">{{ fmt(p.selling_price) }}</td>
-                                    <td class="px-5 py-2.5 text-right font-mono text-xs font-semibold text-gray-700">{{ fmt(p.stock_value) }}</td>
+                                    <td v-if="canViewCost" class="px-5 py-2.5 text-right font-mono text-xs font-semibold text-gray-700">{{ fmt(p.stock_value) }}</td>
                                     <td class="px-3 py-2.5 text-center">
                                         <span v-if="p.alert === 'out'" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700">Hết hàng</span>
                                         <span v-else-if="p.alert === 'low'" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-yellow-100 text-yellow-700">Sắp hết</span>

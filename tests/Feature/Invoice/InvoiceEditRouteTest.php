@@ -20,6 +20,14 @@ class InvoiceEditRouteTest extends TestCase
 {
     use DatabaseTransactions;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // Batch 10 đợt 4: these tests are not about the seller rule (covered by
+        // Security\Batch10SalesControlsTest), so invoices here may omit it.
+        \App\Models\Setting::set('sales_require_seller', false, 'sales_controls', 'boolean');
+    }
+
     private function userWithPermission(array $perms): User
     {
         $name = 'test-user-'.uniqid();
@@ -115,6 +123,7 @@ class InvoiceEditRouteTest extends TestCase
         $invoice = $this->createInvoice($product, $customer, 1, 150000, 150000);
 
         $payload = [
+            'edit_reason' => 'Sửa hóa đơn kiểm thử',
             'customer_id' => $customer->id,
             'subtotal' => 150000,
             'discount' => 0,
@@ -146,6 +155,7 @@ class InvoiceEditRouteTest extends TestCase
         $invoice = $this->createInvoice($product, $customer, 1, 150000, 150000);
 
         $payload = [
+            'edit_reason' => 'Sửa hóa đơn kiểm thử',
             'customer_id' => $customer->id,
             'subtotal' => 150000,
             'discount' => 0,
@@ -294,6 +304,7 @@ class InvoiceEditRouteTest extends TestCase
         $initialStock = $product->stock_quantity; // Should be 8
 
         $payload = [
+            'edit_reason' => 'Sửa hóa đơn kiểm thử',
             'customer_id' => $customer->id,
             'subtotal' => 300000,
             'discount' => 0,
@@ -331,6 +342,7 @@ class InvoiceEditRouteTest extends TestCase
         $this->assertEquals(9, $product->stock_quantity);
 
         $payload = [
+            'edit_reason' => 'Sửa hóa đơn kiểm thử',
             'customer_id' => $customer->id,
             'subtotal' => 300000,
             'discount' => 0,
@@ -418,6 +430,7 @@ class InvoiceEditRouteTest extends TestCase
 
         // Put request to change serial to B
         $payload = [
+            'edit_reason' => 'Sửa hóa đơn kiểm thử',
             'customer_id' => $customer->id,
             'subtotal' => 300000,
             'discount' => 0,

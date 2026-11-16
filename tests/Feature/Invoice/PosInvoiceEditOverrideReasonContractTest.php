@@ -25,6 +25,9 @@ class PosInvoiceEditOverrideReasonContractTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Batch 10 đợt 4: these tests are not about the seller rule (covered by
+        // Security\Batch10SalesControlsTest), so invoices here may omit it.
+        \App\Models\Setting::set('sales_require_seller', false, 'sales_controls', 'boolean');
 
         Setting::set('order_change_time', 24);
         Setting::set('block_edit_cancel_einvoice', false);
@@ -412,6 +415,7 @@ class PosInvoiceEditOverrideReasonContractTest extends TestCase
     private function payload(Invoice $invoice, Product $product, float $price, ?SerialImei $serial = null, ?Carbon $transactionDate = null): array
     {
         $payload = [
+            'edit_reason' => 'Sửa hóa đơn kiểm thử',
             'customer_id' => $invoice->customer_id,
             'subtotal' => $price,
             'discount' => 0,
