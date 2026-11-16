@@ -13,7 +13,7 @@ class SerialProductProjectionAuditTest extends TestCase
 {
     use DatabaseTransactions;
 
-    public function test_dry_run_reports_zero_target_without_mutating_sold_serial_history(): void
+    public function test_dry_run_reports_zero_stock_target_keeping_last_cost_without_mutating_sold_serial_history(): void
     {
         [$product, $soldSerial] = $this->staleSoldOutProduct();
 
@@ -21,13 +21,16 @@ class SerialProductProjectionAuditTest extends TestCase
         $payload = json_decode(Artisan::output(), true, 512, JSON_THROW_ON_ERROR);
         $this->assertSame('DRY_RUN', $payload['result']);
         $this->assertTrue($payload['projection_mismatch']);
-        $this->assertSame(0.0, (float) $payload['target']['cost_price']);
+        $this->assertSame(0, $payload['target']['stock_quantity']);
+        $this->assertSame(0.0, (float) $payload['target']['inventory_total_cost']);
+        // Item 26: sold out keeps the last known cost instead of 0đ.
+        $this->assertSame(9000000.0, (float) $payload['target']['cost_price']);
         $this->assertSame('NO', $payload['historical_cogs_mutation']);
 
         $this->assertSame(9000000.0, (float) $product->fresh()->cost_price);
         $this->assertSame(3500000.0, (float) $soldSerial->fresh()->sold_cost_price);
         $this->assertStringContainsString(
-            'if (inStock.length === 0) return formatCurrency(0)',
+            'if (inStock.length === 0) return formatCurrency(Number(product.cost_price) || 0)',
             file_get_contents(resource_path('js/Pages/Welcome.vue')),
         );
     }
@@ -36,14 +39,14 @@ class SerialProductProjectionAuditTest extends TestCase
     {
         [$product, $soldSerial] = $this->staleSoldOutProduct();
         $before = [
-            'stock_quantity' => 0,
-            'inventory_total_cost' => 0.0,
+            'stock_quantity' => 1,
+            'inventory_total_cost' => 9000000.0,
             'cost_price' => 9000000.0,
         ];
         $target = [
             'stock_quantity' => 0,
             'inventory_total_cost' => 0.0,
-            'cost_price' => 0.0,
+            'cost_price' => 9000000.0,
         ];
         $hash = hash('sha256', json_encode([
             'contract' => 'serial-product-projection-v1',
@@ -63,7 +66,7 @@ class SerialProductProjectionAuditTest extends TestCase
         $product->refresh();
         $this->assertSame(0, (int) $product->stock_quantity);
         $this->assertSame(0.0, (float) $product->inventory_total_cost);
-        $this->assertSame(0.0, (float) $product->cost_price);
+        $this->assertSame(9000000.0, (float) $product->cost_price);
         $this->assertSame('sold', $soldSerial->fresh()->status);
         $this->assertSame(3500000.0, (float) $soldSerial->fresh()->sold_cost_price);
     }
@@ -117,7 +120,8 @@ class SerialProductProjectionAuditTest extends TestCase
         $applied = json_decode(Artisan::output(), true, 512, JSON_THROW_ON_ERROR);
 
         $this->assertSame('APPLIED', $applied['result']);
-        $this->assertSame(0.0, (float) $staleProduct->fresh()->cost_price);
+        $this->assertSame(0, (int) $staleProduct->fresh()->stock_quantity);
+        $this->assertSame(9000000.0, (float) $staleProduct->fresh()->cost_price);
         $this->assertSame(0.0, (float) $consistentProduct->fresh()->cost_price);
         $this->assertSame(999.0, (float) $inStockProduct->fresh()->cost_price);
         $this->assertSame('ACTIVITY_LOG_BEFORE_STATE', $applied['recovery_reference']);
@@ -131,8 +135,8 @@ class SerialProductProjectionAuditTest extends TestCase
             'name' => 'Synthetic sold-out serial product',
             'cost_price' => 9000000,
             'retail_price' => 12000000,
-            'stock_quantity' => 0,
-            'inventory_total_cost' => 0,
+            'stock_quantity' => 1,
+            'inventory_total_cost' => 9000000,
             'is_active' => true,
             'has_serial' => true,
             'category_id' => $category->id,

@@ -222,7 +222,9 @@ class Product extends Model
 
         $count = (int) ($aggregate->quantity ?? 0);
         $totalCost = round((float) ($aggregate->total_cost ?? 0), 2);
-        $averageCost = $count > 0 ? round($totalCost / $count, 2) : 0.0;
+        // Item 26: hết tồn thì giữ giá vốn cuối cùng (không về 0đ); lần nhập
+        // sau sẽ tính lại BQ từ các serial còn trong kho.
+        $averageCost = $count > 0 ? round($totalCost / $count, 2) : round((float) $this->cost_price, 2);
 
         if (
             (int) $this->stock_quantity !== $count

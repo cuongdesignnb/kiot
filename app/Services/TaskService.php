@@ -23,6 +23,10 @@ class TaskService
      */
     public function createTask(array $data): Task
     {
+        if (empty($data['deadline'])) {
+            $data['deadline'] = now()->addDays(Task::DEFAULT_DEADLINE_DAYS)->toDateString();
+        }
+
         return DB::transaction(function () use ($data) {
             $type = $data['type'] ?? Task::TYPE_GENERAL;
 

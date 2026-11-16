@@ -3,6 +3,10 @@ import { ref, computed } from "vue";
 import { Head } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import axios from "axios";
+import { dateInputAfterDays } from "@/utils/dateTime";
+
+// Hạn mặc định của công việc: ngày tạo + 10 ngày (khớp Task::DEFAULT_DEADLINE_DAYS).
+const DEFAULT_TASK_DEADLINE_DAYS = 10;
 
 const tasks = ref([]);
 const loading = ref(true);
@@ -18,7 +22,7 @@ const createForm = ref({
     description: "",
     category_id: null,
     priority: "normal",
-    deadline: "",
+    deadline: dateInputAfterDays(DEFAULT_TASK_DEADLINE_DAYS),
     notes: "",
 });
 
@@ -102,7 +106,7 @@ const openCreateModal = async () => {
         description: "",
         category_id: null,
         priority: "normal",
-        deadline: "",
+        deadline: dateInputAfterDays(DEFAULT_TASK_DEADLINE_DAYS),
         notes: "",
     };
     showCreateModal.value = true;

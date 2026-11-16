@@ -4,6 +4,7 @@ namespace App\Services\Integrations\InventoryApi;
 
 use App\Models\ExternalInventoryReservation;
 use App\Models\Product;
+use App\Models\Purchase;
 use App\Models\SerialImei;
 use App\Services\Integrations\PcWebsite\PcProductAvailabilityService;
 use App\Support\Inventory\SerialReadiness;
@@ -74,7 +75,8 @@ class InventoryApiQueryService
             );
         SerialReadiness::addProductCountSelects($query);
 
-        $paginator = $query->orderBy('products.updated_at')->orderBy('products.id')
+        $this->addSyncKey($query, 'products');
+        $paginator = $query->orderBy('sync_updated_at')->orderBy('products.id')
             ->cursorPaginate($limit, ['*'], 'cursor', $this->cursor($filters));
 
         return [
@@ -95,8 +97,14 @@ class InventoryApiQueryService
         $query = SerialImei::query()
             ->select([
                 'serial_imeis.id', 'serial_imeis.product_id', 'serial_imeis.serial_number',
-                'serial_imeis.status', 'serial_imeis.repair_status', 'serial_imeis.updated_at',
+                'serial_imeis.status', 'serial_imeis.repair_status', 'serial_imeis.created_at', 'serial_imeis.updated_at',
             ])
+            // Only the import date of the linked purchase (phiếu nhập) is
+            // exposed, never the purchase id/code.
+            ->selectSub(
+                Purchase::query()->select('purchase_date')->whereColumn('purchases.id', 'serial_imeis.purchase_id')->limit(1),
+                'imported_at'
+            )
             ->with(['product' => fn ($product) => $product->withTrashed()->select(['id', 'sku', 'name', 'deleted_at'])]);
 
         if ($status !== 'all') {
@@ -115,7 +123,8 @@ class InventoryApiQueryService
             $query->whereIn('serial_imeis.product_id', Product::withTrashed()->select('id')->where('sku', $sku));
         }
 
-        $paginator = $query->orderBy('serial_imeis.updated_at')->orderBy('serial_imeis.id')
+        $this->addSyncKey($query, 'serial_imeis');
+        $paginator = $query->orderBy('sync_updated_at')->orderBy('serial_imeis.id')
             ->cursorPaginate($limit, ['*'], 'cursor', $this->cursor($filters));
 
         return [
@@ -168,8 +177,21 @@ class InventoryApiQueryService
             'repair_status' => $serial->repair_status,
             'repair_status_label' => $serial->repair_status_label,
             'readiness' => SerialReadiness::readinessOf($serial->status, $serial->repair_status),
+            'created_at' => $this->time($serial->created_at),
+            'imported_at' => $serial->imported_at ? $this->time(Carbon::parse($serial->imported_at)) : null,
             'updated_at' => $this->time($serial->updated_at),
         ];
+    }
+
+    /**
+     * Non-null sort key for keyset pagination. Rows with a NULL updated_at
+     * (raw inserts/legacy imports) used to end up in the cursor as null, and
+     * the next page then failed with "Illegal operator and value combination"
+     * (HTTP 500), so the partner saw missing pages / an empty result.
+     */
+    private function addSyncKey(Builder $query, string $table): void
+    {
+        $query->selectRaw("COALESCE({$table}.updated_at, {$table}.created_at, '1970-01-01 00:00:00') as sync_updated_at");
     }
 
     private function meta(?string $nextCursor, bool $hasMore, int $limit, ?CarbonInterface $since, CarbonInterface $watermark): array

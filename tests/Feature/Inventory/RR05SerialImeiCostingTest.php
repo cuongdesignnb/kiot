@@ -14,8 +14,9 @@ use Tests\TestCase;
  * RR-05 — Phần Serial/IMEI:
  *
  * Quy ước: giá vốn của hàng serial là giá vốn đích danh của serial. Projection
- * products chỉ là tổng hợp các serial còn in_stock; không được giữ BQ cũ sau
- * khi hết serial vì giá đó có thể bị dùng nhầm cho một serial ở lô khác.
+ * products là tổng hợp các serial còn in_stock (số lượng, tổng giá trị, BQ).
+ * Item 26: khi hết serial in_stock, số lượng/tổng giá trị về 0 nhưng giá vốn
+ * giữ giá cuối cùng (không hiển thị 0đ); lần nhập sau tính lại từ serial.
  */
 class RR05SerialImeiCostingTest extends TestCase
 {
@@ -54,13 +55,13 @@ class RR05SerialImeiCostingTest extends TestCase
     }
 
     /* ═══════════════════════════════════════════════════════════════════════
-     *  TC-RR05-S2: Bán hết serial — projection phải về 0
+     *  TC-RR05-S2: Bán hết serial — số lượng về 0, giữ giá vốn cuối
      *
      *  Mô phỏng nhập 2 serial qua applyPurchase với cost khác nhau:
      *    - Serial A cost=5,000,000
      *    - Serial B cost=7,000,000
      *  → Projection = 6,000,000
-     *  Sau đó bán cả 2 → không còn serial in_stock nên projection phải về 0.
+     *  Sau đó bán cả 2 → không còn serial in_stock nên số lượng/tổng giá trị về 0, giá vốn giữ 6,000,000.
      * ═══════════════════════════════════════════════════════════════════════ */
     public function test_selling_all_serials_should_clear_product_projection(): void
     {
@@ -108,12 +109,12 @@ class RR05SerialImeiCostingTest extends TestCase
             'Hết serial in_stock → stock_quantity = 0');
         $this->assertSame(0.0, (float) $product->inventory_total_cost,
             'Hết tồn → total_cost = 0');
-        $this->assertSame(0.0, (float) $product->cost_price,
-            'Bán hết serial: không còn serial in_stock nên BQ projection phải bằng 0');
+        $this->assertSame(6000000.0, (float) $product->cost_price,
+            'Bán hết serial: giữ giá vốn cuối cùng, không về 0đ');
     }
 
     /* ═══════════════════════════════════════════════════════════════════════
-     *  TC-RR05-S3: Trả NCC hết serial — projection phải về 0
+     *  TC-RR05-S3: Trả NCC hết serial — số lượng về 0, giữ giá vốn cuối
      *
      *  Mô phỏng nhập 2 serial rồi trả NCC cả 2.
      *  Kỳ vọng: stock=0, total=0, cost_price=0 vì không còn serial in_stock.
@@ -158,14 +159,14 @@ class RR05SerialImeiCostingTest extends TestCase
             'Hết serial in_stock → stock_quantity = 0');
         $this->assertSame(0.0, (float) $product->inventory_total_cost,
             'Hết tồn → total_cost = 0');
-        $this->assertSame(0.0, (float) $product->cost_price,
-            'Trả NCC hết serial: không còn serial in_stock nên BQ projection phải bằng 0');
+        $this->assertSame(6000000.0, (float) $product->cost_price,
+            'Trả NCC hết serial: giữ giá vốn cuối cùng, không về 0đ');
     }
 
     /* ═══════════════════════════════════════════════════════════════════════
      *  TC-RR05-S4: recomputeFromSerials luôn đồng bộ đầy đủ projection
      * ═══════════════════════════════════════════════════════════════════════ */
-    public function test_recompute_from_serials_clears_stale_cost_without_stock(): void
+    public function test_recompute_from_serials_keeps_last_cost_without_stock_and_uses_serials_on_next_import(): void
     {
         $product = $this->makeSerialProduct();
 
@@ -179,7 +180,20 @@ class RR05SerialImeiCostingTest extends TestCase
         $product->refresh();
 
         $this->assertSame(0, (int) $product->stock_quantity);
-        $this->assertSame(0.0, (float) $product->cost_price,
-            'recomputeFromSerials phải xóa BQ cũ khi không còn serial in_stock');
+        $this->assertSame(6000000.0, (float) $product->cost_price,
+            'recomputeFromSerials giữ giá vốn cuối cùng khi không còn serial in_stock');
+
+        // Lần nhập sau: BQ tính lại từ serial còn trong kho, không trộn giá cũ.
+        SerialImei::create([
+            'product_id' => $product->id,
+            'serial_number' => 'SN-NEXT-'.uniqid(),
+            'status' => 'in_stock',
+            'cost_price' => 8000000,
+            'original_cost' => 8000000,
+        ]);
+        $product->refresh()->recomputeFromSerials();
+        $product->refresh();
+        $this->assertSame(1, (int) $product->stock_quantity);
+        $this->assertSame(8000000.0, (float) $product->cost_price);
     }
 }
