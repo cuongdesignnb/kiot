@@ -16,6 +16,13 @@ export function pad2(n) {
     return String(n).padStart(2, '0');
 }
 
+/** yyyy-MM-dd of today + `days` (local time). Used e.g. for the default task deadline. */
+export function dateInputAfterDays(days) {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
 export function nowDatetimeLocal() {
     const d = new Date();
     return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;

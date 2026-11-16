@@ -126,6 +126,8 @@ GET /api/public/v1/inventory/serials?limit=100&readiness=ready
       "repair_status": "ready",
       "repair_status_label": "Sẵn bán",
       "readiness": "ready",
+      "created_at": "2026-10-28T10:05:11+07:00",
+      "imported_at": "2026-10-28T09:30:00+07:00",
       "updated_at": "2026-11-05T09:12:40+07:00"
     }
   ],
@@ -138,6 +140,8 @@ GET /api/public/v1/inventory/serials?limit=100&readiness=ready
 | `status` | Trạng thái kho: `in_stock` (trong kho), `sold` (đã bán), `returning`, `warranty`, `defective`, `returned`, `dismantled` (đã tháo linh kiện) |
 | `repair_status` | `ready` (Sẵn bán), `not_started` (Chưa làm), `repairing` (Đang xử lý), hoặc `null` (không qua sửa chữa = sẵn bán) |
 | `readiness` | Kết luận cuối: `ready` (trong kho và sẵn bán), `repairing` (trong kho nhưng chưa sửa xong), `not_in_stock` (không còn trong kho) |
+| `created_at` | Thời điểm serial được tạo trong hệ thống (ISO 8601) |
+| `imported_at` | Ngày nhập hàng của phiếu nhập chứa serial (ISO 8601); `null` nếu serial không gắn phiếu nhập (tạo tay, tồn đầu kỳ...) |
 
 KIOT hiện quản lý một kho chung nên serial không có trường kho/chi nhánh.
 

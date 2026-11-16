@@ -1628,7 +1628,7 @@ const createdDateRange = computed({
 
             <!-- Summary Bar -->
             <div class="flex items-center gap-6 px-4 py-2 bg-blue-50 border-b border-blue-200 text-sm">
-                <div>Tổng nợ phải thu: <span class="font-bold text-red-600">{{ formatCurrency(summary?.total_debt || 0) }}</span></div>
+                <div title="Tổng nợ phải thu ròng: đã bù trừ công nợ phải trả NCC và tiền ứng trước của cùng đối tác. Tổng quan hiển thị số gộp chưa bù trừ nên có thể lớn hơn.">Tổng nợ phải thu <span class="text-gray-500">(đã bù trừ công nợ NCC/ứng trước)</span>: <span class="font-bold text-red-600">{{ formatCurrency(summary?.total_debt || 0) }}</span></div>
                 <div v-if="summary?.total_store_owes > 0">Tổng mình phải trả: <span class="font-bold text-green-600">{{ formatCurrency(summary?.total_store_owes || 0) }}</span></div>
                 <div>Tổng bán: <span class="font-bold text-gray-800">{{ formatCurrency(summary?.total_spent || 0) }}</span></div>
                 <div>Tổng bán trừ trả: <span class="font-bold text-gray-800">{{ formatCurrency((summary?.total_spent || 0) - (summary?.total_returns || 0)) }}</span></div>

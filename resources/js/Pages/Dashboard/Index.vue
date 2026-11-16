@@ -343,8 +343,8 @@ const orderStatusOptions = {
                    <div class="text-xs text-gray-500 mt-0.5">Giá trị: <span class="font-semibold text-gray-700">{{ fmt(totalStockValue) }}</span></div>
                    <div v-if="outOfStockCount > 0" class="text-xs text-red-500 mt-0.5">⚠ {{ outOfStockCount }} hết hàng</div>
                </div>
-               <div class="border-t border-gray-100 pt-2">
-                   <div class="text-xs text-gray-500 mb-0.5">Nợ phải thu</div>
+               <div class="border-t border-gray-100 pt-2" title="Tổng nợ phải thu gộp của khách, chưa bù trừ với công nợ NCC/tiền ứng trước của cùng đối tác. Trang Khách hàng hiển thị số đã bù trừ nên có thể nhỏ hơn.">
+                   <div class="text-xs text-gray-500 mb-0.5">Nợ phải thu <span class="text-gray-400">(chưa bù trừ)</span></div>
                    <div class="font-bold text-orange-600 font-mono">{{ fmt(totalCustomerDebt) }}</div>
                </div>
                <div class="border-t border-gray-100 pt-2">

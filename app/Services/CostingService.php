@@ -24,10 +24,10 @@ class CostingService
     /**
      * Phân bổ phí nhập (other_costs_total) vào từng dòng theo tỉ lệ subtotal.
      *
-     * @param array $items Mỗi item phải có 'quantity', 'price', 'discount'
-     * @param float $otherCostsTotal Tổng chi phí nhập khác cần phân bổ
+     * @param  array  $items  Mỗi item phải có 'quantity', 'price', 'discount'
+     * @param  float  $otherCostsTotal  Tổng chi phí nhập khác cần phân bổ
      * @return array<int, array{subtotal: float, allocated_fee: float, unit_cost_allocated: float}>
-     *         Trả về theo cùng thứ tự index của $items.
+     *                                                                                              Trả về theo cùng thứ tự index của $items.
      */
     public static function allocateOtherCosts(array $items, float $otherCostsTotal): array
     {
@@ -77,7 +77,7 @@ class CostingService
      */
     public static function recalcOnIn(Product $product, float $qtyIn, float $unitCost): void
     {
-        if (!self::isAverageMethod() || $product->has_serial) {
+        if (! self::isAverageMethod() || $product->has_serial) {
             return;
         }
 
@@ -99,7 +99,7 @@ class CostingService
      */
     public static function reverseOnIn(Product $product, float $qtyOut, float $unitCost): void
     {
-        if (!self::isAverageMethod() || $product->has_serial) {
+        if (! self::isAverageMethod() || $product->has_serial) {
             return;
         }
 
@@ -110,10 +110,9 @@ class CostingService
         if ($newQty > 0) {
             $newValue = max(0.0, $oldQty * $oldCost - $qtyOut * $unitCost);
             $product->cost_price = round($newValue / $newQty, 2);
-        } elseif ($newQty <= 0) {
-            // Hết hàng: reset cost = 0 để lô nhập sau set lại.
-            $product->cost_price = 0;
         }
+        // Hết hàng: giữ giá vốn cuối cùng (last known cost), không reset về 0.
+        // Lô nhập sau tính BQ với old_qty = 0 nên tự lấy giá nhập mới.
     }
 
     /**
@@ -125,7 +124,7 @@ class CostingService
      */
     public static function reverseOnOut(Product $product, float $qtyBack, float $unitCost): void
     {
-        if (!self::isAverageMethod() || $product->has_serial) {
+        if (! self::isAverageMethod() || $product->has_serial) {
             return;
         }
 

@@ -52,31 +52,34 @@ class Task extends Model
 
     protected $casts = [
         'original_cost' => 'decimal:0',
-        'parts_cost'    => 'decimal:0',
-        'total_cost'    => 'decimal:0',
-        'assigned_at'   => 'datetime',
-        'completed_at'  => 'datetime',
-        'cancelled_at'  => 'datetime',
-        'deadline'      => 'date',
-        'progress'      => 'integer',
+        'parts_cost' => 'decimal:0',
+        'total_cost' => 'decimal:0',
+        'assigned_at' => 'datetime',
+        'completed_at' => 'datetime',
+        'cancelled_at' => 'datetime',
+        'deadline' => 'date',
+        'progress' => 'integer',
         // External repair casts
-        'external'      => 'boolean',
-        'received_at'   => 'datetime',
-        'returned_at'   => 'datetime',
-        'labor_fee'     => 'decimal:0',
-        'parts_total'   => 'decimal:0',
-        'total_amount'  => 'decimal:0',
-        'paid_amount'   => 'decimal:0',
-        'debt_amount'   => 'decimal:0',
+        'external' => 'boolean',
+        'received_at' => 'datetime',
+        'returned_at' => 'datetime',
+        'labor_fee' => 'decimal:0',
+        'parts_total' => 'decimal:0',
+        'total_amount' => 'decimal:0',
+        'paid_amount' => 'decimal:0',
+        'debt_amount' => 'decimal:0',
         'warranty_covered_amount' => 'decimal:0',
         'customer_payable_amount' => 'decimal:0',
     ];
 
     // ── Warranty policy constants (Step 23.8D) ──
-    const WARRANTY_POLICY_NONE      = 'none';
+    const WARRANTY_POLICY_NONE = 'none';
+
     const WARRANTY_POLICY_FREE_LABOR = 'free_labor';
+
     const WARRANTY_POLICY_FREE_PARTS = 'free_parts';
-    const WARRANTY_POLICY_FULL_FREE  = 'full_free';
+
+    const WARRANTY_POLICY_FULL_FREE = 'full_free';
 
     const WARRANTY_POLICIES = [
         self::WARRANTY_POLICY_NONE,
@@ -85,33 +88,43 @@ class Task extends Model
         self::WARRANTY_POLICY_FULL_FREE,
     ];
 
+    // Hạn mặc định khi tạo công việc không nhập hạn: ngày tạo + 10 ngày.
+    const DEFAULT_DEADLINE_DAYS = 10;
+
     // ── Type constants ──
     const TYPE_GENERAL = 'general';
-    const TYPE_REPAIR  = 'repair';
+
+    const TYPE_REPAIR = 'repair';
 
     // ── Status constants ──
-    const STATUS_PENDING     = 'pending';
+    const STATUS_PENDING = 'pending';
+
     const STATUS_IN_PROGRESS = 'in_progress';
-    const STATUS_COMPLETED   = 'completed';
-    const STATUS_CANCELLED   = 'cancelled';
+
+    const STATUS_COMPLETED = 'completed';
+
+    const STATUS_CANCELLED = 'cancelled';
 
     const STATUS_MAP = [
-        self::STATUS_PENDING     => 'Chờ xử lý',
+        self::STATUS_PENDING => 'Chờ xử lý',
         self::STATUS_IN_PROGRESS => 'Đang thực hiện',
-        self::STATUS_COMPLETED   => 'Hoàn thành',
-        self::STATUS_CANCELLED   => 'Đã hủy',
+        self::STATUS_COMPLETED => 'Hoàn thành',
+        self::STATUS_CANCELLED => 'Đã hủy',
     ];
 
     // ── Priority constants ──
-    const PRIORITY_LOW    = 'low';
+    const PRIORITY_LOW = 'low';
+
     const PRIORITY_NORMAL = 'normal';
-    const PRIORITY_HIGH   = 'high';
+
+    const PRIORITY_HIGH = 'high';
+
     const PRIORITY_URGENT = 'urgent';
 
     const PRIORITY_MAP = [
-        self::PRIORITY_LOW    => 'Thấp',
+        self::PRIORITY_LOW => 'Thấp',
         self::PRIORITY_NORMAL => 'Bình thường',
-        self::PRIORITY_HIGH   => 'Cao',
+        self::PRIORITY_HIGH => 'Cao',
         self::PRIORITY_URGENT => 'Khẩn cấp',
     ];
 
@@ -233,6 +246,7 @@ class Task extends Model
         if ($last && preg_match("/{$prefix}-(\d+)/", $last, $m)) {
             $num = (int) $m[1] + 1;
         }
-        return $prefix . '-' . str_pad($num, 4, '0', STR_PAD_LEFT);
+
+        return $prefix.'-'.str_pad($num, 4, '0', STR_PAD_LEFT);
     }
 }

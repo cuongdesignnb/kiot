@@ -28,6 +28,42 @@ use Illuminate\Support\Facades\Schema;
 class SellerResolver
 {
     /**
+     * Report-level staff aliases (source seller key => target seller key).
+     * Empty unless enabled through forStaffReports().
+     *
+     * @var array<string, string>
+     */
+    private array $aliases = [];
+
+    /**
+     * Resolver for sales-by-staff reports: documents of an aliased account
+     * (config reports.staff_aliases) are attributed to the target staff.
+     * Display only — no document is modified.
+     */
+    public static function forStaffReports(): self
+    {
+        $resolver = new self;
+        $resolver->aliases = (new StaffAliases)->sellerKeyMap();
+
+        return $resolver;
+    }
+
+    /**
+     * Seller keys that are folded into another staff in this resolver.
+     *
+     * @return array<int, string>
+     */
+    public function aliasedSellerKeys(): array
+    {
+        return array_keys($this->aliases);
+    }
+
+    private function alias(string $key): string
+    {
+        return $this->aliases[$key] ?? $key;
+    }
+
+    /**
      * Resolve the canonical seller display for a source invoice.
      * Return creator snapshots are intentionally not consulted.
      */
@@ -97,12 +133,12 @@ class SellerResolver
 
         $map = [];
         foreach ($invoices as $inv) {
-            $map[$inv->id] = $this->resolveKey(
+            $map[$inv->id] = $this->alias($this->resolveKey(
                 $inv->created_by,
                 $inv->seller_name,
                 $employeeIdSet,
                 $employeeBySellerName
-            );
+            ));
         }
 
         return $map;
@@ -146,12 +182,12 @@ class SellerResolver
         foreach ($returns as $return) {
             $overrideEmployeeId = $return->sales_attribution_employee_id;
             if ($overrideEmployeeId !== null && isset($overrideEmployeeNames[$overrideEmployeeId])) {
-                $map[$return->id] = "employee:{$overrideEmployeeId}";
+                $map[$return->id] = $this->alias("employee:{$overrideEmployeeId}");
 
                 continue;
             }
             if (filled($return->sales_attribution_name)) {
-                $map[$return->id] = "snapshot:{$return->sales_attribution_name}";
+                $map[$return->id] = $this->alias("snapshot:{$return->sales_attribution_name}");
 
                 continue;
             }
@@ -709,6 +745,23 @@ class SellerResolver
     {
         $value = (string) $sellerKeyParam;
 
+        // Staff aliases: filtering by the target staff also includes the
+        // documents of every account aliased to it.
+        $sources = array_keys($this->aliases, $value, true);
+        if ($sources !== []) {
+            return $invoiceQuery->where(function ($q) use ($value, $sources) {
+                $q->where(fn ($own) => $this->applySellerFilter($own, $value));
+                foreach ($sources as $source) {
+                    $q->orWhere(fn ($aliased) => $this->applySellerFilter($aliased, $source));
+                }
+            });
+        }
+
+        return $this->applySellerFilter($invoiceQuery, $value);
+    }
+
+    private function applySellerFilter($invoiceQuery, string $value)
+    {
         // HOTFIX 24.32 — admin_user:<id> → super admin virtual seller.
         // Maps to invoices with NULL created_by + seller_name = user.name
         // (the snapshot we write when this option is chosen). Falsy guard:

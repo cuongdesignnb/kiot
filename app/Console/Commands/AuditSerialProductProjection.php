@@ -45,7 +45,7 @@ class AuditSerialProductProjection extends Command
         }
 
         $before = $this->projection($product);
-        $target = $this->serialProjection((int) $product->id);
+        $target = $this->serialProjection($product);
         $planHash = hash('sha256', json_encode([
             'contract' => 'serial-product-projection-v1',
             'product_id' => (int) $product->id,
@@ -80,7 +80,7 @@ class AuditSerialProductProjection extends Command
         $result = DB::transaction(function () use ($product, $before, $target, $planHash, $recoveryReference, $needsChange): array {
             $locked = Product::query()->lockForUpdate()->findOrFail($product->id);
             SerialImei::query()->where('product_id', $locked->id)->lockForUpdate()->get(['id']);
-            if ($this->projection($locked) !== $before || $this->serialProjection((int) $locked->id) !== $target) {
+            if ($this->projection($locked) !== $before || $this->serialProjection($locked) !== $target) {
                 throw new \RuntimeException('Projection source changed after dry-run; run dry-run again.');
             }
 
@@ -118,7 +118,7 @@ class AuditSerialProductProjection extends Command
             ->orderBy('id')
             ->get()
             ->reject(fn (Product $product) => $product->isService())
-            ->filter(fn (Product $product) => $this->serialProjection((int) $product->id)['stock_quantity'] === 0)
+            ->filter(fn (Product $product) => $this->serialProjection($product)['stock_quantity'] === 0)
             ->values();
         $rows = $products
             ->map(fn (Product $product) => $this->projectionRow($product))
@@ -198,7 +198,7 @@ class AuditSerialProductProjection extends Command
             'product_id' => (int) $product->id,
             'sku' => $product->sku,
             'before' => $this->projection($product),
-            'target' => $this->serialProjection((int) $product->id),
+            'target' => $this->serialProjection($product),
         ];
     }
 
@@ -211,9 +211,9 @@ class AuditSerialProductProjection extends Command
         ];
     }
 
-    private function serialProjection(int $productId): array
+    private function serialProjection(Product $product): array
     {
-        $aggregate = SerialImei::query()->where('product_id', $productId)->where('status', 'in_stock')
+        $aggregate = SerialImei::query()->where('product_id', $product->id)->where('status', 'in_stock')
             ->selectRaw('COUNT(*) quantity, COALESCE(SUM(cost_price), 0) total_cost')->first();
         $quantity = (int) ($aggregate->quantity ?? 0);
         $totalCost = round((float) ($aggregate->total_cost ?? 0), 2);
@@ -221,7 +221,8 @@ class AuditSerialProductProjection extends Command
         return [
             'stock_quantity' => $quantity,
             'inventory_total_cost' => $totalCost,
-            'cost_price' => $quantity > 0 ? round($totalCost / $quantity, 2) : 0.0,
+            // Sold out: keep the last known cost (same rule as Product::recomputeFromSerials).
+            'cost_price' => $quantity > 0 ? round($totalCost / $quantity, 2) : round((float) $product->cost_price, 2),
         ];
     }
 

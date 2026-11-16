@@ -6,6 +6,10 @@ import AppLayout from "@/Layouts/AppLayout.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
 import DateTimePicker from "@/Components/DateTimePicker.vue";
 import axios from "axios";
+import { dateInputAfterDays } from "@/utils/dateTime";
+
+// Hạn mặc định của công việc: ngày tạo + 10 ngày (khớp Task::DEFAULT_DEADLINE_DAYS).
+const DEFAULT_TASK_DEADLINE_DAYS = 10;
 
 const props = defineProps({
     branches: Array,
@@ -42,7 +46,7 @@ const createForm = ref({
     category_id: null,
     priority: "normal",
     branch_id: null,
-    deadline: "",
+    deadline: dateInputAfterDays(DEFAULT_TASK_DEADLINE_DAYS),
     notes: "",
     employee_ids: [],
     // External repair (Step 23.8F)
@@ -207,7 +211,7 @@ const openCreateModal = (type = "general") => {
         category_id: null,
         priority: "normal",
         branch_id: null,
-        deadline: "",
+        deadline: dateInputAfterDays(DEFAULT_TASK_DEADLINE_DAYS),
         notes: "",
         employee_ids: [],
         customer_id: null,

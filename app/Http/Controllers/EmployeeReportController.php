@@ -26,6 +26,10 @@ class EmployeeReportController extends Controller
 
     public function index(Request $request)
     {
+        // Resolved per request: staff aliases (config reports.staff_aliases)
+        // depend on current users/employees.
+        $this->sellers = SellerResolver::forStaffReports();
+
         $concern = $request->input('concern', 'sales');       // sales | profit | items
         $period = $request->input('period', 'this_month');
         $dateFrom = $request->input('date_from');
@@ -96,7 +100,11 @@ class EmployeeReportController extends Controller
 
         // Filter options (dynamic)
         $branches = Branch::orderBy('name')->get(['id', 'name']);
-        $employees = $this->sellers->buildSellerFilterOptions();
+        $aliased = $this->sellers->aliasedSellerKeys();
+        $employees = array_values(array_filter(
+            $this->sellers->buildSellerFilterOptions(),
+            fn (array $option) => ! in_array($option['key'] ?? $option['id'] ?? null, $aliased, true)
+        ));
         $salesChannels = Invoice::whereNotNull('sales_channel')
             ->distinct()->pluck('sales_channel')->filter()->values();
         $branchName = $branchId ? (Branch::find($branchId)?->name ?? 'N/A') : 'Tất cả chi nhánh';

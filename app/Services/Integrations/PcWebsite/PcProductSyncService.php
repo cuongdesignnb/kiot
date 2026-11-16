@@ -45,7 +45,11 @@ class PcProductSyncService
             $query->where('products.is_active', true)->where('products.sell_directly', true);
         }
 
-        $query->orderBy('products.updated_at')->orderBy('products.id');
+        // Non-null sort key: a product with NULL updated_at (raw insert / legacy
+        // import) used to put null into the cursor and the next page failed
+        // with HTTP 500 ("Illegal operator and value combination").
+        $query->selectRaw("COALESCE(products.updated_at, products.created_at, '1970-01-01 00:00:00') as sync_updated_at")
+            ->orderBy('sync_updated_at')->orderBy('products.id');
         /** @var CursorPaginator $paginator */
         $paginator = $query->cursorPaginate($limit, ['*'], 'cursor', PcSyncCursor::decode($filters['cursor'] ?? null));
 

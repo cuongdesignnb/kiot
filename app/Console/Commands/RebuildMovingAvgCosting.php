@@ -150,7 +150,8 @@ class RebuildMovingAvgCosting extends Command
 
         return (int) $product->stock_quantity !== $aggregate['qty']
             || round((float) $product->inventory_total_cost, 0) !== round($aggregate['total'], 0)
-            || round((float) $product->cost_price, 0) !== round($aggregate['avg'], 0);
+            // Sold out keeps the last known cost, so cost is only compared while in stock.
+            || ($aggregate['qty'] > 0 && round((float) $product->cost_price, 0) !== round($aggregate['avg'], 0));
     }
 
     /**
@@ -300,6 +301,7 @@ class RebuildMovingAvgCosting extends Command
         $total = 0.0;
         $invoiceCogsMap = [];
         $soldSerials = [];
+        $lastKnownAvg = 0.0;
 
         $invoiceItemDiffs = [];
         $invoiceItemSerialDiffs = [];
@@ -393,9 +395,14 @@ class RebuildMovingAvgCosting extends Command
                     $total = max(0, $total - $event['cost']);
                     break;
             }
+
+            if ($qty > 0) {
+                $lastKnownAvg = round($total / $qty, 2);
+            }
         }
 
-        $timelineAvg = $qty > 0 ? round($total / $qty, 2) : 0.0;
+        // Sold out: keep the last known average instead of resetting to 0.
+        $timelineAvg = $qty > 0 ? round($total / $qty, 2) : $lastKnownAvg;
         $finalQty = $qty;
         $finalTotal = $total;
         $finalAvg = $timelineAvg;
@@ -404,7 +411,7 @@ class RebuildMovingAvgCosting extends Command
             $serialAggregate = $this->serialStockAggregate($product->id);
             $finalQty = $serialAggregate['qty'];
             $finalTotal = $serialAggregate['total'];
-            $finalAvg = $serialAggregate['avg'];
+            $finalAvg = $serialAggregate['qty'] > 0 ? $serialAggregate['avg'] : $timelineAvg;
 
             if ($qty !== $finalQty || round($total, 0) !== round($finalTotal, 0)) {
                 $warnings[] = sprintf(

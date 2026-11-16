@@ -132,6 +132,33 @@ class PcProductSyncTest extends PcIntegrationTestCase
         $this->assertCount(3, array_unique($actualIds));
     }
 
+    public function test_full_sync_pages_past_products_without_updated_at(): void
+    {
+        \App\Models\Product::withTrashed()->update(['updated_at' => now()->subDays(2)]);
+        $skus = collect(range(1, 4))->map(fn (int $number) => $this->makeProduct(['sku' => 'PC-NULL-TS-'.$number])->sku);
+        \Illuminate\Support\Facades\DB::table('products')->whereIn('sku', $skus->take(3)->all())->update(['updated_at' => null]);
+
+        $basePath = '/api/integrations/v1/pc/products';
+        $seen = [];
+        $cursor = null;
+        for ($page = 0; $page < 500; $page++) {
+            $response = $this->getJson(
+                $basePath.'?limit=2&include_inactive=1'.($cursor ? '&cursor='.urlencode($cursor) : ''),
+                $this->signedHeaders('GET', $basePath),
+            );
+            $response->assertOk();
+            $seen = [...$seen, ...collect($response->json('data'))->pluck('sku')->all()];
+            if (! $response->json('meta.has_more')) {
+                break;
+            }
+            $cursor = (string) $response->json('meta.next_cursor');
+        }
+
+        foreach ($skus as $sku) {
+            $this->assertSame(1, collect($seen)->filter(fn ($value) => $value === $sku)->count(), "SKU {$sku} not returned exactly once");
+        }
+    }
+
     public function test_detail_accepts_url_encoded_exact_case_sku_and_rejects_wrong_case(): void
     {
         $product = $this->makeProduct(['sku' => 'PC+Encoded SKU']);

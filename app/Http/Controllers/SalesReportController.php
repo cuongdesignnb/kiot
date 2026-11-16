@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Models\Branch;
 use App\Models\Employee;
 use App\Models\Invoice;
-use App\Models\InvoiceItem;
 use App\Models\OrderReturn;
 use App\Support\Customers\CustomerGroupSnapshot;
 use App\Support\Reports\SellerResolver;
@@ -21,9 +20,9 @@ class SalesReportController extends Controller
     {
         // ── Filters ──
         $concern = $request->input('concern', 'time');       // time|profit|discount|returns|employee
-        $period  = $request->input('period', 'this_month');  // this_week|this_month|this_year|last_year|custom
+        $period = $request->input('period', 'this_month');  // this_week|this_month|this_year|last_year|custom
         $dateFrom = $request->input('date_from');
-        $dateTo   = $request->input('date_to');
+        $dateTo = $request->input('date_to');
         $branchId = $request->input('branch_id');
         $salesChannel = $request->input('sales_channel');
         $customerGroup = $request->input('customer_group');
@@ -35,13 +34,19 @@ class SalesReportController extends Controller
         // ── Base invoice query ──
         $invoiceQuery = Invoice::whereBetween('created_at', [$startDate, $endDate])
             ->where('status', '!=', 'Đã hủy');
-        if ($branchId) $invoiceQuery->where('branch_id', $branchId);
-        if ($salesChannel) $invoiceQuery->where('sales_channel', $salesChannel);
+        if ($branchId) {
+            $invoiceQuery->where('branch_id', $branchId);
+        }
+        if ($salesChannel) {
+            $invoiceQuery->where('sales_channel', $salesChannel);
+        }
 
         // ── Returns query ──
         $returnsQuery = OrderReturn::whereBetween('created_at', [$startDate, $endDate])
             ->where('status', '!=', 'Đã hủy');
-        if ($branchId) $returnsQuery->where('branch_id', $branchId);
+        if ($branchId) {
+            $returnsQuery->where('branch_id', $branchId);
+        }
 
         // ── Build data based on concern ──
         $chartData = [];
@@ -141,6 +146,7 @@ class SalesReportController extends Controller
                 $label = 'Tháng này';
                 $group = 'day';
         }
+
         return [$start, $end, $label, $group];
     }
 
@@ -207,12 +213,12 @@ class SalesReportController extends Controller
         while ($current <= $end) {
             if ($groupBy === 'month') {
                 $bucketStart = $current->copy()->startOfMonth();
-                $bucketEnd   = $current->copy()->endOfMonth();
+                $bucketEnd = $current->copy()->endOfMonth();
                 $labels[] = $current->format('m/Y');
                 $current->addMonth();
             } else {
                 $bucketStart = $current->copy()->startOfDay();
-                $bucketEnd   = $current->copy()->endOfDay();
+                $bucketEnd = $current->copy()->endOfDay();
                 $labels[] = $current->format('d/m');
                 $current->addDay();
             }
@@ -310,7 +316,7 @@ class SalesReportController extends Controller
     // ═══════════════════════════════════════
     private function buildEmployeeSeries($invoiceQuery, $returnsQuery, $branchId, $salesChannel = null)
     {
-        $sellers = new SellerResolver();
+        $sellers = SellerResolver::forStaffReports();
 
         // Scope returns by sales channel through invoice if provided
         if ($salesChannel) {
@@ -338,34 +344,36 @@ class SalesReportController extends Controller
             $ret = round(array_sum(array_column($children, 'returns')), 2);
 
             $rows[] = [
-                'id'            => $key,
-                'seller_key'    => $key,
-                'name'          => $meta['display_name'] ?? $meta['name'] ?? $key,
-                'revenue'       => $rev,
-                'returns'       => $ret,
-                'net'           => round($rev - $ret, 2),
-                'children'      => $children,
+                'id' => $key,
+                'seller_key' => $key,
+                'name' => $meta['display_name'] ?? $meta['name'] ?? $key,
+                'revenue' => $rev,
+                'returns' => $ret,
+                'net' => round($rev - $ret, 2),
+                'children' => $children,
             ];
         }
 
         // Sort parent rows by revenue descending
-        usort($rows, fn($a, $b) => $b['revenue'] <=> $a['revenue']);
+        usort($rows, fn ($a, $b) => $b['revenue'] <=> $a['revenue']);
 
         // Build chartData: labels and datasets for the chart view
-        $labels      = [];
+        $labels = [];
         $revenueData = [];
         foreach ($rows as $row) {
-            if ($row['revenue'] <= 0) continue;
-            $labels[]      = $row['name'];
+            if ($row['revenue'] <= 0) {
+                continue;
+            }
+            $labels[] = $row['name'];
             $revenueData[] = $row['revenue'];
         }
 
         // Summary builder
         $summary = [
-            'count'   => count($rows),
+            'count' => count($rows),
             'revenue' => array_sum(array_column($rows, 'revenue')),
             'returns' => array_sum(array_column($rows, 'returns')),
-            'net'     => array_sum(array_column($rows, 'net')),
+            'net' => array_sum(array_column($rows, 'net')),
         ];
 
         return [
@@ -390,9 +398,15 @@ class SalesReportController extends Controller
             ->whereBetween('invoices.created_at', [$startDate, $endDate])
             ->where('invoices.status', '!=', 'Đã hủy');
 
-        if ($branchId) $invoiceBase->where('invoices.branch_id', $branchId);
-        if ($salesChannel) $invoiceBase->where('invoices.sales_channel', $salesChannel);
-        if ($customerGroup) $invoiceBase->whereRaw($groupExpr . ' = ?', [$customerGroup]);
+        if ($branchId) {
+            $invoiceBase->where('invoices.branch_id', $branchId);
+        }
+        if ($salesChannel) {
+            $invoiceBase->where('invoices.sales_channel', $salesChannel);
+        }
+        if ($customerGroup) {
+            $invoiceBase->whereRaw($groupExpr.' = ?', [$customerGroup]);
+        }
 
         $invoiceRows = (clone $invoiceBase)
             ->selectRaw("$groupExpr as group_name")
@@ -427,9 +441,15 @@ class SalesReportController extends Controller
             ->whereBetween('returns.created_at', [$startDate, $endDate])
             ->where('returns.status', '!=', 'Đã hủy');
 
-        if ($branchId) $returnBase->where('returns.branch_id', $branchId);
-        if ($salesChannel) $returnBase->where('invoices.sales_channel', $salesChannel);
-        if ($customerGroup) $returnBase->whereRaw($groupExpr . ' = ?', [$customerGroup]);
+        if ($branchId) {
+            $returnBase->where('returns.branch_id', $branchId);
+        }
+        if ($salesChannel) {
+            $returnBase->where('invoices.sales_channel', $salesChannel);
+        }
+        if ($customerGroup) {
+            $returnBase->whereRaw($groupExpr.' = ?', [$customerGroup]);
+        }
 
         $returnRows = (clone $returnBase)
             ->selectRaw("$groupExpr as group_name")
@@ -540,11 +560,11 @@ class SalesReportController extends Controller
 
     private function buildSalesDailyChildren($invoiceQuery, $returnsQuery, array $filters): array
     {
-        $sellers = new SellerResolver();
+        $sellers = SellerResolver::forStaffReports();
         $sellerMap = $sellers->invoiceSellerMap(clone $invoiceQuery);
         $children = [];
 
-        if (!empty($sellerMap)) {
+        if (! empty($sellerMap)) {
             $invoiceIds = array_keys($sellerMap);
             $invoiceRows = \Illuminate\Support\Facades\DB::table('invoices')
                 ->whereIn('id', $invoiceIds)
@@ -554,7 +574,7 @@ class SalesReportController extends Controller
             foreach ($invoiceRows as $row) {
                 $key = $sellerMap[$row->id] ?? 'unknown';
                 $date = $row->report_date;
-                if (!isset($children[$key][$date])) {
+                if (! isset($children[$key][$date])) {
                     $children[$key][$date] = [
                         'date' => $date,
                         'date_display' => Carbon::parse($date)->format('d/m/Y'),
@@ -576,8 +596,8 @@ class SalesReportController extends Controller
 
         if ($returnRows->isNotEmpty()) {
             $returnInvoiceIds = $returnRows->pluck('invoice_id')->filter()->unique()->values()->all();
-            
-            $returnInvoiceSellerMap = !empty($returnInvoiceIds)
+
+            $returnInvoiceSellerMap = ! empty($returnInvoiceIds)
                 ? $sellers->invoiceSellerMap(Invoice::whereIn('id', $returnInvoiceIds))
                 : [];
 
@@ -585,7 +605,7 @@ class SalesReportController extends Controller
                 $sellerKey = $returnInvoiceSellerMap[$ret->invoice_id] ?? 'unknown';
                 $date = Carbon::parse($ret->created_at)->toDateString();
 
-                if (!isset($children[$sellerKey][$date])) {
+                if (! isset($children[$sellerKey][$date])) {
                     $children[$sellerKey][$date] = [
                         'date' => $date,
                         'date_display' => Carbon::parse($date)->format('d/m/Y'),
@@ -613,17 +633,17 @@ class SalesReportController extends Controller
                     'date_to' => $date,
                     'seller_key' => $sellerKey,
                 ];
-                if (!empty($filters['branch_id'])) {
+                if (! empty($filters['branch_id'])) {
                     $params['branch_id'] = $filters['branch_id'];
                 }
-                if (!empty($filters['sales_channel'])) {
+                if (! empty($filters['sales_channel'])) {
                     $params['sales_channel'] = $filters['sales_channel'];
                 }
                 $params['sort_by'] = 'created_at';
                 $params['sort_direction'] = 'desc';
 
-                $dayData['invoice_url'] = '/invoices?' . http_build_query($params);
-                $dayData['return_url'] = '/returns?' . http_build_query($params);
+                $dayData['invoice_url'] = '/invoices?'.http_build_query($params);
+                $dayData['return_url'] = '/returns?'.http_build_query($params);
 
                 $dayData['has_invoices'] = $dayData['invoice_count'] > 0;
                 $dayData['has_returns'] = $dayData['return_count'] > 0;
@@ -643,7 +663,7 @@ class SalesReportController extends Controller
                 }
             }
             // Sort dates descending
-            uksort($dates, fn($a, $b) => strcmp($b, $a));
+            uksort($dates, fn ($a, $b) => strcmp($b, $a));
             // Convert to sequential list
             $dates = array_values($dates);
         }

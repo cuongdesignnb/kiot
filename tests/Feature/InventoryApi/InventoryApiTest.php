@@ -6,11 +6,13 @@ use App\Models\Category;
 use App\Models\InventoryApiAccessLog;
 use App\Models\InventoryApiToken;
 use App\Models\Product;
+use App\Models\Purchase;
 use App\Models\Role;
 use App\Models\SerialImei;
 use App\Models\User;
 use App\Services\Integrations\InventoryApi\InventoryApiTokenService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Inertia\Testing\AssertableInertia as Assert;
@@ -207,6 +209,60 @@ class InventoryApiTest extends TestCase
 
         $this->getJson(self::PRODUCTS.'?limit=101', $this->bearer($plain))->assertStatus(422)->assertJsonPath('error.code', 'VALIDATION_FAILED');
         $this->getJson(self::PRODUCTS.'?cursor=not-a-cursor', $this->bearer($plain))->assertStatus(422)->assertJsonPath('error.code', 'INVALID_CURSOR');
+    }
+
+    public function test_serials_expose_created_at_and_purchase_import_date_without_purchase_reference(): void
+    {
+        [, $plain] = $this->makeToken();
+        $product = $this->makeProduct(['has_serial' => true]);
+        $purchase = Purchase::create([
+            'code' => 'PN-INVAPI-'.Str::upper(Str::random(8)),
+            'status' => 'completed',
+            'total_amount' => 4_000_000,
+            'paid_amount' => 4_000_000,
+            'debt_amount' => 0,
+            'purchase_date' => '2026-11-10 09:30:00',
+        ]);
+        $imported = $this->makeSerial($product, ['purchase_id' => $purchase->id]);
+        $manual = $this->makeSerial($product);
+        DB::table('serial_imeis')->where('id', $imported->id)->update(['created_at' => '2026-11-10 10:00:00']);
+
+        $rows = collect($this->getJson(self::SERIALS.'?sku='.$product->sku, $this->bearer($plain))->assertOk()->json('data'));
+
+        $row = $rows->firstWhere('id', $imported->id);
+        $this->assertSame(Carbon::parse('2026-11-10 10:00:00')->toIso8601String(), $row['created_at']);
+        $this->assertSame(Carbon::parse('2026-11-10 09:30:00')->toIso8601String(), $row['imported_at']);
+        $this->assertArrayNotHasKey('purchase_id', $row);
+        $this->assertStringNotContainsString($purchase->code, json_encode($row));
+
+        $manualRow = $rows->firstWhere('id', $manual->id);
+        $this->assertNotNull($manualRow['created_at']);
+        $this->assertNull($manualRow['imported_at']);
+    }
+
+    public function test_full_sync_pagination_does_not_stop_at_rows_without_updated_at(): void
+    {
+        [, $plain] = $this->makeToken();
+        $category = Category::create(['name' => 'Inventory API null ts '.Str::random(5)]);
+        $skus = collect(range(1, 5))->map(fn () => $this->makeProduct(['category_id' => $category->id])->sku)->all();
+        // Legacy/imported rows can have NULL updated_at (raw inserts bypass Eloquent timestamps).
+        DB::table('products')->whereIn('sku', array_slice($skus, 0, 3))->update(['updated_at' => null]);
+
+        $values = [];
+        $cursor = null;
+        for ($page = 0; $page < 20; $page++) {
+            $url = self::PRODUCTS.'?limit=2&category_id='.$category->id.($cursor ? '&cursor='.urlencode($cursor) : '');
+            $response = $this->getJson($url, $this->bearer($plain))->assertOk();
+            $values = [...$values, ...array_column($response->json('data'), 'sku')];
+            if (! $response->json('meta.has_more')) {
+                break;
+            }
+            $cursor = $response->json('meta.next_cursor');
+        }
+
+        sort($skus);
+        sort($values);
+        $this->assertSame($skus, $values);
     }
 
     public function test_updated_since_catches_repair_status_change_even_without_product_touch(): void
