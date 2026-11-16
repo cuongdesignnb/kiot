@@ -13,8 +13,21 @@ class InventoryApiTokenService
      *
      * @return array{0: InventoryApiToken, 1: string}
      */
-    public function create(string $name, ?string $accountLabel, ?int $userId): array
+    public function create(string $name, ?string $accountLabel, ?int $userId, ?array $abilities = null): array
     {
+        // Omitted abilities keep the original behaviour: inventory read only.
+        $abilities = collect($abilities ?? [InventoryApiToken::ABILITY_INVENTORY_READ])
+            ->map(fn ($ability) => (string) $ability)
+            ->filter(fn (string $ability) => in_array($ability, InventoryApiToken::allAbilities(), true))
+            ->unique()
+            ->sortBy(fn (string $ability) => array_search($ability, InventoryApiToken::allAbilities(), true))
+            ->values()
+            ->all();
+        if ($abilities === []) {
+            $abilities = [InventoryApiToken::ABILITY_INVENTORY_READ];
+        }
+        $writes = array_values(array_intersect($abilities, InventoryApiToken::WRITE_ABILITIES));
+
         $plain = InventoryApiToken::TOKEN_PREFIX.Str::random(48);
 
         $token = InventoryApiToken::create([
@@ -22,15 +35,15 @@ class InventoryApiTokenService
             'account_label' => $accountLabel !== null && trim($accountLabel) !== '' ? trim($accountLabel) : null,
             'token_prefix' => substr($plain, 0, 12),
             'token_hash' => self::hash($plain),
-            'abilities' => [InventoryApiToken::ABILITY_INVENTORY_READ],
+            'abilities' => $abilities,
             'created_by' => $userId,
         ]);
 
         ActivityLog::log(
             ActivityLog::ACTION_INVENTORY_API_TOKEN_CREATED,
-            'Tạo token API tồn kho (chỉ đọc): '.$token->name,
+            ($writes === [] ? 'Tạo token API Kiot (chỉ đọc): ' : 'Tạo token API Kiot (CÓ QUYỀN GHI: '.implode(', ', $writes).'): ').$token->name,
             $token,
-            ['token_prefix' => $token->token_prefix, 'account_label' => $token->account_label],
+            ['token_prefix' => $token->token_prefix, 'account_label' => $token->account_label, 'abilities' => $abilities],
             $userId,
         );
 

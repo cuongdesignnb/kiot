@@ -15,20 +15,32 @@ use Symfony\Component\HttpFoundation\Response;
 use Throwable;
 
 /**
- * Bearer-token gate for /api/public/v1/inventory/*.
+ * Bearer-token gate for /api/public/v1/* (inventory, data and write routes).
+ *
+ * Usage: `inventory.api` (= inventory:read) or `inventory.api:<ability>`.
  *
  * Tokens are separate from Sanctum and from the Website PC HMAC credentials,
- * so they can never reach any other API route. Only safe (GET/HEAD) requests
- * are accepted, every request is rate limited per token and recorded in
- * inventory_api_access_logs.
+ * so they can never reach any other API route. Read abilities accept only
+ * safe (GET/HEAD) requests; each write ability accepts only the one method of
+ * its route (PATCH / POST) and has its own, stricter per-token rate limit.
+ * Every request is recorded in inventory_api_access_logs.
  */
 class AuthenticateInventoryApiToken
 {
     public const RESULT_COUNT_ATTRIBUTE = 'inventory_api_result_count';
 
+    public const TOKEN_ATTRIBUTE = 'inventory_api_token';
+
+    private const FORBIDDEN_MESSAGES = [
+        InventoryApiToken::ABILITY_INVENTORY_READ => 'Token không có quyền đọc tồn kho.',
+        InventoryApiToken::ABILITY_DATA_READ => 'Token không có quyền đọc dữ liệu (data:read).',
+        InventoryApiToken::ABILITY_TECHNICIAN_PRICE_WRITE => 'Token không có quyền sửa giá bán thợ (products:technician_price:write).',
+        InventoryApiToken::ABILITY_INVOICES_CREATE => 'Token không có quyền tạo hóa đơn (invoices:create).',
+    ];
+
     public function __construct(private readonly InventoryApiTokenService $tokens) {}
 
-    public function handle(Request $request, Closure $next): Response
+    public function handle(Request $request, Closure $next, string $ability = InventoryApiToken::ABILITY_INVENTORY_READ): Response
     {
         $startedAt = microtime(true);
 
@@ -36,8 +48,18 @@ class AuthenticateInventoryApiToken
             return $this->reject($request, null, 503, 'API_DISABLED', 'API tồn kho đang tạm tắt.', 'disabled', $startedAt);
         }
 
-        if (! in_array($request->getMethod(), ['GET', 'HEAD'], true)) {
-            return $this->reject($request, null, 405, 'METHOD_NOT_ALLOWED', 'API này chỉ cho phép đọc (GET).', 'method_not_allowed', $startedAt);
+        $isWrite = InventoryApiToken::isWriteAbility($ability);
+        $allowedMethods = $isWrite
+            ? [InventoryApiToken::WRITE_ABILITY_METHODS[$ability]]
+            : ['GET', 'HEAD'];
+        if (! in_array($request->getMethod(), $allowedMethods, true)) {
+            $message = $isWrite
+                ? 'Chức năng ghi này chỉ nhận phương thức '.$allowedMethods[0].'.'
+                : 'API này chỉ cho phép đọc (GET).';
+
+            return $this->reject($request, null, 405, 'METHOD_NOT_ALLOWED', $message, 'method_not_allowed', $startedAt, [
+                'Allow' => implode(', ', $allowedMethods),
+            ]);
         }
 
         $failKey = 'inventory-api:failed-auth:'.sha1((string) $request->ip());
@@ -66,12 +88,14 @@ class AuthenticateInventoryApiToken
 
             return $this->reject($request, $token, 401, 'TOKEN_REVOKED', 'Token đã bị thu hồi.', 'revoked', $startedAt);
         }
-        if (! $token->allows(InventoryApiToken::ABILITY_INVENTORY_READ)) {
-            return $this->reject($request, $token, 403, 'FORBIDDEN', 'Token không có quyền đọc tồn kho.', 'forbidden', $startedAt);
+        if (! in_array($ability, InventoryApiToken::allAbilities(), true) || ! $token->allows($ability)) {
+            return $this->reject($request, $token, 403, 'FORBIDDEN', self::FORBIDDEN_MESSAGES[$ability] ?? 'Token không có quyền cho chức năng này.', 'forbidden', $startedAt);
         }
 
-        $limit = max(1, (int) config('integrations.inventory_api.rate_limit_per_minute', 60));
-        $rateKey = 'inventory-api:token:'.$token->id;
+        $limit = $isWrite
+            ? max(1, (int) config('integrations.inventory_api.write_rate_limit_per_minute', 30))
+            : max(1, (int) config('integrations.inventory_api.rate_limit_per_minute', 60));
+        $rateKey = ($isWrite ? 'inventory-api:write:' : 'inventory-api:token:').$token->id;
         if (RateLimiter::tooManyAttempts($rateKey, $limit)) {
             return $this->reject($request, $token, 429, 'RATE_LIMITED', 'Vượt giới hạn '.$limit.' request/phút.', 'rate_limited', $startedAt, [
                 'Retry-After' => (string) RateLimiter::availableIn($rateKey),
@@ -81,7 +105,7 @@ class AuthenticateInventoryApiToken
         }
         RateLimiter::hit($rateKey, 60);
 
-        $request->attributes->set('inventory_api_token', $token);
+        $request->attributes->set(self::TOKEN_ATTRIBUTE, $token);
 
         $response = $next($request);
 
@@ -138,7 +162,7 @@ class AuthenticateInventoryApiToken
 
     private function safeQuery(Request $request): ?array
     {
-        $allowed = ['limit', 'updated_since', 'sku', 'category_id', 'in_stock', 'status', 'readiness'];
+        $allowed = ['limit', 'updated_since', 'sku', 'category_id', 'in_stock', 'status', 'readiness', 'from', 'to', 'type', 'customer_code'];
         $query = array_intersect_key($request->query(), array_flip($allowed));
         $query = array_map(fn ($value) => is_scalar($value) ? mb_substr((string) $value, 0, 100) : null, $query);
         if ($request->query('cursor')) {

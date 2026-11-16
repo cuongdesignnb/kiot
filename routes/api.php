@@ -363,6 +363,8 @@ Route::prefix('integrations/v1/pc')->middleware('pc.integration')->group(functio
     Route::post('/orders', [\App\Http\Controllers\Api\Integrations\PcWebsite\ExternalOrderController::class, 'store']);
     Route::get('/orders/{externalOrderId}', [\App\Http\Controllers\Api\Integrations\PcWebsite\ExternalOrderController::class, 'status']);
     Route::post('/orders/{externalOrderId}/cancel', [\App\Http\Controllers\Api\Integrations\PcWebsite\ExternalOrderController::class, 'cancel']);
+    Route::post('/orders/{externalOrderId}/deliver', [\App\Http\Controllers\Api\Integrations\PcWebsite\ExternalOrderController::class, 'deliver']);
+    Route::post('/orders/{externalOrderId}/payments', [\App\Http\Controllers\Api\Integrations\PcWebsite\ExternalOrderController::class, 'payments']);
     Route::get('/warranties', \App\Http\Controllers\Api\Integrations\PcWebsite\WarrantyLookupController::class);
 });
 
@@ -371,6 +373,28 @@ Route::prefix('integrations/v1/pc')->middleware('pc.integration')->group(functio
 Route::prefix('public/v1/inventory')->middleware('inventory.api')->group(function () {
     Route::get('/products', [\App\Http\Controllers\Api\PublicApi\InventoryController::class, 'products']);
     Route::get('/serials', [\App\Http\Controllers\Api\PublicApi\InventoryController::class, 'serials']);
+});
+
+// Public read-only business data (token ability data:read).
+Route::prefix('public/v1/data')->middleware('inventory.api:data:read')->group(function () {
+    Route::get('/invoices', [\App\Http\Controllers\Api\PublicApi\DataController::class, 'invoices']);
+    Route::get('/invoices/{code}', [\App\Http\Controllers\Api\PublicApi\DataController::class, 'invoice']);
+    Route::get('/returns', [\App\Http\Controllers\Api\PublicApi\DataController::class, 'returns']);
+    Route::get('/purchases', [\App\Http\Controllers\Api\PublicApi\DataController::class, 'purchases']);
+    Route::get('/repairs', [\App\Http\Controllers\Api\PublicApi\DataController::class, 'repairs']);
+    Route::get('/tasks', [\App\Http\Controllers\Api\PublicApi\DataController::class, 'tasks']);
+    Route::get('/customer-debts', [\App\Http\Controllers\Api\PublicApi\DataController::class, 'customerDebts']);
+    Route::get('/cashflows', [\App\Http\Controllers\Api\PublicApi\DataController::class, 'cashflows']);
+    Route::get('/overview', [\App\Http\Controllers\Api\PublicApi\DataController::class, 'overview']);
+});
+
+// The two logged write functions, each behind its own token ability. Route::any
+// lets the token middleware answer every other method with a logged 405.
+Route::prefix('public/v1/write')->group(function () {
+    Route::any('/products/{sku}/technician-price', [\App\Http\Controllers\Api\PublicApi\WriteController::class, 'technicianPrice'])
+        ->middleware('inventory.api:products:technician_price:write');
+    Route::any('/invoices', [\App\Http\Controllers\Api\PublicApi\WriteController::class, 'createInvoice'])
+        ->middleware('inventory.api:invoices:create');
 });
 
 // 🏷️ PRODUCT ATTRIBUTES

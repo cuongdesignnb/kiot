@@ -87,7 +87,7 @@ class PcCustomerResolver
         return $digits;
     }
 
-    private function findByPhone(string $normalized): ?Customer
+    public function findByPhone(string $normalized): ?Customer
     {
         $suffix = substr($normalized, -9);
         $variants = [$normalized, '84'.substr($normalized, 1), '+84'.substr($normalized, 1)];
