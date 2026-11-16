@@ -260,15 +260,21 @@ const changeSeller = async (invoice, newSellerKey) => {
     const newOpt = invoiceSellerOptions.value.find(o => o.key === newSellerKey);
     const newName = newOpt?.display_name || newOpt?.name || newSellerKey;
 
-    const confirmed = window.confirm(
-        `Bạn có chắc muốn đổi người bán của hóa đơn ${invoice.code} từ "${oldName}" sang "${newName}"?\n\nThay đổi này sẽ ảnh hưởng báo cáo doanh số/lợi nhuận theo nhân viên.`
+    // Batch 10 đợt 4 — item 31: đổi người bán phải ghi lý do (lưu vào nhật ký).
+    const reason = window.prompt(
+        `Đổi người bán của hóa đơn ${invoice.code} từ "${oldName}" sang "${newName}".\n\nThay đổi này sẽ ảnh hưởng báo cáo doanh số/lợi nhuận theo nhân viên.\nNhập lý do đổi người bán (ít nhất 5 ký tự):`
     );
-    if (!confirmed) return;
+    if (reason === null) return;
+    if (reason.trim().length < 5) {
+        alert('Lý do đổi người bán phải có ít nhất 5 ký tự.');
+        return;
+    }
 
     sellerUpdating[invoice.id] = true;
     try {
         const { data } = await axios.patch(`/invoices/${invoice.id}/seller`, {
             seller_key: newSellerKey,
+            reason: reason.trim(),
         });
         invoice.created_by = data.created_by;
         invoice.seller_name = data.seller_name;
@@ -989,8 +995,13 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                         </button>
                                                     </div>
                                                     <div class="flex gap-2">
+                                                        <span
+                                                            v-if="!isInvoiceCancelled(invoice) && invoice.can_modify === false"
+                                                            class="text-[12px] text-gray-500 italic self-center"
+                                                            data-testid="invoice-old-locked"
+                                                        >Hóa đơn cũ — cần quyền sửa hóa đơn cũ</span>
                                                         <Link
-                                                            v-if="!isInvoiceCancelled(invoice)"
+                                                            v-if="!isInvoiceCancelled(invoice) && invoice.can_modify !== false"
                                                             :href="`/orders/create?action=edit&invoice_id=${invoice.id}`"
                                                             class="bg-[#0070f4] text-white px-4 py-1.5 rounded font-medium hover:bg-blue-600 flex items-center gap-1.5"
                                                         >

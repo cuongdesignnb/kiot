@@ -39,22 +39,22 @@ class HOTFIX2430SellerConsistencyAndInvoiceSellerUpdateTest extends TestCase
     private function adminUser(string $name = 'Admin 2430'): User
     {
         return User::create([
-            'name'     => $name,
-            'email'    => 'admin-2430-' . uniqid() . '@test.local',
+            'name' => $name,
+            'email' => 'admin-2430-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
-            'role_id'  => null,
-            'status'   => 'active',
+            'role_id' => null,
+            'status' => 'active',
         ]);
     }
 
     private function staffUser(string $name = 'Staff 2430'): User
     {
         return User::create([
-            'name'     => $name,
-            'email'    => 'staff-2430-' . uniqid() . '@test.local',
+            'name' => $name,
+            'email' => 'staff-2430-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
-            'role_id'  => $this->getOrCreateRole()->id,
-            'status'   => 'active',
+            'role_id' => $this->getOrCreateRole()->id,
+            'status' => 'active',
         ]);
     }
 
@@ -67,29 +67,30 @@ class HOTFIX2430SellerConsistencyAndInvoiceSellerUpdateTest extends TestCase
         // Force reset perms in case a previous run polluted them
         $role->permissions = ['invoices.view'];
         $role->save();
+
         return $role;
     }
 
     private function employee(string $name, ?string $code = null, ?int $userId = null, bool $active = true): Employee
     {
         return Employee::create([
-            'code'      => $code ?? ('NV-2430-' . uniqid()),
-            'name'      => $name,
+            'code' => $code ?? ('NV-2430-'.uniqid()),
+            'name' => $name,
             'is_active' => $active,
-            'user_id'   => $userId,
+            'user_id' => $userId,
         ]);
     }
 
     private function product(): Product
     {
         return Product::create([
-            'sku'                  => 'SKU-2430-' . uniqid(),
-            'name'                 => 'SP 2430',
-            'cost_price'           => 600_000,
-            'retail_price'         => 1_000_000,
-            'stock_quantity'       => 100,
+            'sku' => 'SKU-2430-'.uniqid(),
+            'name' => 'SP 2430',
+            'cost_price' => 600_000,
+            'retail_price' => 1_000_000,
+            'stock_quantity' => 100,
             'inventory_total_cost' => 60_000_000,
-            'has_serial'           => false,
+            'has_serial' => false,
         ]);
     }
 
@@ -102,26 +103,27 @@ class HOTFIX2430SellerConsistencyAndInvoiceSellerUpdateTest extends TestCase
         ?string $sellerName = null
     ): Invoice {
         $inv = Invoice::create([
-            'code'             => 'HD-2430-' . uniqid(),
-            'created_by'       => $createdBy,
-            'created_by_name'  => $createdByName,
-            'seller_name'      => $sellerName,
-            'subtotal'         => $total,
-            'discount'         => 0,
-            'total'            => $total,
-            'customer_paid'    => $total,
-            'status'           => $status,
-            'sales_channel'    => 'Bán trực tiếp',
+            'code' => 'HD-2430-'.uniqid(),
+            'created_by' => $createdBy,
+            'created_by_name' => $createdByName,
+            'seller_name' => $sellerName,
+            'subtotal' => $total,
+            'discount' => 0,
+            'total' => $total,
+            'customer_paid' => $total,
+            'status' => $status,
+            'sales_channel' => 'Bán trực tiếp',
         ]);
         InvoiceItem::create([
             'invoice_id' => $inv->id,
             'product_id' => $product->id,
-            'quantity'   => 1,
-            'price'      => $total,
+            'quantity' => 1,
+            'price' => $total,
             'cost_price' => 600_000,
         ]);
         $inv->created_at = Carbon::now()->startOfDay()->addMinute();
         $inv->save();
+
         return $inv;
     }
 
@@ -129,7 +131,7 @@ class HOTFIX2430SellerConsistencyAndInvoiceSellerUpdateTest extends TestCase
     public function test_employee_linked_user_uses_current_user_name(): void
     {
         $user = $this->adminUser('Admin');
-        $emp  = $this->employee('Admin', 'NV001', $user->id);
+        $emp = $this->employee('Admin', 'NV001', $user->id);
         $product = $this->product();
         $inv = $this->invoice($emp->id, 'Admin', $product, sellerName: 'Admin');
 
@@ -137,7 +139,7 @@ class HOTFIX2430SellerConsistencyAndInvoiceSellerUpdateTest extends TestCase
         $user->name = 'Trần Văn Tiến';
         $user->save();
 
-        $resolver = new SellerResolver();
+        $resolver = new SellerResolver;
         $meta = $resolver->sellerMeta(["employee:{$emp->id}"]);
 
         $this->assertSame('Trần Văn Tiến', $meta["employee:{$emp->id}"]['name'],
@@ -153,7 +155,7 @@ class HOTFIX2430SellerConsistencyAndInvoiceSellerUpdateTest extends TestCase
         $product = $this->product();
         $this->invoice($emp->id, 'Someone', $product, sellerName: $emp->name);
 
-        $resolver = new SellerResolver();
+        $resolver = new SellerResolver;
         $meta = $resolver->sellerMeta(["employee:{$emp->id}"]);
 
         $this->assertSame('Admin', $meta["employee:{$emp->id}"]['name'],
@@ -167,7 +169,7 @@ class HOTFIX2430SellerConsistencyAndInvoiceSellerUpdateTest extends TestCase
         $product = $this->product();
         $inv = $this->invoice(null, 'Someone', $product, sellerName: 'Admin');
 
-        $resolver = new SellerResolver();
+        $resolver = new SellerResolver;
         $map = $resolver->invoiceSellerMap(Invoice::whereKey($inv->id));
 
         // Should NOT merge to user Trần Văn Tiến
@@ -182,7 +184,7 @@ class HOTFIX2430SellerConsistencyAndInvoiceSellerUpdateTest extends TestCase
         $product = $this->product();
         $inv = $this->invoice(null, 'Creator', $product);
 
-        $resolver = new SellerResolver();
+        $resolver = new SellerResolver;
         $map = $resolver->invoiceSellerMap(Invoice::whereKey($inv->id));
 
         $this->assertSame('unknown', $map[$inv->id]);
@@ -221,6 +223,7 @@ class HOTFIX2430SellerConsistencyAndInvoiceSellerUpdateTest extends TestCase
 
         $res = $this->actingAs($admin)->patchJson("/invoices/{$inv->id}/seller", [
             'seller_key' => "employee:{$empB->id}",
+            'reason' => 'Đổi người bán kiểm thử',
         ]);
         $res->assertOk();
 
@@ -241,6 +244,7 @@ class HOTFIX2430SellerConsistencyAndInvoiceSellerUpdateTest extends TestCase
 
         $res = $this->actingAs($admin)->patchJson("/invoices/{$inv->id}/seller", [
             'seller_key' => 'creator_snapshot:Admin',
+            'reason' => 'Đổi người bán kiểm thử',
         ]);
         $res->assertStatus(422);
 
@@ -259,6 +263,7 @@ class HOTFIX2430SellerConsistencyAndInvoiceSellerUpdateTest extends TestCase
 
         $res = $this->actingAs($admin)->patchJson("/invoices/{$inv->id}/seller", [
             'seller_key' => "employee:{$empB->id}",
+            'reason' => 'Đổi người bán kiểm thử',
         ]);
         $res->assertStatus(422);
 
@@ -277,6 +282,7 @@ class HOTFIX2430SellerConsistencyAndInvoiceSellerUpdateTest extends TestCase
 
         $res = $this->actingAs($staff)->patchJson("/invoices/{$inv->id}/seller", [
             'seller_key' => "employee:{$empB->id}",
+            'reason' => 'Đổi người bán kiểm thử',
         ]);
         $this->assertTrue(in_array($res->status(), [403, 302]),
             'Staff without invoices.cancel permission must be blocked');
@@ -294,6 +300,7 @@ class HOTFIX2430SellerConsistencyAndInvoiceSellerUpdateTest extends TestCase
         // Change seller
         $this->actingAs($admin)->patchJson("/invoices/{$inv->id}/seller", [
             'seller_key' => "employee:{$empB->id}",
+            'reason' => 'Đổi người bán kiểm thử',
         ])->assertOk();
 
         // Report should show empB, not empA
@@ -320,6 +327,7 @@ class HOTFIX2430SellerConsistencyAndInvoiceSellerUpdateTest extends TestCase
 
         $this->actingAs($admin)->patchJson("/invoices/{$inv->id}/seller", [
             'seller_key' => "employee:{$empB->id}",
+            'reason' => 'Đổi người bán kiểm thử',
         ])->assertOk();
 
         // Filter by new seller
@@ -347,6 +355,7 @@ class HOTFIX2430SellerConsistencyAndInvoiceSellerUpdateTest extends TestCase
 
         $this->actingAs($admin)->patchJson("/invoices/{$inv->id}/seller", [
             'seller_key' => "employee:{$empB->id}",
+            'reason' => 'Đổi người bán kiểm thử',
         ])->assertOk();
 
         $inv->refresh();
@@ -360,10 +369,10 @@ class HOTFIX2430SellerConsistencyAndInvoiceSellerUpdateTest extends TestCase
         $this->employee('Nguyễn Văn A', 'NV-001');
         $this->employee('Nguyễn Văn A', 'NV-002');
 
-        $resolver = new SellerResolver();
+        $resolver = new SellerResolver;
         $options = $resolver->buildInvoiceSellerOptions();
 
-        $aOptions = collect($options)->filter(fn($o) => str_contains($o['name'], 'Nguyễn Văn A'));
+        $aOptions = collect($options)->filter(fn ($o) => str_contains($o['name'], 'Nguyễn Văn A'));
         $this->assertGreaterThanOrEqual(2, $aOptions->count());
 
         $displayNames = $aOptions->pluck('display_name')->all();

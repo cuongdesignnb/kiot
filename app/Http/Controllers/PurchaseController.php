@@ -252,6 +252,12 @@ class PurchaseController extends Controller
             'other_costs.*.name' => 'required_with:other_costs|string|max:255',
             'other_costs.*.amount' => 'required_with:other_costs|numeric|min:0',
         ]);
+
+        // Batch 10 đợt 4 — item 32: phiếu nhập hoàn thành phải có giá nhập > 0 từng dòng.
+        if ($request->input('status', 'completed') !== 'draft') {
+            app(\App\Services\SalesControls\SalesControlService::class)->assertPurchaseCosts((array) $request->items);
+        }
+
         app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
             (int) $request->supplier_id,
             'supplier_id'
@@ -703,10 +709,26 @@ class PurchaseController extends Controller
             'other_costs' => 'nullable|array',
             'other_costs.*.name' => 'required_with:other_costs|string|max:255',
             'other_costs.*.amount' => 'required_with:other_costs|numeric|min:0',
+            'edit_reason' => 'nullable|string|max:500',
         ]);
 
         if ($purchase->status === 'cancelled') {
             return back()->withErrors(['purchase' => 'Không thể sửa phiếu nhập đã hủy.']);
+        }
+
+        // Batch 10 đợt 4 — item 31: sửa phiếu nhập đã hoàn thành phải có lý do
+        // (phiếu tạm vẫn sửa tự do). Item 32: giá nhập > 0 khi phiếu hoàn thành.
+        $editReason = trim((string) ($validated['edit_reason'] ?? ''));
+        unset($validated['edit_reason']);
+        if ($purchase->status === 'completed' && mb_strlen($editReason) < 5) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'edit_reason' => $editReason === ''
+                    ? 'Vui lòng nhập lý do sửa phiếu nhập.'
+                    : 'Lý do sửa phiếu nhập phải có ít nhất 5 ký tự.',
+            ]);
+        }
+        if (($validated['status'] ?? $purchase->status) === 'completed' && array_key_exists('items', $validated)) {
+            app(\App\Services\SalesControls\SalesControlService::class)->assertPurchaseCosts($validated['items']);
         }
 
         $validated['supplier_id'] = $validated['supplier_id'] ?? $purchase->supplier_id;
@@ -739,9 +761,10 @@ class PurchaseController extends Controller
                 [(int) $purchase->supplier_id, (int) $validated['supplier_id']],
                 'purchase_update',
                 $payloadHash,
-                function (\Illuminate\Support\Collection $lockedPartners) use ($purchase, $validated, $purchaseDate): Purchase {
+                function (\Illuminate\Support\Collection $lockedPartners) use ($purchase, $validated, $purchaseDate, $editReason): Purchase {
 
                     $purchase = Purchase::with(['items.product', 'supplier'])->lockForUpdate()->findOrFail($purchase->id);
+                    $auditBefore = \App\Support\Audit\DocumentSnapshot::purchase($purchase);
                     $oldStatus = $purchase->status;
                     $newStatus = $validated['status'] ?? $purchase->status;
                     if ($oldStatus === 'completed' && $newStatus !== 'completed') {
@@ -1169,10 +1192,14 @@ class PurchaseController extends Controller
                         }
                     }
 
-                    \App\Models\ActivityLog::log(
+                    \App\Models\ActivityLog::audit(
                         \App\Models\ActivityLog::ACTION_PURCHASE_UPDATE,
-                        "Cập nhật phiếu nhập {$purchase->code}",
+                        \App\Models\ActivityLog::DOC_PURCHASE,
+                        $purchase->code,
+                        $editReason !== '' ? $editReason : null,
                         $purchase,
+                        $auditBefore,
+                        \App\Support\Audit\DocumentSnapshot::purchase(Purchase::with(['items.product', 'supplier'])->find($purchase->id)),
                         [
                             'old_total_amount' => $oldTotalAmount,
                             'new_total_amount' => $totalAmount,
@@ -1190,7 +1217,8 @@ class PurchaseController extends Controller
                             'business_time' => $purchaseDate->toDateTimeString(),
                             'old_supplier_id' => $oldSupplierId,
                             'new_supplier_id' => $newSupplierId,
-                        ]
+                        ],
+                        "Cập nhật phiếu nhập {$purchase->code}",
                     );
 
                     return $purchase;
@@ -1233,12 +1261,24 @@ class PurchaseController extends Controller
                 $payloadHash,
                 function () use ($purchase, $cancelReason): Purchase {
                     $lockedPurchase = Purchase::query()->lockForUpdate()->findOrFail($purchase->id);
+                    $auditBefore = \App\Support\Audit\DocumentSnapshot::purchase($lockedPurchase);
                     $lockedPurchase->update([
                         'status' => 'cancelled',
                         'cancel_reason' => $cancelReason,
                         'cancelled_by' => auth()->id(),
                         'cancelled_at' => now(),
                     ]);
+                    \App\Models\ActivityLog::audit(
+                        \App\Models\ActivityLog::ACTION_PURCHASE_DELETE,
+                        \App\Models\ActivityLog::DOC_PURCHASE,
+                        $lockedPurchase->code,
+                        $cancelReason,
+                        $lockedPurchase,
+                        $auditBefore,
+                        ['status' => 'cancelled'],
+                        [],
+                        "Hủy phiếu nhập tạm {$lockedPurchase->code}",
+                    );
 
                     return $lockedPurchase;
                 },
@@ -1383,6 +1423,8 @@ class PurchaseController extends Controller
                         $operation,
                     );
 
+                    $auditBefore = \App\Support\Audit\DocumentSnapshot::purchase($purchase);
+
                     // Giữ items cho audit trail (không xóa)
                     $purchase->status = 'cancelled';
                     $purchase->cancel_reason = $cancelReason;
@@ -1390,15 +1432,20 @@ class PurchaseController extends Controller
                     $purchase->cancelled_at = now();
                     $purchase->save();
 
-                    \App\Models\ActivityLog::log(
+                    \App\Models\ActivityLog::audit(
                         \App\Models\ActivityLog::ACTION_PURCHASE_DELETE,
-                        "Hủy phiếu nhập hàng {$purchase->code}",
+                        \App\Models\ActivityLog::DOC_PURCHASE,
+                        $purchase->code,
+                        $cancelReason,
                         $purchase,
+                        $auditBefore,
+                        ['status' => 'cancelled'],
                         [
                             'total' => (float) ($purchase->total ?? 0),
                             'source_document_paid' => $sourceDocumentPaid,
                             'purchase_balance_effect' => $purchaseBalanceEffect,
-                        ]
+                        ],
+                        "Hủy phiếu nhập hàng {$purchase->code}",
                     );
 
                     return $purchase;

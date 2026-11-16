@@ -1,6 +1,12 @@
 <script setup>
 import { Link } from "@inertiajs/vue3";
 import { ref, computed } from "vue";
+import { usePermission } from "@/composables/usePermission";
+
+// Batch 10 đợt 4 — item 30: báo cáo giá vốn / lợi nhuận chỉ hiện khi có quyền.
+const { can } = usePermission();
+const costOnlyReports = ["cost-profit", "cost-analysis", "serial-cost-history"];
+const isVisibleItem = (item) => !costOnlyReports.includes(item.key) || can("cost_profit.view");
 
 const props = defineProps({
     currentPage: { type: String, default: "" },
@@ -212,7 +218,7 @@ const isActive = (key) => props.currentPage === key;
             >
                 <div v-show="section.open" class="overflow-hidden">
                     <Link
-                        v-for="item in section.items"
+                        v-for="item in section.items.filter(isVisibleItem)"
                         :key="item.key"
                         :href="item.href"
                         class="block pl-10 pr-4 py-2 text-[13px] transition-colors"

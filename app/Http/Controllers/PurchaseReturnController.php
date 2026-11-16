@@ -708,6 +708,15 @@ class PurchaseReturnController extends Controller
 
     public function destroy(PurchaseReturn $purchaseReturn)
     {
+        // Batch 10 đợt 4 — item 31: lý do hủy phiếu trả hàng nhập là bắt buộc.
+        $validated = request()->validate([
+            'cancel_reason' => 'required|string|min:5|max:500',
+        ], [
+            'cancel_reason.required' => 'Vui lòng nhập lý do hủy phiếu trả hàng nhập.',
+            'cancel_reason.min' => 'Lý do hủy phải có ít nhất 5 ký tự.',
+        ]);
+        $cancelReason = trim($validated['cancel_reason']);
+
         if ($purchaseReturn->status === 'cancelled') {
             return back()->with('error', 'Phiếu đã bị hủy trước đó.');
         }
@@ -721,8 +730,9 @@ class PurchaseReturnController extends Controller
                 (int) $purchaseReturn->supplier_id,
                 'purchase_return_cancel',
                 $payloadHash,
-                function (Customer $lockedSupplier) use ($purchaseReturn): PurchaseReturn {
+                function (Customer $lockedSupplier) use ($purchaseReturn, $cancelReason): PurchaseReturn {
                     $purchaseReturn = PurchaseReturn::with(['items', 'supplier'])->lockForUpdate()->findOrFail($purchaseReturn->id);
+                    $auditBefore = \App\Support\Audit\DocumentSnapshot::purchaseReturn($purchaseReturn);
                     if (! (bool) $lockedSupplier->is_supplier) {
                         throw ValidationException::withMessages([
                             'supplier_id' => 'Đối tác chưa có vai trò nhà cung cấp đã lưu.',
@@ -791,11 +801,16 @@ class PurchaseReturnController extends Controller
                         }
                     }
 
-                    \App\Models\ActivityLog::log(
+                    \App\Models\ActivityLog::audit(
                         \App\Models\ActivityLog::ACTION_PURCHASE_RETURN_CANCEL,
-                        "Hủy phiếu trả hàng nhập {$purchaseReturn->code}",
+                        \App\Models\ActivityLog::DOC_PURCHASE_RETURN,
+                        $purchaseReturn->code,
+                        $cancelReason,
                         $purchaseReturn,
-                        ['total' => (float) ($purchaseReturn->total ?? 0)]
+                        $auditBefore,
+                        ['status' => 'cancelled'],
+                        ['total' => (float) ($purchaseReturn->total_amount ?? 0)],
+                        "Hủy phiếu trả hàng nhập {$purchaseReturn->code}",
                     );
 
                     return $purchaseReturn;

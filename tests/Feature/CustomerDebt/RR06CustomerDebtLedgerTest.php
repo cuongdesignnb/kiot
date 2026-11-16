@@ -46,6 +46,9 @@ class RR06CustomerDebtLedgerTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Batch 10 đợt 4: these tests are not about the seller rule (covered by
+        // Security\Batch10SalesControlsTest), so invoices here may omit it.
+        \App\Models\Setting::set('sales_require_seller', false, 'sales_controls', 'boolean');
 
         $this->admin = User::create([
             'name' => 'Admin RR06',

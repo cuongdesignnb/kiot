@@ -566,6 +566,7 @@ class InvoiceCommercialOnlyUpdateTest extends TestCase
     private function payload(Invoice $invoice, array $items, array $overrides = []): array
     {
         return array_merge([
+            'edit_reason' => 'Sửa hóa đơn kiểm thử',
             'customer_id' => $invoice->customer_id,
             'subtotal' => (float) $invoice->subtotal,
             'discount' => (float) $invoice->discount,

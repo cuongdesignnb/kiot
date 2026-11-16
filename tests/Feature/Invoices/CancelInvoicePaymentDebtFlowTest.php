@@ -98,7 +98,7 @@ class CancelInvoicePaymentDebtFlowTest extends TestCase
         $this->assertNotEquals('cancelled', $cashflow->status);
 
         // 2. Gọi API DELETE để hủy hóa đơn
-        $response = $this->actingAs($admin)->delete("/invoices/{$invoice->id}");
+        $response = $this->actingAs($admin)->delete("/invoices/{$invoice->id}", ['cancel_reason' => 'Hủy hóa đơn kiểm thử']);
         $response->assertRedirect();
 
         // Hóa đơn chuyển trạng thái sang Đã hủy, nhưng customer_paid vẫn giữ nguyên snapshot
@@ -141,7 +141,7 @@ class CancelInvoicePaymentDebtFlowTest extends TestCase
         $invoice = app(InvoiceSaleService::class)->createSale($payload, $context);
 
         // Hủy hóa đơn
-        $this->actingAs($admin)->delete("/invoices/{$invoice->id}");
+        $this->actingAs($admin)->delete("/invoices/{$invoice->id}", ['cancel_reason' => 'Hủy hóa đơn kiểm thử']);
 
         // Gọi API payment-history
         $response = $this->actingAs($admin)->get("/invoices/{$invoice->id}/payment-history");
@@ -201,7 +201,7 @@ class CancelInvoicePaymentDebtFlowTest extends TestCase
         $this->assertSame('DebtPayment', $separateReceipt->reference_type);
         $this->assertSame(100000.0, (float) $customer->fresh()->debt_amount);
 
-        $this->actingAs($admin)->delete("/invoices/{$invoice->id}");
+        $this->actingAs($admin)->delete("/invoices/{$invoice->id}", ['cancel_reason' => 'Hủy hóa đơn kiểm thử']);
 
         $this->assertSame('cancelled', $sourceReceipt->fresh()->status);
         $this->assertSame('active', $separateReceipt->fresh()->status);
@@ -258,7 +258,7 @@ class CancelInvoicePaymentDebtFlowTest extends TestCase
         $this->assertEquals(150000, $customer->fresh()->debt_amount);
 
         // Hủy hóa đơn
-        $this->actingAs($admin)->delete("/invoices/{$invoice->id}");
+        $this->actingAs($admin)->delete("/invoices/{$invoice->id}", ['cancel_reason' => 'Hủy hóa đơn kiểm thử']);
 
         // Sau khi hủy, nợ phải về 0
         $this->assertEquals(0, $customer->fresh()->debt_amount);
@@ -329,7 +329,7 @@ class CancelInvoicePaymentDebtFlowTest extends TestCase
             'allow_oversell' => true,
         ]);
 
-        $this->actingAs($admin)->delete("/invoices/{$invCancelled->id}");
+        $this->actingAs($admin)->delete("/invoices/{$invCancelled->id}", ['cancel_reason' => 'Hủy hóa đơn kiểm thử']);
 
         // 3. outstandingInvoices chỉ trả về hóa đơn active
         $response = $this->actingAs($admin)->get("/customers/{$customer->id}/outstanding-invoices");

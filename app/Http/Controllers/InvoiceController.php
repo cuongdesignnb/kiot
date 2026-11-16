@@ -20,7 +20,9 @@ use App\Services\Debt\PartnerDebtMutationCoordinator;
 use App\Services\InvoiceItemSerialResolver;
 use App\Services\InvoiceSaleService;
 use App\Services\InvoiceUpdateService;
+use App\Services\SalesControls\SalesControlService;
 use App\Services\StockMovementService;
+use App\Support\Audit\DocumentSnapshot;
 use App\Support\Customers\CustomerGroupSnapshot;
 use App\Support\Filters\FilterableIndex;
 use App\Support\Reports\SellerResolver;
@@ -106,7 +108,10 @@ class InvoiceController extends Controller
         $orderChangeTime = (int) Setting::get('order_change_time', 24);
         $now = now();
 
-        $invoices->getCollection()->transform(function ($inv) use ($canOverride, $blockEinvoice, $orderChangeTime, $now) {
+        $controls = app(SalesControlService::class);
+        $canModifyOld = $user ? $user->hasPermission(SalesControlService::PERMISSION_MODIFY_OLD_INVOICE) : false;
+
+        $invoices->getCollection()->transform(function ($inv) use ($canOverride, $blockEinvoice, $orderChangeTime, $now, $controls, $canModifyOld) {
             $lockRef = $inv->lock_started_at ?? $inv->created_at;
             $diffHours = $lockRef ? (float) Carbon::parse($lockRef)->floatDiffInHours($now) : 0.0;
             $isTimeLocked = $diffHours > $orderChangeTime;
@@ -119,6 +124,15 @@ class InvoiceController extends Controller
             } elseif ($isTimeLocked && ! $canOverride) {
                 $blockReason = "Đã quá thời gian cho phép hủy hóa đơn ({$orderChangeTime} giờ). Cần quyền override.";
             }
+
+            // Batch 10 đợt 4 — item 30: hóa đơn cũ chỉ người có quyền mới sửa/hủy.
+            $isOldInvoice = $controls->isOldInvoice($inv);
+            $oldLocked = $isOldInvoice && ! $canModifyOld;
+            if ($blockReason === null && $oldLocked) {
+                $blockReason = 'Không có quyền hủy hóa đơn cũ (hóa đơn '.$controls->oldInvoiceRuleLabel().').';
+            }
+            $inv->setAttribute('is_old_invoice', $isOldInvoice);
+            $inv->setAttribute('can_modify', ! $oldLocked);
 
             $inv->setAttribute('is_time_locked', $isTimeLocked);
             $inv->setAttribute('lock_age_hours', round($diffHours, 2));
@@ -235,7 +249,16 @@ class InvoiceController extends Controller
             'items.*.note' => 'nullable|string',
             'items.*.serial_ids' => 'nullable|array',
             'items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
+            'seller_employee_id' => 'nullable|integer|exists:employees,id',
         ]);
+
+        // Batch 10 đợt 4 — item 32: người bán + đơn giá từng dòng bắt buộc.
+        $controls = app(SalesControlService::class);
+        $seller = ! empty($validated['seller_employee_id'])
+            ? Employee::query()->where('is_active', true)->find((int) $validated['seller_employee_id'])
+            : null;
+        $controls->assertSellerPresent($seller?->id, $seller?->name, 'seller_employee_id');
+        $controls->assertLinePrices($validated['items']);
 
         $priceBookName = 'Bảng giá chung';
         if (! empty($validated['price_book_id'])) {
@@ -276,6 +299,8 @@ class InvoiceController extends Controller
                 'default_status' => 'Hoàn thành',
                 'price_book_name' => $priceBookName,
                 'created_by_name' => auth()->user()?->name ?? 'Admin',
+                'seller_id' => $seller?->id,
+                'seller_name' => $seller?->name,
                 'is_delivery' => $validated['is_delivery'] ?? false,
                 'delivery_partner' => $validated['delivery_partner'] ?? null,
                 'delivery_fee' => $validated['delivery_fee'] ?? 0,
@@ -315,6 +340,7 @@ class InvoiceController extends Controller
         }
 
         $validated = $request->validate([
+            'edit_reason' => 'required|string|min:5|max:500',
             'customer_id' => 'nullable|exists:customers,id',
             'branch_id' => 'nullable',
             'subtotal' => 'required|numeric',
@@ -356,9 +382,28 @@ class InvoiceController extends Controller
             'expected_delivery_date' => 'nullable|date',
             'cod_amount' => 'nullable|numeric|min:0',
             'other_fees' => 'nullable|numeric',
+        ], [
+            'edit_reason.required' => 'Vui lòng nhập lý do sửa hóa đơn.',
+            'edit_reason.min' => 'Lý do sửa hóa đơn phải có ít nhất 5 ký tự.',
+            'edit_reason.max' => 'Lý do sửa hóa đơn không được vượt quá 500 ký tự.',
         ]);
 
+        // Batch 10 đợt 4 — item 30: sửa hóa đơn cũ cần quyền riêng.
+        $controls = app(SalesControlService::class);
+        if ($blocked = $controls->oldInvoiceBlockMessage($invoice, auth()->user(), 'sửa')) {
+            return $this->forbiddenInvoiceChange($request, $blocked);
+        }
+
+        // Batch 10 đợt 4 — item 32: người bán + đơn giá từng dòng bắt buộc.
+        $sellerEmployeeId = ! empty($validated['seller_employee_id'])
+            ? (int) $validated['seller_employee_id']
+            : ($invoice->created_by ? (int) $invoice->created_by : null);
+        $controls->assertSellerPresent($sellerEmployeeId, $invoice->seller_name, 'seller_employee_id');
+        $controls->assertLinePrices($validated['items']);
+
         try {
+            $editReason = trim($validated['edit_reason']);
+            unset($validated['edit_reason']);
             $payload = $validated;
             $payload['items'] = array_map(function ($it) {
                 return [
@@ -374,6 +419,7 @@ class InvoiceController extends Controller
 
             $context = [
                 'user' => auth()->user(),
+                'edit_reason' => $editReason,
                 'time_lock_override_reason' => $validated['time_lock_override_reason'] ?? null,
                 'transaction_date_change_reason' => $validated['transaction_date_change_reason'] ?? null,
                 'idempotency_key' => $request->header('Idempotency-Key'),
@@ -391,13 +437,15 @@ class InvoiceController extends Controller
 
     public function destroy(Invoice $invoice, Request $request)
     {
+        // Batch 10 đợt 4 — item 31: lý do hủy là bắt buộc.
         $validated = $request->validate([
-            'cancel_reason' => 'nullable|string|min:5|max:500',
+            'cancel_reason' => 'required|string|min:5|max:500',
             'time_lock_override_reason' => 'nullable|string|min:5|max:500',
         ], [
+            'cancel_reason.required' => 'Vui lòng nhập lý do hủy hóa đơn.',
             'cancel_reason.min' => 'Lý do hủy phải có ít nhất 5 ký tự.',
         ]);
-        $cancelReason = trim($validated['cancel_reason'] ?? '') ?: 'Huy hoa don';
+        $cancelReason = trim($validated['cancel_reason']);
         // RR-01 Guard: Không cho hủy lặp — idempotent check
         if ($invoice->status === 'Đã hủy' && ! $request->header('Idempotency-Key')) {
             return back()->with('error', 'Hóa đơn này đã được hủy trước đó.');
@@ -427,6 +475,11 @@ class InvoiceController extends Controller
             }
         }
 
+        // Batch 10 đợt 4 — item 30: hủy hóa đơn cũ cần quyền riêng.
+        if ($blocked = app(SalesControlService::class)->oldInvoiceBlockMessage($invoice, auth()->user(), 'hủy')) {
+            return $this->forbiddenInvoiceChange($request, $blocked);
+        }
+
         try {
             $cancelMutation = function (?\App\Models\PartnerDebtOperation $operation = null) use ($invoice, $cancelReason, $isOverdue, $validated): Invoice {
                 $invoice = Invoice::query()->lockForUpdate()->findOrFail($invoice->id);
@@ -435,6 +488,7 @@ class InvoiceController extends Controller
                 }
 
                 $invoice->load('items');
+                $auditBefore = DocumentSnapshot::invoice($invoice);
 
                 // Restore stock & serials for each item
                 foreach ($invoice->items as $item) {
@@ -582,17 +636,22 @@ class InvoiceController extends Controller
                 $invoice->save();
                 app(PartnerDebtMutationCoordinator::class)->checkpoint('projection');
 
-                // Step 24.0: audit log invoice cancel
-                \App\Models\ActivityLog::log(
-                    \App\Models\ActivityLog::ACTION_INVOICE_CANCEL,
-                    "Hủy hóa đơn {$invoice->code}",
+                // Step 24.0 + Batch 10 đợt 4: journal row with who/when/reason/snapshot.
+                ActivityLog::audit(
+                    ActivityLog::ACTION_INVOICE_CANCEL,
+                    ActivityLog::DOC_INVOICE,
+                    $invoice->code,
+                    $cancelReason,
                     $invoice,
+                    $auditBefore,
+                    ['status' => $invoice->status, 'cancelled_at' => $invoice->cancelled_at?->format('Y-m-d H:i:s')],
                     [
                         'total' => (float) $invoice->total,
                         'cancel_reason' => $cancelReason,
                         'cancelled_cash_flows' => $cancelledCashFlowCount,
                         'source_document_paid' => $sourceDocumentPaid,
-                    ]
+                    ],
+                    "Hủy hóa đơn {$invoice->code}",
                 );
 
                 // Step 24.3: log override if applicable
@@ -888,9 +947,20 @@ class InvoiceController extends Controller
 
         $request->validate([
             'seller_key' => 'required|string',
+            'reason' => 'required|string|min:5|max:500',
+        ], [
+            'reason.required' => 'Vui lòng nhập lý do đổi người bán.',
+            'reason.min' => 'Lý do đổi người bán phải có ít nhất 5 ký tự.',
         ]);
 
         $sellerKey = $request->input('seller_key');
+        $changeReason = trim((string) $request->input('reason'));
+
+        // Batch 10 đợt 4 — item 30: đổi người bán hóa đơn cũ cần quyền riêng.
+        if ($blocked = app(SalesControlService::class)->oldInvoiceBlockMessage($invoice, $user, 'đổi người bán')) {
+            return response()->json(['message' => $blocked], 403);
+        }
+        $auditBefore = ['seller_name' => $invoice->seller_name, 'seller_employee_id' => $invoice->created_by];
 
         // Time-lock check (shared between both seller key types)
         $orderChangeTime = (int) Setting::get('order_change_time', 24);
@@ -938,10 +1008,14 @@ class InvoiceController extends Controller
             $invoice->seller_name = $adminUser->name;
             $invoice->save();
 
-            ActivityLog::log(
-                ActivityLog::ACTION_INVOICE_UPDATE,
-                "Đổi người bán hóa đơn {$invoice->code} sang admin",
+            ActivityLog::audit(
+                ActivityLog::ACTION_INVOICE_SELLER_CHANGE,
+                ActivityLog::DOC_INVOICE,
+                $invoice->code,
+                $changeReason,
                 $invoice,
+                $auditBefore,
+                ['seller_name' => $invoice->seller_name, 'seller_employee_id' => null],
                 [
                     'action_detail' => 'seller_change_admin_user',
                     'old_created_by' => $oldCreatedBy,
@@ -950,7 +1024,8 @@ class InvoiceController extends Controller
                     'new_seller_name' => $adminUser->name,
                     'admin_user_id' => $adminUser->id,
                     'actor_user_id' => $user->id,
-                ]
+                ],
+                "Đổi người bán hóa đơn {$invoice->code} sang admin",
             );
 
             return response()->json([
@@ -992,10 +1067,14 @@ class InvoiceController extends Controller
         $invoice->seller_name = $employee->name;
         $invoice->save();
 
-        ActivityLog::log(
-            ActivityLog::ACTION_INVOICE_UPDATE,
-            "Đổi người bán hóa đơn {$invoice->code}",
+        ActivityLog::audit(
+            ActivityLog::ACTION_INVOICE_SELLER_CHANGE,
+            ActivityLog::DOC_INVOICE,
+            $invoice->code,
+            $changeReason,
             $invoice,
+            $auditBefore,
+            ['seller_name' => $invoice->seller_name, 'seller_employee_id' => $employee->id],
             [
                 'action_detail' => 'seller_change',
                 'old_created_by' => $oldCreatedBy,
@@ -1004,7 +1083,8 @@ class InvoiceController extends Controller
                 'new_seller_name' => $employee->name,
                 'new_seller_display' => $sellerDisplayName,
                 'employee_code' => $employee->code,
-            ]
+            ],
+            "Đổi người bán hóa đơn {$invoice->code}",
         );
 
         return response()->json([
@@ -1094,5 +1174,20 @@ class InvoiceController extends Controller
 
         // Legacy fallback only: old invoices may not have item or movement cost snapshots.
         return (float) ($product->cost_price ?? 0);
+    }
+
+    /**
+     * Batch 10 đợt 4: refuse a change to an invoice the user may not touch.
+     */
+    private function forbiddenInvoiceChange(Request $request, string $message)
+    {
+        if ($request->expectsJson() && ! $request->header('X-Inertia')) {
+            return response()->json([
+                'message' => $message,
+                'errors' => ['invoice' => [$message]],
+            ], 403);
+        }
+
+        return back()->with('error', $message);
     }
 }

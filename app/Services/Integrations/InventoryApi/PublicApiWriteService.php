@@ -16,6 +16,7 @@ use App\Services\CostPendingSaleGuard;
 use App\Services\Integrations\PcWebsite\PcCustomerResolver;
 use App\Services\InvoiceSaleService;
 use App\Services\LockPeriodService;
+use App\Services\SalesControls\SalesControlService;
 use App\Services\SerialAvailabilityService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -356,6 +357,13 @@ class PublicApiWriteService
 
             if ($sku === '' && $serialNumber === '') {
                 throw new InventoryApiException('VALIDATION_FAILED', "Dòng {$row}: cần sku hoặc serial.", 422);
+            }
+
+            // Batch 10 đợt 4 — item 32: đơn giá từng dòng phải > 0 (theo thiết lập).
+            if ($price <= 0 && app(SalesControlService::class)->linePriceRequired()) {
+                throw new InventoryApiException('INVALID_PRICE', "Dòng {$row}: đơn giá bán phải lớn hơn 0.", 422, [
+                    'items.'.$index.'.price' => ['Đơn giá bán phải lớn hơn 0.'],
+                ]);
             }
 
             if ($serialNumber !== '') {

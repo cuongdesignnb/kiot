@@ -2,16 +2,16 @@
 
 namespace Tests\Feature\Warranty;
 
-use Tests\TestCase;
-use Illuminate\Foundation\Testing\DatabaseTransactions;
-use App\Models\User;
-use App\Models\Customer;
-use App\Models\Product;
 use App\Models\Category;
+use App\Models\Customer;
 use App\Models\Invoice;
-use App\Models\Warranty;
+use App\Models\Product;
 use App\Models\SerialImei;
+use App\Models\User;
+use App\Models\Warranty;
 use Carbon\Carbon;
+use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Tests\TestCase;
 
 /**
  * STEP 24.9 — Warranty generation from Product policies.
@@ -31,38 +31,47 @@ class Step249WarrantyGenerationFromProductPolicyTest extends TestCase
 {
     use DatabaseTransactions;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // Batch 10 đợt 4: these tests are not about the seller rule (covered by
+        // Security\Batch10SalesControlsTest), so invoices here may omit it.
+        \App\Models\Setting::set('sales_require_seller', false, 'sales_controls', 'boolean');
+    }
+
     private function admin(): User
     {
         return User::create([
-            'name'     => 'Admin 249W',
-            'email'    => 'admin-249w-' . uniqid() . '@test.local',
+            'name' => 'Admin 249W',
+            'email' => 'admin-249w-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
-            'role_id'  => null,
+            'role_id' => null,
         ]);
     }
 
     private function makeProduct(bool $hasSerial = false, array $extra = []): Product
     {
         $cat = Category::firstOrCreate(['name' => 'Cat 249W']);
+
         return Product::create(array_merge([
-            'sku'                  => 'P249W-' . uniqid(),
-            'name'                 => 'Product 249W',
-            'cost_price'           => 100000,
-            'retail_price'         => 200000,
-            'stock_quantity'       => 10,
+            'sku' => 'P249W-'.uniqid(),
+            'name' => 'Product 249W',
+            'cost_price' => 100000,
+            'retail_price' => 200000,
+            'stock_quantity' => 10,
             'inventory_total_cost' => 1000000,
-            'is_active'            => true,
-            'has_serial'           => $hasSerial,
-            'category_id'          => $cat->id,
+            'is_active' => true,
+            'has_serial' => $hasSerial,
+            'category_id' => $cat->id,
         ], $extra));
     }
 
     private function makeCustomer(): Customer
     {
         return Customer::create([
-            'code'        => 'KH-249W-' . uniqid(),
-            'name'        => 'KH 249W',
-            'phone'       => '090' . rand(1000000, 9999999),
+            'code' => 'KH-249W-'.uniqid(),
+            'name' => 'KH 249W',
+            'phone' => '090'.rand(1000000, 9999999),
             'is_customer' => true,
         ]);
     }
@@ -70,19 +79,20 @@ class Step249WarrantyGenerationFromProductPolicyTest extends TestCase
     private function sellNormal(User $admin, Customer $cust, Product $product, int $qty, float $price): Invoice
     {
         $this->actingAs($admin)->post(route('invoices.store'), [
-            'customer_id'    => $cust->id,
-            'subtotal'       => $qty * $price,
-            'discount'       => 0,
-            'total'          => $qty * $price,
-            'customer_paid'  => $qty * $price,
+            'customer_id' => $cust->id,
+            'subtotal' => $qty * $price,
+            'discount' => 0,
+            'total' => $qty * $price,
+            'customer_paid' => $qty * $price,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => $qty,
-                'price'      => $price,
-                'discount'   => 0,
+                'quantity' => $qty,
+                'price' => $price,
+                'discount' => 0,
             ]],
         ]);
+
         return Invoice::where('customer_id', $cust->id)->latest('id')->first();
     }
 
@@ -91,7 +101,7 @@ class Step249WarrantyGenerationFromProductPolicyTest extends TestCase
         $admin = $this->admin();
         $cust = $this->makeCustomer();
         $product = $this->makeProduct(false, [
-            'warranty_months'   => 12,
+            'warranty_months' => 12,
             'warranty_policies' => [
                 ['name' => 'Toàn bộ sản phẩm', 'duration_value' => 12, 'duration_unit' => 'month', 'is_default' => true],
             ],
@@ -115,26 +125,26 @@ class Step249WarrantyGenerationFromProductPolicyTest extends TestCase
         $admin = $this->admin();
         $cust = $this->makeCustomer();
         $product = $this->makeProduct(true, [
-            'stock_quantity'    => 0,
+            'stock_quantity' => 0,
             'warranty_policies' => [
                 ['name' => 'Bảo hành 6 tháng', 'duration_value' => 6, 'duration_unit' => 'month', 'is_default' => true],
             ],
         ]);
-        $sA = SerialImei::create(['product_id' => $product->id, 'serial_number' => 'SN249W-A-' . uniqid(), 'status' => 'in_stock', 'cost_price' => 100000]);
-        $sB = SerialImei::create(['product_id' => $product->id, 'serial_number' => 'SN249W-B-' . uniqid(), 'status' => 'in_stock', 'cost_price' => 100000]);
+        $sA = SerialImei::create(['product_id' => $product->id, 'serial_number' => 'SN249W-A-'.uniqid(), 'status' => 'in_stock', 'cost_price' => 100000]);
+        $sB = SerialImei::create(['product_id' => $product->id, 'serial_number' => 'SN249W-B-'.uniqid(), 'status' => 'in_stock', 'cost_price' => 100000]);
         $product->update(['stock_quantity' => 2, 'inventory_total_cost' => 200000]);
 
         $this->actingAs($admin)->post(route('invoices.store'), [
-            'customer_id'    => $cust->id,
-            'subtotal'       => 400000,
-            'discount'       => 0,
-            'total'          => 400000,
-            'customer_paid'  => 400000,
+            'customer_id' => $cust->id,
+            'subtotal' => 400000,
+            'discount' => 0,
+            'total' => 400000,
+            'customer_paid' => 400000,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 2,
-                'price'      => 200000,
+                'quantity' => 2,
+                'price' => 200000,
                 'serial_ids' => [$sA->id, $sB->id],
             ]],
         ]);
@@ -151,7 +161,7 @@ class Step249WarrantyGenerationFromProductPolicyTest extends TestCase
         $admin = $this->admin();
         $cust = $this->makeCustomer();
         $product = $this->makeProduct(false, [
-            'warranty_months'   => 0,
+            'warranty_months' => 0,
             'warranty_policies' => null,
         ]);
         $invoice = $this->sellNormal($admin, $cust, $product, 1, 100000);
@@ -164,7 +174,7 @@ class Step249WarrantyGenerationFromProductPolicyTest extends TestCase
         $admin = $this->admin();
         $cust = $this->makeCustomer();
         $product = $this->makeProduct(false, [
-            'warranty_months'   => 12,
+            'warranty_months' => 12,
             'warranty_policies' => [
                 ['name' => 'Toàn bộ', 'duration_value' => 12, 'duration_unit' => 'month', 'is_default' => true],
                 ['name' => 'Pin',    'duration_value' => 6,  'duration_unit' => 'month', 'is_default' => false],
@@ -183,7 +193,7 @@ class Step249WarrantyGenerationFromProductPolicyTest extends TestCase
         $admin = $this->admin();
         $cust = $this->makeCustomer();
         $product = $this->makeProduct(false, [
-            'warranty_months'   => 6,
+            'warranty_months' => 6,
             'warranty_policies' => [
                 ['name' => 'Cũ', 'duration_value' => 6, 'duration_unit' => 'month', 'is_default' => true],
             ],
@@ -195,7 +205,7 @@ class Step249WarrantyGenerationFromProductPolicyTest extends TestCase
 
         // Now change product policy.
         $product->update([
-            'warranty_months'   => 24,
+            'warranty_months' => 24,
             'warranty_policies' => [
                 ['name' => 'Mới', 'duration_value' => 24, 'duration_unit' => 'month', 'is_default' => true],
             ],
@@ -213,7 +223,7 @@ class Step249WarrantyGenerationFromProductPolicyTest extends TestCase
         $admin = $this->admin();
         $cust = $this->makeCustomer();
         $product = $this->makeProduct(false, [
-            'warranty_months'   => 12,
+            'warranty_months' => 12,
             'warranty_policies' => [
                 ['name' => 'BH', 'duration_value' => 12, 'duration_unit' => 'month', 'is_default' => true],
             ],

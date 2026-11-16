@@ -94,7 +94,16 @@ class ProductExcelFieldCatalog
 
     private function allowed(array $field, ?User $user): bool
     {
-        return empty($field['permission']) || ($user && $user->hasPermission($field['permission']));
+        if (empty($field['permission'])) {
+            return true;
+        }
+        if (! $user || ! $user->hasPermission($field['permission'])) {
+            return false;
+        }
+
+        // Batch 10 đợt 4 — item 30: cost columns also need cost_profit.view.
+        return $field['permission'] !== 'products.view_cost_price'
+            || $user->hasPermission(\App\Support\Security\CostVisibility::PERMISSION);
     }
 
     private function field(

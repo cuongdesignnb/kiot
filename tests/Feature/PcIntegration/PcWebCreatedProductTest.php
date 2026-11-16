@@ -238,6 +238,8 @@ class PcWebCreatedProductTest extends PcIntegrationTestCase
 
         // A completed purchase receipt at price 0 (hàng tặng) clears the flag
         // and allows invoicing, but the line is still sold at cost 0.
+        // Batch 10 đợt 4: a 0-cost receipt needs the "giá nhập > 0" rule switched off.
+        \App\Models\Setting::set('purchase_require_line_cost', false, 'sales_controls', 'boolean');
         $this->actingAs($admin)->post('/purchases', [
             'code' => 'PN-WEB0-'.Str::random(8),
             'supplier_id' => $this->supplier()->id,

@@ -2,15 +2,15 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
-use Inertia\Inertia;
-use App\Models\Product;
+use App\Models\Branch;
 use App\Models\Category;
 use App\Models\PriceBook;
 use App\Models\PriceBookProduct;
-use App\Models\Branch;
+use App\Models\Product;
 use App\Services\ProductSearchService;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Response;
+use Inertia\Inertia;
 
 class PriceSettingController extends Controller
 {
@@ -73,6 +73,10 @@ class PriceSettingController extends Controller
 
         $query->when($request->filled('sort_by'), function ($q) use ($request) {
             $allowed = ['sku' => 'products.sku', 'name' => 'products.name', 'cost_price' => 'products.cost_price', 'last_purchase_price' => 'products.last_purchase_price', 'retail_price' => 'products.retail_price'];
+            // Batch 10 đợt 4 — item 30: sorting by cost would reveal it.
+            if (! \App\Support\Security\CostVisibility::currentUserCanView()) {
+                unset($allowed['cost_price'], $allowed['last_purchase_price']);
+            }
             $sortBy = isset($allowed[$request->sort_by]) ? $allowed[$request->sort_by] : 'products.id';
             $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
             $q->orderBy($sortBy, $dir);
@@ -106,9 +110,14 @@ class PriceSettingController extends Controller
             'technician_price' => 'sometimes|numeric|min:0',
         ]);
 
-        $product->update($request->only('cost_price', 'retail_price', 'technician_price'));
+        $fields = ['cost_price', 'retail_price', 'technician_price'];
+        // Batch 10 đợt 4 — item 30: no cost permission, no cost change.
+        if (! \App\Support\Security\CostVisibility::currentUserCanView()) {
+            $fields = ['retail_price', 'technician_price'];
+        }
+        $product->update($request->only($fields));
 
-        return redirect()->back()->with('success', 'Đã cập nhật giá: ' . $product->name);
+        return redirect()->back()->with('success', 'Đã cập nhật giá: '.$product->name);
     }
 
     /**
@@ -122,7 +131,7 @@ class PriceSettingController extends Controller
             'technician_price' => 'sometimes|numeric|min:0',
         ]);
 
-        if (!$request->hasAny(['price', 'retail_price', 'technician_price'])) {
+        if (! $request->hasAny(['price', 'retail_price', 'technician_price'])) {
             return redirect()->back()->with('error', 'Không có dữ liệu giá để cập nhật.');
         }
 
@@ -154,6 +163,12 @@ class PriceSettingController extends Controller
             'price_book_id' => 'nullable|exists:price_books,id',
         ]);
 
+        // Batch 10 đợt 4 — item 30: a price derived from cost would reveal the cost.
+        if (in_array($request->base_field, ['cost_price', 'last_purchase_price'], true)
+            && ! \App\Support\Security\CostVisibility::currentUserCanView()) {
+            return back()->with('error', 'Bạn không có quyền xem giá vốn nên không thể tính giá theo giá vốn / giá nhập.');
+        }
+
         $products = Product::whereIn('id', $request->product_ids)->get();
         $base = $request->base_field;
         $operator = $request->operator;
@@ -176,7 +191,7 @@ class PriceSettingController extends Controller
             }
         }
 
-        return redirect()->back()->with('success', 'Đã áp dụng công thức cho ' . $products->count() . ' sản phẩm.');
+        return redirect()->back()->with('success', 'Đã áp dụng công thức cho '.$products->count().' sản phẩm.');
     }
 
     /**
@@ -204,7 +219,7 @@ class PriceSettingController extends Controller
         ]);
 
         $priceBook = PriceBook::create([
-            'code' => 'BG' . date('ymdHis') . rand(10, 99),
+            'code' => 'BG'.date('ymdHis').rand(10, 99),
             'name' => $request->name,
             'start_date' => $request->start_date,
             'end_date' => $request->end_date,
@@ -229,7 +244,7 @@ class PriceSettingController extends Controller
             $this->applyFormulaToBook($priceBook);
         }
 
-        return redirect()->back()->with('success', 'Đã tạo bảng giá: ' . $priceBook->name);
+        return redirect()->back()->with('success', 'Đã tạo bảng giá: '.$priceBook->name);
     }
 
     /**
@@ -276,7 +291,7 @@ class PriceSettingController extends Controller
             'enable_technician_price' => $request->boolean('enable_technician_price'),
         ]);
 
-        return redirect()->back()->with('success', 'Đã cập nhật bảng giá: ' . $priceBook->name);
+        return redirect()->back()->with('success', 'Đã cập nhật bảng giá: '.$priceBook->name);
     }
 
     /**
@@ -286,7 +301,8 @@ class PriceSettingController extends Controller
     {
         $name = $priceBook->name;
         $priceBook->delete();
-        return redirect()->back()->with('success', 'Đã xóa bảng giá: ' . $name);
+
+        return redirect()->back()->with('success', 'Đã xóa bảng giá: '.$name);
     }
 
     /**
@@ -294,7 +310,9 @@ class PriceSettingController extends Controller
      */
     private function applyFormulaToBook(PriceBook $priceBook)
     {
-        if (!$priceBook->formula_base || !$priceBook->formula_operator) return;
+        if (! $priceBook->formula_base || ! $priceBook->formula_operator) {
+            return;
+        }
 
         $baseField = $priceBook->formula_base;
         $products = Product::all();
@@ -345,16 +363,22 @@ class PriceSettingController extends Controller
             'Content-Disposition' => 'attachment; filename="bang_gia.csv"',
         ];
 
-        $callback = function () use ($products, $priceBook) {
+        // Batch 10 đợt 4 — item 30: keep the column layout (import reads it) but
+        // leave cost columns empty for users without cost_profit.view.
+        $canViewCost = \App\Support\Security\CostVisibility::currentUserCanView();
+
+        $callback = function () use ($products, $priceBook, $canViewCost) {
             $file = fopen('php://output', 'w');
-            fprintf($file, chr(0xEF) . chr(0xBB) . chr(0xBF));
+            fprintf($file, chr(0xEF).chr(0xBB).chr(0xBF));
 
             $headerRow = ['Mã Hàng', 'Tên Hàng', 'Giá Vốn', 'Giá Nhập Cuối'];
-            $headerRow[] = $priceBook ? $priceBook->name . ' (Import)' : 'Bảng Giá Chung (Import)';
+            $headerRow[] = $priceBook ? $priceBook->name.' (Import)' : 'Bảng Giá Chung (Import)';
             fputcsv($file, $headerRow);
 
             foreach ($products as $p) {
-                $row = [$p->sku, $p->name, $p->cost_price, $p->last_purchase_price];
+                $row = $canViewCost
+                    ? [$p->sku, $p->name, $p->cost_price, $p->last_purchase_price]
+                    : [$p->sku, $p->name, '', ''];
                 $row[] = $priceBook ? ($p->book_price ?? '') : $p->retail_price;
                 fputcsv($file, $row);
             }
@@ -367,7 +391,7 @@ class PriceSettingController extends Controller
     public function import(Request $request)
     {
         $request->validate([
-            'file' => 'required|file|mimes:csv,txt'
+            'file' => 'required|file|mimes:csv,txt',
         ]);
 
         $priceBookId = $request->input('price_book_id');
@@ -384,7 +408,7 @@ class PriceSettingController extends Controller
                 $sku = $row[$skuIndex];
                 $newPrice = preg_replace('/[^0-9.]/', '', $row[$priceIndex]);
 
-                if (is_numeric($newPrice) && !empty($sku)) {
+                if (is_numeric($newPrice) && ! empty($sku)) {
                     $product = Product::where('sku', $sku)->first();
                     if ($product) {
                         if ($priceBookId) {

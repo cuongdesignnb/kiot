@@ -979,6 +979,62 @@ const scrollToSection = (id) => {
                         </div>
                     </div>
 
+                    <!-- Batch 10 đợt 4: Kiểm soát bán hàng -->
+                    <div id="order-sales-controls" class="bg-white rounded shadow-sm border overflow-hidden">
+                        <div class="px-5 py-3 border-b bg-gray-50/50">
+                            <h3 class="font-bold text-[14px] text-gray-800">Kiểm soát bán hàng</h3>
+                        </div>
+                        <div class="px-5 py-4 space-y-4">
+                            <div class="flex justify-between items-start ">
+                                <div class="flex-1">
+                                    <h4 class="text-[13.5px] font-semibold text-gray-900">Bắt buộc chọn người bán</h4>
+                                    <p class="text-[12.5px] text-gray-500 mt-0.5">Hóa đơn (POS, sửa hóa đơn, xử lý đơn hàng, API) phải có người bán.</p>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer ml-4">
+                                    <input type="checkbox" v-model="form.settings.sales_require_seller" @change="submit" class="sr-only peer" data-testid="setting-sales_require_seller">
+                                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                </label>
+                            </div>
+                            <div class="flex justify-between items-start pt-4 border-t">
+                                <div class="flex-1">
+                                    <h4 class="text-[13.5px] font-semibold text-gray-900">Bắt buộc đơn giá bán từng dòng lớn hơn 0</h4>
+                                    <p class="text-[12.5px] text-gray-500 mt-0.5">Không cho lưu hóa đơn có dòng đơn giá bằng 0. Hàng đổi 0đ trong đổi hàng POS vẫn được phép.</p>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer ml-4">
+                                    <input type="checkbox" v-model="form.settings.sales_require_line_price" @change="submit" class="sr-only peer" data-testid="setting-sales_require_line_price">
+                                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                </label>
+                            </div>
+                            <div class="flex justify-between items-start pt-4 border-t">
+                                <div class="flex-1">
+                                    <h4 class="text-[13.5px] font-semibold text-gray-900">Bắt buộc giá nhập từng dòng lớn hơn 0</h4>
+                                    <p class="text-[12.5px] text-gray-500 mt-0.5">Phiếu nhập hàng hoàn thành phải có giá nhập > 0 ở mọi dòng (phiếu tạm không bị chặn).</p>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer ml-4">
+                                    <input type="checkbox" v-model="form.settings.purchase_require_line_cost" @change="submit" class="sr-only peer" data-testid="setting-purchase_require_line_cost">
+                                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                </label>
+                            </div>
+                            <div class="flex justify-between items-start pt-4 border-t">
+                                <div class="flex-1">
+                                    <h4 class="text-[13.5px] font-semibold text-gray-900">Cảnh báo khi bán dưới giá vốn</h4>
+                                    <p class="text-[12.5px] text-gray-500 mt-0.5">Hiện cảnh báo "Giá bán thấp hơn giá vốn" trước khi lưu (vẫn cho lưu) và ghi vào Nhật ký thao tác. Nhân viên không có quyền xem giá vốn chỉ thấy cảnh báo, không thấy số.</p>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer ml-4">
+                                    <input type="checkbox" v-model="form.settings.sales_warn_below_cost" @change="submit" class="sr-only peer" data-testid="setting-sales_warn_below_cost">
+                                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                </label>
+                            </div>
+                            <div class="pt-4 border-t flex justify-between items-start">
+                                <div class="flex-1">
+                                    <h4 class="text-[13.5px] font-semibold text-gray-900">Hóa đơn cũ (cần quyền riêng để sửa/hủy/đổi người bán)</h4>
+                                    <p class="text-[12.5px] text-gray-500 mt-0.5">0 = hóa đơn lập trước hôm nay. N = hóa đơn lập trước N ngày gần nhất. Quyền: "Sửa/hủy/đổi người bán hóa đơn cũ" trong vai trò.</p>
+                                </div>
+                                <input type="number" min="0" max="365" v-model.number="form.settings.invoice_old_lock_days" @change="submit" class="ml-4 w-20 border border-gray-300 rounded px-2 py-1 text-sm text-right" data-testid="setting-invoice_old_lock_days">
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- 8. Quản lý thu khác -->
                     <div id="order-other-fees" class="bg-white rounded shadow-sm border overflow-hidden cursor-pointer hover:shadow-md transition-shadow" @click="showOtherFeeManager = true">
                         <div class="px-5 py-4 flex justify-between items-start">
@@ -1222,6 +1278,7 @@ const scrollToSection = (id) => {
                     <button @click="scrollToSection('order-print-quote')" class="block w-full text-left px-4 py-1.5 text-[12.5px] text-gray-500 hover:text-blue-600 border-l-2 border-transparent transition-all font-medium">In báo giá</button>
                     <button @click="scrollToSection('order-confirm-complete')" class="block w-full text-left px-4 py-1.5 text-[12.5px] text-gray-500 hover:text-blue-600 border-l-2 border-transparent transition-all font-medium">Xác nhận hoàn thành</button>
                     <button @click="scrollToSection('order-return-limit')" class="block w-full text-left px-4 py-1.5 text-[12.5px] text-gray-500 hover:text-blue-600 border-l-2 border-transparent transition-all font-medium">Giới hạn trả hàng</button>
+                    <button @click="scrollToSection('order-sales-controls')" class="block w-full text-left px-4 py-1.5 text-[12.5px] text-gray-500 hover:text-blue-600 border-l-2 border-transparent transition-all font-medium">Kiểm soát bán hàng</button>
                     <button @click="scrollToSection('order-block-time')" class="block w-full text-left px-4 py-1.5 text-[12.5px] text-gray-500 hover:text-blue-600 border-l-2 border-transparent transition-all font-medium">Thời gian giao dịch</button>
                     <button @click="scrollToSection('order-block-einvoice')" class="block w-full text-left px-4 py-1.5 text-[12.5px] text-gray-500 hover:text-blue-600 border-l-2 border-transparent transition-all font-medium">HĐĐT</button>
                     <button @click="scrollToSection('order-other-fees')" class="block w-full text-left px-4 py-1.5 text-[12.5px] text-gray-500 hover:text-blue-600 border-l-2 border-transparent transition-all font-medium">Thu khác</button>

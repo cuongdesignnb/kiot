@@ -1,5 +1,9 @@
 <script setup>
 import { Head, useForm, Link } from '@inertiajs/vue3';
+import { usePermission } from '@/composables/usePermission';
+// Batch 10 đợt 4 — item 30: ẩn giá vốn khi không có quyền (server cũng xóa số và bỏ qua giá vốn gửi lên).
+const { can: canPermission } = usePermission();
+const canViewCost = canPermission('cost_profit.view');
 import { ref, computed, onMounted, watch } from 'vue';
 import axios from 'axios';
 import AppLayout from '../../Layouts/AppLayout.vue';
@@ -575,7 +579,7 @@ const generateVariants = () => {
                                     <div class="col-span-2 border-t border-gray-100 mt-2 mb-2"></div>
 
                                     <!-- Giá vốn & Giá bán -->
-                                    <div>
+                                    <div v-if="canViewCost">
                                         <label class="block text-sm font-semibold text-gray-700 mb-1">Giá vốn</label>
                                         <MoneyInput v-model="form.cost_price" suffix
                                                    :disabled="isServiceProduct"
@@ -671,7 +675,7 @@ const generateVariants = () => {
                                                             <tr>
                                                                 <th class="px-2 py-1.5 text-left text-xs font-semibold text-gray-600">Tên biến thể</th>
                                                                 <th class="px-2 py-1.5 text-left text-xs font-semibold text-gray-600 w-28">SKU</th>
-                                                                <th class="px-2 py-1.5 text-right text-xs font-semibold text-gray-600 w-28">Giá vốn</th>
+                                                                <th v-if="canViewCost" class="px-2 py-1.5 text-right text-xs font-semibold text-gray-600 w-28">Giá vốn</th>
                                                                 <th class="px-2 py-1.5 text-right text-xs font-semibold text-gray-600 w-28">Giá bán</th>
                                                                 <th class="px-2 py-1.5 text-right text-xs font-semibold text-gray-600 w-20">Tồn kho</th>
                                                                 <th class="px-2 py-1.5 text-center text-xs font-semibold text-gray-600 w-24">Ảnh</th>
@@ -681,7 +685,7 @@ const generateVariants = () => {
                                                             <tr v-for="(v, vi) in form.variants" :key="vi" class="border-t border-gray-100">
                                                                 <td class="px-2 py-1"><input type="text" v-model="v.name" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm"></td>
                                                                 <td class="px-2 py-1"><input type="text" v-model="v.sku" placeholder="Tự động" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm"></td>
-                                                                <td class="px-2 py-1"><MoneyInput v-model="v.cost_price" input-class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right" /></td>
+                                                                <td v-if="canViewCost" class="px-2 py-1"><MoneyInput v-model="v.cost_price" input-class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right" /></td>
                                                                 <td class="px-2 py-1"><MoneyInput v-model="v.retail_price" input-class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right" /></td>
                                                                 <td class="px-2 py-1"><input type="number" v-model="v.stock_quantity" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right"></td>
                                                                 <td class="px-2 py-1"><MediaPicker :model-value="v.image_media_id ? [v.image_media_id] : []" :multiple="false" collection="products" label="Chọn" @update:model-value="v.image_media_id = $event[0] || null" /></td>
@@ -854,7 +858,7 @@ const generateVariants = () => {
                                 <tr>
                                     <th class="px-3 py-2 text-left">Serial/IMEI</th>
                                     <th class="px-3 py-2 text-center">Trạng thái</th>
-                                    <th class="px-3 py-2 text-right">Giá vốn</th>
+                                    <th v-if="canViewCost" class="px-3 py-2 text-right">Giá vốn</th>
                                     <th class="px-3 py-2 text-center w-32"></th>
                                 </tr>
                             </thead>
@@ -872,7 +876,7 @@ const generateVariants = () => {
                                                 <option v-for="(label, key) in statusLabels" :key="key" :value="key">{{ label }}</option>
                                             </select>
                                         </td>
-                                        <td class="px-3 py-2 text-right">
+                                        <td v-if="canViewCost" class="px-3 py-2 text-right">
                                             <MoneyInput v-if="s.status === 'in_stock' && editSerialStatus === 'in_stock'"
                                                 v-model="editSerialCost"
                                                 :min="0"
@@ -889,7 +893,7 @@ const generateVariants = () => {
                                         <td class="px-3 py-2 text-center">
                                             <span :class="statusColors[s.status]" class="px-2 py-0.5 rounded-full text-xs font-semibold">{{ statusLabels[s.status] || s.status }}</span>
                                         </td>
-                                        <td class="px-3 py-2 text-right text-gray-500">{{ formatCurrency(s.cost_price) }}</td>
+                                        <td v-if="canViewCost" class="px-3 py-2 text-right text-gray-500">{{ formatCurrency(s.cost_price) }}</td>
                                         <td class="px-3 py-2 text-center">
                                             <button @click="startEdit(s)" class="text-blue-600 text-xs font-semibold mr-2 hover:underline">Sửa</button>
                                             <button v-if="s.status !== 'sold'" @click="deleteSerial(s)" class="text-red-500 text-xs font-semibold hover:underline">Xóa</button>

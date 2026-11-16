@@ -26,22 +26,26 @@ class RequireSerialOnSaleTest extends TestCase
     use DatabaseTransactions;
 
     private User $admin;
+
     private Customer $customer;
 
     protected function setUp(): void
     {
         parent::setUp();
+        // Batch 10 đợt 4: these tests are not about the seller rule (covered by
+        // Security\Batch10SalesControlsTest), so POS checkouts here may omit it.
+        \App\Models\Setting::set('sales_require_seller', false, 'sales_controls', 'boolean');
         $this->admin = User::create([
-            'name'     => 'Admin 23.1',
-            'email'    => 'admin-231-' . uniqid() . '@test.local',
+            'name' => 'Admin 23.1',
+            'email' => 'admin-231-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
-            'role_id'  => null,
+            'role_id' => null,
         ]);
         $this->customer = Customer::create([
-            'code'        => 'KH-231-' . uniqid(),
-            'name'        => 'KH 23.1',
-            'phone'       => '090' . rand(1000000, 9999999),
-            'email'       => 'kh-231-' . uniqid() . '@test.local',
+            'code' => 'KH-231-'.uniqid(),
+            'name' => 'KH 23.1',
+            'phone' => '090'.rand(1000000, 9999999),
+            'email' => 'kh-231-'.uniqid().'@test.local',
             'debt_amount' => 0,
             'total_spent' => 0,
         ]);
@@ -50,26 +54,27 @@ class RequireSerialOnSaleTest extends TestCase
     private function makeProduct(bool $hasSerial, int $stock, float $cost = 100000): Product
     {
         $category = Category::firstOrCreate(['name' => 'Cat 23.1']);
+
         return Product::create([
-            'sku'                  => 'P231-' . uniqid(),
-            'name'                 => 'Product 23.1',
-            'cost_price'           => $cost,
-            'retail_price'         => $cost * 2,
-            'stock_quantity'       => $stock,
+            'sku' => 'P231-'.uniqid(),
+            'name' => 'Product 23.1',
+            'cost_price' => $cost,
+            'retail_price' => $cost * 2,
+            'stock_quantity' => $stock,
             'inventory_total_cost' => $stock * $cost,
-            'is_active'            => true,
-            'has_serial'           => $hasSerial,
-            'category_id'          => $category->id,
+            'is_active' => true,
+            'has_serial' => $hasSerial,
+            'category_id' => $category->id,
         ]);
     }
 
     private function makeSerial(Product $product, string $status = 'in_stock'): SerialImei
     {
         return SerialImei::create([
-            'product_id'    => $product->id,
-            'serial_number' => 'SN231-' . uniqid(),
-            'status'        => $status,
-            'cost_price'    => $product->cost_price,
+            'product_id' => $product->id,
+            'serial_number' => 'SN231-'.uniqid(),
+            'status' => $status,
+            'cost_price' => $product->cost_price,
             'original_cost' => $product->cost_price,
         ]);
     }
@@ -83,15 +88,15 @@ class RequireSerialOnSaleTest extends TestCase
         $stockBefore = (int) $product->stock_quantity;
 
         $this->actingAs($this->admin)->post(route('invoices.store'), [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => 8000000,
-            'total'          => 8000000,
-            'customer_paid'  => 8000000,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 8000000,
+            'total' => 8000000,
+            'customer_paid' => 8000000,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 1,
-                'price'      => 8000000,
+                'quantity' => 1,
+                'price' => 8000000,
                 // serial_ids bỏ trống cố ý
             ]],
         ]);
@@ -113,15 +118,15 @@ class RequireSerialOnSaleTest extends TestCase
         $invoiceCountBefore = Invoice::count();
 
         $this->actingAs($this->admin)->post(route('invoices.store'), [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => 16000000,
-            'total'          => 16000000,
-            'customer_paid'  => 16000000,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 16000000,
+            'total' => 16000000,
+            'customer_paid' => 16000000,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 2,
-                'price'      => 8000000,
+                'quantity' => 2,
+                'price' => 8000000,
                 'serial_ids' => [$serialA->id], // chỉ chọn 1/2
             ]],
         ]);
@@ -141,16 +146,16 @@ class RequireSerialOnSaleTest extends TestCase
         $invoiceCountBefore = Invoice::count();
 
         $response = $this->actingAs($this->admin)->postJson('/api/pos/checkout', [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => 8000000,
-            'discount'       => 0,
-            'total'          => 8000000,
-            'customer_paid'  => 8000000,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 8000000,
+            'discount' => 0,
+            'total' => 8000000,
+            'customer_paid' => 8000000,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 1,
-                'price'      => 8000000,
+                'quantity' => 1,
+                'price' => 8000000,
                 // serial_ids bỏ trống
             ]],
         ]);
@@ -169,16 +174,16 @@ class RequireSerialOnSaleTest extends TestCase
         $stockBefore = (int) $product->stock_quantity;
 
         $response = $this->actingAs($this->admin)->postJson('/api/pos/checkout', [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => 600000,
-            'discount'       => 0,
-            'total'          => 600000,
-            'customer_paid'  => 600000,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 600000,
+            'discount' => 0,
+            'total' => 600000,
+            'customer_paid' => 600000,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 3,
-                'price'      => 200000,
+                'quantity' => 3,
+                'price' => 200000,
             ]],
         ]);
 
@@ -201,16 +206,16 @@ class RequireSerialOnSaleTest extends TestCase
         $movementsBefore = StockMovement::where('product_id', $product->id)->count();
 
         $response = $this->actingAs($this->admin)->postJson('/api/pos/checkout', [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => 16000000,
-            'discount'       => 0,
-            'total'          => 16000000,
-            'customer_paid'  => 16000000,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 16000000,
+            'discount' => 0,
+            'total' => 16000000,
+            'customer_paid' => 16000000,
             'payment_method' => 'cash',
-            'items'          => [[
+            'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 2,
-                'price'      => 8000000,
+                'quantity' => 2,
+                'price' => 8000000,
                 'serial_ids' => [$serialA->id, $serialB->id],
             ]],
         ]);

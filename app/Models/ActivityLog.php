@@ -17,6 +17,42 @@ class ActivityLog extends Model
         'properties',
         'ip_address',
         'user_agent',
+        'reason',
+        'document_type',
+        'document_code',
+    ];
+
+    // ── Batch 10 đợt 4: document types for the edit/delete/cancel journal ──
+    const DOC_INVOICE = 'invoice';
+
+    const DOC_RETURN = 'return';
+
+    const DOC_PURCHASE = 'purchase';
+
+    const DOC_PURCHASE_RETURN = 'purchase_return';
+
+    const DOC_CASH_FLOW = 'cash_flow';
+
+    const DOCUMENT_TYPE_LABELS = [
+        self::DOC_INVOICE => 'Hóa đơn',
+        self::DOC_RETURN => 'Phiếu trả hàng',
+        self::DOC_PURCHASE => 'Phiếu nhập hàng',
+        self::DOC_PURCHASE_RETURN => 'Phiếu trả hàng nhập',
+        self::DOC_CASH_FLOW => 'Phiếu thu/chi',
+    ];
+
+    /** Actions shown by the "Nhật ký sửa / xóa / hủy" filter. */
+    const CONTROL_ACTIONS = [
+        'invoice_update',
+        'invoice_cancel',
+        'invoice_seller_change',
+        'invoice_below_cost',
+        'return_cancel',
+        'purchase_update',
+        'purchase_delete',
+        'purchase_return_cancel',
+        'cashflow_update',
+        'cashflow_cancel',
     ];
 
     protected $casts = [
@@ -76,6 +112,12 @@ class ActivityLog extends Model
     const ACTION_INVOICE_UPDATE_TIME_LOCK_OVERRIDE = 'invoice_update_time_lock_override';
 
     const ACTION_INVOICE_CANCEL_TIME_LOCK_OVERRIDE = 'invoice_cancel_time_lock_override';
+
+    const ACTION_INVOICE_SELLER_CHANGE = 'invoice_seller_change';
+
+    const ACTION_INVOICE_BELOW_COST = 'invoice_below_cost';
+
+    const ACTION_CASHFLOW_UPDATE = 'cashflow_update';
 
     const ACTION_RETURN_CREATE = 'return_create';
 
@@ -306,6 +348,9 @@ class ActivityLog extends Model
         'invoice_transaction_date_changed' => 'Đổi ngày hóa đơn',
         'invoice_update_time_lock_override' => 'Sửa hóa đơn quá hạn (override)',
         'invoice_cancel_time_lock_override' => 'Hủy hóa đơn quá hạn (override)',
+        'invoice_seller_change' => 'Đổi người bán hóa đơn',
+        'invoice_below_cost' => 'Bán dưới giá vốn',
+        'cashflow_update' => 'Sửa phiếu thu/chi',
         'return_create' => 'Tạo phiếu trả hàng',
         'return_cancel' => 'Hủy phiếu trả hàng',
         'return_sales_attribution_update' => 'Điều chỉnh người chịu doanh số trả hàng',
@@ -428,6 +473,9 @@ class ActivityLog extends Model
         'invoice_transaction_date_changed' => '📅',
         'invoice_update_time_lock_override' => '🔓',
         'invoice_cancel_time_lock_override' => '🔓',
+        'invoice_seller_change' => '👤',
+        'invoice_below_cost' => '⚠️',
+        'cashflow_update' => '✏️',
         'return_create' => '↩️',
         'return_cancel' => '🚫',
         'return_sales_attribution_update' => '👤',
@@ -541,6 +589,8 @@ class ActivityLog extends Model
         $resolvedEmployeeId = $employeeId ?? $user?->employee?->id;
 
         // Step 24.0C: capture user_agent nếu schema có cột (idempotent qua hasColumn).
+        $documentColumns = array_intersect_key($properties, array_flip(['reason', 'document_type', 'document_code']));
+        unset($properties['document_type'], $properties['document_code']);
         $payload = [
             'user_id' => $resolvedUserId,
             'employee_id' => $resolvedEmployeeId,
@@ -555,7 +605,60 @@ class ActivityLog extends Model
             $ua = request()?->userAgent();
             $payload['user_agent'] = $ua ? mb_substr($ua, 0, 500) : null;
         }
+        if ($documentColumns !== [] && self::hasDocumentColumns()) {
+            $payload['reason'] = isset($documentColumns['reason']) && is_scalar($documentColumns['reason'])
+                ? (string) $documentColumns['reason']
+                : null;
+            $payload['document_type'] = $documentColumns['document_type'] ?? null;
+            $payload['document_code'] = isset($documentColumns['document_code'])
+                ? mb_substr((string) $documentColumns['document_code'], 0, 100)
+                : null;
+        }
 
         return self::create($payload);
+    }
+
+    /**
+     * Batch 10 đợt 4 — item 31: one journal row for an edit / delete / cancel
+     * of a business document: who (user + employee), when (created_at),
+     * action, reason, and a before/after snapshot of the key fields.
+     */
+    public static function audit(
+        string $action,
+        string $documentType,
+        ?string $documentCode,
+        ?string $reason,
+        ?Model $subject = null,
+        ?array $before = null,
+        ?array $after = null,
+        array $extra = [],
+        ?string $description = null,
+    ): self {
+        $label = self::DOCUMENT_TYPE_LABELS[$documentType] ?? $documentType;
+        $properties = array_merge($extra, array_filter([
+            'reason' => $reason !== null ? trim($reason) : null,
+            'document_type' => $documentType,
+            'document_code' => $documentCode,
+            'before' => $before,
+            'after' => $after,
+        ], fn ($value) => $value !== null));
+
+        return self::log(
+            $action,
+            $description ?? ((self::ACTION_LABELS[$action] ?? $action)." {$label} {$documentCode}"),
+            $subject,
+            $properties,
+        );
+    }
+
+    private static ?bool $documentColumnsPresent = null;
+
+    public static function hasDocumentColumns(): bool
+    {
+        if (self::$documentColumnsPresent === null || self::$documentColumnsPresent === false) {
+            self::$documentColumnsPresent = \Illuminate\Support\Facades\Schema::hasColumn('activity_logs', 'document_code');
+        }
+
+        return self::$documentColumnsPresent;
     }
 }

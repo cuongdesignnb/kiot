@@ -44,6 +44,11 @@ class Role extends Model
             'Tổng quan' => [
                 'dashboard.view' => 'Xem tổng quan',
             ],
+            // Batch 10 đợt 4: một quyền duy nhất quyết định việc thấy giá vốn,
+            // giá nhập, lợi nhuận (lãi) trên mọi màn hình, API và báo cáo.
+            'Giá vốn & lợi nhuận' => [
+                'cost_profit.view' => 'Xem giá vốn, giá nhập và lợi nhuận (lãi)',
+            ],
             'Hàng hóa' => [
                 '_sub' => [
                     'Hàng hóa' => [
@@ -144,6 +149,7 @@ class Role extends Model
                         'invoices.edit' => 'Chỉnh sửa hóa đơn',
                         'invoices.delete' => 'Xóa hóa đơn',
                         'invoices.cancel' => 'Hủy hóa đơn (Step 24.0B)',
+                        'invoices.modify_old' => 'Sửa/hủy/đổi người bán hóa đơn cũ (lập trước hôm nay)',
                         'invoices.override_time_lock' => 'Sửa/hủy hóa đơn quá hạn (Step 24.3)',
                         'invoices.change_transaction_date' => 'Đổi ngày hóa đơn (Step 24.3)',
                         'invoices.print' => 'In hóa đơn',

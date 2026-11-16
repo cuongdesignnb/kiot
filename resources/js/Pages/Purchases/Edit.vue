@@ -434,9 +434,28 @@ const save = () => {
         formError.value = `${invalidItem.name}: ${purchaseLinePricingError(invalidItem, 'quantity')}`;
         return;
     }
+    // Batch 10 đợt 4 — item 32: phiếu nhập hoàn thành phải có giá nhập > 0 từng dòng.
+    if (status.value === 'completed') {
+        const zeroCost = items.value.filter(item => !(Number(item.price) > 0));
+        if (zeroCost.length > 0) {
+            formError.value = 'Giá nhập phải lớn hơn 0: ' + zeroCost.map(item => item.name).join(', ');
+            return;
+        }
+    }
+    // Batch 10 đợt 4 — item 31: sửa phiếu nhập đã hoàn thành phải ghi lý do.
+    let editReason = null;
+    if (props.purchase.status === 'completed') {
+        editReason = window.prompt('Nhập lý do sửa phiếu nhập (ít nhất 5 ký tự):');
+        if (editReason === null) return;
+        if (editReason.trim().length < 5) {
+            formError.value = 'Lý do sửa phiếu nhập phải có ít nhất 5 ký tự.';
+            return;
+        }
+    }
     submitIdempotencyKey.value ||= crypto.randomUUID();
 
     router.put(`/purchases/${props.purchase.id}`, {
+        edit_reason: editReason ? editReason.trim() : null,
         status: status.value,
         supplier_id: selectedSupplierId.value || null,
         employee_id: selectedEmployeeId.value || null,

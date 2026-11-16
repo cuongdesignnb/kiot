@@ -24,6 +24,9 @@ abstract class PcIntegrationTestCase extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Batch 10 đợt 4: these tests are not about the seller rule (covered by
+        // Security\Batch10SalesControlsTest), so invoices here may omit it.
+        \App\Models\Setting::set('sales_require_seller', false, 'sales_controls', 'boolean');
 
         Cache::flush();
         RateLimiter::clear('pc-integration:rate:'.hash('sha256', $this->clientId));

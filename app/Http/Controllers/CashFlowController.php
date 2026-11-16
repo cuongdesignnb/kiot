@@ -262,6 +262,11 @@ class CashFlowController extends Controller
             'accounting_result' => 'boolean',
             'payment_method' => 'nullable|in:cash,bank,ewallet',
             'bank_account_id' => 'nullable|exists:bank_accounts,id',
+            // Batch 10 đợt 4 — item 31: lý do sửa phiếu thu/chi là bắt buộc.
+            'edit_reason' => 'required|string|min:5|max:500',
+        ], [
+            'edit_reason.required' => 'Vui lòng nhập lý do sửa phiếu thu/chi.',
+            'edit_reason.min' => 'Lý do sửa phải có ít nhất 5 ký tự.',
         ]);
         $targetPartner = null;
         if (in_array($request->target_type, ['Khách hàng', 'Nhà cung cấp', 'customer', 'supplier'], true)) {
@@ -280,6 +285,7 @@ class CashFlowController extends Controller
         app(LockPeriodService::class)->assertNotLocked($txDate, 'cashflow_update');
 
         $oldCategory = $cashFlow->category;
+        $auditBefore = \App\Support\Audit\DocumentSnapshot::cashFlow($cashFlow);
 
         $cashFlow->update([
             'time' => $txDate,
@@ -293,6 +299,18 @@ class CashFlowController extends Controller
             'payment_method' => $request->payment_method ?? $cashFlow->payment_method,
             'bank_account_id' => ($request->payment_method ?? $cashFlow->payment_method) !== 'cash' ? $request->bank_account_id : null,
         ]);
+
+        ActivityLog::audit(
+            ActivityLog::ACTION_CASHFLOW_UPDATE,
+            ActivityLog::DOC_CASH_FLOW,
+            $cashFlow->code,
+            trim((string) $request->input('edit_reason')),
+            $cashFlow,
+            $auditBefore,
+            \App\Support\Audit\DocumentSnapshot::cashFlow($cashFlow->fresh()),
+            [],
+            "Sửa phiếu thu/chi {$cashFlow->code}",
+        );
 
         if ($oldCategory !== $cashFlow->category) {
             ActivityLog::log(

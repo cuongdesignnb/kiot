@@ -612,6 +612,13 @@ const save = () => {
         return;
     }
 
+    // Batch 10 đợt 4 — item 32: giá nhập từng dòng phải > 0.
+    const zeroCost = items.value.filter(item => !(moneyNumber(item.price) > 0));
+    if (zeroCost.length > 0) {
+        purchaseSubmitError.value = 'Giá nhập phải lớn hơn 0: ' + zeroCost.map(item => item.name).join(', ');
+        return;
+    }
+
     // “Hoàn thành” is a distinct command. A restored browser draft must
     // never be able to downgrade this action back to status=draft.
     status.value = 'completed';

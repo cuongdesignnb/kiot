@@ -50,7 +50,7 @@ class ReturnCancelResoldSerialGuardTest extends TestCase
         $serials[0]->update(['status' => 'sold', 'invoice_id' => $resale->id, 'sold_at' => now()]);
 
         $before = $this->snapshot($return, $product, $customer, $serials);
-        $response = $this->actingAs($this->admin)->postJson(route('returns.cancel', $return));
+        $response = $this->actingAs($this->admin)->postJson(route('returns.cancel', $return), ['cancel_reason' => 'Hủy phiếu trả kiểm thử']);
 
         $response->assertStatus(422)->assertJsonValidationErrors('serial_ids');
         $this->assertSame(
@@ -74,7 +74,7 @@ class ReturnCancelResoldSerialGuardTest extends TestCase
         $serials[1]->update(['status' => 'sold', 'invoice_id' => $resale->id, 'sold_at' => now()]);
 
         $before = $this->snapshot($return, $product, $customer, $serials);
-        $this->actingAs($this->admin)->postJson(route('returns.cancel', $return))
+        $this->actingAs($this->admin)->postJson(route('returns.cancel', $return), ['cancel_reason' => 'Hủy phiếu trả kiểm thử'])
             ->assertStatus(422)
             ->assertJsonValidationErrors('serial_ids');
 
@@ -85,7 +85,7 @@ class ReturnCancelResoldSerialGuardTest extends TestCase
     {
         [$return, $product, $customer, $originalInvoice, $serials] = $this->scenario(1, false);
 
-        $this->actingAs($this->admin)->postJson(route('returns.cancel', $return))
+        $this->actingAs($this->admin)->postJson(route('returns.cancel', $return), ['cancel_reason' => 'Hủy phiếu trả kiểm thử'])
             ->assertOk()
             ->assertJsonPath('success', true);
 
@@ -111,7 +111,7 @@ class ReturnCancelResoldSerialGuardTest extends TestCase
 
         $this->actingAs($this->admin)
             ->withHeader('Idempotency-Key', $idempotencyKey)
-            ->postJson(route('returns.cancel', $return))
+            ->postJson(route('returns.cancel', $return), ['cancel_reason' => 'Hủy phiếu trả kiểm thử'])
             ->assertStatus(422)
             ->assertJsonValidationErrors('serial_ids');
         $this->assertSame(0, PartnerDebtOperation::query()
@@ -122,7 +122,7 @@ class ReturnCancelResoldSerialGuardTest extends TestCase
 
         $this->actingAs($this->admin)
             ->withHeader('Idempotency-Key', $idempotencyKey)
-            ->postJson(route('returns.cancel', $return))
+            ->postJson(route('returns.cancel', $return), ['cancel_reason' => 'Hủy phiếu trả kiểm thử'])
             ->assertOk()
             ->assertJsonPath('success', true);
 

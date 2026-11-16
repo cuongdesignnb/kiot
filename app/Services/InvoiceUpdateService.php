@@ -15,6 +15,9 @@ use App\Models\SerialImei;
 use App\Models\Setting;
 use App\Models\Warranty;
 use App\Services\Debt\PartnerDebtMutationCoordinator;
+use App\Services\SalesControls\BelowCostSaleService;
+use App\Services\SalesControls\SalesControlService;
+use App\Support\Audit\DocumentSnapshot;
 use App\Support\Customers\CustomerGroupSnapshot;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -251,6 +254,9 @@ class InvoiceUpdateService
         }
 
         $changePlan = $this->buildChangePlan($invoice, $payload);
+
+        // Batch 10 đợt 4 — item 31: before-snapshot for the edit journal.
+        $context['audit_before'] = DocumentSnapshot::invoice(Invoice::query()->with('items.product', 'customer')->find($invoice->id));
 
         if ($changePlan['only_date_changed']) {
             return $this->applyDateOnlyUpdate($invoice, $payload, $changePlan, $context);
@@ -1191,11 +1197,33 @@ class InvoiceUpdateService
             );
         }
 
-        ActivityLog::log(
+        // Batch 10 đợt 4 — items 31/32: who/when/reason + before/after snapshot,
+        // and the lines now sold below cost (allowed, but recorded).
+        $fresh = Invoice::query()->with('items.product', 'customer')->find($invoice->id) ?? $invoice;
+        $belowCost = app(BelowCostSaleService::class);
+        $belowCostLines = app(SalesControlService::class)->belowCostWarningEnabled()
+            ? $belowCost->forInvoice($fresh)
+            : [];
+        if ($belowCostLines !== []) {
+            $properties['below_cost_count'] = count($belowCostLines);
+            $properties['below_cost_lines'] = $belowCostLines;
+        }
+
+        $reason = $context['edit_reason']
+            ?? $context['time_lock_override_reason']
+            ?? $context['transaction_date_change_reason']
+            ?? null;
+
+        ActivityLog::audit(
             $action,
-            "Cập nhật hóa đơn {$invoice->code}",
+            ActivityLog::DOC_INVOICE,
+            $invoice->code,
+            $reason,
             $invoice,
-            $properties
+            $context['audit_before'] ?? null,
+            DocumentSnapshot::invoice($fresh),
+            $properties,
+            "Cập nhật hóa đơn {$invoice->code}",
         );
     }
 

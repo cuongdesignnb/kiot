@@ -110,6 +110,7 @@ class PurchaseLineTotalAutocalculationTest extends TestCase
         $response = $this->from("/purchases/{$purchase->id}/edit")
             ->actingAs($admin)
             ->put("/purchases/{$purchase->id}", [
+                'edit_reason' => 'Sửa phiếu nhập kiểm thử',
                 'supplier_id' => $supplier->id,
                 'status' => 'completed',
                 'purchase_date' => now()->toDateTimeString(),

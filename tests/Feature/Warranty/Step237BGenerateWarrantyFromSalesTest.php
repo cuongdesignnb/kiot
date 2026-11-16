@@ -26,22 +26,26 @@ class Step237BGenerateWarrantyFromSalesTest extends TestCase
     use DatabaseTransactions;
 
     private User $admin;
+
     private Customer $customer;
 
     protected function setUp(): void
     {
         parent::setUp();
+        // Batch 10 đợt 4: these tests are not about the seller rule (covered by
+        // Security\Batch10SalesControlsTest), so invoices here may omit it.
+        \App\Models\Setting::set('sales_require_seller', false, 'sales_controls', 'boolean');
         $this->admin = User::create([
-            'name'     => 'Admin 23.7B',
-            'email'    => 'admin-237b-' . uniqid() . '@test.local',
+            'name' => 'Admin 23.7B',
+            'email' => 'admin-237b-'.uniqid().'@test.local',
             'password' => bcrypt('password'),
-            'role_id'  => null,
+            'role_id' => null,
         ]);
         $this->customer = Customer::create([
-            'code'        => 'KH237B-' . uniqid(),
-            'name'        => 'KH 237B',
-            'phone'       => '090' . rand(1000000, 9999999),
-            'email'       => 'kh-237b-' . uniqid() . '@test.local',
+            'code' => 'KH237B-'.uniqid(),
+            'name' => 'KH 237B',
+            'phone' => '090'.rand(1000000, 9999999),
+            'email' => 'kh-237b-'.uniqid().'@test.local',
             'debt_amount' => 0,
             'total_spent' => 0,
         ]);
@@ -50,39 +54,40 @@ class Step237BGenerateWarrantyFromSalesTest extends TestCase
     private function makeProduct(bool $hasSerial, int $stock, float $cost = 1000000): Product
     {
         $cat = Category::firstOrCreate(['name' => 'Cat 23.7B']);
+
         return Product::create([
-            'sku'                  => 'P237B-' . uniqid(),
-            'name'                 => 'Product 23.7B',
-            'cost_price'           => $cost,
-            'retail_price'         => $cost * 2,
-            'stock_quantity'       => $stock,
+            'sku' => 'P237B-'.uniqid(),
+            'name' => 'Product 23.7B',
+            'cost_price' => $cost,
+            'retail_price' => $cost * 2,
+            'stock_quantity' => $stock,
             'inventory_total_cost' => $stock * $cost,
-            'is_active'            => true,
-            'has_serial'           => $hasSerial,
-            'category_id'          => $cat->id,
+            'is_active' => true,
+            'has_serial' => $hasSerial,
+            'category_id' => $cat->id,
         ]);
     }
 
     private function seedWarrantyMonths(Product $product, int $months): void
     {
         $purchase = Purchase::create([
-            'code'         => 'PN-237B-' . uniqid(),
-            'supplier_id'  => null,
-            'user_id'      => $this->admin->id,
+            'code' => 'PN-237B-'.uniqid(),
+            'supplier_id' => null,
+            'user_id' => $this->admin->id,
             'total_amount' => 0,
-            'paid_amount'  => 0,
-            'debt_amount'  => 0,
-            'status'       => 'completed',
+            'paid_amount' => 0,
+            'debt_amount' => 0,
+            'status' => 'completed',
         ]);
         PurchaseItem::create([
-            'purchase_id'     => $purchase->id,
-            'product_id'      => $product->id,
-            'product_name'    => $product->name,
-            'product_code'    => $product->sku,
-            'quantity'        => 1,
-            'price'           => $product->cost_price,
-            'discount'        => 0,
-            'subtotal'        => $product->cost_price,
+            'purchase_id' => $purchase->id,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'product_code' => $product->sku,
+            'quantity' => 1,
+            'price' => $product->cost_price,
+            'discount' => 0,
+            'subtotal' => $product->cost_price,
             'warranty_months' => $months,
         ]);
     }
@@ -90,10 +95,10 @@ class Step237BGenerateWarrantyFromSalesTest extends TestCase
     private function makeSerial(Product $product): SerialImei
     {
         return SerialImei::create([
-            'product_id'    => $product->id,
-            'serial_number' => 'SN237B-' . uniqid(),
-            'status'        => 'in_stock',
-            'cost_price'    => $product->cost_price,
+            'product_id' => $product->id,
+            'serial_number' => 'SN237B-'.uniqid(),
+            'status' => 'in_stock',
+            'cost_price' => $product->cost_price,
             'original_cost' => $product->cost_price,
         ]);
     }
@@ -108,16 +113,16 @@ class Step237BGenerateWarrantyFromSalesTest extends TestCase
         $product->update(['stock_quantity' => 2, 'inventory_total_cost' => 10000000]);
 
         $resp = $this->actingAs($this->admin)->postJson('/api/pos/checkout', [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => 16000000,
-            'discount'       => 0,
-            'total'          => 16000000,
-            'customer_paid'  => 16000000,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 16000000,
+            'discount' => 0,
+            'total' => 16000000,
+            'customer_paid' => 16000000,
             'payment_method' => 'cash',
             'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 2,
-                'price'      => 8000000,
+                'quantity' => 2,
+                'price' => 8000000,
                 'serial_ids' => [$sA->id, $sB->id],
             ]],
         ]);
@@ -146,15 +151,15 @@ class Step237BGenerateWarrantyFromSalesTest extends TestCase
         $product->update(['stock_quantity' => 1, 'inventory_total_cost' => 5000000]);
 
         $this->actingAs($this->admin)->post(route('invoices.store'), [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => 8000000,
-            'total'          => 8000000,
-            'customer_paid'  => 8000000,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 8000000,
+            'total' => 8000000,
+            'customer_paid' => 8000000,
             'payment_method' => 'cash',
             'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 1,
-                'price'      => 8000000,
+                'quantity' => 1,
+                'price' => 8000000,
                 'serial_ids' => [$sA->id],
             ]],
         ]);
@@ -176,29 +181,29 @@ class Step237BGenerateWarrantyFromSalesTest extends TestCase
         $product->update(['stock_quantity' => 1, 'inventory_total_cost' => 5000000]);
 
         $order = Order::create([
-            'code'             => 'DH-237B-' . uniqid(),
-            'customer_id'      => $this->customer->id,
-            'status'           => 'draft',
-            'total_price'      => 8000000,
-            'discount'         => 0,
-            'other_fees'       => 0,
-            'total_payment'    => 8000000,
-            'amount_paid'      => 0,
-            'created_by_name'  => 'Admin',
+            'code' => 'DH-237B-'.uniqid(),
+            'customer_id' => $this->customer->id,
+            'status' => 'draft',
+            'total_price' => 8000000,
+            'discount' => 0,
+            'other_fees' => 0,
+            'total_payment' => 8000000,
+            'amount_paid' => 0,
+            'created_by_name' => 'Admin',
             'assigned_to_name' => 'Admin',
-            'price_book_name'  => 'Bảng giá chung',
+            'price_book_name' => 'Bảng giá chung',
         ]);
         $order->items()->create([
             'product_id' => $product->id,
-            'qty'        => 1,
-            'price'      => 8000000,
-            'discount'   => 0,
-            'subtotal'   => 8000000,
+            'qty' => 1,
+            'price' => 8000000,
+            'discount' => 0,
+            'subtotal' => 8000000,
             'serial_ids' => [$sA->id],
         ]);
 
         $req = Request::create('/orders-test', 'POST', [
-            'amount_paid'    => 8000000,
+            'amount_paid' => 8000000,
             'payment_method' => 'cash',
         ]);
         $this->actingAs($this->admin);
@@ -220,15 +225,15 @@ class Step237BGenerateWarrantyFromSalesTest extends TestCase
         $this->seedWarrantyMonths($product, 12);
 
         $this->actingAs($this->admin)->post(route('invoices.store'), [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => 600000,
-            'total'          => 600000,
-            'customer_paid'  => 600000,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 600000,
+            'total' => 600000,
+            'customer_paid' => 600000,
             'payment_method' => 'cash',
             'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 3,
-                'price'      => 200000,
+                'quantity' => 3,
+                'price' => 200000,
             ]],
         ]);
 
@@ -248,15 +253,15 @@ class Step237BGenerateWarrantyFromSalesTest extends TestCase
         // Không seed warranty_months.
 
         $this->actingAs($this->admin)->post(route('invoices.store'), [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => 200000,
-            'total'          => 200000,
-            'customer_paid'  => 200000,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 200000,
+            'total' => 200000,
+            'customer_paid' => 200000,
             'payment_method' => 'cash',
             'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 1,
-                'price'      => 200000,
+                'quantity' => 1,
+                'price' => 200000,
             ]],
         ]);
 
@@ -274,16 +279,16 @@ class Step237BGenerateWarrantyFromSalesTest extends TestCase
         $product->update(['stock_quantity' => 1, 'inventory_total_cost' => 5000000]);
 
         $this->actingAs($this->admin)->postJson('/api/pos/checkout', [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => 8000000,
-            'discount'       => 0,
-            'total'          => 8000000,
-            'customer_paid'  => 8000000,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 8000000,
+            'discount' => 0,
+            'total' => 8000000,
+            'customer_paid' => 8000000,
             'payment_method' => 'cash',
             'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 1,
-                'price'      => 8000000,
+                'quantity' => 1,
+                'price' => 8000000,
                 'serial_ids' => [$sA->id],
             ]],
         ])->assertStatus(200);
@@ -314,15 +319,15 @@ class Step237BGenerateWarrantyFromSalesTest extends TestCase
         $warrantyCountBefore = Warranty::count();
 
         $this->actingAs($this->admin)->post(route('invoices.store'), [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => 8000000,
-            'total'          => 8000000,
-            'customer_paid'  => 8000000,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 8000000,
+            'total' => 8000000,
+            'customer_paid' => 8000000,
             'payment_method' => 'cash',
             'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 1,
-                'price'      => 8000000,
+                'quantity' => 1,
+                'price' => 8000000,
                 'serial_ids' => [$sA->id],
             ]],
         ]);
@@ -340,15 +345,15 @@ class Step237BGenerateWarrantyFromSalesTest extends TestCase
         $this->seedWarrantyMonths($product, 12);
 
         $this->actingAs($this->admin)->post(route('invoices.store'), [
-            'customer_id'    => $this->customer->id,
-            'subtotal'       => 200000,
-            'total'          => 200000,
-            'customer_paid'  => 200000,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 200000,
+            'total' => 200000,
+            'customer_paid' => 200000,
             'payment_method' => 'cash',
             'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 1,
-                'price'      => 200000,
+                'quantity' => 1,
+                'price' => 200000,
             ]],
         ]);
 
@@ -357,7 +362,7 @@ class Step237BGenerateWarrantyFromSalesTest extends TestCase
         $this->assertNotNull($w);
 
         $purchase = \Carbon\Carbon::parse($w->purchase_date);
-        $end      = \Carbon\Carbon::parse($w->warranty_end_date);
+        $end = \Carbon\Carbon::parse($w->warranty_end_date);
         $this->assertSame(12, (int) round($purchase->diffInMonths($end)),
             'warranty_end_date = purchase_date + 12 tháng.');
     }

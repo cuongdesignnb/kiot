@@ -212,6 +212,12 @@ class PosController extends Controller
             } catch (\InvalidArgumentException $e) {
                 return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
             }
+
+            // Batch 10 đợt 4 — item 32: người bán + đơn giá từng dòng bắt buộc.
+            $controls = app(\App\Services\SalesControls\SalesControlService::class);
+            $controls->assertSellerPresent($sellerId, $sellerName, 'seller_key');
+            $controls->assertLinePrices($validated['items']);
+
             $paymentMethod = $validated['payment_method'] ?? 'cash';
             $isTransfer = $paymentMethod === 'transfer';
             $bankInfo = $validated['bank_account_info'] ?? null;

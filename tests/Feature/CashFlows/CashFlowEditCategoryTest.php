@@ -21,7 +21,7 @@ class CashFlowEditCategoryTest extends TestCase
     private function createPaymentCashFlow(array $overrides = []): CashFlow
     {
         return CashFlow::create(array_merge([
-            'code' => 'PC-EDIT-CAT-' . uniqid(),
+            'code' => 'PC-EDIT-CAT-'.uniqid(),
             'type' => 'payment',
             'amount' => 250000,
             'time' => Carbon::now(),
@@ -39,7 +39,7 @@ class CashFlowEditCategoryTest extends TestCase
     private function createReceiptCashFlow(array $overrides = []): CashFlow
     {
         return CashFlow::create(array_merge([
-            'code' => 'PT-EDIT-CAT-' . uniqid(),
+            'code' => 'PT-EDIT-CAT-'.uniqid(),
             'type' => 'receipt',
             'amount' => 250000,
             'time' => Carbon::now(),
@@ -56,8 +56,8 @@ class CashFlowEditCategoryTest extends TestCase
 
     public function test_index_splits_saved_categories_by_cashflow_type_and_keeps_compat_options(): void
     {
-        $receiptCategory = 'ReceiptOnly-' . uniqid();
-        $paymentCategory = 'PaymentOnly-' . uniqid();
+        $receiptCategory = 'ReceiptOnly-'.uniqid();
+        $paymentCategory = 'PaymentOnly-'.uniqid();
 
         $this->createReceiptCashFlow(['category' => $receiptCategory]);
         $this->createPaymentCashFlow(['category' => $paymentCategory]);
@@ -71,13 +71,13 @@ class CashFlowEditCategoryTest extends TestCase
                 $values = collect($categories)->all();
 
                 return in_array($receiptCategory, $values, true)
-                    && !in_array($paymentCategory, $values, true);
+                    && ! in_array($paymentCategory, $values, true);
             })
             ->where('savedPaymentCategories', function ($categories) use ($receiptCategory, $paymentCategory) {
                 $values = collect($categories)->all();
 
                 return in_array($paymentCategory, $values, true)
-                    && !in_array($receiptCategory, $values, true);
+                    && ! in_array($receiptCategory, $values, true);
             })
             ->where('filterOptions.categories', function ($options) use ($receiptCategory, $paymentCategory) {
                 $values = collect($options)->pluck('value')->all();
@@ -90,7 +90,7 @@ class CashFlowEditCategoryTest extends TestCase
                 $types = collect($options)->pluck('type')->unique()->all();
 
                 return in_array($receiptCategory, $values, true)
-                    && !in_array($paymentCategory, $values, true)
+                    && ! in_array($paymentCategory, $values, true)
                     && $types === ['receipt'];
             })
             ->where('filterOptions.categoryGroups.payment', function ($options) use ($receiptCategory, $paymentCategory) {
@@ -98,7 +98,7 @@ class CashFlowEditCategoryTest extends TestCase
                 $types = collect($options)->pluck('type')->unique()->all();
 
                 return in_array($paymentCategory, $values, true)
-                    && !in_array($receiptCategory, $values, true)
+                    && ! in_array($receiptCategory, $values, true)
                     && $types === ['payment'];
             })
         );
@@ -111,6 +111,7 @@ class CashFlowEditCategoryTest extends TestCase
 
         $this->actingAs($this->admin())
             ->put(route('cash_flows.update', $cashFlow), [
+                'edit_reason' => 'Sửa loại thu chi kiểm thử',
                 'time' => Carbon::parse($cashFlow->time)->format('Y-m-d\TH:i'),
                 'category' => 'Bảo hiểm',
                 'target_type' => $cashFlow->target_type,
@@ -136,6 +137,7 @@ class CashFlowEditCategoryTest extends TestCase
 
         $this->actingAs($this->admin())
             ->put(route('cash_flows.update', $cashFlow), [
+                'edit_reason' => 'Sửa loại thu chi kiểm thử',
                 'type' => 'receipt',
                 'time' => Carbon::parse($cashFlow->time)->format('Y-m-d\TH:i'),
                 'category' => 'Bảo hiểm',

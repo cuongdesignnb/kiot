@@ -2,6 +2,7 @@
 import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, watch, onMounted, computed } from 'vue';
 import { Head, router, Link } from '@inertiajs/vue3';
+import { usePermission } from '@/composables/usePermission';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import SortableHeader from '@/Components/SortableHeader.vue';
 import MoneyInput from '@/Components/MoneyInput.vue';
@@ -113,8 +114,12 @@ const showTechnicianColumn = computed(() => {
     return Boolean(activePriceBook.value?.enable_technician_price);
 });
 
+// Batch 10 đợt 4 — item 30: ẩn giá vốn / giá nhập khi không có quyền (server cũng xóa số liệu).
+const { can: canPermission } = usePermission();
+const canViewCost = computed(() => canPermission('cost_profit.view'));
+
 const totalColumns = computed(() => {
-    return 5 + (showRetailColumn.value ? 1 : 0) + (showTechnicianColumn.value ? 1 : 0);
+    return 5 + (showRetailColumn.value ? 1 : 0) + (showTechnicianColumn.value ? 1 : 0) - (canViewCost.value ? 0 : 2);
 });
 
 const normalizePriceValue = (value) => {
@@ -257,7 +262,7 @@ const handleFileUpload = (e) => {
 // ============ Formula Modal ============
 const isFormulaModalOpen = ref(false);
 const formulaForm = ref({
-    base_field: 'cost_price',
+    base_field: canViewCost.value ? 'cost_price' : 'retail_price',
     operator: '+',
     value: 0,
     is_percent: false,
@@ -420,8 +425,10 @@ const deselectPriceBook = (id) => {
 const formulaBaseOptions = computed(() => {
     const opts = [
         { value: '', label: 'Chọn bảng giá' },
-        { value: 'cost_price', label: 'Giá vốn' },
-        { value: 'last_purchase_price', label: 'Giá nhập cuối' },
+        ...(canViewCost.value ? [
+            { value: 'cost_price', label: 'Giá vốn' },
+            { value: 'last_purchase_price', label: 'Giá nhập cuối' },
+        ] : []),
         { value: 'retail_price', label: 'Bảng giá chung' },
     ];
     if (props.priceBooks) {
@@ -511,8 +518,8 @@ const formulaBaseOptions = computed(() => {
                         </select>
                         <select v-model="comparePrice" class="w-full border border-gray-300 rounded p-1.5 text-[13px] outline-none focus:border-blue-500 text-gray-700">
                             <option value="">Chọn giá so sánh</option>
-                            <option value="cost_price">Giá vốn</option>
-                            <option value="last_purchase_price">Giá nhập cuối</option>
+                            <option v-if="canViewCost" value="cost_price">Giá vốn</option>
+                            <option v-if="canViewCost" value="last_purchase_price">Giá nhập cuối</option>
                         </select>
                     </div>
                 </div>
@@ -564,8 +571,8 @@ const formulaBaseOptions = computed(() => {
                             <tr>
                                 <SortableHeader label="Mã hàng" field="sku" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 whitespace-nowrap border-r border-[#e1eaf5] font-semibold" style="width:140px" @sort="handleSort" />
                                 <SortableHeader label="Tên hàng" field="name" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-r border-[#e1eaf5] font-semibold" @sort="handleSort" />
-                                <SortableHeader label="Giá vốn" field="cost_price" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right whitespace-nowrap border-r border-[#e1eaf5] font-semibold" style="width:130px" @sort="handleSort" />
-                                <SortableHeader label="Giá nhập cuối" field="last_purchase_price" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right whitespace-nowrap border-r border-[#e1eaf5] font-semibold" style="width:130px" @sort="handleSort" />
+                                <SortableHeader v-if="canViewCost" label="Giá vốn" field="cost_price" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right whitespace-nowrap border-r border-[#e1eaf5] font-semibold" style="width:130px" @sort="handleSort" />
+                                <SortableHeader v-if="canViewCost" label="Giá nhập cuối" field="last_purchase_price" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right whitespace-nowrap border-r border-[#e1eaf5] font-semibold" style="width:130px" @sort="handleSort" />
                                 <SortableHeader label="Giá bán" field="retail_price" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right whitespace-nowrap font-semibold pr-6" style="width:160px" @sort="handleSort" />
                                 <th v-if="showRetailColumn" class="p-3 text-right whitespace-nowrap font-semibold pr-6" style="width:160px">
                                     Giá lẻ
@@ -588,8 +595,8 @@ const formulaBaseOptions = computed(() => {
                                 <td class="p-2.5">
                                     <div class="font-bold text-gray-800 truncate" :title="product.name">{{ product.name }}</div>
                                 </td>
-                                <td class="p-2.5 text-right font-medium text-gray-700">{{ formatCurrency(product.cost_price) }}</td>
-                                <td class="p-2.5 text-right font-medium text-gray-700">{{ formatCurrency(product.last_purchase_price) }}</td>
+                                <td v-if="canViewCost" class="p-2.5 text-right font-medium text-gray-700">{{ formatCurrency(product.cost_price) }}</td>
+                                <td v-if="canViewCost" class="p-2.5 text-right font-medium text-gray-700">{{ formatCurrency(product.last_purchase_price) }}</td>
                                 <td class="p-2.5 text-right">
                                     <div class="flex items-center justify-end gap-1.5 relative group">
                                         <div class="relative w-[130px]">
@@ -695,8 +702,8 @@ const formulaBaseOptions = computed(() => {
                         <div class="flex items-center gap-2 flex-wrap">
                             <span class="font-bold">Giá mới</span> =
                             <select v-model="formulaForm.base_field" class="border rounded p-1.5 outline-none focus:border-blue-500">
-                                <option value="cost_price">Giá vốn</option>
-                                <option value="last_purchase_price">Giá nhập cuối</option>
+                                <option v-if="canViewCost" value="cost_price">Giá vốn</option>
+                                <option v-if="canViewCost" value="last_purchase_price">Giá nhập cuối</option>
                                 <option value="retail_price">Giá bán hiện tại</option>
                             </select>
                             <select v-model="formulaForm.operator" class="border rounded p-1.5 outline-none focus:border-blue-500 w-14">

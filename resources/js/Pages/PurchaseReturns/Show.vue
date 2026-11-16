@@ -30,8 +30,16 @@ const formatDateTime = (value) => {
 
 const cancelReturn = () => {
     if (!confirm(`Bạn có chắc muốn hủy phiếu trả hàng ${ret.code}? Tồn kho và công nợ sẽ được hoàn lại.`)) return;
+    // Batch 10 đợt 4 — item 31: lý do hủy là bắt buộc (lưu vào nhật ký).
+    const cancelReasonInput = window.prompt('Nhập lý do hủy phiếu trả hàng nhập (ít nhất 5 ký tự):');
+    if (cancelReasonInput === null) return;
+    if (cancelReasonInput.trim().length < 5) {
+        alert('Lý do hủy phải có ít nhất 5 ký tự.');
+        return;
+    }
     cancelIdempotencyKey.value ||= crypto.randomUUID();
     router.delete(`/purchase-returns/${ret.id}`, {
+        data: { cancel_reason: cancelReasonInput.trim() },
         headers: { 'Idempotency-Key': cancelIdempotencyKey.value },
         onSuccess: () => { cancelIdempotencyKey.value = ''; },
     });
