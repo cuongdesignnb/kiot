@@ -25,6 +25,7 @@ const page = usePage();
 
 const props = defineProps({
     suppliers: Array,
+    purchaseRequireLineCost: { type: Boolean, default: true },
     employees: Array,
     categories: Array,
     brands: Array,
@@ -613,7 +614,8 @@ const save = () => {
     }
 
     // Batch 10 đợt 4 — item 32: giá nhập từng dòng phải > 0.
-    const zeroCost = items.value.filter(item => !(moneyNumber(item.price) > 0));
+    // Theo Thiết lập → "Bắt buộc giá nhập > 0" (purchase_require_line_cost); tắt thì cho nhập 0đ.
+    const zeroCost = props.purchaseRequireLineCost === false ? [] : items.value.filter(item => !(moneyNumber(item.price) > 0));
     if (zeroCost.length > 0) {
         purchaseSubmitError.value = 'Giá nhập phải lớn hơn 0: ' + zeroCost.map(item => item.name).join(', ');
         return;

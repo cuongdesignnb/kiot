@@ -41,7 +41,7 @@ class SalesControlService
 
     public function purchaseCostRequired(): bool
     {
-        return (bool) Setting::get(self::SETTING_REQUIRE_PURCHASE_COST, true);
+        return filter_var(Setting::get(self::SETTING_REQUIRE_PURCHASE_COST, true), FILTER_VALIDATE_BOOLEAN);
     }
 
     public function belowCostWarningEnabled(): bool
