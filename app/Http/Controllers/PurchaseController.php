@@ -223,6 +223,7 @@ class PurchaseController extends Controller
             'showRetailPrice' => $showRetailPrice,
             'showTechnicianPrice' => $showTechnicianPrice,
             'bankAccounts' => \App\Models\BankAccount::where('status', 'active')->get(),
+            'purchaseRequireLineCost' => app(\App\Services\SalesControls\SalesControlService::class)->purchaseCostRequired(),
         ]);
     }
 
@@ -669,6 +670,7 @@ class PurchaseController extends Controller
             'showRetailPrice' => $priceBooks->contains('enable_retail_price', true),
             'showTechnicianPrice' => $priceBooks->contains('enable_technician_price', true),
             'bankAccounts' => \App\Models\BankAccount::where('status', 'active')->get(),
+            'purchaseRequireLineCost' => app(\App\Services\SalesControls\SalesControlService::class)->purchaseCostRequired(),
         ]);
     }
 

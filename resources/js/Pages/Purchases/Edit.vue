@@ -19,6 +19,7 @@ import {
 const props = defineProps({
     purchase: Object,
     suppliers: Array,
+    purchaseRequireLineCost: { type: Boolean, default: true },
     employees: Array,
     showRetailPrice: Boolean,
     showTechnicianPrice: Boolean,
@@ -435,7 +436,8 @@ const save = () => {
         return;
     }
     // Batch 10 đợt 4 — item 32: phiếu nhập hoàn thành phải có giá nhập > 0 từng dòng.
-    if (status.value === 'completed') {
+    // Theo Thiết lập → "Bắt buộc giá nhập > 0" (purchase_require_line_cost); tắt thì cho nhập 0đ.
+    if (status.value === 'completed' && props.purchaseRequireLineCost !== false) {
         const zeroCost = items.value.filter(item => !(Number(item.price) > 0));
         if (zeroCost.length > 0) {
             formError.value = 'Giá nhập phải lớn hơn 0: ' + zeroCost.map(item => item.name).join(', ');

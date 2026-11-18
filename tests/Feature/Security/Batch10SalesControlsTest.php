@@ -468,6 +468,35 @@ class Batch10SalesControlsTest extends TestCase
         $this->assertTrue(Purchase::query()->where('supplier_id', $supplier->id)->exists());
     }
 
+    public function test_purchase_allows_zero_import_cost_when_the_setting_is_off(): void
+    {
+        Setting::set('purchase_require_line_cost', false, 'sales_controls', 'boolean');
+        $supplier = Customer::create([
+            'code' => 'NCC-B10Z-'.uniqid(),
+            'name' => 'NCC hàng tặng',
+            'phone' => '09'.random_int(10000000, 99999999),
+            'is_supplier' => true,
+            'is_customer' => false,
+        ]);
+
+        $this->actingAs($this->admin)
+            ->from('/purchases/create')
+            ->post('/purchases', [
+                'supplier_id' => $supplier->id,
+                'status' => 'completed',
+                'purchase_date' => now()->toDateTimeString(),
+                'discount' => 0,
+                'paid_amount' => 0,
+                'payment_method' => 'cash',
+                'items' => [['product_id' => $this->product->id, 'quantity' => 1, 'price' => 0, 'discount' => 0]],
+            ])
+            ->assertSessionHasNoErrors();
+        $this->assertTrue(Purchase::query()->where('supplier_id', $supplier->id)->exists());
+
+        $this->withoutVite()->actingAs($this->admin)->get('/purchases/create')
+            ->assertInertia(fn ($page) => $page->where('purchaseRequireLineCost', false));
+    }
+
     // ───────────────────────── Rollout ─────────────────────────
 
     public function test_migration_grants_the_new_permissions_to_existing_roles(): void
