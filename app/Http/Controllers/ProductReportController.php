@@ -32,7 +32,7 @@ class ProductReportController extends Controller
         [$startDate, $endDate, $periodLabel, $groupBy] = $this->resolvePeriod($period, $dateFrom, $dateTo);
 
         // ── Base invoice query ──
-        $invoiceQuery = Invoice::whereBetween('created_at', [$startDate, $endDate])
+        $invoiceQuery = Invoice::businessBetween($startDate, $endDate)
             ->where('status', '!=', 'Đã hủy');
         if ($branchId) {
             $invoiceQuery->where('branch_id', $branchId);
@@ -224,8 +224,8 @@ class ProductReportController extends Controller
         // Returned items — trừ khỏi revenue và cost
         $returnedByProduct = collect();
         if ($returnIds->count() > 0) {
-            $hasRetCostCol = \Illuminate\Support\Facades\Schema::hasColumn('return_items', 'import_price');
-            $retCostCol = $hasRetCostCol ? 'import_price' : 'cost_price';
+            // Cost snapshot of the returned goods; import_price is the refund price.
+            $retCostCol = 'cost_price';
             $returnedByProduct = DB::table('return_items')
                 ->whereIn('return_id', $returnIds)
                 ->join('products', 'return_items.product_id', '=', 'products.id')
@@ -233,7 +233,7 @@ class ProductReportController extends Controller
                 ->select(
                     'return_items.product_id',
                     DB::raw('SUM(return_items.quantity * return_items.price) as return_revenue'),
-                    DB::raw("SUM(return_items.quantity * COALESCE(return_items.{$retCostCol}, products.cost_price, 0)) as return_cost")
+                    DB::raw("SUM(return_items.quantity * COALESCE(NULLIF(return_items.{$retCostCol}, 0), products.cost_price, 0)) as return_cost")
                 )
                 ->groupBy('return_items.product_id')
                 ->get()

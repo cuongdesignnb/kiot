@@ -32,7 +32,7 @@ class SalesReportController extends Controller
         [$startDate, $endDate, $periodLabel, $groupBy] = $this->resolvePeriod($period, $dateFrom, $dateTo);
 
         // ── Base invoice query ──
-        $invoiceQuery = Invoice::whereBetween('created_at', [$startDate, $endDate])
+        $invoiceQuery = Invoice::businessBetween($startDate, $endDate)
             ->where('status', '!=', 'Đã hủy');
         if ($branchId) {
             $invoiceQuery->where('branch_id', $branchId);
@@ -395,7 +395,7 @@ class SalesReportController extends Controller
 
         $invoiceBase = DB::table('invoices')
             ->leftJoin('customers', 'customers.id', '=', 'invoices.customer_id')
-            ->whereBetween('invoices.created_at', [$startDate, $endDate])
+            ->whereBetween(DB::raw('COALESCE(invoices.transaction_date, invoices.created_at)'), [$startDate, $endDate])
             ->where('invoices.status', '!=', 'Đã hủy');
 
         if ($branchId) {

@@ -42,7 +42,7 @@ class EmployeeReportController extends Controller
         [$startDate, $endDate, $periodLabel] = $this->resolvePeriod($period, $dateFrom, $dateTo);
 
         // Base invoice query
-        $invoiceQ = Invoice::whereBetween('created_at', [$startDate, $endDate])
+        $invoiceQ = Invoice::businessBetween($startDate, $endDate)
             ->where('status', '!=', 'Đã hủy');
         if ($branchId) {
             $invoiceQ->where('branch_id', $branchId);

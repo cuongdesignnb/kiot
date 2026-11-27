@@ -1,4 +1,5 @@
 <script setup>
+import { deadlineDay, formatDeadline, isDeadlinePast } from "@/utils/dateTime";
 import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, watch, computed } from "vue";
 import { Head, Link, usePage } from "@inertiajs/vue3";
@@ -230,7 +231,7 @@ loadRepairs();
                                 </span>
                             </td>
                             <td class="px-4 py-3 text-center">
-                                <span v-if="r.deadline" :class="r.status !== 'completed' && new Date(r.deadline) < new Date() ? 'text-red-600 font-bold' : 'text-gray-600'">{{ r.deadline }}</span>
+                                <span v-if="r.deadline" :class="r.status !== 'completed' && isDeadlinePast(r.deadline) ? 'text-red-600 font-bold' : 'text-gray-600'">{{ formatDeadline(r.deadline) }}</span>
                                 <span v-else class="text-gray-300">-</span>
                             </td>
                             <td class="px-4 py-3 text-right">{{ formatCurrency(r.original_cost) }}</td>

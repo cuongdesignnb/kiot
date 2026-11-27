@@ -6,7 +6,7 @@ import AppLayout from "@/Layouts/AppLayout.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
 import DateTimePicker from "@/Components/DateTimePicker.vue";
 import axios from "axios";
-import { dateInputAfterDays } from "@/utils/dateTime";
+import { deadlineDay, formatDeadline, isDeadlinePast, dateInputAfterDays } from "@/utils/dateTime";
 
 // Hạn mặc định của công việc: ngày tạo + 10 ngày (khớp Task::DEFAULT_DEADLINE_DAYS).
 const DEFAULT_TASK_DEADLINE_DAYS = 10;
@@ -555,7 +555,7 @@ loadTasks();
                                 </div>
                             </td>
                             <td class="px-4 py-3 text-center">
-                                <span v-if="t.deadline" :class="t.status !== 'completed' && new Date(t.deadline) < new Date() ? 'text-red-600 font-bold' : 'text-gray-600'">{{ t.deadline }}</span>
+                                <span v-if="t.deadline" :class="t.status !== 'completed' && isDeadlinePast(t.deadline) ? 'text-red-600 font-bold' : 'text-gray-600'">{{ formatDeadline(t.deadline) }}</span>
                                 <span v-else class="text-gray-300">-</span>
                             </td>
                             <td class="px-4 py-3 text-center" @click.stop>
@@ -609,7 +609,7 @@ loadTasks();
                             <div class="font-semibold text-sm text-gray-800 mb-2 line-clamp-2">{{ t.title || t.code }}</div>
                             <div class="flex items-center gap-2 text-xs text-gray-400">
                                 <span :class="priorityBadge(t.priority).cls" class="px-1.5 py-0.5 rounded text-[10px] font-semibold">{{ priorityBadge(t.priority).label }}</span>
-                                <span v-if="t.deadline" :class="t.status !== 'completed' && new Date(t.deadline) < new Date() ? 'text-red-500' : ''">{{ t.deadline }}</span>
+                                <span v-if="t.deadline" :class="t.status !== 'completed' && isDeadlinePast(t.deadline) ? 'text-red-500' : ''">{{ formatDeadline(t.deadline) }}</span>
                             </div>
                             <div v-if="t.progress > 0" class="mt-2">
                                 <div class="w-full bg-gray-200 rounded-full h-1">

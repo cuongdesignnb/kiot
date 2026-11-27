@@ -16,7 +16,8 @@ use Illuminate\Support\Facades\Schema;
  *  - gross_revenue = SUM(invoices.subtotal)  [NOT invoices.total]
  *  - return_value  = SUM(returns.subtotal)
  *  - cogs_sold     = SUM(non-service items.qty * COALESCE(NULLIF(items.cost_price,0), products.cost_price, 0))
- *  - cogs_returned = SUM(non-service return_items.qty * COALESCE(return_items.import_price, 0))
+ *  - cogs_returned = SUM(non-service return_items.qty * COALESCE(NULLIF(return_items.cost_price,0), products.cost_price, 0))
+ *    (return_items.import_price is the refund price paid back to the customer, not a cost)
  *  - cogs_net      = cogs_sold - cogs_returned
  *  - net_revenue   = gross_revenue - invoice_discount - return_value
  *  - gross_profit  = net_revenue - cogs_net
@@ -38,6 +39,7 @@ class MetricService
         if ($branchId) {
             $q->where('branch_id', $branchId);
         }
+
         return $q;
     }
 
@@ -51,6 +53,7 @@ class MetricService
         if ($branchId) {
             $q->where('branch_id', $branchId);
         }
+
         return $q;
     }
 
@@ -67,21 +70,23 @@ class MetricService
         $retQ = self::returnScope($from, $to, $branchId);
 
         $hasInvoiceSubtotal = Schema::hasColumn('invoices', 'subtotal');
-        $hasReturnSubtotal  = Schema::hasColumn('returns', 'subtotal');
-        $hasItemCost        = Schema::hasColumn('invoice_items', 'cost_price');
-        $hasReturnItemCost  = Schema::hasTable('return_items')
-            ? (Schema::hasColumn('return_items', 'import_price') ? 'import_price'
-              : (Schema::hasColumn('return_items', 'cost_price') ? 'cost_price' : null))
+        $hasReturnSubtotal = Schema::hasColumn('returns', 'subtotal');
+        $hasItemCost = Schema::hasColumn('invoice_items', 'cost_price');
+        // Cost of goods back in stock: the cost snapshot taken when the return was
+        // made (sale line / serial cost), else the product's cost, like cogs_sold.
+        // Never import_price: on a return it holds the refund price.
+        $hasReturnItemCost = Schema::hasTable('return_items') && Schema::hasColumn('return_items', 'cost_price')
+            ? 'cost_price'
             : null;
 
-        $grossRevenue    = (float) (clone $invQ)->sum($hasInvoiceSubtotal ? 'subtotal' : 'total');
+        $grossRevenue = (float) (clone $invQ)->sum($hasInvoiceSubtotal ? 'subtotal' : 'total');
         $invoiceDiscount = (float) (clone $invQ)->sum('discount');
-        $invoiceCount    = (clone $invQ)->count();
-        $invoiceIds      = (clone $invQ)->pluck('id');
+        $invoiceCount = (clone $invQ)->count();
+        $invoiceIds = (clone $invQ)->pluck('id');
 
-        $returnValue  = (float) (clone $retQ)->sum($hasReturnSubtotal ? 'subtotal' : 'total');
-        $returnCount  = (clone $retQ)->count();
-        $returnIds    = (clone $retQ)->pluck('id');
+        $returnValue = (float) (clone $retQ)->sum($hasReturnSubtotal ? 'subtotal' : 'total');
+        $returnCount = (clone $retQ)->count();
+        $returnIds = (clone $retQ)->pluck('id');
 
         $costExpr = $hasItemCost
             ? "CASE WHEN products.type = 'service' THEN 0 ELSE invoice_items.quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0) END"
@@ -97,24 +102,24 @@ class MetricService
             $cogsReturned = (float) DB::table('return_items')
                 ->join('products', 'return_items.product_id', '=', 'products.id')
                 ->whereIn('return_id', $returnIds)
-                ->sum(DB::raw("CASE WHEN products.type = 'service' THEN 0 ELSE return_items.quantity * COALESCE(return_items.$hasReturnItemCost, 0) END"));
+                ->sum(DB::raw("CASE WHEN products.type = 'service' THEN 0 ELSE return_items.quantity * COALESCE(NULLIF(return_items.$hasReturnItemCost, 0), products.cost_price, 0) END"));
         }
 
-        $cogsNet     = $cogsSold - $cogsReturned;
-        $netRevenue  = $grossRevenue - $invoiceDiscount - $returnValue;
+        $cogsNet = $cogsSold - $cogsReturned;
+        $netRevenue = $grossRevenue - $invoiceDiscount - $returnValue;
         $grossProfit = $netRevenue - $cogsNet;
 
         return [
-            'gross_revenue'    => $grossRevenue,
+            'gross_revenue' => $grossRevenue,
             'invoice_discount' => $invoiceDiscount,
-            'return_value'     => $returnValue,
-            'net_revenue'      => $netRevenue,
-            'cogs_sold'        => $cogsSold,
-            'cogs_returned'    => $cogsReturned,
-            'cogs_net'         => $cogsNet,
-            'gross_profit'     => $grossProfit,
-            'invoice_count'    => $invoiceCount,
-            'return_count'     => $returnCount,
+            'return_value' => $returnValue,
+            'net_revenue' => $netRevenue,
+            'cogs_sold' => $cogsSold,
+            'cogs_returned' => $cogsReturned,
+            'cogs_net' => $cogsNet,
+            'gross_profit' => $grossProfit,
+            'invoice_count' => $invoiceCount,
+            'return_count' => $returnCount,
         ];
     }
 }

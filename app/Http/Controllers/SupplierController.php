@@ -76,6 +76,16 @@ class SupplierController extends Controller
             }
         }
 
+        // "Nợ cần trả" shows the supplier-side figure: for a partner who is also a
+        // customer, what we owe minus what they owe us. Sort on that same figure
+        // (from the stored balances) so the column reads in order.
+        if ($request->input('sort_by') === 'supplier_debt_amount') {
+            $direction = ($request->input('sort_dir') ?? $request->input('sort_direction')) === 'asc' ? 'asc' : 'desc';
+            $query->reorder()
+                ->orderByRaw('(CASE WHEN is_customer = 1 THEN COALESCE(supplier_debt_amount, 0) - COALESCE(debt_amount, 0) ELSE COALESCE(supplier_debt_amount, 0) END) '.$direction)
+                ->orderBy('id', $direction);
+        }
+
         $suppliers = $query->paginate(50)->withQueryString();
 
         $suppliers->getCollection()->transform(function ($supplier) {

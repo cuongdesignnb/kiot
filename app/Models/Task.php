@@ -57,7 +57,8 @@ class Task extends Model
         'assigned_at' => 'datetime',
         'completed_at' => 'datetime',
         'cancelled_at' => 'datetime',
-        'deadline' => 'date',
+        // Plain "Y-m-d" in JSON: a deadline is a day, not an instant (no UTC "T00:00:00Z").
+        'deadline' => 'date:Y-m-d',
         'progress' => 'integer',
         // External repair casts
         'external' => 'boolean',

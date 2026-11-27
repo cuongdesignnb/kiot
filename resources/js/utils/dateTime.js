@@ -186,3 +186,26 @@ export function timeAgoVN(value) {
     if (diffDay < 30) return `${diffDay} ngày trước`;
     return formatDateVN(value);
 }
+
+// ─── Deadlines (a calendar day, no time) ────────────────────────────
+
+/** "yyyy-MM-dd" part of a deadline value (also accepts older ISO strings). */
+export function deadlineDay(value) {
+    if (!value) return '';
+    const s = String(value).trim();
+    return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : toDateInputValue(value);
+}
+
+/** Deadline shown as dd/MM/yyyy. */
+export function formatDeadline(value) {
+    const day = deadlineDay(value);
+    if (!day) return '';
+    const [y, m, d] = day.split('-');
+    return `${d}/${m}/${y}`;
+}
+
+/** True once the whole deadline day has passed. */
+export function isDeadlinePast(value) {
+    const day = deadlineDay(value);
+    return day !== '' && day < toDateInputValue(new Date());
+}
