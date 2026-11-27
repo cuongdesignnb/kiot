@@ -812,12 +812,13 @@ class ProductController extends Controller
         $sales = \App\Models\InvoiceItem::with(['invoice', 'invoice.customer'])
             ->where('product_id', $product->id)
             ->whereHas('invoice', fn ($q) => $q->where(function ($sq) {
-                $sq->whereNull('status')->orWhere('status', '!=', 'cancelled');
+                // Cancelling sets "Đã hủy" (older rows: "cancelled"); stock was put back.
+                $sq->whereNull('status')->orWhereNotIn('status', ['cancelled', 'Đã hủy']);
             }))
             ->get()
             ->map(function ($item) {
                 return [
-                    'date' => $item->invoice->created_at,
+                    'date' => $item->invoice->transaction_date ?? $item->invoice->created_at,
                     'code' => $item->invoice->code,
                     'doc_type' => 'invoice',
                     'doc_id' => $item->invoice->id,
@@ -881,6 +882,7 @@ class ProductController extends Controller
         // 5. Xuất hủy (Damage)
         $damages = \App\Models\DamageItem::with('damage')
             ->where('product_id', $product->id)
+            ->whereHas('damage', fn ($q) => $q->where('status', 'completed'))
             ->get()
             ->map(function ($item) use ($defaultCostPrice) {
                 return [
@@ -892,7 +894,7 @@ class ProductController extends Controller
                     'partner' => 'Hệ thống',
                     'sell_price' => 0,
                     'cost_price' => $defaultCostPrice,
-                    'change' => -$item->quantity,
+                    'change' => -(int) ($item->qty ?? $item->quantity ?? 0),
                     'method' => 'Trừ kho',
                 ];
             });
@@ -901,20 +903,29 @@ class ProductController extends Controller
         // 6. Chuyển kho (Transfers)
         $transfers = \App\Models\StockTransferItem::with(['stockTransfer', 'stockTransfer.toBranch'])
             ->where('product_id', $product->id)
+            ->whereHas('stockTransfer', fn ($q) => $q->whereNotIn('status', ['draft', 'cancelled']))
             ->get()
-            ->map(function ($item) use ($defaultCostPrice) {
-                return [
-                    'date' => $item->stockTransfer->created_at,
-                    'code' => $item->stockTransfer->code,
+            ->flatMap(function ($item) use ($defaultCostPrice) {
+                $transfer = $item->stockTransfer;
+                $row = [
+                    'code' => $transfer->code,
                     'doc_type' => 'transfer',
-                    'doc_id' => $item->stockTransfer->id,
-                    'type' => 'Chuyển kho',
-                    'partner' => $item->stockTransfer->toBranch->name ?? 'Kho khác',
+                    'doc_id' => $transfer->id,
+                    'partner' => $transfer->toBranch->name ?? 'Kho khác',
                     'sell_price' => 0,
                     'cost_price' => $defaultCostPrice,
-                    'change' => -$item->quantity,
-                    'method' => 'Trừ kho',
                 ];
+                $rows = [$row + ['date' => $transfer->created_at, 'type' => 'Chuyển kho', 'change' => -(int) $item->quantity, 'method' => 'Trừ kho']];
+                if ((int) $item->received_quantity > 0) {
+                    $rows[] = $row + [
+                        'date' => $transfer->receive_date ?? $transfer->updated_at,
+                        'type' => 'Nhận chuyển kho',
+                        'change' => (int) $item->received_quantity,
+                        'method' => 'Cộng kho',
+                    ];
+                }
+
+                return $rows;
             });
         $transactions = $transactions->concat($transfers);
 

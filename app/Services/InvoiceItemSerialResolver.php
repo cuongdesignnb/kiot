@@ -129,6 +129,7 @@ class InvoiceItemSerialResolver
                 'sell_price' => (float) ($item->price - ($item->discount ?? 0)),
                 'subtotal' => (float) $item->subtotal,
                 'serial' => collect($serialPayload)->pluck('serial_number')->implode(', '),
+                'warranty_policy' => $item->warranty_policy ?: null,
                 'serials' => $serialPayload,
                 'serial_count' => count($serialPayload),
                 'serial_source' => $serials->isEmpty() ? null : $serialSource,

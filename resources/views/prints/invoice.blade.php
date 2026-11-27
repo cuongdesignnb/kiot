@@ -41,7 +41,7 @@
 
         <div class="info">
             <div class="info-row"><span class="info-label">Mã hóa đơn:</span><span class="info-value">{{ $invoice->code }}</span></div>
-            <div class="info-row"><span class="info-label">Ngày tạo:</span><span class="info-value">{{ $invoice->created_at->format('d/m/Y H:i') }}</span></div>
+            <div class="info-row"><span class="info-label">Ngày bán:</span><span class="info-value">{{ \Illuminate\Support\Carbon::parse($invoice->transaction_date ?? $invoice->created_at)->format('d/m/Y H:i') }}</span></div>
             <div class="info-row"><span class="info-label">Thu ngân:</span><span class="info-value">{{ $invoice->created_by_name ?? 'Admin' }}</span></div>
             @if($invoice->customer)
             <div class="info-row"><span class="info-label">Khách hàng:</span><span class="info-value">{{ $invoice->customer->name }}</span></div>
@@ -73,6 +73,9 @@
                         @endif
                         @if($item['serial'])
                         <div class="product-sku">Serial/IMEI: {{ $item['serial'] }}</div>
+                        @endif
+                        @if(! empty($item['warranty_policy']))
+                        <div class="product-sku">Bảo hành: {{ $item['warranty_policy'] }}</div>
                         @endif
                     </td>
                     <td class="r">{{ $item['quantity'] }}</td>

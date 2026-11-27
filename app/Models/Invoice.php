@@ -10,7 +10,7 @@ class Invoice extends Model
 
     protected $casts = [
         'transaction_date' => 'datetime',
-        'lock_started_at'  => 'datetime',
+        'lock_started_at' => 'datetime',
         'cancelled_at' => 'datetime',
         'order_deposit_applied_amount' => 'decimal:2',
     ];
@@ -24,6 +24,18 @@ class Invoice extends Model
     public function scopeActive($query)
     {
         return $query->where('status', '!=', 'Đã hủy');
+    }
+
+    /**
+     * Invoices whose sale date ("Ngày bán", editable) falls in the range.
+     * Reports use this so an invoice whose date was changed appears on the
+     * same day everywhere (list, P&L, sales, products, staff, end of day).
+     */
+    public function scopeBusinessBetween($query, $from, $to)
+    {
+        $table = $query->getModel()->getTable();
+
+        return $query->whereRaw("COALESCE({$table}.transaction_date, {$table}.created_at) BETWEEN ? AND ?", [$from, $to]);
     }
 
     public function items()

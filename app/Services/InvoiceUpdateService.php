@@ -538,6 +538,9 @@ class InvoiceUpdateService
             $invoice->update($updateData);
 
             // --- 5. Delete old items, create new ---
+            // The edit form does not resend the chosen warranty package; keep it per product.
+            $previousWarranty = $invoice->items->groupBy('product_id')
+                ->map(fn ($items) => $items->pluck('warranty_policy')->filter()->first());
             $invoice->items()->delete();
 
             $allowOversell = Setting::get('inventory_allow_oversell', true);
@@ -595,6 +598,10 @@ class InvoiceUpdateService
                     'subtotal' => ($item['price'] * $item['quantity']) - ($item['discount'] ?? 0),
                     'note' => $item['note'] ?? null,
                     'serial' => $serialStr,
+                    'warranty_policy' => app(\App\Services\WarrantyPolicyChoice::class)->nameFor(
+                        $product,
+                        $item['warranty_policy'] ?? $previousWarranty->get($item['product_id']),
+                    ),
                 ]);
 
                 foreach ($soldSerials as $serial) {

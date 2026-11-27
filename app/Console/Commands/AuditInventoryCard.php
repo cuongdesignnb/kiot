@@ -43,6 +43,7 @@ class AuditInventoryCard extends Command
         $products = $query->orderBy('id')->get();
         if ($products->isEmpty()) {
             $this->error('Không tìm thấy sản phẩm.');
+
             return self::FAILURE;
         }
 
@@ -62,11 +63,11 @@ class AuditInventoryCard extends Command
             $serialQty = $result['serial_qty'];
 
             $isMatch = ($dbQty === $calcQty);
-            $serialMatch = !$product->has_serial || ($dbQty === $serialQty);
+            $serialMatch = ! $product->has_serial || ($dbQty === $serialQty);
 
             if ($isMatch && $serialMatch) {
                 $matchCount++;
-                if (!$onlyMismatch) {
+                if (! $onlyMismatch) {
                     $this->line(sprintf(
                         '  ✅ #%d %s — DB=%d, Thẻ kho=%d %s',
                         $product->id, $product->sku, $dbQty, $calcQty,
@@ -92,7 +93,7 @@ class AuditInventoryCard extends Command
                     $result['breakdown']['sale_out'],
                     $result['breakdown']['return_in'],
                     $result['breakdown']['purchase_return_out'],
-                    ($result['breakdown']['stock_take_diff'] >= 0 ? '+' : '') . $result['breakdown']['stock_take_diff'],
+                    ($result['breakdown']['stock_take_diff'] >= 0 ? '+' : '').$result['breakdown']['stock_take_diff'],
                     $result['breakdown']['damage_out'],
                     $result['breakdown']['transfer_out'],
                     $result['breakdown']['repair_out'],
@@ -128,7 +129,7 @@ class AuditInventoryCard extends Command
             $this->line("  🔧 Đã sửa: {$fixedCount}");
         }
 
-        if (!empty($mismatches) && !$fix) {
+        if (! empty($mismatches) && ! $fix) {
             $this->newLine();
             $this->warn('Để tự động sửa, chạy: php artisan inventory:audit --fix');
             $this->warn('Hoặc rebuild giá vốn trước: php artisan costing:rebuild-moving-avg --all');
@@ -173,7 +174,7 @@ class AuditInventoryCard extends Command
             ->where('invoice_items.product_id', $product->id)
             ->where(function ($q) {
                 $q->whereNull('invoices.status')
-                  ->orWhere('invoices.status', '!=', 'cancelled');
+                    ->orWhereNotIn('invoices.status', ['cancelled', 'Đã hủy']);
             })
             ->get(['invoice_items.quantity', 'invoices.code', 'invoices.created_at']);
 
@@ -191,7 +192,7 @@ class AuditInventoryCard extends Command
             ->where('return_items.product_id', $product->id)
             ->where(function ($q) {
                 $q->where('returns.status', '!=', 'Đã hủy')
-                  ->orWhereNull('returns.status');
+                    ->orWhereNull('returns.status');
             })
             ->get(['return_items.quantity', 'returns.code', 'returns.created_at']);
 
@@ -253,10 +254,13 @@ class AuditInventoryCard extends Command
         $trItems = DB::table('stock_transfer_items')
             ->join('stock_transfers', 'stock_transfers.id', '=', 'stock_transfer_items.stock_transfer_id')
             ->where('stock_transfer_items.product_id', $product->id)
-            ->get(['stock_transfer_items.quantity', 'stock_transfers.code', 'stock_transfers.created_at']);
+            ->whereNotIn('stock_transfers.status', ['draft', 'cancelled'])
+            ->get(['stock_transfer_items.quantity', 'stock_transfer_items.received_quantity', 'stock_transfers.code', 'stock_transfers.created_at']);
 
         foreach ($trItems as $tri) {
-            $qty = (int) $tri->quantity;
+            // Sent stock leaves at once and comes back when received: only what is
+            // still in transit is missing from stock.
+            $qty = (int) $tri->quantity - (int) ($tri->received_quantity ?? 0);
             $breakdown['transfer_out'] += $qty;
             if ($verbose) {
                 $transactions[] = ['type' => 'Chuyển kho', 'code' => $tri->code, 'qty' => "-{$qty}", 'date' => $tri->created_at];
@@ -305,8 +309,8 @@ class AuditInventoryCard extends Command
         }
 
         // In chi tiết nếu verbose
-        if ($verbose && !empty($transactions)) {
-            usort($transactions, fn($a, $b) => strcmp($a['date'] ?? '', $b['date'] ?? ''));
+        if ($verbose && ! empty($transactions)) {
+            usort($transactions, fn ($a, $b) => strcmp($a['date'] ?? '', $b['date'] ?? ''));
             $balance = 0;
             foreach ($transactions as $tx) {
                 $change = (int) str_replace('+', '', $tx['qty']);

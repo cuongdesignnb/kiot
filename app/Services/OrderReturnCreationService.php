@@ -318,9 +318,19 @@ class OrderReturnCreationService
             }
         }
 
-        $restoredCostPerUnit = $product->tracksInventory()
-            ? ($invoiceItem ? (float) $invoiceItem->cost_price : (float) $product->cost_price)
-            : 0.0;
+        $restoredCostPerUnit = 0.0;
+        if ($product->tracksInventory()) {
+            $restoredCostPerUnit = $invoiceItem ? (float) $invoiceItem->cost_price : 0.0;
+            if ($restoredCostPerUnit <= 0) {
+                // No invoice (or a line sold at 0đ cost): the cost of this product's
+                // last sale, else its current cost.
+                $restoredCostPerUnit = (float) (\App\Models\InvoiceItem::query()
+                    ->where('product_id', $product->id)
+                    ->where('cost_price', '>', 0)
+                    ->latest('id')
+                    ->value('cost_price') ?? $product->cost_price ?? 0);
+            }
+        }
         if ($product->tracksInventory() && $product->has_serial && $restoredSerials->isNotEmpty()) {
             $restoredCostPerUnit = SerialCostingService::snapshotForReturn($restoredSerials)['unit_cost'];
         }

@@ -1,4 +1,5 @@
 <script setup>
+import { deadlineDay, formatDeadline, isDeadlinePast } from "@/utils/dateTime";
 import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, watch } from "vue";
 import { Head, usePage } from "@inertiajs/vue3";
@@ -132,7 +133,7 @@ const markComplete = async () => {
 };
 
 const startEditDeadline = () => {
-    editDeadline.value = repair.value?.deadline || "";
+    editDeadline.value = deadlineDay(repair.value?.deadline);
     showDeadlineEdit.value = true;
 };
 
@@ -261,8 +262,8 @@ loadRepair();
                                         <button @click="showDeadlineEdit = false" class="text-gray-400 text-xs hover:underline">Hủy</button>
                                     </template>
                                     <template v-else>
-                                        <span :class="repair.status !== 'completed' && repair.deadline && new Date(repair.deadline) < new Date() ? 'text-red-600 font-bold' : 'font-semibold'">
-                                            {{ repair.deadline || 'Chưa đặt' }}
+                                        <span :class="repair.status !== 'completed' && repair.deadline && isDeadlinePast(repair.deadline) ? 'text-red-600 font-bold' : 'font-semibold'">
+                                            {{ repair.deadline ? formatDeadline(repair.deadline) : 'Chưa đặt' }}
                                         </span>
                                         <button v-if="repair.status !== 'completed'" @click="startEditDeadline" class="text-blue-500 text-xs hover:underline">Sửa</button>
                                     </template>

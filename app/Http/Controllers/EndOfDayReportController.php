@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Models\Branch;
-use App\Models\Customer;
 use App\Models\Employee;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
@@ -34,19 +33,29 @@ class EndOfDayReportController extends Controller
         $salesChannel = $request->input('sales_channel');
 
         // Build base invoice query with all filters
-        $invoiceQuery = Invoice::whereBetween('created_at', [$dateFrom, $dateTo])
+        $invoiceQuery = Invoice::businessBetween($dateFrom, $dateTo)
             ->where('status', '!=', 'Đã hủy');
 
-        if ($branchId) $invoiceQuery->where('branch_id', $branchId);
-        if ($customerId) $invoiceQuery->where('customer_id', $customerId);
+        if ($branchId) {
+            $invoiceQuery->where('branch_id', $branchId);
+        }
+        if ($customerId) {
+            $invoiceQuery->where('customer_id', $customerId);
+        }
         // HOTFIX 24.26 — use SellerResolver for employee filter
-        $sellers = new SellerResolver();
+        $sellers = new SellerResolver;
         if ($employeeId) {
             $invoiceQuery = $sellers->filterBySeller($invoiceQuery, $employeeId);
         }
-        if ($createdBy) $invoiceQuery->where('created_by', $createdBy);
-        if ($paymentMethod) $invoiceQuery->where('payment_method', $paymentMethod);
-        if ($salesChannel) $invoiceQuery->where('sales_channel', $salesChannel);
+        if ($createdBy) {
+            $invoiceQuery->where('created_by', $createdBy);
+        }
+        if ($paymentMethod) {
+            $invoiceQuery->where('payment_method', $paymentMethod);
+        }
+        if ($salesChannel) {
+            $invoiceQuery->where('sales_channel', $salesChannel);
+        }
 
         // Get matching invoice IDs for filtering items and returns
         $invoiceIds = (clone $invoiceQuery)->pluck('id');
@@ -68,7 +77,7 @@ class EndOfDayReportController extends Controller
         $dailyQty = InvoiceItem::whereIn('invoice_id', $invoiceIds)
             ->join('invoices', 'invoice_items.invoice_id', '=', 'invoices.id')
             ->select(
-                DB::raw('DATE(invoices.created_at) as report_date'),
+                DB::raw('DATE(COALESCE(invoices.transaction_date, invoices.created_at)) as report_date'),
                 DB::raw('COALESCE(SUM(invoice_items.quantity), 0) as total_qty')
             )
             ->groupBy('report_date')
@@ -77,8 +86,12 @@ class EndOfDayReportController extends Controller
         // Daily returns
         $returnsQuery = OrderReturn::whereBetween('created_at', [$dateFrom, $dateTo])
             ->where('status', '!=', 'Đã hủy');
-        if ($branchId) $returnsQuery->where('branch_id', $branchId);
-        if ($customerId) $returnsQuery->where('customer_id', $customerId);
+        if ($branchId) {
+            $returnsQuery->where('branch_id', $branchId);
+        }
+        if ($customerId) {
+            $returnsQuery->where('customer_id', $customerId);
+        }
 
         $dailyReturns = (clone $returnsQuery)
             ->select(

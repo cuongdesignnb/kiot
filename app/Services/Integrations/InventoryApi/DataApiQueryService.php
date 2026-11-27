@@ -153,7 +153,7 @@ class DataApiQueryService
         $query = OrderReturn::query()->with([
             'customer:id,code,name,phone',
             'invoice:id,code,created_by,seller_name',
-            'items.product' => fn ($product) => $product->withTrashed()->select(['id', 'sku', 'name']),
+            'items.product' => fn ($product) => $product->withTrashed()->select(['id', 'sku', 'name', 'cost_price']),
         ]);
         if (! empty($filters['status'])) {
             $query->where('returns.status', (string) $filters['status']);
@@ -196,8 +196,9 @@ class DataApiQueryService
                     'quantity' => (int) $item->quantity,
                     'price' => $this->money($item->price),
                     'discount' => $this->money($item->discount ?? 0),
-                    // Same source as the reports (MetricService): import_price, else cost_price.
-                    'cost_price' => $this->money((float) ($item->import_price ?? 0) > 0 ? $item->import_price : ($item->cost_price ?? 0)),
+                    // Same source as the reports (MetricService): the return's cost snapshot,
+                    // else the product's cost. import_price is the refund price.
+                    'cost_price' => $this->money((float) ($item->cost_price ?? 0) > 0 ? $item->cost_price : ($item->product?->cost_price ?? 0)),
                     'serials' => collect((array) ($item->serial_ids ?? []))
                         ->map(fn ($id) => $serials[(int) $id] ?? null)->filter()->values()->all(),
                 ])->values()->all(),

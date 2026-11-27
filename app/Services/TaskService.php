@@ -813,7 +813,12 @@ class TaskService
             if ($product->isService()) {
                 throw new \RuntimeException("Dịch vụ \"{$product->name}\" không quản lý tồn kho nên không thể nhập bóc máy.");
             }
-            $cost = $unitCost ?? (float) ($product->cost_price ?? 0);
+            // The part's value comes out of the machine's cost, so staff must say
+            // what it is worth; the component's average cost is not used.
+            if ($unitCost === null) {
+                throw new \RuntimeException('Nhập đơn giá nhập kho cho linh kiện bóc tách (phần giá vốn tách ra từ máy).');
+            }
+            $cost = $unitCost;
             $totalCost = $cost * $quantity;
 
             // ── Cost cap ──
@@ -1210,7 +1215,15 @@ class TaskService
 
             // ── Snapshot giá bán linh kiện + tính parts_total (gross, trước khi áp policy) ──
             $partsTotal = 0;
-            $exportParts = $task->parts()->where('direction', 'export')->get();
+            $exportParts = $task->parts()->where('direction', 'export')->with('product')->get();
+
+            // ── Linh kiện chưa có giá vốn: không lập hoá đơn (lãi/lỗ sẽ sai) ──
+            app(\App\Services\CostPendingSaleGuard::class)->assertCanInvoiceProductIds($exportParts->pluck('product_id'));
+            $noCost = $exportParts->filter(fn ($part) => (float) $part->unit_cost <= 0 && ! $part->product?->isService());
+            if ($noCost->isNotEmpty()) {
+                $codes = $noCost->map(fn ($part) => $part->product?->sku ?? $part->product?->code ?? ('#'.$part->product_id))->unique()->implode(', ');
+                throw new \RuntimeException("Linh kiện chưa có giá vốn: {$codes}. Nhập hàng hoặc cập nhật giá vốn cho linh kiện rồi mới hoàn thành phiếu sửa.");
+            }
             foreach ($exportParts as $part) {
                 $salePrice = isset($partPrices[$part->id])
                     ? (float) $partPrices[$part->id]

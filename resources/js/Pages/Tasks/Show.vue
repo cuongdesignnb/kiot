@@ -1,4 +1,5 @@
 <script setup>
+import { deadlineDay, formatDeadline, isDeadlinePast } from "@/utils/dateTime";
 import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, watch } from "vue";
 import { Head, router } from "@inertiajs/vue3";
@@ -26,7 +27,7 @@ const selectedProduct = ref(null);
 
 // Disassemble modal (bóc máy)
 const showDisassembleModal = ref(false);
-const disForm = ref({ product_id: null, quantity: 1, unit_cost: 0, notes: "", serial_numbers: [] });
+const disForm = ref({ product_id: null, quantity: 1, unit_cost: null, notes: "", serial_numbers: [] });
 const disError = ref("");
 const disProductSearch = ref("");
 const disProductResults = ref([]);
@@ -176,7 +177,7 @@ watch(disProductSearch, (val) => {
 const selectDisProduct = (p) => {
     disSelectedProduct.value = p;
     disForm.value.product_id = p.id;
-    disForm.value.unit_cost = p.cost_price || 0;
+    disForm.value.unit_cost = null;
     disProductSearch.value = p.name;
     disProductResults.value = [];
     // Step 23.8F: nếu output has_serial → init serial_numbers theo qty
@@ -257,6 +258,10 @@ watch(() => disForm.value.quantity, (qty) => {
 // Disassemble submit
 const submitDisassemble = async () => {
     disError.value = "";
+    if (disForm.value.unit_cost === null || disForm.value.unit_cost === "" || Number.isNaN(Number(disForm.value.unit_cost))) {
+        disError.value = "Nhập đơn giá nhập kho cho linh kiện (phần giá vốn tách ra từ máy).";
+        return;
+    }
     // Step 23.8F: validate serial_numbers nếu output has_serial
     if (disSelectedProduct.value?.has_serial) {
         const sns = (disForm.value.serial_numbers || []).map(s => (s || "").trim()).filter(Boolean);
@@ -273,7 +278,7 @@ const submitDisassemble = async () => {
         const payload = {
             product_id: disForm.value.product_id,
             quantity: disForm.value.quantity,
-            unit_cost: Number(disForm.value.unit_cost) || 0,
+            unit_cost: Number(disForm.value.unit_cost),
             notes: disForm.value.notes,
         };
         if (disSelectedProduct.value?.has_serial) {
@@ -281,7 +286,7 @@ const submitDisassemble = async () => {
         }
         await axios.post(`/api/tasks/${props.taskId}/disassemble-part`, payload);
         showDisassembleModal.value = false;
-        disForm.value = { product_id: null, quantity: 1, unit_cost: 0, notes: "", serial_numbers: [] };
+        disForm.value = { product_id: null, quantity: 1, unit_cost: null, notes: "", serial_numbers: [] };
         disSelectedProduct.value = null;
         disProductSearch.value = "";
         loadTask();
@@ -294,7 +299,7 @@ const openDisassembleModal = () => {
     disError.value = '';
     disSelectedProduct.value = null;
     disProductSearch.value = '';
-    disForm.value = { product_id: null, quantity: 1, unit_cost: 0, notes: '', serial_numbers: [] };
+    disForm.value = { product_id: null, quantity: 1, unit_cost: null, notes: '', serial_numbers: [] };
     showDisassembleModal.value = true;
 };
 
@@ -331,7 +336,7 @@ const submitQuickProduct = async () => {
         // Auto-select in disassemble modal
         disSelectedProduct.value = p;
         disForm.value.product_id = p.id;
-        disForm.value.unit_cost = p.cost_price || 0;
+        disForm.value.unit_cost = null;
         disProductSearch.value = p.name;
         showQuickCreate.value = false;
     } catch (e) {
@@ -524,7 +529,7 @@ const editDeadline = ref("");
 const showDeadlineEdit = ref(false);
 
 const startEditDeadline = () => {
-    editDeadline.value = task.value?.deadline || "";
+    editDeadline.value = deadlineDay(task.value?.deadline);
     showDeadlineEdit.value = true;
 };
 
@@ -701,7 +706,7 @@ loadTask();
                                         <button @click="showDeadlineEdit = false" class="text-gray-400 text-xs hover:underline">Hủy</button>
                                     </template>
                                     <template v-else>
-                                        <span :class="isActive && task.deadline && new Date(task.deadline) < new Date() ? 'text-red-600 font-bold' : 'font-semibold'">{{ task.deadline || 'Chưa đặt' }}</span>
+                                        <span :class="isActive && task.deadline && isDeadlinePast(task.deadline) ? 'text-red-600 font-bold' : 'font-semibold'">{{ task.deadline ? formatDeadline(task.deadline) : 'Chưa đặt' }}</span>
                                         <button v-if="isActive" @click="startEditDeadline" class="text-blue-500 text-xs hover:underline">Sửa</button>
                                     </template>
                                 </div>
@@ -963,9 +968,9 @@ loadTask();
                             <input v-model.number="disForm.quantity" type="number" min="1" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
                         </div>
                         <div>
-                            <label class="block font-semibold text-sm mb-1">Đơn giá nhập kho</label>
+                            <label class="block font-semibold text-sm mb-1">Đơn giá nhập kho *</label>
                             <MoneyInput v-model="disForm.unit_cost" :min="0" input-class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-right" />
-                            <p class="text-[11px] text-gray-400 mt-1">Mặc định = giá vốn BQ, có thể sửa</p>
+                            <p class="text-[11px] text-gray-400 mt-1">Bắt buộc nhập: phần giá vốn tách ra từ máy (không lấy giá vốn bình quân). Giá vốn máy giảm đúng bằng số này.</p>
                         </div>
                     </div>
                     <div v-if="disForm.product_id && disForm.quantity && disForm.unit_cost" class="text-sm bg-orange-50 px-3 py-2 rounded border border-orange-200">

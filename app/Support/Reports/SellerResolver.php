@@ -411,7 +411,7 @@ class SellerResolver
     {
         $hasCostPrice = Schema::hasColumn('return_items', 'cost_price');
         $costExpr = $hasCostPrice
-            ? 'SUM(return_items.quantity * COALESCE(NULLIF(return_items.cost_price, 0), return_items.import_price, 0))'
+            ? 'SUM(return_items.quantity * COALESCE(NULLIF(return_items.cost_price, 0), (SELECT p.cost_price FROM products p WHERE p.id = return_items.product_id), 0))'
             : 'SUM(return_items.quantity * COALESCE(return_items.import_price, 0))';
 
         return $this->aggregateReturnItemsBySeller($returnQuery, $costExpr);
